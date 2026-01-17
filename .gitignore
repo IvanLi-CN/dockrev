@@ -1,0 +1,22 @@
+.DS_Store
+
+# Rust
+/target
+**/*.rs.bk
+
+# Node / web
+node_modules/
+**/node_modules/
+dist/
+build/
+.vite/
+
+# Env / local data
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+
