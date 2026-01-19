@@ -443,6 +443,219 @@ services:
 }
 
 #[tokio::test]
+async fn webhook_trigger_check_creates_job_and_updates_stack() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+
+    let body = serde_json::json!({
+        "name": "demo",
+        "compose": {
+            "type": "path",
+            "composeFiles": [compose_path],
+            "envFile": null
+        }
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/stacks")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/stacks")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let list = response_json(resp).await;
+    let stack_id = list["stacks"][0]["id"].as_str().unwrap().to_string();
+
+    let trigger = serde_json::json!({
+        "action": "check",
+        "scope": "stack",
+        "stackId": stack_id,
+        "allowArchMismatch": false,
+        "backupMode": "inherit"
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/trigger")
+                .header("content-type", "application/json")
+                .header("X-Dockrev-Webhook-Secret", "secret")
+                .body(Body::from(trigger.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let job_id = triggered["jobId"].as_str().unwrap().to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/stacks")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let list = response_json(resp).await;
+    assert_eq!(list["stacks"][0]["updates"].as_u64().unwrap(), 1);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/jobs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let jobs = response_json(resp).await;
+    let job = jobs["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|j| j["id"].as_str().unwrap() == job_id)
+        .unwrap();
+    assert_eq!(job["createdBy"].as_str().unwrap(), "webhook");
+    assert_eq!(job["reason"].as_str().unwrap(), "webhook");
+    assert_eq!(job["type"].as_str().unwrap(), "check");
+}
+
+#[tokio::test]
+async fn webhook_trigger_update_creates_job() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+
+    let body = serde_json::json!({
+        "name": "demo",
+        "compose": {
+            "type": "path",
+            "composeFiles": [compose_path],
+            "envFile": null
+        }
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/stacks")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/stacks")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let list = response_json(resp).await;
+    let stack_id = list["stacks"][0]["id"].as_str().unwrap().to_string();
+
+    let trigger = serde_json::json!({
+        "action": "update",
+        "scope": "stack",
+        "stackId": stack_id,
+        "allowArchMismatch": false,
+        "backupMode": "skip"
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/trigger")
+                .header("content-type", "application/json")
+                .header("X-Dockrev-Webhook-Secret", "secret")
+                .body(Body::from(trigger.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let job_id = triggered["jobId"].as_str().unwrap().to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/jobs/{job_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let job = response_json(resp).await;
+    assert_eq!(job["job"]["id"].as_str().unwrap(), job_id);
+    assert_eq!(job["job"]["createdBy"].as_str().unwrap(), "webhook");
+    assert_eq!(job["job"]["reason"].as_str().unwrap(), "webhook");
+    assert_eq!(job["job"]["type"].as_str().unwrap(), "update");
+    assert_eq!(job["job"]["summary"]["mode"].as_str().unwrap(), "apply");
+    assert!(job["job"]["finishedAt"].as_str().unwrap().len() > 10);
+}
+
+#[tokio::test]
 async fn settings_and_notifications_roundtrip() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());

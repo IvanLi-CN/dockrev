@@ -947,14 +947,7 @@ WHERE id = 'default'
         .context("put backup settings")
     }
 
-    pub async fn insert_job(
-        &self,
-        job: JobListItem,
-        created_by: &str,
-        reason: &str,
-    ) -> anyhow::Result<()> {
-        let created_by = created_by.to_string();
-        let reason = reason.to_string();
+    pub async fn insert_job(&self, job: JobListItem) -> anyhow::Result<()> {
         self.call(move |conn| {
             conn.execute(
                 r#"
@@ -984,8 +977,8 @@ INSERT INTO jobs (
                     job.status,
                     job.allow_arch_mismatch as i64,
                     job.backup_mode,
-                    created_by,
-                    reason,
+                    job.created_by,
+                    job.reason,
                     job.created_at,
                     job.started_at,
                     job.finished_at,
@@ -1035,6 +1028,8 @@ SELECT
   stack_id,
   service_id,
   status,
+  created_by,
+  reason,
   created_at,
   started_at,
   finished_at,
@@ -1048,7 +1043,7 @@ LIMIT 200
             )?;
 
             let rows = stmt.query_map([], |row| {
-                let summary_json: String = row.get(11)?;
+                let summary_json: String = row.get(13)?;
                 let summary: serde_json::Value =
                     serde_json::from_str(&summary_json).map_err(|e| {
                         rusqlite::Error::FromSqlConversionFailure(
@@ -1064,11 +1059,13 @@ LIMIT 200
                     stack_id: row.get(3)?,
                     service_id: row.get(4)?,
                     status: row.get(5)?,
-                    created_at: row.get(6)?,
-                    started_at: row.get(7)?,
-                    finished_at: row.get(8)?,
-                    allow_arch_mismatch: row.get::<_, i64>(9)? != 0,
-                    backup_mode: row.get(10)?,
+                    created_by: row.get(6)?,
+                    reason: row.get(7)?,
+                    created_at: row.get(8)?,
+                    started_at: row.get(9)?,
+                    finished_at: row.get(10)?,
+                    allow_arch_mismatch: row.get::<_, i64>(11)? != 0,
+                    backup_mode: row.get(12)?,
                     summary_json: summary,
                 })
             })?;
@@ -1092,6 +1089,8 @@ SELECT
   stack_id,
   service_id,
   status,
+  created_by,
+  reason,
   created_at,
   started_at,
   finished_at,
@@ -1103,7 +1102,7 @@ WHERE id = ?1
 "#,
                     params![job_id],
                     |row| {
-                        let summary_json: String = row.get(11)?;
+                        let summary_json: String = row.get(13)?;
                         let summary: serde_json::Value = serde_json::from_str(&summary_json)
                             .map_err(|e| {
                                 rusqlite::Error::FromSqlConversionFailure(
@@ -1119,11 +1118,13 @@ WHERE id = ?1
                             stack_id: row.get(3)?,
                             service_id: row.get(4)?,
                             status: row.get(5)?,
-                            created_at: row.get(6)?,
-                            started_at: row.get(7)?,
-                            finished_at: row.get(8)?,
-                            allow_arch_mismatch: row.get::<_, i64>(9)? != 0,
-                            backup_mode: row.get(10)?,
+                            created_by: row.get(6)?,
+                            reason: row.get(7)?,
+                            created_at: row.get(8)?,
+                            started_at: row.get(9)?,
+                            finished_at: row.get(10)?,
+                            allow_arch_mismatch: row.get::<_, i64>(11)? != 0,
+                            backup_mode: row.get(12)?,
                             summary_json: summary,
                         })
                     },

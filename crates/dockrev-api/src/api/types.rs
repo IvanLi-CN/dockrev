@@ -375,6 +375,8 @@ pub struct JobListItem {
     pub service_id: Option<String>,
     pub status: String,
     pub created_at: String,
+    pub created_by: String,
+    pub reason: String,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub allow_arch_mismatch: bool,
@@ -388,10 +390,17 @@ impl JobListItem {
             id: self.id,
             r#type: self.r#type.as_str().to_string(),
             scope: self.scope.as_str().to_string(),
+            stack_id: self.stack_id,
+            service_id: self.service_id,
             status: self.status,
+            created_by: self.created_by,
+            reason: self.reason,
             created_at: self.created_at,
             started_at: self.started_at,
             finished_at: self.finished_at,
+            allow_arch_mismatch: self.allow_arch_mismatch,
+            backup_mode: self.backup_mode,
+            summary: self.summary_json,
         }
     }
 }
@@ -408,12 +417,21 @@ pub struct JobApiListItem {
     pub id: String,
     pub r#type: String,
     pub scope: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stack_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_id: Option<String>,
     pub status: String,
+    pub created_by: String,
+    pub reason: String,
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub started_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<String>,
+    pub allow_arch_mismatch: bool,
+    pub backup_mode: String,
+    pub summary: Value,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -426,7 +444,22 @@ pub struct GetJobResponse {
 #[serde(rename_all = "camelCase")]
 pub struct JobDetail {
     pub id: String,
+    pub r#type: String,
+    pub scope: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stack_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_id: Option<String>,
     pub status: String,
+    pub created_by: String,
+    pub reason: String,
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+    pub allow_arch_mismatch: bool,
+    pub backup_mode: String,
     pub summary: Value,
     pub logs: Vec<JobLogLine>,
 }
@@ -513,6 +546,8 @@ impl JobRecord {
             service_id: self.service_id.clone(),
             status: self.status.clone(),
             created_at: self.created_at.clone(),
+            created_by: "unknown".to_string(),
+            reason: "unknown".to_string(),
             started_at: self.started_at.clone(),
             finished_at: self.finished_at.clone(),
             allow_arch_mismatch: self.allow_arch_mismatch,

@@ -278,7 +278,7 @@ fn sanitize_project_name(name: &str) -> String {
 fn timestamp_slug(now_rfc3339: &str) -> String {
     // Expect RFC3339; best-effort fallback.
     // Example: 2026-01-19T06:15:54Z -> 20260119-061554Z
-    let cleaned = now_rfc3339.replace('-', "").replace(':', "");
+    let cleaned = now_rfc3339.replace(['-', ':'], "");
     // 20260119T061554Z
     if let Some((date, rest)) = cleaned.split_once('T') {
         let time = rest.trim_end_matches('Z');
@@ -378,7 +378,7 @@ async fn probe_size_bytes(
 
 async fn run_backup_container(
     runner: &dyn CommandRunner,
-    stack_dir: &PathBuf,
+    stack_dir: &std::path::Path,
     included: &[(BackupTarget, u64)],
     ts_slug: &str,
 ) -> anyhow::Result<()> {

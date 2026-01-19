@@ -163,11 +163,10 @@ async fn register_stack(
         None,
         &now,
     );
-    state
-        .db
-        .insert_job(job.to_db(), &user, "ui")
-        .await
-        .map_err(map_internal)?;
+    let mut job_db = job.to_db();
+    job_db.created_by = user.clone();
+    job_db.reason = "ui".to_string();
+    state.db.insert_job(job_db).await.map_err(map_internal)?;
     state
         .db
         .insert_job_log(
@@ -202,7 +201,7 @@ async fn trigger_check(
     )?;
 
     let check_id = ids::new_check_id();
-    let job = JobRecord::new_job(
+    let job = JobRecord::new_running(
         check_id.clone(),
         JobType::Check,
         req.scope.clone(),
@@ -211,20 +210,61 @@ async fn trigger_check(
         &now,
     );
 
-    state
-        .db
-        .insert_job(job.to_db(), &user, req.reason.as_str())
-        .await
-        .map_err(map_internal)?;
+    let mut job_db = job.to_db();
+    job_db.created_by = user.clone();
+    job_db.reason = req.reason.as_str().to_string();
+    state.db.insert_job(job_db).await.map_err(map_internal)?;
 
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
 
-    let stack_ids = match req.scope {
+    let outcome = run_check_for_job(
+        &state,
+        &check_id,
+        &req.scope,
+        req.stack_id.as_deref(),
+        req.service_id.as_deref(),
+        &host_platform,
+        &now,
+    )
+    .await;
+
+    let finished_at = now_rfc3339().map_err(map_internal)?;
+    match outcome {
+        Ok(summary) => {
+            state
+                .db
+                .finish_job(&check_id, "success", &finished_at, &summary)
+                .await
+                .map_err(map_internal)?;
+        }
+        Err(e) => {
+            let summary = json!({"error": format!("{e:?}")});
+            let _ = state
+                .db
+                .finish_job(&check_id, "failed", &finished_at, &summary)
+                .await;
+            return Err(e);
+        }
+    }
+
+    Ok(Json(TriggerCheckResponse { check_id }))
+}
+
+async fn run_check_for_job(
+    state: &Arc<AppState>,
+    job_id: &str,
+    scope: &JobScope,
+    stack_id: Option<&str>,
+    service_id: Option<&str>,
+    host_platform: &str,
+    now: &str,
+) -> Result<serde_json::Value, ApiError> {
+    let stack_ids = match scope {
         JobScope::All => state.db.list_stack_ids().await.map_err(map_internal)?,
-        JobScope::Stack => req.stack_id.clone().into_iter().collect(),
+        JobScope::Stack => stack_id.map(|s| vec![s.to_string()]).unwrap_or_default(),
         JobScope::Service => {
-            let service_id = req.service_id.clone().unwrap_or_default();
+            let service_id = service_id.unwrap_or_default().to_string();
             state
                 .db
                 .get_service_stack_id(&service_id)
@@ -235,6 +275,9 @@ async fn trigger_check(
         }
     };
 
+    let mut services_checked = 0u32;
+    let mut services_with_candidate = 0u32;
+
     for stack_id in &stack_ids {
         let services = state
             .db
@@ -243,15 +286,16 @@ async fn trigger_check(
             .map_err(map_internal)?;
 
         for svc in services {
+            services_checked += 1;
             let img = match registry::ImageRef::parse(&svc.image_ref) {
                 Ok(img) => img,
                 Err(_) => {
                     state
                         .db
                         .insert_job_log(
-                            &check_id,
+                            job_id,
                             &JobLogLine {
-                                ts: now.clone(),
+                                ts: now.to_string(),
                                 level: "warn".to_string(),
                                 msg: format!("skip service {}: invalid image ref", svc.id),
                             },
@@ -287,9 +331,9 @@ async fn trigger_check(
                     state
                         .db
                         .insert_job_log(
-                            &check_id,
+                            job_id,
                             &JobLogLine {
-                                ts: now.clone(),
+                                ts: now.to_string(),
                                 level: "warn".to_string(),
                                 msg: format!("list tags failed for {}: {}", img.name, e),
                             },
@@ -305,6 +349,9 @@ async fn trigger_check(
                 candidates::select_candidate_tag(&svc.image_tag, &tags, is_ignored);
             let candidate_any = candidates::select_candidate_tag(&svc.image_tag, &tags, |_| false);
             let candidate_tag = candidate_non_ignored.or(candidate_any);
+            if candidate_tag.is_some() {
+                services_with_candidate += 1;
+            }
 
             let mut ignore_match: Option<(String, String)> = None;
             if let Some(ref tag) = candidate_tag
@@ -327,7 +374,7 @@ async fn trigger_check(
                 if let Some(tag) = candidate_tag.as_deref() {
                     match state.registry.get_manifest(&img, tag).await {
                         Ok(m) => {
-                            let arch_match = registry::compute_arch_match(&host_platform, &m.arch);
+                            let arch_match = registry::compute_arch_match(host_platform, &m.arch);
                             (
                                 m.digest,
                                 Some(arch_match.as_str().to_string()),
@@ -351,8 +398,8 @@ async fn trigger_check(
                     candidate_arch_json,
                     ignore_match.as_ref().map(|(id, _)| id.clone()),
                     ignore_match.as_ref().map(|(_, r)| r.clone()),
-                    &now,
-                    &now,
+                    now,
+                    now,
                 )
                 .await
                 .map_err(map_internal)?;
@@ -360,7 +407,7 @@ async fn trigger_check(
 
         state
             .db
-            .update_stack_last_check_at(stack_id, &now)
+            .update_stack_last_check_at(stack_id, now)
             .await
             .map_err(map_internal)?;
     }
@@ -368,9 +415,9 @@ async fn trigger_check(
     state
         .db
         .insert_job_log(
-            &check_id,
+            job_id,
             &JobLogLine {
-                ts: now.clone(),
+                ts: now.to_string(),
                 level: "info".to_string(),
                 msg: "check finished".to_string(),
             },
@@ -378,7 +425,13 @@ async fn trigger_check(
         .await
         .map_err(map_internal)?;
 
-    Ok(Json(TriggerCheckResponse { check_id }))
+    Ok(json!({
+        "hostPlatform": host_platform,
+        "scope": scope.as_str(),
+        "stackIds": stack_ids,
+        "servicesChecked": services_checked,
+        "servicesWithCandidate": services_with_candidate,
+    }))
 }
 
 async fn trigger_update(
@@ -395,6 +448,18 @@ async fn trigger_update(
         req.service_id.as_deref(),
     )?;
 
+    let job_id = run_update_for_job(state, user, req.reason.as_str().to_string(), req, now).await?;
+
+    Ok(Json(TriggerUpdateResponse { job_id }))
+}
+
+async fn run_update_for_job(
+    state: Arc<AppState>,
+    created_by: String,
+    reason: String,
+    req: TriggerUpdateRequest,
+    now: String,
+) -> Result<String, ApiError> {
     let job_id = ids::new_job_id();
     let mut job = JobRecord::new_running(
         job_id.clone(),
@@ -408,11 +473,10 @@ async fn trigger_update(
     job.backup_mode = req.backup_mode.as_str().to_string();
     job.summary_json = json!({ "mode": req.mode.as_str() });
 
-    state
-        .db
-        .insert_job(job.to_db(), &user, req.reason.as_str())
-        .await
-        .map_err(map_internal)?;
+    let mut job_db = job.to_db();
+    job_db.created_by = created_by;
+    job_db.reason = reason;
+    state.db.insert_job(job_db).await.map_err(map_internal)?;
 
     state
         .db
@@ -617,26 +681,28 @@ async fn trigger_update(
         "stacks": stack_summaries,
     });
 
+    let finished_at = now_rfc3339().map_err(map_internal)?;
     state
         .db
-        .finish_job(&job_id, &final_status, &now, &final_summary)
+        .finish_job(&job_id, &final_status, &finished_at, &final_summary)
         .await
         .map_err(map_internal)?;
 
-    if final_status == "success" {
-        if let Ok(now_dt) =
-            time::OffsetDateTime::parse(&now, &time::format_description::well_known::Rfc3339)
-        {
-            for (backup_id, after_seconds) in backups_to_cleanup {
-                let cleanup_after = now_dt + time::Duration::seconds(after_seconds as i64);
-                if let Ok(cleanup_after) =
-                    cleanup_after.format(&time::format_description::well_known::Rfc3339)
-                {
-                    let _ = state
-                        .db
-                        .schedule_backup_cleanup(&backup_id, &cleanup_after)
-                        .await;
-                }
+    if final_status == "success"
+        && let Ok(now_dt) = time::OffsetDateTime::parse(
+            &finished_at,
+            &time::format_description::well_known::Rfc3339,
+        )
+    {
+        for (backup_id, after_seconds) in backups_to_cleanup {
+            let cleanup_after = now_dt + time::Duration::seconds(after_seconds as i64);
+            if let Ok(cleanup_after) =
+                cleanup_after.format(&time::format_description::well_known::Rfc3339)
+            {
+                let _ = state
+                    .db
+                    .schedule_backup_cleanup(&backup_id, &cleanup_after)
+                    .await;
             }
         }
     }
@@ -644,7 +710,7 @@ async fn trigger_update(
     let notify_state = state.clone();
     let notify_job_id = job_id.clone();
     let notify_status = final_status.clone();
-    let notify_now = now.clone();
+    let notify_now = finished_at.clone();
     let notify_summary = final_summary.clone();
     tokio::spawn(async move {
         let _ = notify::notify_job_updated(
@@ -657,7 +723,7 @@ async fn trigger_update(
         .await;
     });
 
-    Ok(Json(TriggerUpdateResponse { job_id }))
+    Ok(job_id)
 }
 
 struct DbLoggingRunner {
@@ -755,7 +821,18 @@ async fn get_job(
     Ok(Json(GetJobResponse {
         job: JobDetail {
             id: job.id,
+            r#type: job.r#type.as_str().to_string(),
+            scope: job.scope.as_str().to_string(),
+            stack_id: job.stack_id,
+            service_id: job.service_id,
             status: job.status,
+            created_by: job.created_by,
+            reason: job.reason,
+            created_at: job.created_at,
+            started_at: job.started_at,
+            finished_at: job.finished_at,
+            allow_arch_mismatch: job.allow_arch_mismatch,
+            backup_mode: job.backup_mode,
             summary: job.summary_json,
             logs,
         },
@@ -991,42 +1068,103 @@ async fn webhook_trigger(
         req.service_id.as_deref(),
     )?;
 
-    let job_id = ids::new_job_id();
-    let job_type = match req.action {
-        WebhookAction::Check => JobType::Check,
-        WebhookAction::Update => JobType::Update,
-    };
-    let mut job = JobRecord::new_job(
-        job_id.clone(),
-        job_type,
-        req.scope,
-        req.stack_id,
-        req.service_id,
-        &now,
-    );
-    job.allow_arch_mismatch = req.allow_arch_mismatch;
-    job.backup_mode = req.backup_mode.as_str().to_string();
+    let WebhookTriggerRequest {
+        action,
+        scope,
+        stack_id,
+        service_id,
+        allow_arch_mismatch,
+        backup_mode,
+    } = req;
 
-    state
-        .db
-        .insert_job(job.to_db(), "webhook", "webhook")
-        .await
-        .map_err(map_internal)?;
+    match action {
+        WebhookAction::Check => {
+            let job_id = ids::new_job_id();
+            let mut job = JobRecord::new_running(
+                job_id.clone(),
+                JobType::Check,
+                scope.clone(),
+                stack_id.clone(),
+                service_id.clone(),
+                &now,
+            );
+            job.allow_arch_mismatch = allow_arch_mismatch;
+            job.backup_mode = backup_mode.as_str().to_string();
 
-    state
-        .db
-        .insert_job_log(
-            &job_id,
-            &JobLogLine {
-                ts: now,
-                level: "info".to_string(),
-                msg: "webhook trigger accepted (scaffold)".to_string(),
-            },
-        )
-        .await
-        .map_err(map_internal)?;
+            let mut job_db = job.to_db();
+            job_db.created_by = "webhook".to_string();
+            job_db.reason = "webhook".to_string();
+            state.db.insert_job(job_db).await.map_err(map_internal)?;
 
-    Ok(Json(WebhookTriggerResponse { job_id }))
+            state
+                .db
+                .insert_job_log(
+                    &job_id,
+                    &JobLogLine {
+                        ts: now.clone(),
+                        level: "info".to_string(),
+                        msg: "webhook check started".to_string(),
+                    },
+                )
+                .await
+                .map_err(map_internal)?;
+
+            let host_platform =
+                registry::host_platform_override(state.config.host_platform.as_deref())
+                    .unwrap_or_else(|| "linux/amd64".to_string());
+            let outcome = run_check_for_job(
+                &state,
+                &job_id,
+                &scope,
+                stack_id.as_deref(),
+                service_id.as_deref(),
+                &host_platform,
+                &now,
+            )
+            .await;
+
+            let finished_at = now_rfc3339().map_err(map_internal)?;
+            match outcome {
+                Ok(summary) => {
+                    state
+                        .db
+                        .finish_job(&job_id, "success", &finished_at, &summary)
+                        .await
+                        .map_err(map_internal)?;
+                    Ok(Json(WebhookTriggerResponse { job_id }))
+                }
+                Err(e) => {
+                    let summary = json!({"error": format!("{e:?}")});
+                    let _ = state
+                        .db
+                        .finish_job(&job_id, "failed", &finished_at, &summary)
+                        .await;
+                    Err(e)
+                }
+            }
+        }
+        WebhookAction::Update => {
+            let update_req = TriggerUpdateRequest {
+                scope,
+                stack_id,
+                service_id,
+                mode: UpdateMode::Apply,
+                allow_arch_mismatch,
+                backup_mode,
+                reason: UpdateReason::Webhook,
+            };
+
+            let job_id = run_update_for_job(
+                state,
+                "webhook".to_string(),
+                "webhook".to_string(),
+                update_req,
+                now,
+            )
+            .await?;
+            Ok(Json(WebhookTriggerResponse { job_id }))
+        }
+    }
 }
 
 async fn get_settings(
