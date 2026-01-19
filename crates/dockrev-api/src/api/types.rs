@@ -315,7 +315,7 @@ pub struct TriggerUpdateResponse {
     pub job_id: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum JobScope {
     Service,
@@ -474,6 +474,30 @@ impl JobRecord {
             created_at: now.to_string(),
             started_at: Some(now.to_string()),
             finished_at: Some(now.to_string()),
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json: Value::Object(Default::default()),
+        }
+    }
+
+    pub fn new_running(
+        id: String,
+        r#type: JobType,
+        scope: JobScope,
+        stack_id: Option<String>,
+        service_id: Option<String>,
+        now: &str,
+    ) -> Self {
+        Self {
+            id,
+            r#type,
+            scope,
+            stack_id,
+            service_id,
+            status: "running".to_string(),
+            created_at: now.to_string(),
+            started_at: Some(now.to_string()),
+            finished_at: None,
             allow_arch_mismatch: false,
             backup_mode: "inherit".to_string(),
             summary_json: Value::Object(Default::default()),

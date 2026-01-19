@@ -958,6 +958,32 @@ INSERT INTO jobs (
         .context("insert job")
     }
 
+    pub async fn finish_job(
+        &self,
+        job_id: &str,
+        status: &str,
+        finished_at: &str,
+        summary_json: &serde_json::Value,
+    ) -> anyhow::Result<()> {
+        let job_id = job_id.to_string();
+        let status = status.to_string();
+        let finished_at = finished_at.to_string();
+        let summary_json = serde_json::to_string(summary_json)?;
+        self.call(move |conn| {
+            conn.execute(
+                r#"
+UPDATE jobs
+SET status = ?2, finished_at = ?3, summary_json = ?4
+WHERE id = ?1
+"#,
+                params![job_id, status, finished_at, summary_json],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("finish job")
+    }
+
     pub async fn list_jobs(&self) -> anyhow::Result<Vec<JobListItem>> {
         self.call(|conn| {
             let mut stmt = conn.prepare(

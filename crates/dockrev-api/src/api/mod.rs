@@ -10,7 +10,9 @@ use axum::{
 };
 use serde_json::json;
 
-use crate::{candidates, compose, error::ApiError, ids, ignore, registry, state::AppState};
+use crate::{
+    candidates, compose, error::ApiError, ids, ignore, registry, state::AppState, updater,
+};
 use types::*;
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -389,7 +391,7 @@ async fn trigger_update(
     )?;
 
     let job_id = ids::new_job_id();
-    let mut job = JobRecord::new_job(
+    let mut job = JobRecord::new_running(
         job_id.clone(),
         JobType::Update,
         req.scope.clone(),
@@ -414,13 +416,147 @@ async fn trigger_update(
             &JobLogLine {
                 ts: now.clone(),
                 level: "info".to_string(),
-                msg: "update completed (scaffold)".to_string(),
+                msg: "update started".to_string(),
             },
         )
         .await
         .map_err(map_internal)?;
 
+    let stack_ids = match req.scope {
+        JobScope::All => state.db.list_stack_ids().await.map_err(map_internal)?,
+        JobScope::Stack => req.stack_id.clone().into_iter().collect(),
+        JobScope::Service => {
+            let service_id = req.service_id.clone().unwrap_or_default();
+            state
+                .db
+                .get_service_stack_id(&service_id)
+                .await
+                .map_err(map_internal)?
+                .map(|id| vec![id])
+                .unwrap_or_default()
+        }
+    };
+
+    let mut final_status = "success".to_string();
+    let mut final_summary = json!({ "mode": req.mode.as_str(), "stacks": stack_ids.len() });
+
+    for stack_id in &stack_ids {
+        let Some(stack) = state.db.get_stack(stack_id).await.map_err(map_internal)? else {
+            continue;
+        };
+
+        if !req.allow_arch_mismatch {
+            for svc in &stack.services {
+                if req.scope == JobScope::Service
+                    && req.service_id.as_deref().is_some_and(|id| id != svc.id)
+                {
+                    continue;
+                }
+                if let Some(candidate) = svc.candidate.as_ref()
+                    && matches!(candidate.arch_match, ArchMatch::Mismatch)
+                {
+                    return Err(ApiError::invalid_argument(
+                        "candidate arch mismatch (set allowArchMismatch=true to override)",
+                    ));
+                }
+            }
+        }
+
+        let logging_runner = DbLoggingRunner {
+            db: state.db.clone(),
+            inner: state.runner.clone(),
+            job_id: job_id.clone(),
+        };
+
+        let outcome = updater::run_update_job(
+            &logging_runner,
+            &state.config.compose_bin,
+            &stack,
+            &req.scope,
+            req.service_id.as_deref(),
+            req.mode.as_str(),
+        )
+        .await
+        .map_err(map_internal)?;
+
+        final_status = outcome.status.clone();
+        final_summary = outcome.summary_json;
+
+        if final_status != "success" {
+            break;
+        }
+    }
+
+    state
+        .db
+        .finish_job(&job_id, &final_status, &now, &final_summary)
+        .await
+        .map_err(map_internal)?;
+
     Ok(Json(TriggerUpdateResponse { job_id }))
+}
+
+struct DbLoggingRunner {
+    db: crate::db::Db,
+    inner: Arc<dyn crate::runner::CommandRunner>,
+    job_id: String,
+}
+
+#[async_trait::async_trait]
+impl crate::runner::CommandRunner for DbLoggingRunner {
+    async fn run(
+        &self,
+        spec: crate::runner::CommandSpec,
+        timeout: std::time::Duration,
+    ) -> anyhow::Result<crate::runner::CommandOutput> {
+        let start = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)?;
+        let msg = format!("$ {} {}", spec.program, spec.args.join(" "));
+        let _ = self
+            .db
+            .insert_job_log(
+                &self.job_id,
+                &JobLogLine {
+                    ts: start,
+                    level: "info".to_string(),
+                    msg,
+                },
+            )
+            .await;
+
+        let out = self.inner.run(spec, timeout).await?;
+        let ts = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)?;
+        let msg = format!(
+            "status={} stdout={} stderr={}",
+            out.status,
+            truncate(&out.stdout, 2000),
+            truncate(&out.stderr, 2000)
+        );
+        let _ = self
+            .db
+            .insert_job_log(
+                &self.job_id,
+                &JobLogLine {
+                    ts,
+                    level: if out.status == 0 {
+                        "info".to_string()
+                    } else {
+                        "warn".to_string()
+                    },
+                    msg,
+                },
+            )
+            .await;
+        Ok(out)
+    }
+}
+
+fn truncate(input: &str, max: usize) -> String {
+    if input.len() <= max {
+        return input.to_string();
+    }
+    format!("{}...(truncated)", &input[..max])
 }
 
 async fn list_jobs(

@@ -7,6 +7,7 @@ pub struct Config {
     pub http_addr: String,
     pub db_path: PathBuf,
     pub docker_config_path: Option<PathBuf>,
+    pub compose_bin: String,
     pub auth_forward_header_name: HeaderName,
     pub auth_allow_anonymous_in_dev: bool,
     pub webhook_secret: Option<String>,
@@ -26,6 +27,9 @@ impl Config {
             .ok()
             .map(PathBuf::from);
 
+        let compose_bin =
+            std::env::var("DOCKREV_COMPOSE_BIN").unwrap_or_else(|_| "docker-compose".to_string());
+
         let auth_forward_header_name = std::env::var("DOCKREV_AUTH_FORWARD_HEADER_NAME")
             .unwrap_or_else(|_| "X-Forwarded-User".to_string())
             .parse::<HeaderName>()?;
@@ -42,6 +46,7 @@ impl Config {
             http_addr,
             db_path,
             docker_config_path,
+            compose_bin,
             auth_forward_header_name,
             auth_allow_anonymous_in_dev,
             webhook_secret,

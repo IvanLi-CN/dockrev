@@ -3,13 +3,17 @@
 mod api;
 mod candidates;
 mod compose;
+mod compose_runner;
 mod config;
 mod db;
+mod docker_runner;
 mod error;
 mod ids;
 mod ignore;
 mod registry;
+mod runner;
 mod state;
+mod updater;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -29,7 +33,8 @@ async fn main() -> anyhow::Result<()> {
     let registry = std::sync::Arc::new(registry::HttpRegistryClient::new(
         config.docker_config_path.as_deref(),
     )?);
-    let state = state::AppState::new(config, db, registry);
+    let runner = std::sync::Arc::new(runner::TokioCommandRunner);
+    let state = state::AppState::new(config, db, registry, runner);
     let app = api::router(state.clone());
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
