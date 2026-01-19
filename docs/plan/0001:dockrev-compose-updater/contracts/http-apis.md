@@ -366,13 +366,19 @@ Notes:
   "email": { "enabled": true, "smtpUrl": "..." },
   "webhook": { "enabled": true, "url": "..." },
   "telegram": { "enabled": true, "botToken": "...", "chatId": "..." },
-  "webPush": { "enabled": true, "vapidPublicKey": "..." }
+  "webPush": {
+    "enabled": true,
+    "vapidPublicKey": "...",
+    "vapidPrivateKey": "...",
+    "vapidSubject": "mailto:you@example.com"
+  }
 }
 ```
 
 Notes:
 
 - UI 中 Email 采用单字段 `smtpUrl` 输入（例如 `smtp://user:pass@smtp.example.com:587`），其余细项（from/to 等）可在后续迭代中扩展为结构化字段；MVP 先以 URL 形状落地，降低配置复杂度。
+  - MVP 额外支持通过 query 参数提供收件人（示例：`...?to=a@example.com,b@example.com&from=Dockrev <noreply@example.com>`）。
 
 敏感字段（token/密码）：
 
@@ -398,6 +404,30 @@ DELETE body:
 
 ```json
 { "endpoint": "https://..." }
+```
+
+## Test notifications（POST /api/notifications/test）
+
+用途：手动触发一次“测试通知”，用于验证 webhook/email/telegram/webPush 配置是否可用。
+
+Body:
+
+```json
+{ "message": "dockrev test" }
+```
+
+Response（示例；按实现可增量扩展）：
+
+```json
+{
+  "ok": true,
+  "results": {
+    "webhook": { "ok": true },
+    "email": { "ok": false, "error": "..." },
+    "telegram": { "ok": false, "error": "..." },
+    "webPush": { "ok": false, "error": "..." }
+  }
+}
 ```
 
 ## Webhook trigger（POST /api/webhooks/trigger）

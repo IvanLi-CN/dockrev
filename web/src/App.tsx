@@ -1,35 +1,65 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
 import './App.css'
+import { useMemo, useState, type ReactNode } from 'react'
+import { AppShell } from './Shell'
+import type { Route } from './routes'
+import { OverviewPage } from './pages/OverviewPage'
+import { QueuePage } from './pages/QueuePage'
+import { ServicesPage } from './pages/ServicesPage'
+import { ServiceDetailPage } from './pages/ServiceDetailPage'
+import { SettingsPage } from './pages/SettingsPage'
+import { useRoute } from './useRoute'
 
-function App() {
-  const [count, setCount] = useState(0)
-
-  return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbarHint?: string } {
+  switch (route.name) {
+    case 'overview':
+      return {
+        title: '概览',
+        pageSubtitle: '聚焦：可更新 / 需提示（同前缀新版本）/ 架构不匹配 / 被阻止',
+        topbarHint: 'Compose 镜像更新 / 版本提示',
+      }
+    case 'queue':
+      return { title: '更新队列', topbarHint: '更新队列' }
+    case 'services':
+      return { title: '服务', topbarHint: '服务' }
+    case 'settings':
+      return {
+        title: '系统设置',
+        pageSubtitle: '单用户 / Forward Header · 认证配置 · 通知配置 · 备份默认策略',
+        topbarHint: '系统设置',
+      }
+    case 'service':
+      return { title: '服务详情', topbarHint: '服务详情' }
+  }
 }
 
-export default App
+export default function App() {
+  const route = useRoute()
+  const [topActions, setTopActions] = useState<ReactNode>(null)
+  const [composeHint, setComposeHint] = useState<{ path?: string; profile?: string; lastScan?: string }>({})
+
+  const head = useMemo(() => pageTitle(route), [route])
+
+  return (
+    <AppShell
+      route={route}
+      title={head.title}
+      pageSubtitle={head.pageSubtitle}
+      topbarHint={head.topbarHint}
+      topActions={topActions}
+      composeHint={composeHint}
+    >
+      {route.name === 'overview' ? <OverviewPage onComposeHint={setComposeHint} onTopActions={setTopActions} /> : null}
+      {route.name === 'queue' ? <QueuePage onTopActions={setTopActions} /> : null}
+      {route.name === 'services' ? <ServicesPage onComposeHint={setComposeHint} onTopActions={setTopActions} /> : null}
+      {route.name === 'settings' ? <SettingsPage onTopActions={setTopActions} /> : null}
+      {route.name === 'service' ? (
+        <ServiceDetailPage
+          stackId={route.stackId}
+          serviceId={route.serviceId}
+          onComposeHint={setComposeHint}
+          onTopActions={setTopActions}
+        />
+      ) : null}
+    </AppShell>
+  )
+}

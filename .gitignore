@@ -1,5 +1,8 @@
 .DS_Store
 
+# Local scratch
+.tmp/
+
 # Rust
 /target
 **/*.rs.bk
@@ -19,4 +22,3 @@ build/
 # IDE
 .idea/
 .vscode/
-

@@ -54,5 +54,5 @@
 
 | ID   | Title | Status | Plan | Last | Notes |
 |-----:|-------|--------|------|------|-------|
-| 0001 | Dockrev: Docker/Compose 更新管理器（MVP→生产） | 待实现 | `0001:dockrev-compose-updater/PLAN.md` | 2026-01-19 | - |
+| 0001 | Dockrev: Docker/Compose 更新管理器（MVP→生产） | 已完成 | `0001:dockrev-compose-updater/PLAN.md` | 2026-01-19 | UI 已对齐 mockups；Jobs 审计与 webhook trigger 已补齐；PR #2 |
 | 0002 | Web: Storybook（组件覆盖 + 主题切换） | 待实现 | `0002:storybook-theme-switching/PLAN.md` | 2026-01-19 | - |
