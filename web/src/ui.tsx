@@ -38,6 +38,20 @@ export function Pill(props: { tone: 'ok' | 'warn' | 'bad' | 'muted'; children: R
   return <span className={className}>{props.children}</span>
 }
 
+export function Switch(props: { checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void }) {
+  return (
+    <label className={props.disabled ? 'switch switchDisabled' : 'switch'}>
+      <input
+        type="checkbox"
+        checked={props.checked}
+        disabled={props.disabled}
+        onChange={(e) => props.onChange(e.target.checked)}
+      />
+      <span className="switchSlider" />
+    </label>
+  )
+}
+
 export function Mono(props: { children: ReactNode }) {
   return <span className="mono">{props.children}</span>
 }
@@ -45,4 +59,3 @@ export function Mono(props: { children: ReactNode }) {
 export function SectionTitle(props: { children: ReactNode }) {
   return <div className="sectionTitle">{props.children}</div>
 }
-

@@ -22,7 +22,11 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
     case 'services':
       return { title: '服务', topbarHint: '服务' }
     case 'settings':
-      return { title: '系统设置', topbarHint: '系统设置' }
+      return {
+        title: '系统设置',
+        pageSubtitle: '单用户 / Forward Header · 认证配置 · 通知配置 · 备份默认策略',
+        topbarHint: '系统设置',
+      }
     case 'service':
       return { title: '服务详情', topbarHint: '服务详情' }
   }

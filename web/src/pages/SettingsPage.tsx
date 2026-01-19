@@ -10,8 +10,7 @@ import {
   type NotificationConfig,
   type SettingsResponse,
 } from '../api'
-import { Button, Mono, Pill } from '../ui'
-import { getTheme, setTheme, type DockrevTheme } from '../theme'
+import { Button, Mono, Switch } from '../ui'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -47,8 +46,6 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   const [error, setError] = useState<string | null>(null)
   const [webPushEndpoint, setWebPushEndpoint] = useState<string | null>(null)
 
-  const [theme, setThemeState] = useState<DockrevTheme>(() => getTheme())
-
   const refresh = useCallback(async () => {
     setError(null)
     setSettings(await getSettings())
@@ -62,12 +59,16 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   useEffect(() => {
     onTopActions(
       <Button
-        variant="ghost"
-        disabled={busy}
+        variant="primary"
+        disabled={busy || !settings || !notifications}
         onClick={() => {
           void (async () => {
+            if (!settings || !notifications) return
             setBusy(true)
+            setError(null)
             try {
+              await putSettings(settings.backup)
+              await putNotifications(notifications)
               await refresh()
             } catch (e: unknown) {
               setError(errorMessage(e))
@@ -77,10 +78,10 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
           })()
         }}
       >
-        刷新
+        保存设置
       </Button>,
     )
-  }, [busy, onTopActions, refresh])
+  }, [busy, notifications, onTopActions, refresh, settings])
 
   const canWebPush = useMemo(() => {
     return typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window
@@ -125,120 +126,231 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   }
 
   return (
-    <div className="page twoCol">
-      <div className="card">
-        <div className="title">系统设置</div>
+    <div className="page">
+      <div className="twoCol">
+        <div className="settingsCol">
+          <div className="card">
+            <div className="title">鉴权（Forward Header）</div>
+            <div className="muted">单用户：由反向代理注入 Header；本服务信任来源</div>
 
-        <div className="settingsSection">
-          <div className="sectionRow">
-            <div className="sectionTitle">外观</div>
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
-              <Pill tone="muted">
-                theme <Mono>{theme}</Mono>
-              </Pill>
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  const next = theme === 'dockrev-dark' ? 'dockrev-light' : 'dockrev-dark'
-                  setTheme(next)
-                  setThemeState(next)
-                }}
-              >
-                切换主题
-              </Button>
+            <div className="kv">
+              <div className="kvRow">
+                <div className="label">Header 名称</div>
+                <input
+                  className="input"
+                  value={settings.auth.forwardHeaderName}
+                  onChange={(e) => setSettings({ ...settings, auth: { ...settings.auth, forwardHeaderName: e.target.value } })}
+                />
+              </div>
+
+              <div className="kvRow">
+                <div className="label">允许匿名（开发环境）</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Switch
+                    checked={settings.auth.allowAnonymousInDev}
+                    disabled={busy}
+                    onChange={(v) => setSettings({ ...settings, auth: { ...settings.auth, allowAnonymousInDev: v } })}
+                  />
+                  <div className="muted">{settings.auth.allowAnonymousInDev ? 'on' : 'off'}</div>
+                </div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">当前用户展示</div>
+                <div className="mono">ivan</div>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="settingsSection">
-          <div className="sectionTitle">鉴权</div>
-          <div className="formGrid">
-            <label className="formField formSpan2">
-              <span className="label">Forward Header Name</span>
-              <input
-                className="input"
-                value={settings.auth.forwardHeaderName}
-                onChange={(e) =>
-                  setSettings({ ...settings, auth: { ...settings.auth, forwardHeaderName: e.target.value } })
-                }
-              />
-            </label>
-            <label className="formField formSpan2">
-              <span className="label">Allow Anonymous In Dev</span>
-              <select
-                className="input"
-                value={String(settings.auth.allowAnonymousInDev)}
-                onChange={(e) =>
-                  setSettings({ ...settings, auth: { ...settings.auth, allowAnonymousInDev: e.target.value === 'true' } })
-                }
-              >
-                <option value="false">false</option>
-                <option value="true">true</option>
-              </select>
-            </label>
+          <div className="card">
+            <div className="title">备份默认策略</div>
+            <div className="muted">默认 fail-closed；目标过大可按阈值跳过（force 可覆盖）</div>
+
+            <div className="kv">
+              <div className="kvRow">
+                <div className="label">启用更新前备份</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Switch
+                    checked={settings.backup.enabled}
+                    disabled={busy}
+                    onChange={(v) => setSettings({ ...settings, backup: { ...settings.backup, enabled: v } })}
+                  />
+                  <div className="muted">{settings.backup.enabled ? 'on' : 'off'}</div>
+                </div>
+              </div>
+              <div className="kvRow">
+                <div className="label">要求备份成功（fail-closed）</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Switch
+                    checked={settings.backup.requireSuccess}
+                    disabled={busy}
+                    onChange={(v) => setSettings({ ...settings, backup: { ...settings.backup, requireSuccess: v } })}
+                  />
+                  <div className="muted">{settings.backup.requireSuccess ? 'on' : 'off'}</div>
+                </div>
+              </div>
+              <div className="kvRow">
+                <div className="label">备份输出目录</div>
+                <input
+                  className="input"
+                  value={settings.backup.baseDir}
+                  onChange={(e) => setSettings({ ...settings, backup: { ...settings.backup, baseDir: e.target.value } })}
+                />
+              </div>
+              <div className="kvRow">
+                <div className="label">体积阈值（超过则跳过）</div>
+                <div>
+                  <input
+                    className="input"
+                    value={String(settings.backup.skipTargetsOverBytes)}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        backup: { ...settings.backup, skipTargetsOverBytes: Number(e.target.value) || 0 },
+                      })
+                    }
+                  />
+                  <div className="muted" style={{ marginTop: 6 }}>
+                    当前：{formatBytes(settings.backup.skipTargetsOverBytes)}
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
+
+          {error ? <div className="error">{error}</div> : null}
         </div>
 
-        <div className="settingsSection">
-          <div className="sectionTitle">更新前备份</div>
-          <div className="formGrid">
-            <label className="formField">
-              <span className="label">Enabled</span>
-              <select
-                className="input"
-                value={String(settings.backup.enabled)}
-                onChange={(e) => setSettings({ ...settings, backup: { ...settings.backup, enabled: e.target.value === 'true' } })}
-              >
-                <option value="false">false</option>
-                <option value="true">true</option>
-              </select>
-            </label>
-            <label className="formField">
-              <span className="label">Require Success (fail-closed)</span>
-              <select
-                className="input"
-                value={String(settings.backup.requireSuccess)}
-                onChange={(e) =>
-                  setSettings({ ...settings, backup: { ...settings.backup, requireSuccess: e.target.value === 'true' } })
-                }
-              >
-                <option value="false">false</option>
-                <option value="true">true</option>
-              </select>
-            </label>
-            <label className="formField formSpan2">
-              <span className="label">Base dir</span>
-              <input
-                className="input"
-                value={settings.backup.baseDir}
-                onChange={(e) => setSettings({ ...settings, backup: { ...settings.backup, baseDir: e.target.value } })}
+        <div className="card">
+          <div className="title">通知</div>
+          <div className="muted">事件：发现更新 / 版本提示 / 更新成功 / 更新失败 / 备份失败</div>
+
+          <div className="settingsSection">
+            <div className="settingHead">
+              <div className="sectionTitle">Email</div>
+              <Switch
+                checked={notifications.email.enabled}
+                disabled={busy}
+                onChange={(v) => setNotifications({ ...notifications, email: { ...notifications.email, enabled: v } })}
               />
-            </label>
-            <label className="formField formSpan2">
-              <span className="label">Skip targets over bytes</span>
-              <input
-                className="input"
-                value={String(settings.backup.skipTargetsOverBytes)}
-                onChange={(e) =>
-                  setSettings({
-                    ...settings,
-                    backup: { ...settings.backup, skipTargetsOverBytes: Number(e.target.value) || 0 },
-                  })
-                }
+            </div>
+            <div className="kv">
+              <div className="kvRow">
+                <div className="label">SMTP URL</div>
+                <input
+                  className="input"
+                  value={notifications.email.smtpUrl ?? ''}
+                  onChange={(e) => setNotifications({ ...notifications, email: { ...notifications.email, smtpUrl: e.target.value } })}
+                  placeholder="smtp://user:pass@smtp.example.com:587"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="settingsSection">
+            <div className="settingHead">
+              <div className="sectionTitle">Webhook</div>
+              <Switch
+                checked={notifications.webhook.enabled}
+                disabled={busy}
+                onChange={(v) => setNotifications({ ...notifications, webhook: { ...notifications.webhook, enabled: v } })}
               />
-              <span className="muted">当前：{formatBytes(settings.backup.skipTargetsOverBytes)}</span>
-            </label>
-            <div className="formActions formSpan2">
+            </div>
+            <div className="kv">
+              <div className="kvRow">
+                <div className="label">URL</div>
+                <input
+                  className="input"
+                  value={notifications.webhook.url ?? ''}
+                  onChange={(e) => setNotifications({ ...notifications, webhook: { ...notifications.webhook, url: e.target.value } })}
+                  placeholder="https://hooks.example.com/dockrev"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="settingsSection">
+            <div className="settingHead">
+              <div className="sectionTitle">Telegram</div>
+              <Switch
+                checked={notifications.telegram.enabled}
+                disabled={busy}
+                onChange={(v) => setNotifications({ ...notifications, telegram: { ...notifications.telegram, enabled: v } })}
+              />
+            </div>
+            <div className="kv">
+              <div className="kvRow">
+                <div className="label">Bot token</div>
+                <input
+                  className="input"
+                  value={notifications.telegram.botToken ?? ''}
+                  onChange={(e) => setNotifications({ ...notifications, telegram: { ...notifications.telegram, botToken: e.target.value } })}
+                />
+              </div>
+              <div className="kvRow">
+                <div className="label">Chat id</div>
+                <input
+                  className="input"
+                  value={notifications.telegram.chatId ?? ''}
+                  onChange={(e) => setNotifications({ ...notifications, telegram: { ...notifications.telegram, chatId: e.target.value } })}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="settingsSection">
+            <div className="settingHead">
+              <div className="sectionTitle">Web Push（Chrome / VAPID）</div>
+              <Switch
+                checked={notifications.webPush.enabled}
+                disabled={busy}
+                onChange={(v) => setNotifications({ ...notifications, webPush: { ...notifications.webPush, enabled: v } })}
+              />
+            </div>
+
+            <div className="kv">
+              <div className="kvRow">
+                <div className="label">Public Key</div>
+                <input
+                  className="input"
+                  value={notifications.webPush.vapidPublicKey ?? ''}
+                  onChange={(e) =>
+                    setNotifications({ ...notifications, webPush: { ...notifications.webPush, vapidPublicKey: e.target.value } })
+                  }
+                />
+              </div>
+              <div className="kvRow">
+                <div className="label">Private Key（留空=保持原值）</div>
+                <input
+                  className="input"
+                  value={notifications.webPush.vapidPrivateKey ?? ''}
+                  onChange={(e) =>
+                    setNotifications({ ...notifications, webPush: { ...notifications.webPush, vapidPrivateKey: e.target.value } })
+                  }
+                />
+              </div>
+              <div className="kvRow">
+                <div className="label">Subject</div>
+                <input
+                  className="input"
+                  value={notifications.webPush.vapidSubject ?? ''}
+                  onChange={(e) =>
+                    setNotifications({ ...notifications, webPush: { ...notifications.webPush, vapidSubject: e.target.value } })
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="formActions" style={{ marginTop: 10 }}>
               <Button
-                variant="primary"
+                variant="ghost"
                 disabled={busy}
                 onClick={() => {
                   void (async () => {
                     setBusy(true)
                     setError(null)
                     try {
-                      await putSettings(settings.backup)
-                      await refresh()
+                      await testNotifications('dockrev: test notification')
                     } catch (e: unknown) {
                       setError(errorMessage(e))
                     } finally {
@@ -247,274 +359,58 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                   })()
                 }}
               >
-                保存
+                发送测试通知
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={busy || !canWebPush}
+                onClick={() => {
+                  void (async () => {
+                    setBusy(true)
+                    setError(null)
+                    try {
+                      await ensureSubscription()
+                    } catch (e: unknown) {
+                      setError(errorMessage(e))
+                    } finally {
+                      setBusy(false)
+                    }
+                  })()
+                }}
+                title={canWebPush ? '当前浏览器订阅 Web Push' : '当前环境不支持'}
+              >
+                订阅本浏览器
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={busy || !canWebPush}
+                onClick={() => {
+                  void (async () => {
+                    setBusy(true)
+                    setError(null)
+                    try {
+                      await removeSubscription()
+                    } catch (e: unknown) {
+                      setError(errorMessage(e))
+                    } finally {
+                      setBusy(false)
+                    }
+                  })()
+                }}
+              >
+                取消订阅
               </Button>
             </div>
-          </div>
-        </div>
 
-        {error ? <div className="error">{error}</div> : null}
-      </div>
-
-      <div className="card">
-        <div className="title">Notifications</div>
-
-        <div className="settingsSection">
-          <div className="sectionTitle">Email</div>
-          <div className="formGrid">
-            <label className="formField">
-              <span className="label">Enabled</span>
-              <select
-                className="input"
-                value={String(notifications.email.enabled)}
-                onChange={(e) =>
-                  setNotifications({ ...notifications, email: { ...notifications.email, enabled: e.target.value === 'true' } })
-                }
-              >
-                <option value="false">false</option>
-                <option value="true">true</option>
-              </select>
-            </label>
-            <label className="formField formSpan2">
-              <span className="label">SMTP URL</span>
-              <input
-                className="input"
-                value={notifications.email.smtpUrl ?? ''}
-                onChange={(e) => setNotifications({ ...notifications, email: { ...notifications.email, smtpUrl: e.target.value } })}
-                placeholder="smtp://user:pass@smtp.example.com:587"
-              />
-            </label>
-          </div>
-        </div>
-
-        <div className="settingsSection">
-          <div className="sectionTitle">Webhook</div>
-          <div className="formGrid">
-            <label className="formField">
-              <span className="label">Enabled</span>
-              <select
-                className="input"
-                value={String(notifications.webhook.enabled)}
-                onChange={(e) =>
-                  setNotifications({
-                    ...notifications,
-                    webhook: { ...notifications.webhook, enabled: e.target.value === 'true' },
-                  })
-                }
-              >
-                <option value="false">false</option>
-                <option value="true">true</option>
-              </select>
-            </label>
-            <label className="formField formSpan2">
-              <span className="label">URL</span>
-              <input
-                className="input"
-                value={notifications.webhook.url ?? ''}
-                onChange={(e) => setNotifications({ ...notifications, webhook: { ...notifications.webhook, url: e.target.value } })}
-              />
-            </label>
-          </div>
-        </div>
-
-        <div className="settingsSection">
-          <div className="sectionTitle">Telegram</div>
-          <div className="formGrid">
-            <label className="formField">
-              <span className="label">Enabled</span>
-              <select
-                className="input"
-                value={String(notifications.telegram.enabled)}
-                onChange={(e) =>
-                  setNotifications({
-                    ...notifications,
-                    telegram: { ...notifications.telegram, enabled: e.target.value === 'true' },
-                  })
-                }
-              >
-                <option value="false">false</option>
-                <option value="true">true</option>
-              </select>
-            </label>
-            <label className="formField">
-              <span className="label">Bot token</span>
-              <input
-                className="input"
-                value={notifications.telegram.botToken ?? ''}
-                onChange={(e) =>
-                  setNotifications({
-                    ...notifications,
-                    telegram: { ...notifications.telegram, botToken: e.target.value },
-                  })
-                }
-              />
-            </label>
-            <label className="formField">
-              <span className="label">Chat id</span>
-              <input
-                className="input"
-                value={notifications.telegram.chatId ?? ''}
-                onChange={(e) =>
-                  setNotifications({
-                    ...notifications,
-                    telegram: { ...notifications.telegram, chatId: e.target.value },
-                  })
-                }
-              />
-            </label>
-          </div>
-        </div>
-
-        <div className="settingsSection">
-          <div className="sectionTitle">Web Push（Chrome / VAPID）</div>
-          <div className="formGrid">
-            <label className="formField">
-              <span className="label">Enabled</span>
-              <select
-                className="input"
-                value={String(notifications.webPush.enabled)}
-                onChange={(e) =>
-                  setNotifications({
-                    ...notifications,
-                    webPush: { ...notifications.webPush, enabled: e.target.value === 'true' },
-                  })
-                }
-              >
-                <option value="false">false</option>
-                <option value="true">true</option>
-              </select>
-            </label>
-            <label className="formField formSpan2">
-              <span className="label">VAPID Public Key</span>
-              <input
-                className="input"
-                value={notifications.webPush.vapidPublicKey ?? ''}
-                onChange={(e) =>
-                  setNotifications({
-                    ...notifications,
-                    webPush: { ...notifications.webPush, vapidPublicKey: e.target.value },
-                  })
-                }
-              />
-            </label>
-            <label className="formField formSpan2">
-              <span className="label">VAPID Private Key（留空=保持原值）</span>
-              <input
-                className="input"
-                value={notifications.webPush.vapidPrivateKey ?? ''}
-                onChange={(e) =>
-                  setNotifications({
-                    ...notifications,
-                    webPush: { ...notifications.webPush, vapidPrivateKey: e.target.value },
-                  })
-                }
-              />
-            </label>
-            <label className="formField formSpan2">
-              <span className="label">VAPID Subject</span>
-              <input
-                className="input"
-                value={notifications.webPush.vapidSubject ?? ''}
-                onChange={(e) =>
-                  setNotifications({
-                    ...notifications,
-                    webPush: { ...notifications.webPush, vapidSubject: e.target.value },
-                  })
-                }
-              />
-            </label>
-          </div>
-          <div className="formActions" style={{ marginTop: 10 }}>
-            <Button
-              variant="primary"
-              disabled={busy}
-              onClick={() => {
-                void (async () => {
-                  setBusy(true)
-                  setError(null)
-                  try {
-                    await putNotifications(notifications)
-                    await refresh()
-                  } catch (e: unknown) {
-                    setError(errorMessage(e))
-                  } finally {
-                    setBusy(false)
-                  }
-                })()
-              }}
-            >
-              保存通知配置
-            </Button>
-            <Button
-              variant="ghost"
-              disabled={busy}
-              onClick={() => {
-                void (async () => {
-                  setBusy(true)
-                  setError(null)
-                  try {
-                    await testNotifications('dockrev: test notification')
-                  } catch (e: unknown) {
-                    setError(errorMessage(e))
-                  } finally {
-                    setBusy(false)
-                  }
-                })()
-              }}
-            >
-              发送测试通知
-            </Button>
-          </div>
-
-          <div className="formActions" style={{ marginTop: 10 }}>
-            <Button
-              variant="ghost"
-              disabled={busy || !canWebPush}
-              onClick={() => {
-                void (async () => {
-                  setBusy(true)
-                  setError(null)
-                  try {
-                    await ensureSubscription()
-                  } catch (e: unknown) {
-                    setError(errorMessage(e))
-                  } finally {
-                    setBusy(false)
-                  }
-                })()
-              }}
-              title={canWebPush ? '当前浏览器订阅 Web Push' : '当前环境不支持'}
-            >
-              订阅本浏览器
-            </Button>
-            <Button
-              variant="ghost"
-              disabled={busy || !canWebPush}
-              onClick={() => {
-                void (async () => {
-                  setBusy(true)
-                  setError(null)
-                  try {
-                    await removeSubscription()
-                  } catch (e: unknown) {
-                    setError(errorMessage(e))
-                  } finally {
-                    setBusy(false)
-                  }
-                })()
-              }}
-            >
-              取消订阅本浏览器
-            </Button>
             {webPushEndpoint ? (
-              <div className="muted">
+              <div className="muted" style={{ marginTop: 10 }}>
                 endpoint <Mono>{webPushEndpoint.slice(0, 40)}…</Mono>
               </div>
             ) : null}
           </div>
-        </div>
 
-        {error ? <div className="error">{error}</div> : null}
+          {error ? <div className="error">{error}</div> : null}
+        </div>
       </div>
     </div>
   )
