@@ -2,6 +2,8 @@
 
 Dockrev is a self-hosted Docker/Compose update manager.
 
+MVP status: see `docs/plan/README.md`.
+
 ## Tech stack (selected)
 
 Back-end (Rust):
@@ -28,11 +30,8 @@ Front-end (React + TypeScript):
 Backend:
 
 ```bash
-cd crates/dockrev-api
-cargo run
+DOCKREV_HTTP_ADDR=127.0.0.1:50883 DOCKREV_DB_PATH=/tmp/dockrev.sqlite3 cargo run -p dockrev-api
 ```
-
-Defaults to `DOCKREV_HTTP_ADDR=0.0.0.0:50883` (override via `.env` / env vars).
 
 Front-end:
 
@@ -42,6 +41,40 @@ npm install
 npm run dev
 ```
 
-## Credentials
+Open:
 
-Dockrev reads Docker registry credentials from `~/.docker/config.json` (mount it into the container in production).
+- UI: `http://127.0.0.1:5173/`
+- API health: `http://127.0.0.1:50883/api/health`
+
+## Runtime config
+
+Environment variables (API):
+
+- `DOCKREV_HTTP_ADDR` (default `0.0.0.0:50883`)
+- `DOCKREV_DB_PATH` (default `./data/dockrev.sqlite3`)
+- `DOCKREV_DOCKER_CONFIG` (optional) path to Docker `config.json` for registry credentials
+- `DOCKREV_COMPOSE_BIN` (default `docker-compose`; set to `docker` to use the plugin)
+- `DOCKREV_AUTH_FORWARD_HEADER_NAME` (default `X-Forwarded-User`)
+- `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV` (default `true`; set to `false` in production)
+- `DOCKREV_WEBHOOK_SECRET` (optional) shared secret for `/api/webhooks/trigger`
+- `DOCKREV_HOST_PLATFORM` (optional) override host platform (example `linux/amd64`)
+
+## Deploy (minimal)
+
+See `deploy/README.md` for a minimal Docker Compose deployment.
+
+## Notifications
+
+Notifications are configured via UI (stored in SQLite; secrets are masked on read):
+
+- Webhook: POSTs a JSON payload to the configured URL
+- Telegram: calls `sendMessage`
+- Email: `smtpUrl` supports `?to=a@example.com,b@example.com&from=Dockrev <noreply@example.com>`
+- Web Push: configure VAPID keys, then use the UI buttons to subscribe/unsubscribe and test
+
+VAPID keys can be generated with:
+
+```bash
+npm install web-push -g
+web-push generate-vapid-keys --json
+```

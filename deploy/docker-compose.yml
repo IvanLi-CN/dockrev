@@ -1,0 +1,30 @@
+services:
+  dockrev-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    ports:
+      - "50883:50883"
+    environment:
+      DOCKREV_HTTP_ADDR: "0.0.0.0:50883"
+      DOCKREV_DB_PATH: "/data/dockrev.sqlite3"
+      DOCKREV_DOCKER_CONFIG: "/data/docker-config.json"
+      DOCKREV_COMPOSE_BIN: "docker"
+      DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV: "false"
+      # DOCKREV_WEBHOOK_SECRET: "change-me"
+      # DOCKREV_HOST_PLATFORM: "linux/amd64"
+    volumes:
+      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mount your compose stacks into the container so registered paths exist.
+      # - /srv/compose:/srv/compose:ro
+
+  dockrev-web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    ports:
+      - "5173:80"
+    depends_on:
+      - dockrev-api
+
