@@ -2,13 +2,14 @@
 
 ## 状态
 
-- Status: 部分完成（6/7）
+- Status: 已完成
 - Created: 2026-01-18
 - Last: 2026-01-19
 
 ## Change log
 
 - 2026-01-19: 计划状态回滚为“部分完成”，UI 需按 mockups 对齐后方可最终验收
+- 2026-01-19: Web UI 按 mockups 对齐并通过验收（Service Detail / System Settings）
 - 2026-01-19: 完成 M1（后端：SQLite schema + HTTP API scaffold + Compose services 解析）
 - 2026-01-19: 完成 M2（registry tag 扫描 + manifest 解析 + arch 匹配提示 + ignore 生效）
 - 2026-01-19: 完成 M3（更新执行：compose pull/up + healthcheck 等待 + digest 回滚闭环）
@@ -231,7 +232,7 @@ Dockrev 的目标是为单机 Docker/Compose 环境提供“可控、可审计�
 - [x] M1: 数据模型与契约冻结（contracts + db schema + API 列表）
 - [x] M2: registry 扫描与 arch 匹配提示可用（不含更新执行）
 - [x] M3: 更新执行 + healthcheck + digest 回滚闭环
-- [ ] M4: Web UI（按 `ui/*.svg` mockups 对齐后验收）
+- [x] M4: Web UI（按 `ui/*.svg` mockups 对齐后验收）
 - [x] M5: 备份（volume+bind mounts）与保留/清理策略
 - [x] M6: 通知与 Web Push（含订阅管理与测试发送）
 - [x] M7: 部署文档与“最小生产”运行手册
