@@ -70,6 +70,7 @@ impl Db {
     async fn migrate(&self) -> anyhow::Result<()> {
         self.call(|conn| {
             ensure_service_columns(conn)?;
+            ensure_notification_columns(conn)?;
             Ok(())
         })
         .await?;
@@ -105,8 +106,10 @@ INSERT OR IGNORE INTO notification_settings (
   telegram_bot_token,
   telegram_chat_id,
   webpush_enabled,
-  webpush_vapid_public_key
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+  webpush_vapid_public_key,
+  webpush_vapid_private_key,
+  webpush_vapid_subject
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
 "#,
                 params![
                     "default",
@@ -118,6 +121,8 @@ INSERT OR IGNORE INTO notification_settings (
                     Option::<String>::None,
                     Option::<String>::None,
                     0i64,
+                    Option::<String>::None,
+                    Option::<String>::None,
                     Option::<String>::None
                 ],
             )?;
@@ -752,7 +757,9 @@ SELECT
   telegram_bot_token,
   telegram_chat_id,
   webpush_enabled,
-  webpush_vapid_public_key
+  webpush_vapid_public_key,
+  webpush_vapid_private_key,
+  webpush_vapid_subject
 FROM notification_settings
 WHERE id = 'default'
 "#,
@@ -768,6 +775,8 @@ WHERE id = 'default'
                         telegram_chat_id: row.get(6)?,
                         webpush_enabled: row.get::<_, i64>(7)? != 0,
                         webpush_vapid_public_key: row.get(8)?,
+                        webpush_vapid_private_key: row.get(9)?,
+                        webpush_vapid_subject: row.get(10)?,
                     })
                 },
             )?)
@@ -797,7 +806,9 @@ SET
   telegram_chat_id = ?7,
   webpush_enabled = ?8,
   webpush_vapid_public_key = ?9,
-  updated_at = ?10
+  webpush_vapid_private_key = ?10,
+  webpush_vapid_subject = ?11,
+  updated_at = ?12
 WHERE id = 'default'
 "#,
                 params![
@@ -810,6 +821,8 @@ WHERE id = 'default'
                     settings.telegram_chat_id,
                     settings.webpush_enabled as i64,
                     settings.webpush_vapid_public_key,
+                    settings.webpush_vapid_private_key,
+                    settings.webpush_vapid_subject,
                     now
                 ],
             )?;
@@ -857,6 +870,25 @@ ON CONFLICT(endpoint) DO UPDATE SET
         })
         .await
         .context("delete web push subscription")
+    }
+
+    pub async fn list_web_push_subscriptions(
+        &self,
+    ) -> anyhow::Result<Vec<(String, String, String)>> {
+        self.call(|conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT endpoint, p256dh, auth
+FROM web_push_subscriptions
+ORDER BY created_at ASC
+LIMIT 500
+"#,
+            )?;
+            let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list web push subscriptions")
     }
 
     pub async fn get_backup_settings(&self) -> anyhow::Result<BackupSettings> {
@@ -1367,6 +1399,38 @@ fn ensure_service_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn ensure_notification_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    #[derive(Clone)]
+    struct Col<'a> {
+        name: &'a str,
+        ddl: &'a str,
+    }
+
+    let desired = [
+        Col {
+            name: "webpush_vapid_private_key",
+            ddl: "ALTER TABLE notification_settings ADD COLUMN webpush_vapid_private_key TEXT",
+        },
+        Col {
+            name: "webpush_vapid_subject",
+            ddl: "ALTER TABLE notification_settings ADD COLUMN webpush_vapid_subject TEXT",
+        },
+    ];
+
+    let mut stmt = conn.prepare("PRAGMA table_info(notification_settings)")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let existing = rows.collect::<Result<Vec<_>, _>>()?;
+
+    for col in desired {
+        if existing.iter().any(|c| c == col.name) {
+            continue;
+        }
+        conn.execute_batch(col.ddl)?;
+    }
+
+    Ok(())
+}
+
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS stacks (
   id TEXT PRIMARY KEY NOT NULL,
@@ -1436,6 +1500,8 @@ CREATE TABLE IF NOT EXISTS notification_settings (
   telegram_chat_id TEXT,
   webpush_enabled INTEGER NOT NULL,
   webpush_vapid_public_key TEXT,
+  webpush_vapid_private_key TEXT,
+  webpush_vapid_subject TEXT,
   updated_at TEXT
 );
 

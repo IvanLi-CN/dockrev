@@ -1,7 +1,9 @@
 import './App.css'
 import { useEffect, useState } from 'react'
 import {
+  createWebPushSubscription,
   createIgnore,
+  deleteWebPushSubscription,
   deleteIgnore,
   getJob,
   getNotifications,
@@ -13,6 +15,7 @@ import {
   putNotifications,
   putSettings,
   registerStack,
+  testNotifications,
   triggerCheck,
   triggerUpdate,
   type IgnoreRule,
@@ -68,6 +71,15 @@ export default App
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
   return String(e)
+}
+
+function base64UrlToUint8Array(base64UrlString: string): Uint8Array {
+  const padding = '='.repeat((4 - (base64UrlString.length % 4)) % 4)
+  const base64 = (base64UrlString + padding).replace(/-/g, '+').replace(/_/g, '/')
+  const raw = atob(base64)
+  const out = new Uint8Array(raw.length)
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i)
+  return out
 }
 
 function TabButton(props: { active: boolean; onClick: () => void; children: React.ReactNode }) {
@@ -488,6 +500,7 @@ function SettingsView() {
   const [notifications, setNotifications] = useState<NotificationConfig | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [testResult, setTestResult] = useState<string | null>(null)
 
   const backup = settings?.backup
   const auth = settings?.auth
@@ -522,17 +535,85 @@ function SettingsView() {
 
   async function saveNotifications() {
     if (!notifications) return
-	    setBusy(true)
-	    setError(null)
-	    try {
-	      await putNotifications(notifications)
-	      await refresh()
-	    } catch (e: unknown) {
-	      setError(errorMessage(e))
-	    } finally {
-	      setBusy(false)
-	    }
-	  }
+    setBusy(true)
+    setError(null)
+    try {
+      await putNotifications(notifications)
+      await refresh()
+      setTestResult(null)
+    } catch (e: unknown) {
+      setError(errorMessage(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function doTestNotifications() {
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await testNotifications('dockrev test')
+      setTestResult(JSON.stringify(res, null, 2))
+    } catch (e: unknown) {
+      setError(errorMessage(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function subscribeWebPush() {
+    setBusy(true)
+    setError(null)
+    try {
+      if (!notifications?.webPush.enabled) throw new Error('请先启用 notifications.webPush.enabled')
+      const pub = notifications.webPush.vapidPublicKey
+      if (!pub) throw new Error('请先填写 notifications.webPush.vapidPublicKey')
+
+      if (!('serviceWorker' in navigator)) throw new Error('当前浏览器不支持 Service Worker')
+      if (!('PushManager' in window)) throw new Error('当前浏览器不支持 PushManager')
+
+      const perm = await Notification.requestPermission()
+      if (perm !== 'granted') throw new Error('Notification permission not granted')
+
+      const reg = await navigator.serviceWorker.register('/sw.js')
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: base64UrlToUint8Array(pub) as unknown as BufferSource,
+      })
+
+      const json = sub.toJSON()
+      if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
+        throw new Error('Push subscription JSON 缺少 endpoint/keys')
+      }
+      await createWebPushSubscription({ endpoint: json.endpoint, keys: { p256dh: json.keys.p256dh, auth: json.keys.auth } })
+      setTestResult(`webPush subscribed: ${json.endpoint}`)
+    } catch (e: unknown) {
+      setError(errorMessage(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function unsubscribeWebPush() {
+    setBusy(true)
+    setError(null)
+    try {
+      const reg = await navigator.serviceWorker.ready
+      const sub = await reg.pushManager.getSubscription()
+      if (!sub) {
+        setTestResult('webPush: no subscription')
+        return
+      }
+      const endpoint = sub.endpoint
+      await sub.unsubscribe()
+      await deleteWebPushSubscription(endpoint)
+      setTestResult(`webPush unsubscribed: ${endpoint}`)
+    } catch (e: unknown) {
+      setError(errorMessage(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <div className="grid">
@@ -609,6 +690,15 @@ function SettingsView() {
           <button disabled={busy} onClick={() => void saveNotifications()}>
             Save notifications
           </button>
+          <button disabled={busy} onClick={() => void doTestNotifications()}>
+            Test
+          </button>
+          <button disabled={busy} onClick={() => void subscribeWebPush()}>
+            Subscribe webPush
+          </button>
+          <button disabled={busy} onClick={() => void unsubscribeWebPush()}>
+            Unsubscribe webPush
+          </button>
         </div>
         {!notifications && <div className="muted">加载中…</div>}
         {notifications && (
@@ -651,8 +741,80 @@ function SettingsView() {
                 }
               />
             </label>
+            <label>
+              telegram.enabled
+              <input
+                type="checkbox"
+                checked={notifications.telegram.enabled}
+                onChange={(e) =>
+                  setNotifications((n) => (n ? { ...n, telegram: { ...n.telegram, enabled: e.target.checked } } : n))
+                }
+              />
+            </label>
+            <label>
+              telegram.botToken（敏感值读取会脱敏）
+              <input
+                value={notifications.telegram.botToken || ''}
+                onChange={(e) =>
+                  setNotifications((n) => (n ? { ...n, telegram: { ...n.telegram, botToken: e.target.value } } : n))
+                }
+              />
+            </label>
+            <label>
+              telegram.chatId（敏感值读取会脱敏）
+              <input
+                value={notifications.telegram.chatId || ''}
+                onChange={(e) =>
+                  setNotifications((n) => (n ? { ...n, telegram: { ...n.telegram, chatId: e.target.value } } : n))
+                }
+              />
+            </label>
+            <label>
+              webPush.enabled
+              <input
+                type="checkbox"
+                checked={notifications.webPush.enabled}
+                onChange={(e) =>
+                  setNotifications((n) => (n ? { ...n, webPush: { ...n.webPush, enabled: e.target.checked } } : n))
+                }
+              />
+            </label>
+            <label>
+              webPush.vapidPublicKey
+              <input
+                value={notifications.webPush.vapidPublicKey || ''}
+                onChange={(e) =>
+                  setNotifications((n) =>
+                    n ? { ...n, webPush: { ...n.webPush, vapidPublicKey: e.target.value } } : n,
+                  )
+                }
+              />
+            </label>
+            <label>
+              webPush.vapidPrivateKey（敏感值读取会脱敏）
+              <input
+                value={notifications.webPush.vapidPrivateKey || ''}
+                onChange={(e) =>
+                  setNotifications((n) =>
+                    n ? { ...n, webPush: { ...n.webPush, vapidPrivateKey: e.target.value } } : n,
+                  )
+                }
+              />
+            </label>
+            <label>
+              webPush.vapidSubject（例如 mailto:you@example.com）
+              <input
+                value={notifications.webPush.vapidSubject || ''}
+                onChange={(e) =>
+                  setNotifications((n) =>
+                    n ? { ...n, webPush: { ...n.webPush, vapidSubject: e.target.value } } : n,
+                  )
+                }
+              />
+            </label>
           </div>
         )}
+        {testResult && <pre className="logs">{testResult}</pre>}
       </section>
     </div>
   )

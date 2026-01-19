@@ -11,6 +11,7 @@ mod docker_runner;
 mod error;
 mod ids;
 mod ignore;
+mod notify;
 mod registry;
 mod runner;
 mod state;

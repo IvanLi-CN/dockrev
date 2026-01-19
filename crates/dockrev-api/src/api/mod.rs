@@ -14,7 +14,8 @@ use axum::{
 use serde_json::json;
 
 use crate::{
-    backup, candidates, compose, error::ApiError, ids, ignore, registry, state::AppState, updater,
+    backup, candidates, compose, error::ApiError, ids, ignore, notify, registry, state::AppState,
+    updater,
 };
 use types::*;
 
@@ -39,6 +40,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/notifications",
             get(get_notifications).put(put_notifications),
         )
+        .route("/api/notifications/test", post(test_notifications))
         .route(
             "/api/web-push/subscriptions",
             post(create_web_push_subscription).delete(delete_web_push_subscription),
@@ -639,6 +641,22 @@ async fn trigger_update(
         }
     }
 
+    let notify_state = state.clone();
+    let notify_job_id = job_id.clone();
+    let notify_status = final_status.clone();
+    let notify_now = now.clone();
+    let notify_summary = final_summary.clone();
+    tokio::spawn(async move {
+        let _ = notify::notify_job_updated(
+            notify_state.as_ref(),
+            &notify_job_id,
+            &notify_status,
+            &notify_now,
+            &notify_summary,
+        )
+        .await;
+    });
+
     Ok(Json(TriggerUpdateResponse { job_id }))
 }
 
@@ -889,6 +907,10 @@ async fn put_notifications(
     merge_secret(&mut merged.webhook_url, existing.webhook_url);
     merge_secret(&mut merged.telegram_bot_token, existing.telegram_bot_token);
     merge_secret(&mut merged.telegram_chat_id, existing.telegram_chat_id);
+    merge_secret(
+        &mut merged.webpush_vapid_private_key,
+        existing.webpush_vapid_private_key,
+    );
 
     state
         .db
@@ -896,6 +918,20 @@ async fn put_notifications(
         .await
         .map_err(map_internal)?;
     Ok(Json(PutNotificationsResponse { ok: true }))
+}
+
+async fn test_notifications(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<TestNotificationsRequest>,
+) -> Result<Json<TestNotificationsResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let now = now_rfc3339().map_err(map_internal)?;
+    let message = req.message.unwrap_or_else(|| "dockrev test".to_string());
+    let results = notify::send_test(state.as_ref(), &now, &message)
+        .await
+        .map_err(map_internal)?;
+    Ok(Json(TestNotificationsResponse { ok: true, results }))
 }
 
 async fn create_web_push_subscription(

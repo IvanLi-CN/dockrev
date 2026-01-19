@@ -616,6 +616,8 @@ pub struct NotificationSettings {
     pub telegram_chat_id: Option<String>,
     pub webpush_enabled: bool,
     pub webpush_vapid_public_key: Option<String>,
+    pub webpush_vapid_private_key: Option<String>,
+    pub webpush_vapid_subject: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -646,6 +648,8 @@ impl NotificationConfig {
             web_push: WebPushNotification {
                 enabled: db.webpush_enabled,
                 vapid_public_key: db.webpush_vapid_public_key,
+                vapid_private_key: mask_if_some(db.webpush_vapid_private_key),
+                vapid_subject: db.webpush_vapid_subject,
             },
         }
     }
@@ -661,6 +665,8 @@ impl NotificationConfig {
             telegram_chat_id: self.telegram.chat_id,
             webpush_enabled: self.web_push.enabled,
             webpush_vapid_public_key: self.web_push.vapid_public_key,
+            webpush_vapid_private_key: self.web_push.vapid_private_key,
+            webpush_vapid_subject: self.web_push.vapid_subject,
         }
     }
 }
@@ -697,12 +703,30 @@ pub struct WebPushNotification {
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vapid_public_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vapid_private_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vapid_subject: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PutNotificationsResponse {
     pub ok: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestNotificationsRequest {
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestNotificationsResponse {
+    pub ok: bool,
+    pub results: Value,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -86,7 +86,12 @@ export type NotificationConfig = {
   email: { enabled: boolean; smtpUrl?: string | null }
   webhook: { enabled: boolean; url?: string | null }
   telegram: { enabled: boolean; botToken?: string | null; chatId?: string | null }
-  webPush: { enabled: boolean; vapidPublicKey?: string | null }
+  webPush: {
+    enabled: boolean
+    vapidPublicKey?: string | null
+    vapidPrivateKey?: string | null
+    vapidSubject?: string | null
+  }
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -224,6 +229,30 @@ export async function putNotifications(input: NotificationConfig) {
   const resp = await apiFetch('/api/notifications', {
     method: 'PUT',
     body: JSON.stringify(input),
+  })
+  return (await resp.json()) as { ok: boolean }
+}
+
+export async function testNotifications(message?: string) {
+  const resp = await apiFetch('/api/notifications/test', {
+    method: 'POST',
+    body: JSON.stringify({ message: message || null }),
+  })
+  return (await resp.json()) as { ok: boolean; results: unknown }
+}
+
+export async function createWebPushSubscription(input: { endpoint: string; keys: { p256dh: string; auth: string } }) {
+  const resp = await apiFetch('/api/web-push/subscriptions', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+  return (await resp.json()) as { ok: boolean }
+}
+
+export async function deleteWebPushSubscription(endpoint: string) {
+  const resp = await apiFetch('/api/web-push/subscriptions', {
+    method: 'DELETE',
+    body: JSON.stringify({ endpoint }),
   })
   return (await resp.json()) as { ok: boolean }
 }

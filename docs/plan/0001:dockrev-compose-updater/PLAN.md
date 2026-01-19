@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（5/7）
+- Status: 部分完成（6/7）
 - Created: 2026-01-18
 - Last: 2026-01-19
 
@@ -13,6 +13,7 @@
 - 2026-01-19: 完成 M3（更新执行：compose pull/up + healthcheck 等待 + digest 回滚闭环）
 - 2026-01-19: 完成 M4（Web UI：Stacks/Ignores/Jobs/Settings + /api 代理 + 基本交互闭环）
 - 2026-01-19: 完成 M5（更新前备份：size probe + 阈值跳过/force + 产物落盘 + 清理调度）
+- 2026-01-19: 完成 M6（通知与 Web Push：配置落库脱敏 + /api/notifications/test + SW 订阅/退订 + job 完成触发）
 
 ## 背景 / 问题陈述
 
@@ -228,7 +229,7 @@ Dockrev 的目标是为单机 Docker/Compose 环境提供“可控、可审计�
 - [x] M3: 更新执行 + healthcheck + digest 回滚闭环
 - [x] M4: Web UI（概览/详情/忽略规则/任务与日志）
 - [x] M5: 备份（volume+bind mounts）与保留/清理策略
-- [ ] M6: 通知与 Web Push（含订阅管理与测试发送）
+- [x] M6: 通知与 Web Push（含订阅管理与测试发送）
 - [ ] M7: 部署文档与“最小生产”运行手册
 
 ## 方案概述（Approach, high-level）
