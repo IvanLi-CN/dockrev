@@ -1,6 +1,13 @@
 #![forbid(unsafe_code)]
 
-use axum::{Router, routing::get};
+mod api;
+mod compose;
+mod config;
+mod db;
+mod error;
+mod ids;
+mod state;
+
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -13,16 +20,15 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let app = Router::new().route("/api/health", get(health));
+    let config = config::Config::from_env()?;
+    let bind = config.http_addr.clone();
+    let db = db::Db::open(&config.db_path).await?;
+    let state = state::AppState::new(config, db);
+    let app = api::router(state.clone());
 
-    let bind = std::env::var("DOCKREV_HTTP_ADDR").unwrap_or_else(|_| "0.0.0.0:50883".to_string());
     let listener = tokio::net::TcpListener::bind(&bind).await?;
-    tracing::info!(%bind, "dockrev api listening");
+    tracing::info!(bind = %bind, "dockrev api listening");
 
     axum::serve(listener, app).await?;
     Ok(())
-}
-
-async fn health() -> &'static str {
-    "ok"
 }

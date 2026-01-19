@@ -11,11 +11,15 @@ resolver = "3"
 [workspace.dependencies]
 anyhow = "1"
 axum = "0.8"
+rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+serde_yaml_ng = "0.10"
+time = { version = "0.3", features = ["formatting", "parsing", "serde"] }
+tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "signal"] }
+tokio-rusqlite = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ulid = "1.2"
 
 [dependencies]
-
