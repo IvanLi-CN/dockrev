@@ -1,0 +1,201 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <defs>
+	    <style>      :root {
+	        /* DaisyUI theme tokens (dark) */
+	        --color-base-100: #0f172a;
+	        --color-base-200: #0b1020;
+	        --color-base-300: #070b15;
+	        --color-base-content: #e5e7eb;
+
+	        --color-primary: #38bdf8;
+	        --color-primary-content: #001018;
+	        --color-secondary: #a78bfa;
+	        --color-secondary-content: #0b1020;
+	        --color-accent: #22c55e;
+	        --color-accent-content: #041008;
+	        --color-neutral: #111827;
+	        --color-neutral-content: #e5e7eb;
+	        --color-info: #38bdf8;
+	        --color-info-content: #001018;
+	        --color-success: #22c55e;
+	        --color-success-content: #041008;
+	        --color-warning: #f59e0b;
+	        --color-warning-content: #1a1200;
+	        --color-error: #fb7185;
+	        --color-error-content: #1a0006;
+
+	        --radius-selector: 1rem;
+	        --radius-field: 0.75rem;
+	        --radius-box: 1rem;
+	        --size-selector: 0.25rem;
+	        --size-field: 0.25rem;
+	        --border: 1px;
+	        --depth: 0;
+	        --noise: 0;
+
+	        /* aliases used by the SVG mock */
+	        --bg: var(--color-base-200);
+	        --panel: var(--color-base-100);
+	        --panel2: var(--color-base-200);
+	        --borderColor: rgba(229,231,235,.12);
+	        --dockrev-surface: rgba(255,255,255,.035);
+	        --muted: rgba(229,231,235,.78);
+	        --muted2: rgba(229,231,235,.56);
+	        --text: rgba(229,231,235,.92);
+	        --accent: var(--color-primary);
+	        --ok: var(--color-success);
+	        --warn: var(--color-warning);
+	        --bad: var(--color-error);
+	      }
+text { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+      .title { font-size: 16px; fill: var(--text); font-weight: 650; }
+      .h1 { font-size: 22px; fill: var(--text); font-weight: 750; }
+      .h2 { font-size: 14px; fill: var(--text); font-weight: 650; }
+      .label { font-size: 12px; fill: var(--muted); }
+      .muted { font-size: 12px; fill: var(--muted2); }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; fill: var(--muted); }
+	      .chip { fill: rgba(229,231,235,.08); }
+	      .chipText { font-size: 11px; fill: rgba(229,231,235,.78); font-weight: 650; }
+	      .card { fill: var(--panel); }
+	      .row { fill: var(--dockrev-surface); }
+	      .btnPrimary { fill: var(--color-primary); }
+	      .btnDanger { fill: var(--color-error); }
+	      .btnText { font-size: 12px; fill: var(--color-primary-content); font-weight: 800; }
+	      .btnDangerText { font-size: 12px; fill: var(--color-error-content); font-weight: 800; }
+	      .badgeOutline { fill: rgba(0,0,0,0); stroke: rgba(229,231,235,.18); stroke-width: 1; }
+	      .badgeText { font-size: 11px; fill: rgba(229,231,235,.78); font-weight: 650; }
+	      .toggleTrackOn { fill: var(--color-primary); stroke: rgba(0,0,0,.10); stroke-width: 1; }
+	      .toggleTrackOff { fill: rgba(229,231,235,.10); stroke: rgba(229,231,235,.16); stroke-width: 1; }
+	      .toggleKnob { fill: var(--color-base-100); stroke: rgba(229,231,235,.10); stroke-width: 1; }
+	      .ok { fill: var(--ok); }
+	      .warn { fill: var(--warn); }
+	      .bad { fill: var(--bad); }
+	      .icon { fill: none; stroke: rgba(255,255,255,.44); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
+	      .iconPrimary { fill: none; stroke: var(--color-primary); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
+	    </style>
+	  </defs>
+
+  <rect x="0" y="0" width="1440" height="900" fill="var(--bg)"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="1440" height="64" fill="var(--panel2)"/>
+  <text x="28" y="40" class="title">Dockrev</text>
+  <text x="110" y="40" class="muted">服务详情</text>
+
+  <rect x="1108" y="18" width="136" height="28" rx="8" class="btnPrimary"/>
+  <text x="1176" y="37" class="btnText" text-anchor="middle">预览更新</text>
+  <rect x="1258" y="18" width="154" height="28" rx="8" class="btnDanger"/>
+  <text x="1335" y="37" class="btnDangerText" text-anchor="middle">阻止此服务更新</text>
+
+  <!-- Sidebar -->
+  <rect x="0" y="64" width="256" height="836" fill="var(--panel2)"/>
+  <text x="28" y="110" class="label">导航</text>
+  <rect x="16" y="130" width="224" height="40" rx="10" fill="rgba(255,255,255,.00)"/>
+  <text x="44" y="155" class="label">概览</text>
+  <rect x="16" y="178" width="224" height="40" rx="10" fill="rgba(255,255,255,.00)"/>
+  <text x="44" y="203" class="label">更新队列</text>
+  <rect x="16" y="226" width="224" height="40" rx="10" fill="rgba(110,231,255,.05)"/>
+  <text x="44" y="251" class="h2">服务</text>
+  <rect x="16" y="274" width="224" height="40" rx="10" fill="rgba(255,255,255,.00)"/>
+  <text x="44" y="299" class="label">系统设置</text>
+
+	  <!-- Header -->
+	  <text x="296" y="112" class="h1">服务：web</text>
+	  <rect x="420" y="92.5" width="72" height="22" rx="11" class="badgeOutline"/>
+	  <g transform="translate(432 96.5)"><g transform="scale(.5)">
+	    <path class="icon" d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2"/>
+	  </g></g>
+	  <text x="450" y="103.5" class="badgeText" text-anchor="start" dominant-baseline="middle">prod</text>
+	  <text x="296" y="138" class="mono">harbor.local/ops/web</text>
+
+  <!-- Status banner -->
+  <rect x="296" y="160" width="1116" height="72" rx="14" fill="rgba(52,211,153,.10)"/>
+  <circle cx="322" cy="184" r="6" class="ok"/>
+  <text x="336" y="188" class="label">可更新（已发现新 digest）</text>
+  <text x="336" y="212" class="muted">当前：5.2@sha256:…c2 → 候选：5.2.7@sha256:…7a（arch=linux/amd64）</text>
+
+  <!-- Left column: update policy -->
+  <rect x="296" y="246" width="540" height="368" rx="16" class="card"/>
+  <text x="316" y="282" class="title">更新策略</text>
+
+  <text x="316" y="316" class="label">跟随规则</text>
+  <rect x="316" y="330" width="500" height="44" rx="12" class="row"/>
+  <text x="332" y="352" class="label" dominant-baseline="middle">跟随当前 tag 前缀 / 语义版本</text>
+  <rect x="708" y="339" width="96" height="26" rx="10" class="chip"/>
+  <text x="756" y="352" class="chipText" text-anchor="middle" dominant-baseline="middle">5.2.x</text>
+
+  <text x="316" y="410" class="label">新版本提示</text>
+  <rect x="316" y="424" width="500" height="44" rx="12" class="row"/>
+  <text x="332" y="446" class="label" dominant-baseline="middle">同级别新版本仅提示（例如 5.3）</text>
+  <rect x="760" y="434" width="44" height="24" rx="12" class="toggleTrackOn"/>
+  <circle cx="792" cy="446" r="8" class="toggleKnob"/>
+
+  <text x="316" y="504" class="label">忽略名单（服务级）</text>
+  <rect x="316" y="518" width="500" height="84" rx="12" class="row"/>
+  <text x="332" y="544" class="mono">- 5.3.*</text>
+  <text x="332" y="568" class="mono">- sha256:deadbeef…</text>
+  <g transform="translate(742 574)"><title>tag / digest / until-date</title><g transform="scale(.6)">
+    <g transform="translate(0 0)"><path class="icon" d="M6.5 7.5a1 1 0 1 0 2 0a1 1 0 1 0-2 0"/><path class="icon" d="M3 6v5.172a2 2 0 0 0 .586 1.414l7.71 7.71a2.41 2.41 0 0 0 3.408 0l5.592-5.592a2.41 2.41 0 0 0 0-3.408l-7.71-7.71A2 2 0 0 0 11.172 3H6a3 3 0 0 0-3 3"/></g>
+    <g transform="translate(28 0)"><path class="icon" d="M5 9h14M5 15h14M11 4L7 20M17 4l-4 16"/></g>
+    <g transform="translate(56 0)"><path class="icon" d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm12-4v4M8 3v4m-4 4h16m-9 4h1m0 0v3"/></g>
+  </g></g>
+
+  <!-- Right column: backup + rollback -->
+	  <rect x="872" y="246" width="540" height="368" rx="16" class="card"/>
+	  <text x="892" y="282" class="title">更新前备份 / 回滚</text>
+
+	  <rect x="892" y="300" width="500" height="44" rx="12" class="row"/>
+	  <text x="908" y="322" class="label" dominant-baseline="middle">更新前备份</text>
+	  <rect x="1332" y="310" width="44" height="24" rx="12" class="toggleTrackOn"/>
+	  <circle cx="1364" cy="322" r="8" class="toggleKnob"/>
+
+  <text x="892" y="368" class="label">备份项（服务级）</text>
+  <g transform="translate(1318 360)"><title>三态复选框：勾选=备份；空=不备份；?=未决定（仅 ? 受全局体积限制）</title><g transform="scale(.66)">
+    <g transform="translate(0 0)"><path class="icon" d="M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path class="iconPrimary" d="m9 12l2 2l4-4"/></g>
+    <g transform="translate(22 0)"><path class="icon" d="M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zm9 11v.01"/><path class="icon" d="M12 13a2 2 0 0 0 .914-3.782a1.98 1.98 0 0 0-2.414.483"/></g>
+    <g transform="translate(44 0)"><path class="icon" d="M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></g>
+  </g></g>
+  <rect x="892" y="382" width="500" height="124" rx="12" class="row"/>
+  <!-- checked -->
+  <g transform="translate(908 398) scale(.66)">
+    <path class="icon" d="M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+    <path class="iconPrimary" d="m9 12l2 2l4-4"/>
+  </g>
+  <text x="936" y="412" class="mono">/var/lib/web/uploads</text>
+  <!-- undecided (?) -->
+  <g transform="translate(908 426) scale(.66)">
+    <path class="icon" d="M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zm9 11v.01"/>
+    <path class="icon" d="M12 13a2 2 0 0 0 .914-3.782a1.98 1.98 0 0 0-2.414.483"/>
+  </g>
+  <text x="936" y="440" class="mono">vol:web-data</text>
+  <!-- unchecked -->
+  <g transform="translate(908 454) scale(.66)">
+    <path class="icon" d="M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+  </g>
+  <text x="936" y="468" class="mono">/var/lib/web/cache</text>
+
+	  <rect x="892" y="516" width="500" height="44" rx="12" class="row"/>
+	  <text x="908" y="538" class="label" dominant-baseline="middle">失败回滚</text>
+	  <rect x="1332" y="526" width="44" height="24" rx="12" class="toggleTrackOff"/>
+	  <circle cx="1344" cy="538" r="8" class="toggleKnob"/>
+	  <g transform="translate(970 526)"><title>失败时按 digest 强制回滚（可在服务级覆盖）</title><g transform="scale(.66)">
+	    <path class="icon" d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0-18 0m9-3h.01"/>
+	    <path class="icon" d="M11 12h1v4h1"/>
+	  </g></g>
+
+  <!-- Bottom: webhook triggers -->
+  <rect x="296" y="624" width="1116" height="260" rx="16" class="card"/>
+  <text x="316" y="658" class="title">Webhook 触发（服务级）</text>
+  <text x="316" y="684" class="muted">用于外部系统触发：更新此服务 / 更新 compose / 更新全部</text>
+
+  <rect x="316" y="704" width="1076" height="52" rx="12" class="row"/>
+  <text x="332" y="735" class="label">POST</text>
+  <text x="386" y="735" class="mono">/api/v1/update/service/web</text>
+  <rect x="1160" y="718" width="112" height="26" rx="10" class="chip"/>
+  <text x="1216" y="736" class="chipText" text-anchor="middle">需要鉴权</text>
+
+  <rect x="316" y="768" width="1076" height="92" rx="12" class="row"/>
+  <text x="332" y="796" class="label">Body（可选）</text>
+  <text x="480" y="796" class="mono">{ \"dryRun\": true, \"backup\": \"inherit\" }</text>
+  <text x="332" y="822" class="muted">dryRun=仅预览；backup=inherit/on/off；rollback=inherit/on/off</text>
+</svg>

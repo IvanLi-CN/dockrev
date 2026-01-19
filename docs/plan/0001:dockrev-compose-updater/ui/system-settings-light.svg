@@ -1,0 +1,184 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <defs>
+	    <style>      :root {
+	        /* DaisyUI theme tokens (light) */
+	        --color-base-100: #ffffff;
+	        --color-base-200: #f7f8fb;
+	        --color-base-300: #edf2f7;
+	        --color-base-content: #0f172a;
+
+	        --color-primary: #0ea5e9;
+	        --color-primary-content: #ffffff;
+	        --color-secondary: #6366f1;
+	        --color-secondary-content: #ffffff;
+	        --color-accent: #22c55e;
+	        --color-accent-content: #052e16;
+	        --color-neutral: #0f172a;
+	        --color-neutral-content: #ffffff;
+	        --color-info: #38bdf8;
+	        --color-info-content: #001018;
+	        --color-success: #16a34a;
+	        --color-success-content: #052e16;
+	        --color-warning: #f59e0b;
+	        --color-warning-content: #1a1200;
+	        --color-error: #e11d48;
+	        --color-error-content: #ffffff;
+
+	        --radius-selector: 1rem;
+	        --radius-field: 0.75rem;
+	        --radius-box: 1rem;
+	        --size-selector: 0.25rem;
+	        --size-field: 0.25rem;
+	        --border: 1px;
+	        --depth: 0;
+	        --noise: 0;
+
+	        /* aliases used by the SVG mock */
+	        --bg: var(--color-base-200);
+	        --panel: var(--color-base-100);
+	        --panel2: var(--color-base-200);
+	        --borderColor: rgba(15,23,42,.12);
+	        --dockrev-surface: rgba(15,23,42,.03);
+	        --muted: rgba(15,23,42,.72);
+	        --muted2: rgba(15,23,42,.54);
+	        --text: rgba(15,23,42,.94);
+	        --accent: var(--color-primary);
+	        --ok: var(--color-success);
+	        --warn: var(--color-warning);
+	        --bad: var(--color-error);
+	      }
+text { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+      .title { font-size: 16px; fill: var(--text); font-weight: 650; }
+      .h1 { font-size: 22px; fill: var(--text); font-weight: 750; }
+      .h2 { font-size: 14px; fill: var(--text); font-weight: 650; }
+      .label { font-size: 12px; fill: var(--muted); }
+      .muted { font-size: 12px; fill: var(--muted2); }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; fill: var(--muted); }
+	      .chip { fill: rgba(15,23,42,.06); }
+	      .chipText { font-size: 11px; fill: rgba(15,23,42,.72); font-weight: 650; }
+	      .card { fill: var(--panel); }
+	      .row { fill: var(--dockrev-surface); }
+	      .btn { fill: var(--color-primary); }
+	      .btnText { font-size: 12px; fill: var(--color-primary-content); font-weight: 800; }
+	      .toggleTrackOn { fill: var(--color-primary); stroke: rgba(0,0,0,.08); stroke-width: 1; }
+	      .toggleTrackOff { fill: rgba(15,23,42,.08); stroke: rgba(15,23,42,.14); stroke-width: 1; }
+	      .toggleKnob { fill: var(--color-base-100); stroke: rgba(15,23,42,.12); stroke-width: 1; }
+	      .icon { fill: none; stroke: rgba(15,23,42,.44); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1440" height="900" fill="var(--bg)"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="1440" height="64" fill="var(--panel2)"/>
+  <text x="28" y="40" class="title">Dockrev</text>
+  <text x="110" y="40" class="muted">系统设置</text>
+  <rect x="1266" y="18" width="146" height="28" rx="8" class="btn"/>
+  <text x="1339" y="37" class="btnText" text-anchor="middle">保存设置</text>
+
+  <!-- Sidebar -->
+  <rect x="0" y="64" width="256" height="836" fill="var(--panel2)"/>
+  <text x="28" y="110" class="label">导航</text>
+  <rect x="16" y="130" width="224" height="40" rx="10" fill="rgba(15,23,42,.00)"/>
+  <text x="44" y="155" class="label">概览</text>
+  <rect x="16" y="178" width="224" height="40" rx="10" fill="rgba(15,23,42,.00)"/>
+  <text x="44" y="203" class="label">更新队列</text>
+  <rect x="16" y="226" width="224" height="40" rx="10" fill="rgba(15,23,42,.00)"/>
+  <text x="44" y="251" class="label">服务</text>
+  <rect x="16" y="274" width="224" height="40" rx="10" fill="rgba(14,165,233,.06)"/>
+  <text x="44" y="299" class="h2">系统设置</text>
+
+  <text x="296" y="112" class="h1">系统设置</text>
+  <text x="296" y="138" class="muted">单用户 / Forward Header 鉴权、通知渠道、备份默认策略</text>
+
+  <!-- Auth -->
+  <rect x="296" y="164" width="540" height="280" rx="16" class="card"/>
+  <text x="316" y="200" class="title">鉴权（Forward Header）</text>
+
+  <text x="316" y="234" class="label">Header 名称</text>
+  <rect x="316" y="248" width="500" height="44" rx="12" class="row"/>
+  <text x="332" y="276" class="mono">X-Forwarded-User</text>
+  <text x="316" y="310" class="muted">可通过环境变量覆盖；生产建议由反向代理注入。</text>
+
+  <text x="316" y="346" class="label">本地开发模式（跳过鉴权）</text>
+  <rect x="772" y="334" width="44" height="24" rx="12" class="toggleTrackOn"/>
+  <circle cx="804" cy="346" r="8" class="toggleKnob"/>
+
+  <text x="316" y="380" class="label">当前用户显示</text>
+  <rect x="316" y="394" width="500" height="44" rx="12" class="row"/>
+  <text x="332" y="422" class="mono">ivan</text>
+
+  <!-- Notifications -->
+  <rect x="872" y="164" width="540" height="656" rx="16" class="card"/>
+  <text x="892" y="200" class="title">通知</text>
+  <text x="892" y="226" class="muted">事件：发现更新 / 提示新版本 / 更新成功 / 更新失败 / 备份失败</text>
+
+  <!-- Email -->
+  <text x="892" y="262" class="label">Email</text>
+  <rect x="1348" y="250" width="44" height="24" rx="12" class="toggleTrackOff"/>
+  <circle cx="1360" cy="262" r="8" class="toggleKnob"/>
+  <rect x="892" y="280" width="500" height="82" rx="12" class="row"/>
+  <text x="908" y="310" class="label">SMTP URL</text>
+  <text x="1020" y="310" class="mono">smtp://user:••••@smtp.example.com:587</text>
+  <text x="908" y="336" class="label">To</text>
+  <text x="1020" y="336" class="mono">ops@example.com</text>
+
+  <!-- Webhook -->
+  <text x="892" y="390" class="label">Webhook</text>
+  <rect x="1348" y="378" width="44" height="24" rx="12" class="toggleTrackOn"/>
+  <circle cx="1380" cy="390" r="8" class="toggleKnob"/>
+  <rect x="892" y="408" width="500" height="92" rx="12" class="row"/>
+  <text x="908" y="438" class="label">URL</text>
+  <text x="1020" y="438" class="mono">https://hooks.example.com/dockrev</text>
+  <text x="908" y="464" class="label">Secret</text>
+  <text x="1020" y="464" class="mono">••••••••••</text>
+  <text x="908" y="490" class="muted">支持重试/退避；失败不阻止更新。</text>
+
+  <!-- Telegram -->
+  <text x="892" y="532" class="label">Telegram</text>
+  <rect x="1348" y="520" width="44" height="24" rx="12" class="toggleTrackOn"/>
+  <circle cx="1380" cy="532" r="8" class="toggleKnob"/>
+  <rect x="892" y="550" width="500" height="82" rx="12" class="row"/>
+  <text x="908" y="580" class="label">Bot Token</text>
+  <text x="1040" y="580" class="mono">••••••••••</text>
+  <text x="908" y="606" class="label">Chat ID</text>
+  <text x="1040" y="606" class="mono">-1001234567890</text>
+
+  <!-- Web Push -->
+  <text x="892" y="664" class="label">Web Push（Chrome / VAPID）</text>
+  <rect x="892" y="682" width="500" height="118" rx="12" class="row"/>
+  <text x="908" y="712" class="label">Public Key</text>
+  <text x="1020" y="712" class="mono">BK8…</text>
+  <text x="908" y="738" class="label">Private Key</text>
+  <text x="1020" y="738" class="mono">••••••••••</text>
+  <rect x="1180" y="696" width="192" height="28" rx="8" class="btn"/>
+  <text x="1276" y="715" class="btnText" text-anchor="middle">生成 VAPID 密钥</text>
+  <rect x="1180" y="734" width="192" height="28" rx="8" class="chip"/>
+  <text x="1276" y="753" class="chipText" text-anchor="middle">浏览器订阅：12</text>
+
+  <!-- Backup defaults -->
+  <rect x="296" y="462" width="540" height="354" rx="16" class="card"/>
+  <text x="316" y="498" class="title">备份默认策略</text>
+  <text x="316" y="524" class="muted">默认 fail-closed：备份失败阻止更新；服务可覆盖</text>
+
+  <text x="316" y="558" class="label">备份根目录</text>
+  <rect x="316" y="572" width="500" height="44" rx="12" class="row"/>
+  <text x="332" y="600" class="mono">/var/lib/dockrev/backups</text>
+
+  <text x="316" y="640" class="label">单目标最大体积（未决定项）</text>
+  <rect x="316" y="654" width="500" height="44" rx="12" class="row"/>
+  <text x="332" y="676" class="mono" dominant-baseline="middle">100 MiB</text>
+  <g transform="translate(708 663)"><title>仅对服务未决定（? / inherit）的目标生效；显式勾选备份不受此限制</title><g transform="scale(.58)">
+    <path class="icon" d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0-18 0m9-3h.01"/>
+    <path class="icon" d="M11 12h1v4h1"/>
+  </g></g>
+  <rect x="736" y="665" width="68" height="22" rx="11" class="chip"/>
+  <text x="770" y="676" class="chipText" text-anchor="middle" dominant-baseline="middle">仅 ?</text>
+  <text x="316" y="730" class="label">保留与清理</text>
+  <rect x="316" y="744" width="500" height="44" rx="12" class="row"/>
+  <text x="332" y="766" class="label" dominant-baseline="middle">保留 1 份；稳定运行 1h 后删除</text>
+  <g transform="translate(786 753)"><title>稳定：容器未退出且无重启（仅 Docker healthcheck）</title><g transform="scale(.58)">
+    <path class="icon" d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0-18 0m9-3h.01"/>
+    <path class="icon" d="M11 12h1v4h1"/>
+  </g></g>
+</svg>
