@@ -1,5 +1,8 @@
 pub mod types;
 
+#[cfg(test)]
+mod tests;
+
 use std::{collections::BTreeMap, sync::Arc};
 
 use axum::{

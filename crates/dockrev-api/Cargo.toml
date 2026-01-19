@@ -23,4 +23,5 @@ tracing-subscriber = { workspace = true }
 ulid = { workspace = true }
 
 [dev-dependencies]
+http-body-util = "0.1"
 tower = "0.5"
