@@ -14,7 +14,7 @@ use axum::{
 use serde_json::json;
 
 use crate::{
-    candidates, compose, error::ApiError, ids, ignore, registry, state::AppState, updater,
+    backup, candidates, compose, error::ApiError, ids, ignore, registry, state::AppState, updater,
 };
 use types::*;
 
@@ -425,6 +425,8 @@ async fn trigger_update(
         .await
         .map_err(map_internal)?;
 
+    let backup_settings = state.db.get_backup_settings().await.map_err(map_internal)?;
+
     let stack_ids = match req.scope {
         JobScope::All => state.db.list_stack_ids().await.map_err(map_internal)?,
         JobScope::Stack => req.stack_id.clone().into_iter().collect(),
@@ -441,7 +443,8 @@ async fn trigger_update(
     };
 
     let mut final_status = "success".to_string();
-    let mut final_summary = json!({ "mode": req.mode.as_str(), "stacks": stack_ids.len() });
+    let mut stack_summaries = Vec::new();
+    let mut backups_to_cleanup: Vec<(String, u32)> = Vec::new();
 
     for stack_id in &stack_ids {
         let Some(stack) = state.db.get_stack(stack_id).await.map_err(map_internal)? else {
@@ -471,6 +474,117 @@ async fn trigger_update(
             job_id: job_id.clone(),
         };
 
+        let mut stack_summary = serde_json::Map::new();
+        stack_summary.insert("stackId".to_string(), json!(stack_id));
+
+        let mut backup_id_for_cleanup: Option<(String, u32)> = None;
+        if req.mode.as_str() == "apply"
+            && backup::should_run_backup(&backup_settings, &job.backup_mode)
+        {
+            let backup_id = ids::new_backup_id();
+            state
+                .db
+                .insert_backup(&backup_id, stack_id, &job_id, &now)
+                .await
+                .map_err(map_internal)?;
+            state
+                .db
+                .insert_job_log(
+                    &job_id,
+                    &JobLogLine {
+                        ts: now.clone(),
+                        level: "info".to_string(),
+                        msg: format!("backup started: {backup_id}"),
+                    },
+                )
+                .await
+                .map_err(map_internal)?;
+
+            match backup::run_pre_update_backup(
+                &logging_runner,
+                &backup_settings,
+                &stack,
+                &req.scope,
+                req.service_id.as_deref(),
+                &now,
+            )
+            .await
+            {
+                Ok(res) => {
+                    for msg in &res.log_lines {
+                        let _ = state
+                            .db
+                            .insert_job_log(
+                                &job_id,
+                                &JobLogLine {
+                                    ts: now.clone(),
+                                    level: "info".to_string(),
+                                    msg: msg.clone(),
+                                },
+                            )
+                            .await;
+                    }
+
+                    let _ = state
+                        .db
+                        .finish_backup(
+                            &backup_id,
+                            &res.status,
+                            &now,
+                            res.artifact_path.as_deref(),
+                            res.size_bytes,
+                            None,
+                        )
+                        .await;
+
+                    stack_summary.insert("backup".to_string(), res.summary_json);
+
+                    if res.status == "success" {
+                        backup_id_for_cleanup = Some((
+                            backup_id,
+                            stack.backup.retention.delete_after_stable_seconds,
+                        ));
+                    }
+                }
+                Err(e) => {
+                    let err = e.to_string();
+                    let _ = state
+                        .db
+                        .finish_backup(&backup_id, "failed", &now, None, None, Some(&err))
+                        .await;
+                    let _ = state
+                        .db
+                        .insert_job_log(
+                            &job_id,
+                            &JobLogLine {
+                                ts: now.clone(),
+                                level: "warn".to_string(),
+                                msg: format!("backup failed: {err}"),
+                            },
+                        )
+                        .await;
+
+                    stack_summary
+                        .insert("backup".to_string(), json!({"status":"failed","error":err}));
+
+                    if backup_settings.require_success {
+                        final_status = "failed".to_string();
+                        stack_summaries.push(serde_json::Value::Object(stack_summary));
+                        break;
+                    }
+                }
+            }
+        } else {
+            stack_summary.insert(
+                "backup".to_string(),
+                if req.mode.as_str() != "apply" {
+                    json!({"status":"skipped","reason":"dry_run"})
+                } else {
+                    json!({"status":"skipped","reason":"disabled"})
+                },
+            );
+        }
+
         let outcome = updater::run_update_job(
             &logging_runner,
             &state.config.compose_bin,
@@ -483,18 +597,47 @@ async fn trigger_update(
         .map_err(map_internal)?;
 
         final_status = outcome.status.clone();
-        final_summary = outcome.summary_json;
+        stack_summary.insert("update".to_string(), outcome.summary_json);
+
+        stack_summaries.push(serde_json::Value::Object(stack_summary));
 
         if final_status != "success" {
             break;
         }
+
+        if let Some(b) = backup_id_for_cleanup.take() {
+            backups_to_cleanup.push(b);
+        }
     }
+
+    let final_summary = json!({
+        "mode": req.mode.as_str(),
+        "stacks": stack_summaries,
+    });
 
     state
         .db
         .finish_job(&job_id, &final_status, &now, &final_summary)
         .await
         .map_err(map_internal)?;
+
+    if final_status == "success" {
+        if let Ok(now_dt) =
+            time::OffsetDateTime::parse(&now, &time::format_description::well_known::Rfc3339)
+        {
+            for (backup_id, after_seconds) in backups_to_cleanup {
+                let cleanup_after = now_dt + time::Duration::seconds(after_seconds as i64);
+                if let Ok(cleanup_after) =
+                    cleanup_after.format(&time::format_description::well_known::Rfc3339)
+                {
+                    let _ = state
+                        .db
+                        .schedule_backup_cleanup(&backup_id, &cleanup_after)
+                        .await;
+                }
+            }
+        }
+    }
 
     Ok(Json(TriggerUpdateResponse { job_id }))
 }

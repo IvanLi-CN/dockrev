@@ -54,4 +54,4 @@
 
 | ID   | Title | Status | Plan | Last | Notes |
 |-----:|-------|--------|------|------|-------|
-| 0001 | Dockrev: Docker/Compose 更新管理器（MVP→生产） | 部分完成（4/7） | `0001:dockrev-compose-updater/PLAN.md` | 2026-01-19 | - |
+| 0001 | Dockrev: Docker/Compose 更新管理器（MVP→生产） | 部分完成（5/7） | `0001:dockrev-compose-updater/PLAN.md` | 2026-01-19 | - |

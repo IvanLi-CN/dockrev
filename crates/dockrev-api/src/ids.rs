@@ -19,3 +19,7 @@ pub fn new_job_id() -> String {
 pub fn new_check_id() -> String {
     format!("chk_{}", Ulid::new())
 }
+
+pub fn new_backup_id() -> String {
+    format!("bkp_{}", Ulid::new())
+}

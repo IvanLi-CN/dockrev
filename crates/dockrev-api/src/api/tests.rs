@@ -379,7 +379,7 @@ services:
     let update = serde_json::json!({
         "scope": "stack",
         "stackId": stack_id,
-        "mode": "dry-run",
+        "mode": "apply",
         "allowArchMismatch": false,
         "backupMode": "inherit",
         "reason": "ui"
@@ -434,6 +434,12 @@ services:
     let job = response_json(resp).await;
     assert_eq!(job["job"]["id"].as_str().unwrap(), job_id);
     assert!(job["job"]["logs"].as_array().unwrap().len() >= 1);
+    assert_eq!(
+        job["job"]["summary"]["stacks"][0]["backup"]["status"]
+            .as_str()
+            .unwrap(),
+        "skipped"
+    );
 }
 
 #[tokio::test]

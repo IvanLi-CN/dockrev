@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod api;
+mod backup;
 mod candidates;
 mod compose;
 mod compose_runner;
@@ -35,6 +36,7 @@ async fn main() -> anyhow::Result<()> {
     )?);
     let runner = std::sync::Arc::new(runner::TokioCommandRunner);
     let state = state::AppState::new(config, db, registry, runner);
+    backup::spawn_cleanup_task(state.clone());
     let app = api::router(state.clone());
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
