@@ -43,9 +43,8 @@ CREATE TABLE services (
 -- {
 --   "autoRollback": true,
 --   "backupTargets": {
---     "mode": "allowlist|denylist",
---     "bindPaths": ["/abs/host/path"],
---     "volumeNames": ["volume_name"]
+--     "bindPaths": { "/abs/host/path": "inherit|skip|force" },
+--     "volumeNames": { "volume_name": "inherit|skip|force" }
 --   }
 -- }
 

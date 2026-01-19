@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dockrev UI SVG Preview</title>
+    <style>
+      :root {
+        color-scheme: dark light;
+        --bg: #0b1020;
+        --panel: rgba(255, 255, 255, 0.06);
+        --text: rgba(255, 255, 255, 0.9);
+        --muted: rgba(255, 255, 255, 0.7);
+      }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+        background: var(--bg);
+        color: var(--text);
+      }
+      header {
+        position: sticky;
+        top: 0;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        padding: 10px 12px;
+        background: rgba(11, 16, 32, 0.95);
+      }
+      header a {
+        color: var(--muted);
+        text-decoration: none;
+      }
+      select {
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 10px;
+        padding: 6px 10px;
+      }
+      main {
+        padding: 12px;
+      }
+      .frame {
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 16px;
+        overflow: hidden;
+        width: 1440px;
+        height: 900px;
+        transform-origin: top left;
+      }
+      .zoomRow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-left: auto;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      input[type="range"] {
+        width: 180px;
+      }
+      button {
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 10px;
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: rgba(255, 255, 255, 0.2);
+      }
+      pre {
+        margin: 12px 0 0;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.03);
+        color: rgba(255, 255, 255, 0.85);
+        max-width: 1440px;
+        overflow: auto;
+        font-size: 12px;
+        line-height: 1.35;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>SVG Preview</strong>
+      <span style="opacity:.7">Dockrev UI mockups</span>
+      <select id="file">
+        <option value="dashboard.svg">dashboard.svg</option>
+        <option value="dashboard-light.svg">dashboard-light.svg</option>
+        <option value="service-detail.svg" selected>service-detail.svg</option>
+        <option value="service-detail-light.svg">service-detail-light.svg</option>
+        <option value="system-settings.svg">system-settings.svg</option>
+        <option value="system-settings-light.svg">system-settings-light.svg</option>
+        <option value="compose-icon-options.svg">compose-icon-options.svg</option>
+      </select>
+      <div class="zoomRow">
+        <span id="zoomLabel">Zoom 80%</span>
+        <input id="zoom" type="range" min="40" max="120" value="80" step="5" />
+      </div>
+      <button id="measureBtn" type="button" title="Run layout measurement (M)">Measure</button>
+      <a href="./">dir</a>
+    </header>
+    <main>
+      <div id="frame" class="frame">
+        <object id="svgObj" data="service-detail.svg" type="image/svg+xml" width="1440" height="900"></object>
+      </div>
+      <pre id="out" hidden></pre>
+    </main>
+
+    <script>
+      const sel = document.getElementById("file");
+      const zoom = document.getElementById("zoom");
+      const zoomLabel = document.getElementById("zoomLabel");
+      const frame = document.getElementById("frame");
+      const svgObj = document.getElementById("svgObj");
+      const out = document.getElementById("out");
+      const measureBtn = document.getElementById("measureBtn");
+
+      const url = new URL(location.href);
+      const param = url.searchParams.get("f");
+      if (param) sel.value = param;
+
+      function setZoom() {
+        const z = Number(zoom.value) / 100;
+        zoomLabel.textContent = `Zoom ${zoom.value}%`;
+        frame.style.transform = `scale(${z})`;
+      }
+      function setFile(name) {
+        // cache-bust so the browser picks up local edits immediately
+        svgObj.data = `${name}?v=${Date.now()}`;
+        url.searchParams.set("f", name);
+        history.replaceState(null, "", url.toString());
+      }
+      sel.addEventListener("change", () => setFile(sel.value));
+      zoom.addEventListener("input", setZoom);
+      setZoom();
+      setFile(sel.value);
+
+      function getSvgRoot() {
+        const doc = svgObj.contentDocument;
+        if (!doc) return null;
+        return doc.querySelector("svg");
+      }
+
+      function unionRects(rects) {
+        let left = Infinity,
+          top = Infinity,
+          right = -Infinity,
+          bottom = -Infinity;
+        for (const r of rects) {
+          left = Math.min(left, r.left);
+          top = Math.min(top, r.top);
+          right = Math.max(right, r.right);
+          bottom = Math.max(bottom, r.bottom);
+        }
+        if (!isFinite(left)) return null;
+        return { left, top, right, bottom, width: right - left, height: bottom - top };
+      }
+
+      function measureLayout() {
+        const svg = getSvgRoot();
+        if (!svg) return { ok: false, error: "SVG not loaded yet" };
+
+        const svgBox = svg.getBoundingClientRect();
+        const rows = Array.from(svg.querySelectorAll("rect.row"));
+        const cards = Array.from(svg.querySelectorAll("rect.card"));
+
+        const rowCard = [];
+        for (const row of rows) {
+          const rowBox = row.getBoundingClientRect();
+          let best = null;
+          for (const card of cards) {
+            const cardBox = card.getBoundingClientRect();
+            const inside =
+              rowBox.left >= cardBox.left &&
+              rowBox.right <= cardBox.right &&
+              rowBox.top >= cardBox.top &&
+              rowBox.bottom <= cardBox.bottom;
+            if (inside) {
+              best = { cardBox, card };
+              break;
+            }
+          }
+          if (!best) continue;
+          rowCard.push({ row, rowBox, cardBox: best.cardBox });
+        }
+
+        const cardRowOutliers = [];
+        for (const it of rowCard) {
+          const leftPad = it.rowBox.left - it.cardBox.left;
+          const rightPad = it.cardBox.right - it.rowBox.right;
+          const diff = Math.abs(leftPad - rightPad);
+          if (diff > 0.6) {
+            cardRowOutliers.push({
+              row: { x: Math.round(it.rowBox.left - svgBox.left), y: Math.round(it.rowBox.top - svgBox.top) },
+              leftPad: Number(leftPad.toFixed(2)),
+              rightPad: Number(rightPad.toFixed(2)),
+              diff: Number(diff.toFixed(2)),
+            });
+          }
+        }
+
+        const contentEls = Array.from(svg.querySelectorAll("text, rect, circle, path"))
+          .filter((el) => el !== svg)
+          .filter((el) => !el.classList?.contains("guide"))
+          .filter((el) => !(el instanceof SVGRectElement && (el.classList.contains("row") || el.classList.contains("card") || el.classList.contains("group"))));
+
+        const rowContentOutliers = [];
+        for (const row of rows) {
+          const rowBox = row.getBoundingClientRect();
+          const rowArea = Math.max(1, rowBox.width * rowBox.height);
+          const inside = [];
+          for (const el of contentEls) {
+            const r = el.getBoundingClientRect();
+            const area = r.width * r.height;
+            if (area <= 0.5) continue;
+            if (el.tagName?.toLowerCase() === "rect" && r.width <= 3.2) continue;
+            if (area > rowArea * 0.92) continue;
+            const cx = (r.left + r.right) / 2;
+            const cy = (r.top + r.bottom) / 2;
+            if (cx < rowBox.left || cx > rowBox.right || cy < rowBox.top || cy > rowBox.bottom) continue;
+            inside.push(r);
+          }
+
+          if (inside.length === 0) continue;
+          const u = unionRects(inside);
+          if (!u) continue;
+
+          const left = u.left - rowBox.left;
+          const right = rowBox.right - u.right;
+          const top = u.top - rowBox.top;
+          const bottom = rowBox.bottom - u.bottom;
+          const min = Math.min(left, right, top, bottom);
+
+          if (min < 6) {
+            rowContentOutliers.push({
+              row: { x: Math.round(rowBox.left - svgBox.left), y: Math.round(rowBox.top - svgBox.top), w: Math.round(rowBox.width), h: Math.round(rowBox.height) },
+              padding: {
+                left: Number(left.toFixed(2)),
+                right: Number(right.toFixed(2)),
+                top: Number(top.toFixed(2)),
+                bottom: Number(bottom.toFixed(2)),
+                min: Number(min.toFixed(2)),
+              },
+            });
+          }
+        }
+
+        return {
+          ok: cardRowOutliers.length === 0 && rowContentOutliers.length === 0,
+          file: sel.value,
+          viewport: { w: Math.round(svgBox.width), h: Math.round(svgBox.height) },
+          cardRowOutliers,
+          rowContentOutliers,
+        };
+      }
+
+      function runMeasure() {
+        // force a stable 100% scale for consistent numbers
+        const prev = zoom.value;
+        zoom.value = "100";
+        setZoom();
+
+        const result = measureLayout();
+        out.hidden = false;
+        out.textContent = JSON.stringify(result, null, 2);
+        console.log("[dockrev-ui-measure]", result);
+
+        zoom.value = prev;
+        setZoom();
+      }
+
+      measureBtn.addEventListener("click", runMeasure);
+      window.addEventListener("keydown", (e) => {
+        if (e.key.toLowerCase() === "m") runMeasure();
+      });
+
+      svgObj.addEventListener("load", () => {
+        out.hidden = true;
+        out.textContent = "";
+      });
+    </script>
+  </body>
+</html>

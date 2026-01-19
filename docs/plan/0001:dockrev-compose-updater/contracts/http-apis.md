@@ -102,9 +102,13 @@ Success（核心字段；可增量扩展）：
         "settings": {
           "autoRollback": true,
           "backupTargets": {
-            "mode": "allowlist|denylist",
-            "bindPaths": ["/var/lib/postgresql/data"],
-            "volumeNames": ["app_db_data"]
+            "bindPaths": {
+              "/var/lib/web/uploads": "force",
+              "/var/lib/web/cache": "skip"
+            },
+            "volumeNames": {
+              "web-data": "inherit"
+            }
           }
         }
       }
@@ -313,9 +317,13 @@ GET response:
 {
   "autoRollback": true,
   "backupTargets": {
-    "mode": "allowlist|denylist",
-    "bindPaths": ["/var/lib/postgresql/data"],
-    "volumeNames": ["app_db_data"]
+    "bindPaths": {
+      "/var/lib/web/uploads": "force",
+      "/var/lib/web/cache": "skip"
+    },
+    "volumeNames": {
+      "web-data": "inherit"
+    }
   }
 }
 ```
@@ -326,9 +334,12 @@ PUT request:
 {
   "autoRollback": false,
   "backupTargets": {
-    "mode": "denylist",
-    "bindPaths": ["/srv/media"],
-    "volumeNames": ["big_cache"]
+    "bindPaths": {
+      "/srv/media": "inherit"
+    },
+    "volumeNames": {
+      "big_cache": "skip"
+    }
   }
 }
 ```
@@ -336,13 +347,13 @@ PUT request:
 Notes:
 
 - `autoRollback=true` 仅在存在 healthcheck 时才生效；无 healthcheck 的服务将被强制视为不可自动回滚（UI 需提示原因）。
-- `backupTargets` 对 bind mounts + docker named volumes 生效：
-  - bind mounts（host path 前缀匹配）：
-    - `mode=allowlist`: 仅允许 `bindPaths` 覆盖的 bind mount source path 参与备份
-    - `mode=denylist`: 禁止 `bindPaths` 覆盖的 bind mount source path 参与备份
-  - docker named volumes（volume name 精确匹配）：
-    - `mode=allowlist`: 仅允许 `volumeNames` 覆盖的 volume name 参与备份
-    - `mode=denylist`: 禁止 `volumeNames` 覆盖的 volume name 参与备份
+- `backupTargets.*` 表示“服务对每个备份目标的显式选择”（三态）：
+  - 值域：`inherit|skip|force`
+  - `force`：强制备份该目标；不受系统级 `skipTargetsOverBytes` 限制
+  - `skip`：强制不备份该目标
+  - `inherit`：服务未表态（UI 用 `?` 表示）；按系统级默认策略执行（包含 `skipTargetsOverBytes`）
+  - bind mounts：key 为 bind mount 的 host source path（绝对路径，前缀匹配由实现阶段定义）
+  - docker named volumes：key 为 volume name（精确匹配）
 
 ## Notifications config（GET/PUT /api/notifications）
 
@@ -358,6 +369,10 @@ Notes:
   "webPush": { "enabled": true, "vapidPublicKey": "..." }
 }
 ```
+
+Notes:
+
+- UI 中 Email 采用单字段 `smtpUrl` 输入（例如 `smtp://user:pass@smtp.example.com:587`），其余细项（from/to 等）可在后续迭代中扩展为结构化字段；MVP 先以 URL 形状落地，降低配置复杂度。
 
 敏感字段（token/密码）：
 
@@ -462,3 +477,4 @@ PUT request:
 Notes:
 
 - `auth.*` 主要由环境变量控制；API 以“只读展示”为主（PUT 不允许修改 auth）。
+- `backup.skipTargetsOverBytes` 仅对“服务未表态（inherit）”的备份目标生效；服务显式 `force` 的目标不受此限制。

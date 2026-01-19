@@ -70,7 +70,7 @@
 - `DOCKREV_AUTH_FORWARD_HEADER_NAME`（默认 `X-Forwarded-User`）
 - `DOCKREV_AUTH_ALLOW_ANON_IN_DEV`（默认 `true`）
 - `DOCKREV_BACKUP_BASE_DIR`（默认 `/data/backups`）
-- `DOCKREV_BACKUP_SKIP_TARGETS_OVER_BYTES`（默认 `104857600`，即 `100MiB`）
+- `DOCKREV_BACKUP_SKIP_TARGETS_OVER_BYTES`（默认 `104857600`，即 `100MiB`；仅对服务未表态/`inherit` 的目标生效）
 
 ## Docker config.json（registry credentials）
 

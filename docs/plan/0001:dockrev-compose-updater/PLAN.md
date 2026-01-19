@@ -68,6 +68,7 @@ Dockrev 的目标是为单机 Docker/Compose 环境提供“可控、可审计�
 - UI 必须区分并提示：
   - **arch 匹配**：候选 tag 的 manifest 含 host arch（可更新）。
   - **arch 不匹配**：候选 tag 的 manifest 不含 host arch（提示但默认不允许更新，除非用户显式覆盖）。
+- 服务列表必须按 docker compose stack 分组显示，并支持分组折叠/展开（用于降低视觉噪音与提升可扫读性）。
 - 支持忽略规则（服务粒度）：
   - 可按 tag（精确/前缀/regex）或 semver 范围表达忽略（具体形状见契约）。
   - 忽略后不产生“可更新”提示，但保留可追溯记录。
@@ -77,8 +78,13 @@ Dockrev 的目标是为单机 Docker/Compose 环境提供“可控、可审计�
 - 更新前支持“临时数据备份”（可在系统设置启用/禁用，默认启用且失败阻止更新）：
   - 备份面向 compose stack，并由 stack 定义“备份目标”（Docker named volumes + bind mounts，见契约）
   - 当启用备份时，更新任务在执行更新前先执行一次备份，并将备份结果写入审计
-  - 备份前必须计算每个 target 的体积；超过阈值则跳过（默认阈值 `100MiB`，可在系统设置配置）
-  - 备份目标还必须受“备份路径/卷名白名单/黑名单”约束（服务粒度；用户可选模式）
+  - 备份前必须计算每个 target 的体积：
+    - 对服务未表态（? / inherit）的目标：超过阈值则跳过（默认阈值 `100MiB`，可在系统设置配置）
+    - 对服务显式勾选（☑ / force）的目标：不受该阈值限制
+  - 服务可对每个备份目标做三态选择（服务粒度）：
+    - ☑（force）：强制备份
+    - ☐（skip）：强制不备份
+    - ?（inherit）：未决定，按系统级默认策略（包含阈值跳过）
 - 回滚策略（服务粒度可配置）：
   - 每个服务可配置是否自动回滚（默认：有 healthcheck 的服务启用；无 healthcheck 的服务禁用）
   - 自动回滚时必须以 digest 为基准，提供“可复现的回滚”（记录 old/new digests）
@@ -192,6 +198,10 @@ Dockrev 的目标是为单机 Docker/Compose 环境提供“可控、可审计�
 ### UI / Storybook (if applicable)
 
 - 本仓库当前未引入 Storybook；本计划不引入新工具。
+- UI 视觉规范参考 DaisyUI（flat, `--depth: 0`, `--noise: 0`），并维护可落地的主题草案：`docs/plan/0001:dockrev-compose-updater/ui/daisyui-theme.md`。
+- UI 设计图（深色/亮色）与可视化预览：
+  - 预览页：`docs/plan/0001:dockrev-compose-updater/ui/preview.html`（含 `Measure` 按钮用于浏览器内测量行/卡片内边距）
+  - 设计图：`docs/plan/0001:dockrev-compose-updater/ui/dashboard*.svg`、`docs/plan/0001:dockrev-compose-updater/ui/service-detail*.svg`、`docs/plan/0001:dockrev-compose-updater/ui/system-settings*.svg`
 
 ### Quality checks
 
@@ -230,8 +240,13 @@ Dockrev 的目标是为单机 Docker/Compose 环境提供“可控、可审计�
 - “备份”作为更新前置步骤（可配置）：
   - 启用时：先生成 stack 级备份，再执行更新
   - 默认 fail-closed：备份失败则阻止更新继续执行
-  - 备份目标包含 docker volumes 与 bind mounts，并受服务级“白名单/黑名单”策略约束
-  - 备份前执行体积检测；超阈值目标直接跳过并记录（默认 100MiB）
+  - 备份目标包含 docker volumes 与 bind mounts；服务可对每个目标做三态选择（UI：☑/☐/?）：
+    - ☑（force）：强制备份
+    - ☐（skip）：强制不备份
+    - ?（inherit）：服务未表态，按系统级默认策略执行
+  - 备份前执行体积检测：
+    - 仅对 `inherit` 的目标应用“超过阈值则跳过并记录”（默认 100MiB）
+    - `force` 的目标不受该阈值限制（仍需记录体积与耗时，避免误操作）
   - 备份产物默认保留 1 份；更新成功稳定 1 小时后自动删除
 
 ## 风险与开放问题（Risks & Open Questions）

@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="640" viewBox="0 0 1100 640">
+  <defs>
+    <style>
+      text { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
+      .h1 { font-size: 18px; font-weight: 800; }
+      .h2 { font-size: 13px; font-weight: 750; }
+      .muted { font-size: 12px; opacity: .72; }
+      .label { font-size: 12px; font-weight: 650; opacity: .78; }
+      .chip { rx: 12; }
+      .row { rx: 14; }
+      .icon { fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
+    </style>
+  </defs>
+
+  <!-- Light -->
+  <rect x="0" y="0" width="1100" height="320" fill="#f7f8fb"/>
+  <text x="28" y="46" class="h1" fill="#0f172a">Compose 图标备选（Light）</text>
+  <text x="28" y="70" class="muted" fill="#0f172a">每组提供：Collapsed / Expanded 两个状态（均为 Iconify 图标名）。</text>
+
+  <rect x="28" y="96" width="1044" height="60" class="row" fill="#ffffff"/>
+  <text x="52" y="132" class="h2" fill="#0f172a">Option A</text>
+  <text x="140" y="124" class="label" fill="#0f172a">Collapsed</text>
+  <text x="280" y="124" class="label" fill="#0f172a">Expanded</text>
+  <text x="420" y="124" class="label" fill="#0f172a">Iconify</text>
+  <!-- A icons -->
+  <g transform="translate(140 132) scale(.9)"><path class="icon" stroke="#0f172a" d="m12 6l-8 4l8 4l8-4zm-8 8l8 4l8-4"/></g>
+  <g transform="translate(280 132) scale(.9)"><path class="icon" stroke="#0f172a" d="M12 4L4 8l8 4l8-4zm-8 8l8 4l8-4M4 16l8 4l8-4"/></g>
+  <rect x="420" y="112" width="250" height="28" class="chip" fill="rgba(15,23,42,.06)"/>
+  <text x="436" y="131" class="muted" fill="#0f172a">tabler:stack / tabler:stack-2</text>
+
+  <rect x="28" y="168" width="1044" height="60" class="row" fill="#ffffff"/>
+  <text x="52" y="204" class="h2" fill="#0f172a">Option B</text>
+  <text x="140" y="196" class="label" fill="#0f172a">Collapsed</text>
+  <text x="280" y="196" class="label" fill="#0f172a">Expanded</text>
+  <text x="420" y="196" class="label" fill="#0f172a">Iconify</text>
+  <!-- B icons -->
+  <g transform="translate(140 204) scale(.9)"><path class="icon" stroke="#0f172a" d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2"/></g>
+  <g transform="translate(280 204) scale(.9)"><path class="icon" stroke="#0f172a" d="m5 19l2.757-7.351A1 1 0 0 1 8.693 11H21a1 1 0 0 1 .986 1.164l-.996 5.211A2 2 0 0 1 19.026 19za2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4l3 3h7a2 2 0 0 1 2 2v2"/></g>
+  <rect x="420" y="184" width="330" height="28" class="chip" fill="rgba(15,23,42,.06)"/>
+  <text x="436" y="203" class="muted" fill="#0f172a">tabler:folder / tabler:folder-open</text>
+
+  <rect x="28" y="240" width="1044" height="60" class="row" fill="#ffffff"/>
+  <text x="52" y="276" class="h2" fill="#0f172a">Option C</text>
+  <text x="140" y="268" class="label" fill="#0f172a">Collapsed</text>
+  <text x="280" y="268" class="label" fill="#0f172a">Expanded</text>
+  <text x="420" y="268" class="label" fill="#0f172a">Iconify</text>
+  <!-- C icons -->
+  <g transform="translate(140 276) scale(.9)"><path class="icon" stroke="#0f172a" d="m12 3l8 4.5v9L12 21l-8-4.5v-9zm0 9l8-4.5M12 12v9m0-9L4 7.5"/></g>
+  <g transform="translate(280 276) scale(.9)"><path class="icon" stroke="#0f172a" d="M7 5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2z"/><path class="icon" stroke="#0f172a" d="M17 17v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2"/></g>
+  <rect x="420" y="256" width="340" height="28" class="chip" fill="rgba(15,23,42,.06)"/>
+  <text x="436" y="275" class="muted" fill="#0f172a">tabler:box / tabler:box-multiple</text>
+
+  <!-- Dark -->
+  <rect x="0" y="320" width="1100" height="320" fill="#0b1020"/>
+  <text x="28" y="366" class="h1" fill="rgba(255,255,255,.92)">Compose 图标备选（Dark）</text>
+  <text x="28" y="390" class="muted" fill="rgba(255,255,255,.75)">与 Light 同一组图标，仅演示在暗背景下的可读性。</text>
+
+  <rect x="28" y="416" width="1044" height="60" class="row" fill="rgba(255,255,255,.018)"/>
+  <text x="52" y="452" class="h2" fill="rgba(255,255,255,.92)">Option A</text>
+  <g transform="translate(140 452) scale(.9)"><path class="icon" stroke="rgba(255,255,255,.72)" d="m12 6l-8 4l8 4l8-4zm-8 8l8 4l8-4"/></g>
+  <g transform="translate(280 452) scale(.9)"><path class="icon" stroke="rgba(255,255,255,.72)" d="M12 4L4 8l8 4l8-4zm-8 8l8 4l8-4M4 16l8 4l8-4"/></g>
+  <rect x="420" y="432" width="250" height="28" class="chip" fill="rgba(255,255,255,.06)"/>
+  <text x="436" y="451" class="muted" fill="rgba(255,255,255,.75)">tabler:stack / tabler:stack-2</text>
+
+  <rect x="28" y="488" width="1044" height="60" class="row" fill="rgba(255,255,255,.018)"/>
+  <text x="52" y="524" class="h2" fill="rgba(255,255,255,.92)">Option B</text>
+  <g transform="translate(140 524) scale(.9)"><path class="icon" stroke="rgba(255,255,255,.72)" d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2"/></g>
+  <g transform="translate(280 524) scale(.9)"><path class="icon" stroke="rgba(255,255,255,.72)" d="m5 19l2.757-7.351A1 1 0 0 1 8.693 11H21a1 1 0 0 1 .986 1.164l-.996 5.211A2 2 0 0 1 19.026 19za2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4l3 3h7a2 2 0 0 1 2 2v2"/></g>
+  <rect x="420" y="504" width="330" height="28" class="chip" fill="rgba(255,255,255,.06)"/>
+  <text x="436" y="523" class="muted" fill="rgba(255,255,255,.75)">tabler:folder / tabler:folder-open</text>
+
+  <rect x="28" y="560" width="1044" height="60" class="row" fill="rgba(255,255,255,.018)"/>
+  <text x="52" y="596" class="h2" fill="rgba(255,255,255,.92)">Option C</text>
+  <g transform="translate(140 596) scale(.9)"><path class="icon" stroke="rgba(255,255,255,.72)" d="m12 3l8 4.5v9L12 21l-8-4.5v-9zm0 9l8-4.5M12 12v9m0-9L4 7.5"/></g>
+  <g transform="translate(280 596) scale(.9)"><path class="icon" stroke="rgba(255,255,255,.72)" d="M7 5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2z"/><path class="icon" stroke="rgba(255,255,255,.72)" d="M17 17v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2"/></g>
+  <rect x="420" y="576" width="340" height="28" class="chip" fill="rgba(255,255,255,.06)"/>
+  <text x="436" y="595" class="muted" fill="rgba(255,255,255,.75)">tabler:box / tabler:box-multiple</text>
+</svg>
