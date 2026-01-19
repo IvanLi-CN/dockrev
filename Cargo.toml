@@ -10,8 +10,13 @@ resolver = "3"
 
 [workspace.dependencies]
 anyhow = "1"
+async-trait = "0.1"
 axum = "0.8"
+base64 = "0.22"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
+semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml_ng = "0.10"

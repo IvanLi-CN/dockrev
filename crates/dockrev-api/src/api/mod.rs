@@ -10,7 +10,7 @@ use axum::{
 };
 use serde_json::json;
 
-use crate::{compose, error::ApiError, ids, state::AppState};
+use crate::{candidates, compose, error::ApiError, ids, ignore, registry, state::AppState};
 use types::*;
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -209,6 +209,155 @@ async fn trigger_check(
         .insert_job(job.to_db(), &user, req.reason.as_str())
         .await
         .map_err(map_internal)?;
+
+    let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
+        .unwrap_or_else(|| "linux/amd64".to_string());
+
+    let stack_ids = match req.scope {
+        JobScope::All => state.db.list_stack_ids().await.map_err(map_internal)?,
+        JobScope::Stack => req.stack_id.clone().into_iter().collect(),
+        JobScope::Service => {
+            let service_id = req.service_id.clone().unwrap_or_default();
+            state
+                .db
+                .get_service_stack_id(&service_id)
+                .await
+                .map_err(map_internal)?
+                .map(|id| vec![id])
+                .unwrap_or_default()
+        }
+    };
+
+    for stack_id in &stack_ids {
+        let services = state
+            .db
+            .list_services_for_check(stack_id)
+            .await
+            .map_err(map_internal)?;
+
+        for svc in services {
+            let img = match registry::ImageRef::parse(&svc.image_ref) {
+                Ok(img) => img,
+                Err(_) => {
+                    state
+                        .db
+                        .insert_job_log(
+                            &check_id,
+                            &JobLogLine {
+                                ts: now.clone(),
+                                level: "warn".to_string(),
+                                msg: format!("skip service {}: invalid image ref", svc.id),
+                            },
+                        )
+                        .await
+                        .map_err(map_internal)?;
+                    continue;
+                }
+            };
+
+            let ignore_rules = state
+                .db
+                .list_ignore_rules_for_service(&svc.id)
+                .await
+                .map_err(map_internal)?;
+            let matchers = ignore_rules
+                .iter()
+                .map(|r| {
+                    let kind = ignore::IgnoreKind::parse(&r.matcher.kind);
+                    (
+                        r.id.clone(),
+                        ignore::IgnoreRuleMatcher {
+                            kind,
+                            value: r.matcher.value.clone(),
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            let tags = match state.registry.list_tags(&img).await {
+                Ok(t) => t,
+                Err(e) => {
+                    state
+                        .db
+                        .insert_job_log(
+                            &check_id,
+                            &JobLogLine {
+                                ts: now.clone(),
+                                level: "warn".to_string(),
+                                msg: format!("list tags failed for {}: {}", img.name, e),
+                            },
+                        )
+                        .await
+                        .map_err(map_internal)?;
+                    continue;
+                }
+            };
+
+            let is_ignored = |tag: &str| matchers.iter().any(|(_, m)| m.matches(tag));
+            let candidate_non_ignored =
+                candidates::select_candidate_tag(&svc.image_tag, &tags, is_ignored);
+            let candidate_any = candidates::select_candidate_tag(&svc.image_tag, &tags, |_| false);
+            let candidate_tag = candidate_non_ignored.or(candidate_any);
+
+            let mut ignore_match: Option<(String, String)> = None;
+            if let Some(ref tag) = candidate_tag
+                && let Some((rule_id, _)) = matchers.iter().find(|(_, m)| m.matches(tag))
+            {
+                ignore_match = Some((
+                    rule_id.clone(),
+                    format!("matched ignore rule for tag {tag}"),
+                ));
+            }
+
+            let current_digest = state
+                .registry
+                .get_manifest(&img, &svc.image_tag)
+                .await
+                .ok()
+                .and_then(|m| m.digest);
+
+            let (candidate_digest, candidate_arch_match, candidate_arch_json) =
+                if let Some(tag) = candidate_tag.as_deref() {
+                    match state.registry.get_manifest(&img, tag).await {
+                        Ok(m) => {
+                            let arch_match = registry::compute_arch_match(&host_platform, &m.arch);
+                            (
+                                m.digest,
+                                Some(arch_match.as_str().to_string()),
+                                Some(serde_json::to_string(&m.arch).unwrap_or_default()),
+                            )
+                        }
+                        Err(_) => (None, None, None),
+                    }
+                } else {
+                    (None, None, None)
+                };
+
+            state
+                .db
+                .update_service_check_result(
+                    &svc.id,
+                    current_digest,
+                    candidate_tag.clone(),
+                    candidate_digest,
+                    candidate_arch_match,
+                    candidate_arch_json,
+                    ignore_match.as_ref().map(|(id, _)| id.clone()),
+                    ignore_match.as_ref().map(|(_, r)| r.clone()),
+                    &now,
+                    &now,
+                )
+                .await
+                .map_err(map_internal)?;
+        }
+
+        state
+            .db
+            .update_stack_last_check_at(stack_id, &now)
+            .await
+            .map_err(map_internal)?;
+    }
+
     state
         .db
         .insert_job_log(
@@ -216,19 +365,11 @@ async fn trigger_check(
             &JobLogLine {
                 ts: now.clone(),
                 level: "info".to_string(),
-                msg: "check completed (scaffold)".to_string(),
+                msg: "check finished".to_string(),
             },
         )
         .await
         .map_err(map_internal)?;
-
-    if let Some(stack_id) = req.stack_id.as_deref() {
-        state
-            .db
-            .update_stack_last_check_at(stack_id, &now)
-            .await
-            .map_err(map_internal)?;
-    }
 
     Ok(Json(TriggerCheckResponse { check_id }))
 }

@@ -14,6 +14,13 @@ use crate::api::types::{
     StackListItem, StackRecord, StackStatus,
 };
 
+#[derive(Clone, Debug)]
+pub struct ServiceForCheck {
+    pub id: String,
+    pub image_ref: String,
+    pub image_tag: String,
+}
+
 #[derive(Clone)]
 pub struct Db {
     conn: Connection,
@@ -45,6 +52,16 @@ impl Db {
         self.call(|conn| {
             conn.execute_batch("PRAGMA foreign_keys = ON;")?;
             conn.execute_batch(SCHEMA)?;
+            Ok(())
+        })
+        .await?;
+        self.migrate().await?;
+        Ok(())
+    }
+
+    async fn migrate(&self) -> anyhow::Result<()> {
+        self.call(|conn| {
+            ensure_service_columns(conn)?;
             Ok(())
         })
         .await?;
@@ -112,7 +129,16 @@ SELECT
   s.id,
   s.name,
   s.last_check_at,
-  (SELECT COUNT(1) FROM services sv WHERE sv.stack_id = s.id) AS services
+  (SELECT COUNT(1) FROM services sv WHERE sv.stack_id = s.id) AS services,
+  (
+    SELECT COUNT(1)
+    FROM services sv
+    WHERE
+      sv.stack_id = s.id
+      AND sv.candidate_tag IS NOT NULL
+      AND sv.ignore_rule_id IS NULL
+      AND sv.candidate_arch_match = 'match'
+  ) AS updates
 FROM stacks s
 ORDER BY s.created_at DESC
 "#,
@@ -124,7 +150,7 @@ ORDER BY s.created_at DESC
                     name: row.get(1)?,
                     status: StackStatus::Unknown,
                     services: row.get::<_, i64>(3)? as u32,
-                    updates: 0,
+                    updates: row.get::<_, i64>(4)? as u32,
                     last_check_at: row.get(2)?,
                 })
             })?;
@@ -203,24 +229,31 @@ WHERE id = ?1
 
             let mut stmt = conn.prepare(
                 r#"
-SELECT
-  id,
-  name,
-  image_ref,
-  image_tag,
-  auto_rollback,
-  backup_targets_bind_paths_json,
-  backup_targets_volume_names_json
-FROM services
-WHERE stack_id = ?1
-ORDER BY name ASC
+	SELECT
+	  id,
+	  name,
+	  image_ref,
+	  image_tag,
+	  current_digest,
+	  candidate_tag,
+	  candidate_digest,
+	  candidate_arch_match,
+	  candidate_arch_json,
+	  ignore_rule_id,
+	  ignore_reason,
+	  auto_rollback,
+	  backup_targets_bind_paths_json,
+	  backup_targets_volume_names_json
+	FROM services
+	WHERE stack_id = ?1
+	ORDER BY name ASC
 "#,
             )?;
             let mut rows = stmt.query(params![stack.id.clone()])?;
 
             while let Some(row) = rows.next()? {
-                let bind_paths_json: String = row.get(5)?;
-                let volume_names_json: String = row.get(6)?;
+                let bind_paths_json: String = row.get(12)?;
+                let volume_names_json: String = row.get(13)?;
                 let bind_paths: BTreeMap<String, crate::api::types::TernaryChoice> =
                     serde_json::from_str(&bind_paths_json).map_err(|e| {
                         rusqlite::Error::FromSqlConversionFailure(
@@ -238,18 +271,51 @@ ORDER BY name ASC
                         )
                     })?;
 
+                let candidate_tag: Option<String> = row.get(5)?;
+                let candidate_digest: Option<String> = row.get(6)?;
+                let candidate_arch_match: Option<String> = row.get(7)?;
+                let candidate_arch_json: Option<String> = row.get(8)?;
+                let ignore_rule_id: Option<String> = row.get(9)?;
+                let ignore_reason: Option<String> = row.get(10)?;
+
+                let candidate_arch: Vec<String> = candidate_arch_json
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                    .unwrap_or_default();
+
+                let candidate = match (candidate_tag, candidate_digest) {
+                    (Some(tag), Some(digest)) => Some(crate::api::types::Candidate {
+                        tag,
+                        digest,
+                        arch_match: crate::api::types::ArchMatch::from_str(
+                            candidate_arch_match.as_deref().unwrap_or("unknown"),
+                        ),
+                        arch: candidate_arch,
+                    }),
+                    _ => None,
+                };
+
+                let ignore = match (ignore_rule_id, ignore_reason) {
+                    (Some(rule_id), Some(reason)) => Some(crate::api::types::IgnoreMatch {
+                        matched: true,
+                        rule_id,
+                        reason,
+                    }),
+                    _ => None,
+                };
+
                 stack.services.push(crate::api::types::Service {
                     id: row.get(0)?,
                     name: row.get(1)?,
                     image: ComposeRef {
                         reference: row.get(2)?,
                         tag: row.get(3)?,
-                        digest: None,
+                        digest: row.get(4)?,
                     },
-                    candidate: None,
-                    ignore: None,
+                    candidate,
+                    ignore,
                     settings: ServiceSettings {
-                        auto_rollback: row.get::<_, i64>(4)? != 0,
+                        auto_rollback: row.get::<_, i64>(11)? != 0,
                         backup_targets: crate::api::types::BackupTargetOverrides {
                             bind_paths,
                             volume_names,
@@ -361,6 +427,149 @@ INSERT INTO services (
         })
         .await?;
         Ok(())
+    }
+
+    pub async fn list_services_for_check(
+        &self,
+        stack_id: &str,
+    ) -> anyhow::Result<Vec<ServiceForCheck>> {
+        let stack_id = stack_id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT id, image_ref, image_tag
+FROM services
+WHERE stack_id = ?1
+ORDER BY name ASC
+"#,
+            )?;
+            let rows = stmt.query_map(params![stack_id], |row| {
+                Ok(ServiceForCheck {
+                    id: row.get(0)?,
+                    image_ref: row.get(1)?,
+                    image_tag: row.get(2)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list services for check")
+    }
+
+    pub async fn get_service_stack_id(&self, service_id: &str) -> anyhow::Result<Option<String>> {
+        let service_id = service_id.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    r#"
+SELECT id, stack_id, image_ref, image_tag
+FROM services
+WHERE id = ?1
+"#,
+                    params![service_id],
+                    |row| row.get::<_, String>(1),
+                )
+                .optional()?)
+        })
+        .await
+        .context("get service stack id")
+    }
+
+    pub async fn list_stack_ids(&self) -> anyhow::Result<Vec<String>> {
+        self.call(|conn| {
+            let mut stmt = conn.prepare("SELECT id FROM stacks ORDER BY created_at DESC")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list stack ids")
+    }
+
+    pub async fn list_ignore_rules_for_service(
+        &self,
+        service_id: &str,
+    ) -> anyhow::Result<Vec<IgnoreRule>> {
+        let service_id = service_id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT id, enabled, scope_type, scope_service_id, match_kind, match_value, note
+FROM ignore_rules
+WHERE enabled = 1 AND scope_type = 'service' AND scope_service_id = ?1
+ORDER BY created_at DESC
+"#,
+            )?;
+            let rows = stmt.query_map(params![service_id], |row| {
+                Ok(IgnoreRule {
+                    id: row.get(0)?,
+                    enabled: row.get::<_, i64>(1)? != 0,
+                    scope: IgnoreRuleScope {
+                        kind: row.get(2)?,
+                        service_id: row.get(3)?,
+                    },
+                    matcher: IgnoreRuleMatch {
+                        kind: row.get(4)?,
+                        value: row.get(5)?,
+                    },
+                    note: row.get(6)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list ignore rules for service")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_service_check_result(
+        &self,
+        service_id: &str,
+        current_digest: Option<String>,
+        candidate_tag: Option<String>,
+        candidate_digest: Option<String>,
+        candidate_arch_match: Option<String>,
+        candidate_arch_json: Option<String>,
+        ignore_rule_id: Option<String>,
+        ignore_reason: Option<String>,
+        checked_at: &str,
+        now: &str,
+    ) -> anyhow::Result<bool> {
+        let service_id = service_id.to_string();
+        let checked_at = checked_at.to_string();
+        let now = now.to_string();
+        self.call(move |conn| {
+            let changed = conn.execute(
+                r#"
+UPDATE services
+SET
+  current_digest = ?2,
+  candidate_tag = ?3,
+  candidate_digest = ?4,
+  candidate_arch_match = ?5,
+  candidate_arch_json = ?6,
+  ignore_rule_id = ?7,
+  ignore_reason = ?8,
+  checked_at = ?9,
+  updated_at = ?10
+WHERE id = ?1
+"#,
+                params![
+                    service_id,
+                    current_digest,
+                    candidate_tag,
+                    candidate_digest,
+                    candidate_arch_match,
+                    candidate_arch_json,
+                    ignore_rule_id,
+                    ignore_reason,
+                    checked_at,
+                    now
+                ],
+            )?;
+            Ok(changed > 0)
+        })
+        .await
+        .context("update service check result")
     }
 
     pub async fn get_service_settings(
@@ -910,6 +1119,62 @@ fn ensure_parent_dir(path: &Path) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
+fn ensure_service_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    #[derive(Clone)]
+    struct Col<'a> {
+        name: &'a str,
+        ddl: &'a str,
+    }
+
+    let desired = [
+        Col {
+            name: "current_digest",
+            ddl: "ALTER TABLE services ADD COLUMN current_digest TEXT",
+        },
+        Col {
+            name: "candidate_tag",
+            ddl: "ALTER TABLE services ADD COLUMN candidate_tag TEXT",
+        },
+        Col {
+            name: "candidate_digest",
+            ddl: "ALTER TABLE services ADD COLUMN candidate_digest TEXT",
+        },
+        Col {
+            name: "candidate_arch_match",
+            ddl: "ALTER TABLE services ADD COLUMN candidate_arch_match TEXT",
+        },
+        Col {
+            name: "candidate_arch_json",
+            ddl: "ALTER TABLE services ADD COLUMN candidate_arch_json TEXT",
+        },
+        Col {
+            name: "ignore_rule_id",
+            ddl: "ALTER TABLE services ADD COLUMN ignore_rule_id TEXT",
+        },
+        Col {
+            name: "ignore_reason",
+            ddl: "ALTER TABLE services ADD COLUMN ignore_reason TEXT",
+        },
+        Col {
+            name: "checked_at",
+            ddl: "ALTER TABLE services ADD COLUMN checked_at TEXT",
+        },
+    ];
+
+    let mut stmt = conn.prepare("PRAGMA table_info(services)")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let existing = rows.collect::<Result<Vec<_>, _>>()?;
+
+    for col in desired {
+        if existing.iter().any(|c| c == col.name) {
+            continue;
+        }
+        conn.execute_batch(col.ddl)?;
+    }
+
+    Ok(())
+}
+
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS stacks (
   id TEXT PRIMARY KEY NOT NULL,
@@ -931,6 +1196,14 @@ CREATE TABLE IF NOT EXISTS services (
   name TEXT NOT NULL,
   image_ref TEXT NOT NULL,
   image_tag TEXT NOT NULL,
+  current_digest TEXT,
+  candidate_tag TEXT,
+  candidate_digest TEXT,
+  candidate_arch_match TEXT,
+  candidate_arch_json TEXT,
+  ignore_rule_id TEXT,
+  ignore_reason TEXT,
+  checked_at TEXT,
   auto_rollback INTEGER NOT NULL,
   backup_targets_bind_paths_json TEXT NOT NULL,
   backup_targets_volume_names_json TEXT NOT NULL,

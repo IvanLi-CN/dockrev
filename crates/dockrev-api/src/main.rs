@@ -1,11 +1,14 @@
 #![forbid(unsafe_code)]
 
 mod api;
+mod candidates;
 mod compose;
 mod config;
 mod db;
 mod error;
 mod ids;
+mod ignore;
+mod registry;
 mod state;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -23,7 +26,10 @@ async fn main() -> anyhow::Result<()> {
     let config = config::Config::from_env()?;
     let bind = config.http_addr.clone();
     let db = db::Db::open(&config.db_path).await?;
-    let state = state::AppState::new(config, db);
+    let registry = std::sync::Arc::new(registry::HttpRegistryClient::new(
+        config.docker_config_path.as_deref(),
+    )?);
+    let state = state::AppState::new(config, db, registry);
     let app = api::router(state.clone());
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;

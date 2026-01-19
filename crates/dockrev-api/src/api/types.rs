@@ -92,6 +92,24 @@ pub enum ArchMatch {
     Unknown,
 }
 
+impl ArchMatch {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Match => "match",
+            Self::Mismatch => "mismatch",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn from_str(input: &str) -> Self {
+        match input {
+            "match" => Self::Match,
+            "mismatch" => Self::Mismatch,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IgnoreMatch {
