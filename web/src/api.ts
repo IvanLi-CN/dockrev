@@ -17,6 +17,18 @@ export type ComposeConfig = {
 
 export type ArchMatch = 'match' | 'mismatch' | 'unknown'
 
+export type TernaryChoice = 'inherit' | 'skip' | 'force'
+
+export type BackupTargetOverrides = {
+  bindPaths: Record<string, TernaryChoice>
+  volumeNames: Record<string, TernaryChoice>
+}
+
+export type ServiceSettings = {
+  autoRollback: boolean
+  backupTargets: BackupTargetOverrides
+}
+
 export type Service = {
   id: string
   name: string
@@ -36,6 +48,7 @@ export type Service = {
     ruleId: string
     reason: string
   } | null
+  settings: ServiceSettings
 }
 
 export type StackDetail = {
@@ -49,10 +62,17 @@ export type JobListItem = {
   id: string
   type: string
   scope: string
+  stackId?: string | null
+  serviceId?: string | null
   status: string
+  createdBy: string
+  reason: string
   createdAt: string
   startedAt?: string | null
   finishedAt?: string | null
+  allowArchMismatch: boolean
+  backupMode: string
+  summary: unknown
 }
 
 export type JobLogLine = {
@@ -60,6 +80,8 @@ export type JobLogLine = {
   level: string
   msg: string
 }
+
+export type JobDetail = JobListItem & { logs: JobLogLine[] }
 
 export type IgnoreRule = {
   id: string
@@ -168,10 +190,10 @@ export async function listJobs(): Promise<JobListItem[]> {
   return data.jobs as JobListItem[]
 }
 
-export async function getJob(jobId: string): Promise<{ id: string; status: string; logs: JobLogLine[] }> {
+export async function getJob(jobId: string): Promise<JobDetail> {
   const resp = await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}`)
   const data = await resp.json()
-  return data.job as { id: string; status: string; logs: JobLogLine[] }
+  return data.job as JobDetail
 }
 
 export async function listIgnores(): Promise<IgnoreRule[]> {
@@ -253,6 +275,19 @@ export async function deleteWebPushSubscription(endpoint: string) {
   const resp = await apiFetch('/api/web-push/subscriptions', {
     method: 'DELETE',
     body: JSON.stringify({ endpoint }),
+  })
+  return (await resp.json()) as { ok: boolean }
+}
+
+export async function getServiceSettings(serviceId: string): Promise<ServiceSettings> {
+  const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/settings`)
+  return (await resp.json()) as ServiceSettings
+}
+
+export async function putServiceSettings(serviceId: string, settings: ServiceSettings) {
+  const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/settings`, {
+    method: 'PUT',
+    body: JSON.stringify(settings),
   })
   return (await resp.json()) as { ok: boolean }
 }
