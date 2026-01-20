@@ -51,21 +51,21 @@
 ## 用户与场景
 
 - 维护者：合并到 `main` 后，希望自动得到一个新的版本（tag + GitHub Release），并能在 GHCR 拉取到对应版本镜像。
-- 部署者：希望以固定版本号部署（例如 `v0.1.3`），并能选择是否跟随 `latest`。
+- 部署者：希望以固定版本号部署（例如 `0.1.3`），并能选择是否跟随 `latest`。
 - CI：在 PR 阶段就能验证“发布相关构建”不会在合并后失败。
 
 ## 需求（Requirements）
 
 ### MUST
 
-- CI/CD 必须能稳定地产出版本号（`APP_EFFECTIVE_VERSION`）并形成一致的 tag（`v<semver>`）。
+- CI/CD 必须能稳定地产出版本号（`APP_EFFECTIVE_VERSION`）并形成一致的 tag（`<semver>`）。
 - 在 `main` 分支上，自动发布流程必须满足：
   - 通过 lint/tests 后才允许进入发布步骤
   - tag/release 创建具备幂等性（重复运行不应失败；tag 已存在应安全跳过或明确失败原因）
-  - 发布到 GHCR 的镜像 tag 中必须包含版本 tag（`v<semver>`）
+  - 发布到 GHCR 的镜像 tag 中必须包含版本 tag（`<semver>`）
 - Docker 发布产物必须满足：
-  - 仅允许单镜像：`ghcr.io/<owner>/dockrev`（禁止出现 `dockrev-api`/`dockrev-web` 等双镜像）
-  - 镜像 tags 至少包含：`v<APP_EFFECTIVE_VERSION>`（以及默认分支的 `latest`）
+  - 仅允许单镜像：`ghcr.io/ivanli-cn/dockrev`（禁止出现 `dockrev-api`/`dockrev-web` 等双镜像）
+  - 镜像 tags 至少包含：`<APP_EFFECTIVE_VERSION>`（以及默认分支的 `latest`）
 - GitHub Release 必须附带二进制产物（assets），且命名与内容符合契约。
 - 发布镜像必须写入版本元数据（见契约），并在 API 层提供版本口径（见契约）。
 - Web UI 必须由服务端进程直接提供：
@@ -91,9 +91,9 @@
 - 统一版本变量：`APP_EFFECTIVE_VERSION=<semver>`（不带 `v` 前缀）。
 - `push main`：
   - 运行 `.github/scripts/compute-version.sh` 得到 `APP_EFFECTIVE_VERSION`
-  - 创建/推送 tag：`v${APP_EFFECTIVE_VERSION}`（已存在则跳过）
+  - 创建/推送 tag：`${APP_EFFECTIVE_VERSION}`（已存在则跳过）
 - `release: published`：
-  - 直接从 release tag 推导版本：`APP_EFFECTIVE_VERSION = <tag_name 去掉 v 前缀>`（例如 `v0.1.0` → `0.1.0`）
+  - 直接从 release tag 推导版本：`APP_EFFECTIVE_VERSION = <tag_name>`（tag_name 形如 `<semver>`）
 
 ### PR（pull_request → main）：只做“可预演校验”
 
@@ -110,21 +110,21 @@
 ### 自动发布（push → main）：一次性产出全部产物
 
 1. `lint` + `unit-tests`
-2. 计算 `APP_EFFECTIVE_VERSION` → 创建/推送 `v${APP_EFFECTIVE_VERSION}`
+2. 计算 `APP_EFFECTIVE_VERSION` → 创建/推送 `${APP_EFFECTIVE_VERSION}`
 3. 构建 Web（`npm ci` + `npm run build`）
 4. 构建 Release assets（4 targets：amd64/arm64 × gnu/musl），并生成 `sha256`
 5. 运行 smoke test（至少对 linux/amd64 的实际运行产物做验证；web/health/version 三项都要通过）
 6. 创建或更新 GitHub Release，并“替换式上传” assets（幂等）
    - 采用 `ncipollo/release-action@v1`：`allowUpdates: true` + `replacesArtifacts: true`
 7. 构建并推送 GHCR 单镜像：
-   - Image: `ghcr.io/<owner>/dockrev`
+   - Image: `ghcr.io/ivanli-cn/dockrev`
    - Platforms: `linux/amd64,linux/arm64`
-   - Tags: `v${APP_EFFECTIVE_VERSION}` + `latest`
+   - Tags: `${APP_EFFECTIVE_VERSION}` + `latest`
 
 ### 手动/兜底发布（release: published）：同一套发布逻辑
 
 1. 从 release tag 解析 `APP_EFFECTIVE_VERSION`
-2. 执行与 “push main” 相同的步骤 #3–#7，但 **不更新 `latest`**（只推 `v${APP_EFFECTIVE_VERSION}`），避免手动发布意外改变默认版本指向。
+2. 执行与 “push main” 相同的步骤 #3–#7，但 **不更新 `latest`**（只推 `${APP_EFFECTIVE_VERSION}`），避免手动发布意外改变默认版本指向。
 
 ### Docker 镜像内 CLI/Compose（冻结口径）
 
@@ -143,8 +143,8 @@
 | GitHub Actions CI/CD workflow | Config | internal | Modify | [./contracts/file-formats.md](./contracts/file-formats.md) | maintainer | CI | `.github/workflows/ci.yml`（含 release 相关 jobs） |
 | Effective version computation | CLI | internal | Modify | [./contracts/cli.md](./contracts/cli.md) | maintainer | CI | `.github/scripts/compute-version.sh` |
 | CI smoke test script | CLI | internal | New | [./contracts/cli.md](./contracts/cli.md) | maintainer | CI | `.github/scripts/smoke-test.sh` |
-| Git tag format | File format | internal | Modify | [./contracts/file-formats.md](./contracts/file-formats.md) | maintainer | CI/users | `v<semver>` |
-| GHCR image naming & tagging | File format | external | Modify | [./contracts/file-formats.md](./contracts/file-formats.md) | maintainer | deployers | `ghcr.io/<owner>/<image>:<tag>` |
+| Git tag format | File format | internal | Modify | [./contracts/file-formats.md](./contracts/file-formats.md) | maintainer | CI/users | `<semver>` |
+| GHCR image naming & tagging | File format | external | Modify | [./contracts/file-formats.md](./contracts/file-formats.md) | maintainer | deployers | `ghcr.io/ivanli-cn/dockrev:<tag>` |
 | GitHub Release assets naming | File format | external | New | [./contracts/file-formats.md](./contracts/file-formats.md) | maintainer | deployers | Release 附带二进制产物（assets） |
 | `GET /api/version` | HTTP API | external | New | [./contracts/http-apis.md](./contracts/http-apis.md) | backend | web/users | 版本可观测口径 |
 | `GET /api/health` | HTTP API | external | Modify | [./contracts/http-apis.md](./contracts/http-apis.md) | backend | CI/users | 存活探针 |
@@ -160,11 +160,11 @@
 
 - Given 合并一个提交到 `main`
   When CI 通过 lint/tests 并进入发布阶段
-  Then 若目标 tag `v<APP_EFFECTIVE_VERSION>` 不存在，则自动创建并推送 tag，且创建对应 GitHub Release（包含自动生成的 release notes）
+  Then 若目标 tag `<APP_EFFECTIVE_VERSION>` 不存在，则自动创建并推送 tag，且创建对应 GitHub Release（包含自动生成的 release notes）
 
 - Given 合并一个提交到 `main`
   When 发布阶段执行镜像构建与推送
-  Then GHCR 上存在与本次发布版本一致的单镜像 `ghcr.io/<owner>/dockrev`，且 tag 至少包含 `v<APP_EFFECTIVE_VERSION>`
+  Then GHCR 上存在与本次发布版本一致的单镜像 `ghcr.io/ivanli-cn/dockrev`，且 tag 至少包含 `<APP_EFFECTIVE_VERSION>`
 
 - Given 合并一个提交到 `main`
   When 发布阶段创建 GitHub Release
@@ -192,7 +192,7 @@
 
 - Given 主人手动发布一个 GitHub Release（`release: published`）
   When CI 在 release 事件上运行发布步骤
-  Then 会推送对应版本的单镜像 `ghcr.io/<owner>/dockrev:v<semver>`，并为该 Release 上传二进制 assets（命名与内容符合契约）
+  Then 会推送对应版本的单镜像 `ghcr.io/ivanli-cn/dockrev:<semver>`，并为该 Release 上传二进制 assets（命名与内容符合契约）
 
 - Given 发布流程被重复触发（例如重跑 workflow）
   When tag 已存在
@@ -237,7 +237,7 @@
 - [x] 单镜像与嵌入式 Web：实现单一二进制 `dockrev`（内嵌 web assets），并补齐 `GET /api/version`（保持 `/api/health` 可用）
 - [x] CI 构建校验：PR 阶段可构建单镜像（不 push），且通过 smoke test（启动→`/api/health`→`/`）
 - [x] `main` 自动发布：tag + GitHub Release（幂等）+ Release assets（linux/amd64 + linux/arm64，gnu+musl）
-- [x] GHCR 自动发布：推送单镜像 `ghcr.io/<owner>/dockrev`（含 `v<semver>` 与 `latest`，并写入版本元数据）
+- [x] GHCR 自动发布：推送单镜像 `ghcr.io/ivanli-cn/dockrev`（含 `<semver>` 与 `latest`，并写入版本元数据）
 - [x] 文档同步：`README.md` / `deploy/README.md`
 
 ## Change log

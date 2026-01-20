@@ -10,10 +10,10 @@
 - Working dir: repo root（或任意 workdir，只要 `git rev-parse --show-toplevel` 指向仓库根目录）。
 - Inputs:
   - `Cargo.toml` 中的 `version`（形如 `x.y.z`）
-  - 已存在的 git tags（形如 `v<semver>`）
+  - 已存在的 git tags（形如 `<semver>`）
 - Behavior:
   - 以 `Cargo.toml` 的 `major.minor.patch` 作为 base
-  - 若 `v<major>.<minor>.<patch>` 已存在，则递增 patch，直到找到一个未被占用的版本
+  - 若 `<major>.<minor>.<patch>` 已存在，则递增 patch，直到找到一个未被占用的版本
 - Outputs:
   - 向 `$GITHUB_ENV` 写入：`APP_EFFECTIVE_VERSION=<semver>`
   - stdout 打印 computed version（用于日志）

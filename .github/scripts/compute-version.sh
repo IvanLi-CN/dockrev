@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # Compute effective semver from Cargo.toml, auto-increment patch if tag exists.
+# Tag naming: prefer <semver>; also treats legacy v<semver> tags as occupied.
 
 root_dir="$(git rev-parse --show-toplevel)"
 
@@ -22,7 +23,9 @@ base_minor="$(echo "$cargo_ver" | cut -d. -f2)"
 base_patch="$(echo "$cargo_ver" | cut -d. -f3)"
 
 candidate="${base_patch}"
-while git rev-parse -q --verify "refs/tags/v${base_major}.${base_minor}.${candidate}" >/dev/null; do
+while \
+  git rev-parse -q --verify "refs/tags/${base_major}.${base_minor}.${candidate}" >/dev/null \
+  || git rev-parse -q --verify "refs/tags/v${base_major}.${base_minor}.${candidate}" >/dev/null; do
   candidate="$((candidate + 1))"
 done
 
@@ -30,4 +33,3 @@ effective="${base_major}.${base_minor}.${candidate}"
 
 echo "APP_EFFECTIVE_VERSION=${effective}" >> "${GITHUB_ENV:-/dev/stdout}"
 echo "Computed APP_EFFECTIVE_VERSION=${effective} (base ${cargo_ver})"
-

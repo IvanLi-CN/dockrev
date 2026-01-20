@@ -68,7 +68,7 @@ See `deploy/README.md` for a minimal Docker Compose deployment.
 
 ## Releases / Images
 
-- GHCR: `ghcr.io/<owner>/dockrev:v<semver>` (single image)
+- GHCR: `ghcr.io/ivanli-cn/dockrev:<semver>` (single image)
 - `latest` is updated by pushes to `main`
 - GitHub Releases include Linux binaries (amd64/arm64 × gnu/musl) as `.tar.gz` + `.sha256`
 
