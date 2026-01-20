@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-01-20
 - Last: 2026-01-20
 
@@ -234,11 +234,15 @@
 
 ## 里程碑（Milestones）
 
-- [ ] 单镜像与嵌入式 Web：实现单一二进制 `dockrev`（内嵌 web assets），并补齐 `GET /api/version`（保持 `/api/health` 可用）
-- [ ] CI 构建校验：PR 阶段可构建单镜像（不 push），且通过 smoke test（启动→`/api/health`→`/`）
-- [ ] `main` 自动发布：tag + GitHub Release（幂等）+ Release assets（linux/amd64 + linux/arm64，gnu+musl）
-- [ ] GHCR 自动发布：推送单镜像 `ghcr.io/<owner>/dockrev`（含 `v<semver>` 与 `latest`，并写入版本元数据）
-- [ ] 文档同步：`README.md` / `deploy/README.md`
+- [x] 单镜像与嵌入式 Web：实现单一二进制 `dockrev`（内嵌 web assets），并补齐 `GET /api/version`（保持 `/api/health` 可用）
+- [x] CI 构建校验：PR 阶段可构建单镜像（不 push），且通过 smoke test（启动→`/api/health`→`/`）
+- [x] `main` 自动发布：tag + GitHub Release（幂等）+ Release assets（linux/amd64 + linux/arm64，gnu+musl）
+- [x] GHCR 自动发布：推送单镜像 `ghcr.io/<owner>/dockrev`（含 `v<semver>` 与 `latest`，并写入版本元数据）
+- [x] 文档同步：`README.md` / `deploy/README.md`
+
+## Change log
+
+- 2026-01-20: 单镜像 Dockerfile + Web 资源嵌入 + `/api/version`，并对齐 CI（PR 预演构建校验、Release assets、GHCR 发布）。
 
 ## 风险与开放问题（需主人决策）
 

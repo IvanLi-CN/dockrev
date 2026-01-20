@@ -60,6 +60,7 @@ impl CommandRunner for FakeRunner {
 
 async fn test_state(db_path: &str) -> Arc<AppState> {
     let config = Config {
+        app_effective_version: "0.1.0".to_string(),
         http_addr: "127.0.0.1:0".to_string(),
         db_path: PathBuf::from(db_path),
         docker_config_path: None,
@@ -72,8 +73,8 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
 
     let db = Db::open(&config.db_path).await.unwrap();
 
-    let registry = Arc::new(FakeRegistry::default());
-    let runner = Arc::new(FakeRunner::default());
+    let registry = Arc::new(FakeRegistry);
+    let runner = Arc::new(FakeRunner);
     AppState::new(config, db, registry, runner)
 }
 
@@ -93,6 +94,44 @@ async fn health_ok() {
         .unwrap();
 
     assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
+async fn version_ok() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/version")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["version"], "0.1.0");
+}
+
+#[tokio::test]
+async fn unknown_api_path_is_not_swallowed_by_ui_fallback() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/does-not-exist")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 404);
 }
 
 #[tokio::test]
@@ -302,7 +341,7 @@ services:
         .unwrap();
     assert_eq!(resp.status(), 200);
     let deleted = response_json(resp).await;
-    assert_eq!(deleted["deleted"].as_bool().unwrap(), true);
+    assert!(deleted["deleted"].as_bool().unwrap());
 }
 
 #[tokio::test]
@@ -433,7 +472,7 @@ services:
     assert_eq!(resp.status(), 200);
     let job = response_json(resp).await;
     assert_eq!(job["job"]["id"].as_str().unwrap(), job_id);
-    assert!(job["job"]["logs"].as_array().unwrap().len() >= 1);
+    assert!(!job["job"]["logs"].as_array().unwrap().is_empty());
     assert_eq!(
         job["job"]["summary"]["stacks"][0]["backup"]["status"]
             .as_str()
@@ -760,6 +799,6 @@ async fn settings_and_notifications_roundtrip() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let conf = response_json(resp).await;
-    assert_eq!(conf["webhook"]["enabled"].as_bool().unwrap(), true);
+    assert!(conf["webhook"]["enabled"].as_bool().unwrap());
     assert_eq!(conf["webhook"]["url"].as_str().unwrap(), "******");
 }

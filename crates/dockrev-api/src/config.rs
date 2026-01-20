@@ -4,6 +4,7 @@ use axum::http::HeaderName;
 
 #[derive(Clone)]
 pub struct Config {
+    pub app_effective_version: String,
     pub http_addr: String,
     pub db_path: PathBuf,
     pub docker_config_path: Option<PathBuf>,
@@ -16,6 +17,11 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
+        let app_effective_version = match std::env::var("APP_EFFECTIVE_VERSION") {
+            Ok(v) if !v.trim().is_empty() => v,
+            _ => env!("CARGO_PKG_VERSION").to_string(),
+        };
+
         let http_addr =
             std::env::var("DOCKREV_HTTP_ADDR").unwrap_or_else(|_| "0.0.0.0:50883".to_string());
 
@@ -43,6 +49,7 @@ impl Config {
         let host_platform = std::env::var("DOCKREV_HOST_PLATFORM").ok();
 
         Ok(Self {
+            app_effective_version,
             http_addr,
             db_path,
             docker_config_path,

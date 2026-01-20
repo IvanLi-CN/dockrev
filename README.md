@@ -30,7 +30,7 @@ Front-end (React + TypeScript):
 Backend:
 
 ```bash
-DOCKREV_HTTP_ADDR=127.0.0.1:50883 DOCKREV_DB_PATH=/tmp/dockrev.sqlite3 cargo run -p dockrev-api
+DOCKREV_HTTP_ADDR=127.0.0.1:50883 DOCKREV_DB_PATH=/tmp/dockrev.sqlite3 cargo run -p dockrev-api --bin dockrev
 ```
 
 Front-end:
@@ -43,13 +43,16 @@ npm run dev
 
 Open:
 
-- UI: `http://127.0.0.1:5173/`
+- UI (dev server): `http://127.0.0.1:5173/`
+- UI (embedded): `http://127.0.0.1:50883/`
 - API health: `http://127.0.0.1:50883/api/health`
+- API version: `http://127.0.0.1:50883/api/version`
 
 ## Runtime config
 
 Environment variables (API):
 
+- `APP_EFFECTIVE_VERSION` (optional) effective version used by `/api/version` (defaults to `CARGO_PKG_VERSION`)
 - `DOCKREV_HTTP_ADDR` (default `0.0.0.0:50883`)
 - `DOCKREV_DB_PATH` (default `./data/dockrev.sqlite3`)
 - `DOCKREV_DOCKER_CONFIG` (optional) path to Docker `config.json` for registry credentials
@@ -62,6 +65,12 @@ Environment variables (API):
 ## Deploy (minimal)
 
 See `deploy/README.md` for a minimal Docker Compose deployment.
+
+## Releases / Images
+
+- GHCR: `ghcr.io/<owner>/dockrev:v<semver>` (single image)
+- `latest` is updated by pushes to `main`
+- GitHub Releases include Linux binaries (amd64/arm64 × gnu/musl) as `.tar.gz` + `.sha256`
 
 ## Notifications
 

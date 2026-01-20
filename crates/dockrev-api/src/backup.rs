@@ -445,7 +445,7 @@ mod tests {
             spec: CommandSpec,
             _timeout: Duration,
         ) -> anyhow::Result<crate::runner::CommandOutput> {
-            if spec.program == "docker" && spec.args.get(0).is_some_and(|a| a == "run") {
+            if spec.program == "docker" && spec.args.first().is_some_and(|a| a == "run") {
                 if spec.args.iter().any(|a| a.contains("du -sb /data")) {
                     let mount = spec
                         .args

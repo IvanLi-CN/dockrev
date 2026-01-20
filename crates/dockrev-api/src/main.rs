@@ -15,6 +15,7 @@ mod notify;
 mod registry;
 mod runner;
 mod state;
+mod ui;
 mod updater;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};

@@ -1,0 +1,249 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: ["CI (main)"]
+    types: [completed]
+    branches: [main]
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: dockrev
+  PLATFORMS: linux/amd64,linux/arm64
+  NODE_VERSION: "20"
+  RUST_TOOLCHAIN: "1.91.0"
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
+
+jobs:
+  release:
+    name: Release (tag, assets, ghcr)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: |
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      || github.event_name == 'release'
+    steps:
+      - name: Checkout (workflow_run)
+        if: github.event_name == 'workflow_run'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Checkout (release tag)
+        if: github.event_name == 'release'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Compute effective version (main)
+        if: github.event_name == 'workflow_run'
+        shell: bash
+        run: bash ./.github/scripts/compute-version.sh
+
+      - name: Export effective version from release tag
+        if: github.event_name == 'release'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.release.tag_name }}"
+          if [[ -z "${tag}" ]]; then
+            echo "missing release tag_name" >&2
+            exit 1
+          fi
+          if [[ "${tag}" != v* ]]; then
+            echo "expected release tag to start with v: ${tag}" >&2
+            exit 1
+          fi
+          echo "APP_EFFECTIVE_VERSION=${tag#v}" >> "$GITHUB_ENV"
+
+      - name: Configure Git user
+        if: github.event_name == 'workflow_run'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create and push tag (if missing)
+        if: github.event_name == 'workflow_run'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v${APP_EFFECTIVE_VERSION}"
+          echo "target tag: $tag"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "Tag ${tag} already exists. Skipping push."
+          else
+            git tag -a "${tag}" -m "${tag}"
+            git push origin "${tag}"
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y musl-tools pkg-config libsqlite3-dev
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Cache cargo directories
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build web (optional)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f web/package.json ]]; then
+            cd web
+            npm ci
+            npm run build
+          else
+            echo "No web/ package; skipping"
+          fi
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Add musl targets
+        run: rustup target add x86_64-unknown-linux-musl
+
+      - name: Build release binaries (linux/amd64)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CARGO_TARGET_DIR=target/ci/amd64
+          cargo build -p dockrev-api --bin dockrev --release --locked
+          cargo build -p dockrev-api --bin dockrev --release --locked --target x86_64-unknown-linux-musl
+
+      - name: Smoke test (linux/amd64 musl)
+        shell: bash
+        env:
+          DOCKREV_SMOKE_BIN: target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev
+          APP_EFFECTIVE_VERSION: ${{ env.APP_EFFECTIVE_VERSION }}
+        run: bash ./.github/scripts/smoke-test.sh
+
+      - name: Build release binaries (linux/arm64)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --platform linux/arm64 \
+            -v "${GITHUB_WORKSPACE}:/src" \
+            -w /src \
+            -e CARGO_TARGET_DIR=/src/target/ci/arm64 \
+            rust:1.91-bookworm bash -lc '
+              set -euo pipefail
+              apt-get update
+              apt-get install -y --no-install-recommends musl-tools pkg-config ca-certificates
+              rm -rf /var/lib/apt/lists/*
+              rustup target add aarch64-unknown-linux-musl
+              cargo build -p dockrev-api --bin dockrev --release --locked
+              cargo build -p dockrev-api --bin dockrev --release --locked --target aarch64-unknown-linux-musl
+            '
+
+      - name: Package release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          out_dir="dist/release"
+          mkdir -p "${out_dir}"
+          ver="${APP_EFFECTIVE_VERSION}"
+
+          package() {
+            local arch="$1"
+            local libc="$2"
+            local bin="$3"
+            if [[ ! -f "${bin}" ]]; then
+              echo "missing binary: ${bin}" >&2
+              exit 1
+            fi
+            local base="dockrev_${ver}_linux_${arch}_${libc}.tar.gz"
+            tar -czf "${out_dir}/${base}" -C "$(dirname "${bin}")" dockrev
+            sha256sum "${out_dir}/${base}" > "${out_dir}/${base}.sha256"
+            echo "[assets] ${base} ($(stat -c%s "${out_dir}/${base}") bytes)"
+          }
+
+          package amd64 gnu target/ci/amd64/release/dockrev
+          package arm64 gnu target/ci/arm64/release/dockrev
+          package amd64 musl target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev
+          package arm64 musl target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev
+
+          ls -lah "${out_dir}"
+
+      - name: Create or update GitHub Release + upload assets
+        uses: ncipollo/release-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: v${{ env.APP_EFFECTIVE_VERSION }}
+          name: v${{ env.APP_EFFECTIVE_VERSION }}
+          generateReleaseNotes: true
+          allowUpdates: true
+          replacesArtifacts: true
+          artifactErrorsFailBuild: true
+          artifacts: |
+            dist/release/*.tar.gz
+            dist/release/*.sha256
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute image tags
+        id: docker-tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="${REGISTRY}/${owner}/${IMAGE_NAME}"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          {
+            echo "tags<<EOF"
+            echo "${image}:v${APP_EFFECTIVE_VERSION}"
+            if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" ]]; then
+              echo "${image}:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.docker-tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.version=${{ env.APP_EFFECTIVE_VERSION }}
+            org.opencontainers.image.revision=${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          build-args: |
+            APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}

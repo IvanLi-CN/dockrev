@@ -2,8 +2,7 @@
 
 This directory contains a minimal Docker Compose deployment:
 
-- `dockrev-api`: Rust HTTP API (binds to Docker socket, stores SQLite under `deploy/data/`)
-- `dockrev-web`: static web UI served by Nginx, proxies `/api/*` to `dockrev-api`
+- `dockrev`: single container (Rust backend + embedded web UI)
 
 ## Quickstart
 
@@ -19,12 +18,12 @@ docker compose up --build
 
 Open:
 
-- UI: `http://127.0.0.1:5173/`
-- API health: `http://127.0.0.1:5173/api/health`
+- UI: `http://127.0.0.1:50883/`
+- API health: `http://127.0.0.1:50883/api/health`
 
 ## Registering a stack
 
-Dockrev reads compose files from inside the `dockrev-api` container. To register a stack, the compose file paths you submit must exist in the container:
+Dockrev reads compose files from inside the `dockrev` container. To register a stack, the compose file paths you submit must exist in the container:
 
 - Mount your compose directory into the container (example in `docker-compose.yml`)
 - Register using the container path (absolute)
@@ -32,5 +31,19 @@ Dockrev reads compose files from inside the `dockrev-api` container. To register
 ## Auth / reverse proxy
 
 - Production default is to require a forward header (see `DOCKREV_AUTH_FORWARD_HEADER_NAME`).
-- In the sample Compose, `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV=false` is set. You must inject the forward header in front of Nginx/API.
+- In the sample Compose, `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV=false` is set. You must inject the forward header in front of Dockrev.
 
+## Using a released image
+
+Replace the `build:` section with:
+
+```yaml
+services:
+  dockrev:
+    image: ghcr.io/<owner>/dockrev:v<semver>
+```
+
+Notes:
+
+- `latest` is only updated by `push` to `main`; `release: published` only pushes `v<semver>`.
+- The image supports both direct socket mount and `DOCKER_HOST` (e.g. `tcp://docker-socket-proxy:2375`).

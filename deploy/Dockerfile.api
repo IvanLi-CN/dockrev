@@ -10,8 +10,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
-COPY --from=builder /src/target/release/dockrev-api /usr/local/bin/dockrev-api
+COPY --from=builder /src/target/release/dockrev /usr/local/bin/dockrev
 
 EXPOSE 50883
-CMD ["/usr/local/bin/dockrev-api"]
-
+CMD ["/usr/local/bin/dockrev"]
