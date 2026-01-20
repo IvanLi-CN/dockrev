@@ -153,7 +153,7 @@ jobs:
             -v "${GITHUB_WORKSPACE}:/src" \
             -w /src \
             -e CARGO_TARGET_DIR=/src/target/ci/arm64 \
-            rust:1.91-bookworm bash -lc '
+            rust:1.91-bookworm bash -c '
               set -euo pipefail
               apt-get update
               apt-get install -y --no-install-recommends musl-tools pkg-config ca-certificates
