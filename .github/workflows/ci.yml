@@ -146,6 +146,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint, unit-tests]
     if: github.event_name == 'pull_request'
+    env:
+      # Multi-arch (via QEMU) is validated on main/release publishes; keep PR checks fast.
+      PLATFORMS: linux/amd64
     timeout-minutes: 45
     steps:
       - name: Checkout
