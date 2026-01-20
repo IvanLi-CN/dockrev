@@ -73,6 +73,10 @@ jobs:
               npm install
             fi
             npm run lint
+            npm run build
+            npm run build-storybook -- --quiet
+            npx playwright install --with-deps chromium
+            npm run test-storybook
           else
             echo "No web/ package; skipping"
           fi
@@ -261,4 +265,3 @@ jobs:
             APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ steps.image-name.outputs.image_name_lower }}:buildcache
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ steps.image-name.outputs.image_name_lower }}:buildcache,mode=max
-

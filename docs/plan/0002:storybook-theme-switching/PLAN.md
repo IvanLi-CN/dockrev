@@ -2,9 +2,9 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-01-19
-- Last: 2026-01-19
+- Last: 2026-01-20
 
 ## 背景 / 问题陈述
 
@@ -124,13 +124,17 @@
 
 ## 里程碑（Milestones）
 
-- [ ] 在 `web/` 集成 Storybook（React + Vite）并可启动
-- [ ] Storybook toolbar 主题切换（`light` / `dark`）并对所有 stories 生效
-- [ ] 应用显式主题支持（`light` / `dark`），提供 UI 切换入口并持久化，与 Storybook 共用主题机制
-- [ ] 落地 stories 组织规范与示例（目录/命名/新增方式）
-- [ ] 为实现当下 in-scope 的 layout/pages/components 补齐 stories 与“代表性状态”覆盖
-- [ ] CI 增加 `build-storybook` + `test-storybook` 校验
-- [ ] 更新 `web/README.md` 与受影响的计划/文档说明
+- [x] 在 `web/` 集成 Storybook（React + Vite）并可启动
+- [x] Storybook toolbar 主题切换（`light` / `dark`）并对所有 stories 生效
+- [x] 应用显式主题支持（`light` / `dark`），提供 UI 切换入口并持久化，与 Storybook 共用主题机制
+- [x] 落地 stories 组织规范与示例（目录/命名/新增方式）
+- [x] 为实现当下 in-scope 的 layout/pages/components 补齐 stories 与“代表性状态”覆盖
+- [x] CI 增加 `build-storybook` + `test-storybook` 校验
+- [x] 更新 `web/README.md` 与受影响的计划/文档说明
+
+## Change log
+
+- 2026-01-20：落地 Storybook + 主题切换，并把 build/test 校验纳入 CI。
 
 ## 约束与风险
 

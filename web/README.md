@@ -1,5 +1,28 @@
 # React + TypeScript + Vite
 
+## Storybook
+
+在 `web/` 目录下执行：
+
+- 启动：`npm run storybook`
+- 构建静态站点：`npm run build-storybook`（输出 `storybook-static/`）
+- 运行自动化测试：`npm run test-storybook`
+
+### 新增 stories 约定
+
+- 推荐：与组件同目录 colocate，文件名 `*.stories.tsx`
+- 允许集中管理：`src/stories/**`
+- `title` 分组建议：
+  - `Components/<Name>`
+  - `Layouts/<Name>`
+  - `Pages/<Name>`
+
+### 主题（Theme）
+
+- 主题值：`light` / `dark`
+- DOM hook：`<html data-theme="<value>">` + `color-scheme`
+- 持久化：`localStorage["dockrev:theme"]`
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:
