@@ -17,8 +17,10 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
-        let app_effective_version = std::env::var("APP_EFFECTIVE_VERSION")
-            .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
+        let app_effective_version = match std::env::var("APP_EFFECTIVE_VERSION") {
+            Ok(v) if !v.trim().is_empty() => v,
+            _ => env!("CARGO_PKG_VERSION").to_string(),
+        };
 
         let http_addr =
             std::env::var("DOCKREV_HTTP_ADDR").unwrap_or_else(|_| "0.0.0.0:50883".to_string());
