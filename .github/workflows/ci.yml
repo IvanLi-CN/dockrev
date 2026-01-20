@@ -37,6 +37,18 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Build web (optional)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f web/package.json ]]; then
+            cd web
+            npm ci
+            npm run build
+          else
+            echo "No web/ package; skipping"
+          fi
+
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libsqlite3-dev
 
@@ -74,13 +86,7 @@ jobs:
           set -euo pipefail
           if [[ -f web/package.json ]]; then
             cd web
-            if [[ -f package-lock.json ]]; then
-              npm ci
-            else
-              npm install
-            fi
             npm run lint
-            npm run build
             npm run build-storybook -- --quiet
             npx playwright install --with-deps chromium
             npm run test-storybook
@@ -100,6 +106,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+
+      - name: Build web (optional)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f web/package.json ]]; then
+            cd web
+            npm ci
+            npm run build
+          else
+            echo "No web/ package; skipping"
+          fi
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libsqlite3-dev
