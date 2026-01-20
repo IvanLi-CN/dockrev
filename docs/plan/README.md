@@ -56,3 +56,4 @@
 |-----:|-------|--------|------|------|-------|
 | 0001 | Dockrev: Docker/Compose 更新管理器（MVP→生产） | 已完成 | `0001:dockrev-compose-updater/PLAN.md` | 2026-01-19 | UI 已对齐 mockups；Jobs 审计与 webhook trigger 已补齐；PR #2 |
 | 0002 | Web: Storybook（组件覆盖 + 主题切换） | 待实现 | `0002:storybook-theme-switching/PLAN.md` | 2026-01-19 | - |
+| 0003 | CI/CD: 自动发布（GHCR + GitHub Release Assets）对标与补齐 | 待实现 | `0003:release-automation-alignment/PLAN.md` | 2026-01-20 | 单镜像 `dockrev`；push+release 双触发；Release assets: linux/amd64+arm64（gnu+musl）；CI 运行测试；web 资源嵌入；docker.sock+socket-proxy |
