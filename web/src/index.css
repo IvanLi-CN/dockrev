@@ -44,7 +44,7 @@ code {
     monospace;
 }
 
-html[data-theme='dockrev-dark'] {
+html[data-theme='dark'] {
   --color-base-100: #0f172a;
   --color-base-200: #0b1020;
   --color-base-300: #070b15;
@@ -78,7 +78,7 @@ html[data-theme='dockrev-dark'] {
   --panel2: var(--color-base-200);
 }
 
-html[data-theme='dockrev-light'] {
+html[data-theme='light'] {
   --color-base-100: #ffffff;
   --color-base-200: #f7f8fb;
   --color-base-300: #edf2f7;

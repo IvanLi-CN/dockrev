@@ -211,7 +211,7 @@ Dockrev 的目标是为单机 Docker/Compose 环境提供“可控、可审计�
 
 ### UI / Storybook (if applicable)
 
-- 本仓库当前未引入 Storybook；本计划不引入新工具。
+- 本仓库已在 `web/` 引入 Storybook（见计划 #0002）；本计划本身不额外引入 UI 工具链与平台（例如 Chromatic）。
 - UI 视觉规范参考 DaisyUI（flat, `--depth: 0`, `--noise: 0`），并维护可落地的主题草案：`docs/plan/0001:dockrev-compose-updater/ui/daisyui-theme.md`。
 - UI 设计图（深色/亮色）与可视化预览：
   - 预览页：`docs/plan/0001:dockrev-compose-updater/ui/preview.html`（含 `Measure` 按钮用于浏览器内测量行/卡片内边距）

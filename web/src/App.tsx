@@ -8,6 +8,8 @@ import { ServicesPage } from './pages/ServicesPage'
 import { ServiceDetailPage } from './pages/ServiceDetailPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { useRoute } from './useRoute'
+import { Switch } from './ui'
+import { getTheme, setTheme, type DockrevTheme } from './theme'
 
 function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbarHint?: string } {
   switch (route.name) {
@@ -34,10 +36,29 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
 
 export default function App() {
   const route = useRoute()
-  const [topActions, setTopActions] = useState<ReactNode>(null)
+  const [pageActions, setPageActions] = useState<ReactNode>(null)
   const [composeHint, setComposeHint] = useState<{ path?: string; profile?: string; lastScan?: string }>({})
+  const [theme, setThemeState] = useState<DockrevTheme>(() => getTheme())
 
   const head = useMemo(() => pageTitle(route), [route])
+  const topActions = useMemo(() => {
+    return (
+      <>
+        {pageActions}
+        <div className="themeToggle">
+          <span className="muted">主题</span>
+          <Switch
+            checked={theme === 'dark'}
+            onChange={(checked) => {
+              const next: DockrevTheme = checked ? 'dark' : 'light'
+              setTheme(next)
+              setThemeState(next)
+            }}
+          />
+        </div>
+      </>
+    )
+  }, [pageActions, theme])
 
   return (
     <AppShell
@@ -48,16 +69,16 @@ export default function App() {
       topActions={topActions}
       composeHint={composeHint}
     >
-      {route.name === 'overview' ? <OverviewPage onComposeHint={setComposeHint} onTopActions={setTopActions} /> : null}
-      {route.name === 'queue' ? <QueuePage onTopActions={setTopActions} /> : null}
-      {route.name === 'services' ? <ServicesPage onComposeHint={setComposeHint} onTopActions={setTopActions} /> : null}
-      {route.name === 'settings' ? <SettingsPage onTopActions={setTopActions} /> : null}
+      {route.name === 'overview' ? <OverviewPage onComposeHint={setComposeHint} onTopActions={setPageActions} /> : null}
+      {route.name === 'queue' ? <QueuePage onTopActions={setPageActions} /> : null}
+      {route.name === 'services' ? <ServicesPage onComposeHint={setComposeHint} onTopActions={setPageActions} /> : null}
+      {route.name === 'settings' ? <SettingsPage onTopActions={setPageActions} /> : null}
       {route.name === 'service' ? (
         <ServiceDetailPage
           stackId={route.stackId}
           serviceId={route.serviceId}
           onComposeHint={setComposeHint}
-          onTopActions={setTopActions}
+          onTopActions={setPageActions}
         />
       ) : null}
     </AppShell>
