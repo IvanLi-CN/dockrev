@@ -60,11 +60,12 @@ jobs:
             echo "missing release tag_name" >&2
             exit 1
           fi
-          if [[ "${tag}" != v* ]]; then
-            echo "expected release tag to start with v: ${tag}" >&2
+          if [[ ! "${tag}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "expected release tag to be <semver> (no 'v' prefix): ${tag}" >&2
             exit 1
           fi
-          echo "APP_EFFECTIVE_VERSION=${tag#v}" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=${tag}" >> "$GITHUB_ENV"
+          echo "APP_EFFECTIVE_VERSION=${tag}" >> "$GITHUB_ENV"
 
       - name: Configure Git user
         if: github.event_name == 'workflow_run'
@@ -77,8 +78,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="v${APP_EFFECTIVE_VERSION}"
+          tag="${APP_EFFECTIVE_VERSION}"
           echo "target tag: $tag"
+          echo "RELEASE_TAG=${tag}" >> "$GITHUB_ENV"
           if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
             echo "Tag ${tag} already exists. Skipping push."
           else
@@ -196,8 +198,8 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag: v${{ env.APP_EFFECTIVE_VERSION }}
-          name: v${{ env.APP_EFFECTIVE_VERSION }}
+          tag: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
           generateReleaseNotes: true
           allowUpdates: true
           replacesArtifacts: true
@@ -226,7 +228,7 @@ jobs:
           echo "image=${image}" >> "$GITHUB_OUTPUT"
           {
             echo "tags<<EOF"
-            echo "${image}:v${APP_EFFECTIVE_VERSION}"
+            echo "${image}:${APP_EFFECTIVE_VERSION}"
             if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" ]]; then
               echo "${image}:latest"
             fi

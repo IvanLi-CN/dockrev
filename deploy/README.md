@@ -40,10 +40,10 @@ Replace the `build:` section with:
 ```yaml
 services:
   dockrev:
-    image: ghcr.io/<owner>/dockrev:v<semver>
+    image: ghcr.io/ivanli-cn/dockrev:<semver>
 ```
 
 Notes:
 
-- `latest` is only updated by `push` to `main`; `release: published` only pushes `v<semver>`.
+- `latest` is only updated by `push` to `main`; `release: published` only pushes `<semver>`.
 - The image supports both direct socket mount and `DOCKER_HOST` (e.g. `tcp://docker-socket-proxy:2375`).

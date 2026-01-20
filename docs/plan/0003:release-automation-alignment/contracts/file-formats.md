@@ -4,10 +4,10 @@
 
 ## Git tag & GitHub Release naming
 
-- Tag format: `v<semver>`
-  - Example: `v0.1.0`
+- Tag format: `<semver>`
+  - Example: `0.1.0`
 - Release:
-  - Release name 与 tag 对齐（例如 `v0.1.0`）
+  - Release name 与 tag 对齐（例如 `0.1.0`）
   - Release notes：默认使用 GitHub 自动生成（`generate_release_notes: true`）
 
 ## GHCR image naming & tagging
@@ -16,9 +16,9 @@
 
 ### Single image (fixed)
 
-- App image: `ghcr.io/<owner>/dockrev`
+- App image: `ghcr.io/ivanli-cn/dockrev`
 - Tags (minimum):
-  - `v<semver>`（例如 `v0.1.0`）
+  - `<semver>`（例如 `0.1.0`）
   - `latest`（仅默认分支 / `main`）
 
 ### Explicitly forbidden
