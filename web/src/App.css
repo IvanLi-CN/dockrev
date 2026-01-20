@@ -34,6 +34,12 @@
   gap: 12px;
 }
 
+.themeToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .brand {
   font-size: 16px;
   font-weight: 650;
@@ -458,7 +464,7 @@
     border-color 160ms ease;
 }
 
-html[data-theme='dockrev-light'] .switchSlider {
+html[data-theme='light'] .switchSlider {
   background: rgba(15, 23, 42, 0.03);
 }
 
@@ -499,7 +505,7 @@ html[data-theme='dockrev-light'] .switchSlider {
   color: var(--text);
 }
 
-html[data-theme='dockrev-light'] .input {
+html[data-theme='light'] .input {
   background: rgba(15, 23, 42, 0.03);
 }
 
