@@ -11,17 +11,19 @@ use axum::{
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
+use serde::Serialize;
 use serde_json::json;
 
 use crate::{
     backup, candidates, compose, error::ApiError, ids, ignore, notify, registry, state::AppState,
-    updater,
+    ui, updater,
 };
 use types::*;
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/health", get(health))
+        .route("/api/version", get(version))
         .route("/api/stacks", get(list_stacks).post(register_stack))
         .route("/api/stacks/{stack_id}", get(get_stack))
         .route("/api/checks", post(trigger_check))
@@ -48,10 +50,22 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/webhooks/trigger", post(webhook_trigger))
         .route("/api/settings", get(get_settings).put(put_settings))
         .with_state(state)
+        .merge(ui::router())
 }
 
 async fn health() -> &'static str {
     "ok"
+}
+
+#[derive(Serialize)]
+struct VersionResponse {
+    version: String,
+}
+
+async fn version(State(state): State<Arc<AppState>>) -> Json<VersionResponse> {
+    Json(VersionResponse {
+        version: state.config.app_effective_version.clone(),
+    })
 }
 
 async fn list_stacks(
