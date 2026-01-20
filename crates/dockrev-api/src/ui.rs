@@ -8,7 +8,7 @@ use axum::{
 };
 use include_dir::{Dir, include_dir};
 
-static WEB_DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../web/dist");
+static WEB_DIST: Dir<'_> = include_dir!("$OUT_DIR/dockrev-ui-dist");
 
 pub fn router() -> Router {
     Router::new()
@@ -37,6 +37,10 @@ async fn fallback(Path(path): Path<String>) -> Response {
 
     if path.is_empty() {
         return index().await;
+    }
+
+    if path == "api" || path.starts_with("api/") {
+        return StatusCode::NOT_FOUND.into_response();
     }
 
     if let Some(resp) = serve_path(&path) {

@@ -117,6 +117,24 @@ async fn version_ok() {
 }
 
 #[tokio::test]
+async fn unknown_api_path_is_not_swallowed_by_ui_fallback() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/does-not-exist")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
 async fn register_stack_then_check_updates() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
