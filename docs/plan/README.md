@@ -59,3 +59,4 @@
 | 0003 | CI/CD: 自动发布（GHCR + GitHub Release Assets）对标与补齐 | 已完成 | `0003:release-automation-alignment/PLAN.md` | 2026-01-21 | 单镜像 `dockrev`；仅 workflow_run 触发；Release assets: linux/amd64+arm64（gnu+musl）；CI 运行测试；web 资源嵌入；docker.sock+socket-proxy；PR #5 |
 | 0004 | CI/CD: 自动发布时“同步发布镜像”口径冻结与验收 | 已完成 | `0004:auto-release-publish-image/PLAN.md` | 2026-01-21 | 冻结：仅 workflow_run；镜像成功后才创建/更新 Release；允许“镜像已推送但 Release 失败”残留（不清理，需清晰报错） |
 | 0005 | CI/CD: GitHub Actions 构建提速（策略与验收） | 部分完成（6/7） | `0005:github-actions-performance/PLAN.md` | 2026-01-21 | 实现分支：`feat/0005-github-actions-performance`；冻结：native arm runner（ubuntu-24.04-arm）；PR 允许 gating；Docker 产物优先打包；buildx cache best-effort |
+| 0006 | CI/CD: 自动发版意图标签与发布限制（防止 docs-only 发版） | 待实现 | `0006:release-intent-label-gating/PLAN.md` | 2026-01-21 | 参考 catnap PR #9：PR label gate（type:docs|skip|patch|minor|major，缺失即失败）+ main release-intent；无关联 PR / API 失败 / 多 PR=保守跳过；bump 仅由标签决定（major|minor|patch） |
