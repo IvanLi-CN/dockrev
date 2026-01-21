@@ -1,5 +1,22 @@
 # syntax=docker/dockerfile:1
 
+FROM docker:29-cli AS docker-cli
+
+FROM alpine:3.20 AS runtime-base
+RUN apk add --no-cache ca-certificates \
+  && update-ca-certificates \
+  && mkdir -p /usr/local/libexec/docker/cli-plugins
+
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
+RUN ln -sf /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
+
+ARG APP_EFFECTIVE_VERSION
+ENV APP_EFFECTIVE_VERSION="${APP_EFFECTIVE_VERSION}"
+
+EXPOSE 50883
+CMD ["/usr/local/bin/dockrev"]
+
 FROM node:20-alpine AS web-builder
 WORKDIR /app
 
@@ -32,21 +49,9 @@ RUN case "${TARGETARCH}" in \
   && cargo build -p dockrev-api --bin dockrev --release --locked --target "${target}" \
   && cp "target/${target}/release/dockrev" /src/dockrev
 
-FROM docker:29-cli AS docker-cli
+FROM runtime-base AS runtime-prebuilt
+ARG TARGETARCH
+COPY dist/ci/docker/${TARGETARCH}/dockrev /usr/local/bin/dockrev
 
-FROM alpine:3.20 AS runtime
-RUN apk add --no-cache ca-certificates \
-  && update-ca-certificates \
-  && mkdir -p /usr/local/libexec/docker/cli-plugins
-
-COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
-COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
-RUN ln -sf /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
-
+FROM runtime-base AS runtime
 COPY --from=builder /src/dockrev /usr/local/bin/dockrev
-
-ARG APP_EFFECTIVE_VERSION
-ENV APP_EFFECTIVE_VERSION="${APP_EFFECTIVE_VERSION}"
-
-EXPOSE 50883
-CMD ["/usr/local/bin/dockrev"]
