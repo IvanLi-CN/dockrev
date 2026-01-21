@@ -16,32 +16,41 @@ env:
   RUST_TOOLCHAIN: "1.91.0"
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      web: ${{ steps.filter.outputs.web }}
+      docker: ${{ steps.filter.outputs.docker }}
+    steps:
+      - name: Paths filter
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            web:
+              - "web/**"
+            docker:
+              - "Dockerfile"
+              - ".github/**"
+              - "deploy/**"
+              - "Cargo.toml"
+              - "Cargo.lock"
+              - "crates/**"
+              - "src/**"
+              - "web/**"
+
   lint:
     name: Lint & Checks
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      CARGO_TARGET_DIR: target/ci/pr/${{ github.job }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: Build web (optional)
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -f web/package.json ]]; then
-            cd web
-            npm ci
-            npm run build
-          else
-            echo "No web/ package; skipping"
-          fi
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libsqlite3-dev
@@ -60,10 +69,10 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+            ${{ env.CARGO_TARGET_DIR }}
+          key: ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}-${{ github.job }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-
 
       - name: Cargo fmt check
         run: cargo fmt --all -- --check
@@ -74,46 +83,15 @@ jobs:
       - name: Cargo check
         run: cargo check --workspace --locked --all-targets --all-features
 
-      - name: Front-end lint (optional)
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -f web/package.json ]]; then
-            cd web
-            npm run lint
-            npm run build-storybook -- --quiet
-            npx playwright install --with-deps chromium
-            npm run test-storybook
-          else
-            echo "No web/ package; skipping"
-          fi
-
   unit-tests:
     name: Backend Tests
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      CARGO_TARGET_DIR: target/ci/pr/${{ github.job }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: Build web (optional)
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -f web/package.json ]]; then
-            cd web
-            npm ci
-            npm run build
-          else
-            echo "No web/ package; skipping"
-          fi
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libsqlite3-dev
@@ -129,27 +107,73 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+            ${{ env.CARGO_TARGET_DIR }}
+          key: ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}-${{ github.job }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-
 
       - name: Run cargo test
         run: cargo test --workspace --locked --all-features
 
-  pr-release-check:
-    name: Release build check (PR)
+  frontend:
+    name: Frontend (lint + Storybook)
     runs-on: ubuntu-latest
-    needs: [lint, unit-tests]
-    env:
-      # Multi-arch (via QEMU) is validated on main/release publishes; keep PR checks fast.
-      PLATFORMS: linux/amd64
-    timeout-minutes: 45
+    needs: [changes]
+    if: ${{ needs.changes.outputs.web == 'true' }}
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: npm ci
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd web
+          npm ci
+
+      - name: Restore Playwright browser cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('web/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Front-end lint + build + Storybook tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd web
+          npm run lint
+          npm run build
+          npm run build-storybook -- --quiet
+          npx playwright install --with-deps chromium
+          npm run test-storybook
+
+  pr-release-check:
+    name: Release build check (PR)
+    runs-on: ubuntu-latest
+    needs: [changes, lint, unit-tests]
+    if: ${{ needs.changes.outputs.docker == 'true' }}
+    env:
+      # Multi-arch (via QEMU) is validated on main/release publishes; keep PR checks fast.
+      PLATFORMS: linux/amd64
+      CARGO_TARGET_DIR: target/ci/pr
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js (only when web changed)
+        if: ${{ needs.changes.outputs.web == 'true' }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -167,12 +191,13 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+            ${{ env.CARGO_TARGET_DIR }}
+          key: ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}-${{ github.job }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-
 
-      - name: Build web (optional)
+      - name: Build web (only when web changed)
+        if: ${{ needs.changes.outputs.web == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -190,21 +215,19 @@ jobs:
       - name: Add musl target
         run: rustup target add x86_64-unknown-linux-musl
 
-      - name: Build dockrev (linux/amd64 musl)
+      - name: Build dockrev (linux/amd64 musl) + stage docker artifact
         shell: bash
         run: |
           set -euo pipefail
-          export CARGO_TARGET_DIR=target/ci/pr
           cargo build -p dockrev-api --bin dockrev --release --locked --target x86_64-unknown-linux-musl
+          mkdir -p dist/ci/docker/amd64
+          cp target/ci/pr/x86_64-unknown-linux-musl/release/dockrev dist/ci/docker/amd64/dockrev
 
       - name: Smoke test (linux/amd64 musl)
         shell: bash
         env:
-          DOCKREV_SMOKE_BIN: target/ci/pr/x86_64-unknown-linux-musl/release/dockrev
+          DOCKREV_SMOKE_BIN: dist/ci/docker/amd64/dockrev
         run: bash ./.github/scripts/smoke-test.sh
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -216,5 +239,8 @@ jobs:
           file: ./Dockerfile
           platforms: ${{ env.PLATFORMS }}
           push: false
+          target: runtime-prebuilt
+          cache-from: type=gha
+          cache-to: type=gha,mode=max,ignore-error=true
           build-args: |
             APP_EFFECTIVE_VERSION=0.0.0-pr

@@ -21,11 +21,14 @@ concurrency:
   group: release-${{ github.event.workflow_run.head_branch }}
 
 jobs:
-  release:
-    name: Release (tag, assets, ghcr)
+  prepare:
+    name: Prepare (version + tag)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 20
     if: github.event.workflow_run.conclusion == 'success'
+    outputs:
+      app_effective_version: ${{ steps.meta.outputs.app_effective_version }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
     steps:
       - name: Checkout (workflow_run)
         uses: actions/checkout@v4
@@ -36,6 +39,14 @@ jobs:
       - name: Compute effective version (main)
         shell: bash
         run: bash ./.github/scripts/compute-version.sh
+
+      - name: Export release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "app_effective_version=${APP_EFFECTIVE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${APP_EFFECTIVE_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Configure Git user
         run: |
@@ -48,7 +59,6 @@ jobs:
           set -euo pipefail
           tag="${APP_EFFECTIVE_VERSION}"
           echo "target tag: $tag"
-          echo "RELEASE_TAG=${tag}" >> "$GITHUB_ENV"
           if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
             echo "Tag ${tag} already exists. Skipping push."
           else
@@ -56,12 +66,65 @@ jobs:
             git push origin "${tag}"
           fi
 
+  build-web:
+    name: Build web dist
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [prepare]
+    env:
+      APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
+    steps:
+      - name: Checkout (workflow_run)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: web/package-lock.json
+
+      - name: Build web (optional)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f web/package.json ]]; then
+            cd web
+            npm ci
+            npm run build
+          else
+            echo "No web/ package; skipping"
+          fi
+
+      - name: Upload web dist artifact (if present)
+        if: ${{ hashFiles('web/dist/**') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist-${{ github.event.workflow_run.head_sha }}
+          path: web/dist
+
+  build-binaries-amd64:
+    name: Build binaries (amd64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [prepare, build-web]
+    env:
+      APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
+      CARGO_TARGET_DIR: target/ci/amd64
+    steps:
+      - name: Checkout (workflow_run)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Download web dist artifact (best-effort)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist-${{ github.event.workflow_run.head_sha }}
+          path: web/dist
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y musl-tools pkg-config libsqlite3-dev
@@ -77,61 +140,135 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+            ${{ env.CARGO_TARGET_DIR }}
+          key: ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}-${{ github.job }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-
 
-      - name: Build web (optional)
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -f web/package.json ]]; then
-            cd web
-            npm ci
-            npm run build
-          else
-            echo "No web/ package; skipping"
-          fi
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Add musl targets
+      - name: Add musl target
         run: rustup target add x86_64-unknown-linux-musl
 
       - name: Build release binaries (linux/amd64)
         shell: bash
         run: |
           set -euo pipefail
-          export CARGO_TARGET_DIR=target/ci/amd64
           cargo build -p dockrev-api --bin dockrev --release --locked
           cargo build -p dockrev-api --bin dockrev --release --locked --target x86_64-unknown-linux-musl
+
+      - name: Stage docker artifact (linux/amd64 musl)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/ci/docker/amd64
+          cp target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev dist/ci/docker/amd64/dockrev
 
       - name: Smoke test (linux/amd64 musl)
         shell: bash
         env:
-          DOCKREV_SMOKE_BIN: target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev
+          DOCKREV_SMOKE_BIN: dist/ci/docker/amd64/dockrev
           APP_EFFECTIVE_VERSION: ${{ env.APP_EFFECTIVE_VERSION }}
         run: bash ./.github/scripts/smoke-test.sh
+
+      - name: Upload binaries artifact (amd64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-amd64-${{ github.event.workflow_run.head_sha }}
+          path: |
+            target/ci/amd64/release/dockrev
+            target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev
+            dist/ci/docker/amd64/dockrev
+
+  build-binaries-arm64:
+    name: Build binaries (arm64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    needs: [prepare, build-web]
+    env:
+      APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
+      CARGO_TARGET_DIR: target/ci/arm64
+    steps:
+      - name: Checkout (workflow_run)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Download web dist artifact (best-effort)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist-${{ github.event.workflow_run.head_sha }}
+          path: web/dist
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y musl-tools pkg-config libsqlite3-dev
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Cache cargo directories
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ env.CARGO_TARGET_DIR }}
+          key: ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}-${{ github.job }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ env.RUST_TOOLCHAIN }}-
+
+      - name: Add musl target
+        run: rustup target add aarch64-unknown-linux-musl
 
       - name: Build release binaries (linux/arm64)
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm --platform linux/arm64 \
-            -v "${GITHUB_WORKSPACE}:/src" \
-            -w /src \
-            -e CARGO_TARGET_DIR=/src/target/ci/arm64 \
-            rust:1.91-bookworm bash -c '
-              set -euo pipefail
-              apt-get update
-              apt-get install -y --no-install-recommends musl-tools pkg-config ca-certificates
-              rm -rf /var/lib/apt/lists/*
-              rustup target add aarch64-unknown-linux-musl
-              cargo build -p dockrev-api --bin dockrev --release --locked
-              cargo build -p dockrev-api --bin dockrev --release --locked --target aarch64-unknown-linux-musl
-            '
+          cargo build -p dockrev-api --bin dockrev --release --locked
+          cargo build -p dockrev-api --bin dockrev --release --locked --target aarch64-unknown-linux-musl
+
+      - name: Stage docker artifact (linux/arm64 musl)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/ci/docker/arm64
+          cp target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev dist/ci/docker/arm64/dockrev
+
+      - name: Upload binaries artifact (arm64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-arm64-${{ github.event.workflow_run.head_sha }}
+          path: |
+            target/ci/arm64/release/dockrev
+            target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev
+            dist/ci/docker/arm64/dockrev
+
+  publish:
+    name: Publish (GHCR + GitHub Release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: [prepare, build-binaries-amd64, build-binaries-arm64]
+    env:
+      APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+    steps:
+      - name: Checkout (workflow_run)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Download binaries (amd64)
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-amd64-${{ github.event.workflow_run.head_sha }}
+          path: .
+
+      - name: Download binaries (arm64)
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-arm64-${{ github.event.workflow_run.head_sha }}
+          path: .
 
       - name: Package release assets
         shell: bash
@@ -169,6 +306,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -187,13 +327,16 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build and push Docker image
+      - name: Build and push Docker image (artifact-first)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
+          target: runtime-prebuilt
           platforms: ${{ env.PLATFORMS }}
           push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max,ignore-error=true
           tags: ${{ steps.docker-tags.outputs.tags }}
           labels: |
             org.opencontainers.image.version=${{ env.APP_EFFECTIVE_VERSION }}
@@ -227,3 +370,4 @@ jobs:
           echo "::error::Cause: see step 'Create or update GitHub Release + upload assets' logs above."
           echo "::error::Retry: Actions → workflow 'Release' → Re-run jobs (tag=${RELEASE_TAG})."
           exit 1
+

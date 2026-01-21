@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 部分完成（6/7）
 - Created: 2026-01-21
 - Last: 2026-01-21
 
@@ -173,12 +173,12 @@
 
 （用于驱动 Index 的 `部分完成（x/y）`：只统计本节的 checkbox。）
 
-- [ ] M1: `CI (PR)` 引入变更检测并对前端重型检查做 gating（后端改动不跑 Storybook/Playwright）
-- [ ] M2: `CI (PR)` 对 `Release build check (PR)` 做 gating（仅在影响镜像/发布链路的变更时运行）
-- [ ] M3: `CI (PR)`/`CI (main)` 去除后端 job 的 web build 依赖（保持 Rust 检查与测试结论不变）
-- [ ] M4: `Release` 使用原生 `ubuntu-24.04-arm` runner 构建 arm64 产物（移除 QEMU 下 arm64 编译路径）
-- [ ] M5: Docker 改为“产物优先”打包（workflow 产出二进制与 `web/dist`；docker build 只 COPY）
-- [ ] M6: Docker build 启用 buildx layer cache（GHA backend），并确保 cache 写入失败不致命
+- [x] M1: `CI (PR)` 引入变更检测并对前端重型检查做 gating（后端改动不跑 Storybook/Playwright）
+- [x] M2: `CI (PR)` 对 `Release build check (PR)` 做 gating（仅在影响镜像/发布链路的变更时运行）
+- [x] M3: `CI (PR)`/`CI (main)` 去除后端 job 的 web build 依赖（保持 Rust 检查与测试结论不变）
+- [x] M4: `Release` 使用原生 `ubuntu-24.04-arm` runner 构建 arm64 产物（移除 QEMU 下 arm64 编译路径）
+- [x] M5: Docker 改为“产物优先”打包（workflow 产出二进制与 `web/dist`；docker build 只 COPY）
+- [x] M6: Docker build 启用 buildx layer cache（GHA backend），并确保 cache 写入失败不致命
 - [ ] M7: 验证并记录提速收益（对照 baseline runs；更新 `Last` 与 Notes）
 
 ## 方案概述（Approach, high-level）
@@ -249,6 +249,7 @@
 
 - 2026-01-21: 创建计划，完成静态勘察并整理可选提速方案与待决策项。
 - 2026-01-21: 冻结关键取舍与时间目标，状态切换为 `待实现`。
+- 2026-01-21: 落地方案 B：PR/main job gating；Release arm64 原生 runner；Docker 改为 artifact-first target；Buildx GHA cache best-effort。
 
 ## 参考（References）
 
