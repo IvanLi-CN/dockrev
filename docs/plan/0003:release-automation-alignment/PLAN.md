@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-01-20
-- Last: 2026-01-20
+- Last: 2026-01-21
 
 ## 背景 / 问题陈述
 
@@ -16,7 +16,7 @@
 
 - 发布渠道：GHCR + GitHub Release（Release 必须附带二进制产物）。
 - Docker 镜像：仅允许单镜像（禁止出现双镜像），镜像名固定为 `dockrev`。
-- 触发策略：`push` 到 `main` 自动发布，同时也支持 `release: published` 触发发布（用于手动发布/兜底）。
+- 触发策略：仅保留 `workflow_run`（`CI (main)` 成功后自动发布；不再支持 `release: published`，见计划 #0004）。
 - 版本可观测：发布镜像内必须包含版本元数据（OCI labels / env / API 口径对齐）。
 - Web UI 静态资源：必须嵌入到服务端程序（不依赖运行时挂载/复制静态文件目录）。
 - Release assets 平台：至少包含 `linux/amd64` 与 `linux/arm64`。
@@ -89,11 +89,9 @@
 ### 统一版本口径
 
 - 统一版本变量：`APP_EFFECTIVE_VERSION=<semver>`（不带 `v` 前缀）。
-- `push main`：
+- `workflow_run`（`CI (main)` → `Release`）：
   - 运行 `.github/scripts/compute-version.sh` 得到 `APP_EFFECTIVE_VERSION`
   - 创建/推送 tag：`${APP_EFFECTIVE_VERSION}`（已存在则跳过）
-- `release: published`：
-  - 直接从 release tag 推导版本：`APP_EFFECTIVE_VERSION = <tag_name>`（tag_name 形如 `<semver>`）
 
 ### PR（pull_request → main）：只做“可预演校验”
 
@@ -107,24 +105,19 @@
 
 > PR 阶段不创建 tag/release，不上传 Release assets，不推送 GHCR。
 
-### 自动发布（push → main）：一次性产出全部产物
+### 自动发布（workflow_run：CI (main) → Release）：一次性产出全部产物
 
 1. `lint` + `unit-tests`
 2. 计算 `APP_EFFECTIVE_VERSION` → 创建/推送 `${APP_EFFECTIVE_VERSION}`
 3. 构建 Web（`npm ci` + `npm run build`）
 4. 构建 Release assets（4 targets：amd64/arm64 × gnu/musl），并生成 `sha256`
 5. 运行 smoke test（至少对 linux/amd64 的实际运行产物做验证；web/health/version 三项都要通过）
-6. 创建或更新 GitHub Release，并“替换式上传” assets（幂等）
-   - 采用 `ncipollo/release-action@v1`：`allowUpdates: true` + `replacesArtifacts: true`
-7. 构建并推送 GHCR 单镜像：
+6. 构建并推送 GHCR 单镜像：
    - Image: `ghcr.io/ivanli-cn/dockrev`
    - Platforms: `linux/amd64,linux/arm64`
    - Tags: `${APP_EFFECTIVE_VERSION}` + `latest`
-
-### 手动/兜底发布（release: published）：同一套发布逻辑
-
-1. 从 release tag 解析 `APP_EFFECTIVE_VERSION`
-2. 执行与 “push main” 相同的步骤 #3–#7，但 **不更新 `latest`**（只推 `${APP_EFFECTIVE_VERSION}`），避免手动发布意外改变默认版本指向。
+7. 创建或更新 GitHub Release，并“替换式上传” assets（幂等）
+   - 采用 `ncipollo/release-action@v1`：`allowUpdates: true` + `replacesArtifacts: true`
 
 ### Docker 镜像内 CLI/Compose（冻结口径）
 
@@ -190,10 +183,6 @@
   When 请求 `GET /`
   Then 返回 `200` 且 Content-Type 为 `text/html`（或等价），并包含可识别的 HTML 结构（例如 `<!doctype html>`）
 
-- Given 主人手动发布一个 GitHub Release（`release: published`）
-  When CI 在 release 事件上运行发布步骤
-  Then 会推送对应版本的单镜像 `ghcr.io/ivanli-cn/dockrev:<semver>`，并为该 Release 上传二进制 assets（命名与内容符合契约）
-
 - Given 发布流程被重复触发（例如重跑 workflow）
   When tag 已存在
   Then 流程行为明确且可预测：要么安全跳过 tag 创建并继续后续步骤，要么在不破坏仓库状态的前提下失败并给出明确原因
@@ -222,7 +211,6 @@
 - 当前 CI 存在明显未对齐点：
   - workflow 构建镜像使用 `file: ./Dockerfile`，但仓库当前只有 `deploy/Dockerfile.*`（实现阶段需补齐单镜像 `Dockerfile` 并对齐）。
   - workflow 当前 `PLATFORMS` 仅为 `linux/amd64`，与已确认的 `linux/arm64` 目标不一致（实现阶段需扩展）。
-  - workflow 虽已声明触发 `release: published`，但发布相关 job 目前仅在 `push main` 条件下执行（实现阶段需补齐 release 事件的发布路径）。
 - 单镜像要求会影响当前 `deploy/` 的形态：
   - 现有 `deploy/docker-compose.yml` 是 API+Nginx 双服务部署；实现阶段需给出“单镜像部署”的替代方式（或明确仅将 `deploy/` 作为本地演示，并同步文档）。
 - Release assets 需要可重复上传：已冻结为“替换式上传”（使用 `ncipollo/release-action@v1` 的 `allowUpdates` + `replacesArtifacts`）。
@@ -243,6 +231,7 @@
 ## Change log
 
 - 2026-01-20: 单镜像 Dockerfile + Web 资源嵌入 + `/api/version`，并对齐 CI（PR 预演构建校验、Release assets、GHCR 发布）。
+- 2026-01-21: 触发与同步语义对齐：移除 `release: published` 触发路径，改为仅 `workflow_run`，并调整为“先推镜像后建 Release”（见计划 #0004）。
 
 ## 风险与开放问题（需主人决策）
 
