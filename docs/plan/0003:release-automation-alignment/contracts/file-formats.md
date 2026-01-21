@@ -30,8 +30,7 @@
 ### Triggers
 
 - `pull_request`（to `main`）：执行 lint/tests + 发布链路构建校验（不 push）
-- `push`（to `main`）：执行 lint/tests + 自动打 tag/创建 Release + 上传 Release assets + 推送 GHCR 镜像（含 `latest`）
-- `release: published`（required，对标 `tavily-hikari`）：用于“手动发布/兜底”触发（从 release tag 推导版本并推送镜像，并上传 Release assets；不更新 `latest`）
+- `workflow_run`（`CI (main)` 成功后触发 `Release`）：自动打 tag/推送 GHCR 镜像（含 `latest`）+ 创建/更新 GitHub Release 并上传 Release assets
 
 ### Required permissions
 
@@ -49,8 +48,6 @@
 ### Target Dockerfile (for single image)
 
 - `Dockerfile`（repo root）
-
-> 当前 workflow 里 `docker/build-push-action` 指向 `file: ./Dockerfile`（但仓库目前并不存在该文件）。实现阶段需要补齐单镜像 `Dockerfile` 并与 workflow 对齐。
 
 ### Binary inside Docker image
 

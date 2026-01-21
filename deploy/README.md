@@ -45,5 +45,5 @@ services:
 
 Notes:
 
-- `latest` is only updated by `push` to `main`; `release: published` only pushes `<semver>`.
+- `latest` is updated only by the automatic release path after `CI (main)` succeeds on `main`.
 - The image supports both direct socket mount and `DOCKER_HOST` (e.g. `tcp://docker-socket-proxy:2375`).

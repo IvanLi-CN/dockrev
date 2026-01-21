@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-01-21
 - Last: 2026-01-21
 
@@ -111,11 +111,11 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 移除 `release: published` 触发路径（只保留 `workflow_run` 自动发布）
-- [ ] M2: 调整发布顺序：先 build+push GHCR 镜像，再创建/更新 GitHub Release + 上传 assets
-- [ ] M3: 明确失败语义与错误输出（镜像失败不得创建 Release；Release/asset 失败不清理镜像但 workflow 必须失败）
-- [ ] M4: PR 阶段继续保留 docker build 校验（不 push），确保 Dockerfile/构建不会在发布时才失败
-- [ ] M5: 文档对齐：`README.md` 补充镜像 tags 与发布触发说明（仅 `workflow_run`）
+- [x] M1: 移除 `release: published` 触发路径（只保留 `workflow_run` 自动发布）
+- [x] M2: 调整发布顺序：先 build+push GHCR 镜像，再创建/更新 GitHub Release + 上传 assets
+- [x] M3: 明确失败语义与错误输出（镜像失败不得创建 Release；Release/asset 失败不清理镜像但 workflow 必须失败）
+- [x] M4: PR 阶段继续保留 docker build 校验（不 push），确保 Dockerfile/构建不会在发布时才失败
+- [x] M5: 文档对齐：`README.md` 补充镜像 tags 与发布触发说明（仅 `workflow_run`）
 
 ## 方案概述（Approach, high-level）
 
@@ -134,6 +134,7 @@
 ## 变更记录（Change log）
 
 - 2026-01-21: 创建计划，冻结“同步发布镜像”的口径与待决策项。
+- 2026-01-21: 落地实现：`release.yml` 仅保留 `workflow_run`，并保证“先推镜像后建 Release”；失败时输出可重试说明。
 
 ## 参考（References）
 

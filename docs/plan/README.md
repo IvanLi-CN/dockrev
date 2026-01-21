@@ -56,5 +56,5 @@
 |-----:|-------|--------|------|------|-------|
 | 0001 | Dockrev: Docker/Compose 更新管理器（MVP→生产） | 已完成 | `0001:dockrev-compose-updater/PLAN.md` | 2026-01-19 | UI 已对齐 mockups；Jobs 审计与 webhook trigger 已补齐；PR #2 |
 | 0002 | Web: Storybook（组件覆盖 + 主题切换） | 已完成 | `0002:storybook-theme-switching/PLAN.md` | 2026-01-20 | - |
-| 0003 | CI/CD: 自动发布（GHCR + GitHub Release Assets）对标与补齐 | 已完成 | `0003:release-automation-alignment/PLAN.md` | 2026-01-20 | 单镜像 `dockrev`；push+release 双触发；Release assets: linux/amd64+arm64（gnu+musl）；CI 运行测试；web 资源嵌入；docker.sock+socket-proxy；PR #5 |
-| 0004 | CI/CD: 自动发布时“同步发布镜像”口径冻结与验收 | 待实现 | `0004:auto-release-publish-image/PLAN.md` | 2026-01-21 | 冻结：仅 workflow_run；镜像成功后才创建/更新 Release；允许“镜像已推送但 Release 失败”残留（不清理，需清晰报错） |
+| 0003 | CI/CD: 自动发布（GHCR + GitHub Release Assets）对标与补齐 | 已完成 | `0003:release-automation-alignment/PLAN.md` | 2026-01-21 | 单镜像 `dockrev`；仅 workflow_run 触发；Release assets: linux/amd64+arm64（gnu+musl）；CI 运行测试；web 资源嵌入；docker.sock+socket-proxy；PR #5 |
+| 0004 | CI/CD: 自动发布时“同步发布镜像”口径冻结与验收 | 已完成 | `0004:auto-release-publish-image/PLAN.md` | 2026-01-21 | 冻结：仅 workflow_run；镜像成功后才创建/更新 Release；允许“镜像已推送但 Release 失败”残留（不清理，需清晰报错） |
