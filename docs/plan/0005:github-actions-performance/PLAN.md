@@ -2,9 +2,9 @@
 
 ## 状态
 
-- Status: 部分完成（6/7）
+- Status: 已完成
 - Created: 2026-01-21
-- Last: 2026-01-21
+- Last: 2026-01-22
 
 ## 背景 / 问题陈述
 
@@ -179,7 +179,7 @@
 - [x] M4: `Release` 使用原生 `ubuntu-24.04-arm` runner 构建 arm64 产物（移除 QEMU 下 arm64 编译路径）
 - [x] M5: Docker 改为“产物优先”打包（workflow 产出二进制与 `web/dist`；docker build 只 COPY）
 - [x] M6: Docker build 启用 buildx layer cache（GHA backend），并确保 cache 写入失败不致命
-- [ ] M7: 验证并记录提速收益（对照 baseline runs；更新 `Last` 与 Notes）
+- [x] M7: 验证并记录提速收益（对照 baseline runs；更新 `Last` 与 Notes）
 
 ## 方案概述（Approach, high-level）
 
@@ -250,6 +250,7 @@
 - 2026-01-21: 创建计划，完成静态勘察并整理可选提速方案与待决策项。
 - 2026-01-21: 冻结关键取舍与时间目标，状态切换为 `待实现`。
 - 2026-01-21: 落地方案 B：PR/main job gating；Release arm64 原生 runner；Docker 改为 artifact-first target；Buildx GHA cache best-effort。
+- 2026-01-22: 验证提速收益（对照 baseline）：`CI (PR)` run `21219660095` 约 1m41s（frontend + pr-release-check 被 gating 跳过）；`Release` run `21220384586` 约 3m03s（arm64 binaries 约 27s，runner: `ubuntu-24.04-arm`）。
 
 ## 参考（References）
 
