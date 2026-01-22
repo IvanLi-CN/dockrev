@@ -2,7 +2,7 @@
   <defs>
     <style>
       :root {
-        /* DaisyUI theme tokens (dark) — aligned with Plan #0001 Dockrev web mockups */
+        /* Dockrev Web tokens (see web/src/index.css: html[data-theme='dark']) */
         --color-base-100: #0f172a;
         --color-base-200: #0b1020;
         --color-base-300: #070b15;
@@ -10,151 +10,144 @@
 
         --color-primary: #38bdf8;
         --color-primary-content: #001018;
-        --color-secondary: #a78bfa;
-        --color-secondary-content: #0b1020;
-        --color-accent: #22c55e;
-        --color-accent-content: #041008;
-        --color-neutral: #111827;
-        --color-neutral-content: #e5e7eb;
-        --color-info: #38bdf8;
-        --color-info-content: #001018;
         --color-success: #22c55e;
-        --color-success-content: #041008;
         --color-warning: #f59e0b;
-        --color-warning-content: #1a1200;
         --color-error: #fb7185;
         --color-error-content: #1a0006;
 
-        --radius-selector: 1rem;
-        --radius-field: 0.75rem;
-        --radius-box: 1rem;
-        --size-selector: 0.25rem;
-        --size-field: 0.25rem;
-        --border: 1px;
-        --depth: 0;
-        --noise: 0;
+        --dockrev-surface: rgba(255, 255, 255, 0.035);
+        --borderColor: rgba(229, 231, 235, 0.12);
+        --muted: rgba(229, 231, 235, 0.78);
+        --muted2: rgba(229, 231, 235, 0.56);
+        --text: rgba(229, 231, 235, 0.92);
 
-        /* aliases used by the SVG mock */
         --bg: var(--color-base-200);
         --panel: var(--color-base-100);
         --panel2: var(--color-base-200);
-        --borderColor: rgba(229,231,235,.12);
-        --dockrev-surface: rgba(255,255,255,.035);
-        --muted: rgba(229,231,235,.78);
-        --muted2: rgba(229,231,235,.56);
-        --text: rgba(229,231,235,.92);
-        --accent: var(--color-primary);
-        --ok: var(--color-success);
-        --warn: var(--color-warning);
-        --bad: var(--color-error);
       }
 
       text { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
-      .title { font-size: 16px; fill: var(--text); font-weight: 650; }
-      .h1 { font-size: 22px; fill: var(--text); font-weight: 750; }
-      .h2 { font-size: 14px; fill: var(--text); font-weight: 650; }
+      .brand { font-size: 16px; font-weight: 650; fill: var(--text); }
+      .hint { font-size: 12px; fill: var(--muted2); }
+      .h1 { font-size: 22px; font-weight: 750; fill: var(--text); }
+      .title { font-size: 16px; font-weight: 650; fill: var(--text); }
       .label { font-size: 12px; fill: var(--muted); }
       .muted { font-size: 12px; fill: var(--muted2); }
       .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; fill: var(--muted); }
-      .btn { fill: var(--color-primary); }
-      .btnText { font-size: 12px; fill: var(--color-primary-content); font-weight: 800; }
-      .chip { fill: rgba(229,231,235,.08); }
-      .chipText { font-size: 11px; fill: rgba(229,231,235,.78); font-weight: 650; }
-      .card { fill: var(--panel); }
-      .row { fill: var(--dockrev-surface); }
-      .group { fill: var(--dockrev-surface); }
-      .ok { fill: var(--ok); }
-      .warn { fill: var(--warn); }
-      .bad { fill: var(--bad); }
-      .icon { fill: none; stroke: rgba(255,255,255,.44); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
+
+      .line { stroke: var(--borderColor); stroke-width: 1; }
+      .card { fill: var(--panel); stroke: var(--borderColor); stroke-width: 1; }
+      .surface { fill: var(--dockrev-surface); }
+
+      .btnPrimary { fill: var(--color-primary); }
+      .btnDanger { fill: var(--color-error); }
+      .btnGhost { fill: var(--dockrev-surface); stroke: var(--borderColor); stroke-width: 1; }
+      .btnTextPrimary { font-size: 12px; font-weight: 800; fill: var(--color-primary-content); }
+      .btnTextDanger { font-size: 12px; font-weight: 800; fill: var(--color-error-content); }
+      .btnTextGhost { font-size: 12px; font-weight: 800; fill: var(--text); }
+
+      .pill { fill: rgba(229, 231, 235, 0.08); stroke: rgba(229, 231, 235, 0.18); stroke-width: 1; }
+      .pillOk { fill: rgba(34, 197, 94, 0.1); stroke: rgba(34, 197, 94, 0.35); stroke-width: 1; }
+      .pillWarn { fill: rgba(245, 158, 11, 0.1); stroke: rgba(245, 158, 11, 0.35); stroke-width: 1; }
+      .pillBad { fill: rgba(251, 113, 133, 0.12); stroke: rgba(251, 113, 133, 0.35); stroke-width: 1; }
+      .pillText { font-size: 11px; font-weight: 650; fill: var(--muted); }
+      .pillTextOk { font-size: 11px; font-weight: 650; fill: var(--color-success); }
+      .pillTextWarn { font-size: 11px; font-weight: 650; fill: var(--color-warning); }
+      .pillTextBad { font-size: 11px; font-weight: 650; fill: var(--color-error); }
     </style>
   </defs>
 
   <rect x="0" y="0" width="1440" height="900" fill="var(--bg)"/>
 
-  <!-- Top bar -->
+  <!-- Topbar -->
   <rect x="0" y="0" width="1440" height="64" fill="var(--panel2)"/>
-  <text x="28" y="40" class="title">Dockrev</text>
-  <text x="110" y="40" class="muted">Stack 详情（Auto-Discovery / 归档与恢复）</text>
+  <line x1="0" y1="64" x2="1440" y2="64" class="line"/>
+  <text x="28" y="40" class="brand">Dockrev</text>
+  <text x="110" y="40" class="hint">服务详情（Stack / Service 归档与恢复）</text>
 
-  <rect x="1108" y="18" width="136" height="28" rx="8" class="btn"/>
-  <text x="1176" y="37" class="btnText" text-anchor="middle">归档 stack</text>
-  <rect x="1258" y="18" width="154" height="28" rx="8" class="chip"/>
-  <text x="1335" y="37" class="chipText" text-anchor="middle">打开归档箱</text>
+  <!-- Page actions (ServiceDetailPage style: primary + danger + ghost) -->
+  <rect x="860" y="18" width="112" height="28" rx="8" class="btnPrimary"/>
+  <text x="916" y="37" class="btnTextPrimary" text-anchor="middle">恢复服务</text>
+  <rect x="984" y="18" width="124" height="28" rx="8" class="btnDanger"/>
+  <text x="1046" y="37" class="btnTextDanger" text-anchor="middle">归档此服务</text>
+  <rect x="1120" y="18" width="120" height="28" rx="8" class="btnGhost"/>
+  <text x="1180" y="37" class="btnTextGhost" text-anchor="middle">归档 stack</text>
+  <rect x="1252" y="18" width="172" height="28" rx="8" class="btnGhost"/>
+  <text x="1338" y="37" class="btnTextGhost" text-anchor="middle">打开归档箱</text>
 
   <!-- Sidebar -->
   <rect x="0" y="64" width="256" height="836" fill="var(--panel2)"/>
+  <line x1="256" y1="64" x2="256" y2="900" class="line"/>
   <text x="28" y="110" class="label">导航</text>
-  <rect x="16" y="130" width="224" height="40" rx="10" fill="rgba(255,255,255,.00)"/>
+  <rect x="16" y="130" width="224" height="40" rx="10" fill="rgba(0,0,0,0)"/>
   <text x="44" y="155" class="label">概览</text>
-  <rect x="16" y="178" width="224" height="40" rx="10" fill="rgba(110,231,255,.05)"/>
-  <text x="44" y="203" class="h2">服务</text>
-  <rect x="16" y="226" width="224" height="40" rx="10" fill="rgba(255,255,255,.00)"/>
-  <text x="44" y="251" class="label">归档箱</text>
+  <rect x="16" y="178" width="224" height="40" rx="10" fill="rgba(0,0,0,0)"/>
+  <text x="44" y="203" class="label">更新队列</text>
+  <rect x="16" y="226" width="224" height="40" rx="10" fill="rgba(110, 231, 255, 0.05)"/>
+  <text x="44" y="251" class="title">服务</text>
+  <rect x="16" y="274" width="224" height="40" rx="10" fill="rgba(0,0,0,0)"/>
+  <text x="44" y="299" class="label">系统设置</text>
 
-  <!-- Content -->
-  <text x="296" y="112" class="h1">Stack：blog</text>
-  <text x="296" y="138" class="muted">归档仅影响可见性；归档对象仍参与更新计数，但不会触发通知发送。</text>
+  <!-- Main: detail header (similar to ServiceDetailPage title row) -->
+  <text x="280" y="112" class="h1">服务：worker</text>
+  <text x="280" y="138" class="mono">ghcr.io/acme/worker</text>
+  <text x="280" y="162" class="muted">stack <tspan class="mono">blog</tspan> · serviceId <tspan class="mono">svc_123</tspan></text>
 
-  <!-- Summary cards -->
-  <rect x="296" y="164" width="1116" height="96" rx="16" class="card"/>
-  <text x="316" y="200" class="label">状态</text>
-  <rect x="360" y="184" width="88" height="26" rx="10" class="chip"/>
-  <text x="404" y="201" class="chipText" text-anchor="middle">active</text>
-  <rect x="456" y="184" width="96" height="26" rx="10" class="chip"/>
-  <text x="504" y="201" class="chipText" text-anchor="middle">services: 7</text>
-  <rect x="560" y="184" width="118" height="26" rx="10" class="chip"/>
-  <text x="619" y="201" class="chipText" text-anchor="middle">archived: 2</text>
+  <!-- Banner (simplified) -->
+  <rect x="280" y="186" width="1136" height="78" rx="16" class="card"/>
+  <text x="300" y="220" class="title">已归档（仅隐藏）</text>
+  <text x="300" y="246" class="muted">归档对象仍参与 check/update 计算与计数展示，但不会触发通知发送</text>
+  <rect x="1240" y="214" width="156" height="28" rx="8" class="btnPrimary"/>
+  <text x="1318" y="233" class="btnTextPrimary" text-anchor="middle">恢复到主视图</text>
 
-  <text x="316" y="236" class="label">可更新（服务数）</text>
-  <text x="430" y="236" class="h2">3</text>
-  <text x="468" y="236" class="muted">（含归档服务；仅 UI 计数，不发送通知）</text>
+  <!-- Two-column cards (mirrors .twoCol layout in ServiceDetailPage) -->
+  <rect x="280" y="284" width="560" height="250" rx="16" class="card"/>
+  <text x="300" y="318" class="title">Stack 状态</text>
+  <text x="300" y="342" class="muted">missing：一轮未见即 missing；进程重启后默认归档隐藏</text>
+  <text x="300" y="372" class="label">lastSeen</text>
+  <text x="420" y="372" class="mono">2026/01/22 13:20</text>
+  <text x="300" y="400" class="label">composeFiles</text>
+  <text x="420" y="400" class="mono">/srv/blog/compose.yml</text>
+  <rect x="300" y="424" width="74" height="24" rx="999" class="pillWarn"/>
+  <text x="337" y="441" class="pillTextWarn" text-anchor="middle">missing</text>
+  <text x="382" y="442" class="muted">当前扫描未见容器</text>
 
-  <!-- Services list -->
-  <text x="296" y="304" class="title">Services</text>
-  <rect x="296" y="320" width="1116" height="52" rx="12" class="row"/>
-  <text x="316" y="350" class="label">名称</text>
-  <text x="520" y="350" class="label">镜像</text>
-  <text x="920" y="350" class="label">状态</text>
-  <text x="1260" y="350" class="label">操作</text>
+  <rect x="856" y="284" width="560" height="250" rx="16" class="card"/>
+  <text x="876" y="318" class="title">归档设置</text>
+  <text x="876" y="342" class="muted">支持归档 service 或 stack；不做删除；归档箱提供恢复入口</text>
+  <text x="876" y="372" class="label">service.archived</text>
+  <rect x="1004" y="360" width="92" height="26" rx="10" class="surface" stroke="var(--borderColor)" stroke-width="1"/>
+  <text x="1050" y="377" class="pillText" text-anchor="middle">true</text>
+  <text x="876" y="408" class="label">stack.archived</text>
+  <rect x="1004" y="396" width="92" height="26" rx="10" class="surface" stroke="var(--borderColor)" stroke-width="1"/>
+  <text x="1050" y="413" class="pillText" text-anchor="middle">false</text>
+  <text x="876" y="448" class="muted">归档后仍计入“有更新的服务数量”；仅禁用通知</text>
 
-  <!-- web -->
-  <rect x="296" y="384" width="1116" height="52" rx="12" class="row"/>
-  <text x="316" y="414" class="h2">web</text>
-  <text x="520" y="414" class="mono">ghcr.io/acme/web:5.2 → 5.3</text>
-  <rect x="920" y="398" width="96" height="26" rx="10" class="chip"/>
-  <text x="968" y="415" class="chipText" text-anchor="middle">update</text>
-  <rect x="1240" y="398" width="156" height="26" rx="10" class="chip"/>
-  <text x="1318" y="415" class="chipText" text-anchor="middle">归档 service</text>
+  <!-- Service list (within stack) -->
+  <text x="280" y="574" class="title">同一 stack 的 services</text>
+  <rect x="280" y="592" width="1136" height="40" rx="10" class="surface"/>
+  <text x="300" y="616" class="label">Service</text>
+  <text x="480" y="616" class="label">Image</text>
+  <text x="780" y="616" class="label">Current → Candidate</text>
+  <text x="1180" y="616" class="label">状态 / 备注</text>
 
-  <!-- worker (archived) -->
-  <rect x="296" y="444" width="1116" height="52" rx="12" class="row"/>
-  <text x="316" y="474" class="h2">worker</text>
-  <text x="520" y="474" class="mono">ghcr.io/acme/worker:1.1 → 1.2</text>
-  <rect x="920" y="458" width="96" height="26" rx="10" class="chip"/>
-  <text x="968" y="475" class="chipText" text-anchor="middle">archived</text>
-  <rect x="1240" y="458" width="156" height="26" rx="10" class="btn"/>
-  <text x="1318" y="475" class="btnText" text-anchor="middle">恢复</text>
+  <rect x="280" y="642" width="1136" height="64" rx="12" class="surface"/>
+  <text x="300" y="670" class="title" style="font-size:12px">web</text>
+  <text x="480" y="670" class="mono">ghcr.io/acme/web</text>
+  <text x="780" y="666" class="mono">5.2</text>
+  <text x="780" y="688" class="mono">5.3@sha256:…</text>
+  <rect x="1180" y="656" width="64" height="24" rx="999" class="pillOk"/>
+  <text x="1212" y="673" class="pillTextOk" text-anchor="middle">可更新</text>
+  <text x="1180" y="694" class="muted">含归档计数</text>
 
-  <!-- api (missing) -->
-  <rect x="296" y="504" width="1116" height="52" rx="12" class="row"/>
-  <text x="316" y="534" class="h2">api</text>
-  <text x="520" y="534" class="mono">ghcr.io/acme/api:2.0</text>
-  <rect x="920" y="518" width="96" height="26" rx="10" class="chip"/>
-  <text x="968" y="535" class="chipText" text-anchor="middle">missing</text>
-  <text x="1040" y="534" class="muted">一轮未见；重启后自动归档隐藏</text>
-  <rect x="1240" y="518" width="156" height="26" rx="10" class="chip"/>
-  <text x="1318" y="535" class="chipText" text-anchor="middle">归档 service</text>
+  <rect x="280" y="716" width="1136" height="64" rx="12" class="surface"/>
+  <text x="300" y="744" class="title" style="font-size:12px">worker</text>
+  <text x="480" y="744" class="mono">ghcr.io/acme/worker</text>
+  <text x="780" y="740" class="mono">1.1</text>
+  <text x="780" y="762" class="mono">1.2@sha256:…</text>
+  <rect x="1180" y="730" width="74" height="24" rx="999" class="pill"/>
+  <text x="1217" y="747" class="pillText" text-anchor="middle">archived</text>
+  <text x="1180" y="768" class="muted">恢复后回主视图</text>
 
-  <!-- In-stack archived section -->
-  <text x="296" y="618" class="title">已归档（本 stack）</text>
-  <text x="520" y="618" class="muted">也可在“归档箱”按 stack 成组恢复</text>
-
-  <rect x="296" y="636" width="1116" height="52" rx="12" class="row"/>
-  <text x="316" y="666" class="h2">worker</text>
-  <text x="520" y="666" class="muted">恢复后回到主视图；仍计入更新服务数量</text>
-  <rect x="1240" y="650" width="156" height="26" rx="10" class="btn"/>
-  <text x="1318" y="667" class="btnText" text-anchor="middle">恢复</text>
-
-  <text x="296" y="844" class="muted">提示：归档不是删除；允许归档 stack 或 service，并提供归档箱恢复入口。</text>
+  <text x="280" y="844" class="muted">说明：归档/恢复是“可见性”能力；实现阶段需保证归档对象仍被扫描并参与计数，但通知抑制。</text>
 </svg>
