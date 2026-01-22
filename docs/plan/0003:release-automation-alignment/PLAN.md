@@ -80,7 +80,7 @@
   - 至少验证目标 Dockerfile(s) 可成功构建（与计划中的镜像形态一致）
 - 版本策略需有明确规则：
   - 版本来源（`Cargo.toml`）与“已存在 tag 时自动 patch +1”的行为是否保留
-  - 何时 bump minor/major（由开发者在 `Cargo.toml` 修改触发）
+  - 何时 bump major/minor/patch：自计划 0006 起由 PR 意图标签决定（`Cargo.toml` 仅作为无语义 tag 时的 base fallback）
 
 ## 唯一流程（Canonical CI/CD Flow）
 
