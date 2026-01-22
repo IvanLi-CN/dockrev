@@ -142,9 +142,9 @@
 
 说明：本计划的 SVG mockups 以当前 Dockrev Web 的现有样式与布局为基准（参考 `web/src/index.css` 与 `web/src/App.css`），仅展示新增的信息架构与交互入口，不引入新的视觉语言。
 
-- Overview（新增 discovered group、归档入口、更新计数提示）：`ui/overview.svg`
-- Archived / 归档箱（stack 成组、可恢复）：`ui/archived.svg`
-- Stack detail（归档 stack/service 入口与恢复动线）：`ui/stack-detail.svg`
+- Overview（在现有“更新候选”页面上增量加入：立即发现、discovered 聚合组、stack 归档入口）：`ui/overview.svg`
+- Services（替换“手工注册 Stack”为 discovered 聚合组；新增 archived 过滤与恢复入口）：`ui/services.svg`
+- Service detail（新增归档/恢复入口；归档仅影响可见性与通知）：`ui/service-detail.svg`
 
 ## 验收标准（Acceptance Criteria）
 

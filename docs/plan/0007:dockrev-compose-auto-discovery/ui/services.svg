@@ -1,0 +1,172 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <defs>
+    <style>
+      :root {
+        /* Dockrev Web tokens (see web/src/index.css: html[data-theme='dark']) */
+        --color-base-100: #0f172a;
+        --color-base-200: #0b1020;
+        --color-base-300: #070b15;
+        --color-base-content: #e5e7eb;
+
+        --color-primary: #38bdf8;
+        --color-primary-content: #001018;
+        --color-success: #22c55e;
+        --color-warning: #f59e0b;
+        --color-error: #fb7185;
+        --color-error-content: #1a0006;
+
+        --dockrev-surface: rgba(255, 255, 255, 0.035);
+        --borderColor: rgba(229, 231, 235, 0.12);
+        --muted: rgba(229, 231, 235, 0.78);
+        --muted2: rgba(229, 231, 235, 0.56);
+        --text: rgba(229, 231, 235, 0.92);
+
+        --bg: var(--color-base-200);
+        --panel: var(--color-base-100);
+        --panel2: var(--color-base-200);
+      }
+
+      text { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
+      .brand { font-size: 16px; font-weight: 650; fill: var(--text); }
+      .hint { font-size: 12px; fill: var(--muted2); }
+      .h1 { font-size: 22px; font-weight: 750; fill: var(--text); }
+      .title { font-size: 16px; font-weight: 650; fill: var(--text); }
+      .label { font-size: 12px; fill: var(--muted); }
+      .muted { font-size: 12px; fill: var(--muted2); }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; fill: var(--muted); }
+
+      .line { stroke: var(--borderColor); stroke-width: 1; }
+      .card { fill: var(--panel); stroke: var(--borderColor); stroke-width: 1; }
+      .surface { fill: var(--dockrev-surface); }
+
+      .btnPrimary { fill: var(--color-primary); }
+      .btnGhost { fill: var(--dockrev-surface); stroke: var(--borderColor); stroke-width: 1; }
+      .btnTextPrimary { font-size: 12px; font-weight: 800; fill: var(--color-primary-content); }
+      .btnTextGhost { font-size: 12px; font-weight: 800; fill: var(--text); }
+
+      .pill { fill: rgba(229, 231, 235, 0.08); stroke: rgba(229, 231, 235, 0.18); stroke-width: 1; }
+      .pillOk { fill: rgba(34, 197, 94, 0.1); stroke: rgba(34, 197, 94, 0.35); stroke-width: 1; }
+      .pillWarn { fill: rgba(245, 158, 11, 0.1); stroke: rgba(245, 158, 11, 0.35); stroke-width: 1; }
+      .pillBad { fill: rgba(251, 113, 133, 0.12); stroke: rgba(251, 113, 133, 0.35); stroke-width: 1; }
+      .pillText { font-size: 11px; font-weight: 650; fill: var(--muted); }
+      .pillTextOk { font-size: 11px; font-weight: 650; fill: var(--color-success); }
+      .pillTextWarn { font-size: 11px; font-weight: 650; fill: var(--color-warning); }
+      .pillTextBad { font-size: 11px; font-weight: 650; fill: var(--color-error); }
+
+      .chip { fill: var(--dockrev-surface); stroke: var(--borderColor); stroke-width: 1; }
+      .chipActive { fill: rgba(110, 231, 255, 0.12); stroke: rgba(110, 231, 255, 0.18); stroke-width: 1; }
+      .chipText { font-size: 11px; font-weight: 650; fill: var(--muted); }
+      .chipTextActive { font-size: 11px; font-weight: 650; fill: var(--color-primary); }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1440" height="900" fill="var(--bg)"/>
+
+  <!-- Topbar -->
+  <rect x="0" y="0" width="1440" height="64" fill="var(--panel2)"/>
+  <line x1="0" y1="64" x2="1440" y2="64" class="line"/>
+  <text x="28" y="40" class="brand">Dockrev</text>
+  <text x="110" y="40" class="hint">服务</text>
+
+  <!-- Top actions (existing ServicesPage: 刷新; new: 归档视图) -->
+  <rect x="1120" y="18" width="92" height="28" rx="8" class="btnGhost"/>
+  <text x="1166" y="37" class="btnTextGhost" text-anchor="middle">刷新</text>
+  <rect x="1220" y="18" width="92" height="28" rx="8" class="btnGhost"/>
+  <text x="1266" y="37" class="btnTextGhost" text-anchor="middle">归档</text>
+  <rect x="1320" y="18" width="120" height="28" rx="8" class="btnGhost"/>
+  <text x="1380" y="37" class="btnTextGhost" text-anchor="middle">立即发现</text>
+
+  <!-- Sidebar -->
+  <rect x="0" y="64" width="256" height="836" fill="var(--panel2)"/>
+  <line x1="256" y1="64" x2="256" y2="900" class="line"/>
+  <text x="28" y="110" class="label">导航</text>
+  <rect x="16" y="130" width="224" height="40" rx="10" fill="rgba(0,0,0,0)"/>
+  <text x="44" y="155" class="label">概览</text>
+  <rect x="16" y="178" width="224" height="40" rx="10" fill="rgba(0,0,0,0)"/>
+  <text x="44" y="203" class="label">更新队列</text>
+  <rect x="16" y="226" width="224" height="40" rx="10" fill="rgba(56, 189, 248, 0.12)"/>
+  <text x="44" y="251" class="title">服务</text>
+  <rect x="16" y="274" width="224" height="40" rx="10" fill="rgba(0,0,0,0)"/>
+  <text x="44" y="299" class="label">系统设置</text>
+
+  <!-- Page head -->
+  <text x="280" y="112" class="h1">服务</text>
+
+  <!-- Card: services grid (keep existing layout) -->
+  <rect x="280" y="140" width="1136" height="420" rx="16" class="card"/>
+  <text x="300" y="176" class="title">服务</text>
+  <text x="360" y="176" class="muted">搜索 + 归档/恢复（新增）</text>
+
+  <!-- Search input + counters -->
+  <rect x="1040" y="158" width="260" height="32" rx="12" fill="rgba(0,0,0,0.12)" stroke="rgba(229,231,235,.18)" stroke-width="1"/>
+  <text x="1060" y="179" class="muted">搜索 service / image / stack</text>
+  <text x="1330" y="179" class="muted">12/58</text>
+
+  <!-- NEW: view filter (active/archived) to provide restore UI without new navigation -->
+  <rect x="300" y="202" width="96" height="26" rx="10" class="chipActive"/>
+  <text x="348" y="219" class="chipTextActive" text-anchor="middle">Active</text>
+  <rect x="404" y="202" width="112" height="26" rx="10" class="chip"/>
+  <text x="460" y="219" class="chipText" text-anchor="middle">Archived <tspan class="mono">4</tspan></text>
+  <rect x="524" y="202" width="84" height="26" rx="10" class="chip"/>
+  <text x="566" y="219" class="chipText" text-anchor="middle">All</text>
+
+  <!-- svcCard (simplified) -->
+  <rect x="300" y="244" width="352" height="132" rx="14" class="surface" stroke="rgba(0,0,0,0)" stroke-width="1"/>
+  <text x="320" y="272" class="title" style="font-size:14px">web</text>
+  <rect x="568" y="254" width="72" height="24" rx="999" class="pillOk"/>
+  <text x="604" y="271" class="pillTextOk" text-anchor="middle">update</text>
+  <text x="320" y="298" class="muted">stack <tspan class="mono">blog</tspan></text>
+  <text x="320" y="320" class="muted">image <tspan class="mono">ghcr.io/acme/web</tspan></text>
+  <text x="320" y="342" class="muted">current <tspan class="mono">5.2</tspan> → candidate <tspan class="mono">5.3</tspan></text>
+  <rect x="560" y="336" width="80" height="28" rx="8" class="btnGhost"/>
+  <text x="600" y="355" class="btnTextGhost" text-anchor="middle">归档</text>
+
+  <rect x="668" y="244" width="352" height="132" rx="14" class="surface"/>
+  <text x="688" y="272" class="title" style="font-size:14px">worker</text>
+  <rect x="936" y="254" width="88" height="24" rx="999" class="pill"/>
+  <text x="980" y="271" class="pillText" text-anchor="middle">archived</text>
+  <text x="688" y="298" class="muted">stack <tspan class="mono">blog</tspan></text>
+  <text x="688" y="320" class="muted">image <tspan class="mono">ghcr.io/acme/worker</tspan></text>
+  <text x="688" y="342" class="muted">current <tspan class="mono">1.1</tspan> → candidate <tspan class="mono">1.2</tspan></text>
+  <rect x="920" y="336" width="92" height="28" rx="8" class="btnPrimary"/>
+  <text x="966" y="355" class="btnTextPrimary" text-anchor="middle">恢复</text>
+
+  <rect x="1036" y="244" width="352" height="132" rx="14" class="surface"/>
+  <text x="1056" y="272" class="title" style="font-size:14px">admin</text>
+  <rect x="1304" y="254" width="102" height="24" rx="999" class="pillBad"/>
+  <text x="1355" y="271" class="pillTextBad" text-anchor="middle">ignored</text>
+  <text x="1056" y="298" class="muted">stack <tspan class="mono">infra</tspan></text>
+  <text x="1056" y="320" class="muted">image <tspan class="mono">ghcr.io/acme/admin</tspan></text>
+  <text x="1056" y="342" class="muted">candidate <tspan class="mono">-</tspan></text>
+  <rect x="1280" y="336" width="80" height="28" rx="8" class="btnGhost"/>
+  <text x="1320" y="355" class="btnTextGhost" text-anchor="middle">归档</text>
+
+  <!-- Card: Discovered (replaces old “注册 Stack” card in plan 0007) -->
+  <rect x="280" y="576" width="1136" height="294" rx="16" class="card"/>
+  <text x="300" y="612" class="title">Discovered（未注册，聚合组）</text>
+  <text x="560" y="612" class="muted">取代“手工注册 Stack”：自动发现为唯一入口（不猜测路径）</text>
+
+  <rect x="300" y="634" width="1096" height="40" rx="10" class="surface"/>
+  <text x="320" y="658" class="label">Project</text>
+  <text x="480" y="658" class="label">Compose files</text>
+  <text x="860" y="658" class="label">状态 / 原因</text>
+  <text x="1260" y="658" class="label">操作</text>
+
+  <rect x="300" y="680" width="1096" height="56" rx="12" class="surface"/>
+  <text x="320" y="712" class="title" style="font-size:12px">srv</text>
+  <text x="480" y="712" class="mono">/srv/srv/compose.yml</text>
+  <rect x="860" y="694" width="86" height="24" rx="999" class="pillBad"/>
+  <text x="903" y="711" class="pillTextBad" text-anchor="middle">unreadable</text>
+  <text x="954" y="712" class="muted">缺少同路径只读挂载</text>
+  <rect x="1260" y="694" width="120" height="28" rx="8" class="btnGhost"/>
+  <text x="1320" y="713" class="btnTextGhost" text-anchor="middle">归档项目</text>
+
+  <rect x="300" y="744" width="1096" height="56" rx="12" class="surface"/>
+  <text x="320" y="776" class="title" style="font-size:12px">blog2</text>
+  <text x="480" y="776" class="mono">/srv/blog2/compose.yml</text>
+  <rect x="860" y="758" width="74" height="24" rx="999" class="pillWarn"/>
+  <text x="897" y="775" class="pillTextWarn" text-anchor="middle">invalid</text>
+  <text x="946" y="776" class="muted">compose 解析失败（fail-closed）</text>
+  <rect x="1260" y="758" width="120" height="28" rx="8" class="btnGhost"/>
+  <text x="1320" y="777" class="btnTextGhost" text-anchor="middle">查看原因</text>
+</svg>

@@ -27,18 +27,18 @@
       }
 
       text { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
-
       .brand { font-size: 16px; font-weight: 650; fill: var(--text); }
       .hint { font-size: 12px; fill: var(--muted2); }
       .h1 { font-size: 22px; font-weight: 750; fill: var(--text); }
       .title { font-size: 16px; font-weight: 650; fill: var(--text); }
+      .sectionTitle { font-size: 12px; font-weight: 650; fill: var(--muted); }
       .label { font-size: 12px; fill: var(--muted); }
       .muted { font-size: 12px; fill: var(--muted2); }
       .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; fill: var(--muted); }
 
+      .line { stroke: var(--borderColor); stroke-width: 1; }
       .card { fill: var(--panel); stroke: var(--borderColor); stroke-width: 1; }
       .surface { fill: var(--dockrev-surface); }
-      .line { stroke: var(--borderColor); stroke-width: 1; }
 
       .btnPrimary { fill: var(--color-primary); }
       .btnGhost { fill: var(--dockrev-surface); stroke: var(--borderColor); stroke-width: 1; }
@@ -64,27 +64,27 @@
     </style>
   </defs>
 
-  <!-- Background -->
   <rect x="0" y="0" width="1440" height="900" fill="var(--bg)"/>
 
-  <!-- Topbar (matches web/src/App.css: .topbar) -->
+  <!-- Topbar -->
   <rect x="0" y="0" width="1440" height="64" fill="var(--panel2)"/>
   <line x1="0" y1="64" x2="1440" y2="64" class="line"/>
   <text x="28" y="40" class="brand">Dockrev</text>
   <text x="110" y="40" class="hint">Compose 镜像更新 / 版本提示</text>
 
-  <!-- Top actions (pageActions + theme toggle) -->
-  <rect x="980" y="18" width="108" height="28" rx="8" class="btnPrimary"/>
-  <text x="1034" y="37" class="btnTextPrimary" text-anchor="middle">立即发现</text>
-  <rect x="1096" y="18" width="92" height="28" rx="8" class="btnGhost"/>
-  <text x="1142" y="37" class="btnTextGhost" text-anchor="middle">归档箱</text>
+  <!-- Top actions (existing: 立即扫描; new: 立即发现 / 归档视图) -->
+  <rect x="916" y="18" width="108" height="28" rx="8" class="btnPrimary"/>
+  <text x="970" y="37" class="btnTextPrimary" text-anchor="middle">立即扫描</text>
+  <rect x="1032" y="18" width="108" height="28" rx="8" class="btnGhost"/>
+  <text x="1086" y="37" class="btnTextGhost" text-anchor="middle">立即发现</text>
+  <rect x="1148" y="18" width="96" height="28" rx="8" class="btnGhost"/>
+  <text x="1196" y="37" class="btnTextGhost" text-anchor="middle">归档</text>
 
-  <text x="1204" y="38" class="muted">主题</text>
-  <rect x="1238" y="20" width="44" height="24" rx="999" class="chip"/>
-  <circle cx="1259" cy="32" r="8" fill="var(--panel)" stroke="rgba(229,231,235,.18)" stroke-width="1"/>
-
-  <rect x="1292" y="18" width="132" height="28" rx="8" class="chipStatic"/>
-  <text x="1358" y="37" class="chipStaticText" text-anchor="middle">用户：ivan（FH）</text>
+  <text x="1260" y="38" class="muted">主题</text>
+  <rect x="1294" y="20" width="44" height="24" rx="999" class="chip"/>
+  <circle cx="1315" cy="32" r="8" fill="var(--panel)" stroke="rgba(229,231,235,.18)" stroke-width="1"/>
+  <rect x="1348" y="18" width="132" height="28" rx="8" class="chipStatic"/>
+  <text x="1414" y="37" class="chipStaticText" text-anchor="middle">用户：ivan（FH）</text>
 
   <!-- Sidebar -->
   <rect x="0" y="64" width="256" height="836" fill="var(--panel2)"/>
@@ -103,95 +103,111 @@
   <text x="28" y="360" class="label">Compose</text>
   <text x="28" y="386" class="muted">尚未选择 stack</text>
   <text x="28" y="428" class="label">最近一次扫描</text>
-  <text x="28" y="454" class="muted">-</text>
+  <text x="28" y="454" class="muted">2026/01/22 13:20</text>
 
-  <!-- Main content area (matches .content padding: 22px 24px) -->
+  <!-- Page head (AppShell) -->
   <text x="280" y="112" class="h1">概览</text>
-  <text x="280" y="138" class="muted">Auto-Discovery：发现未注册项目（成组展示）· 归档/恢复 · missing 重启后自动隐藏</text>
+  <text x="280" y="138" class="muted">聚焦：可更新 / 需提示（同前缀新版本）/ 架构不匹配 / 被阻止</text>
 
-  <!-- Stat grid (4 cards) -->
+  <!-- statGrid (keep existing 4 cards) -->
   <rect x="280" y="164" width="272" height="108" rx="16" class="card"/>
   <text x="300" y="196" class="label">可更新</text>
   <text x="300" y="232" class="h1" style="font-size:22px">3</text>
-  <text x="300" y="256" class="muted">含归档 services</text>
+  <text x="300" y="256" class="muted">已匹配 host arch</text>
 
   <rect x="568" y="164" width="272" height="108" rx="16" class="card"/>
-  <text x="588" y="196" class="label">Discovered（未注册）</text>
-  <text x="588" y="232" class="h1" style="font-size:22px">2</text>
-  <text x="588" y="256" class="muted">需挂载/解析</text>
+  <text x="588" y="196" class="label">新版本提示</text>
+  <text x="588" y="232" class="h1" style="font-size:22px">1</text>
+  <text x="588" y="256" class="muted">同级别/新 minor</text>
 
   <rect x="856" y="164" width="272" height="108" rx="16" class="card"/>
-  <text x="876" y="196" class="label">Missing</text>
-  <text x="876" y="232" class="h1" style="font-size:22px">1</text>
-  <text x="876" y="256" class="muted">重启后自动归档</text>
+  <text x="876" y="196" class="label">架构不匹配</text>
+  <text x="876" y="232" class="h1" style="font-size:22px">0</text>
+  <text x="876" y="256" class="muted">仅提示，不允许更新</text>
 
   <rect x="1144" y="164" width="272" height="108" rx="16" class="card"/>
-  <text x="1164" y="196" class="label">已归档</text>
-  <text x="1164" y="232" class="h1" style="font-size:22px">4</text>
-  <text x="1164" y="256" class="muted">可在归档箱恢复</text>
+  <text x="1164" y="196" class="label">被阻止</text>
+  <text x="1164" y="232" class="h1" style="font-size:22px">2</text>
+  <text x="1164" y="256" class="muted">忽略/策略阻止</text>
 
-  <!-- Discovered group (no stack) -->
-  <text x="280" y="320" class="title">Discovered（未注册，聚合组）</text>
-  <text x="520" y="320" class="muted">仅当 config_files 为绝对路径且容器内可读/可解析时才会落库为 stack</text>
+  <!-- sectionRow: 更新候选 -->
+  <text x="280" y="312" class="title">更新候选</text>
+  <text x="780" y="312" class="muted">stacks: <tspan class="mono">1</tspan> · last scan: <tspan class="mono">2026/01/22 13:20</tspan></text>
 
-  <rect x="280" y="336" width="1136" height="40" rx="10" class="surface"/>
-  <text x="300" y="360" class="label">Project</text>
-  <text x="460" y="360" class="label">Compose</text>
-  <text x="760" y="360" class="label">状态 / 备注</text>
-  <text x="1240" y="360" class="label">操作</text>
+  <!-- FilterChips (existing) -->
+  <rect x="280" y="330" width="74" height="26" rx="10" class="chipActive"/>
+  <text x="317" y="347" class="chipTextActive" text-anchor="middle">全部</text>
+  <rect x="362" y="330" width="92" height="26" rx="10" class="chip"/>
+  <text x="408" y="347" class="chipText" text-anchor="middle">可更新 <tspan class="mono">3</tspan></text>
+  <rect x="462" y="330" width="112" height="26" rx="10" class="chip"/>
+  <text x="518" y="347" class="chipText" text-anchor="middle">新版本提示 <tspan class="mono">1</tspan></text>
+  <rect x="582" y="330" width="128" height="26" rx="10" class="chip"/>
+  <text x="646" y="347" class="chipText" text-anchor="middle">架构不匹配 <tspan class="mono">0</tspan></text>
+  <rect x="718" y="330" width="92" height="26" rx="10" class="chip"/>
+  <text x="764" y="347" class="chipText" text-anchor="middle">被阻止 <tspan class="mono">2</tspan></text>
 
-  <rect x="280" y="386" width="1136" height="56" rx="12" class="surface"/>
-  <text x="300" y="418" class="title" style="font-size:12px">srv</text>
-  <text x="460" y="418" class="mono">/srv/srv/compose.yml</text>
-  <rect x="760" y="400" width="98" height="24" rx="999" class="pillBad"/>
-  <text x="809" y="417" class="pillTextBad" text-anchor="middle">unreadable</text>
-  <text x="870" y="418" class="muted">缺少同路径只读挂载</text>
-  <rect x="1260" y="400" width="136" height="28" rx="8" class="btnGhost"/>
-  <text x="1328" y="419" class="btnTextGhost" text-anchor="middle">归档项目</text>
+  <!-- tableHeader (existing: 4 cols) -->
+  <rect x="280" y="374" width="1136" height="40" rx="10" class="surface"/>
+  <text x="300" y="398" class="label">Service</text>
+  <text x="480" y="398" class="label">Image</text>
+  <text x="780" y="398" class="label">Current → Candidate</text>
+  <text x="1180" y="398" class="label">状态 / 备注</text>
 
-  <rect x="280" y="452" width="1136" height="56" rx="12" class="surface"/>
-  <text x="300" y="484" class="title" style="font-size:12px">blog</text>
-  <text x="460" y="484" class="mono">/srv/blog/compose.yml</text>
-  <rect x="760" y="466" width="98" height="24" rx="999" class="pillWarn"/>
-  <text x="809" y="483" class="pillTextWarn" text-anchor="middle">invalid</text>
-  <text x="870" y="484" class="muted">compose 解析失败（可读但格式不合法）</text>
-  <rect x="1260" y="466" width="136" height="28" rx="8" class="btnGhost"/>
-  <text x="1328" y="485" class="btnTextGhost" text-anchor="middle">查看原因</text>
+  <!-- groupHead -->
+  <rect x="280" y="426" width="1136" height="52" rx="12" class="surface" stroke="rgba(110, 231, 255, 0.08)" stroke-width="1"/>
+  <text x="300" y="457" class="title" style="font-size:14px">blog</text>
+  <text x="380" y="457" class="muted">7 services · 3 可更新 · 2 被阻止</text>
+  <rect x="1104" y="440" width="96" height="28" rx="8" class="btnGhost"/>
+  <text x="1152" y="459" class="btnTextGhost" text-anchor="middle">归档 stack</text>
+  <text x="1236" y="457" class="muted">2026/01/22 13:20</text>
+  <text x="1400" y="457" class="label" text-anchor="end">▾</text>
 
-  <!-- Stacks list (existing UI pattern: group head + rows) -->
-  <text x="280" y="564" class="title">Stacks</text>
-  <text x="360" y="564" class="muted">归档对象仍参与更新计数，但不会发送通知；归档仅影响可见性与恢复动线</text>
+  <!-- rowLine -->
+  <rect x="280" y="488" width="1136" height="68" rx="12" class="surface"/>
+  <text x="300" y="516" class="title" style="font-size:12px">web</text>
+  <text x="480" y="516" class="mono">ghcr.io/acme/web</text>
+  <text x="780" y="512" class="mono">5.2</text>
+  <text x="780" y="534" class="mono">5.3@sha256:…</text>
+  <rect x="1180" y="502" width="64" height="24" rx="999" class="pillOk"/>
+  <text x="1212" y="519" class="pillTextOk" text-anchor="middle">可更新</text>
+  <text x="1180" y="540" class="muted">按当前 tag 前缀</text>
 
-  <rect x="280" y="584" width="1136" height="52" rx="12" class="surface" stroke="rgba(110, 231, 255, 0.08)" stroke-width="1"/>
-  <text x="300" y="615" class="title" style="font-size:14px">blog</text>
-  <text x="380" y="615" class="muted">7 services · 3 可更新 · 2 已归档</text>
-  <rect x="1128" y="596" width="96" height="28" rx="8" class="btnGhost"/>
-  <text x="1176" y="615" class="btnTextGhost" text-anchor="middle">归档 stack</text>
-  <text x="1252" y="615" class="muted">2026/01/22 13:20</text>
-  <text x="1400" y="615" class="label" text-anchor="end">▾</text>
+  <rect x="280" y="564" width="1136" height="68" rx="12" class="surface"/>
+  <text x="300" y="592" class="title" style="font-size:12px">admin</text>
+  <text x="480" y="592" class="mono">ghcr.io/acme/admin</text>
+  <text x="780" y="588" class="mono">1.0</text>
+  <text x="780" y="610" class="mono">-</text>
+  <rect x="1180" y="578" width="64" height="24" rx="999" class="pillBad"/>
+  <text x="1212" y="595" class="pillTextBad" text-anchor="middle">阻止</text>
+  <text x="1180" y="616" class="muted">忽略规则命中</text>
 
-  <!-- Table header (matches OverviewPage layout: 4 cols) -->
-  <rect x="280" y="648" width="1136" height="40" rx="10" class="surface"/>
-  <text x="300" y="672" class="label">Service</text>
-  <text x="480" y="672" class="label">Image</text>
-  <text x="780" y="672" class="label">Current → Candidate</text>
-  <text x="1180" y="672" class="label">状态 / 备注</text>
+  <!-- NEW: Discovered (unregistered) card (adds to existing Overview without changing its main focus) -->
+  <rect x="280" y="654" width="1136" height="216" rx="16" class="card"/>
+  <text x="300" y="690" class="title">Discovered（未注册，聚合组）</text>
+  <text x="520" y="690" class="muted">仅展示：labels 可解析但尚未满足“可读/可解析”的项目；不会猜测路径</text>
+  <text x="1200" y="690" class="muted" text-anchor="end">2 items</text>
 
-  <rect x="280" y="696" width="1136" height="68" rx="12" class="surface"/>
-  <text x="300" y="724" class="title" style="font-size:12px">web</text>
-  <text x="480" y="724" class="mono">ghcr.io/acme/web</text>
-  <text x="780" y="720" class="mono">5.2</text>
-  <text x="780" y="742" class="mono">5.3@sha256:…</text>
-  <rect x="1180" y="710" width="64" height="24" rx="999" class="pillOk"/>
-  <text x="1212" y="727" class="pillTextOk" text-anchor="middle">可更新</text>
-  <text x="1180" y="748" class="muted">按当前 tag 前缀</text>
+  <rect x="300" y="708" width="1096" height="40" rx="10" class="surface"/>
+  <text x="320" y="732" class="label">Project</text>
+  <text x="480" y="732" class="label">Compose files</text>
+  <text x="860" y="732" class="label">状态 / 原因</text>
+  <text x="1260" y="732" class="label">操作</text>
 
-  <rect x="280" y="772" width="1136" height="68" rx="12" class="surface"/>
-  <text x="300" y="800" class="title" style="font-size:12px">worker</text>
-  <text x="480" y="800" class="mono">ghcr.io/acme/worker</text>
-  <text x="780" y="796" class="mono">1.1</text>
-  <text x="780" y="818" class="mono">1.2@sha256:…</text>
-  <rect x="1180" y="786" width="74" height="24" rx="999" class="pill"/>
-  <text x="1217" y="803" class="pillText" text-anchor="middle">archived</text>
-  <text x="1180" y="824" class="muted">仅隐藏；仍计数</text>
+  <rect x="300" y="754" width="1096" height="52" rx="12" class="surface"/>
+  <text x="320" y="786" class="title" style="font-size:12px">srv</text>
+  <text x="480" y="786" class="mono">/srv/srv/compose.yml</text>
+  <rect x="860" y="768" width="86" height="24" rx="999" class="pillBad"/>
+  <text x="903" y="785" class="pillTextBad" text-anchor="middle">unreadable</text>
+  <text x="954" y="786" class="muted">缺少同路径只读挂载</text>
+  <rect x="1260" y="766" width="120" height="28" rx="8" class="btnGhost"/>
+  <text x="1320" y="785" class="btnTextGhost" text-anchor="middle">归档项目</text>
+
+  <rect x="300" y="812" width="1096" height="52" rx="12" class="surface"/>
+  <text x="320" y="844" class="title" style="font-size:12px">blog2</text>
+  <text x="480" y="844" class="mono">/srv/blog2/compose.yml</text>
+  <rect x="860" y="826" width="74" height="24" rx="999" class="pillWarn"/>
+  <text x="897" y="843" class="pillTextWarn" text-anchor="middle">invalid</text>
+  <text x="946" y="844" class="muted">compose 解析失败（fail-closed）</text>
+  <rect x="1260" y="824" width="120" height="28" rx="8" class="btnGhost"/>
+  <text x="1320" y="843" class="btnTextGhost" text-anchor="middle">查看原因</text>
 </svg>
