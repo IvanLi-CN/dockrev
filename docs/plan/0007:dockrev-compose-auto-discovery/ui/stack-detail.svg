@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720">
+  <defs>
+    <style>
+      .bg { fill: #0b1220; }
+      .panel { fill: #0f1a2c; stroke: #1b2a44; stroke-width: 1; }
+      .card { fill: #0c1628; stroke: #1b2a44; stroke-width: 1; }
+      .text { fill: #e6eefc; font: 16px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+      .muted { fill: #93a4c7; font: 14px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+      .title { fill: #e6eefc; font: 22px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; font-weight: 700; }
+      .btn { fill: #1a2d4d; stroke: #2a4574; stroke-width: 1; }
+      .btnText { fill: #e6eefc; font: 14px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; font-weight: 600; }
+      .chip { fill: #13233b; stroke: #22385c; stroke-width: 1; }
+      .chipText { fill: #cfe0ff; font: 12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+      .divider { stroke: #1b2a44; stroke-width: 1; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1200" height="720"/>
+
+  <rect class="panel" x="24" y="18" width="1152" height="56" rx="12"/>
+  <text class="title" x="52" y="54">Stack: blog</text>
+  <rect class="btn" x="920" y="30" width="120" height="32" rx="10"/>
+  <text class="btnText" x="952" y="51">Archive stack</text>
+  <rect class="btn" x="1048" y="30" width="128" height="32" rx="10" opacity="0.8"/>
+  <text class="btnText" x="1086" y="51">Open Archived</text>
+
+  <rect class="panel" x="24" y="94" width="1152" height="96" rx="14"/>
+  <text class="text" x="52" y="132">Updates: 3</text>
+  <text class="muted" x="52" y="156">Includes archived services; archived services never trigger notifications.</text>
+  <rect class="chip" x="260" y="114" width="140" height="28" rx="10"/>
+  <text class="chipText" x="274" y="133">services: 7</text>
+  <rect class="chip" x="410" y="114" width="160" height="28" rx="10"/>
+  <text class="chipText" x="424" y="133">archived: 2</text>
+
+  <!-- Services list -->
+  <text class="title" x="24" y="238" style="font-size:18px">Services</text>
+
+  <rect class="card" x="24" y="258" width="1152" height="72" rx="12"/>
+  <text class="text" x="52" y="292">web</text>
+  <text class="muted" x="140" y="292">ghcr.io/acme/web:5.2 → 5.3</text>
+  <rect class="btn" x="1048" y="274" width="128" height="32" rx="10"/>
+  <text class="btnText" x="1088" y="295">Archive</text>
+
+  <rect class="card" x="24" y="340" width="1152" height="72" rx="12" opacity="0.9"/>
+  <text class="text" x="52" y="374">worker</text>
+  <text class="muted" x="140" y="374">ghcr.io/acme/worker:1.1 → 1.2</text>
+  <rect class="chip" x="940" y="356" width="96" height="28" rx="10"/>
+  <text class="chipText" x="956" y="375">archived</text>
+  <rect class="btn" x="1048" y="356" width="128" height="32" rx="10"/>
+  <text class="btnText" x="1086" y="377">Restore</text>
+
+  <line class="divider" x1="24" y1="440" x2="1176" y2="440"/>
+
+  <rect class="panel" x="24" y="460" width="1152" height="236" rx="14"/>
+  <text class="title" x="52" y="496" style="font-size:18px">Archived (in this stack)</text>
+  <text class="muted" x="52" y="522">Restore archived services here, or use the global Archived page.</text>
+
+  <rect class="card" x="52" y="540" width="1096" height="64" rx="12"/>
+  <text class="text" x="76" y="572">worker</text>
+  <text class="muted" x="160" y="572">Restore to show in main list</text>
+  <rect class="btn" x="1020" y="556" width="128" height="32" rx="10"/>
+  <text class="btnText" x="1058" y="577">Restore</text>
+</svg>

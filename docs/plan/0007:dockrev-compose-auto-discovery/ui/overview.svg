@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720">
+  <defs>
+    <style>
+      .bg { fill: #0b1220; }
+      .panel { fill: #0f1a2c; stroke: #1b2a44; stroke-width: 1; }
+      .card { fill: #0c1628; stroke: #1b2a44; stroke-width: 1; }
+      .muted { fill: #93a4c7; font: 14px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+      .text { fill: #e6eefc; font: 16px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+      .title { fill: #e6eefc; font: 22px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; font-weight: 700; }
+      .h2 { fill: #e6eefc; font: 18px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; font-weight: 700; }
+      .chip { fill: #13233b; stroke: #22385c; stroke-width: 1; }
+      .chipText { fill: #cfe0ff; font: 12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+      .btn { fill: #1a2d4d; stroke: #2a4574; stroke-width: 1; }
+      .btnText { fill: #e6eefc; font: 14px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; font-weight: 600; }
+      .warn { fill: #ffd38a; font: 13px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1200" height="720"/>
+
+  <!-- Top bar -->
+  <rect class="panel" x="24" y="18" width="1152" height="56" rx="12"/>
+  <text class="title" x="52" y="54">Dockrev</text>
+
+  <rect class="btn" x="900" y="30" width="140" height="32" rx="10"/>
+  <text class="btnText" x="930" y="51">Discover now</text>
+
+  <rect class="btn" x="1048" y="30" width="108" height="32" rx="10"/>
+  <text class="btnText" x="1072" y="51">Archived</text>
+  <rect class="chip" x="1136" y="34" width="34" height="24" rx="8"/>
+  <text class="chipText" x="1148" y="50">6</text>
+
+  <!-- Left column: stacks -->
+  <text class="h2" x="24" y="118">Stacks</text>
+  <text class="muted" x="24" y="142">Updates count includes archived services; archived items never send notifications.</text>
+
+  <rect class="card" x="24" y="160" width="744" height="120" rx="14"/>
+  <text class="text" x="48" y="194">blog</text>
+  <text class="muted" x="48" y="218">services: 7 · healthy</text>
+  <rect class="chip" x="640" y="184" width="104" height="28" rx="10"/>
+  <text class="chipText" x="654" y="203">updates: 3</text>
+  <text class="warn" x="640" y="236">2 archived</text>
+
+  <rect class="card" x="24" y="296" width="744" height="120" rx="14"/>
+  <text class="text" x="48" y="330">infra</text>
+  <text class="muted" x="48" y="354">services: 12 · degraded</text>
+  <rect class="chip" x="640" y="320" width="104" height="28" rx="10"/>
+  <text class="chipText" x="654" y="339">updates: 0</text>
+
+  <!-- Right column: discovered group -->
+  <rect class="panel" x="792" y="120" width="384" height="296" rx="14"/>
+  <text class="h2" x="816" y="152">Discovered (unregistered)</text>
+  <text class="muted" x="816" y="176">Compose projects seen via Docker labels</text>
+
+  <rect class="card" x="816" y="196" width="336" height="64" rx="12"/>
+  <text class="text" x="840" y="228">srv</text>
+  <text class="muted" x="840" y="250">invalid · compose file unreadable</text>
+  <rect class="btn" x="1060" y="212" width="92" height="32" rx="10"/>
+  <text class="btnText" x="1082" y="233">Archive</text>
+
+  <rect class="card" x="816" y="270" width="336" height="64" rx="12"/>
+  <text class="text" x="840" y="302">metrics</text>
+  <text class="muted" x="840" y="324">active · ready to register</text>
+  <rect class="btn" x="1048" y="286" width="104" height="32" rx="10"/>
+  <text class="btnText" x="1068" y="307">Register</text>
+
+  <rect class="card" x="816" y="344" width="336" height="64" rx="12"/>
+  <text class="text" x="840" y="376">old</text>
+  <text class="muted" x="840" y="398">missing · auto-archived on restart</text>
+  <rect class="btn" x="1060" y="360" width="92" height="32" rx="10"/>
+  <text class="btnText" x="1082" y="381">Restore</text>
+
+  <!-- Footer hint -->
+  <rect class="panel" x="24" y="624" width="1152" height="72" rx="14"/>
+  <text class="muted" x="48" y="660">Hint: Archive is a UI-only visibility control (no hard delete). Archived services still count toward updates but notifications are suppressed.</text>
+</svg>

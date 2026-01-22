@@ -10,6 +10,7 @@
 
 - 2026-01-22: 创建计划
 - 2026-01-22: 冻结口径：自动发现必启用；移除手动注册；missing 重启自动归档；归档/恢复（project/stack/service）；归档不跳过检查但禁用通知
+- 2026-01-22: 补充 UI 设计图（Overview / Archived / Stack detail）
 
 ## 背景 / 问题陈述
 
@@ -136,6 +137,12 @@
   - `crates/dockrev-api/src/main.rs`：spawn 周期性 discovery task（与 backup cleanup 类似）
 - Web（React）：
   - `web/src/pages/OverviewPage.tsx` / `web/src/pages/ServicesPage.tsx`：新增“立即发现/重新同步”入口与结果展示；展示 stack 的 discovery 状态（missing/冲突/跳过原因）
+
+## UI 设计（Mockups）
+
+- Overview（新增 discovered group、归档入口、更新计数提示）：`ui/overview.svg`
+- Archived / 归档箱（stack 成组、可恢复）：`ui/archived.svg`
+- Stack detail（归档 stack/service 入口与恢复动线）：`ui/stack-detail.svg`
 
 ## 验收标准（Acceptance Criteria）
 
