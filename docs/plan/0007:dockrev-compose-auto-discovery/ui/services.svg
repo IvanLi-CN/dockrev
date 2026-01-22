@@ -40,32 +40,32 @@
       }
 
       text { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
-      .title { font-size: 16px; fill: var(--text); font-weight: 650; }
-      .h1 { font-size: 22px; fill: var(--text); font-weight: 750; }
-      .h2 { font-size: 14px; fill: var(--text); font-weight: 650; }
-      .label { font-size: 12px; fill: var(--muted); }
-      .muted { font-size: 12px; fill: var(--muted2); }
-      .tag { font-size: 12px; fill: var(--text); font-weight: 650; }
-      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; fill: var(--muted); }
+      .title { font-size: 16px; fill: rgba(229,231,235,.92); font-weight: 650; }
+      .h1 { font-size: 22px; fill: rgba(229,231,235,.92); font-weight: 750; }
+      .h2 { font-size: 14px; fill: rgba(229,231,235,.92); font-weight: 650; }
+      .label { font-size: 12px; fill: rgba(229,231,235,.78); }
+      .muted { font-size: 12px; fill: rgba(229,231,235,.56); }
+      .tag { font-size: 12px; fill: rgba(229,231,235,.92); font-weight: 650; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; fill: rgba(229,231,235,.78); }
 
-      .btn { fill: var(--color-primary); }
-      .btnText { font-size: 12px; fill: var(--color-primary-content); font-weight: 800; }
+      .btn { fill: #38bdf8; }
+      .btnText { font-size: 12px; fill: #001018; font-weight: 800; }
       .chip { fill: rgba(229,231,235,.08); }
       .chipText { font-size: 11px; fill: rgba(229,231,235,.78); font-weight: 650; }
-      .card { fill: var(--panel); }
-      .row { fill: var(--dockrev-surface); }
-      .group { fill: var(--dockrev-surface); }
-      .ok { fill: var(--ok); }
-      .warn { fill: var(--warn); }
-      .bad { fill: var(--bad); }
+      .card { fill: #0f172a; }
+      .row { fill: rgba(255,255,255,.035); }
+      .group { fill: rgba(255,255,255,.035); }
+      .ok { fill: #22c55e; }
+      .warn { fill: #f59e0b; }
+      .bad { fill: #fb7185; }
       .icon { fill: none; stroke: rgba(255,255,255,.44); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
     </style>
   </defs>
 
-  <rect x="0" y="0" width="1440" height="900" fill="var(--bg)"/>
+  <rect x="0" y="0" width="1440" height="900" fill="#0b1020"/>
 
   <!-- Top bar -->
-  <rect x="0" y="0" width="1440" height="64" fill="var(--panel2)"/>
+  <rect x="0" y="0" width="1440" height="64" fill="#0b1020"/>
   <text x="28" y="40" class="title">Dockrev</text>
   <text x="110" y="40" class="muted">服务</text>
   <!-- ServicesPage top action (existing): 刷新 -->
@@ -75,7 +75,7 @@
   <text x="1340" y="37" class="chipText" text-anchor="middle">用户：ivan（FH）</text>
 
   <!-- Sidebar -->
-  <rect x="0" y="64" width="256" height="836" fill="var(--panel2)"/>
+  <rect x="0" y="64" width="256" height="836" fill="#0b1020"/>
   <text x="28" y="110" class="label">导航</text>
   <rect x="16" y="130" width="224" height="40" rx="10" fill="rgba(255,255,255,.00)"/>
   <text x="44" y="155" class="label">概览</text>
@@ -99,7 +99,7 @@
   <rect x="296" y="164" width="94" height="26" rx="10" class="chip"/>
   <text x="343" y="182" class="chipText" text-anchor="middle">Active</text>
   <rect x="396" y="164" width="116" height="26" rx="10" fill="rgba(110,231,255,.12)"/>
-  <text x="454" y="182" class="chipText" text-anchor="middle" fill="var(--accent)">Archived</text>
+  <text x="454" y="182" class="chipText" text-anchor="middle" fill="#38bdf8">Archived</text>
   <rect x="518" y="164" width="74" height="26" rx="10" class="chip"/>
   <text x="555" y="182" class="chipText" text-anchor="middle">All</text>
   <text x="1412" y="182" class="muted" text-anchor="end">archived: <tspan class="mono">4</tspan></text>

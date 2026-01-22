@@ -40,37 +40,37 @@
       }
 
       text { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
-      .title { font-size: 16px; fill: var(--text); font-weight: 650; }
-      .h1 { font-size: 22px; fill: var(--text); font-weight: 750; }
-      .h2 { font-size: 14px; fill: var(--text); font-weight: 650; }
-      .label { font-size: 12px; fill: var(--muted); }
-      .muted { font-size: 12px; fill: var(--muted2); }
-      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; fill: var(--muted); }
+      .title { font-size: 16px; fill: rgba(229,231,235,.92); font-weight: 650; }
+      .h1 { font-size: 22px; fill: rgba(229,231,235,.92); font-weight: 750; }
+      .h2 { font-size: 14px; fill: rgba(229,231,235,.92); font-weight: 650; }
+      .label { font-size: 12px; fill: rgba(229,231,235,.78); }
+      .muted { font-size: 12px; fill: rgba(229,231,235,.56); }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; fill: rgba(229,231,235,.78); }
 
       .chip { fill: rgba(229,231,235,.08); }
       .chipText { font-size: 11px; fill: rgba(229,231,235,.78); font-weight: 650; }
-      .card { fill: var(--panel); }
-      .row { fill: var(--dockrev-surface); }
+      .card { fill: #0f172a; }
+      .row { fill: rgba(255,255,255,.035); }
 
-      .btnPrimary { fill: var(--color-primary); }
-      .btnDanger { fill: var(--color-error); }
-      .btnText { font-size: 12px; fill: var(--color-primary-content); font-weight: 800; }
-      .btnDangerText { font-size: 12px; fill: var(--color-error-content); font-weight: 800; }
+      .btnPrimary { fill: #38bdf8; }
+      .btnDanger { fill: #fb7185; }
+      .btnText { font-size: 12px; fill: #001018; font-weight: 800; }
+      .btnDangerText { font-size: 12px; fill: #1a0006; font-weight: 800; }
 
       .badgeOutline { fill: rgba(0,0,0,0); stroke: rgba(229,231,235,.18); stroke-width: 1; }
       .badgeText { font-size: 11px; fill: rgba(229,231,235,.78); font-weight: 650; }
 
-      .ok { fill: var(--ok); }
-      .warn { fill: var(--warn); }
-      .bad { fill: var(--bad); }
+      .ok { fill: #22c55e; }
+      .warn { fill: #f59e0b; }
+      .bad { fill: #fb7185; }
       .icon { fill: none; stroke: rgba(255,255,255,.44); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
     </style>
   </defs>
 
-  <rect x="0" y="0" width="1440" height="900" fill="var(--bg)"/>
+  <rect x="0" y="0" width="1440" height="900" fill="#0b1020"/>
 
   <!-- Top bar -->
-  <rect x="0" y="0" width="1440" height="64" fill="var(--panel2)"/>
+  <rect x="0" y="0" width="1440" height="64" fill="#0b1020"/>
   <text x="28" y="40" class="title">Dockrev</text>
   <text x="110" y="40" class="muted">服务详情</text>
 
@@ -81,7 +81,7 @@
   <text x="1335" y="37" class="btnDangerText" text-anchor="middle">阻止此服务更新</text>
 
   <!-- Sidebar -->
-  <rect x="0" y="64" width="256" height="836" fill="var(--panel2)"/>
+  <rect x="0" y="64" width="256" height="836" fill="#0b1020"/>
   <text x="28" y="110" class="label">导航</text>
   <rect x="16" y="130" width="224" height="40" rx="10" fill="rgba(255,255,255,.00)"/>
   <text x="44" y="155" class="label">概览</text>
