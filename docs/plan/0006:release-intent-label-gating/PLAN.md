@@ -2,9 +2,9 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-01-21
-- Last: 2026-01-21
+- Last: 2026-01-22
 
 ## 背景 / 问题陈述
 
@@ -178,3 +178,7 @@
 - `.github/workflows/ci-main.yml`
 - `.github/workflows/release.yml`
 - `.github/scripts/compute-version.sh`
+
+## Change log
+
+- 2026-01-22：落地 PR 标签 gate + release intent gating（保守跳过策略）+ label-driven 版本 bump（major/minor/patch）。

@@ -9,6 +9,8 @@ on:
 permissions:
   contents: write
   packages: write
+  issues: read
+  pull-requests: read
 
 env:
   REGISTRY: ghcr.io
@@ -29,6 +31,12 @@ jobs:
     outputs:
       app_effective_version: ${{ steps.meta.outputs.app_effective_version }}
       release_tag: ${{ steps.meta.outputs.release_tag }}
+      should_release: ${{ steps.meta.outputs.should_release }}
+      bump_level: ${{ steps.meta.outputs.bump_level }}
+      pr_number: ${{ steps.meta.outputs.pr_number }}
+      pr_url: ${{ steps.meta.outputs.pr_url }}
+      release_intent_label: ${{ steps.meta.outputs.release_intent_label }}
+      reason: ${{ steps.meta.outputs.reason }}
     steps:
       - name: Checkout (workflow_run)
         uses: actions/checkout@v4
@@ -36,8 +44,19 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Compute effective version (main)
+      - name: Determine release intent (labels)
+        id: intent
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: bash ./.github/scripts/release-intent.sh
+
+      - name: Compute effective version (label-driven)
+        if: ${{ steps.intent.outputs.should_release == 'true' }}
+        shell: bash
+        env:
+          BUMP_LEVEL: ${{ steps.intent.outputs.bump_level }}
         run: bash ./.github/scripts/compute-version.sh
 
       - name: Export release metadata
@@ -45,15 +64,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "app_effective_version=${APP_EFFECTIVE_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "release_tag=${APP_EFFECTIVE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "should_release=${{ steps.intent.outputs.should_release }}" >> "$GITHUB_OUTPUT"
+          echo "bump_level=${{ steps.intent.outputs.bump_level }}" >> "$GITHUB_OUTPUT"
+          echo "pr_number=${{ steps.intent.outputs.pr_number }}" >> "$GITHUB_OUTPUT"
+          echo "pr_url=${{ steps.intent.outputs.pr_url }}" >> "$GITHUB_OUTPUT"
+          echo "release_intent_label=${{ steps.intent.outputs.release_intent_label }}" >> "$GITHUB_OUTPUT"
+          echo "reason=${{ steps.intent.outputs.reason }}" >> "$GITHUB_OUTPUT"
+
+          if [[ "${{ steps.intent.outputs.should_release }}" == "true" ]]; then
+            echo "app_effective_version=${APP_EFFECTIVE_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "release_tag=${APP_EFFECTIVE_VERSION}" >> "$GITHUB_OUTPUT"
+          else
+            echo "app_effective_version=" >> "$GITHUB_OUTPUT"
+            echo "release_tag=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Configure Git user
+        if: ${{ steps.intent.outputs.should_release == 'true' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Create and push tag (if missing)
+        if: ${{ steps.intent.outputs.should_release == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -71,6 +104,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [prepare]
+    if: ${{ needs.prepare.outputs.should_release == 'true' }}
     env:
       APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
     steps:
@@ -110,6 +144,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: [prepare, build-web]
+    if: ${{ needs.prepare.outputs.should_release == 'true' }}
     env:
       APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
       CARGO_TARGET_DIR: target/ci/amd64
@@ -183,6 +218,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
     needs: [prepare, build-web]
+    if: ${{ needs.prepare.outputs.should_release == 'true' }}
     env:
       APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
       CARGO_TARGET_DIR: target/ci/arm64
@@ -249,6 +285,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     needs: [prepare, build-binaries-amd64, build-binaries-arm64]
+    if: ${{ needs.prepare.outputs.should_release == 'true' }}
     env:
       APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
       RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
@@ -370,4 +407,3 @@ jobs:
           echo "::error::Cause: see step 'Create or update GitHub Release + upload assets' logs above."
           echo "::error::Retry: Actions → workflow 'Release' → Re-run jobs (tag=${RELEASE_TAG})."
           exit 1
-
