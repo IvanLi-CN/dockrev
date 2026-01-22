@@ -247,7 +247,12 @@ None
 
 ## 假设（需主人确认）
 
-- 假设 A1：以 `com.docker.compose.project` 作为“项目唯一标识”，用于自动发现创建 stack 的去重。（已确认）
-- 假设 A2：发现到的 `config_files` 经规范化（split/trim/dedupe/sort）后作为“变更判定”的唯一形态。
-- 假设 A3：除明确移除 `POST /api/stacks` 外，其余既有 API 维持向后兼容（仅增量新增，不移除/不改名既有字段）。
-  - 归档逻辑：stack/service archive/restore API；归档对象不发送通知但仍参与 updates 计数
+None
+
+## 已确认口径（冻结）
+
+- `project` 唯一键：以 `com.docker.compose.project` 作为“项目唯一标识”，用于去重与绑定 stack。
+- `config_files` 规范化：split/trim/dedupe（**保序不排序**）；必须为 `/` 开头绝对路径；相对路径一律拒绝。
+  - 原因：compose 多文件覆盖存在顺序语义，排序可能掩盖真实优先级。
+- API 兼容性：除明确移除“手动注册 stack”（含 `POST /api/stacks`）外，其余既有 API 维持向后兼容（仅增量新增，不移除/不改名既有字段）。
+  - 归档逻辑：stack/service archive/restore；归档对象不发送通知但仍参与 updates 计数

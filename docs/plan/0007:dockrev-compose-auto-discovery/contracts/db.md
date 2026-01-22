@@ -41,7 +41,7 @@ Backfill:
 
 ## Data rules（must）
 
-- `config_files` 规范化后再写入 `*_config_files_json`（split/trim/dedupe/sort）。
+- `config_files` 规范化后再写入 `*_config_files_json`（split/trim/dedupe，**保序不排序**）。
 - “missing” 仅表达“未观察到容器”，不得自动删除 stacks（只更新状态字段）。
 - “进程重启后默认隐藏 missing”：
   - 在 app startup 的 migration/初始化阶段，将 `status='missing' AND archived=0` 的记录批量置为 `archived=1`（`archived_reason='auto_archive_on_restart'`）。
