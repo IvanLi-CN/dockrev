@@ -140,11 +140,12 @@
 
 ## UI 设计（Mockups）
 
-说明：本计划的 SVG mockups 以当前 Dockrev Web 的现有样式与布局为基准（参考 `web/src/index.css` 与 `web/src/App.css`），仅展示新增的信息架构与交互入口，不引入新的视觉语言。
+说明：本计划的 SVG mockups **严格沿用 Dockrev 既有 UI 设计语言**（以 Plan 0001 的 `docs/plan/0001:dockrev-compose-updater/ui/*.svg` 为基准），仅在现有页面上做增量信息架构与入口补齐；不得引入新的页面导航或新的视觉语言。
 
 - Overview（在现有“更新候选”页面上增量加入：立即发现、discovered 聚合组、stack 归档入口）：`ui/overview.svg`
-- Services（替换“手工注册 Stack”为 discovered 聚合组；新增 archived 过滤与恢复入口）：`ui/services.svg`
-- Service detail（新增归档/恢复入口；归档仅影响可见性与通知）：`ui/service-detail.svg`
+- Services（移除“手工注册 Stack”入口；新增 Archived 视图用于恢复归档对象，且归档 stack 以成组形式展示）：`ui/services.svg`
+- Service detail（新增归档/恢复相关信息与入口；归档仅影响可见性与通知，不影响扫描与计数）：`ui/service-detail.svg`
+- Preview（本地快速预览 SVG）：`ui/preview.html`
 
 ## 验收标准（Acceptance Criteria）
 
