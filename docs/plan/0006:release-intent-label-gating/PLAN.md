@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（1/2）
+- Status: 已完成
 - Created: 2026-01-21
 - Last: 2026-01-22
 
@@ -191,3 +191,4 @@
 ## Change log
 
 - 2026-01-22：落地 PR 标签 gate + release intent gating（保守跳过策略）+ label-driven 版本 bump（major/minor/patch）。
+- 2026-01-22：修复 PR Label Gate 安全性：使用 `pull_request` + 不检出 PR 代码，避免执行来自 PR checkout 的脚本；并使用稳定的 `concurrency` key（`${{ github.event.number }}`）。
