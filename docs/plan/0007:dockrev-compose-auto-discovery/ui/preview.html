@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dockrev Plan 0007 UI SVG Preview</title>
+    <style>
+      :root {
+        color-scheme: dark light;
+        --bg: #0b1020;
+        --panel: rgba(255, 255, 255, 0.06);
+        --text: rgba(255, 255, 255, 0.9);
+        --muted: rgba(255, 255, 255, 0.7);
+      }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+        background: var(--bg);
+        color: var(--text);
+      }
+      header {
+        position: sticky;
+        top: 0;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        padding: 10px 12px;
+        background: rgba(11, 16, 32, 0.95);
+      }
+      header a {
+        color: var(--muted);
+        text-decoration: none;
+      }
+      select {
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 10px;
+        padding: 6px 10px;
+      }
+      main {
+        padding: 12px;
+      }
+      .frame {
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 16px;
+        overflow: hidden;
+        width: 1440px;
+        height: 900px;
+        transform-origin: top left;
+      }
+      .zoomRow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-left: auto;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      input[type='range'] {
+        width: 180px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>SVG Preview</strong>
+      <span style="opacity:.7">Plan 0007 UI mockups</span>
+      <select id="file">
+        <option value="overview.svg" selected>overview.svg</option>
+        <option value="services.svg">services.svg</option>
+        <option value="service-detail.svg">service-detail.svg</option>
+      </select>
+      <div class="zoomRow">
+        <span id="zoomLabel">Zoom 80%</span>
+        <input id="zoom" type="range" min="40" max="120" value="80" step="5" />
+      </div>
+      <a href="./">dir</a>
+    </header>
+    <main>
+      <div id="frame" class="frame">
+        <object id="svgObj" data="overview.svg" type="image/svg+xml" width="1440" height="900"></object>
+      </div>
+    </main>
+
+    <script>
+      const sel = document.getElementById('file');
+      const zoom = document.getElementById('zoom');
+      const zoomLabel = document.getElementById('zoomLabel');
+      const frame = document.getElementById('frame');
+      const svgObj = document.getElementById('svgObj');
+
+      const url = new URL(location.href);
+      const param = url.searchParams.get('f');
+      if (param) sel.value = param;
+
+      function setZoom() {
+        const z = Number(zoom.value) / 100;
+        zoomLabel.textContent = `Zoom ${zoom.value}%`;
+        frame.style.transform = `scale(${z})`;
+      }
+
+      function setFile(name) {
+        svgObj.data = `${name}?v=${Date.now()}`;
+        url.searchParams.set('f', name);
+        history.replaceState(null, '', url.toString());
+      }
+
+      sel.addEventListener('change', () => setFile(sel.value));
+      zoom.addEventListener('input', setZoom);
+      setZoom();
+      setFile(sel.value);
+    </script>
+  </body>
+</html>
+

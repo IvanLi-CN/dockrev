@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <defs>
+    <style>
+      :root {
+        /* Match Dockrev "original design" mockups (Plan 0001 DaisyUI tokens, dark) */
+        --color-base-100: #0f172a;
+        --color-base-200: #0b1020;
+        --color-base-300: #070b15;
+        --color-base-content: #e5e7eb;
+
+        --color-primary: #38bdf8;
+        --color-primary-content: #001018;
+        --color-secondary: #a78bfa;
+        --color-secondary-content: #0b1020;
+        --color-accent: #22c55e;
+        --color-accent-content: #041008;
+        --color-neutral: #111827;
+        --color-neutral-content: #e5e7eb;
+        --color-info: #38bdf8;
+        --color-info-content: #001018;
+        --color-success: #22c55e;
+        --color-success-content: #041008;
+        --color-warning: #f59e0b;
+        --color-warning-content: #1a1200;
+        --color-error: #fb7185;
+        --color-error-content: #1a0006;
+
+        --bg: var(--color-base-200);
+        --panel: var(--color-base-100);
+        --panel2: var(--color-base-200);
+        --borderColor: rgba(229,231,235,.12);
+        --dockrev-surface: rgba(255,255,255,.035);
+        --muted: rgba(229,231,235,.78);
+        --muted2: rgba(229,231,235,.56);
+        --text: rgba(229,231,235,.92);
+        --accent: var(--color-primary);
+        --ok: var(--color-success);
+        --warn: var(--color-warning);
+        --bad: var(--color-error);
+      }
+
+      text { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+      .title { font-size: 16px; fill: rgba(229,231,235,.92); font-weight: 650; }
+      .h1 { font-size: 22px; fill: rgba(229,231,235,.92); font-weight: 750; }
+      .h2 { font-size: 14px; fill: rgba(229,231,235,.92); font-weight: 650; }
+      .label { font-size: 12px; fill: rgba(229,231,235,.78); }
+      .muted { font-size: 12px; fill: rgba(229,231,235,.56); }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; fill: rgba(229,231,235,.78); }
+
+      .chip { fill: rgba(229,231,235,.08); }
+      .chipText { font-size: 11px; fill: rgba(229,231,235,.78); font-weight: 650; }
+      .card { fill: #0f172a; }
+      .row { fill: rgba(255,255,255,.035); }
+
+      .btnPrimary { fill: #38bdf8; }
+      .btnDanger { fill: #fb7185; }
+      .btnText { font-size: 12px; fill: #001018; font-weight: 800; }
+      .btnDangerText { font-size: 12px; fill: #1a0006; font-weight: 800; }
+
+      .badgeOutline { fill: rgba(0,0,0,0); stroke: rgba(229,231,235,.18); stroke-width: 1; }
+      .badgeText { font-size: 11px; fill: rgba(229,231,235,.78); font-weight: 650; }
+
+      .ok { fill: #22c55e; }
+      .warn { fill: #f59e0b; }
+      .bad { fill: #fb7185; }
+      .icon { fill: none; stroke: rgba(255,255,255,.44); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1440" height="900" fill="#0b1020"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="1440" height="64" fill="#0b1020"/>
+  <text x="28" y="40" class="title">Dockrev</text>
+  <text x="110" y="40" class="muted">服务详情</text>
+
+  <!-- Existing ServiceDetail top actions -->
+  <rect x="1108" y="18" width="136" height="28" rx="8" class="btnPrimary"/>
+  <text x="1176" y="37" class="btnText" text-anchor="middle">预览更新</text>
+  <rect x="1258" y="18" width="154" height="28" rx="8" class="btnDanger"/>
+  <text x="1335" y="37" class="btnDangerText" text-anchor="middle">阻止此服务更新</text>
+
+  <!-- Sidebar -->
+  <rect x="0" y="64" width="256" height="836" fill="#0b1020"/>
+  <text x="28" y="110" class="label">导航</text>
+  <rect x="16" y="130" width="224" height="40" rx="10" fill="rgba(255,255,255,.00)"/>
+  <text x="44" y="155" class="label">概览</text>
+  <rect x="16" y="178" width="224" height="40" rx="10" fill="rgba(255,255,255,.00)"/>
+  <text x="44" y="203" class="label">更新队列</text>
+  <rect x="16" y="226" width="224" height="40" rx="10" fill="rgba(56,189,248,.12)"/>
+  <text x="44" y="251" class="h2">服务</text>
+  <rect x="16" y="274" width="224" height="40" rx="10" fill="rgba(255,255,255,.00)"/>
+  <text x="44" y="299" class="label">系统设置</text>
+
+  <!-- Header -->
+  <text x="296" y="112" class="h1">服务：web</text>
+  <rect x="420" y="92.5" width="72" height="22" rx="11" class="badgeOutline"/>
+  <text x="456" y="103.5" class="badgeText" text-anchor="middle" dominant-baseline="middle">prod</text>
+  <rect x="500" y="92.5" width="92" height="22" rx="11" class="badgeOutline"/>
+  <text x="546" y="103.5" class="badgeText" text-anchor="middle" dominant-baseline="middle">archived</text>
+  <text x="296" y="138" class="mono">ghcr.io/acme/web</text>
+
+  <!-- Status banner (archived: still counts, no notifications) -->
+  <rect x="296" y="160" width="1116" height="92" rx="14" fill="rgba(56,189,248,.06)"/>
+  <circle cx="322" cy="186" r="6" class="ok"/>
+  <text x="336" y="190" class="label">有更新（已归档：仅隐藏）</text>
+  <text x="336" y="214" class="muted">归档对象仍参与 check/update 计数展示，但不会触发通知发送</text>
+  <rect x="1260" y="186" width="132" height="28" rx="8" class="btnPrimary"/>
+  <text x="1326" y="205" class="btnText" text-anchor="middle">恢复到主视图</text>
+
+  <!-- Left column -->
+  <rect x="296" y="268" width="540" height="320" rx="16" class="card"/>
+  <text x="316" y="304" class="title">更新策略</text>
+  <rect x="316" y="332" width="500" height="44" rx="12" class="row"/>
+  <text x="332" y="356" class="label">（原有内容）跟随规则 / 忽略名单 / 提示策略</text>
+  <rect x="316" y="388" width="500" height="44" rx="12" class="row"/>
+  <text x="332" y="412" class="label">（原有内容）备份 / 回滚（如启用）</text>
+  <rect x="316" y="444" width="500" height="124" rx="12" class="row"/>
+  <text x="332" y="472" class="label">归档影响</text>
+  <text x="332" y="496" class="muted">- 仅影响可见性（主视图隐藏）</text>
+  <text x="332" y="518" class="muted">- 不影响扫描与计数</text>
+  <text x="332" y="540" class="muted">- 不发送通知</text>
+
+  <!-- Right column -->
+  <rect x="872" y="268" width="540" height="320" rx="16" class="card"/>
+  <text x="892" y="304" class="title">归档与恢复（新增）</text>
+  <text x="892" y="330" class="muted">允许归档 service 或 stack；归档 stack 在“已归档”视图按 stack 成组展示</text>
+
+  <rect x="892" y="356" width="500" height="44" rx="12" class="row"/>
+  <text x="908" y="380" class="label" dominant-baseline="middle">service.archived</text>
+  <rect x="1280" y="365" width="96" height="26" rx="10" class="chip"/>
+  <text x="1328" y="383" class="chipText" text-anchor="middle">true</text>
+
+  <rect x="892" y="412" width="500" height="44" rx="12" class="row"/>
+  <text x="908" y="436" class="label" dominant-baseline="middle">stack.archived</text>
+  <rect x="1280" y="421" width="96" height="26" rx="10" class="chip"/>
+  <text x="1328" y="439" class="chipText" text-anchor="middle">false</text>
+
+  <rect x="892" y="468" width="500" height="96" rx="12" class="row"/>
+  <text x="908" y="494" class="label">恢复入口</text>
+  <text x="908" y="518" class="muted">- 服务页：Archived 视图内可逐个恢复</text>
+  <text x="908" y="540" class="muted">- 若归档的是 stack：可一键恢复整个 stack</text>
+
+  <!-- Bottom -->
+  <rect x="296" y="606" width="1116" height="232" rx="16" class="card"/>
+  <text x="316" y="640" class="title">与 Auto-Discovery 的关系</text>
+  <text x="316" y="666" class="muted">Discovered（未建 stack）会被聚合展示；missing 在进程重启后默认隐藏（可在 Archived 视图恢复）</text>
+  <rect x="316" y="694" width="1076" height="52" rx="12" class="row"/>
+  <text x="332" y="726" class="label">提示：缺少同路径只读挂载时，不会注册为 stack，并给出可操作原因</text>
+  <rect x="316" y="758" width="1076" height="52" rx="12" class="row"/>
+  <text x="332" y="790" class="label">提示：归档不等于删除；未来可恢复，不引入数据丢失风险</text>
+</svg>

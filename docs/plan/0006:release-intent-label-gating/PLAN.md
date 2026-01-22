@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 已完成
+- Status: 部分完成（1/2）
 - Created: 2026-01-21
 - Last: 2026-01-22
 
@@ -100,6 +100,11 @@
 - 标签策略改变维护流程：需要约定“谁来打标签、何时打、缺失标签怎么处理”，否则会造成 PR 合并阻塞。
 - `workflow_run` 事件上下文与权限边界需要验证：读取 PR 信息所需的 `permissions` 不应过度授权。
 - tag 历史存在双形态（`vX.Y.Z` 与 `X.Y.Z`）：版本解析、占用判断与输出 tag 必须统一，否则可能导致冲突或重复发版。
+- **安全性（必须修复）**：PR Label Gate 不得执行来自 PR checkout 的仓库脚本。
+  - 当前实现为 `pull_request` + `actions/checkout` 默认检出 `refs/pull/<n>/merge`（`GITHUB_SHA` 为 PR merge commit），随后执行 `bash ./.github/scripts/label-gate.sh`；PR 可通过修改该脚本使 gate 恒通过，从而绕过“exactly one intent label”约束。
+  - 推荐修复方向（二选一，优先 2）：
+    1) 仍用 `pull_request`：在执行脚本前检出 base SHA（例如 `${{ github.event.pull_request.base.sha }}`）以确保脚本来自可信基线；
+    2) 避免 checkout：直接基于 event payload / GitHub API 在 workflow 中完成 label 校验，或使用固定版本的外部 action（避免运行 PR 提交引入的脚本）。
 
 ## 实现入口点（Repo reconnaissance）
 
@@ -129,6 +134,10 @@
 - Given 一个 PR 同时存在多个意图标签（例如 `type:docs` + `type:patch`）
   When `CI (PR)` 运行
   Then label gate 必须失败并提示“必须且只能有一个意图标签”。
+
+- Given 一个 PR 试图绕过 gate（例如修改 `.github/scripts/label-gate.sh`，或通过 checkout 侧的可执行文件改变其行为）
+  When `PR Label Gate` 运行
+  Then gate 必须仍然使用可信代码路径执行校验（不运行 PR checkout 内的脚本），且不能被绕过。
 
 - Given 一个提交 `push` 到 `main` 且无法关联到任何 PR
   When `CI (main)` 成功触发 `Release`
