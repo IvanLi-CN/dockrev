@@ -193,7 +193,7 @@ Notes:
 
 Rules:
 
-- 归档的 stack 默认从主视图隐藏，且默认不参与 check/update 统计（具体以 `PLAN.md` 决策为准）。
+- 归档的 stack 默认从主视图隐藏；仍参与 check/update 计算与计数展示，但不触发通知发送。
 
 ## `POST /api/services/{service_id}/archive` / `POST /api/services/{service_id}/restore`
 
