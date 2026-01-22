@@ -1,63 +1,160 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720">
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
   <defs>
     <style>
-      .bg { fill: #0b1220; }
-      .panel { fill: #0f1a2c; stroke: #1b2a44; stroke-width: 1; }
-      .card { fill: #0c1628; stroke: #1b2a44; stroke-width: 1; }
-      .text { fill: #e6eefc; font: 16px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
-      .muted { fill: #93a4c7; font: 14px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
-      .title { fill: #e6eefc; font: 22px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; font-weight: 700; }
-      .btn { fill: #1a2d4d; stroke: #2a4574; stroke-width: 1; }
-      .btnText { fill: #e6eefc; font: 14px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; font-weight: 600; }
-      .chip { fill: #13233b; stroke: #22385c; stroke-width: 1; }
-      .chipText { fill: #cfe0ff; font: 12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
-      .divider { stroke: #1b2a44; stroke-width: 1; }
+      :root {
+        /* DaisyUI theme tokens (dark) — aligned with Plan #0001 Dockrev web mockups */
+        --color-base-100: #0f172a;
+        --color-base-200: #0b1020;
+        --color-base-300: #070b15;
+        --color-base-content: #e5e7eb;
+
+        --color-primary: #38bdf8;
+        --color-primary-content: #001018;
+        --color-secondary: #a78bfa;
+        --color-secondary-content: #0b1020;
+        --color-accent: #22c55e;
+        --color-accent-content: #041008;
+        --color-neutral: #111827;
+        --color-neutral-content: #e5e7eb;
+        --color-info: #38bdf8;
+        --color-info-content: #001018;
+        --color-success: #22c55e;
+        --color-success-content: #041008;
+        --color-warning: #f59e0b;
+        --color-warning-content: #1a1200;
+        --color-error: #fb7185;
+        --color-error-content: #1a0006;
+
+        --radius-selector: 1rem;
+        --radius-field: 0.75rem;
+        --radius-box: 1rem;
+        --size-selector: 0.25rem;
+        --size-field: 0.25rem;
+        --border: 1px;
+        --depth: 0;
+        --noise: 0;
+
+        /* aliases used by the SVG mock */
+        --bg: var(--color-base-200);
+        --panel: var(--color-base-100);
+        --panel2: var(--color-base-200);
+        --borderColor: rgba(229,231,235,.12);
+        --dockrev-surface: rgba(255,255,255,.035);
+        --muted: rgba(229,231,235,.78);
+        --muted2: rgba(229,231,235,.56);
+        --text: rgba(229,231,235,.92);
+        --accent: var(--color-primary);
+        --ok: var(--color-success);
+        --warn: var(--color-warning);
+        --bad: var(--color-error);
+      }
+
+      text { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
+      .title { font-size: 16px; fill: var(--text); font-weight: 650; }
+      .h1 { font-size: 22px; fill: var(--text); font-weight: 750; }
+      .h2 { font-size: 14px; fill: var(--text); font-weight: 650; }
+      .label { font-size: 12px; fill: var(--muted); }
+      .muted { font-size: 12px; fill: var(--muted2); }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; fill: var(--muted); }
+      .btn { fill: var(--color-primary); }
+      .btnText { font-size: 12px; fill: var(--color-primary-content); font-weight: 800; }
+      .chip { fill: rgba(229,231,235,.08); }
+      .chipText { font-size: 11px; fill: rgba(229,231,235,.78); font-weight: 650; }
+      .card { fill: var(--panel); }
+      .row { fill: var(--dockrev-surface); }
+      .group { fill: var(--dockrev-surface); }
+      .ok { fill: var(--ok); }
+      .warn { fill: var(--warn); }
+      .bad { fill: var(--bad); }
+      .icon { fill: none; stroke: rgba(255,255,255,.44); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
     </style>
   </defs>
 
-  <rect class="bg" x="0" y="0" width="1200" height="720"/>
+  <rect x="0" y="0" width="1440" height="900" fill="var(--bg)"/>
 
-  <rect class="panel" x="24" y="18" width="1152" height="56" rx="12"/>
-  <text class="title" x="52" y="54">Stack: blog</text>
-  <rect class="btn" x="920" y="30" width="120" height="32" rx="10"/>
-  <text class="btnText" x="952" y="51">Archive stack</text>
-  <rect class="btn" x="1048" y="30" width="128" height="32" rx="10" opacity="0.8"/>
-  <text class="btnText" x="1086" y="51">Open Archived</text>
+  <!-- Top bar -->
+  <rect x="0" y="0" width="1440" height="64" fill="var(--panel2)"/>
+  <text x="28" y="40" class="title">Dockrev</text>
+  <text x="110" y="40" class="muted">Stack 详情（Auto-Discovery / 归档与恢复）</text>
 
-  <rect class="panel" x="24" y="94" width="1152" height="96" rx="14"/>
-  <text class="text" x="52" y="132">Updates: 3</text>
-  <text class="muted" x="52" y="156">Includes archived services; archived services never trigger notifications.</text>
-  <rect class="chip" x="260" y="114" width="140" height="28" rx="10"/>
-  <text class="chipText" x="274" y="133">services: 7</text>
-  <rect class="chip" x="410" y="114" width="160" height="28" rx="10"/>
-  <text class="chipText" x="424" y="133">archived: 2</text>
+  <rect x="1108" y="18" width="136" height="28" rx="8" class="btn"/>
+  <text x="1176" y="37" class="btnText" text-anchor="middle">归档 stack</text>
+  <rect x="1258" y="18" width="154" height="28" rx="8" class="chip"/>
+  <text x="1335" y="37" class="chipText" text-anchor="middle">打开归档箱</text>
+
+  <!-- Sidebar -->
+  <rect x="0" y="64" width="256" height="836" fill="var(--panel2)"/>
+  <text x="28" y="110" class="label">导航</text>
+  <rect x="16" y="130" width="224" height="40" rx="10" fill="rgba(255,255,255,.00)"/>
+  <text x="44" y="155" class="label">概览</text>
+  <rect x="16" y="178" width="224" height="40" rx="10" fill="rgba(110,231,255,.05)"/>
+  <text x="44" y="203" class="h2">服务</text>
+  <rect x="16" y="226" width="224" height="40" rx="10" fill="rgba(255,255,255,.00)"/>
+  <text x="44" y="251" class="label">归档箱</text>
+
+  <!-- Content -->
+  <text x="296" y="112" class="h1">Stack：blog</text>
+  <text x="296" y="138" class="muted">归档仅影响可见性；归档对象仍参与更新计数，但不会触发通知发送。</text>
+
+  <!-- Summary cards -->
+  <rect x="296" y="164" width="1116" height="96" rx="16" class="card"/>
+  <text x="316" y="200" class="label">状态</text>
+  <rect x="360" y="184" width="88" height="26" rx="10" class="chip"/>
+  <text x="404" y="201" class="chipText" text-anchor="middle">active</text>
+  <rect x="456" y="184" width="96" height="26" rx="10" class="chip"/>
+  <text x="504" y="201" class="chipText" text-anchor="middle">services: 7</text>
+  <rect x="560" y="184" width="118" height="26" rx="10" class="chip"/>
+  <text x="619" y="201" class="chipText" text-anchor="middle">archived: 2</text>
+
+  <text x="316" y="236" class="label">可更新（服务数）</text>
+  <text x="430" y="236" class="h2">3</text>
+  <text x="468" y="236" class="muted">（含归档服务；仅 UI 计数，不发送通知）</text>
 
   <!-- Services list -->
-  <text class="title" x="24" y="238" style="font-size:18px">Services</text>
+  <text x="296" y="304" class="title">Services</text>
+  <rect x="296" y="320" width="1116" height="52" rx="12" class="row"/>
+  <text x="316" y="350" class="label">名称</text>
+  <text x="520" y="350" class="label">镜像</text>
+  <text x="920" y="350" class="label">状态</text>
+  <text x="1260" y="350" class="label">操作</text>
 
-  <rect class="card" x="24" y="258" width="1152" height="72" rx="12"/>
-  <text class="text" x="52" y="292">web</text>
-  <text class="muted" x="140" y="292">ghcr.io/acme/web:5.2 → 5.3</text>
-  <rect class="btn" x="1048" y="274" width="128" height="32" rx="10"/>
-  <text class="btnText" x="1088" y="295">Archive</text>
+  <!-- web -->
+  <rect x="296" y="384" width="1116" height="52" rx="12" class="row"/>
+  <text x="316" y="414" class="h2">web</text>
+  <text x="520" y="414" class="mono">ghcr.io/acme/web:5.2 → 5.3</text>
+  <rect x="920" y="398" width="96" height="26" rx="10" class="chip"/>
+  <text x="968" y="415" class="chipText" text-anchor="middle">update</text>
+  <rect x="1240" y="398" width="156" height="26" rx="10" class="chip"/>
+  <text x="1318" y="415" class="chipText" text-anchor="middle">归档 service</text>
 
-  <rect class="card" x="24" y="340" width="1152" height="72" rx="12" opacity="0.9"/>
-  <text class="text" x="52" y="374">worker</text>
-  <text class="muted" x="140" y="374">ghcr.io/acme/worker:1.1 → 1.2</text>
-  <rect class="chip" x="940" y="356" width="96" height="28" rx="10"/>
-  <text class="chipText" x="956" y="375">archived</text>
-  <rect class="btn" x="1048" y="356" width="128" height="32" rx="10"/>
-  <text class="btnText" x="1086" y="377">Restore</text>
+  <!-- worker (archived) -->
+  <rect x="296" y="444" width="1116" height="52" rx="12" class="row"/>
+  <text x="316" y="474" class="h2">worker</text>
+  <text x="520" y="474" class="mono">ghcr.io/acme/worker:1.1 → 1.2</text>
+  <rect x="920" y="458" width="96" height="26" rx="10" class="chip"/>
+  <text x="968" y="475" class="chipText" text-anchor="middle">archived</text>
+  <rect x="1240" y="458" width="156" height="26" rx="10" class="btn"/>
+  <text x="1318" y="475" class="btnText" text-anchor="middle">恢复</text>
 
-  <line class="divider" x1="24" y1="440" x2="1176" y2="440"/>
+  <!-- api (missing) -->
+  <rect x="296" y="504" width="1116" height="52" rx="12" class="row"/>
+  <text x="316" y="534" class="h2">api</text>
+  <text x="520" y="534" class="mono">ghcr.io/acme/api:2.0</text>
+  <rect x="920" y="518" width="96" height="26" rx="10" class="chip"/>
+  <text x="968" y="535" class="chipText" text-anchor="middle">missing</text>
+  <text x="1040" y="534" class="muted">一轮未见；重启后自动归档隐藏</text>
+  <rect x="1240" y="518" width="156" height="26" rx="10" class="chip"/>
+  <text x="1318" y="535" class="chipText" text-anchor="middle">归档 service</text>
 
-  <rect class="panel" x="24" y="460" width="1152" height="236" rx="14"/>
-  <text class="title" x="52" y="496" style="font-size:18px">Archived (in this stack)</text>
-  <text class="muted" x="52" y="522">Restore archived services here, or use the global Archived page.</text>
+  <!-- In-stack archived section -->
+  <text x="296" y="618" class="title">已归档（本 stack）</text>
+  <text x="520" y="618" class="muted">也可在“归档箱”按 stack 成组恢复</text>
 
-  <rect class="card" x="52" y="540" width="1096" height="64" rx="12"/>
-  <text class="text" x="76" y="572">worker</text>
-  <text class="muted" x="160" y="572">Restore to show in main list</text>
-  <rect class="btn" x="1020" y="556" width="128" height="32" rx="10"/>
-  <text class="btnText" x="1058" y="577">Restore</text>
+  <rect x="296" y="636" width="1116" height="52" rx="12" class="row"/>
+  <text x="316" y="666" class="h2">worker</text>
+  <text x="520" y="666" class="muted">恢复后回到主视图；仍计入更新服务数量</text>
+  <rect x="1240" y="650" width="156" height="26" rx="10" class="btn"/>
+  <text x="1318" y="667" class="btnText" text-anchor="middle">恢复</text>
+
+  <text x="296" y="844" class="muted">提示：归档不是删除；允许归档 stack 或 service，并提供归档箱恢复入口。</text>
 </svg>

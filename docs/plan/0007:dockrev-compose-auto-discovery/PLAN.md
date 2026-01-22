@@ -140,6 +140,8 @@
 
 ## UI 设计（Mockups）
 
+说明：本计划的 SVG mockups 复用与 `docs/plan/0001:dockrev-compose-updater/ui/*.svg` 一致的 DaisyUI（dark）token 与 Dockrev app shell（topbar/sidebar）布局，用于保证与现有 Web 界面设计规范一致。
+
 - Overview（新增 discovered group、归档入口、更新计数提示）：`ui/overview.svg`
 - Archived / 归档箱（stack 成组、可恢复）：`ui/archived.svg`
 - Stack detail（归档 stack/service 入口与恢复动线）：`ui/stack-detail.svg`
