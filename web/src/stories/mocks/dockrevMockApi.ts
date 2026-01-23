@@ -9,7 +9,7 @@ import type {
   StackListItem,
 } from '../../api'
 
-export type DockrevApiScenario = 'default' | 'empty' | 'error'
+export type DockrevApiScenario = 'default' | 'empty' | 'no-candidates' | 'error'
 
 const realFetch = globalThis.fetch.bind(globalThis)
 
@@ -61,7 +61,10 @@ function fixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
     id: 'svc-a',
     name: 'api',
     image: { ref: 'ghcr.io/acme/api', tag: 'v1.2.3', digest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111' },
-    candidate: { tag: 'v1.2.4', digest: 'sha256:2222222222222222222222222222222222222222222222222222222222222222', archMatch: 'match', arch: ['amd64'] },
+    candidate:
+      scenario === 'no-candidates'
+        ? null
+        : { tag: 'v1.2.4', digest: 'sha256:2222222222222222222222222222222222222222222222222222222222222222', archMatch: 'match', arch: ['amd64'] },
     ignore: null,
     settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} } },
   } satisfies StackDetail['services'][number]
@@ -70,7 +73,10 @@ function fixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
     id: 'svc-b',
     name: 'worker',
     image: { ref: 'ghcr.io/acme/worker', tag: 'v2.0.0', digest: 'sha256:3333333333333333333333333333333333333333333333333333333333333333' },
-    candidate: { tag: 'v2.1.0', digest: 'sha256:4444444444444444444444444444444444444444444444444444444444444444', archMatch: 'unknown', arch: ['amd64', 'arm64'] },
+    candidate:
+      scenario === 'no-candidates'
+        ? null
+        : { tag: 'v2.1.0', digest: 'sha256:4444444444444444444444444444444444444444444444444444444444444444', archMatch: 'unknown', arch: ['amd64', 'arm64'] },
     ignore: null,
     settings: { autoRollback: false, backupTargets: { bindPaths: {}, volumeNames: {} } },
   } satisfies StackDetail['services'][number]
@@ -79,8 +85,11 @@ function fixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
     id: 'svc-c',
     name: 'ui',
     image: { ref: 'ghcr.io/acme/ui', tag: 'v0.9.0', digest: null },
-    candidate: { tag: 'v1.0.0', digest: 'sha256:5555555555555555555555555555555555555555555555555555555555555555', archMatch: 'mismatch', arch: ['arm64'] },
-    ignore: { matched: true, ruleId: 'ignore-1', reason: 'pinned via policy' },
+    candidate:
+      scenario === 'no-candidates'
+        ? null
+        : { tag: 'v1.0.0', digest: 'sha256:5555555555555555555555555555555555555555555555555555555555555555', archMatch: 'mismatch', arch: ['arm64'] },
+    ignore: scenario === 'no-candidates' ? null : { matched: true, ruleId: 'ignore-1', reason: 'pinned via policy' },
     settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} } },
   } satisfies StackDetail['services'][number]
 
@@ -100,7 +109,7 @@ function fixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
     name: 'prod',
     status: 'healthy',
     services: stackDetail.services.length,
-    updates: 2,
+    updates: scenario === 'no-candidates' ? 0 : 2,
     lastCheckAt: new Date().toISOString(),
   } satisfies StackListItem
 
@@ -160,7 +169,7 @@ function fixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
     stackById: { [stackId]: stackDetail },
     jobs: [job1],
     jobById: { [job1.id]: jobDetail },
-    ignores: [ignoreRule],
+    ignores: scenario === 'no-candidates' ? [] : [ignoreRule],
     settings,
     notifications,
     serviceSettingsById,
