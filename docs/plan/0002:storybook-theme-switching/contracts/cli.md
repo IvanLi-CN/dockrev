@@ -13,6 +13,8 @@
 - Exit codes:
   - `0`: 正常退出（例如手动停止）
   - `!= 0`: 启动或运行失败（配置/依赖/编译错误等）
+- Default port:
+  - `50886`（可用 `DOCKREV_STORYBOOK_PORT` 覆盖，`--port` 优先）
 
 ### `npm run build-storybook`
 
@@ -34,7 +36,7 @@
 - Purpose: 运行 Storybook 自动化测试（用于 CI / 本地验证）。
 - Working dir: `web/`
 - Target selection:
-  - 默认：对本地 Storybook（例如 `http://127.0.0.1:6006`）运行测试（实现阶段需确保命令行为稳定）
+  - 默认：对本地 Storybook（例如 `http://127.0.0.1:50887`）运行测试（实现阶段需确保命令行为稳定）
   - 可选：通过 `--url` 或环境变量 `TARGET_URL` 指向已部署的 Storybook 实例
     - 示例：`npm run test-storybook -- --url https://the-storybook-url-here.com`
     - 示例：`TARGET_URL=https://the-storybook-url-here.com npm run test-storybook`

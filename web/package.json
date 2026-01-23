@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "storybook": "storybook dev",
+    "storybook": "node ./scripts/storybook-dev.mjs",
     "build-storybook": "storybook build",
     "test-storybook": "node ./scripts/test-storybook.mjs",
     "preview": "vite preview"
