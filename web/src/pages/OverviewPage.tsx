@@ -326,6 +326,7 @@ export function OverviewPage(props: {
           const d = details[st.id]
           if (!d) return null
           const allServices = d.services
+            .filter((svc) => !svc.archived)
             .map((svc) => ({ svc, stt: serviceStatus(svc) }))
             .filter((x): x is { svc: Service; stt: RowStatus } => Boolean(x.stt))
           const visibleServices = allServices.filter((x) => filter === 'all' || x.stt === filter)
