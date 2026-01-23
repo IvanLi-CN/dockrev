@@ -23,10 +23,12 @@ Open:
 
 ## Registering a stack
 
-Dockrev reads compose files from inside the `dockrev` container. To register a stack, the compose file paths you submit must exist in the container:
+Dockrev automatically discovers Docker Compose projects by scanning containers for Compose labels and registering stacks automatically.
 
-- Mount your compose directory into the container (example in `docker-compose.yml`)
-- Register using the container path (absolute)
+Important: Dockrev reads compose files from inside the `dockrev` container. The Compose label `com.docker.compose.project.config_files` contains **absolute paths** that must exist and be readable in the container. When Dockrev runs in Docker:
+
+- Bind-mount the host compose directories into the container **read-only at the same absolute path** (example in `docker-compose.yml`)
+- If the mount is missing/mismatched, discovery will not register/update the stack and will surface an actionable error
 
 ## Auth / reverse proxy
 

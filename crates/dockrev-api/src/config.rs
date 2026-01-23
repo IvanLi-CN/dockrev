@@ -13,6 +13,8 @@ pub struct Config {
     pub auth_allow_anonymous_in_dev: bool,
     pub webhook_secret: Option<String>,
     pub host_platform: Option<String>,
+    pub discovery_interval_seconds: u64,
+    pub discovery_max_actions: u32,
 }
 
 impl Config {
@@ -48,6 +50,21 @@ impl Config {
         let webhook_secret = std::env::var("DOCKREV_WEBHOOK_SECRET").ok();
         let host_platform = std::env::var("DOCKREV_HOST_PLATFORM").ok();
 
+        let discovery_interval_seconds = std::env::var("DOCKREV_DISCOVERY_INTERVAL_SECONDS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(60);
+        if discovery_interval_seconds < 10 {
+            return Err(anyhow::anyhow!(
+                "DOCKREV_DISCOVERY_INTERVAL_SECONDS must be >= 10"
+            ));
+        }
+
+        let discovery_max_actions = std::env::var("DOCKREV_DISCOVERY_MAX_ACTIONS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .unwrap_or(200);
+
         Ok(Self {
             app_effective_version,
             http_addr,
@@ -58,6 +75,8 @@ impl Config {
             auth_allow_anonymous_in_dev,
             webhook_secret,
             host_platform,
+            discovery_interval_seconds,
+            discovery_max_actions,
         })
     }
 }

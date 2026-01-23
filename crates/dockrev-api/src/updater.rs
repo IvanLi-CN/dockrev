@@ -275,6 +275,7 @@ mod tests {
         let stack = StackRecord {
             id: "stk_1".to_string(),
             name: "App".to_string(),
+            archived: false,
             compose: crate::api::types::ComposeConfig {
                 kind: "path".to_string(),
                 compose_files: vec!["/srv/docker-compose.yml".to_string()],
@@ -298,6 +299,7 @@ mod tests {
                         volume_names: BTreeMap::<String, TernaryChoice>::new(),
                     },
                 },
+                archived: None,
             }],
         };
 

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  archiveService,
   createIgnore,
   deleteIgnore,
   getServiceSettings,
   getStack,
   listIgnores,
   putServiceSettings,
+  restoreService,
   triggerUpdate,
   type IgnoreRule,
   type Service,
@@ -113,6 +115,31 @@ export function ServiceDetailPage(props: {
           }}
         >
           预览更新
+        </Button>
+        <Button
+          variant={service?.archived ? 'primary' : 'ghost'}
+          disabled={busy || !service}
+          onClick={() => {
+            void (async () => {
+              if (!service) return
+              setBusy(true)
+              setError(null)
+              try {
+                if (service.archived) {
+                  await restoreService(service.id)
+                } else {
+                  await archiveService(service.id)
+                }
+                await refresh()
+              } catch (e: unknown) {
+                setError(errorMessage(e))
+              } finally {
+                setBusy(false)
+              }
+            })()
+          }}
+        >
+          {service?.archived ? '恢复' : '归档'}
         </Button>
         <Button
           variant="danger"

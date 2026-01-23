@@ -11,7 +11,7 @@ Back-end (Rust):
 - Runtime: Tokio
 - HTTP API: Axum
 - Logging: tracing + tracing-subscriber
-- Docker Engine API: via Docker socket (planned: Rust client)
+- Docker Engine access: via `docker` CLI (typically through docker-socket-proxy via `DOCKER_HOST`)
 - Registry auth: reads `~/.docker/config.json`
 - State: SQLite (planned)
 
@@ -61,6 +61,21 @@ Environment variables (API):
 - `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV` (default `true`; set to `false` in production)
 - `DOCKREV_WEBHOOK_SECRET` (optional) shared secret for `/api/webhooks/trigger`
 - `DOCKREV_HOST_PLATFORM` (optional) override host platform (example `linux/amd64`)
+- `DOCKREV_DISCOVERY_INTERVAL_SECONDS` (default `60`; must be `>= 10`)
+- `DOCKREV_DISCOVERY_MAX_ACTIONS` (default `200`) max actions returned by `POST /api/discovery/scan`
+
+## Auto-discovery (Compose projects)
+
+Dockrev automatically discovers Docker Compose projects by scanning running containers and grouping by Compose labels:
+
+- `com.docker.compose.project`
+- `com.docker.compose.project.config_files`
+
+Notes:
+
+- Auto-discovery is always enabled (no enable/disable switch).
+- Manual stack registration (`POST /api/stacks`) is disabled.
+- The `config_files` paths are **container-visible absolute paths**. If Dockrev runs in a container, you must bind-mount the host directories into Dockrev **read-only at the same absolute path**, otherwise discovery will surface an actionable error (mount missing/unreadable).
 
 ## Deploy (minimal)
 

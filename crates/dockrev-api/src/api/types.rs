@@ -18,6 +18,10 @@ pub struct StackListItem {
     pub services: u32,
     pub updates: u32,
     pub last_check_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived_services: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -41,12 +45,15 @@ pub struct StackResponse {
     pub name: String,
     pub compose: ComposeConfig,
     pub services: Vec<Service>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
 pub struct StackRecord {
     pub id: String,
     pub name: String,
+    pub archived: bool,
     pub compose: ComposeConfig,
     pub backup: StackBackupConfig,
     pub services: Vec<Service>,
@@ -63,6 +70,8 @@ pub struct Service {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ignore: Option<IgnoreMatch>,
     pub settings: ServiceSettings,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -159,21 +168,6 @@ pub struct ComposeConfig {
     pub compose_files: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env_file: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RegisterStackRequest {
-    pub name: String,
-    pub compose: ComposeConfig,
-    #[serde(default)]
-    pub backup: Option<StackBackupConfig>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RegisterStackResponse {
-    pub stack_id: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -489,30 +483,6 @@ pub struct JobRecord {
 }
 
 impl JobRecord {
-    pub fn new_job(
-        id: String,
-        r#type: JobType,
-        scope: JobScope,
-        stack_id: Option<String>,
-        service_id: Option<String>,
-        now: &str,
-    ) -> Self {
-        Self {
-            id,
-            r#type,
-            scope,
-            stack_id,
-            service_id,
-            status: "success".to_string(),
-            created_at: now.to_string(),
-            started_at: Some(now.to_string()),
-            finished_at: Some(now.to_string()),
-            allow_arch_mismatch: false,
-            backup_mode: "inherit".to_string(),
-            summary_json: Value::Object(Default::default()),
-        }
-    }
-
     pub fn new_running(
         id: String,
         r#type: JobType,
@@ -857,4 +827,89 @@ fn mask_if_some(input: Option<String>) -> Option<String> {
 
 fn default_true() -> bool {
     true
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiscoveredProjectStatus {
+    Active,
+    Missing,
+    Invalid,
+}
+
+impl DiscoveredProjectStatus {
+    pub fn from_str(input: &str) -> Self {
+        match input {
+            "active" => Self::Active,
+            "missing" => Self::Missing,
+            _ => Self::Invalid,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveredProject {
+    pub project: String,
+    pub status: DiscoveredProjectStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stack_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_files: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_seen_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_scan_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    pub archived: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListDiscoveredProjectsResponse {
+    pub projects: Vec<DiscoveredProject>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryScanSummary {
+    pub projects_seen: u32,
+    pub stacks_created: u32,
+    pub stacks_updated: u32,
+    pub stacks_skipped: u32,
+    pub stacks_failed: u32,
+    pub stacks_marked_missing: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiscoveryActionKind {
+    Created,
+    Updated,
+    Skipped,
+    Failed,
+    MarkedMissing,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryAction {
+    pub project: String,
+    pub action: DiscoveryActionKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stack_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerDiscoveryScanResponse {
+    pub started_at: String,
+    pub duration_ms: u64,
+    pub summary: DiscoveryScanSummary,
+    pub actions: Vec<DiscoveryAction>,
 }

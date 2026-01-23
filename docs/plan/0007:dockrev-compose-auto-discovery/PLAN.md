@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-01-22
 - Last: 2026-01-22
 
@@ -11,6 +11,7 @@
 - 2026-01-22: 创建计划
 - 2026-01-22: 冻结口径：自动发现必启用；移除手动注册；missing 重启自动归档；归档/恢复（project/stack/service）；归档不跳过检查但禁用通知
 - 2026-01-22: 补充 UI 设计图（Overview / Archived / Stack detail）
+- 2026-01-22: 实现：discovery scan + periodic task；归档/恢复 API；`POST /api/stacks` 禁用；Web UI 补齐发现/归档视图；更新部署与配置文档
 
 ## 背景 / 问题陈述
 

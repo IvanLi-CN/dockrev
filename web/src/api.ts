@@ -7,6 +7,8 @@ export type StackListItem = {
   services: number
   updates: number
   lastCheckAt: string
+  archived?: boolean
+  archivedServices?: number
 }
 
 export type ComposeConfig = {
@@ -49,6 +51,7 @@ export type Service = {
     reason: string
   } | null
   settings: ServiceSettings
+  archived?: boolean
 }
 
 export type StackDetail = {
@@ -56,6 +59,40 @@ export type StackDetail = {
   name: string
   compose: ComposeConfig
   services: Service[]
+  archived?: boolean
+}
+
+export type DiscoveredProjectStatus = 'active' | 'missing' | 'invalid'
+
+export type DiscoveredProject = {
+  project: string
+  status: DiscoveredProjectStatus
+  stackId?: string | null
+  configFiles?: string[] | null
+  lastSeenAt?: string | null
+  lastScanAt?: string | null
+  lastError?: string | null
+  archived: boolean
+}
+
+export type DiscoveryScanResponse = {
+  startedAt: string
+  durationMs: number
+  summary: {
+    projectsSeen: number
+    stacksCreated: number
+    stacksUpdated: number
+    stacksSkipped: number
+    stacksFailed: number
+    stacksMarkedMissing: number
+  }
+  actions: Array<{
+    project: string
+    action: 'created' | 'updated' | 'skipped' | 'failed' | 'marked_missing'
+    stackId?: string | null
+    reason?: string | null
+    details?: unknown
+  }>
 }
 
 export type JobListItem = {
@@ -140,25 +177,51 @@ export async function listStacks(): Promise<StackListItem[]> {
   return data.stacks as StackListItem[]
 }
 
+export async function listStacksArchived(filter: 'exclude' | 'include' | 'only'): Promise<StackListItem[]> {
+  const resp = await apiFetch(`/api/stacks?archived=${encodeURIComponent(filter)}`)
+  const data = await resp.json()
+  return data.stacks as StackListItem[]
+}
+
 export async function getStack(stackId: string): Promise<StackDetail> {
   const resp = await apiFetch(`/api/stacks/${encodeURIComponent(stackId)}`)
   const data = await resp.json()
   return data.stack as StackDetail
 }
 
-export async function registerStack(input: {
-  name: string
-  composeFiles: string[]
-  envFile?: string | null
-}) {
-  const resp = await apiFetch('/api/stacks', {
-    method: 'POST',
-    body: JSON.stringify({
-      name: input.name,
-      compose: { type: 'path', composeFiles: input.composeFiles, envFile: input.envFile || null },
-    }),
-  })
-  return (await resp.json()) as { stackId: string }
+export async function triggerDiscoveryScan(): Promise<DiscoveryScanResponse> {
+  const resp = await apiFetch('/api/discovery/scan', { method: 'POST', body: '{}' })
+  return (await resp.json()) as DiscoveryScanResponse
+}
+
+export async function listDiscoveryProjects(filter: 'exclude' | 'include' | 'only' = 'exclude'): Promise<DiscoveredProject[]> {
+  const resp = await apiFetch(`/api/discovery/projects?archived=${encodeURIComponent(filter)}`)
+  const data = await resp.json()
+  return data.projects as DiscoveredProject[]
+}
+
+export async function archiveDiscoveredProject(project: string) {
+  await apiFetch(`/api/discovery/projects/${encodeURIComponent(project)}/archive`, { method: 'POST', body: '{}' })
+}
+
+export async function restoreDiscoveredProject(project: string) {
+  await apiFetch(`/api/discovery/projects/${encodeURIComponent(project)}/restore`, { method: 'POST', body: '{}' })
+}
+
+export async function archiveStack(stackId: string) {
+  await apiFetch(`/api/stacks/${encodeURIComponent(stackId)}/archive`, { method: 'POST', body: '{}' })
+}
+
+export async function restoreStack(stackId: string) {
+  await apiFetch(`/api/stacks/${encodeURIComponent(stackId)}/restore`, { method: 'POST', body: '{}' })
+}
+
+export async function archiveService(serviceId: string) {
+  await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/archive`, { method: 'POST', body: '{}' })
+}
+
+export async function restoreService(serviceId: string) {
+  await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/restore`, { method: 'POST', body: '{}' })
 }
 
 export async function triggerCheck(scope: string, stackId?: string, serviceId?: string) {
