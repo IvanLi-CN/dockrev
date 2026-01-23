@@ -356,6 +356,22 @@ export function OverviewPage(props: {
             archivedUpdateCount > 0 ? ` · ${archivedUpdateCount} 已归档更新（隐藏）` : ''
           }`
 
+          const emptyRowTitle =
+            visibleServices.length > 0
+              ? null
+              : allServices.length === 0 && archivedUpdateCount > 0
+                ? '更新候选均为已归档（默认隐藏）'
+                : allServices.length === 0
+                  ? '无更新候选'
+                  : '当前筛选无结果'
+
+          const emptyRowHint =
+            emptyRowTitle === null
+              ? null
+              : emptyRowTitle === '当前筛选无结果'
+                ? '切换筛选或查看服务列表'
+                : '点击查看服务列表'
+
           return (
             <div key={st.id} className="tableGroup">
               <button
@@ -370,7 +386,17 @@ export function OverviewPage(props: {
                 </div>
               </button>
 
-              {!isCollapsed &&
+              {!isCollapsed && emptyRowTitle ? (
+                <button className="rowLine" onClick={() => navigate({ name: 'services' })} title="打开服务页">
+                  <div className="svcName">{emptyRowTitle}</div>
+                  <div className="muted">{emptyRowHint}</div>
+                  <div className="mono">-</div>
+                  <div className="statusCol">
+                    <Pill tone="muted">无候选</Pill>
+                    <div className="muted">-</div>
+                  </div>
+                </button>
+              ) : !isCollapsed ? (
                 visibleServices.map(({ svc, stt }) => {
                   const current = `${svc.image.tag}${svc.image.digest ? `@${svc.image.digest}` : ''}`
                   const candidate = svc.candidate ? `${svc.candidate.tag}@${svc.candidate.digest}` : '-'
@@ -392,7 +418,8 @@ export function OverviewPage(props: {
                       </div>
                     </button>
                   )
-                })}
+                })
+              ) : null}
             </div>
           )
         })}

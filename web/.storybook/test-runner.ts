@@ -24,6 +24,14 @@ const config: TestRunnerConfig = {
     if (!text.includes('3 services')) {
       throw new Error(`Expected OverviewPage group summary to include "3 services", got: ${JSON.stringify(text)}`)
     }
+
+    const groupHead = page.locator('.tableGroup .groupHead').first()
+    await groupHead.click()
+
+    const rowText = (await page.locator('.tableGroup .rowLine').first().textContent()) ?? ''
+    if (!rowText.includes('无更新候选')) {
+      throw new Error(`Expected expanded OverviewPage group to show empty-state row, got: ${JSON.stringify(rowText)}`)
+    }
   },
 }
 
