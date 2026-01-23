@@ -26,7 +26,7 @@ bun install
 
 ```text
 cd web
-bun ci
+bun install --frozen-lockfile
 ```
 
 ### 约束（Constraints）
