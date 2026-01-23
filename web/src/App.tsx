@@ -8,8 +8,6 @@ import { ServicesPage } from './pages/ServicesPage'
 import { ServiceDetailPage } from './pages/ServiceDetailPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { useRoute } from './useRoute'
-import { Switch } from './ui'
-import { getTheme, setTheme, type DockrevTheme } from './theme'
 
 function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbarHint?: string } {
   switch (route.name) {
@@ -38,27 +36,11 @@ export default function App() {
   const route = useRoute()
   const [pageActions, setPageActions] = useState<ReactNode>(null)
   const [composeHint, setComposeHint] = useState<{ path?: string; profile?: string; lastScan?: string }>({})
-  const [theme, setThemeState] = useState<DockrevTheme>(() => getTheme())
 
   const head = useMemo(() => pageTitle(route), [route])
   const topActions = useMemo(() => {
-    return (
-      <>
-        {pageActions}
-        <div className="themeToggle">
-          <span className="muted">主题</span>
-          <Switch
-            checked={theme === 'dark'}
-            onChange={(checked) => {
-              const next: DockrevTheme = checked ? 'dark' : 'light'
-              setTheme(next)
-              setThemeState(next)
-            }}
-          />
-        </div>
-      </>
-    )
-  }, [pageActions, theme])
+    return <>{pageActions}</>
+  }, [pageActions])
 
   return (
     <AppShell

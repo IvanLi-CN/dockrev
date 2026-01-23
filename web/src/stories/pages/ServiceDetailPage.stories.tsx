@@ -29,11 +29,32 @@ function render(stackId: string, serviceId: string): Story['render'] {
   }
 }
 
-export const Updatable: Story = { render: render('stack-1', 'svc-a') }
-export const Hint: Story = { render: render('stack-1', 'svc-b') }
-export const Blocked: Story = { render: render('stack-1', 'svc-c') }
+export const Updatable: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-prod', 'svc-prod-api'),
+}
+
+export const Hint: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-infra', 'svc-infra-loki'),
+}
+
+export const ArchMismatch: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-infra', 'svc-infra-prom'),
+}
+
+export const Blocked: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-prod', 'svc-prod-worker'),
+}
+
+export const NoCandidate: Story = {
+  parameters: { dockrevApiScenario: 'no-candidates' },
+  render: render('stack-1', 'svc-a'),
+}
 
 export const Error: Story = {
   parameters: { dockrevApiScenario: 'error' },
-  render: render('stack-1', 'svc-a'),
+  render: render('stack-prod', 'svc-prod-api'),
 }

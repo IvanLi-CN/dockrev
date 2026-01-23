@@ -68,6 +68,12 @@ html[data-theme='dark'] {
   --color-error-content: #1a0006;
 
   --dockrev-surface: rgba(255, 255, 255, 0.035);
+  --dockrev-surface-strong: rgba(229, 231, 235, 0.06);
+  --dockrev-chip: rgba(229, 231, 235, 0.08);
+  --dockrev-nav-active-bg: rgba(56, 189, 248, 0.12);
+  --dockrev-accent-dot: rgba(110, 231, 255, 0.55);
+  --dockrev-guide: rgba(110, 231, 255, 0.08);
+  --dockrev-icon-stroke: rgba(255, 255, 255, 0.44);
   --borderColor: rgba(229, 231, 235, 0.12);
   --muted: rgba(229, 231, 235, 0.78);
   --muted2: rgba(229, 231, 235, 0.56);
@@ -102,6 +108,12 @@ html[data-theme='light'] {
   --color-error-content: #ffffff;
 
   --dockrev-surface: rgba(15, 23, 42, 0.03);
+  --dockrev-surface-strong: rgba(15, 23, 42, 0.06);
+  --dockrev-chip: rgba(15, 23, 42, 0.04);
+  --dockrev-nav-active-bg: rgba(14, 165, 233, 0.06);
+  --dockrev-accent-dot: rgba(14, 165, 233, 0.55);
+  --dockrev-guide: rgba(15, 23, 42, 0.1);
+  --dockrev-icon-stroke: rgba(15, 23, 42, 0.44);
   --borderColor: rgba(15, 23, 42, 0.12);
   --muted: rgba(15, 23, 42, 0.72);
   --muted2: rgba(15, 23, 42, 0.52);

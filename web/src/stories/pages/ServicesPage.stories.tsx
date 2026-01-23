@@ -13,6 +13,7 @@ export default meta
 type Story = StoryObj<typeof ServicesPage>
 
 export const Default: Story = {
+  parameters: { dockrevApiScenario: 'multi-stack-mixed' },
   render: () => {
     return (
       <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务">
@@ -42,6 +43,19 @@ export const Error: Story = {
   render: () => {
     return (
       <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务">
+        {({ onComposeHint, onTopActions }) => (
+          <ServicesPage onComposeHint={onComposeHint} onTopActions={onTopActions} />
+        )}
+      </PageHarness>
+    )
+  },
+}
+
+export const DashboardDemo: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务" pageSubtitle="代表性：候选/提示/架构不匹配/被阻止 + 可交互">
         {({ onComposeHint, onTopActions }) => (
           <ServicesPage onComposeHint={onComposeHint} onTopActions={onTopActions} />
         )}
