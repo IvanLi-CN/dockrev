@@ -352,7 +352,7 @@ export function OverviewPage(props: {
           const archivedUpdateCount = d.services.filter((svc) => svc.archived && serviceStatus(svc)).length
 
           const isCollapsed = collapsed[st.id] ?? false
-          const groupSummary = `${allServices.length} services · ${groupCounts.updatable} 可更新 · ${groupCounts.blocked} 被阻止${
+          const groupSummary = `${st.services} services · ${groupCounts.updatable} 可更新 · ${groupCounts.blocked} 被阻止${
             archivedUpdateCount > 0 ? ` · ${archivedUpdateCount} 已归档更新（隐藏）` : ''
           }`
 

@@ -2,13 +2,14 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-01-23
 - Last: 2026-01-23
 
 ## Change log
 
 - 2026-01-23: 创建计划
+- 2026-01-23: 完成：概览页 services 计数口径修复 + Storybook 回归覆盖 + 避免 number/array 误用
 
 ## 背景 / 问题陈述
 
@@ -103,9 +104,9 @@ Dockrev Web 概览页（`/`）按 stack 成组展示“更新候选”，每个 
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 修复概览页 stack 组头的 services 计数口径（使用 `StackListItem.services`）
-- [ ] M2: 增加回归校验：覆盖 “services>0 且无 candidate” 的场景（Storybook + test-runner）
-- [ ] M3: 静态/类型约束：避免对 `StackListItem.services`（number）进行 `.length` 等数组用法
+- [x] M1: 修复概览页 stack 组头的 services 计数口径（使用 `StackListItem.services`）
+- [x] M2: 增加回归校验：覆盖 “services>0 且无 candidate” 的场景（Storybook + test-runner）
+- [x] M3: 静态/类型约束：避免对 `StackListItem.services`（number）进行 `.length` 等数组用法
 
 ## 方案概述（Approach, high-level）
 

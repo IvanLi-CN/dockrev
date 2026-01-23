@@ -43,3 +43,14 @@ export const Error: Story = {
     )
   },
 }
+
+export const NoCandidatesButHasServices: Story = {
+  parameters: { dockrevApiScenario: 'no-candidates' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：services>0 且无 candidate">
+        {({ onComposeHint, onTopActions }) => <OverviewPage onComposeHint={onComposeHint} onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}
