@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    sync::LazyLock,
     time::Duration,
 };
 
@@ -15,6 +16,9 @@ use crate::{
     runner::CommandSpec,
     state::AppState,
 };
+
+static DISCOVERY_SCAN_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 fn now_rfc3339() -> anyhow::Result<String> {
     Ok(time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
@@ -107,7 +111,12 @@ async fn list_compose_projects_from_docker(
         .run(
             CommandSpec {
                 program: "docker".to_string(),
-                args: vec!["ps".to_string(), "-q".to_string()],
+                args: vec![
+                    "ps".to_string(),
+                    "--filter".to_string(),
+                    "label=com.docker.compose.project".to_string(),
+                    "-q".to_string(),
+                ],
                 env: Vec::new(),
             },
             Duration::from_secs(8),
@@ -226,6 +235,7 @@ pub fn spawn_task(state: std::sync::Arc<AppState>) {
 }
 
 pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanResponse> {
+    let _scan_guard = DISCOVERY_SCAN_LOCK.lock().await;
     let started_at = now_rfc3339()?;
     let start = std::time::Instant::now();
     let now = started_at.clone();
