@@ -43,7 +43,7 @@ npm run dev
 
 Open:
 
-- UI (dev server): `http://127.0.0.1:5173/`
+- UI (dev server): `http://127.0.0.1:50884/`
 - UI (embedded): `http://127.0.0.1:50883/`
 - API health: `http://127.0.0.1:50883/api/health`
 - API version: `http://127.0.0.1:50883/api/version`

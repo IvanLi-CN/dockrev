@@ -8,6 +8,13 @@
 - 构建静态站点：`npm run build-storybook`（输出 `storybook-static/`）
 - 运行自动化测试：`npm run test-storybook`
 
+### 端口约定（默认高位端口）
+
+- Vite dev：`50884`（可用 `DOCKREV_WEB_DEV_PORT` 覆盖，CLI `--port` 优先）
+- Vite preview：`50885`（可用 `DOCKREV_WEB_PREVIEW_PORT` 覆盖，CLI `--port` 优先）
+- Storybook dev：`50886`（可用 `DOCKREV_STORYBOOK_PORT` 覆盖，CLI `--port` 优先）
+- test-storybook 自起静态 server：`50887`（可用 `DOCKREV_TEST_STORYBOOK_PORT` 覆盖）
+
 ### 新增 stories 约定
 
 - 推荐：与组件同目录 colocate，文件名 `*.stories.tsx`

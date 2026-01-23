@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 部分完成（2/3）
 - Created: 2026-01-23
 - Last: 2026-01-23
 
@@ -112,8 +112,8 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 统一端口分配与覆盖入口（按契约落地）
-- [ ] M2: `web` 的 dev/preview/storybook/test-storybook 全部遵循高位端口策略并可被测试覆盖
+- [x] M1: 统一端口分配与覆盖入口（按契约落地）
+- [x] M2: `web` 的 dev/preview/storybook/test-storybook 全部遵循高位端口策略并可被测试覆盖
 - [ ] M3: 文档与 CI 口径对齐（README/相关计划契约更新 + CI 稳定性验证）
 
 ## 方案概述（Approach, high-level）
@@ -136,3 +136,7 @@
 
 - Dockrev API：`DOCKREV_HTTP_ADDR`（默认 `0.0.0.0:50883`）
 - `web`：Vite dev（默认 `5173`）、Vite preview（默认 `4173`）、Storybook dev（默认 `6006`）、`test-storybook` 本地静态 server（当前写死 `6006`）
+
+## Change log
+
+- 2026-01-23: 落地 `web` 端口 env 默认值与 strictPort；调整 Storybook/test-storybook 端口与脚本入口；更新相关文档端口说明。

@@ -3,8 +3,13 @@ import { access, readFile } from 'node:fs/promises'
 import http from 'node:http'
 import path from 'node:path'
 
-const DEFAULT_URL = 'http://127.0.0.1:6006'
 const DEFAULT_OUTDIR = path.resolve(process.cwd(), 'storybook-static')
+const DEFAULT_PORT = 50887
+
+function parsePort(value, fallback) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
 
 function parseArgs(argv) {
   const out = { url: null, passthrough: [] }
@@ -92,8 +97,16 @@ function startStaticServer({ port }) {
   })
 
   const listen = () =>
-    new Promise((resolve) => {
-      server.listen(port, '127.0.0.1', resolve)
+    new Promise((resolve, reject) => {
+      const onError = (err) => {
+        server.off('error', onError)
+        reject(err)
+      }
+      server.on('error', onError)
+      server.listen(port, '127.0.0.1', () => {
+        server.off('error', onError)
+        resolve()
+      })
     })
 
   const cleanup = () =>
@@ -114,12 +127,24 @@ async function main() {
   }
 
   await ensureStaticBuild()
-  const server = startStaticServer({ port: 6006 })
-  await server.listen()
+  const port = parsePort(process.env.DOCKREV_TEST_STORYBOOK_PORT, DEFAULT_PORT)
+  const server = startStaticServer({ port })
+  try {
+    await server.listen()
+  } catch (error) {
+    if (error && typeof error === 'object' && error.code === 'EADDRINUSE') {
+      console.error(
+        `Port ${port} is already in use. Set DOCKREV_TEST_STORYBOOK_PORT or pass --url/TARGET_URL.`
+      )
+      process.exit(1)
+    }
+    throw error
+  }
 
   try {
-    await waitForHttpOk(DEFAULT_URL)
-    const code = await run('test-storybook', ['--url', DEFAULT_URL, ...passthrough])
+    const localUrl = `http://127.0.0.1:${port}`
+    await waitForHttpOk(localUrl)
+    const code = await run('test-storybook', ['--url', localUrl, ...passthrough])
     process.exit(code)
   } finally {
     await server.cleanup()
