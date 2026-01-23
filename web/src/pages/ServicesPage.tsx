@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   getStack,
-  listIgnores,
   listStacks,
   listStacksArchived,
   restoreService,
   restoreStack,
-  type IgnoreRule,
+  triggerCheck,
   type Service,
   type StackDetail,
   type StackListItem,
@@ -20,18 +19,103 @@ function formatShort(ts: string) {
   return d.toLocaleString()
 }
 
-function svcTone(svc: Service): 'ok' | 'warn' | 'bad' | 'muted' {
-  if (svc.ignore?.matched) return 'bad'
-  if (!svc.candidate) return 'muted'
-  if (svc.candidate.archMatch === 'mismatch') return 'warn'
-  return 'ok'
+type RowStatus = 'ok' | 'updatable' | 'hint' | 'archMismatch' | 'blocked'
+
+function serviceStatus(svc: Service): RowStatus {
+  if (svc.ignore?.matched) return 'blocked'
+  if (!svc.candidate) return 'ok'
+  if (svc.candidate.archMatch === 'mismatch') return 'archMismatch'
+  if (svc.candidate.archMatch === 'unknown') return 'hint'
+  return 'updatable'
 }
 
-function svcBadge(svc: Service): string {
-  if (svc.ignore?.matched) return 'ignored'
-  if (!svc.candidate) return 'ok'
-  if (svc.candidate.archMatch === 'mismatch') return 'arch mismatch'
-  return 'update'
+function statusDotClass(st: RowStatus): string {
+  if (st === 'updatable') return 'statusDot statusDotOk'
+  if (st === 'hint') return 'statusDot statusDotWarn'
+  if (st === 'archMismatch') return 'statusDot statusDotWarn'
+  if (st === 'blocked') return 'statusDot statusDotBad'
+  return 'statusDot'
+}
+
+function statusLabel(st: RowStatus): string {
+  if (st === 'updatable') return '可更新'
+  if (st === 'hint') return '新版本提示'
+  if (st === 'archMismatch') return '架构不匹配'
+  if (st === 'blocked') return '被阻止'
+  return '无更新'
+}
+
+function noteFor(svc: Service, st: RowStatus): string {
+  if (st === 'blocked') return svc.ignore?.reason ?? '被阻止'
+  if (st === 'archMismatch') return '仅提示，不允许更新'
+  if (st === 'hint') return '同级别/新 minor'
+  if (st === 'updatable') {
+    const hasForceBackup =
+      Object.values(svc.settings.backupTargets.bindPaths).some((v) => v === 'force') ||
+      Object.values(svc.settings.backupTargets.volumeNames).some((v) => v === 'force')
+    return hasForceBackup ? '备份通过后执行' : '按当前 tag 前缀'
+  }
+  return '-'
+}
+
+function formatGroupSummary(services: number, counts: Record<Exclude<RowStatus, 'ok'>, number>) {
+  const parts: string[] = [`${services} services`]
+  if (counts.updatable > 0) parts.push(`${counts.updatable} 可更新`)
+  if (counts.hint > 0) parts.push(`${counts.hint} 新版本提示`)
+  if (counts.archMismatch > 0) parts.push(`${counts.archMismatch} 架构不匹配`)
+  if (counts.blocked > 0) parts.push(`${counts.blocked} 被阻止`)
+  return parts.join(' · ')
+}
+
+function formatDigestShort(digest: string | null | undefined): string | null {
+  if (!digest) return null
+  const m = digest.includes(':') ? digest : `sha256:${digest}`
+  const last2 = m.slice(-2)
+  return `${m.split(':')[0]}:…${last2}`
+}
+
+function formatTagDigest(tag: string, digest: string | null | undefined): string {
+  const d = formatDigestShort(digest)
+  return d ? `${tag}@${d}` : tag
+}
+
+function StackIcon(props: { variant: 'collapsed' | 'expanded' }) {
+  return (
+    <svg className="stackIcon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      {props.variant === 'expanded' ? (
+        <path d="m5 19l2.757-7.351A1 1 0 0 1 8.693 11H21a1 1 0 0 1 .986 1.164l-.996 5.211A2 2 0 0 1 19.026 19za2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4l3 3h7a2 2 0 0 1 2 2v2" />
+      ) : (
+        <path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2" />
+      )}
+    </svg>
+  )
+}
+
+function GroupGuide(props: { rows: number }) {
+  if (props.rows <= 0) return null
+  const rowHeight = 52
+  const gap = 4
+  const bulletGap = 10
+  const topSeg = rowHeight / 2 - bulletGap / 2
+  const midSeg = rowHeight + gap - bulletGap
+
+  const segments: Array<{ top: number; height: number }> = []
+  let y = 36 + gap
+  segments.push({ top: y, height: topSeg })
+  y += topSeg + bulletGap
+  for (let i = 0; i < props.rows - 1; i += 1) {
+    segments.push({ top: y, height: midSeg })
+    y += midSeg + bulletGap
+  }
+  segments.push({ top: y, height: topSeg })
+
+  return (
+    <div className="groupGuide" aria-hidden="true">
+      {segments.map((s, idx) => (
+        <span key={idx} className="groupGuideSeg" style={{ top: s.top, height: s.height }} />
+      ))}
+    </div>
+  )
 }
 
 export function ServicesPage(props: {
@@ -41,7 +125,7 @@ export function ServicesPage(props: {
   const { onComposeHint, onTopActions } = props
   const [stacks, setStacks] = useState<StackListItem[]>([])
   const [details, setDetails] = useState<Record<string, StackDetail | undefined>>({})
-  const [ignores, setIgnores] = useState<IgnoreRule[]>([])
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [search, setSearch] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -66,13 +150,20 @@ export function ServicesPage(props: {
       }),
     )
     setDetails(Object.fromEntries(results))
-    setIgnores(await listIgnores())
 
     const first = results.find(([, d]) => Boolean(d))?.[1]
     onComposeHint({
       path: first?.compose.composeFiles?.[0],
       profile: first?.name,
       lastScan: maxLastScan,
+    })
+
+    setCollapsed((prev) => {
+      const next = { ...prev }
+      for (const st of s) {
+        if (next[st.id] == null) next[st.id] = false
+      }
+      return next
     })
 
     const a = await listStacksArchived('only').catch(() => [])
@@ -96,56 +187,100 @@ export function ServicesPage(props: {
 
   useEffect(() => {
     onTopActions(
-      <Button
-        variant="ghost"
-        disabled={busy}
-        onClick={() => {
-          void (async () => {
-            setBusy(true)
-            try {
-              await refresh()
-            } catch (e: unknown) {
-              setError(e instanceof Error ? e.message : String(e))
-            } finally {
-              setBusy(false)
-            }
-          })()
-        }}
-      >
-        刷新
-      </Button>,
+      <>
+        <Button
+          variant="ghost"
+          disabled={busy}
+          onClick={() => {
+            void (async () => {
+              setBusy(true)
+              try {
+                await refresh()
+              } catch (e: unknown) {
+                setError(e instanceof Error ? e.message : String(e))
+              } finally {
+                setBusy(false)
+              }
+            })()
+          }}
+        >
+          刷新
+        </Button>
+        <Button
+          variant="ghost"
+          disabled={busy}
+          onClick={() => {
+            void (async () => {
+              setBusy(true)
+              try {
+                await triggerCheck('all')
+                await refresh()
+              } catch (e: unknown) {
+                setError(e instanceof Error ? e.message : String(e))
+              } finally {
+                setBusy(false)
+              }
+            })()
+          }}
+        >
+          立即扫描更新
+        </Button>
+      </>,
     )
   }, [busy, onTopActions, refresh])
 
-  const allServices = useMemo(() => {
-    const out: Array<{ stackId: string; stackName: string; lastCheckAt: string; svc: Service }> = []
+  const groups = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    const out: Array<{
+      stackId: string
+      stackName: string
+      lastCheckAt: string
+      services: Array<{ svc: Service; status: RowStatus }>
+      counts: Record<Exclude<RowStatus, 'ok'>, number>
+      totalServices: number
+    }> = []
+
     for (const st of stacks) {
       const d = details[st.id]
       if (!d) continue
-      for (const svc of d.services) {
-        if (svc.archived) continue
-        out.push({ stackId: st.id, stackName: d.name, lastCheckAt: st.lastCheckAt, svc })
+
+      const services = d.services
+        .filter((svc) => !svc.archived)
+        .map((svc) => ({ svc, status: serviceStatus(svc) }))
+        .filter((x) => {
+          if (!q) return true
+          const hay = `${d.name} ${x.svc.name} ${x.svc.image.ref} ${x.svc.image.tag}`.toLowerCase()
+          return hay.includes(q)
+        })
+
+      if (q && services.length === 0) continue
+
+      const counts: Record<Exclude<RowStatus, 'ok'>, number> = { updatable: 0, hint: 0, archMismatch: 0, blocked: 0 }
+      for (const x of services) {
+        if (x.status === 'ok') continue
+        counts[x.status] += 1
       }
+
+      const totalServices = d.services.filter((svc) => !svc.archived).length
+      out.push({ stackId: st.id, stackName: d.name, lastCheckAt: st.lastCheckAt, services, counts, totalServices })
     }
+
     return out
-  }, [stacks, details])
+  }, [details, search, stacks])
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return allServices
-    return allServices.filter((x) => {
-      const hay = `${x.stackName} ${x.svc.name} ${x.svc.image.ref} ${x.svc.image.tag}`.toLowerCase()
-      return hay.includes(q)
-    })
-  }, [allServices, search])
-
-  const ignoreByService = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const r of ignores) {
-      m.set(r.scope.serviceId, (m.get(r.scope.serviceId) ?? 0) + 1)
+  const totals = useMemo(() => {
+    let total = 0
+    let filtered = 0
+    const q = search.trim()
+    for (const st of stacks) {
+      const d = details[st.id]
+      if (!d) continue
+      total += d.services.filter((svc) => !svc.archived).length
     }
-    return m
-  }, [ignores])
+    if (!q) filtered = total
+    else filtered = groups.reduce((acc, g) => acc + g.services.length, 0)
+    return { total, filtered }
+  }, [details, groups, search, stacks])
 
   const archivedServices = useMemo(() => {
     const out: Array<{ stackId: string; stackName: string; svc: Service }> = []
@@ -172,51 +307,73 @@ export function ServicesPage(props: {
               placeholder="搜索 service / image / stack"
             />
             <div className="muted">
-              {filtered.length}/{allServices.length}
+              {totals.filtered}/{totals.total}
             </div>
           </div>
         </div>
 
-        <div className="svcGrid">
-          {filtered.map((x) => (
-            <button
-              key={x.svc.id}
-              className="svcCard"
-              onClick={() => navigate({ name: 'service', stackId: x.stackId, serviceId: x.svc.id })}
-            >
-              <div className="svcCardTop">
-                <div className="svcCardName">{x.svc.name}</div>
-                <Pill tone={svcTone(x.svc)}>{svcBadge(x.svc)}</Pill>
+        <div className="table" style={{ marginTop: 12 }}>
+          <div className="tableHeader">
+            <div>Service</div>
+            <div>Image</div>
+            <div>Current → Candidate</div>
+            <div>状态 / 备注</div>
+          </div>
+
+          {groups.map((g) => {
+            const isCollapsed = collapsed[g.stackId] ?? false
+            const groupSummary = formatGroupSummary(g.totalServices, g.counts)
+            return (
+              <div key={g.stackId} className={isCollapsed ? 'tableGroup' : 'tableGroup tableGroupExpanded'}>
+                {!isCollapsed ? <GroupGuide rows={g.services.length} /> : null}
+                <button
+                  className="groupHead"
+                  onClick={() => setCollapsed((prev) => ({ ...prev, [g.stackId]: !isCollapsed }))}
+                >
+                  <div className="cellService cellServiceGroup">
+                    <StackIcon variant={isCollapsed ? 'collapsed' : 'expanded'} />
+                    <div className="groupTitle">{g.stackName}</div>
+                  </div>
+                  <div className="groupMeta">{groupSummary}</div>
+                  <div />
+                  <div />
+                </button>
+
+                {!isCollapsed
+                  ? g.services.map(({ svc, status }) => {
+                      const current = formatTagDigest(svc.image.tag, svc.image.digest)
+                      const candidate = svc.candidate ? formatTagDigest(svc.candidate.tag, svc.candidate.digest) : '-'
+                      return (
+                        <button
+                          key={svc.id}
+                          className="rowLine"
+                          onClick={() => navigate({ name: 'service', stackId: g.stackId, serviceId: svc.id })}
+                        >
+                          <div className="cellService">
+                            <span className="svcBullet" aria-hidden="true" />
+                            <span className="svcName">{svc.name}</span>
+                          </div>
+                          <div className="mono cellMono">{svc.image.ref}</div>
+                          <div className="cellTwoLine">
+                            <div className="mono">{current}</div>
+                            <div className="mono">{candidate}</div>
+                          </div>
+                          <div className="statusCol">
+                            <div className="statusLine">
+                              <span className={statusDotClass(status)} aria-hidden="true" />
+                              <span className="label">{statusLabel(status)}</span>
+                            </div>
+                            <div className="muted statusNote">{noteFor(svc, status)}</div>
+                          </div>
+                        </button>
+                      )
+                    })
+                  : null}
               </div>
-              <div className="svcCardMeta">
-                <div className="muted">
-                  stack <Mono>{x.stackName}</Mono>
-                </div>
-                <div className="muted">
-                  image <Mono>{x.svc.image.ref}</Mono>
-                </div>
-                <div className="muted">
-                  current <Mono>{x.svc.image.tag}</Mono>
-                  {x.svc.candidate ? (
-                    <>
-                      {' '}
-                      → candidate <Mono>{x.svc.candidate.tag}</Mono>
-                    </>
-                  ) : null}
-                </div>
-                <div className="muted">
-                  last scan <Mono>{formatShort(x.lastCheckAt)}</Mono>
-                  {ignoreByService.get(x.svc.id) ? (
-                    <>
-                      {' '}
-                      · ignores <Mono>{ignoreByService.get(x.svc.id)}</Mono>
-                    </>
-                  ) : null}
-                </div>
-              </div>
-            </button>
-          ))}
-          {filtered.length === 0 ? <div className="muted">无匹配结果</div> : null}
+            )
+          })}
+
+          {groups.length === 0 ? <div className="muted">无匹配结果</div> : null}
         </div>
       </div>
 

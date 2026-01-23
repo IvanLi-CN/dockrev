@@ -32,6 +32,19 @@ export function href(route: Route): string {
   }
 }
 
+function currentPathname(): string {
+  const hash = window.location.hash
+  if (hash.startsWith('#/')) return hash.slice(1)
+  return window.location.pathname
+}
+
+function shouldUseHashRouting(): boolean {
+  if (window.location.hash.startsWith('#/')) return true
+  // Storybook renders stories inside `iframe.html?...`; pushing pathname would break the preview.
+  if (window.location.pathname.endsWith('/iframe.html')) return true
+  return false
+}
+
 type NavListener = () => void
 const listeners = new Set<NavListener>()
 
@@ -41,6 +54,16 @@ function notify() {
 
 export function navigate(route: Route) {
   const url = href(route)
+  if (shouldUseHashRouting()) {
+    const next = `#${url}`
+    if (window.location.hash !== next) {
+      window.location.hash = next
+    } else {
+      notify()
+    }
+    return
+  }
+
   window.history.pushState({}, '', url)
   notify()
 }
@@ -54,5 +77,14 @@ export function subscribeNavigation(listener: NavListener) {
 
 export function installPopStateListener() {
   window.addEventListener('popstate', notify)
+  window.addEventListener('hashchange', notify)
 }
 
+export function currentRoutePathname(): string {
+  return currentPathname()
+}
+
+export function currentHref(route: Route): string {
+  const url = href(route)
+  return shouldUseHashRouting() ? `#${url}` : url
+}

@@ -1,12 +1,13 @@
 import { useMemo, type ReactNode } from 'react'
 import { Chip, Mono } from './ui'
 import type { Route } from './routes'
-import { href, navigate } from './routes'
+import { currentHref, navigate } from './routes'
 
 function formatShort(ts: string) {
   const d = new Date(ts)
   if (Number.isNaN(d.valueOf())) return ts
-  return d.toLocaleString()
+  const pad2 = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
 }
 
 export function AppShell(props: {
@@ -42,8 +43,8 @@ export function AppShell(props: {
           <div className="topbarHint">{props.topbarHint ?? 'Compose 镜像更新 / 版本提示'}</div>
         </div>
         <div className="topbarRight">
-          {props.topActions}
-          <div className="chipStatic">用户：ivan（FH）</div>
+          {props.topActions ? <div className="topActions">{props.topActions}</div> : null}
+          <div className="chipStatic chipStaticUser">用户：ivan（FH）</div>
         </div>
       </header>
 
@@ -53,7 +54,7 @@ export function AppShell(props: {
           {nav.map((item) => (
             <a
               key={item.key}
-              href={href(item.to)}
+              href={currentHref(item.to)}
               className={active === item.key ? 'navItem navItemActive' : 'navItem'}
               onClick={(e) => {
                 e.preventDefault()
@@ -75,7 +76,9 @@ export function AppShell(props: {
         ) : (
           <div className="sidebarMuted">尚未选择 stack</div>
         )}
-        {profile ? <div className="chipStatic" style={{ marginTop: 8 }}>{`profile: ${profile}`}</div> : null}
+        {profile ? (
+          <div className="chipStatic chipStaticSidebar" style={{ marginTop: 8 }}>{`profile: ${profile}`}</div>
+        ) : null}
 
         <div className="sidebarSectionLabel" style={{ marginTop: 20 }}>
           最近一次扫描
@@ -115,7 +118,6 @@ export function FilterChips<T extends string>(props: {
           title={it.count != null ? `${it.label}: ${it.count}` : it.label}
         >
           {it.label}
-          {typeof it.count === 'number' ? <span className="chipCount">{it.count}</span> : null}
         </Chip>
       ))}
     </div>

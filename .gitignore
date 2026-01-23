@@ -2,6 +2,8 @@
 
 # Local scratch
 .tmp/
+web/.proof/
+dockrev-prod-overview.png
 
 # Rust
 /target

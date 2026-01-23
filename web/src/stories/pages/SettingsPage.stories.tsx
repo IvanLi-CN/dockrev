@@ -13,6 +13,7 @@ export default meta
 type Story = StoryObj<typeof SettingsPage>
 
 export const Default: Story = {
+  parameters: { dockrevApiScenario: 'settings-configured' },
   render: () => {
     return (
       <PageHarness
@@ -29,6 +30,17 @@ export const Default: Story = {
 
 export const Error: Story = {
   parameters: { dockrevApiScenario: 'error' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'settings' }} title="系统设置" topbarHint="系统设置">
+        {({ onTopActions }) => <SettingsPage onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}
+
+export const Empty: Story = {
+  parameters: { dockrevApiScenario: 'empty' },
   render: () => {
     return (
       <PageHarness route={{ name: 'settings' }} title="系统设置" topbarHint="系统设置">

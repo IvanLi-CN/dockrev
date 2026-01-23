@@ -14,9 +14,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 0 20px;
+  padding: 0 28px;
   background: var(--panel2);
-  border-bottom: 1px solid var(--borderColor);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -31,7 +30,13 @@
 .topbarRight {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
+}
+
+.topActions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 
 .themeToggle {
@@ -54,7 +59,6 @@
 .sidebar {
   grid-area: side;
   background: var(--panel2);
-  border-right: 1px solid var(--borderColor);
   padding: 18px 16px;
   overflow: auto;
 }
@@ -86,10 +90,13 @@
 }
 
 .navItem {
-  display: block;
-  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 12px 0 28px;
   border-radius: 10px;
   color: var(--muted);
+  font-size: 12px;
 }
 
 .navItem:hover {
@@ -98,25 +105,31 @@
 }
 
 .navItemActive {
-  background: rgba(56, 189, 248, 0.12);
+  background: var(--dockrev-nav-active-bg);
   color: var(--text);
+  font-size: 14px;
   font-weight: 650;
 }
 
 .content {
   grid-area: main;
-  padding: 22px 24px;
+  padding: 48px 28px 48px 40px;
   overflow: auto;
 }
 
 .pageHead {
-  margin-bottom: 14px;
+  margin-bottom: 26px;
 }
 
 .page {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.overviewIndent {
+  margin-left: 20px;
+  margin-right: 20px;
 }
 
 .twoCol {
@@ -196,6 +209,9 @@
   cursor: pointer;
   font-size: 12px;
   font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .btn:disabled {
@@ -223,14 +239,27 @@
   height: 28px;
   padding: 0 12px;
   border-radius: 8px;
-  border: 1px solid var(--borderColor);
-  background: var(--dockrev-surface);
+  border: 0;
+  background: var(--dockrev-chip);
   display: flex;
   align-items: center;
+  justify-content: center;
   font-size: 11px;
   color: var(--muted);
   font-weight: 650;
   white-space: nowrap;
+}
+
+.chipStaticUser {
+  width: 144px;
+}
+
+.chipStaticSidebar {
+  width: 224px;
+}
+
+.topbarRight .btnPrimary {
+  width: 132px;
 }
 
 .chipRow {
@@ -244,8 +273,8 @@
   height: 26px;
   padding: 0 10px;
   border-radius: 10px;
-  border: 1px solid var(--borderColor);
-  background: var(--dockrev-surface);
+  border: 0;
+  background: var(--dockrev-chip);
   color: var(--muted);
   font-size: 11px;
   font-weight: 650;
@@ -256,57 +285,52 @@
 }
 
 .chip:hover {
-  border-color: rgba(56, 189, 248, 0.35);
+  background: var(--dockrev-surface-strong);
 }
 
 .chipActive {
   background: rgba(110, 231, 255, 0.12);
-  border-color: rgba(110, 231, 255, 0.18);
   color: var(--color-primary);
-}
-
-.chipCount {
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.12);
-  color: var(--muted);
-  font-weight: 650;
 }
 
 .card {
   background: var(--panel);
-  border: 1px solid var(--borderColor);
-  border-radius: 16px;
-  padding: 16px;
+  border: 0;
+  border-radius: 14px;
+  padding: 20px;
 }
 
 .statGrid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
+  grid-template-columns: 270px 270px 270px 246px;
+  gap: 20px;
+  margin-bottom: 60px;
 }
 
 @media (max-width: 1200px) {
   .statGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-bottom: 24px;
   }
 }
 
 @media (max-width: 650px) {
   .statGrid {
     grid-template-columns: 1fr;
+    margin-bottom: 18px;
   }
 }
 
 .statCard {
-  padding: 18px 18px 16px;
+  height: 110px;
+  padding: 20px;
 }
 
 .statNum {
   font-size: 22px;
   font-weight: 750;
   color: var(--text);
-  margin-top: 10px;
+  margin-top: 18px;
 }
 
 .sectionRow {
@@ -318,37 +342,45 @@
 .table {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 4px;
+  width: 1076px;
+  max-width: 100%;
 }
 
 .tableHeader {
   display: grid;
-  grid-template-columns: 180px 300px 1fr 220px;
-  gap: 10px;
-  padding: 10px 16px;
+  grid-template-columns: 204px 320px 330px 222px;
+  align-items: center;
+  height: 38px;
   border-radius: 10px;
-  background: var(--dockrev-surface);
+  background: var(--dockrev-surface-strong);
   color: var(--muted);
   font-size: 12px;
+}
+
+.tableHeader > :first-child {
+  padding-left: 16px;
 }
 
 .tableGroup {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
+  position: relative;
 }
 
 .groupHead {
-  display: flex;
+  display: grid;
+  grid-template-columns: 204px 320px 330px 222px;
   align-items: center;
-  gap: 12px;
-  width: 100%;
+  height: 36px;
   cursor: pointer;
   text-align: left;
-  border: 1px solid rgba(110, 231, 255, 0.08);
+  border: 0;
+  outline: none;
   background: var(--dockrev-surface);
   border-radius: 12px;
-  padding: 10px 16px;
+  padding: 0;
 }
 
 .groupTitle {
@@ -362,33 +394,21 @@
   color: var(--muted2);
 }
 
-.groupRight {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.groupChevron {
-  font-size: 14px;
-  color: var(--muted);
-}
-
 .rowLine {
   display: grid;
-  grid-template-columns: 180px 300px 1fr 220px;
-  gap: 10px;
+  grid-template-columns: 204px 320px 330px 222px;
   width: 100%;
   cursor: pointer;
   text-align: left;
-  border: 1px solid rgba(0, 0, 0, 0);
+  border: 0;
+  outline: none;
   background: var(--dockrev-surface);
   border-radius: 12px;
-  padding: 12px 16px;
+  padding: 0;
 }
 
 .rowLine:hover {
-  border-color: rgba(56, 189, 248, 0.35);
+  background: var(--dockrev-surface-strong);
 }
 
 .svcName {
@@ -397,13 +417,132 @@
   color: var(--text);
 }
 
-.statusCol {
+.cellService {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-items: flex-start;
+  align-items: center;
+  gap: 10px;
+  padding: 0 0 0 56px;
+  min-height: 52px;
+  position: relative;
+  overflow: hidden;
 }
 
+.cellServiceGroup {
+  min-height: 36px;
+  padding-left: 16px;
+  gap: 10px;
+}
+
+.svcBullet {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--dockrev-accent-dot);
+  flex: 0 0 auto;
+  position: absolute;
+  left: 25px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.stackIcon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.stackIcon path {
+  fill: none;
+  stroke: var(--dockrev-icon-stroke);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.cellMono {
+  padding: 10px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cellTwoLine {
+  padding: 8px 0;
+  overflow: hidden;
+}
+
+.cellTwoLine > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statusCol {
+  padding: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  overflow: hidden;
+}
+
+.statusLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.statusDot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(229, 231, 235, 0.18);
+  flex: 0 0 auto;
+}
+
+html[data-theme='light'] .statusDot {
+  background: rgba(15, 23, 42, 0.18);
+}
+
+.statusDotOk {
+  background: var(--color-success);
+}
+
+.statusDotWarn {
+  background: var(--color-warning);
+}
+
+.statusDotBad {
+  background: var(--color-error);
+}
+
+.statusNote {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.groupGuide {
+  position: absolute;
+  left: 24px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  pointer-events: none;
+}
+
+.groupGuideSeg {
+  position: absolute;
+  left: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--dockrev-guide);
+}
+
+/* Legacy: pill tags (used outside dashboard table) */
 .pill {
   font-size: 11px;
   padding: 4px 10px;
