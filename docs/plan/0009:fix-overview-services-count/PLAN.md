@@ -43,7 +43,7 @@ Dockrev Web 概览页（`/`）按 stack 成组展示“更新候选”，每个 
 
 ## 接口契约（Interfaces & Contracts）
 
-本计划不新增/删除 API，但会冻结并记录“前端消费的现有契约”。
+本计划不改变服务端 API 行为；仅对“前端消费的现有契约”做补齐与冻结（docs-only）。因此本节的 `Change=Modify` 指“契约文档增量补齐”，不代表需要后端 rollout。
 
 ### 接口清单（Inventory）
 
@@ -103,7 +103,9 @@ Dockrev Web 概览页（`/`）按 stack 成组展示“更新候选”，每个 
 
 ## 实现里程碑（Milestones）
 
-（待 `Status` 进入 `待实现` 后再补齐；本阶段不拆分实现里程碑，避免关键口径未冻结就排期。）
+- [ ] M1: 修复概览页 stack 组头的 services 计数口径（使用 `StackListItem.services`）
+- [ ] M2: 增加回归校验：覆盖 “services>0 且无 candidate” 的场景（Storybook + test-runner）
+- [ ] M3: 静态/类型约束：避免对 `StackListItem.services`（number）进行 `.length` 等数组用法
 
 ## 方案概述（Approach, high-level）
 
