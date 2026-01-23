@@ -46,7 +46,7 @@
 | 接口（Name） | 类型（Kind） | 范围（Scope） | 变更（Change） | 契约文档（Contract Doc） | 负责人（Owner） | 使用方（Consumers） | 备注（Notes） |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `web` 安装依赖与运行脚本 | CLI | internal | Modify | ./contracts/cli.md | frontend | devs / CI | `bun install` + `bun run <script>` |
-| 前端锁文件 | File format | internal | Modify | ./contracts/file-formats.md | frontend | devs / CI | `bun.lock`（替代 `web/package-lock.json`） |
+| 前端锁文件 | File format | internal | Modify | ./contracts/file-formats.md | frontend | devs / CI | `bun.lock`/`web/bun.lock`（替代 `package-lock.json`/`web/package-lock.json`） |
 
 ### 契约文档（按 Kind 拆分）
 
