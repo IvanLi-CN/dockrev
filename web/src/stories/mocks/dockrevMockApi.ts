@@ -181,17 +181,42 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
     const f = fixture(scenario)
 
     // stacks
-    if (method === 'GET' && urlString === '/api/stacks') return json({ stacks: f.stacks })
+    if (method === 'GET' && (urlString === '/api/stacks' || urlString.startsWith('/api/stacks?'))) {
+      const query = urlString.includes('?') ? urlString.split('?')[1] : ''
+      const params = new URLSearchParams(query)
+      const archived = params.get('archived') ?? 'exclude'
+
+      let stacks = f.stacks
+      if (archived === 'only') stacks = stacks.filter((s) => Boolean(s.archived))
+      if (archived === 'exclude') stacks = stacks.filter((s) => !s.archived)
+
+      return json({ stacks })
+    }
     if (method === 'GET' && urlString.startsWith('/api/stacks/')) {
-      const id = decodeURIComponent(urlString.split('/').slice(3).join('/'))
+      const id = decodeURIComponent(urlString.split('?')[0].split('/').slice(3).join('/'))
       const st = f.stackById[id]
       if (!st) return json({ error: 'not found' }, { status: 404 })
       return json({ stack: st })
     }
+    if (method === 'POST' && urlString.startsWith('/api/stacks/') && urlString.endsWith('/archive')) return json({}, { status: 204 })
+    if (method === 'POST' && urlString.startsWith('/api/stacks/') && urlString.endsWith('/restore')) return json({}, { status: 204 })
 
     // checks / updates
     if (method === 'POST' && urlString === '/api/checks') return json({ checkId: 'check-1' })
     if (method === 'POST' && urlString === '/api/updates') return json({ jobId: 'job-1' })
+
+    // discovery
+    if (method === 'POST' && urlString === '/api/discovery/scan')
+      return json({
+        startedAt: new Date().toISOString(),
+        durationMs: 12,
+        summary: { projectsSeen: 0, stacksCreated: 0, stacksUpdated: 0, stacksSkipped: 0, stacksFailed: 0, stacksMarkedMissing: 0 },
+        actions: [],
+      })
+    if (method === 'GET' && (urlString === '/api/discovery/projects' || urlString.startsWith('/api/discovery/projects?')))
+      return json({ projects: [] })
+    if (method === 'POST' && urlString.startsWith('/api/discovery/projects/') && urlString.endsWith('/archive')) return json({}, { status: 204 })
+    if (method === 'POST' && urlString.startsWith('/api/discovery/projects/') && urlString.endsWith('/restore')) return json({}, { status: 204 })
 
     // jobs
     if (method === 'GET' && urlString === '/api/jobs') return json({ jobs: f.jobs })
@@ -229,6 +254,8 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       return json(st)
     }
     if (method === 'PUT' && urlString.startsWith('/api/services/') && urlString.endsWith('/settings')) return json({ ok: true })
+    if (method === 'POST' && urlString.startsWith('/api/services/') && urlString.endsWith('/archive')) return json({}, { status: 204 })
+    if (method === 'POST' && urlString.startsWith('/api/services/') && urlString.endsWith('/restore')) return json({}, { status: 204 })
 
     return json({ error: `unhandled mock route: ${method} ${urlString}` }, { status: 501 })
   }

@@ -23,15 +23,56 @@ pub struct BackupCleanupItem {
 }
 
 #[derive(Clone, Debug)]
+pub struct ComposeServiceSpec {
+    pub name: String,
+    pub image_ref: String,
+    pub image_tag: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct ServiceForCheck {
     pub id: String,
     pub image_ref: String,
     pub image_tag: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct DiscoveredComposeProjectRecord {
+    pub stack_id: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct DiscoveredComposeProjectUpsert {
+    pub project: String,
+    pub stack_id: Option<String>,
+    pub status: String,
+    pub last_seen_at: Option<String>,
+    pub last_scan_at: String,
+    pub last_error: Option<String>,
+    pub last_config_files: Option<Vec<String>>,
+    pub unarchive_if_active: bool,
+}
+
 #[derive(Clone)]
 pub struct Db {
     conn: Connection,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArchivedFilter {
+    Exclude,
+    Include,
+    Only,
+}
+
+impl ArchivedFilter {
+    fn where_clause(self, column: &str) -> String {
+        match self {
+            Self::Exclude => format!("AND {column} = 0"),
+            Self::Include => String::new(),
+            Self::Only => format!("AND {column} = 1"),
+        }
+    }
 }
 
 impl Db {
@@ -71,6 +112,12 @@ impl Db {
         self.call(|conn| {
             ensure_service_columns(conn)?;
             ensure_notification_columns(conn)?;
+            ensure_stack_archive_columns(conn)?;
+            ensure_service_archive_columns(conn)?;
+            ensure_discovery_schema(conn)?;
+            ensure_schema_migrations_table(conn)?;
+            apply_migration_0007_remove_manual_stacks(conn)?;
+            auto_archive_missing_discovery_projects_on_startup(conn)?;
             Ok(())
         })
         .await?;
@@ -134,15 +181,21 @@ INSERT OR IGNORE INTO notification_settings (
         Ok(())
     }
 
-    pub async fn list_stacks(&self) -> anyhow::Result<Vec<StackListItem>> {
-        self.call(|conn| {
-            let mut stmt = conn.prepare(
+    pub async fn list_stacks(
+        &self,
+        archived: ArchivedFilter,
+    ) -> anyhow::Result<Vec<StackListItem>> {
+        self.call(move |conn| {
+            let filter_clause = archived.where_clause("s.archived");
+            let sql = format!(
                 r#"
 SELECT
   s.id,
   s.name,
   s.last_check_at,
+  s.archived,
   (SELECT COUNT(1) FROM services sv WHERE sv.stack_id = s.id) AS services,
+  (SELECT COUNT(1) FROM services sv WHERE sv.stack_id = s.id AND sv.archived = 1) AS archived_services,
   (
     SELECT COUNT(1)
     FROM services sv
@@ -153,18 +206,23 @@ SELECT
       AND sv.candidate_arch_match = 'match'
   ) AS updates
 FROM stacks s
+WHERE 1=1
+{filter_clause}
 ORDER BY s.created_at DESC
 "#,
-            )?;
+            );
+            let mut stmt = conn.prepare(&sql)?;
 
             let rows = stmt.query_map([], |row| {
                 Ok(StackListItem {
                     id: row.get(0)?,
                     name: row.get(1)?,
                     status: StackStatus::Unknown,
-                    services: row.get::<_, i64>(3)? as u32,
-                    updates: row.get::<_, i64>(4)? as u32,
                     last_check_at: row.get(2)?,
+                    archived: Some(row.get::<_, i64>(3)? != 0),
+                    services: row.get::<_, i64>(4)? as u32,
+                    archived_services: Some(row.get::<_, i64>(5)? as u32),
+                    updates: row.get::<_, i64>(6)? as u32,
                 })
             })?;
 
@@ -188,7 +246,8 @@ SELECT
   env_file,
   backup_targets_json,
   backup_retention_keep_last,
-  backup_retention_delete_after_stable_seconds
+  backup_retention_delete_after_stable_seconds,
+  archived
 FROM stacks
 WHERE id = ?1
 "#,
@@ -218,6 +277,7 @@ WHERE id = ?1
                         Ok(StackRecord {
                             id: row.get(0)?,
                             name: row.get(1)?,
+                            archived: row.get::<_, i64>(8)? != 0,
                             compose: ComposeConfig {
                                 kind: row.get(2)?,
                                 compose_files,
@@ -255,6 +315,7 @@ WHERE id = ?1
 	  ignore_rule_id,
 	  ignore_reason,
 	  auto_rollback,
+	  archived,
 	  backup_targets_bind_paths_json,
 	  backup_targets_volume_names_json
 	FROM services
@@ -265,8 +326,8 @@ WHERE id = ?1
             let mut rows = stmt.query(params![stack.id.clone()])?;
 
             while let Some(row) = rows.next()? {
-                let bind_paths_json: String = row.get(12)?;
-                let volume_names_json: String = row.get(13)?;
+                let bind_paths_json: String = row.get(13)?;
+                let volume_names_json: String = row.get(14)?;
                 let bind_paths: BTreeMap<String, crate::api::types::TernaryChoice> =
                     serde_json::from_str(&bind_paths_json).map_err(|e| {
                         rusqlite::Error::FromSqlConversionFailure(
@@ -334,6 +395,7 @@ WHERE id = ?1
                             volume_names,
                         },
                     },
+                    archived: Some(row.get::<_, i64>(12)? != 0),
                 });
             }
 
@@ -442,6 +504,197 @@ INSERT INTO services (
         Ok(())
     }
 
+    pub async fn set_stack_archived(
+        &self,
+        stack_id: &str,
+        archived: bool,
+        reason: Option<&str>,
+        now: &str,
+    ) -> anyhow::Result<bool> {
+        let stack_id = stack_id.to_string();
+        let now = now.to_string();
+        let reason = reason.map(|s| s.to_string());
+        self.call(move |conn| {
+            let changed = if archived {
+                conn.execute(
+                    r#"
+UPDATE stacks
+SET archived = 1, archived_at = ?2, archived_reason = ?3, updated_at = ?2
+WHERE id = ?1
+"#,
+                    params![stack_id, now, reason],
+                )?
+            } else {
+                conn.execute(
+                    r#"
+UPDATE stacks
+SET archived = 0, archived_at = NULL, archived_reason = NULL, updated_at = ?2
+WHERE id = ?1
+"#,
+                    params![stack_id, now],
+                )?
+            };
+            Ok(changed > 0)
+        })
+        .await
+        .context("set stack archived")
+    }
+
+    pub async fn set_service_archived(
+        &self,
+        service_id: &str,
+        archived: bool,
+        reason: Option<&str>,
+        now: &str,
+    ) -> anyhow::Result<bool> {
+        let service_id = service_id.to_string();
+        let now = now.to_string();
+        let reason = reason.map(|s| s.to_string());
+        self.call(move |conn| {
+            let changed = if archived {
+                conn.execute(
+                    r#"
+UPDATE services
+SET archived = 1, archived_at = ?2, archived_reason = ?3, updated_at = ?2
+WHERE id = ?1
+"#,
+                    params![service_id, now, reason],
+                )?
+            } else {
+                conn.execute(
+                    r#"
+UPDATE services
+SET archived = 0, archived_at = NULL, archived_reason = NULL, updated_at = ?2
+WHERE id = ?1
+"#,
+                    params![service_id, now],
+                )?
+            };
+            Ok(changed > 0)
+        })
+        .await
+        .context("set service archived")
+    }
+
+    pub async fn sync_stack_from_compose(
+        &self,
+        stack_id: &str,
+        compose_files: &[String],
+        services: &[ComposeServiceSpec],
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let stack_id = stack_id.to_string();
+        let compose_files = compose_files.to_vec();
+        let services = services.to_vec();
+        let now = now.to_string();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+            tx.execute(
+                r#"
+UPDATE stacks
+SET compose_files_json = ?2, updated_at = ?3
+WHERE id = ?1
+"#,
+                params![stack_id, serde_json::to_string(&compose_files)?, now],
+            )?;
+
+            let existing_by_name = {
+                let mut stmt = tx.prepare("SELECT id, name FROM services WHERE stack_id = ?1")?;
+                let existing_rows = stmt.query_map(params![stack_id.clone()], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+                let mut m = BTreeMap::<String, String>::new();
+                for r in existing_rows {
+                    let (id, name) = r?;
+                    m.insert(name, id);
+                }
+                m
+            };
+
+            let mut keep_ids = Vec::<String>::new();
+
+            for svc in services {
+                if let Some(id) = existing_by_name.get(&svc.name) {
+                    tx.execute(
+                        r#"
+UPDATE services
+SET
+  image_ref = ?2,
+  image_tag = ?3,
+  current_digest = NULL,
+  candidate_tag = NULL,
+  candidate_digest = NULL,
+  candidate_arch_match = NULL,
+  candidate_arch_json = NULL,
+  ignore_rule_id = NULL,
+  ignore_reason = NULL,
+  checked_at = NULL,
+  updated_at = ?4
+WHERE id = ?1
+"#,
+                        params![id, svc.image_ref, svc.image_tag, now],
+                    )?;
+                    keep_ids.push(id.clone());
+                } else {
+                    let id = crate::ids::new_service_id();
+                    tx.execute(
+                        r#"
+INSERT INTO services (
+  id,
+  stack_id,
+  name,
+  image_ref,
+  image_tag,
+  auto_rollback,
+  backup_targets_bind_paths_json,
+  backup_targets_volume_names_json,
+  created_at,
+  updated_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+"#,
+                        params![
+                            id,
+                            stack_id,
+                            svc.name,
+                            svc.image_ref,
+                            svc.image_tag,
+                            1i64,
+                            "{}",
+                            "{}",
+                            now,
+                            now
+                        ],
+                    )?;
+                    keep_ids.push(id);
+                }
+            }
+
+            if keep_ids.is_empty() {
+                tx.execute(
+                    "DELETE FROM services WHERE stack_id = ?1",
+                    params![stack_id],
+                )?;
+            } else {
+                let placeholders = keep_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                let sql = format!(
+                    "DELETE FROM services WHERE stack_id = ? AND id NOT IN ({placeholders})"
+                );
+                let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(1 + keep_ids.len());
+                params.push(&stack_id);
+                for id in &keep_ids {
+                    params.push(id);
+                }
+                tx.execute(&sql, params.as_slice())?;
+            }
+
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .context("sync stack from compose")
+    }
+
     pub async fn list_services_for_check(
         &self,
         stack_id: &str,
@@ -488,6 +741,79 @@ WHERE id = ?1
         .context("get service stack id")
     }
 
+    pub async fn is_stack_archived(&self, stack_id: &str) -> anyhow::Result<Option<bool>> {
+        let stack_id = stack_id.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT archived FROM stacks WHERE id = ?1",
+                    params![stack_id],
+                    |row| Ok(row.get::<_, i64>(0)? != 0),
+                )
+                .optional()?)
+        })
+        .await
+        .context("is stack archived")
+    }
+
+    pub async fn is_service_archived(&self, service_id: &str) -> anyhow::Result<Option<bool>> {
+        let service_id = service_id.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT archived FROM services WHERE id = ?1",
+                    params![service_id],
+                    |row| Ok(row.get::<_, i64>(0)? != 0),
+                )
+                .optional()?)
+        })
+        .await
+        .context("is service archived")
+    }
+
+    pub async fn has_unarchived_services_in_stack(&self, stack_id: &str) -> anyhow::Result<bool> {
+        let stack_id = stack_id.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT 1 FROM services WHERE stack_id = ?1 AND archived = 0 LIMIT 1",
+                    params![stack_id],
+                    |_row| Ok(()),
+                )
+                .optional()?
+                .is_some())
+        })
+        .await
+        .context("has unarchived services in stack")
+    }
+
+    pub async fn has_unarchived_services(&self, service_ids: &[String]) -> anyhow::Result<bool> {
+        let service_ids = service_ids.to_vec();
+        self.call(move |conn| {
+            if service_ids.is_empty() {
+                return Ok(false);
+            }
+            let placeholders = service_ids
+                .iter()
+                .map(|_| "?")
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT 1 FROM services WHERE archived = 0 AND id IN ({placeholders}) LIMIT 1"
+            );
+            let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(service_ids.len());
+            for id in &service_ids {
+                params.push(id);
+            }
+            Ok(conn
+                .query_row(&sql, params.as_slice(), |_row| Ok(()))
+                .optional()?
+                .is_some())
+        })
+        .await
+        .context("has unarchived services")
+    }
+
     pub async fn list_stack_ids(&self) -> anyhow::Result<Vec<String>> {
         self.call(|conn| {
             let mut stmt = conn.prepare("SELECT id FROM stacks ORDER BY created_at DESC")?;
@@ -496,6 +822,246 @@ WHERE id = ?1
         })
         .await
         .context("list stack ids")
+    }
+
+    pub async fn get_discovered_compose_project(
+        &self,
+        project: &str,
+    ) -> anyhow::Result<Option<DiscoveredComposeProjectRecord>> {
+        let project = project.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    r#"
+SELECT stack_id
+FROM discovered_compose_projects
+WHERE project = ?1
+"#,
+                    params![project],
+                    |row| {
+                        Ok(DiscoveredComposeProjectRecord {
+                            stack_id: row.get(0)?,
+                        })
+                    },
+                )
+                .optional()?)
+        })
+        .await
+        .context("get discovered compose project")
+    }
+
+    pub async fn upsert_discovered_compose_project(
+        &self,
+        input: DiscoveredComposeProjectUpsert,
+    ) -> anyhow::Result<()> {
+        self.call(move |conn| {
+            let last_config_files_json = input
+                .last_config_files
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?;
+
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute(
+                r#"
+INSERT INTO discovered_compose_projects (
+  project,
+  stack_id,
+  status,
+  last_seen_at,
+  last_scan_at,
+  last_error,
+  last_config_files_json,
+  archived,
+  archived_at,
+  archived_reason
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+ON CONFLICT(project) DO UPDATE SET
+  stack_id = COALESCE(excluded.stack_id, discovered_compose_projects.stack_id),
+  status = excluded.status,
+  last_seen_at = COALESCE(excluded.last_seen_at, discovered_compose_projects.last_seen_at),
+  last_scan_at = excluded.last_scan_at,
+  last_error = excluded.last_error,
+  last_config_files_json = excluded.last_config_files_json
+"#,
+                params![
+                    input.project,
+                    input.stack_id,
+                    input.status,
+                    input.last_seen_at,
+                    input.last_scan_at,
+                    input.last_error,
+                    last_config_files_json,
+                    0i64,
+                    Option::<String>::None,
+                    Option::<String>::None
+                ],
+            )?;
+
+            if input.unarchive_if_active && input.status == "active" {
+                tx.execute(
+                    r#"
+UPDATE discovered_compose_projects
+SET archived = 0, archived_at = NULL, archived_reason = NULL
+WHERE project = ?1
+"#,
+                    params![input.project],
+                )?;
+            }
+
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .context("upsert discovered compose project")
+    }
+
+    pub async fn mark_discovered_compose_projects_missing_except(
+        &self,
+        seen_projects: &[String],
+        now: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        let seen_projects = seen_projects.to_vec();
+        let now = now.to_string();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+            let newly_missing = if seen_projects.is_empty() {
+                let mut stmt = tx.prepare(
+                    r#"
+	SELECT project
+	FROM discovered_compose_projects
+	WHERE status != 'missing'
+	"#,
+                )?;
+                let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+                let newly_missing = rows.collect::<Result<Vec<_>, _>>()?;
+                tx.execute(
+                    r#"
+	UPDATE discovered_compose_projects
+	SET status = 'missing', last_scan_at = ?1
+	WHERE status != 'missing'
+	"#,
+                    params![now],
+                )?;
+                newly_missing
+            } else {
+                let placeholders = seen_projects.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                let sql_select = format!(
+                    "SELECT project FROM discovered_compose_projects WHERE status != 'missing' AND project NOT IN ({placeholders})"
+                );
+                let mut params: Vec<&dyn rusqlite::ToSql> =
+                    Vec::with_capacity(seen_projects.len());
+                for p in &seen_projects {
+                    params.push(p);
+                }
+                let mut stmt = tx.prepare(&sql_select)?;
+                let rows = stmt.query_map(params.as_slice(), |row| row.get::<_, String>(0))?;
+                let newly_missing = rows.collect::<Result<Vec<_>, _>>()?;
+
+                let sql_update = format!(
+                    "UPDATE discovered_compose_projects SET status = 'missing', last_scan_at = ? WHERE status != 'missing' AND project NOT IN ({placeholders})"
+                );
+                let mut params2: Vec<&dyn rusqlite::ToSql> =
+                    Vec::with_capacity(1 + seen_projects.len());
+                params2.push(&now);
+                for p in &seen_projects {
+                    params2.push(p);
+                }
+                tx.execute(&sql_update, params2.as_slice())?;
+                newly_missing
+            };
+
+            tx.commit()?;
+            Ok(newly_missing)
+        })
+        .await
+        .context("mark discovered compose projects missing")
+    }
+
+    pub async fn list_discovered_compose_projects(
+        &self,
+        archived: ArchivedFilter,
+    ) -> anyhow::Result<Vec<crate::api::types::DiscoveredProject>> {
+        self.call(move |conn| {
+            let filter_clause = archived.where_clause("d.archived");
+            let sql = format!(
+                r#"
+SELECT
+  d.project,
+  d.status,
+  d.stack_id,
+  d.last_config_files_json,
+  d.last_seen_at,
+  d.last_scan_at,
+  d.last_error,
+  d.archived
+FROM discovered_compose_projects d
+WHERE 1=1
+{filter_clause}
+ORDER BY d.project ASC
+"#
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map([], |row| {
+                let config_files_json: Option<String> = row.get(3)?;
+                let config_files = config_files_json
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok());
+
+                Ok(crate::api::types::DiscoveredProject {
+                    project: row.get(0)?,
+                    status: crate::api::types::DiscoveredProjectStatus::from_str(
+                        row.get::<_, String>(1)?.as_str(),
+                    ),
+                    stack_id: row.get(2)?,
+                    config_files,
+                    last_seen_at: row.get(4)?,
+                    last_scan_at: row.get(5)?,
+                    last_error: row.get(6)?,
+                    archived: row.get::<_, i64>(7)? != 0,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list discovered compose projects")
+    }
+
+    pub async fn set_discovered_compose_project_archived(
+        &self,
+        project: &str,
+        archived: bool,
+        reason: Option<&str>,
+        now: &str,
+    ) -> anyhow::Result<bool> {
+        let project = project.to_string();
+        let now = now.to_string();
+        let reason = reason.map(|s| s.to_string());
+        self.call(move |conn| {
+            let changed = if archived {
+                conn.execute(
+                    r#"
+UPDATE discovered_compose_projects
+SET archived = 1, archived_at = ?2, archived_reason = ?3
+WHERE project = ?1
+"#,
+                    params![project, now, reason],
+                )?
+            } else {
+                conn.execute(
+                    r#"
+UPDATE discovered_compose_projects
+SET archived = 0, archived_at = NULL, archived_reason = NULL
+WHERE project = ?1
+"#,
+                    params![project],
+                )?
+            };
+            Ok(changed > 0)
+        })
+        .await
+        .context("set discovered compose project archived")
     }
 
     pub async fn list_ignore_rules_for_service(
@@ -1432,6 +1998,170 @@ fn ensure_notification_columns(conn: &rusqlite::Connection) -> anyhow::Result<()
     Ok(())
 }
 
+fn ensure_stack_archive_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    #[derive(Clone)]
+    struct Col<'a> {
+        name: &'a str,
+        ddl: &'a str,
+    }
+
+    let desired = [
+        Col {
+            name: "archived",
+            ddl: "ALTER TABLE stacks ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
+        },
+        Col {
+            name: "archived_at",
+            ddl: "ALTER TABLE stacks ADD COLUMN archived_at TEXT",
+        },
+        Col {
+            name: "archived_reason",
+            ddl: "ALTER TABLE stacks ADD COLUMN archived_reason TEXT",
+        },
+    ];
+
+    let mut stmt = conn.prepare("PRAGMA table_info(stacks)")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let existing = rows.collect::<Result<Vec<_>, _>>()?;
+
+    for col in desired {
+        if existing.iter().any(|c| c == col.name) {
+            continue;
+        }
+        conn.execute_batch(col.ddl)?;
+    }
+
+    Ok(())
+}
+
+fn ensure_service_archive_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    #[derive(Clone)]
+    struct Col<'a> {
+        name: &'a str,
+        ddl: &'a str,
+    }
+
+    let desired = [
+        Col {
+            name: "archived",
+            ddl: "ALTER TABLE services ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
+        },
+        Col {
+            name: "archived_at",
+            ddl: "ALTER TABLE services ADD COLUMN archived_at TEXT",
+        },
+        Col {
+            name: "archived_reason",
+            ddl: "ALTER TABLE services ADD COLUMN archived_reason TEXT",
+        },
+    ];
+
+    let mut stmt = conn.prepare("PRAGMA table_info(services)")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let existing = rows.collect::<Result<Vec<_>, _>>()?;
+
+    for col in desired {
+        if existing.iter().any(|c| c == col.name) {
+            continue;
+        }
+        conn.execute_batch(col.ddl)?;
+    }
+
+    Ok(())
+}
+
+fn ensure_discovery_schema(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+CREATE TABLE IF NOT EXISTS discovered_compose_projects (
+  project TEXT PRIMARY KEY NOT NULL,
+  stack_id TEXT,
+  status TEXT NOT NULL,
+  last_seen_at TEXT,
+  last_scan_at TEXT,
+  last_error TEXT,
+  last_config_files_json TEXT,
+  archived INTEGER NOT NULL DEFAULT 0,
+  archived_at TEXT,
+  archived_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_discovered_compose_projects_stack_id ON discovered_compose_projects(stack_id);
+"#,
+    )?;
+    Ok(())
+}
+
+fn ensure_schema_migrations_table(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id TEXT PRIMARY KEY NOT NULL,
+  applied_at TEXT NOT NULL
+);
+"#,
+    )?;
+    Ok(())
+}
+
+fn now_rfc3339() -> anyhow::Result<String> {
+    Ok(time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
+}
+
+fn migration_applied(conn: &rusqlite::Connection, id: &str) -> anyhow::Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM schema_migrations WHERE id = ?1",
+            params![id],
+            |_row| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
+fn record_migration_tx(tx: &rusqlite::Transaction<'_>, id: &str) -> anyhow::Result<()> {
+    let applied_at = now_rfc3339()?;
+    tx.execute(
+        "INSERT INTO schema_migrations (id, applied_at) VALUES (?1, ?2)",
+        params![id, applied_at],
+    )?;
+    Ok(())
+}
+
+fn apply_migration_0007_remove_manual_stacks(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0007_remove_manual_stacks";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute("DELETE FROM ignore_rules", [])?;
+    tx.execute(
+        "DELETE FROM jobs WHERE stack_id IS NOT NULL OR service_id IS NOT NULL",
+        [],
+    )?;
+    tx.execute("DELETE FROM stacks", [])?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+fn auto_archive_missing_discovery_projects_on_startup(
+    conn: &rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let now = now_rfc3339()?;
+    conn.execute(
+        r#"
+UPDATE discovered_compose_projects
+SET archived = 1, archived_at = ?1, archived_reason = 'auto_archive_on_restart'
+WHERE status = 'missing' AND archived = 0
+"#,
+        params![now],
+    )?;
+    Ok(())
+}
+
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS stacks (
   id TEXT PRIMARY KEY NOT NULL,
@@ -1442,6 +2172,9 @@ CREATE TABLE IF NOT EXISTS stacks (
   backup_targets_json TEXT NOT NULL,
   backup_retention_keep_last INTEGER NOT NULL,
   backup_retention_delete_after_stable_seconds INTEGER NOT NULL,
+  archived INTEGER NOT NULL DEFAULT 0,
+  archived_at TEXT,
+  archived_reason TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   last_check_at TEXT NOT NULL
@@ -1462,12 +2195,34 @@ CREATE TABLE IF NOT EXISTS services (
   ignore_reason TEXT,
   checked_at TEXT,
   auto_rollback INTEGER NOT NULL,
+  archived INTEGER NOT NULL DEFAULT 0,
+  archived_at TEXT,
+  archived_reason TEXT,
   backup_targets_bind_paths_json TEXT NOT NULL,
   backup_targets_volume_names_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_services_stack_id ON services(stack_id);
+
+CREATE TABLE IF NOT EXISTS discovered_compose_projects (
+  project TEXT PRIMARY KEY NOT NULL,
+  stack_id TEXT,
+  status TEXT NOT NULL,
+  last_seen_at TEXT,
+  last_scan_at TEXT,
+  last_error TEXT,
+  last_config_files_json TEXT,
+  archived INTEGER NOT NULL DEFAULT 0,
+  archived_at TEXT,
+  archived_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_discovered_compose_projects_stack_id ON discovered_compose_projects(stack_id);
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id TEXT PRIMARY KEY NOT NULL,
+  applied_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS ignore_rules (
   id TEXT PRIMARY KEY NOT NULL,

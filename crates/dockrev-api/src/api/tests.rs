@@ -1,13 +1,14 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 
 use axum::{body::Body, http::Request};
 use http_body_util::BodyExt as _;
 use tower::ServiceExt as _;
 
 use crate::{
-    api,
+    api, compose,
     config::Config,
     db::Db,
+    ids,
     registry::{ImageRef, ManifestInfo, RegistryClient},
     runner::{CommandOutput, CommandRunner, CommandSpec},
     state::AppState,
@@ -69,6 +70,8 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
         auth_allow_anonymous_in_dev: true,
         webhook_secret: Some("secret".to_string()),
         host_platform: Some("linux/amd64".to_string()),
+        discovery_interval_seconds: 60,
+        discovery_max_actions: 200,
     };
 
     let db = Db::open(&config.db_path).await.unwrap();
@@ -76,6 +79,47 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
     let registry = Arc::new(FakeRegistry);
     let runner = Arc::new(FakeRunner);
     AppState::new(config, db, registry, runner)
+}
+
+async fn seed_stack_from_compose(state: &Arc<AppState>, name: &str, compose_file: &str) -> String {
+    let contents = std::fs::read_to_string(compose_file).unwrap();
+    let parsed = compose::parse_services(&contents).unwrap();
+    let mut merged = BTreeMap::<String, compose::ServiceFromCompose>::new();
+    merged = compose::merge_services(merged, parsed);
+
+    let stack_id = ids::new_stack_id();
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    let stack = crate::api::types::StackRecord {
+        id: stack_id.clone(),
+        name: name.to_string(),
+        archived: false,
+        compose: crate::api::types::ComposeConfig {
+            kind: "path".to_string(),
+            compose_files: vec![compose_file.to_string()],
+            env_file: None,
+        },
+        backup: crate::api::types::StackBackupConfig::default(),
+        services: Vec::new(),
+    };
+
+    let mut seeds = Vec::new();
+    for svc in merged.values() {
+        seeds.push(crate::api::types::ServiceSeed {
+            id: ids::new_service_id(),
+            name: svc.name.clone(),
+            image_ref: svc.image_ref.clone(),
+            image_tag: svc.image_tag.clone(),
+            auto_rollback: true,
+            backup_bind_paths: BTreeMap::new(),
+            backup_volume_names: BTreeMap::new(),
+        });
+    }
+
+    state.db.insert_stack(&stack, &seeds, &now).await.unwrap();
+    stack_id
 }
 
 #[tokio::test]
@@ -150,28 +194,7 @@ services:
     )
     .unwrap();
 
-    let body = serde_json::json!({
-        "name": "demo",
-        "compose": {
-            "type": "path",
-            "composeFiles": [compose_path],
-            "envFile": null
-        }
-    });
-
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/stacks")
-                .header("content-type", "application/json")
-                .body(Body::from(body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 201);
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
 
     let resp = app
         .clone()
@@ -186,7 +209,7 @@ services:
     assert_eq!(resp.status(), 200);
 
     let list = response_json(resp).await;
-    let stack_id = list["stacks"][0]["id"].as_str().unwrap().to_string();
+    assert_eq!(list["stacks"][0]["id"].as_str().unwrap(), stack_id.as_str());
 
     let check = serde_json::json!({
         "scope": "stack",
@@ -237,28 +260,7 @@ services:
     )
     .unwrap();
 
-    let body = serde_json::json!({
-        "name": "demo",
-        "compose": {
-            "type": "path",
-            "composeFiles": [compose_path],
-            "envFile": null
-        }
-    });
-
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/stacks")
-                .header("content-type", "application/json")
-                .body(Body::from(body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 201);
+    let _stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
 
     let resp = app
         .clone()
@@ -360,41 +362,7 @@ services:
     )
     .unwrap();
 
-    let body = serde_json::json!({
-        "name": "demo",
-        "compose": {
-            "type": "path",
-            "composeFiles": [compose_path],
-            "envFile": null
-        }
-    });
-
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/stacks")
-                .header("content-type", "application/json")
-                .body(Body::from(body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 201);
-
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/stacks")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let list = response_json(resp).await;
-    let stack_id = list["stacks"][0]["id"].as_str().unwrap().to_string();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
 
     let check = serde_json::json!({
         "scope": "stack",
@@ -482,6 +450,317 @@ services:
 }
 
 #[tokio::test]
+async fn archived_stack_update_skips_notify() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .set_stack_archived(&stack_id, true, Some("user_archive"), &now)
+        .await
+        .unwrap();
+
+    let update = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "mode": "dry-run",
+        "allowArchMismatch": false,
+        "backupMode": "inherit",
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/updates")
+                .header("content-type", "application/json")
+                .body(Body::from(update.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let job_id = triggered["jobId"].as_str().unwrap().to_string();
+
+    for _ in 0..50 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{job_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            let logs = job["job"]["logs"].as_array().unwrap();
+            assert!(
+                logs.iter()
+                    .any(|l| l["msg"].as_str().unwrap().contains("notify skipped"))
+            );
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    panic!("job did not finish in time");
+}
+
+#[tokio::test]
+async fn archived_services_stack_update_skips_notify() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+  worker:
+    image: ghcr.io/acme/worker:1.0
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let stack = state.db.get_stack(&stack_id).await.unwrap().unwrap();
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    for svc in &stack.services {
+        state
+            .db
+            .set_service_archived(&svc.id, true, Some("user_archive"), &now)
+            .await
+            .unwrap();
+    }
+
+    let update = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "mode": "dry-run",
+        "allowArchMismatch": false,
+        "backupMode": "inherit",
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/updates")
+                .header("content-type", "application/json")
+                .body(Body::from(update.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let job_id = triggered["jobId"].as_str().unwrap().to_string();
+
+    for _ in 0..50 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{job_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            let logs = job["job"]["logs"].as_array().unwrap();
+            assert!(
+                logs.iter()
+                    .any(|l| l["msg"].as_str().unwrap().contains("notify skipped"))
+            );
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    panic!("job did not finish in time");
+}
+
+#[tokio::test]
+async fn archived_services_all_update_skips_notify() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let stack = state.db.get_stack(&stack_id).await.unwrap().unwrap();
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    for svc in &stack.services {
+        state
+            .db
+            .set_service_archived(&svc.id, true, Some("user_archive"), &now)
+            .await
+            .unwrap();
+    }
+
+    let update = serde_json::json!({
+        "scope": "all",
+        "mode": "dry-run",
+        "allowArchMismatch": false,
+        "backupMode": "inherit",
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/updates")
+                .header("content-type", "application/json")
+                .body(Body::from(update.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let job_id = triggered["jobId"].as_str().unwrap().to_string();
+
+    for _ in 0..50 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{job_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            let logs = job["job"]["logs"].as_array().unwrap();
+            assert!(
+                logs.iter()
+                    .any(|l| l["msg"].as_str().unwrap().contains("notify skipped"))
+            );
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    panic!("job did not finish in time");
+}
+
+#[tokio::test]
+async fn empty_new_digests_does_not_skip_notify() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    // Use apply mode to produce updater summary with `newDigests: {}` (FakeRunner returns empty container id).
+    // Skip backups to keep the test isolated.
+    let update = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "mode": "apply",
+        "allowArchMismatch": false,
+        "backupMode": "skip",
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/updates")
+                .header("content-type", "application/json")
+                .body(Body::from(update.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let job_id = triggered["jobId"].as_str().unwrap().to_string();
+
+    for _ in 0..50 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{job_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            let logs = job["job"]["logs"].as_array().unwrap();
+            assert!(
+                !logs
+                    .iter()
+                    .any(|l| l["msg"].as_str().unwrap().contains("notify skipped")),
+                "notify should not be skipped just because newDigests is empty"
+            );
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    panic!("job did not finish in time");
+}
+
+#[tokio::test]
 async fn webhook_trigger_check_creates_job_and_updates_stack() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
@@ -497,42 +776,7 @@ services:
     )
     .unwrap();
 
-    let body = serde_json::json!({
-        "name": "demo",
-        "compose": {
-            "type": "path",
-            "composeFiles": [compose_path],
-            "envFile": null
-        }
-    });
-
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/stacks")
-                .header("content-type", "application/json")
-                .body(Body::from(body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 201);
-
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/stacks")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let list = response_json(resp).await;
-    let stack_id = list["stacks"][0]["id"].as_str().unwrap().to_string();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
 
     let trigger = serde_json::json!({
         "action": "check",
@@ -612,42 +856,7 @@ services:
     )
     .unwrap();
 
-    let body = serde_json::json!({
-        "name": "demo",
-        "compose": {
-            "type": "path",
-            "composeFiles": [compose_path],
-            "envFile": null
-        }
-    });
-
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/stacks")
-                .header("content-type", "application/json")
-                .body(Body::from(body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 201);
-
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/stacks")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let list = response_json(resp).await;
-    let stack_id = list["stacks"][0]["id"].as_str().unwrap().to_string();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
 
     let trigger = serde_json::json!({
         "action": "update",

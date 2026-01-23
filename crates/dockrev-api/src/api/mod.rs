@@ -3,19 +3,19 @@ pub mod types;
 #[cfg(test)]
 mod tests;
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
-    backup, candidates, compose, error::ApiError, ids, ignore, notify, registry, state::AppState,
+    backup, candidates, discovery, error::ApiError, ids, ignore, notify, registry, state::AppState,
     ui, updater,
 };
 use types::*;
@@ -24,8 +24,25 @@ pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/version", get(version))
-        .route("/api/stacks", get(list_stacks).post(register_stack))
+        .route(
+            "/api/stacks",
+            get(list_stacks).post(register_stack_disabled),
+        )
         .route("/api/stacks/{stack_id}", get(get_stack))
+        .route("/api/stacks/{stack_id}/archive", post(archive_stack))
+        .route("/api/stacks/{stack_id}/restore", post(restore_stack))
+        .route("/api/services/{service_id}/archive", post(archive_service))
+        .route("/api/services/{service_id}/restore", post(restore_service))
+        .route("/api/discovery/scan", post(trigger_discovery_scan))
+        .route("/api/discovery/projects", get(list_discovery_projects))
+        .route(
+            "/api/discovery/projects/{project}/archive",
+            post(archive_discovery_project),
+        )
+        .route(
+            "/api/discovery/projects/{project}/restore",
+            post(restore_discovery_project),
+        )
         .route("/api/checks", post(trigger_check))
         .route("/api/updates", post(trigger_update))
         .route("/api/jobs", get(list_jobs))
@@ -71,10 +88,32 @@ async fn version(State(state): State<Arc<AppState>>) -> Json<VersionResponse> {
 async fn list_stacks(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    Query(q): Query<ListStacksQuery>,
 ) -> Result<Json<ListStacksResponse>, ApiError> {
     let _user = require_user(&state, &headers)?;
-    let stacks = state.db.list_stacks().await.map_err(map_internal)?;
+    let stacks = state
+        .db
+        .list_stacks(parse_archived_filter(q.archived.as_deref())?)
+        .await
+        .map_err(map_internal)?;
     Ok(Json(ListStacksResponse { stacks }))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListStacksQuery {
+    archived: Option<String>,
+}
+
+fn parse_archived_filter(input: Option<&str>) -> Result<crate::db::ArchivedFilter, ApiError> {
+    match input.unwrap_or("exclude") {
+        "exclude" => Ok(crate::db::ArchivedFilter::Exclude),
+        "include" => Ok(crate::db::ArchivedFilter::Include),
+        "only" => Ok(crate::db::ArchivedFilter::Only),
+        other => Err(ApiError::invalid_argument(format!(
+            "invalid archived filter: {other}"
+        ))),
+    }
 }
 
 async fn get_stack(
@@ -94,110 +133,161 @@ async fn get_stack(
             name: stack.name,
             compose: stack.compose,
             services: stack.services,
+            archived: Some(stack.archived),
         },
     }))
 }
 
-async fn register_stack(
+async fn register_stack_disabled(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(req): Json<RegisterStackRequest>,
-) -> Result<(StatusCode, Json<RegisterStackResponse>), ApiError> {
-    let user = require_user(&state, &headers)?;
-
-    if req.compose.compose_files.is_empty() {
-        return Err(ApiError::invalid_argument(
-            "compose.composeFiles must not be empty",
-        ));
-    }
-    for path in &req.compose.compose_files {
-        if !path.starts_with('/') {
-            return Err(ApiError::invalid_argument(
-                "compose.composeFiles must be absolute paths",
-            ));
-        }
-    }
-    if let Some(env_file) = req.compose.env_file.as_deref()
-        && !env_file.starts_with('/')
-    {
-        return Err(ApiError::invalid_argument(
-            "compose.envFile must be an absolute path",
-        ));
-    }
-
-    let mut merged: BTreeMap<String, compose::ServiceFromCompose> = BTreeMap::new();
-    for path in &req.compose.compose_files {
-        let contents = tokio::fs::read_to_string(path).await.map_err(|e| {
-            ApiError::invalid_argument(format!("failed to read compose file: {path} ({e})"))
-        })?;
-        let parsed = compose::parse_services(&contents).map_err(|e| {
-            ApiError::invalid_argument(format!("invalid compose file: {path} ({e})"))
-        })?;
-        merged = compose::merge_services(merged, parsed);
-    }
-
-    let now = now_rfc3339().map_err(map_internal)?;
-    let stack_id = ids::new_stack_id();
-
-    let backup = req.backup.unwrap_or_else(StackBackupConfig::default);
-
-    let stack = StackRecord {
-        id: stack_id.clone(),
-        name: req.name,
-        compose: req.compose,
-        backup,
-        services: Vec::new(),
-    };
-
-    let mut seeds = Vec::new();
-    for svc in merged.values() {
-        seeds.push(ServiceSeed {
-            id: ids::new_service_id(),
-            name: svc.name.clone(),
-            image_ref: svc.image_ref.clone(),
-            image_tag: svc.image_tag.clone(),
-            auto_rollback: true,
-            backup_bind_paths: BTreeMap::new(),
-            backup_volume_names: BTreeMap::new(),
-        });
-    }
-
-    state
-        .db
-        .insert_stack(&stack, &seeds, &now)
-        .await
-        .map_err(map_internal)?;
-
-    let job_id = ids::new_job_id();
-    let job = JobRecord::new_job(
-        job_id.clone(),
-        JobType::Check,
-        JobScope::Stack,
-        Some(stack_id.clone()),
-        None,
-        &now,
-    );
-    let mut job_db = job.to_db();
-    job_db.created_by = user.clone();
-    job_db.reason = "ui".to_string();
-    state.db.insert_job(job_db).await.map_err(map_internal)?;
-    state
-        .db
-        .insert_job_log(
-            &job_id,
-            &JobLogLine {
-                ts: now.clone(),
-                level: "info".to_string(),
-                msg: "stack registered".to_string(),
-            },
-        )
-        .await
-        .map_err(map_internal)?;
-
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    let _user = require_user(&state, &headers)?;
     Ok((
-        StatusCode::CREATED,
-        Json(RegisterStackResponse { stack_id }),
+        StatusCode::METHOD_NOT_ALLOWED,
+        Json(json!({
+            "error": "manual stack registration is disabled; use auto-discovery instead"
+        })),
     ))
+}
+
+async fn archive_stack(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(stack_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let now = now_rfc3339().map_err(map_internal)?;
+    let changed = state
+        .db
+        .set_stack_archived(&stack_id, true, Some("user_archive"), &now)
+        .await
+        .map_err(map_internal)?;
+    if !changed {
+        return Err(ApiError::not_found("stack not found"));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn restore_stack(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(stack_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let now = now_rfc3339().map_err(map_internal)?;
+    let changed = state
+        .db
+        .set_stack_archived(&stack_id, false, None, &now)
+        .await
+        .map_err(map_internal)?;
+    if !changed {
+        return Err(ApiError::not_found("stack not found"));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn archive_service(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(service_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let now = now_rfc3339().map_err(map_internal)?;
+    let changed = state
+        .db
+        .set_service_archived(&service_id, true, Some("user_archive"), &now)
+        .await
+        .map_err(map_internal)?;
+    if !changed {
+        return Err(ApiError::not_found("service not found"));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn restore_service(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(service_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let now = now_rfc3339().map_err(map_internal)?;
+    let changed = state
+        .db
+        .set_service_archived(&service_id, false, None, &now)
+        .await
+        .map_err(map_internal)?;
+    if !changed {
+        return Err(ApiError::not_found("service not found"));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn trigger_discovery_scan(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<TriggerDiscoveryScanResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let resp = discovery::run_scan(state.as_ref())
+        .await
+        .map_err(map_internal)?;
+    Ok(Json(resp))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListDiscoveryProjectsQuery {
+    archived: Option<String>,
+}
+
+async fn list_discovery_projects(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<ListDiscoveryProjectsQuery>,
+) -> Result<Json<ListDiscoveredProjectsResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let projects = state
+        .db
+        .list_discovered_compose_projects(parse_archived_filter(q.archived.as_deref())?)
+        .await
+        .map_err(map_internal)?;
+    Ok(Json(ListDiscoveredProjectsResponse { projects }))
+}
+
+async fn archive_discovery_project(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(project): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let now = now_rfc3339().map_err(map_internal)?;
+    let changed = state
+        .db
+        .set_discovered_compose_project_archived(&project, true, Some("user_archive"), &now)
+        .await
+        .map_err(map_internal)?;
+    if !changed {
+        return Err(ApiError::not_found("project not found"));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn restore_discovery_project(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(project): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let now = now_rfc3339().map_err(map_internal)?;
+    let changed = state
+        .db
+        .set_discovered_compose_project_archived(&project, false, None, &now)
+        .await
+        .map_err(map_internal)?;
+    if !changed {
+        return Err(ApiError::not_found("project not found"));
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn trigger_check(
@@ -474,6 +564,14 @@ async fn run_update_for_job(
     req: TriggerUpdateRequest,
     now: String,
 ) -> Result<String, ApiError> {
+    fn extract_changed_service_ids(update: &serde_json::Value) -> Option<Vec<String>> {
+        let ids = update
+            .get("newDigests")
+            .and_then(|v| v.as_object())
+            .map(|m| m.keys().cloned().collect::<Vec<_>>())?;
+        if ids.is_empty() { None } else { Some(ids) }
+    }
+
     let job_id = ids::new_job_id();
     let mut job = JobRecord::new_running(
         job_id.clone(),
@@ -692,7 +790,7 @@ async fn run_update_for_job(
 
     let final_summary = json!({
         "mode": req.mode.as_str(),
-        "stacks": stack_summaries,
+        "stacks": stack_summaries.clone(),
     });
 
     let finished_at = now_rfc3339().map_err(map_internal)?;
@@ -721,21 +819,122 @@ async fn run_update_for_job(
         }
     }
 
-    let notify_state = state.clone();
-    let notify_job_id = job_id.clone();
-    let notify_status = final_status.clone();
-    let notify_now = finished_at.clone();
-    let notify_summary = final_summary.clone();
-    tokio::spawn(async move {
-        let _ = notify::notify_job_updated(
-            notify_state.as_ref(),
-            &notify_job_id,
-            &notify_status,
-            &notify_now,
-            &notify_summary,
-        )
-        .await;
-    });
+    let mut should_notify = true;
+    let mut notify_summary = final_summary.clone();
+    let mut notify_skip_reason: Option<String> = None;
+    match req.scope {
+        JobScope::Service => {
+            if let Some(service_id) = req.service_id.as_deref()
+                && let Some(true) = state
+                    .db
+                    .is_service_archived(service_id)
+                    .await
+                    .map_err(map_internal)?
+            {
+                should_notify = false;
+                notify_skip_reason = Some("archived service".to_string());
+            }
+            if should_notify
+                && let Some(service_id) = req.service_id.as_deref()
+                && let Some(stack_id) = state
+                    .db
+                    .get_service_stack_id(service_id)
+                    .await
+                    .map_err(map_internal)?
+                && let Some(true) = state
+                    .db
+                    .is_stack_archived(&stack_id)
+                    .await
+                    .map_err(map_internal)?
+            {
+                should_notify = false;
+                notify_skip_reason = Some("archived stack".to_string());
+            }
+        }
+        JobScope::Stack | JobScope::All => {
+            let mut filtered = Vec::<serde_json::Value>::new();
+            for s in &stack_summaries {
+                let Some(stack_id) = s.get("stackId").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+
+                if let Some(true) = state
+                    .db
+                    .is_stack_archived(stack_id)
+                    .await
+                    .map_err(map_internal)?
+                {
+                    continue;
+                }
+
+                let include = if let Some(update) = s.get("update")
+                    && let Some(changed_ids) = extract_changed_service_ids(update)
+                {
+                    state
+                        .db
+                        .has_unarchived_services(&changed_ids)
+                        .await
+                        .map_err(map_internal)?
+                } else {
+                    state
+                        .db
+                        .has_unarchived_services_in_stack(stack_id)
+                        .await
+                        .map_err(map_internal)?
+                };
+
+                if include {
+                    filtered.push(s.clone());
+                }
+            }
+
+            if filtered.is_empty() {
+                should_notify = false;
+                notify_skip_reason =
+                    Some("all stacks archived or only archived services touched".to_string());
+            } else {
+                notify_summary = json!({
+                    "mode": req.mode.as_str(),
+                    "stacks": filtered,
+                });
+            }
+        }
+    }
+
+    if !should_notify {
+        let _ = state
+            .db
+            .insert_job_log(
+                &job_id,
+                &JobLogLine {
+                    ts: finished_at.clone(),
+                    level: "info".to_string(),
+                    msg: format!(
+                        "notify skipped ({})",
+                        notify_skip_reason.as_deref().unwrap_or("filtered")
+                    ),
+                },
+            )
+            .await;
+    }
+
+    if should_notify {
+        let notify_state = state.clone();
+        let notify_job_id = job_id.clone();
+        let notify_status = final_status.clone();
+        let notify_now = finished_at.clone();
+        let notify_summary = notify_summary.clone();
+        tokio::spawn(async move {
+            let _ = notify::notify_job_updated(
+                notify_state.as_ref(),
+                &notify_job_id,
+                &notify_status,
+                &notify_now,
+                &notify_summary,
+            )
+            .await;
+        });
+    }
 
     Ok(job_id)
 }

@@ -1,5 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { getStack, listStacks, triggerCheck, type Service, type StackDetail, type StackListItem } from '../api'
+import {
+  archiveDiscoveredProject,
+  getStack,
+  listDiscoveryProjects,
+  listStacks,
+  restoreDiscoveredProject,
+  triggerCheck,
+  triggerDiscoveryScan,
+  type DiscoveredProject,
+  type Service,
+  type StackDetail,
+  type StackListItem,
+} from '../api'
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
 import { FilterChips } from '../Shell'
@@ -51,6 +63,7 @@ export function OverviewPage(props: {
   const [stacks, setStacks] = useState<StackListItem[]>([])
   const [details, setDetails] = useState<Record<string, StackDetail | undefined>>({})
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [discovered, setDiscovered] = useState<DiscoveredProject[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -81,6 +94,8 @@ export function OverviewPage(props: {
       }
       return next
     })
+
+    setDiscovered(await listDiscoveryProjects('exclude').catch(() => []))
   }, [onComposeHint])
 
   useEffect(() => {
@@ -89,25 +104,46 @@ export function OverviewPage(props: {
 
   useEffect(() => {
     onTopActions(
-      <Button
-        variant="primary"
-        disabled={busy}
-        onClick={() => {
-          void (async () => {
-            setBusy(true)
-            try {
-              await triggerCheck('all')
-              await refresh()
-            } catch (e: unknown) {
-              setError(e instanceof Error ? e.message : String(e))
-            } finally {
-              setBusy(false)
-            }
-          })()
-        }}
-      >
-        立即扫描
-      </Button>,
+      <>
+        <Button
+          variant="primary"
+          disabled={busy}
+          onClick={() => {
+            void (async () => {
+              setBusy(true)
+              try {
+                await triggerDiscoveryScan()
+                await refresh()
+              } catch (e: unknown) {
+                setError(e instanceof Error ? e.message : String(e))
+              } finally {
+                setBusy(false)
+              }
+            })()
+          }}
+        >
+          立即发现
+        </Button>
+        <Button
+          variant="ghost"
+          disabled={busy}
+          onClick={() => {
+            void (async () => {
+              setBusy(true)
+              try {
+                await triggerCheck('all')
+                await refresh()
+              } catch (e: unknown) {
+                setError(e instanceof Error ? e.message : String(e))
+              } finally {
+                setBusy(false)
+              }
+            })()
+          }}
+        >
+          立即扫描更新
+        </Button>
+      </>,
     )
   }, [busy, onTopActions, refresh])
 
@@ -122,6 +158,7 @@ export function OverviewPage(props: {
       const d = details[st.id]
       if (!d) continue
       for (const svc of d.services) {
+        if (svc.archived) continue
         const stt = serviceStatus(svc)
         if (!stt) continue
         out.push({ stackId: st.id, stackName: d.name, service: svc, status: stt })
@@ -135,6 +172,10 @@ export function OverviewPage(props: {
     for (const r of rows) c[r.status] += 1
     return c
   }, [rows])
+
+  const discoveredUnregistered = useMemo(() => {
+    return discovered.filter((p) => !p.stackId || p.status !== 'active')
+  }, [discovered])
 
   return (
     <div className="page">
@@ -174,6 +215,92 @@ export function OverviewPage(props: {
           )}
         </div>
       </div>
+
+      {discoveredUnregistered.length > 0 ? (
+        <div className="card" style={{ marginBottom: 14 }}>
+          <div className="sectionRow">
+            <div className="title">Discovered（无 Stack / 异常）</div>
+            <div className="muted" style={{ marginLeft: 'auto' }}>
+              {discoveredUnregistered.length} projects
+            </div>
+          </div>
+          <div className="svcGrid">
+            {discoveredUnregistered.map((p) => (
+              <div key={p.project} className="svcCard" style={{ cursor: 'default' }}>
+                <div className="svcCardTop">
+                  <div className="svcCardName">
+                    <Mono>{p.project}</Mono>
+                  </div>
+                  <Pill tone={p.status === 'invalid' ? 'bad' : p.status === 'missing' ? 'warn' : 'muted'}>{p.status}</Pill>
+                </div>
+                <div className="svcCardMeta">
+                  {p.lastError ? (
+                    <div className="muted">
+                      error <Mono>{p.lastError}</Mono>
+                    </div>
+                  ) : null}
+                  {p.configFiles?.length ? (
+                    <div className="muted">
+                      config <Mono>{p.configFiles.join(', ')}</Mono>
+                    </div>
+                  ) : null}
+                  <div className="muted">
+                    archived <Mono>{String(p.archived)}</Mono>
+                    {p.stackId ? (
+                      <>
+                        {' '}
+                        · stackId <Mono>{p.stackId}</Mono>
+                      </>
+                    ) : null}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                    <Button
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => {
+                        void (async () => {
+                          setBusy(true)
+                          setError(null)
+                          try {
+                            await archiveDiscoveredProject(p.project)
+                            await refresh()
+                          } catch (e: unknown) {
+                            setError(e instanceof Error ? e.message : String(e))
+                          } finally {
+                            setBusy(false)
+                          }
+                        })()
+                      }}
+                    >
+                      归档
+                    </Button>
+                    <Button
+                      variant="primary"
+                      disabled={busy}
+                      onClick={() => {
+                        void (async () => {
+                          setBusy(true)
+                          setError(null)
+                          try {
+                            await restoreDiscoveredProject(p.project)
+                            await refresh()
+                          } catch (e: unknown) {
+                            setError(e instanceof Error ? e.message : String(e))
+                          } finally {
+                            setBusy(false)
+                          }
+                        })()
+                      }}
+                    >
+                      恢复
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <FilterChips
         value={filter}

@@ -497,6 +497,7 @@ mod tests {
         StackRecord {
             id: "stk_test".to_string(),
             name: "demo".to_string(),
+            archived: false,
             compose: crate::api::types::ComposeConfig {
                 kind: "path".to_string(),
                 compose_files: vec!["/tmp/compose.yml".to_string()],
@@ -523,6 +524,7 @@ mod tests {
                         volume_names: BTreeMap::new(),
                     },
                 },
+                archived: None,
             }],
         }
     }

@@ -7,6 +7,7 @@ mod compose;
 mod compose_runner;
 mod config;
 mod db;
+mod discovery;
 mod docker_runner;
 mod error;
 mod ids;
@@ -39,6 +40,7 @@ async fn main() -> anyhow::Result<()> {
     let runner = std::sync::Arc::new(runner::TokioCommandRunner);
     let state = state::AppState::new(config, db, registry, runner);
     backup::spawn_cleanup_task(state.clone());
+    discovery::spawn_task(state.clone());
     let app = api::router(state.clone());
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
