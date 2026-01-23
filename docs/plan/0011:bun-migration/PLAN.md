@@ -104,7 +104,7 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 生成并提交 Bun 锁文件（`bun.lock` / `web/bun.lock`），移除 `package-lock.json` / `web/package-lock.json`
+- [ ] M1: 生成并提交 Bun 锁文件（`bun.lock` / `web/bun.lock`），并保留 `package-lock.json` / `web/package-lock.json`（待验收后移除）
 - [ ] M2: 本地开发与 hooks 迁移到 Bun（README + lefthook + scripts），并确保不依赖 node
 - [ ] M3: CI 与 Docker 构建迁移到 Bun（setup-bun + bun install --frozen-lockfile + bunx），并验证前端/Storybook 相关 job 稳定
 - [ ] M4: Upgrade plan（如需）：为达成 Bun runtime 兼容性而进行的最小工具链升级/替换，并记录变更

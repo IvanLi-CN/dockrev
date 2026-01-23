@@ -26,6 +26,7 @@ npm run dev -- [vite-options...]
   - 建议冲突时优先使用 env vars（见 `./config.md`）显式指定高位端口
   - 优先级：CLI 参数 `--port` > 环境变量 `DOCKREV_WEB_DEV_PORT` > 默认值
 - 冲突：端口被占用时严格失败退出（非 0），不得自动换端口继续启动
+  - 约束：实现必须启用 Vite `strictPort`（CLI `--strictPort` 或 `server.strictPort: true`）
 
 ## `web: vite preview`
 
@@ -51,6 +52,7 @@ npm run preview -- [vite-preview-options...]
   - 建议冲突时优先使用 env vars（见 `./config.md`）显式指定高位端口
   - 优先级：CLI 参数 `--port` > 环境变量 `DOCKREV_WEB_PREVIEW_PORT` > 默认值
 - 冲突：端口被占用时严格失败退出（非 0），不得自动换端口继续启动
+  - 约束：实现必须启用 Vite preview `strictPort`（`preview.strictPort: true`）
 
 ## `web: storybook dev`
 
