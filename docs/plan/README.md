@@ -64,3 +64,4 @@
 | 0009 | Dockrev Web: 概览页 Stack services 计数修复 | 已完成 | `0009:fix-overview-services-count/PLAN.md` | 2026-01-23 | - |
 | 0010 | Dev/CI: 禁用默认端口（统一高位端口） | 部分完成（2/3） | `0010:no-default-ports/PLAN.md` | 2026-01-23 | - |
 | 0011 | Dev/CI: Bun 迁移（替代 npm） | 待实现 | `0011:bun-migration/PLAN.md` | 2026-01-23 | - |
+| 0012 | Dockrev Web: 一键执行更新（service/stack/all）+ 自我升级策略 | 待实现 | `0012:update-buttons-self-upgrade/PLAN.md` | 2026-01-24 | - |
