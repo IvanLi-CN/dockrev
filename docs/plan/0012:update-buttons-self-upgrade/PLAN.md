@@ -38,7 +38,7 @@
 
 ### Out of scope
 
-- 新增后端接口（优先复用 `POST /api/updates` 既有契约）。
+- 不新增 Dockrev 本体的 `/api/*` 端点（优先复用 `POST /api/updates` 既有契约；supervisor 的 `/supervisor/*` API 不在此限制内，见 In scope 与契约）。
 - 为其它服务更新引入宿主机 agent/sidecar（本计划的 agent 仅服务于自我升级；扩展为通用执行者另起计划）。
 
 ## 需求（Requirements）

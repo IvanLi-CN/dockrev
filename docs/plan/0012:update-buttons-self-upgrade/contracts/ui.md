@@ -30,7 +30,7 @@
 
 - 入口：
   - 在列表/详情对 Dockrev 服务点击“升级 Dockrev”后跳转
-  -（可选）在系统设置页提供固定入口（便于找回）
+  - 在系统设置页提供固定入口（便于找回）
 - 目标：在 Dockrev 重启窗口内仍可用，因此该页面应由 supervisor/agent 提供（见 `contracts/http-apis.md`）。
 - 跳转 URL：来自 `DOCKREV_SELF_UPGRADE_URL`（默认 `/supervisor/`；见 `contracts/config.md`）。
 
