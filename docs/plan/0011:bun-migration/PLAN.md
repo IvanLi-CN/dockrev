@@ -2,9 +2,9 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-01-23
-- Last: 2026-01-23
+- Last: 2026-01-24
 
 ## 问题陈述
 
@@ -104,10 +104,10 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 生成并提交 Bun 锁文件（`bun.lock` / `web/bun.lock`），并保留 `package-lock.json` / `web/package-lock.json`（待验收后移除）
-- [ ] M2: 本地开发与 hooks 迁移到 Bun（README + lefthook + scripts），并确保不依赖 node
-- [ ] M3: CI 与 Docker 构建迁移到 Bun（setup-bun + bun install --frozen-lockfile + bunx），并验证前端/Storybook 相关 job 稳定
-- [ ] M4: Upgrade plan（如需）：为达成 Bun runtime 兼容性而进行的最小工具链升级/替换，并记录变更
+- [x] M1: 生成并提交 Bun 锁文件（`bun.lock` / `web/bun.lock`），并保留 `package-lock.json` / `web/package-lock.json`（待验收后移除）
+- [x] M2: 本地开发与 hooks 迁移到 Bun（README + lefthook + scripts），并确保不依赖 node
+- [x] M3: CI 与 Docker 构建迁移到 Bun（setup-bun + bun install --frozen-lockfile + bunx），并验证前端/Storybook 相关 job 稳定
+- [x] M4: Upgrade plan（如需）：为达成 Bun runtime 兼容性而进行的最小工具链升级/替换，并记录变更
 
 ## 方案概述（Approach, high-level）
 
@@ -148,6 +148,7 @@
 
 - 2026-01-23: 确认“不使用 node”，并将工具链不兼容时的升级/替换纳入交付范围（Upgrade plan）。
 - 2026-01-23: 将“工具链升级/替换”从“允许”明确为“如遇不兼容则必须完成”的修复路径（不改变“默认尽量不升级”的约束）。
+- 2026-01-24: `test-storybook` 在 Bun runtime 下不兼容（`The superclass is not a constructor`）；改为 Playwright 驱动的 Storybook smoke 测试以满足“不依赖 node”的验收标准。
 
 ## 参考（References）
 

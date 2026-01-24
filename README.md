@@ -37,8 +37,8 @@ Front-end:
 
 ```bash
 cd web
-npm install
-npm run dev
+bun install
+bun run dev
 ```
 
 Open:
@@ -104,6 +104,5 @@ Notifications are configured via UI (stored in SQLite; secrets are masked on rea
 VAPID keys can be generated with:
 
 ```bash
-npm install web-push -g
-web-push generate-vapid-keys --json
+bunx web-push generate-vapid-keys --json
 ```

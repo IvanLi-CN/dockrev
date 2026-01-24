@@ -16,7 +16,6 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: dockrev
   PLATFORMS: linux/amd64,linux/arm64
-  NODE_VERSION: "20"
   RUST_TOOLCHAIN: "1.91.0"
 
 concurrency:
@@ -113,12 +112,10 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+          bun-version: latest
 
       - name: Build web (optional)
         shell: bash
@@ -126,8 +123,8 @@ jobs:
           set -euo pipefail
           if [[ -f web/package.json ]]; then
             cd web
-            npm ci
-            npm run build
+            bun install --frozen-lockfile
+            bun run build
           else
             echo "No web/ package; skipping"
           fi

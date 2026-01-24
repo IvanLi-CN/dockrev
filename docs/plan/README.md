@@ -63,4 +63,4 @@
 | 0007 | Dockrev: Compose 项目自动发现（Auto-Discovery） | 已完成 | `0007:dockrev-compose-auto-discovery/PLAN.md` | 2026-01-22 | 基于 compose labels 自动发现/注册；移除手动注册（迁移清理 stack-bound 数据）；无 Stack 项目聚合组；missing 重启自动归档；支持归档/恢复 stack/service/project；归档不发通知 |
 | 0009 | Dockrev Web: 概览页 Stack services 计数修复 | 已完成 | `0009:fix-overview-services-count/PLAN.md` | 2026-01-23 | - |
 | 0010 | Dev/CI: 禁用默认端口（统一高位端口） | 已完成 | `0010:no-default-ports/PLAN.md` | 2026-01-23 | PR #24 |
-| 0011 | Dev/CI: Bun 迁移（替代 npm） | 待实现 | `0011:bun-migration/PLAN.md` | 2026-01-23 | - |
+| 0011 | Dev/CI: Bun 迁移（替代 npm） | 已完成 | `0011:bun-migration/PLAN.md` | 2026-01-24 | - |

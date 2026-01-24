@@ -4,9 +4,9 @@
 
 在 `web/` 目录下执行：
 
-- 启动：`npm run storybook`
-- 构建静态站点：`npm run build-storybook`（输出 `storybook-static/`）
-- 运行自动化测试：`npm run test-storybook`
+- 启动：`bun run storybook`
+- 构建静态站点：`bun run build-storybook`（输出 `storybook-static/`）
+- 运行自动化测试：`bun run test-storybook`
 
 ### 端口约定（默认高位端口）
 

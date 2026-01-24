@@ -17,14 +17,14 @@ ENV APP_EFFECTIVE_VERSION="${APP_EFFECTIVE_VERSION}"
 EXPOSE 50883
 CMD ["/usr/local/bin/dockrev"]
 
-FROM node:20-alpine AS web-builder
+FROM oven/bun:alpine AS web-builder
 WORKDIR /app
 
-COPY web/package.json web/package-lock.json ./web/
-RUN cd web && npm ci
+COPY web/package.json web/bun.lock ./web/
+RUN cd web && bun install --frozen-lockfile
 
 COPY web ./web
-RUN cd web && npm run build
+RUN cd web && bun run build
 
 FROM rust:1.91-bookworm AS builder
 WORKDIR /src

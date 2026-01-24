@@ -14,7 +14,7 @@ pre-commit:
       run: |
         set -euo pipefail
         if [[ -f web/package.json ]]; then
-          (cd web && npm run lint)
+          (cd web && bun run lint)
         else
           echo "No web/ package; skipping web lint"
         fi
@@ -24,18 +24,9 @@ commit-msg:
     commitlint:
       run: |
         set -euo pipefail
-        if [ -x ./node_modules/.bin/commitlint ]; then
-          ./node_modules/.bin/commitlint --edit {1}
+        if command -v bun >/dev/null 2>&1 && [ -x ./node_modules/.bin/commitlint ]; then
+          bun ./node_modules/.bin/commitlint --edit {1}
           exit 0
         fi
-        if command -v bunx >/dev/null 2>&1; then
-          bunx --no-install commitlint --edit {1}
-          exit 0
-        fi
-        if command -v npx >/dev/null 2>&1; then
-          npx --no-install commitlint --edit {1}
-          exit 0
-        fi
-        echo "commitlint is not installed. Install it (recommended) or remove the commit-msg hook." >&2
+        echo "bunx is not available. Install Bun, then run: bun install" >&2
         exit 1
-

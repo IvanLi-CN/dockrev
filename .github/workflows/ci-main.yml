@@ -13,7 +13,6 @@ permissions:
   contents: read
 
 env:
-  NODE_VERSION: "20"
   RUST_TOOLCHAIN: "1.91.0"
 
 jobs:
@@ -119,25 +118,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+          bun-version: latest
 
-      - name: npm ci
+      - name: bun install (frozen lockfile)
         shell: bash
         run: |
           set -euo pipefail
           cd web
-          npm ci
+          bun install --frozen-lockfile
 
       - name: Restore Playwright browser cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('web/package-lock.json') }}
+          key: ${{ runner.os }}-playwright-${{ hashFiles('web/bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-playwright-
 
@@ -146,8 +143,8 @@ jobs:
         run: |
           set -euo pipefail
           cd web
-          npm run lint
-          npm run build
-          npm run build-storybook -- --quiet
-          npx playwright install --with-deps chromium
-          npm run test-storybook
+          bun run lint
+          bun run build
+          bun run build-storybook -- --quiet
+          bun ./node_modules/.bin/playwright install --with-deps chromium
+          bun run test-storybook

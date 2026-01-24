@@ -13,7 +13,7 @@ const PLACEHOLDER_INDEX_HTML: &str = r#"<!doctype html>
   <body>
     <h1>Dockrev</h1>
     <p>Web UI assets are not built.</p>
-    <p>Run <code>cd web &amp;&amp; npm ci &amp;&amp; npm run build</code> before building the server.</p>
+    <p>Run <code>cd web &amp;&amp; bun install &amp;&amp; bun run build</code> before building the server.</p>
   </body>
 </html>
 "#;
