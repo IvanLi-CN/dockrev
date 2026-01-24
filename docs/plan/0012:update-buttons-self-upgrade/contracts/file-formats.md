@@ -18,7 +18,7 @@
   "previous": { "tag": "1.2.2", "digest": "sha256:..." },
   "startedAt": "2026-01-24T00:00:00Z",
   "updatedAt": "2026-01-24T00:00:00Z",
-  "progress": { "step": "pull|apply|wait_healthy|rollback|done", "message": "..." },
+  "progress": { "step": "precheck|pull|apply|wait_healthy|postcheck|rollback|done", "message": "..." },
   "logs": [
     { "ts": "2026-01-24T00:00:00Z", "level": "INFO|WARN|ERROR", "msg": "..." }
   ]
@@ -29,4 +29,3 @@
 
 - 仅允许追加字段；不删除/重命名既有字段。
 - `schemaVersion` 变更需要提供读写兼容窗口与迁移策略。
-

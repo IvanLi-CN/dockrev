@@ -9,8 +9,10 @@
 
 ## Auth（鉴权）
 
-- 复用 forward header 方案（与 Dockrev 相同的前置反代），默认要求已登录用户。
+- 复用 forward header 方案（与 Dockrev 相同的前置反代），除非 endpoint 显式标注 `Auth: none`，否则默认要求已登录用户。
 - Header 名称：`X-Forwarded-User`（可配置，需与 Dockrev 一致）。
+-
+- `Auth: none` 的 endpoints 仅用于“可用性探测/版本展示”，仍应部署在与 Dockrev 同域/同反代之后（避免公网暴露）。
 
 ## Health（GET /supervisor/health）
 
@@ -27,6 +29,7 @@ Response:
 Notes:
 
 - Dockrev UI 使用此 endpoint 进行“supervisor 可用性探测”，以决定是否允许跳转到自我升级页面。
+- 若出现 `401`（不应发生，因 `Auth: none`）：视为反代/路由异常，不应当作“offline”吞掉。
 
 ## Version（GET /supervisor/version）
 

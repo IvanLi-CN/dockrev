@@ -72,8 +72,8 @@
 
 - Scope: external
 - Change: New
-- Default: `docker`
-- Semantics: 使用 `docker compose` 还是 `docker-compose`（实现需与 Dockrev 现有约定保持一致）。
+- Default: `docker-compose`
+- Semantics: 使用 `docker compose` 还是 `docker-compose`（实现需与 Dockrev 现有约定保持一致；如需使用 plugin 形式则设为 `docker`）。
 
 ### Persistence
 
@@ -93,4 +93,3 @@
      - `com.docker.compose.project`
      - `com.docker.compose.project.config_files`
    - 若 label 缺失或 `config_files` 路径不可读：要求使用 `DOCKREV_SUPERVISOR_TARGET_COMPOSE_*` 显式配置覆盖。
-
