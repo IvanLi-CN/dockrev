@@ -11,7 +11,6 @@
 
 - 复用 forward header 方案（与 Dockrev 相同的前置反代），除非 endpoint 显式标注 `Auth: none`，否则默认要求已登录用户。
 - Header 名称：`X-Forwarded-User`（可配置，需与 Dockrev 一致）。
--
 - `Auth: none` 的 endpoints 仅用于“可用性探测/版本展示”，仍应部署在与 Dockrev 同域/同反代之后（避免公网暴露）。
 
 ## Health（GET /supervisor/health）
