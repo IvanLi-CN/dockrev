@@ -1,0 +1,151 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <defs>
+    <style>
+      :root {
+        /* DaisyUI theme tokens (dark) */
+        --color-base-100: #0f172a;
+        --color-base-200: #0b1020;
+        --color-base-300: #070b15;
+        --color-base-content: #e5e7eb;
+
+        --color-primary: #38bdf8;
+        --color-primary-content: #001018;
+        --color-secondary: #a78bfa;
+        --color-secondary-content: #0b1020;
+        --color-accent: #22c55e;
+        --color-accent-content: #041008;
+        --color-neutral: #111827;
+        --color-neutral-content: #e5e7eb;
+        --color-info: #38bdf8;
+        --color-info-content: #001018;
+        --color-success: #22c55e;
+        --color-success-content: #041008;
+        --color-warning: #f59e0b;
+        --color-warning-content: #1a1200;
+        --color-error: #fb7185;
+        --color-error-content: #1a0006;
+
+        --radius-selector: 1rem;
+        --radius-field: 0.75rem;
+        --radius-box: 1rem;
+        --size-selector: 0.25rem;
+        --size-field: 0.25rem;
+        --border: 1px;
+        --depth: 0;
+        --noise: 0;
+
+        /* aliases used by the SVG mock */
+        --bg: var(--color-base-200);
+        --panel: var(--color-base-100);
+        --panel2: var(--color-base-200);
+        --borderColor: rgba(229,231,235,.12);
+        --dockrev-surface: rgba(255,255,255,.035);
+        --muted: rgba(229,231,235,.78);
+        --muted2: rgba(229,231,235,.56);
+        --text: rgba(229,231,235,.92);
+        --accent: var(--color-primary);
+        --ok: var(--color-success);
+        --warn: var(--color-warning);
+        --bad: var(--color-error);
+      }
+
+      text { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+      .title { font-size: 16px; fill: var(--text); font-weight: 650; }
+      .h1 { font-size: 22px; fill: var(--text); font-weight: 750; }
+      .h2 { font-size: 14px; fill: var(--text); font-weight: 650; }
+      .label { font-size: 12px; fill: var(--muted); }
+      .muted { font-size: 12px; fill: var(--muted2); }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; fill: var(--muted); }
+
+      .btnPrimary { fill: var(--color-primary); }
+      .btnDanger { fill: var(--color-error); }
+      .btnText { font-size: 12px; fill: var(--color-primary-content); font-weight: 800; }
+      .btnDangerText { font-size: 12px; fill: var(--color-error-content); font-weight: 800; }
+      .btnGhost { fill: rgba(229,231,235,.08); }
+      .btnGhostText { font-size: 12px; fill: rgba(229,231,235,.86); font-weight: 750; }
+      .btnDisabled { fill: rgba(229,231,235,.06); stroke: rgba(229,231,235,.08); stroke-width: 1; }
+      .btnDisabledText { font-size: 12px; fill: rgba(229,231,235,.44); font-weight: 750; }
+
+      .chip { fill: rgba(229,231,235,.08); }
+      .chipText { font-size: 11px; fill: rgba(229,231,235,.78); font-weight: 650; }
+      .card { fill: var(--panel); }
+      .row { fill: var(--dockrev-surface); }
+      .badgeOutline { fill: rgba(56,189,248,.08); stroke: rgba(56,189,248,.22); stroke-width: 1; }
+      .badgeText { font-size: 12px; fill: rgba(110,231,255,.86); font-weight: 700; }
+      .ok { fill: var(--ok); }
+      .warn { fill: var(--warn); }
+      .bad { fill: var(--bad); }
+      .icon { fill: none; stroke: rgba(255,255,255,.44); stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1440" height="900" fill="var(--bg)"/>
+
+  <!-- Top bar -->
+  <rect x="0" y="0" width="1440" height="64" fill="var(--panel2)"/>
+  <text x="28" y="40" class="title">Dockrev</text>
+  <text x="110" y="40" class="muted">服务详情</text>
+
+  <!-- Top actions (dockrev self-upgrade) -->
+  <rect x="956" y="18" width="136" height="28" rx="8" class="btnGhost"/>
+  <text x="1024" y="37" class="btnGhostText" text-anchor="middle">预览更新</text>
+
+  <rect x="1108" y="18" width="154" height="28" rx="8" class="btnDisabled"/>
+  <text x="1185" y="37" class="btnDisabledText" text-anchor="middle">升级 Dockrev</text>
+
+  <rect x="1268" y="18" width="64" height="28" rx="8" class="btnGhost"/>
+  <text x="1300" y="37" class="btnGhostText" text-anchor="middle">重试</text>
+
+  <rect x="1338" y="18" width="74" height="28" rx="8" class="chip"/>
+  <text x="1375" y="37" class="chipText" text-anchor="middle">offline</text>
+
+  <!-- Sidebar -->
+  <rect x="0" y="64" width="256" height="836" fill="var(--panel2)"/>
+  <text x="28" y="110" class="label">导航</text>
+  <rect x="16" y="130" width="224" height="40" rx="10" fill="rgba(255,255,255,.00)"/>
+  <text x="44" y="155" class="label">概览</text>
+  <rect x="16" y="178" width="224" height="40" rx="10" fill="rgba(255,255,255,.00)"/>
+  <text x="44" y="203" class="label">更新队列</text>
+  <rect x="16" y="226" width="224" height="40" rx="10" fill="rgba(110,231,255,.05)"/>
+  <text x="44" y="251" class="h2">服务</text>
+  <rect x="16" y="274" width="224" height="40" rx="10" fill="rgba(255,255,255,.00)"/>
+  <text x="44" y="299" class="label">系统设置</text>
+
+  <!-- Header -->
+  <text x="296" y="112" class="h1">服务：dockrev</text>
+  <rect x="456" y="92.5" width="72" height="22" rx="11" class="badgeOutline"/>
+  <g transform="translate(468 96.5)"><g transform="scale(.5)">
+    <path class="icon" d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2"/>
+  </g></g>
+  <text x="486" y="103.5" class="badgeText" text-anchor="start" dominant-baseline="middle">prod</text>
+  <text x="296" y="138" class="mono">ghcr.io/ivanli-cn/dockrev</text>
+
+  <!-- Status banner -->
+  <rect x="296" y="160" width="1116" height="72" rx="14" fill="rgba(245,158,11,.10)"/>
+  <circle cx="322" cy="184" r="6" class="warn"/>
+  <text x="336" y="188" class="label">自我升级（需跳转 supervisor）</text>
+  <text x="336" y="212" class="muted">Dockrev 自身不会走 /api/updates；入口先探测 /supervisor/health</text>
+
+  <!-- Left column: self-upgrade entry -->
+  <rect x="296" y="246" width="540" height="208" rx="16" class="card"/>
+  <text x="316" y="282" class="title">自我升级</text>
+  <text x="316" y="310" class="muted">入口：升级 Dockrev → 跳转到 `DOCKREV_SELF_UPGRADE_URL`（默认 /supervisor/）</text>
+  <text x="316" y="340" class="label">supervisor 状态</text>
+  <rect x="316" y="354" width="500" height="44" rx="12" class="row"/>
+  <text x="332" y="382" class="mono">offline · last probe: 2026-01-24 14:12</text>
+  <text x="316" y="430" class="muted">建议：检查反代 /supervisor/ 路由与 supervisor 容器状态</text>
+
+  <!-- Right column: apply buttons note -->
+  <rect x="872" y="246" width="540" height="208" rx="16" class="card"/>
+  <text x="892" y="282" class="title">执行更新（普通服务）</text>
+  <text x="892" y="310" class="muted">普通服务：执行更新 → POST /api/updates (mode=apply)</text>
+  <text x="892" y="340" class="muted">Dockrev 自身：仅允许走 supervisor 自我升级流程（可回滚）</text>
+
+  <!-- Logs / queue hint -->
+  <rect x="296" y="470" width="1116" height="344" rx="16" class="card"/>
+  <text x="316" y="506" class="title">相关任务与日志</text>
+  <text x="316" y="534" class="muted">服务级 apply 任务会出现在“更新队列”；自我升级任务出现在 supervisor 页面</text>
+
+  <rect x="316" y="560" width="1076" height="44" rx="12" class="row"/>
+  <text x="332" y="588" class="mono">提示：点击右上角“重试”将重新探测 /supervisor/health</text>
+</svg>
