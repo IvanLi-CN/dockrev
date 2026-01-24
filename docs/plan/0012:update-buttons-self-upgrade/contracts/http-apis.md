@@ -78,7 +78,9 @@ Errors:
 
 Notes:
 
-- 必须幂等：当已有 `state=running` 时再次调用，返回相同 `opId`（不重复启动）。
+- 必须幂等（为 retry/刷新而设计）：
+  - 当已有 `state=running`，且本次请求参数与当前 running 的操作一致时：返回 `200` + 相同 `opId`（不重复启动）。
+  - 当已有 `state=running`，但本次请求试图变更目标（target/mode/rollbackOnFailure）时：返回 `409/conflict`，并在错误信息中提示“已有运行中的 self-upgrade，请等待完成或先回滚/结束后再发起”。
 
 Request body:
 
@@ -103,7 +105,7 @@ Errors:
 
 - `400/invalid_argument`
 - `401/auth_required`
-- `409/conflict`（已有 running）
+- `409/conflict`（已有 running 且请求参数不一致）
 
 ## Rollback self-upgrade（POST /supervisor/self-upgrade/rollback）
 
