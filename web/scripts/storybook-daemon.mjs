@@ -246,12 +246,10 @@ async function cmdStop({ port, force }) {
 async function cmdStart({ port, passthrough }) {
   const existing = await getListenerPids(port)
   if (existing.length === 0 && (await isTcpPortOpen(port))) {
-    console.log(`Port ${port} is already in use.`)
-    return
+    throw new Error(`Port ${port} is already in use.`)
   }
   if (existing.length > 0) {
-    console.log(`Storybook is already listening on port ${port}.`)
-    return
+    throw new Error(`Port ${port} is already in use.`)
   }
 
   const logFd = openLogFd()
@@ -275,11 +273,19 @@ async function cmdStart({ port, passthrough }) {
     },
   })
 
-  child.unref()
-  await writePid(child.pid)
-
   const url = `http://127.0.0.1:${port}/`
-  await waitForHttpOk(url, 120_000)
+  try {
+    await waitForHttpOk(url, 120_000)
+  } catch (error) {
+    try {
+      process.kill(child.pid, 'SIGTERM')
+    } catch {}
+    await clearPid()
+    throw error
+  }
+
+  await writePid(child.pid)
+  child.unref()
   console.log(`Storybook ready: ${url}`)
   console.log(`Logs: ${LOG_PATH}`)
 }

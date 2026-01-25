@@ -107,7 +107,8 @@ function startStaticServer({ port }) {
 }
 
 async function getStoryIds(baseUrl) {
-  const resp = await fetch(new URL('/index.json', baseUrl))
+  const base = normalizeBaseUrl(baseUrl)
+  const resp = await fetch(new URL('index.json', base))
   if (!resp.ok) {
     throw new Error(`Failed to fetch Storybook index.json: ${resp.status} ${resp.statusText}`)
   }
@@ -117,6 +118,17 @@ async function getStoryIds(baseUrl) {
   return Object.values(entries)
     .filter((e) => e && typeof e === 'object' && e.type === 'story' && typeof e.id === 'string')
     .map((e) => e.id)
+}
+
+function normalizeBaseUrl(input) {
+  const url = new URL(input)
+  url.search = ''
+  url.hash = ''
+  if (url.pathname.endsWith('/iframe.html') || url.pathname.endsWith('/index.html')) {
+    url.pathname = url.pathname.replace(/[^/]+$/, '')
+  }
+  if (!url.pathname.endsWith('/')) url.pathname += '/'
+  return url.toString()
 }
 
 async function runSmoke({ baseUrl, storyIds }) {
@@ -137,7 +149,8 @@ async function runSmoke({ baseUrl, storyIds }) {
       page.on('pageerror', (err) => pageErrors.push(err))
 
       try {
-        const url = new URL('/iframe.html', baseUrl)
+        const base = normalizeBaseUrl(baseUrl)
+        const url = new URL('iframe.html', base)
         url.searchParams.set('id', id)
         url.searchParams.set('viewMode', 'story')
 
@@ -164,7 +177,7 @@ async function runSmoke({ baseUrl, storyIds }) {
       if (failures.length > 20) {
         console.error(`...and ${failures.length - 20} more`)
       }
-      process.exit(1)
+      throw new Error(`Storybook smoke test failed (${failures.length}/${storyIds.length}).`)
     }
 
     console.log('All stories passed.')
