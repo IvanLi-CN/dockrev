@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -65,6 +66,9 @@ async function getListenerPids(port) {
     child.stdout.on('data', (chunk) => {
       out += String(chunk)
     })
+    child.on('error', () => {
+      resolve([])
+    })
     child.on('exit', () => {
       const pids = out
         .split('\n')
@@ -74,6 +78,22 @@ async function getListenerPids(port) {
         .filter((n) => Number.isFinite(n) && n > 0)
       resolve([...new Set(pids)])
     })
+  })
+}
+
+async function isTcpPortOpen(port, host = '127.0.0.1') {
+  return await new Promise((resolve) => {
+    const socket = net.connect({ port, host })
+
+    const done = (value) => {
+      socket.removeAllListeners()
+      socket.destroy()
+      resolve(value)
+    }
+
+    socket.once('connect', () => done(true))
+    socket.once('error', () => done(false))
+    socket.setTimeout(1000, () => done(false))
   })
 }
 
@@ -124,6 +144,7 @@ async function cmdStatus({ port }) {
   const pidFile = await safeReadPid()
   const url = `http://127.0.0.1:${port}/`
   const ok = await isHttpOk(url)
+  const tcpOpen = await isTcpPortOpen(port)
 
   console.log(
     JSON.stringify(
@@ -133,6 +154,7 @@ async function cmdStatus({ port }) {
         listeningPids: pids,
         pidFile,
         httpOk: ok,
+        tcpOpen,
         log: LOG_PATH,
       },
       null,
@@ -155,13 +177,16 @@ async function cmdLogs() {
 
 async function cmdStop({ port }) {
   const pids = await getListenerPids(port)
-  if (pids.length === 0) {
+  const pidFile = await safeReadPid()
+
+  const targets = pids.length > 0 ? pids : pidFile ? [pidFile] : []
+  if (targets.length === 0) {
     await clearPid()
     console.log(`No Storybook listener found on port ${port}.`)
     return
   }
 
-  for (const pid of pids) {
+  for (const pid of targets) {
     try {
       process.kill(pid, 'SIGTERM')
     } catch {}
@@ -169,14 +194,13 @@ async function cmdStop({ port }) {
 
   const startedAt = Date.now()
   while (Date.now() - startedAt < 10_000) {
-    const remaining = await getListenerPids(port)
-    if (remaining.length === 0) break
+    const tcpOpen = await isTcpPortOpen(port)
+    if (!tcpOpen) break
     await new Promise((r) => setTimeout(r, 250))
   }
 
-  const remaining = await getListenerPids(port)
-  if (remaining.length > 0) {
-    for (const pid of remaining) {
+  if (await isTcpPortOpen(port)) {
+    for (const pid of targets) {
       try {
         process.kill(pid, 'SIGKILL')
       } catch {}
@@ -189,6 +213,10 @@ async function cmdStop({ port }) {
 
 async function cmdStart({ port, passthrough }) {
   const existing = await getListenerPids(port)
+  if (existing.length === 0 && (await isTcpPortOpen(port))) {
+    console.log(`Port ${port} is already in use.`)
+    return
+  }
   if (existing.length > 0) {
     console.log(`Storybook is already listening on port ${port}.`)
     return
@@ -259,4 +287,3 @@ main().catch((error) => {
   console.error(error)
   process.exit(1)
 })
-

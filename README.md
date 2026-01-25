@@ -41,6 +41,13 @@ bun install
 bun run dev
 ```
 
+Storybook:
+
+```bash
+cd web
+bun run storybook:start
+```
+
 Open:
 
 - UI (dev server): `http://127.0.0.1:50884/`

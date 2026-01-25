@@ -127,7 +127,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.6
 
       - name: bun install (frozen lockfile)
         shell: bash
@@ -173,7 +173,7 @@ jobs:
         if: ${{ needs.changes.outputs.web == 'true' }}
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.6
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@v1

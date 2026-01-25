@@ -123,6 +123,11 @@ async function runSmoke({ baseUrl, storyIds }) {
   const { chromium } = await import('playwright')
   const browser = await chromium.launch()
   try {
+    if (storyIds.length === 0) {
+      throw new Error(
+        'No stories discovered from index.json. Storybook may be misconfigured or the index schema may have changed.'
+      )
+    }
     console.log(`Testing ${storyIds.length} stories...`)
     const failures = []
 
