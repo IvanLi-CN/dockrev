@@ -28,5 +28,5 @@ commit-msg:
           bun ./node_modules/.bin/commitlint --edit {1}
           exit 0
         fi
-        echo "bunx is not available. Install Bun, then run: bun install" >&2
+        echo "Bun and commitlint are required. Install Bun, then run: bun install" >&2
         exit 1

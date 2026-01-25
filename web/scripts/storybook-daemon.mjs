@@ -6,9 +6,19 @@ import path from 'node:path'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 
 const DEFAULT_PORT = 50886
-const STATE_DIR = path.join(os.tmpdir(), 'dockrev-storybook')
-const PID_PATH = path.join(STATE_DIR, 'pid')
-const LOG_PATH = path.join(STATE_DIR, 'storybook.log')
+const STATE_ROOT = path.join(os.tmpdir(), 'dockrev-storybook')
+
+function getStateDir(port) {
+  return path.join(STATE_ROOT, String(port))
+}
+
+function getPidPath(port) {
+  return path.join(getStateDir(port), 'pid')
+}
+
+function getLogPath(port) {
+  return path.join(getStateDir(port), 'storybook.log')
+}
 
 function parsePort(value, fallback) {
   const parsed = Number(value)
@@ -134,9 +144,9 @@ async function waitForHttpOk(url, timeoutMs = 60_000) {
   throw new Error(`Timed out waiting for ${url}`)
 }
 
-async function safeReadPid() {
+async function safeReadPid(port) {
   try {
-    const raw = await readFile(PID_PATH, 'utf8')
+    const raw = await readFile(getPidPath(port), 'utf8')
     const pid = Number(raw.trim())
     return Number.isFinite(pid) && pid > 0 ? pid : null
   } catch {
@@ -144,26 +154,27 @@ async function safeReadPid() {
   }
 }
 
-async function writePid(pid) {
-  await mkdir(STATE_DIR, { recursive: true })
-  await writeFile(PID_PATH, String(pid), 'utf8')
+async function writePid(port, pid) {
+  await mkdir(getStateDir(port), { recursive: true })
+  await writeFile(getPidPath(port), String(pid), 'utf8')
 }
 
-async function clearPid() {
-  await rm(PID_PATH, { force: true })
+async function clearPid(port) {
+  await rm(getPidPath(port), { force: true })
 }
 
-function openLogFd() {
-  fs.mkdirSync(STATE_DIR, { recursive: true })
-  return fs.openSync(LOG_PATH, 'a')
+function openLogFd(port) {
+  fs.mkdirSync(getStateDir(port), { recursive: true })
+  return fs.openSync(getLogPath(port), 'a')
 }
 
 async function cmdStatus({ port }) {
   const pids = await getListenerPids(port)
-  const pidFile = await safeReadPid()
+  const pidFile = await safeReadPid(port)
   const url = `http://127.0.0.1:${port}/`
   const ok = await isHttpOk(url)
   const tcpOpen = await isTcpPortOpen(port)
+  const logPath = getLogPath(port)
 
   console.log(
     JSON.stringify(
@@ -174,7 +185,7 @@ async function cmdStatus({ port }) {
         pidFile,
         httpOk: ok,
         tcpOpen,
-        log: LOG_PATH,
+        log: logPath,
       },
       null,
       2
@@ -182,20 +193,21 @@ async function cmdStatus({ port }) {
   )
 }
 
-async function cmdLogs() {
+async function cmdLogs({ port }) {
+  const logPath = getLogPath(port)
   try {
-    const content = await readFile(LOG_PATH, 'utf8')
+    const content = await readFile(logPath, 'utf8')
     const lines = content.split('\n')
     const tail = lines.slice(Math.max(0, lines.length - 120)).join('\n')
     process.stdout.write(tail.endsWith('\n') ? tail : `${tail}\n`)
   } catch {
-    console.error(`No logs yet at ${LOG_PATH}`)
+    console.error(`No logs yet at ${logPath}`)
     process.exit(1)
   }
 }
 
 async function cmdStop({ port, force }) {
-  const pidFile = await safeReadPid()
+  const pidFile = await safeReadPid(port)
 
   if (!pidFile) {
     const tcpOpen = await isTcpPortOpen(port)
@@ -221,7 +233,7 @@ async function cmdStop({ port, force }) {
   try {
     process.kill(pidFile, 'SIGTERM')
   } catch {
-    await clearPid()
+    await clearPid(port)
     console.log(`PID ${pidFile} is not running; cleared PID file.`)
     return
   }
@@ -239,7 +251,7 @@ async function cmdStop({ port, force }) {
     } catch {}
   }
 
-  await clearPid()
+  await clearPid(port)
   console.log(`Stopped Storybook on port ${port}.`)
 }
 
@@ -252,7 +264,7 @@ async function cmdStart({ port, passthrough }) {
     throw new Error(`Port ${port} is already in use.`)
   }
 
-  const logFd = openLogFd()
+  const logFd = openLogFd(port)
   const args = [
     './node_modules/.bin/storybook',
     'dev',
@@ -272,22 +284,29 @@ async function cmdStart({ port, passthrough }) {
       DOCKREV_STORYBOOK_PORT: String(port),
     },
   })
+  child.on('error', () => {})
+  try {
+    fs.closeSync(logFd)
+  } catch {}
 
   const url = `http://127.0.0.1:${port}/`
+  const spawnErrorPromise = new Promise((_, reject) => {
+    child.once('error', reject)
+  })
   try {
-    await waitForHttpOk(url, 120_000)
+    await Promise.race([waitForHttpOk(url, 120_000), spawnErrorPromise])
   } catch (error) {
     try {
       process.kill(child.pid, 'SIGTERM')
     } catch {}
-    await clearPid()
+    await clearPid(port)
     throw error
   }
 
-  await writePid(child.pid)
+  await writePid(port, child.pid)
   child.unref()
   console.log(`Storybook ready: ${url}`)
-  console.log(`Logs: ${LOG_PATH}`)
+  console.log(`Logs: ${getLogPath(port)}`)
 }
 
 async function main() {
@@ -312,7 +331,7 @@ async function main() {
     return
   }
   if (command === 'logs') {
-    await cmdLogs()
+    await cmdLogs({ port })
     return
   }
 
