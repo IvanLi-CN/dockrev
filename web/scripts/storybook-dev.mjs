@@ -26,7 +26,6 @@ function run(command, args) {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       stdio: 'inherit',
-      shell: process.platform === 'win32',
     })
     child.on('exit', (code) => resolve(code ?? 1))
   })
@@ -47,7 +46,7 @@ async function main() {
   }
   args.push(...passthrough)
 
-  const code = await run('bun', ['x', '--bun', 'storybook', ...args])
+  const code = await run('bun', ['--bun', './node_modules/.bin/storybook', ...args])
   process.exit(code)
 }
 

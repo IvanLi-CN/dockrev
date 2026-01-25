@@ -8,27 +8,6 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 const DEFAULT_PORT = 50886
 const STATE_ROOT = path.join(os.tmpdir(), 'dockrev-storybook')
 
-let warnedMissingLsof = false
-let warnedMissingPs = false
-
-function warnMissingToolOnce(tool, error) {
-  const code = error && typeof error === 'object' ? error.code : null
-  const missing = code === 'ENOENT'
-  if (tool === 'lsof') {
-    if (warnedMissingLsof) return
-    warnedMissingLsof = true
-    console.error(
-      `[storybook-daemon] 'lsof' ${missing ? 'not found' : 'failed'}; listener PID discovery disabled.`
-    )
-    return
-  }
-  if (tool === 'ps') {
-    if (warnedMissingPs) return
-    warnedMissingPs = true
-    console.error(`[storybook-daemon] 'ps' ${missing ? 'not found' : 'failed'}; using HTTP checks only.`)
-  }
-}
-
 function getStateDir(port) {
   return path.join(STATE_ROOT, String(port))
 }
@@ -105,15 +84,11 @@ async function getListenerPids(port) {
 
     let out = ''
     if (!child.stdout) {
-      warnMissingToolOnce('lsof')
       done([])
       return
     }
     child.stdout.on('data', (chunk) => (out += String(chunk)))
-    child.on('error', (error) => {
-      warnMissingToolOnce('lsof', error)
-      done([])
-    })
+    child.on('error', () => done([]))
     child.on('exit', () => {
       const pids = out
         .split('\n')
@@ -140,15 +115,11 @@ async function getProcessCommand(pid) {
 
     let out = ''
     if (!child.stdout) {
-      warnMissingToolOnce('ps')
       done(null)
       return
     }
     child.stdout.on('data', (chunk) => (out += String(chunk)))
-    child.on('error', (error) => {
-      warnMissingToolOnce('ps', error)
-      done(null)
-    })
+    child.on('error', () => done(null))
     child.on('exit', () => done(out.trim() || null))
   })
 }
@@ -169,33 +140,10 @@ async function isTcpPortOpen(port, host = '127.0.0.1') {
   })
 }
 
-async function fetchWithTimeout(url, options, timeoutMs = 2000) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    return await fetch(url, { ...options, signal: controller.signal })
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
 async function isHttpOk(url) {
   try {
-    const resp = await fetchWithTimeout(url, { method: 'GET' }, 2000)
+    const resp = await fetch(url, { method: 'GET' })
     return resp.ok
-  } catch {
-    return false
-  }
-}
-
-async function isStorybookIndexOk(port) {
-  const url = `http://127.0.0.1:${port}/index.json`
-  try {
-    const resp = await fetchWithTimeout(url, { method: 'GET' }, 2000)
-    if (!resp.ok) return false
-    const json = await resp.json().catch(() => null)
-    const entries = json && typeof json === 'object' ? json.entries : null
-    return Boolean(entries && typeof entries === 'object')
   } catch {
     return false
   }
@@ -288,8 +236,7 @@ async function cmdStop({ port, force }) {
   }
 
   const cmd = await getProcessCommand(pidFile)
-  const looksLikeStorybook =
-    Boolean(cmd && cmd.includes('storybook')) || (await isStorybookIndexOk(port))
+  const looksLikeStorybook = Boolean(cmd && cmd.includes('storybook'))
   if (!looksLikeStorybook && !force) {
     console.error(
       `Refusing to stop PID ${pidFile} (does not look like Storybook). Re-run with --force if you're sure.`
@@ -333,9 +280,8 @@ async function cmdStart({ port, passthrough }) {
 
   const logFd = openLogFd(port)
   const args = [
-    'x',
     '--bun',
-    'storybook',
+    './node_modules/.bin/storybook',
     'dev',
     '--port',
     String(port),
