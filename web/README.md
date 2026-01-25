@@ -4,9 +4,13 @@
 
 在 `web/` 目录下执行：
 
-- 启动：`npm run storybook`
-- 构建静态站点：`npm run build-storybook`（输出 `storybook-static/`）
-- 运行自动化测试：`npm run test-storybook`
+- 前台启动（用于本地开发，关闭终端会退出）：`bun run storybook`
+- 后台启动（推荐给 Agent/自动化，避免“测试完服务就不见了”）：`bun run storybook:start`
+- 状态检查：`bun run storybook:status`
+- 查看日志：`bun run storybook:logs`
+- 停止：`bun run storybook:stop`
+- 构建静态站点：`bun run build-storybook`（输出 `storybook-static/`）
+- 运行自动化测试：`bun run test-storybook`
 
 ### 端口约定（默认高位端口）
 

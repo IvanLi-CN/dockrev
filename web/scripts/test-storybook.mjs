@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process'
 import { access, readFile } from 'node:fs/promises'
 import http from 'node:http'
 import path from 'node:path'
@@ -53,24 +52,14 @@ async function waitForHttpOk(url, timeoutMs = 60_000) {
   throw new Error(`Timed out waiting for ${url}`)
 }
 
-function run(command, args, { silent = false } = {}) {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, {
-      stdio: silent ? 'ignore' : 'inherit',
-      shell: process.platform === 'win32',
-    })
-    child.on('exit', (code) => resolve(code ?? 1))
-  })
-}
-
 async function ensureStaticBuild() {
   try {
     await access(path.join(DEFAULT_OUTDIR, 'index.html'))
     await access(path.join(DEFAULT_OUTDIR, 'iframe.html'))
     return
   } catch {
-    const code = await run('storybook', ['build', '--quiet'])
-    if (code !== 0) process.exit(code)
+    console.error('Missing storybook-static build. Run: bun run build-storybook')
+    process.exit(1)
   }
 }
 
@@ -117,13 +106,98 @@ function startStaticServer({ port }) {
   return { listen, cleanup }
 }
 
+async function getStoryIds(baseUrl) {
+  const base = normalizeBaseUrl(baseUrl)
+  const resp = await fetch(new URL('index.json', base))
+  if (!resp.ok) {
+    throw new Error(`Failed to fetch Storybook index.json: ${resp.status} ${resp.statusText}`)
+  }
+  const json = await resp.json()
+  const entries = (json && typeof json === 'object' && json.entries) || {}
+  if (!entries || typeof entries !== 'object') return []
+  return Object.values(entries)
+    .filter((e) => e && typeof e === 'object' && e.type === 'story' && typeof e.id === 'string')
+    .map((e) => e.id)
+}
+
+function normalizeBaseUrl(input) {
+  const url = new URL(input)
+  url.search = ''
+  url.hash = ''
+  if (url.pathname.endsWith('/iframe.html') || url.pathname.endsWith('/index.html')) {
+    url.pathname = url.pathname.replace(/[^/]+$/, '')
+  }
+  if (!url.pathname.endsWith('/')) url.pathname += '/'
+  return url.toString()
+}
+
+async function runSmoke({ baseUrl, storyIds }) {
+  const { chromium } = await import('playwright')
+  const browser = await chromium.launch()
+  try {
+    if (storyIds.length === 0) {
+      throw new Error(
+        'No stories discovered from index.json. Storybook may be misconfigured or the index schema may have changed.'
+      )
+    }
+    console.log(`Testing ${storyIds.length} stories...`)
+    const failures = []
+
+    for (const id of storyIds) {
+      const page = await browser.newPage()
+      const pageErrors = []
+      page.on('pageerror', (err) => pageErrors.push(err))
+
+      try {
+        const base = normalizeBaseUrl(baseUrl)
+        const url = new URL('iframe.html', base)
+        url.searchParams.set('id', id)
+        url.searchParams.set('viewMode', 'story')
+
+        await page.goto(url.toString(), { waitUntil: 'domcontentloaded' })
+        await page.waitForFunction(() => document.body.classList.contains('sb-show-main'), null, {
+          timeout: 60_000,
+        })
+
+        if (pageErrors.length > 0) {
+          failures.push({ id, error: pageErrors[0] })
+        }
+      } catch (error) {
+        failures.push({ id, error })
+      } finally {
+        await page.close().catch(() => {})
+      }
+    }
+
+    if (failures.length > 0) {
+      console.error(`Failed ${failures.length}/${storyIds.length} stories:`)
+      for (const f of failures.slice(0, 20)) {
+        console.error(`- ${f.id}: ${String(f.error?.message ?? f.error)}`)
+      }
+      if (failures.length > 20) {
+        console.error(`...and ${failures.length - 20} more`)
+      }
+      throw new Error(`Storybook smoke test failed (${failures.length}/${storyIds.length}).`)
+    }
+
+    console.log('All stories passed.')
+  } finally {
+    await browser.close().catch(() => {})
+  }
+}
+
 async function main() {
   const { url: cliUrl, passthrough } = parseArgs(process.argv.slice(2))
   const targetUrl = cliUrl ?? process.env.TARGET_URL ?? null
 
   if (targetUrl) {
-    const code = await run('test-storybook', ['--url', targetUrl, ...passthrough])
-    process.exit(code)
+    if (passthrough.length > 0) {
+      console.error('Only --url is supported for now; extra args are not accepted.')
+      process.exit(2)
+    }
+    const storyIds = await getStoryIds(targetUrl)
+    await runSmoke({ baseUrl: targetUrl, storyIds })
+    return
   }
 
   await ensureStaticBuild()
@@ -144,8 +218,12 @@ async function main() {
   try {
     const localUrl = `http://127.0.0.1:${port}`
     await waitForHttpOk(localUrl)
-    const code = await run('test-storybook', ['--url', localUrl, ...passthrough])
-    process.exit(code)
+    if (passthrough.length > 0) {
+      console.error('Only --url is supported for now; extra args are not accepted.')
+      process.exit(2)
+    }
+    const storyIds = await getStoryIds(localUrl)
+    await runSmoke({ baseUrl: localUrl, storyIds })
   } finally {
     await server.cleanup()
   }

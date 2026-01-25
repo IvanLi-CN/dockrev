@@ -4,13 +4,17 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "lint": "eslint .",
-    "storybook": "node ./scripts/storybook-dev.mjs",
-    "build-storybook": "storybook build",
-    "test-storybook": "node ./scripts/test-storybook.mjs",
-    "preview": "vite preview"
+    "dev": "bun --bun ./node_modules/.bin/vite",
+    "build": "bun --bun ./node_modules/.bin/tsc -b && bun --bun ./node_modules/.bin/vite build",
+    "lint": "bun --bun ./node_modules/.bin/eslint .",
+    "storybook": "bun ./scripts/storybook-dev.mjs",
+    "storybook:start": "bun ./scripts/storybook-daemon.mjs start",
+    "storybook:stop": "bun ./scripts/storybook-daemon.mjs stop",
+    "storybook:status": "bun ./scripts/storybook-daemon.mjs status",
+    "storybook:logs": "bun ./scripts/storybook-daemon.mjs logs",
+    "build-storybook": "bun --bun ./node_modules/.bin/storybook build",
+    "test-storybook": "bun ./scripts/test-storybook.mjs",
+    "preview": "bun --bun ./node_modules/.bin/vite preview"
   },
   "dependencies": {
     "react": "^19.2.0",
@@ -20,7 +24,6 @@
     "@eslint/js": "^9.39.1",
     "@storybook/react": "^10.1.11",
     "@storybook/react-vite": "^10.1.11",
-    "@storybook/test-runner": "^0.24.2",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",

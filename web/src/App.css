@@ -114,7 +114,8 @@
 .content {
   grid-area: main;
   padding: 48px 28px 48px 40px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .pageHead {
@@ -343,19 +344,27 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  width: 1076px;
-  max-width: 100%;
+  width: 100%;
+  max-width: 1076px;
 }
 
 .tableHeader {
   display: grid;
-  grid-template-columns: 204px 320px 330px 222px;
+  grid-template-columns:
+    minmax(0, 1.2fr)
+    minmax(0, 1.9fr)
+    minmax(0, 2.2fr)
+    minmax(0, 1.4fr);
   align-items: center;
   height: 38px;
   border-radius: 10px;
   background: var(--dockrev-surface-strong);
   color: var(--muted);
   font-size: 12px;
+}
+
+.tableHeader > * {
+  min-width: 0;
 }
 
 .tableHeader > :first-child {
@@ -371,7 +380,11 @@
 
 .groupHead {
   display: grid;
-  grid-template-columns: 204px 320px 330px 222px;
+  grid-template-columns:
+    minmax(0, 1.2fr)
+    minmax(0, 1.9fr)
+    minmax(0, 2.2fr)
+    minmax(0, 1.4fr);
   align-items: center;
   height: 36px;
   cursor: pointer;
@@ -381,6 +394,10 @@
   background: var(--dockrev-surface);
   border-radius: 12px;
   padding: 0;
+}
+
+.groupHead > * {
+  min-width: 0;
 }
 
 .groupTitle {
@@ -396,7 +413,11 @@
 
 .rowLine {
   display: grid;
-  grid-template-columns: 204px 320px 330px 222px;
+  grid-template-columns:
+    minmax(0, 1.2fr)
+    minmax(0, 1.9fr)
+    minmax(0, 2.2fr)
+    minmax(0, 1.4fr);
   width: 100%;
   cursor: pointer;
   text-align: left;
@@ -405,6 +426,10 @@
   background: var(--dockrev-surface);
   border-radius: 12px;
   padding: 0;
+}
+
+.rowLine > * {
+  min-width: 0;
 }
 
 .rowLine:hover {
