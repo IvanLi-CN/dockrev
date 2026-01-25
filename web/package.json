@@ -4,17 +4,17 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "bun ./node_modules/.bin/vite",
-    "build": "bun ./node_modules/.bin/tsc -b && bun ./node_modules/.bin/vite build",
-    "lint": "bun ./node_modules/.bin/eslint .",
+    "dev": "bunx --bun vite",
+    "build": "bunx --bun tsc -b && bunx --bun vite build",
+    "lint": "bunx --bun eslint .",
     "storybook": "bun ./scripts/storybook-dev.mjs",
     "storybook:start": "bun ./scripts/storybook-daemon.mjs start",
     "storybook:stop": "bun ./scripts/storybook-daemon.mjs stop",
     "storybook:status": "bun ./scripts/storybook-daemon.mjs status",
     "storybook:logs": "bun ./scripts/storybook-daemon.mjs logs",
-    "build-storybook": "bun ./node_modules/.bin/storybook build",
+    "build-storybook": "bunx --bun storybook build",
     "test-storybook": "bun ./scripts/test-storybook.mjs",
-    "preview": "bun ./node_modules/.bin/vite preview"
+    "preview": "bunx --bun vite preview"
   },
   "dependencies": {
     "react": "^19.2.0",

@@ -47,7 +47,7 @@ async function main() {
   }
   args.push(...passthrough)
 
-  const code = await run('bun', ['./node_modules/.bin/storybook', ...args])
+  const code = await run('bun', ['x', '--bun', 'storybook', ...args])
   process.exit(code)
 }
 
