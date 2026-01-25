@@ -17,7 +17,7 @@ ENV APP_EFFECTIVE_VERSION="${APP_EFFECTIVE_VERSION}"
 EXPOSE 50883
 CMD ["/usr/local/bin/dockrev"]
 
-FROM oven/bun:alpine AS web-builder
+FROM oven/bun:1.3.6-alpine AS web-builder
 WORKDIR /app
 
 COPY web/package.json web/bun.lock ./web/

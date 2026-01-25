@@ -19,7 +19,7 @@ function usage() {
   console.error(
     [
       'Usage:',
-      '  bun ./scripts/storybook-daemon.mjs <start|stop|status|logs> [--port <port>] [-- [extra args]]',
+      '  bun ./scripts/storybook-daemon.mjs <start|stop|status|logs> [--port <port>] [--force] [-- [extra args]]',
       '',
       'Examples:',
       '  bun run storybook:status',
@@ -32,7 +32,7 @@ function usage() {
 }
 
 function parseArgs(argv) {
-  const out = { command: null, port: null, passthrough: [] }
+  const out = { command: null, port: null, force: false, passthrough: [] }
   const args = [...argv]
   out.command = args.shift() ?? null
 
@@ -41,6 +41,10 @@ function parseArgs(argv) {
     if (a === '--') {
       out.passthrough = args.splice(0)
       break
+    }
+    if (a === '--force') {
+      out.force = true
+      continue
     }
     if (a === '--port') {
       out.port = args.shift() ?? null
@@ -78,6 +82,21 @@ async function getListenerPids(port) {
         .filter((n) => Number.isFinite(n) && n > 0)
       resolve([...new Set(pids)])
     })
+  })
+}
+
+async function getProcessCommand(pid) {
+  return await new Promise((resolve) => {
+    const child = spawn('ps', ['-p', String(pid), '-o', 'command='], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+
+    let out = ''
+    child.stdout.on('data', (chunk) => {
+      out += String(chunk)
+    })
+    child.on('error', () => resolve(null))
+    child.on('exit', () => resolve(out.trim() || null))
   })
 }
 
@@ -175,21 +194,36 @@ async function cmdLogs() {
   }
 }
 
-async function cmdStop({ port }) {
-  const pids = await getListenerPids(port)
+async function cmdStop({ port, force }) {
   const pidFile = await safeReadPid()
 
-  const targets = pids.length > 0 ? pids : pidFile ? [pidFile] : []
-  if (targets.length === 0) {
-    await clearPid()
+  if (!pidFile) {
+    const tcpOpen = await isTcpPortOpen(port)
+    if (tcpOpen) {
+      console.error(
+        `Port ${port} is in use but no PID was recorded by this tool; refusing to stop it without --force.`
+      )
+      process.exit(1)
+    }
     console.log(`No Storybook listener found on port ${port}.`)
     return
   }
 
-  for (const pid of targets) {
-    try {
-      process.kill(pid, 'SIGTERM')
-    } catch {}
+  const cmd = await getProcessCommand(pidFile)
+  const looksLikeStorybook = Boolean(cmd && cmd.includes('storybook'))
+  if (!looksLikeStorybook && !force) {
+    console.error(
+      `Refusing to stop PID ${pidFile} (does not look like Storybook). Re-run with --force if you're sure.`
+    )
+    process.exit(1)
+  }
+
+  try {
+    process.kill(pidFile, 'SIGTERM')
+  } catch {
+    await clearPid()
+    console.log(`PID ${pidFile} is not running; cleared PID file.`)
+    return
   }
 
   const startedAt = Date.now()
@@ -200,11 +234,9 @@ async function cmdStop({ port }) {
   }
 
   if (await isTcpPortOpen(port)) {
-    for (const pid of targets) {
-      try {
-        process.kill(pid, 'SIGKILL')
-      } catch {}
-    }
+    try {
+      process.kill(pidFile, 'SIGKILL')
+    } catch {}
   }
 
   await clearPid()
@@ -253,7 +285,7 @@ async function cmdStart({ port, passthrough }) {
 }
 
 async function main() {
-  const { command, port: portRaw, passthrough } = parseArgs(process.argv.slice(2))
+  const { command, port: portRaw, force, passthrough } = parseArgs(process.argv.slice(2))
   if (!command || command === '-h' || command === '--help') {
     usage()
     process.exit(command ? 0 : 2)
@@ -266,7 +298,7 @@ async function main() {
     return
   }
   if (command === 'stop') {
-    await cmdStop({ port })
+    await cmdStop({ port, force })
     return
   }
   if (command === 'status') {
