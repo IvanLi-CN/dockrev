@@ -16,7 +16,7 @@ export const Default: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
   render: () => {
     return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="聚焦：可更新 / 需确认 / 跨 tag 版本 / 架构不匹配 / 被阻止">
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="聚焦：运行态/结果 + 发现异常 + 更新候选筛选">
         {({ onComposeHint, onTopActions }) => <OverviewPage onComposeHint={onComposeHint} onTopActions={onTopActions} />}
       </PageHarness>
     )

@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  triggerDiscoveryScan,
+  listDiscoveryProjects,
+  listJobs,
   getStack,
   listStacks,
   triggerCheck,
   triggerUpdate,
   ApiError,
+  type DiscoveredProject,
+  type DiscoveryScanResponse,
+  type JobListItem,
   type Service,
   type StackDetail,
   type StackListItem,
@@ -17,6 +23,13 @@ import { useSupervisorHealth } from '../useSupervisorHealth'
 import { serviceRowStatus, type RowStatus } from '../updateStatus'
 
 type Filter = 'all' | Exclude<RowStatus, 'ok'>
+
+function formatShort(ts?: string | null) {
+  if (!ts) return '-'
+  const d = new Date(ts)
+  if (Number.isNaN(d.valueOf())) return ts
+  return d.toLocaleString()
+}
 
 function formatDigestShort(digest: string | null | undefined): string | null {
   if (!digest) return null
@@ -92,6 +105,9 @@ export function OverviewPage(props: {
   const [stacks, setStacks] = useState<StackListItem[]>([])
   const [details, setDetails] = useState<Record<string, StackDetail | undefined>>({})
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [jobs, setJobs] = useState<JobListItem[]>([])
+  const [discoveredProjects, setDiscoveredProjects] = useState<DiscoveredProject[]>([])
+  const [lastDiscoveryScan, setLastDiscoveryScan] = useState<DiscoveryScanResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -99,8 +115,26 @@ export function OverviewPage(props: {
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
 
   const refresh = useCallback(async () => {
+    const errors: string[] = []
     setError(null)
-    const s = await listStacks()
+
+    const stacksPromise = listStacks()
+    const jobsPromise = listJobs()
+    const projectsPromise = listDiscoveryProjects('exclude')
+
+    const [stacksRes, jobsRes, projectsRes] = await Promise.allSettled([stacksPromise, jobsPromise, projectsPromise])
+
+    if (jobsRes.status === 'fulfilled') setJobs(jobsRes.value)
+    else errors.push('jobs unavailable')
+
+    if (projectsRes.status === 'fulfilled') setDiscoveredProjects(projectsRes.value)
+    else errors.push('discovery projects unavailable')
+
+    if (stacksRes.status === 'rejected') {
+      throw stacksRes.reason
+    }
+
+    const s = stacksRes.value
     setStacks(s)
     const maxLastScan = s.map((x) => x.lastCheckAt).sort().at(-1)
 
@@ -125,6 +159,8 @@ export function OverviewPage(props: {
       }
       return next
     })
+
+    if (errors.length > 0) setError(errors.join(' · '))
   }, [onComposeHint])
 
   useEffect(() => {
@@ -163,6 +199,45 @@ export function OverviewPage(props: {
     }
     return { enabled: false, note: null as string | null, title: '无可更新服务' }
   }, [countsAll.crossTag, countsAll.hint, countsAll.updatable])
+
+  const jobsSummary = useMemo(() => {
+    const total = jobs.length
+    const running = jobs.filter((j) => j.status === 'running').length
+    const failed = jobs.filter((j) => j.status === 'failed').length
+    const rolled = jobs.filter((j) => j.status === 'rolled_back').length
+    const success = jobs.filter((j) => j.status === 'success').length
+    const other = total - running - failed - rolled - success
+    const latest = [...jobs]
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+      .at(0)
+    return { total, running, failed, rolled, success, other, latest }
+  }, [jobs])
+
+  const discoverySummary = useMemo(() => {
+    const active = discoveredProjects.filter((p) => p.status === 'active' && !p.archived)
+    const missing = discoveredProjects.filter((p) => p.status === 'missing' && !p.archived)
+    const invalid = discoveredProjects.filter((p) => p.status === 'invalid' && !p.archived)
+    const issues = [...missing, ...invalid]
+      .sort((a, b) => String(b.lastSeenAt ?? '').localeCompare(String(a.lastSeenAt ?? '')))
+      .slice(0, 4)
+    return { active, missing, invalid, issues }
+  }, [discoveredProjects])
+
+  const runDiscoveryScan = useCallback(async () => {
+    const ok = window.confirm(['即将执行发现扫描（discovery scan）', '', '提示：可能创建/标记 stacks；用于发现 missing/invalid。'].join('\n'))
+    if (!ok) return
+    setBusy(true)
+    setError(null)
+    try {
+      const resp = await triggerDiscoveryScan()
+      setLastDiscoveryScan(resp)
+      setDiscoveredProjects(await listDiscoveryProjects('exclude'))
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [])
 
   const triggerApply = useCallback(
     async (input: { scope: 'all' | 'stack' | 'service'; stackId?: string; serviceId?: string; targetLabel: string }) => {
@@ -244,31 +319,67 @@ export function OverviewPage(props: {
 
   return (
     <div className="page">
-      <div className="statGrid">
-        <div className="card statCard">
-          <div className="label">可更新</div>
-          <div className="statNum">{countsAll.updatable}</div>
-          <div className="muted">匹配当前 tag 序列</div>
+      <div className="twoCol">
+        <div className="card">
+          <div className="sectionRow">
+            <div>
+              <div className="title">运行态与结果</div>
+              <div className="muted">更新任务（队列）摘要</div>
+            </div>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
+              <Button variant="ghost" disabled={busy} onClick={() => navigate({ name: 'queue' })}>
+                查看队列
+              </Button>
+            </div>
+          </div>
+          <div className="chipRow" style={{ marginTop: 14 }}>
+            <div className="chipStatic">{`运行中: ${jobsSummary.running}`}</div>
+            <div className="chipStatic">{`失败: ${jobsSummary.failed}`}</div>
+            <div className="chipStatic">{`回滚: ${jobsSummary.rolled}`}</div>
+            <div className="chipStatic">{`成功: ${jobsSummary.success}`}</div>
+            {jobsSummary.other > 0 ? <div className="chipStatic">{`其他: ${jobsSummary.other}`}</div> : null}
+          </div>
+          <div className="muted" style={{ marginTop: 12 }}>
+            最近: {jobsSummary.latest ? <Mono>{`${jobsSummary.latest.status} · ${formatShort(jobsSummary.latest.createdAt)} · ${jobsSummary.latest.scope}`}</Mono> : <Mono>-</Mono>}
+          </div>
         </div>
-        <div className="card statCard">
-          <div className="label">需确认</div>
-          <div className="statNum">{countsAll.hint}</div>
-          <div className="muted">arch 未知/无法推断</div>
-        </div>
-        <div className="card statCard">
-          <div className="label">跨 tag 版本</div>
-          <div className="statNum">{countsAll.crossTag}</div>
-          <div className="muted">候选不匹配当前序列</div>
-        </div>
-        <div className="card statCard">
-          <div className="label">架构不匹配</div>
-          <div className="statNum">{countsAll.archMismatch}</div>
-          <div className="muted">仅提示，不允许更新</div>
-        </div>
-        <div className="card statCard">
-          <div className="label">被阻止</div>
-          <div className="statNum">{countsAll.blocked}</div>
-          <div className="muted">备份失败/被禁用</div>
+
+        <div className="card">
+          <div className="sectionRow">
+            <div>
+              <div className="title">扫描与发现异常</div>
+              <div className="muted">discovery projects（missing/invalid）</div>
+            </div>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
+              <Button variant="ghost" disabled={busy} onClick={runDiscoveryScan}>
+                发现扫描
+              </Button>
+              <Button variant="ghost" disabled={busy} onClick={() => navigate({ name: 'services' })}>
+                查看服务
+              </Button>
+            </div>
+          </div>
+          <div className="chipRow" style={{ marginTop: 14 }}>
+            <div className="chipStatic">{`active: ${discoverySummary.active.length}`}</div>
+            <div className="chipStatic">{`missing: ${discoverySummary.missing.length}`}</div>
+            <div className="chipStatic">{`invalid: ${discoverySummary.invalid.length}`}</div>
+            {lastDiscoveryScan ? <div className="chipStatic">{`last scan: ${formatShort(lastDiscoveryScan.startedAt)}`}</div> : null}
+          </div>
+          {discoverySummary.issues.length > 0 ? (
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {discoverySummary.issues.map((p) => (
+                <div key={p.project} className="muted" title={p.lastError ?? undefined}>
+                  <Mono>{p.project}</Mono>
+                  {p.status === 'missing' ? ' · missing' : ' · invalid'}
+                  {p.lastError ? ` · ${p.lastError}` : ''}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="muted" style={{ marginTop: 12 }}>
+              暂无异常
+            </div>
+          )}
         </div>
       </div>
 

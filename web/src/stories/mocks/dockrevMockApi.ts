@@ -224,6 +224,29 @@ function buildDashboardDemo(): Fixture {
     [infraSvcC.id]: infraSvcC.settings,
   }
 
+  f.discoveredProjects = [
+    {
+      project: 'missing-compose',
+      status: 'missing',
+      stackId: null,
+      configFiles: ['/srv/missing/docker-compose.yml'],
+      lastSeenAt: nowIso(-600_000),
+      lastScanAt: nowIso(-300_000),
+      lastError: 'compose file not found',
+      archived: false,
+    },
+    {
+      project: 'invalid-compose',
+      status: 'invalid',
+      stackId: null,
+      configFiles: ['/srv/invalid/docker-compose.yml'],
+      lastSeenAt: nowIso(-520_000),
+      lastScanAt: nowIso(-290_000),
+      lastError: 'yaml parse error: unexpected indent',
+      archived: false,
+    },
+  ]
+
   const job1 = {
     id: 'job-1',
     type: 'update',
