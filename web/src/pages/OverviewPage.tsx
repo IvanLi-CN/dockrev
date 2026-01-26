@@ -236,7 +236,21 @@ export function OverviewPage(props: {
   const runDiscoveryScan = useCallback(async () => {
     const ok = await confirm({
       title: '确认执行发现扫描？',
-      body: ['即将执行发现扫描（discovery scan）', '', '提示：可能创建/标记 stacks；用于发现 missing/invalid。'].join('\n'),
+      body: (
+        <>
+          <div className="modalLead">发现扫描会拉取 discovery projects，并标记 missing/invalid。</div>
+          <div className="modalKvGrid">
+            <div className="modalKvLabel">操作</div>
+            <div className="modalKvValue">
+              <Mono>discovery scan</Mono>
+            </div>
+            <div className="modalKvLabel">可能影响</div>
+            <div className="modalKvValue">创建/更新 stacks，或将 stacks 标记为 missing/invalid。</div>
+          </div>
+          <div className="modalDivider" />
+          <div className="muted">这是“发现异常”用的扫描，不会直接重启容器。</div>
+        </>
+      ),
       confirmText: '开始扫描',
       cancelText: '取消',
       confirmVariant: 'primary',
@@ -256,17 +270,45 @@ export function OverviewPage(props: {
   }, [confirm])
 
   const triggerApply = useCallback(
-    async (input: { scope: 'all' | 'stack' | 'service'; stackId?: string; serviceId?: string; targetLabel: string }) => {
+    async (input: {
+      scope: 'all' | 'stack' | 'service'
+      stackId?: string
+      serviceId?: string
+      targetLabel: string
+      confirmBody?: React.ReactNode
+      confirmTitle?: string
+    }) => {
       const scopeLabel = input.scope === 'all' ? 'all' : input.scope === 'stack' ? 'stack' : 'service'
       const ok = await confirm({
-        title: '确认执行更新？',
-        body: [
-          `即将执行更新（mode=apply）`,
-          `scope=${scopeLabel}`,
-          `target=${input.targetLabel}`,
-          '',
-          '提示：将拉取镜像并重启容器；失败可能触发回滚。',
-        ].join('\n'),
+        title: input.confirmTitle ?? '确认执行更新？',
+        body:
+          input.confirmBody ?? (
+            <>
+              <div className="modalLead">将拉取镜像并重启容器；失败可能触发回滚。</div>
+              <div className="modalKvGrid">
+                <div className="modalKvLabel">模式</div>
+                <div className="modalKvValue">
+                  <Mono>apply</Mono>
+                </div>
+                <div className="modalKvLabel">范围</div>
+                <div className="modalKvValue">
+                  <Mono>{scopeLabel}</Mono>
+                </div>
+                <div className="modalKvLabel">目标</div>
+                <div className="modalKvValue">
+                  <Mono>{input.targetLabel}</Mono>
+                </div>
+                <div className="modalKvLabel">备份</div>
+                <div className="modalKvValue">
+                  <Mono>inherit</Mono>
+                </div>
+                <div className="modalKvLabel">架构不匹配</div>
+                <div className="modalKvValue">
+                  <Mono>disallow</Mono>
+                </div>
+              </div>
+            </>
+          ),
         confirmText: '执行更新',
         cancelText: '取消',
         confirmVariant: 'danger',
@@ -328,14 +370,50 @@ export function OverviewPage(props: {
           disabled={busy || !allApply.enabled}
           title={allApply.title ?? undefined}
           onClick={() => {
-            void triggerApply({ scope: 'all', targetLabel: '全部服务' })
+            const totalCandidates = countsAll.updatable + countsAll.hint + countsAll.crossTag
+            const body = (
+              <>
+                <div className="modalLead">将为所有服务创建更新任务（服务端会计算是否实际变更）。</div>
+                <div className="modalKvGrid">
+                  <div className="modalKvLabel">范围</div>
+                  <div className="modalKvValue">
+                    <Mono>all</Mono>
+                  </div>
+                  <div className="modalKvLabel">候选服务</div>
+                  <div className="modalKvValue">{totalCandidates} 个（可更新/需确认/跨 tag）</div>
+                  <div className="modalKvLabel">其中</div>
+                  <div className="modalKvValue">
+                    可更新 {countsAll.updatable} · 需确认 {countsAll.hint} · 跨 tag {countsAll.crossTag}
+                  </div>
+                  <div className="modalKvLabel">将跳过</div>
+                  <div className="modalKvValue">
+                    架构不匹配 {countsAll.archMismatch} · 被阻止 {countsAll.blocked}
+                  </div>
+                </div>
+                <div className="modalDivider" />
+                <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>
+              </>
+            )
+            void triggerApply({ scope: 'all', targetLabel: '全部服务', confirmBody: body, confirmTitle: '确认更新全部服务？' })
           }}
         >
           更新全部
         </Button>
       </>,
     )
-  }, [allApply.enabled, allApply.title, busy, onTopActions, refresh, triggerApply])
+  }, [
+    allApply.enabled,
+    allApply.title,
+    busy,
+    countsAll.archMismatch,
+    countsAll.blocked,
+    countsAll.crossTag,
+    countsAll.hint,
+    countsAll.updatable,
+    onTopActions,
+    refresh,
+    triggerApply,
+  ])
 
   return (
     <div className="page">
@@ -481,16 +559,50 @@ export function OverviewPage(props: {
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={(e) => e.stopPropagation()}
                   >
-                    <Button
-                      variant="ghost"
-                      disabled={busy || !stackApply.enabled}
-                      title={stackApply.title ?? undefined}
-                      onClick={() => {
-                        void triggerApply({ scope: 'stack', stackId: st.id, targetLabel: `stack:${d.name}` })
-                      }}
-                    >
-                      更新此 stack
-                    </Button>
+	                    <Button
+	                      variant="ghost"
+	                      disabled={busy || !stackApply.enabled}
+	                      title={stackApply.title ?? undefined}
+	                      onClick={() => {
+	                        const totalCandidates = counts.updatable + counts.hint + counts.crossTag
+	                        const body = (
+	                          <>
+	                            <div className="modalLead">将为该 stack 内服务创建更新任务（服务端会计算是否实际变更）。</div>
+	                            <div className="modalKvGrid">
+	                              <div className="modalKvLabel">范围</div>
+	                              <div className="modalKvValue">
+	                                <Mono>stack</Mono>
+	                              </div>
+	                              <div className="modalKvLabel">目标</div>
+	                              <div className="modalKvValue">
+	                                <Mono>{d.name}</Mono>
+	                              </div>
+	                              <div className="modalKvLabel">候选服务</div>
+	                              <div className="modalKvValue">{totalCandidates} 个（可更新/需确认/跨 tag）</div>
+	                              <div className="modalKvLabel">其中</div>
+	                              <div className="modalKvValue">
+	                                可更新 {counts.updatable} · 需确认 {counts.hint} · 跨 tag {counts.crossTag}
+	                              </div>
+	                              <div className="modalKvLabel">将跳过</div>
+	                              <div className="modalKvValue">
+	                                架构不匹配 {counts.archMismatch} · 被阻止 {counts.blocked}
+	                              </div>
+	                            </div>
+	                            <div className="modalDivider" />
+	                            <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>
+	                          </>
+	                        )
+	                        void triggerApply({
+	                          scope: 'stack',
+	                          stackId: st.id,
+	                          targetLabel: `stack:${d.name}`,
+	                          confirmBody: body,
+	                          confirmTitle: `确认更新此 stack？`,
+	                        })
+	                      }}
+	                    >
+	                      更新此 stack
+	                    </Button>
                   </div>
                 </div>
 
@@ -579,11 +691,42 @@ export function OverviewPage(props: {
                                 disabled={busy || !svcApply.enabled}
                                 title={svcApply.title ?? undefined}
                                 onClick={() => {
+                                  const body = (
+                                    <>
+                                      <div className="modalLead">将对该服务执行更新（apply）。</div>
+                                      <div className="modalKvGrid">
+                                        <div className="modalKvLabel">范围</div>
+                                        <div className="modalKvValue">
+                                          <Mono>service</Mono>
+                                        </div>
+                                        <div className="modalKvLabel">目标</div>
+                                        <div className="modalKvValue">
+                                          <Mono>{`${d.name}/${svc.name}`}</Mono>
+                                        </div>
+                                        <div className="modalKvLabel">镜像</div>
+                                        <div className="modalKvValue">
+                                          <Mono>{svc.image.ref}</Mono>
+                                        </div>
+                                        <div className="modalKvLabel">当前 → 候选</div>
+                                        <div className="modalKvValue">
+                                          <Mono>{`${current} → ${candidate}`}</Mono>
+                                        </div>
+                                        <div className="modalKvLabel">状态</div>
+                                        <div className="modalKvValue">
+                                          <Mono>{stt}</Mono>
+                                        </div>
+                                      </div>
+                                      <div className="modalDivider" />
+                                      <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>
+                                    </>
+                                  )
                                   void triggerApply({
                                     scope: 'service',
                                     stackId: st.id,
                                     serviceId: svc.id,
                                     targetLabel: `service:${d.name}/${svc.name}`,
+                                    confirmBody: body,
+                                    confirmTitle: `确认更新服务 ${svc.name}？`,
                                   })
                                 }}
                               >

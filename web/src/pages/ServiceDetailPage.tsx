@@ -195,20 +195,56 @@ export function ServiceDetailPage(props: {
               }
               onClick={() => {
                 void (async () => {
-                  if (!service) return
-                  const ok = await confirm({
-                    title: '确认执行更新？',
-                    body: [
-                      `即将执行更新（mode=apply）`,
-                      `scope=service`,
-                      `target=${stack?.name ?? stackId}/${service.name}`,
-                      '',
-                      '提示：将拉取镜像并重启容器；失败可能触发回滚。',
-                    ].join('\n'),
-                    confirmText: '执行更新',
-                    cancelText: '取消',
-                    confirmVariant: 'danger',
-                  })
+	                  if (!service) return
+	                  const ok = await confirm({
+	                    title: `确认更新服务 ${service.name}？`,
+	                    body: (
+	                      <>
+	                        <div className="modalLead">将对该服务执行更新（apply）。</div>
+	                        <div className="modalKvGrid">
+	                          <div className="modalKvLabel">范围</div>
+	                          <div className="modalKvValue">
+	                            <Mono>service</Mono>
+	                          </div>
+	                          <div className="modalKvLabel">目标</div>
+	                          <div className="modalKvValue">
+	                            <Mono>{`${stack?.name ?? stackId}/${service.name}`}</Mono>
+	                          </div>
+	                          <div className="modalKvLabel">镜像</div>
+	                          <div className="modalKvValue">
+	                            <Mono>{service.image.ref}</Mono>
+	                          </div>
+	                          <div className="modalKvLabel">当前 → 候选</div>
+	                          <div className="modalKvValue">
+	                            <Mono>
+	                              {`${service.image.tag}${service.image.digest ? `@${shortDigest(service.image.digest)}` : ''} → ${
+	                                service.candidate
+	                                  ? `${service.candidate.tag}@${shortDigest(service.candidate.digest)}`
+	                                  : '-'
+	                              }`}
+	                            </Mono>
+	                          </div>
+	                          <div className="modalKvLabel">状态</div>
+	                          <div className="modalKvValue">
+	                            <Mono>{serviceRowStatus(service)}</Mono>
+	                          </div>
+	                          <div className="modalKvLabel">备份</div>
+	                          <div className="modalKvValue">
+	                            <Mono>inherit</Mono>
+	                          </div>
+	                          <div className="modalKvLabel">架构不匹配</div>
+	                          <div className="modalKvValue">
+	                            <Mono>disallow</Mono>
+	                          </div>
+	                        </div>
+	                        <div className="modalDivider" />
+	                        <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>
+	                      </>
+	                    ),
+	                    confirmText: '执行更新',
+	                    cancelText: '取消',
+	                    confirmVariant: 'danger',
+	                  })
                   if (!ok) return
                   setBusy(true)
                   setError(null)

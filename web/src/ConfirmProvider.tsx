@@ -1,24 +1,8 @@
-/* eslint-disable react-refresh/only-export-components */
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Button } from './ui'
-
-type ConfirmVariant = 'primary' | 'danger' | 'ghost'
-
-export type ConfirmOptions = {
-  title: string
-  body: string
-  confirmText?: string
-  cancelText?: string
-  confirmVariant?: ConfirmVariant
-}
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Button, Pill } from './ui'
+import { ConfirmContext, type ConfirmOptions, type ConfirmVariant } from './confirm'
 
 type ConfirmRequest = ConfirmOptions & { resolve: (ok: boolean) => void }
-
-type ConfirmApi = {
-  confirm: (opts: ConfirmOptions) => Promise<boolean>
-}
-
-const ConfirmContext = createContext<ConfirmApi | null>(null)
 
 export function ConfirmProvider(props: { children: ReactNode }) {
   const [req, setReq] = useState<ConfirmRequest | null>(null)
@@ -51,15 +35,9 @@ export function ConfirmProvider(props: { children: ReactNode }) {
   )
 }
 
-export function useConfirm(): ConfirmApi['confirm'] {
-  const ctx = useContext(ConfirmContext)
-  if (!ctx) throw new Error('useConfirm must be used within ConfirmProvider')
-  return ctx.confirm
-}
-
 function ConfirmDialog(props: {
   title: string
-  body: string
+  body: ReactNode
   confirmText?: string
   cancelText?: string
   confirmVariant?: ConfirmVariant
@@ -69,6 +47,9 @@ function ConfirmDialog(props: {
   const confirmVariant = props.confirmVariant ?? 'danger'
   const confirmText = props.confirmText ?? '确定'
   const cancelText = props.cancelText ?? '取消'
+
+  const tone: 'warn' | 'bad' | 'muted' =
+    confirmVariant === 'danger' ? 'bad' : confirmVariant === 'primary' ? 'warn' : 'muted'
 
   useEffect(() => {
     cancelRef.current?.focus()
@@ -100,7 +81,10 @@ function ConfirmDialog(props: {
         aria-label={props.title}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="modalTitle">{props.title}</div>
+        <div className="modalHeader">
+          <div className="modalTitle">{props.title}</div>
+          <Pill tone={tone}>{confirmVariant === 'danger' ? '危险操作' : confirmVariant === 'primary' ? '将触发任务' : '确认'}</Pill>
+        </div>
         <div className="modalBody">{props.body}</div>
         <div className="modalActions">
           <button className="btn btnGhost" ref={cancelRef} onClick={() => props.onClose(false)}>

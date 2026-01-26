@@ -792,8 +792,15 @@ html[data-theme='light'] .modalOverlay {
   box-shadow: 0 28px 80px rgba(0, 0, 0, 0.55);
 }
 
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .modalTitle {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 750;
   color: var(--text);
 }
@@ -802,8 +809,44 @@ html[data-theme='light'] .modalOverlay {
   margin-top: 10px;
   color: var(--muted2);
   font-size: 12px;
-  white-space: pre-wrap;
   line-height: 1.55;
+}
+
+.modalLead {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.modalKvGrid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 8px 12px;
+  align-items: start;
+}
+
+@media (max-width: 520px) {
+  .modalKvGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.modalKvLabel {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.modalKvValue {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.modalDivider {
+  margin: 14px 0;
+  height: 1px;
+  background: rgba(229, 231, 235, 0.1);
 }
 
 .modalActions {

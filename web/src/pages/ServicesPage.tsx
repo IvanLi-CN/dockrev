@@ -210,17 +210,45 @@ export function ServicesPage(props: {
   }, [busy, onTopActions, refresh])
 
   const triggerApply = useCallback(
-    async (input: { scope: 'stack' | 'service'; stackId: string; serviceId?: string; targetLabel: string }) => {
+    async (input: {
+      scope: 'stack' | 'service'
+      stackId: string
+      serviceId?: string
+      targetLabel: string
+      confirmBody?: React.ReactNode
+      confirmTitle?: string
+    }) => {
       const scopeLabel = input.scope === 'stack' ? 'stack' : 'service'
       const ok = await confirm({
-        title: '确认执行更新？',
-        body: [
-          `即将执行更新（mode=apply）`,
-          `scope=${scopeLabel}`,
-          `target=${input.targetLabel}`,
-          '',
-          '提示：将拉取镜像并重启容器；失败可能触发回滚。',
-        ].join('\n'),
+        title: input.confirmTitle ?? '确认执行更新？',
+        body:
+          input.confirmBody ?? (
+            <>
+              <div className="modalLead">将拉取镜像并重启容器；失败可能触发回滚。</div>
+              <div className="modalKvGrid">
+                <div className="modalKvLabel">模式</div>
+                <div className="modalKvValue">
+                  <Mono>apply</Mono>
+                </div>
+                <div className="modalKvLabel">范围</div>
+                <div className="modalKvValue">
+                  <Mono>{scopeLabel}</Mono>
+                </div>
+                <div className="modalKvLabel">目标</div>
+                <div className="modalKvValue">
+                  <Mono>{input.targetLabel}</Mono>
+                </div>
+                <div className="modalKvLabel">备份</div>
+                <div className="modalKvValue">
+                  <Mono>inherit</Mono>
+                </div>
+                <div className="modalKvLabel">架构不匹配</div>
+                <div className="modalKvValue">
+                  <Mono>disallow</Mono>
+                </div>
+              </div>
+            </>
+          ),
         confirmText: '执行更新',
         cancelText: '取消',
         confirmVariant: 'danger',
@@ -458,16 +486,50 @@ export function ServicesPage(props: {
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={(e) => e.stopPropagation()}
                   >
-                    <Button
-                      variant="ghost"
-                      disabled={busy || !stackApply.enabled}
-                      title={stackApply.title ?? undefined}
-                      onClick={() => {
-                        void triggerApply({ scope: 'stack', stackId: g.stackId, targetLabel: `stack:${g.stackName}` })
-                      }}
-                    >
-                      更新此 stack
-                    </Button>
+	                    <Button
+	                      variant="ghost"
+	                      disabled={busy || !stackApply.enabled}
+	                      title={stackApply.title ?? undefined}
+	                      onClick={() => {
+	                        const totalCandidates = g.countsAll.updatable + g.countsAll.hint + g.countsAll.crossTag
+	                        const body = (
+	                          <>
+	                            <div className="modalLead">将为该 stack 内服务创建更新任务（服务端会计算是否实际变更）。</div>
+	                            <div className="modalKvGrid">
+	                              <div className="modalKvLabel">范围</div>
+	                              <div className="modalKvValue">
+	                                <Mono>stack</Mono>
+	                              </div>
+	                              <div className="modalKvLabel">目标</div>
+	                              <div className="modalKvValue">
+	                                <Mono>{g.stackName}</Mono>
+	                              </div>
+	                              <div className="modalKvLabel">候选服务</div>
+	                              <div className="modalKvValue">{totalCandidates} 个（可更新/需确认/跨 tag）</div>
+	                              <div className="modalKvLabel">其中</div>
+	                              <div className="modalKvValue">
+	                                可更新 {g.countsAll.updatable} · 需确认 {g.countsAll.hint} · 跨 tag {g.countsAll.crossTag}
+	                              </div>
+	                              <div className="modalKvLabel">将跳过</div>
+	                              <div className="modalKvValue">
+	                                架构不匹配 {g.countsAll.archMismatch} · 被阻止 {g.countsAll.blocked}
+	                              </div>
+	                            </div>
+	                            <div className="modalDivider" />
+	                            <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>
+	                          </>
+	                        )
+	                        void triggerApply({
+	                          scope: 'stack',
+	                          stackId: g.stackId,
+	                          targetLabel: `stack:${g.stackName}`,
+	                          confirmBody: body,
+	                          confirmTitle: '确认更新此 stack？',
+	                        })
+	                      }}
+	                    >
+	                      更新此 stack
+	                    </Button>
                   </div>
                 </div>
 
@@ -512,11 +574,11 @@ export function ServicesPage(props: {
                             <div className="mono">{candidate}</div>
                           </div>
                           <StatusRemark service={svc} status={status} />
-                          <div
-                            className="actionCell"
-                            onClick={(e) => e.stopPropagation()}
-                            onKeyDown={(e) => e.stopPropagation()}
-                          >
+	                          <div
+	                            className="actionCell"
+	                            onClick={(e) => e.stopPropagation()}
+	                            onKeyDown={(e) => e.stopPropagation()}
+	                          >
                             {isDockrev ? (
                               <div className="actionStack">
                                 <Button
@@ -550,24 +612,57 @@ export function ServicesPage(props: {
                                   <div className="muted">supervisor offline · {supervisor.state.errorAt}</div>
                                 ) : null}
                               </div>
-                            ) : (
-                              <Button
-                                variant="ghost"
-                                disabled={busy || !svcApply.enabled}
-                                title={svcApply.title ?? undefined}
-                                onClick={() => {
-                                  void triggerApply({
-                                    scope: 'service',
-                                    stackId: g.stackId,
-                                    serviceId: svc.id,
-                                    targetLabel: `service:${g.stackName}/${svc.name}`,
-                                  })
-                                }}
-                              >
-                                执行更新
-                              </Button>
-                            )}
-                          </div>
+	                            ) : (
+	                              <Button
+	                                variant="ghost"
+	                                disabled={busy || !svcApply.enabled}
+	                                title={svcApply.title ?? undefined}
+	                                onClick={() => {
+	                                  const current = formatTagDigest(svc.image.tag, svc.image.digest)
+	                                  const candidate = svc.candidate ? formatTagDigest(svc.candidate.tag, svc.candidate.digest) : '-'
+	                                  const body = (
+	                                    <>
+	                                      <div className="modalLead">将对该服务执行更新（apply）。</div>
+	                                      <div className="modalKvGrid">
+	                                        <div className="modalKvLabel">范围</div>
+	                                        <div className="modalKvValue">
+	                                          <Mono>service</Mono>
+	                                        </div>
+	                                        <div className="modalKvLabel">目标</div>
+	                                        <div className="modalKvValue">
+	                                          <Mono>{`${g.stackName}/${svc.name}`}</Mono>
+	                                        </div>
+	                                        <div className="modalKvLabel">镜像</div>
+	                                        <div className="modalKvValue">
+	                                          <Mono>{svc.image.ref}</Mono>
+	                                        </div>
+	                                        <div className="modalKvLabel">当前 → 候选</div>
+	                                        <div className="modalKvValue">
+	                                          <Mono>{`${current} → ${candidate}`}</Mono>
+	                                        </div>
+		                                        <div className="modalKvLabel">状态</div>
+		                                        <div className="modalKvValue">
+		                                          <Mono>{status}</Mono>
+		                                        </div>
+		                                      </div>
+		                                      <div className="modalDivider" />
+		                                      <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>
+		                                    </>
+	                                  )
+	                                  void triggerApply({
+	                                    scope: 'service',
+	                                    stackId: g.stackId,
+	                                    serviceId: svc.id,
+	                                    targetLabel: `service:${g.stackName}/${svc.name}`,
+	                                    confirmBody: body,
+	                                    confirmTitle: `确认更新服务 ${svc.name}？`,
+	                                  })
+	                                }}
+	                              >
+	                                执行更新
+	                              </Button>
+	                            )}
+	                          </div>
                         </div>
                       )
                     })

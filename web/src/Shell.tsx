@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from 'react'
 import { Chip, Mono } from './ui'
-import { ConfirmProvider } from './confirm'
+import { ConfirmProvider } from './ConfirmProvider'
 import type { Route } from './routes'
 import { currentHref, navigate } from './routes'
 
