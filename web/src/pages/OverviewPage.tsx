@@ -407,20 +407,22 @@ export function OverviewPage(props: {
             <div>操作</div>
           </div>
 
-          {stacks.map((st) => {
-            const d = details[st.id]
-            if (!d) return null
+	          {stacks.map((st) => {
+	            const d = details[st.id]
+	            if (!d) return null
+	
+	            const rows = d.services
+	              .filter((svc) => !svc.archived)
+	              .map((svc) => ({ svc, stt: serviceRowStatus(svc) }))
+	              .filter((x) => filter === 'all' || x.stt === filter)
 
-            const rows = d.services
-              .filter((svc) => !svc.archived)
-              .map((svc) => ({ svc, stt: serviceRowStatus(svc) }))
-              .filter((x) => filter === 'all' || x.stt === filter)
+	            if (rows.length === 0) return null
 
-            const counts: Record<Exclude<RowStatus, 'ok'>, number> = {
-              updatable: 0,
-              hint: 0,
-              crossTag: 0,
-              archMismatch: 0,
+	            const counts: Record<Exclude<RowStatus, 'ok'>, number> = {
+	              updatable: 0,
+	              hint: 0,
+	              crossTag: 0,
+	              archMismatch: 0,
               blocked: 0,
             }
             for (const svc of d.services) {

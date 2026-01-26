@@ -17,6 +17,7 @@ import { Button, Mono, Pill, StatusRemark } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { serviceRowStatus, type RowStatus } from '../updateStatus'
+import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
 
 function formatShort(ts: string) {
   const d = new Date(ts)
@@ -100,6 +101,7 @@ export function ServicesPage(props: {
   const [details, setDetails] = useState<Record<string, StackDetail | undefined>>({})
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState<UpdateCandidateFilter>('all')
   const [error, setError] = useState<string | null>(null)
   const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -247,14 +249,16 @@ export function ServicesPage(props: {
     [],
   )
 
-  const groups = useMemo(() => {
+  const groupsAll = useMemo(() => {
     const q = search.trim().toLowerCase()
     const out: Array<{
       stackId: string
       stackName: string
       lastCheckAt: string
-      services: Array<{ svc: Service; status: RowStatus }>
-      counts: Record<Exclude<RowStatus, 'ok'>, number>
+      servicesAll: Array<{ svc: Service; status: RowStatus }>
+      servicesSearch: Array<{ svc: Service; status: RowStatus }>
+      countsAll: Record<Exclude<RowStatus, 'ok'>, number>
+      countsSearch: Record<Exclude<RowStatus, 'ok'>, number>
       totalServices: number
     }> = []
 
@@ -262,47 +266,110 @@ export function ServicesPage(props: {
       const d = details[st.id]
       if (!d) continue
 
-      const services = d.services
+      const servicesAll = d.services
         .filter((svc) => !svc.archived)
         .map((svc) => ({ svc, status: serviceRowStatus(svc) }))
-        .filter((x) => {
-          if (!q) return true
-          const hay = `${d.name} ${x.svc.name} ${x.svc.image.ref} ${x.svc.image.tag}`.toLowerCase()
-          return hay.includes(q)
-        })
 
-      if (q && services.length === 0) continue
+      const servicesSearch = q
+        ? servicesAll.filter((x) => {
+            const hay = `${d.name} ${x.svc.name} ${x.svc.image.ref} ${x.svc.image.tag}`.toLowerCase()
+            return hay.includes(q)
+          })
+        : servicesAll
 
-      const counts: Record<Exclude<RowStatus, 'ok'>, number> = {
+      if (q && servicesSearch.length === 0) continue
+
+      const countsAll: Record<Exclude<RowStatus, 'ok'>, number> = {
         updatable: 0,
         hint: 0,
         crossTag: 0,
         archMismatch: 0,
         blocked: 0,
       }
-      for (const x of services) {
+      for (const x of servicesAll) {
         if (x.status === 'ok') continue
-        counts[x.status] += 1
+        countsAll[x.status] += 1
       }
 
-      const totalServices = d.services.filter((svc) => !svc.archived).length
-      out.push({ stackId: st.id, stackName: d.name, lastCheckAt: st.lastCheckAt, services, counts, totalServices })
+      const countsSearch: Record<Exclude<RowStatus, 'ok'>, number> = {
+        updatable: 0,
+        hint: 0,
+        crossTag: 0,
+        archMismatch: 0,
+        blocked: 0,
+      }
+      for (const x of servicesSearch) {
+        if (x.status === 'ok') continue
+        countsSearch[x.status] += 1
+      }
+
+      const totalServices = servicesAll.length
+      out.push({
+        stackId: st.id,
+        stackName: d.name,
+        lastCheckAt: st.lastCheckAt,
+        servicesAll,
+        servicesSearch,
+        countsAll,
+        countsSearch,
+        totalServices,
+      })
     }
 
     return out
   }, [details, search, stacks])
 
+  const filterSummary = useMemo(() => {
+    let total = 0
+    const counts: Record<Exclude<RowStatus, 'ok'>, number> = {
+      updatable: 0,
+      hint: 0,
+      crossTag: 0,
+      archMismatch: 0,
+      blocked: 0,
+    }
+    for (const g of groupsAll) {
+      total += g.servicesSearch.length
+      for (const k of Object.keys(counts) as Array<Exclude<RowStatus, 'ok'>>) {
+        counts[k] += g.countsSearch[k]
+      }
+    }
+    return { total, counts }
+  }, [groupsAll])
+
+  const groups = useMemo(() => {
+    const out: Array<{
+      stackId: string
+      stackName: string
+      lastCheckAt: string
+      services: Array<{ svc: Service; status: RowStatus }>
+      countsAll: Record<Exclude<RowStatus, 'ok'>, number>
+      totalServices: number
+    }> = []
+
+    for (const g of groupsAll) {
+      const services = filter === 'all' ? g.servicesSearch : g.servicesSearch.filter((x) => x.status === filter)
+      if (filter !== 'all' && services.length === 0) continue
+      out.push({
+        stackId: g.stackId,
+        stackName: g.stackName,
+        lastCheckAt: g.lastCheckAt,
+        services,
+        countsAll: g.countsAll,
+        totalServices: g.totalServices,
+      })
+    }
+    return out
+  }, [filter, groupsAll])
+
   const totals = useMemo(() => {
     let total = 0
-    let filtered = 0
-    const q = search.trim()
     for (const st of stacks) {
       const d = details[st.id]
       if (!d) continue
       total += d.services.filter((svc) => !svc.archived).length
     }
-    if (!q) filtered = total
-    else filtered = groups.reduce((acc, g) => acc + g.services.length, 0)
+    const filtered = groups.reduce((acc, g) => acc + g.services.length, 0)
     return { total, filtered }
   }, [details, groups, search, stacks])
 
@@ -319,44 +386,48 @@ export function ServicesPage(props: {
   }, [details, stacks])
 
   return (
-    <div className="page">
-      <div className="card">
-        <div className="sectionRow">
-          <div className="title">服务</div>
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
+	    <div className="page">
+	      <div className="card">
+	        <div className="sectionRow">
+	          <div className="title">服务</div>
+	          <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
             <input
               className="input"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="搜索 service / image / stack"
             />
-            <div className="muted">
-              {totals.filtered}/{totals.total}
-            </div>
-          </div>
-        </div>
+	            <div className="muted">
+	              {totals.filtered}/{totals.total}
+	            </div>
+	          </div>
+	        </div>
 
-        <div className="table" style={{ marginTop: 12 }}>
-          <div className="tableHeader">
-            <div>Service</div>
-            <div>Image</div>
-            <div>Current → Candidate</div>
+	        <div style={{ marginTop: 12 }}>
+	          <UpdateCandidateFilters value={filter} onChange={setFilter} total={filterSummary.total} counts={filterSummary.counts} />
+	        </div>
+
+	        <div className="table" style={{ marginTop: 12 }}>
+	          <div className="tableHeader">
+	            <div>Service</div>
+	            <div>Image</div>
+	            <div>Current → Candidate</div>
             <div>状态 / 备注</div>
             <div>操作</div>
           </div>
 
-          {groups.map((g) => {
-            const isCollapsed = collapsed[g.stackId] ?? false
-            const groupSummary = formatGroupSummary(g.totalServices, g.counts)
-            const stackApply =
-              g.counts.updatable > 0
-                ? { enabled: true, title: null as string | null }
-                : g.counts.hint > 0 || g.counts.crossTag > 0
-                  ? { enabled: true, title: '存在需确认/跨 tag 的候选；将由服务端计算是否实际变更' }
-                  : { enabled: false, title: '无可更新服务' }
-            return (
-              <div key={g.stackId} className={isCollapsed ? 'tableGroup' : 'tableGroup tableGroupExpanded'}>
-                {!isCollapsed ? <GroupGuide rows={g.services.length} /> : null}
+	          {groups.map((g) => {
+	            const isCollapsed = collapsed[g.stackId] ?? false
+	            const groupSummary = formatGroupSummary(g.totalServices, g.countsAll)
+	            const stackApply =
+	              g.countsAll.updatable > 0
+	                ? { enabled: true, title: null as string | null }
+	                : g.countsAll.hint > 0 || g.countsAll.crossTag > 0
+	                  ? { enabled: true, title: '存在需确认/跨 tag 的候选；将由服务端计算是否实际变更' }
+	                  : { enabled: false, title: '无可更新服务' }
+	            return (
+	              <div key={g.stackId} className={isCollapsed ? 'tableGroup' : 'tableGroup tableGroupExpanded'}>
+	                {!isCollapsed ? <GroupGuide rows={g.services.length} /> : null}
                 <div
                   className="groupHead"
                   onClick={() => setCollapsed((prev) => ({ ...prev, [g.stackId]: !isCollapsed }))}
