@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-01-26
 - Last: 2026-01-26
 
@@ -107,9 +107,9 @@ None
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 在 `release.yml` 中打包并上传 `dockrev-supervisor_*`（含 `*.tar.gz.sha256`）
-- [ ] M2: 为新增 assets 增加 workflow 内自校验（打包后校验 + sha256 校验）
-- [ ] M3: 更新 `README.md` 的发布物说明并与实现对齐
+- [x] M1: 在 `release.yml` 中打包并上传 `dockrev-supervisor_*`（含 `*.tar.gz.sha256`）
+- [x] M2: 为新增 assets 增加 workflow 内自校验（打包后校验 + sha256 校验）
+- [x] M3: 更新 `README.md` 的发布物说明并与实现对齐
 
 ## 方案概述（Approach, high-level）
 
@@ -125,6 +125,7 @@ None
 ## 变更记录（Change log）
 
 - 2026-01-26: 创建计划。
+- 2026-01-26: 实现：Release assets 追加 `dockrev-supervisor_*`；增加 workflow 自校验；更新 README 交付物说明。
 
 ## 参考（References）
 

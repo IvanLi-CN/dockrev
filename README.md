@@ -128,7 +128,7 @@ See `deploy/README.md` for a minimal Docker Compose deployment.
   - `type:patch` / `type:minor` / `type:major` → publish with the corresponding semver bump
 - Direct `push` to `main` without an associated PR conservatively skips release
 - `latest` is updated only by the automatic release path above
-- GitHub Releases include Linux binaries (amd64/arm64 × gnu/musl) as `.tar.gz` + `.sha256`
+- GitHub Releases include Linux binaries for `dockrev` and `dockrev-supervisor` (amd64/arm64 × gnu/musl) as `.tar.gz` + `.sha256`
 
 ## Notifications
 

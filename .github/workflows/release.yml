@@ -325,25 +325,75 @@ jobs:
           ver="${APP_EFFECTIVE_VERSION}"
 
           package() {
-            local arch="$1"
-            local libc="$2"
-            local bin="$3"
+            local name="$1"
+            local arch="$2"
+            local libc="$3"
+            local bin="$4"
             if [[ ! -f "${bin}" ]]; then
               echo "missing binary: ${bin}" >&2
               exit 1
             fi
-            local base="dockrev_${ver}_linux_${arch}_${libc}.tar.gz"
-            tar -czf "${out_dir}/${base}" -C "$(dirname "${bin}")" dockrev
+            local base="${name}_${ver}_linux_${arch}_${libc}.tar.gz"
+            tar -czf "${out_dir}/${base}" -C "$(dirname "${bin}")" "${name}"
             sha256sum "${out_dir}/${base}" > "${out_dir}/${base}.sha256"
             echo "[assets] ${base} ($(stat -c%s "${out_dir}/${base}") bytes)"
           }
 
-          package amd64 gnu target/ci/amd64/release/dockrev
-          package arm64 gnu target/ci/arm64/release/dockrev
-          package amd64 musl target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev
-          package arm64 musl target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev
+          package dockrev amd64 gnu target/ci/amd64/release/dockrev
+          package dockrev arm64 gnu target/ci/arm64/release/dockrev
+          package dockrev amd64 musl target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev
+          package dockrev arm64 musl target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev
+
+          package dockrev-supervisor amd64 gnu target/ci/amd64/release/dockrev-supervisor
+          package dockrev-supervisor arm64 gnu target/ci/arm64/release/dockrev-supervisor
+          package dockrev-supervisor amd64 musl target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev-supervisor
+          package dockrev-supervisor arm64 musl target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev-supervisor
 
           ls -lah "${out_dir}"
+
+      - name: Validate release assets (tar content + sha256)
+        shell: bash
+        run: |
+          set -euo pipefail
+          out_dir="dist/release"
+
+          shopt -s nullglob
+          sums=("${out_dir}"/*.sha256)
+          if (( ${#sums[@]} == 0 )); then
+            echo "No sha256 files found in ${out_dir}" >&2
+            exit 1
+          fi
+
+          echo "[validate] sha256sum -c"
+          for sum in "${sums[@]}"; do
+            sha256sum -c "${sum}"
+          done
+
+          echo "[validate] tarball content"
+          tars=("${out_dir}"/*.tar.gz)
+          if (( ${#tars[@]} == 0 )); then
+            echo "No tar.gz files found in ${out_dir}" >&2
+            exit 1
+          fi
+
+          for tarball in "${tars[@]}"; do
+            base="$(basename "${tarball}")"
+            expected="${base%%_*}"
+
+            mapfile -t entries < <(tar -tzf "${tarball}")
+            if (( ${#entries[@]} != 1 )) || [[ "${entries[0]}" != "${expected}" ]]; then
+              echo "Unexpected tar entries for ${tarball}: ${entries[*]}" >&2
+              exit 1
+            fi
+
+            tmp="$(mktemp -d)"
+            tar -xzf "${tarball}" -C "${tmp}"
+            if [[ ! -f "${tmp}/${expected}" ]] || [[ ! -x "${tmp}/${expected}" ]]; then
+              echo "Missing or non-executable: ${expected} (from ${tarball})" >&2
+              exit 1
+            fi
+            rm -rf "${tmp}"
+          done
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
