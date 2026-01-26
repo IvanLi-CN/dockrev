@@ -17,12 +17,10 @@ import {
 } from '../api'
 import { navigate } from '../routes'
 import { Button, Mono, StatusRemark } from '../ui'
-import { FilterChips } from '../Shell'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { serviceRowStatus, type RowStatus } from '../updateStatus'
-
-type Filter = 'all' | Exclude<RowStatus, 'ok'>
+import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
 
 function formatShort(ts?: string | null) {
   if (!ts) return '-'
@@ -101,7 +99,7 @@ export function OverviewPage(props: {
   onTopActions: (node: React.ReactNode) => void
 }) {
   const { onComposeHint, onTopActions } = props
-  const [filter, setFilter] = useState<Filter>('all')
+  const [filter, setFilter] = useState<UpdateCandidateFilter>('all')
   const [stacks, setStacks] = useState<StackListItem[]>([])
   const [details, setDetails] = useState<Record<string, StackDetail | undefined>>({})
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -186,6 +184,16 @@ export function OverviewPage(props: {
       }
     }
     return c
+  }, [details, stacks])
+
+  const totalServicesAll = useMemo(() => {
+    let total = 0
+    for (const st of stacks) {
+      const d = details[st.id]
+      if (!d) continue
+      total += d.services.filter((svc) => !svc.archived).length
+    }
+    return total
   }, [details, stacks])
 
   const allApply = useMemo(() => {
@@ -387,18 +395,7 @@ export function OverviewPage(props: {
         <div className="title">更新候选</div>
 
         <div style={{ marginTop: 14 }}>
-          <FilterChips
-            value={filter}
-            onChange={setFilter}
-            items={[
-              { key: 'all', label: '全部' },
-              { key: 'updatable', label: '可更新', count: countsAll.updatable },
-              { key: 'hint', label: '需确认', count: countsAll.hint },
-              { key: 'crossTag', label: '跨 tag 版本', count: countsAll.crossTag },
-              { key: 'archMismatch', label: '架构不匹配', count: countsAll.archMismatch },
-              { key: 'blocked', label: '被阻止', count: countsAll.blocked },
-            ]}
-          />
+          <UpdateCandidateFilters value={filter} onChange={setFilter} total={totalServicesAll} counts={countsAll} />
         </div>
 
         <div className="table" style={{ marginTop: 14 }}>

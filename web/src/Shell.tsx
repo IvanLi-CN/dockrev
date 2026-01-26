@@ -117,7 +117,8 @@ export function FilterChips<T extends string>(props: {
           onClick={() => props.onChange(it.key)}
           title={it.count != null ? `${it.label}: ${it.count}` : it.label}
         >
-          {it.label}
+          <span>{it.label}</span>
+          {it.count != null ? <span className="chipCount">{it.count}</span> : null}
         </Chip>
       ))}
     </div>
