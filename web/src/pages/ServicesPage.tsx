@@ -18,6 +18,7 @@ import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { serviceRowStatus, type RowStatus } from '../updateStatus'
 import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
+import { useConfirm } from '../confirm'
 
 function formatShort(ts: string) {
   const d = new Date(ts)
@@ -97,6 +98,7 @@ export function ServicesPage(props: {
   onTopActions: (node: React.ReactNode) => void
 }) {
   const { onComposeHint, onTopActions } = props
+  const confirm = useConfirm()
   const [stacks, setStacks] = useState<StackListItem[]>([])
   const [details, setDetails] = useState<Record<string, StackDetail | undefined>>({})
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -210,15 +212,19 @@ export function ServicesPage(props: {
   const triggerApply = useCallback(
     async (input: { scope: 'stack' | 'service'; stackId: string; serviceId?: string; targetLabel: string }) => {
       const scopeLabel = input.scope === 'stack' ? 'stack' : 'service'
-      const ok = window.confirm(
-        [
+      const ok = await confirm({
+        title: '确认执行更新？',
+        body: [
           `即将执行更新（mode=apply）`,
           `scope=${scopeLabel}`,
           `target=${input.targetLabel}`,
           '',
           '提示：将拉取镜像并重启容器；失败可能触发回滚。',
         ].join('\n'),
-      )
+        confirmText: '执行更新',
+        cancelText: '取消',
+        confirmVariant: 'danger',
+      })
       if (!ok) return
 
       setBusy(true)
@@ -246,7 +252,7 @@ export function ServicesPage(props: {
         setBusy(false)
       }
     },
-    [],
+    [confirm],
   )
 
   const groupsAll = useMemo(() => {

@@ -20,6 +20,7 @@ import { Button, Mono, Pill, Switch } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { serviceRowStatus, tagSeriesMatches } from '../updateStatus'
+import { useConfirm } from '../confirm'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -66,6 +67,7 @@ export function ServiceDetailPage(props: {
   onTopActions: (node: React.ReactNode) => void
 }) {
   const { stackId, serviceId, onComposeHint, onTopActions } = props
+  const confirm = useConfirm()
   const [stack, setStack] = useState<StackDetail | null>(null)
   const [service, setService] = useState<Service | null>(null)
   const [settings, setSettings] = useState<ServiceSettings | null>(null)
@@ -74,6 +76,7 @@ export function ServiceDetailPage(props: {
   const [error, setError] = useState<string | null>(null)
   const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
   const { state: supervisorState, check: checkSupervisor } = useSupervisorHealth()
+  const supervisorErrorAt = supervisorState.status === 'offline' ? supervisorState.errorAt : undefined
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
 
   const [newRuleKind, setNewRuleKind] = useState<'exact' | 'prefix' | 'regex' | 'semver'>('regex')
@@ -110,7 +113,7 @@ export function ServiceDetailPage(props: {
               disabled={busy || supervisorState.status !== 'ok'}
               title={
                 supervisorState.status === 'offline'
-                  ? `自我升级不可用（supervisor offline） · ${supervisorState.errorAt}`
+                  ? `自我升级不可用（supervisor offline） · ${supervisorErrorAt ?? '-'}`
                   : supervisorState.status === 'checking'
                     ? '检查 supervisor 中…'
                     : undefined
@@ -193,15 +196,19 @@ export function ServiceDetailPage(props: {
               onClick={() => {
                 void (async () => {
                   if (!service) return
-                  const ok = window.confirm(
-                    [
+                  const ok = await confirm({
+                    title: '确认执行更新？',
+                    body: [
                       `即将执行更新（mode=apply）`,
                       `scope=service`,
                       `target=${stack?.name ?? stackId}/${service.name}`,
                       '',
                       '提示：将拉取镜像并重启容器；失败可能触发回滚。',
                     ].join('\n'),
-                  )
+                    confirmText: '执行更新',
+                    cancelText: '取消',
+                    confirmVariant: 'danger',
+                  })
                   if (!ok) return
                   setBusy(true)
                   setError(null)
@@ -290,6 +297,7 @@ export function ServiceDetailPage(props: {
   }, [
     busy,
     checkSupervisor,
+    confirm,
     onTopActions,
     refresh,
     selfUpgradeUrl,
@@ -297,7 +305,7 @@ export function ServiceDetailPage(props: {
     serviceId,
     stackId,
     stack?.name,
-    supervisorState.errorAt,
+    supervisorErrorAt,
     supervisorState.status,
   ])
 
@@ -376,7 +384,7 @@ export function ServiceDetailPage(props: {
 
       {isDockrevService(service) && supervisorState.status === 'offline' ? (
         <div className="muted" style={{ marginTop: 10 }}>
-          supervisor offline · {supervisorState.errorAt}
+          supervisor offline · {supervisorErrorAt ?? '-'}
         </div>
       ) : null}
 

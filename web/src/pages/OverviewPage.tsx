@@ -21,6 +21,7 @@ import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { serviceRowStatus, type RowStatus } from '../updateStatus'
 import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
+import { useConfirm } from '../confirm'
 
 function formatShort(ts?: string | null) {
   if (!ts) return '-'
@@ -99,6 +100,7 @@ export function OverviewPage(props: {
   onTopActions: (node: React.ReactNode) => void
 }) {
   const { onComposeHint, onTopActions } = props
+  const confirm = useConfirm()
   const [filter, setFilter] = useState<UpdateCandidateFilter>('all')
   const [stacks, setStacks] = useState<StackListItem[]>([])
   const [details, setDetails] = useState<Record<string, StackDetail | undefined>>({})
@@ -232,7 +234,13 @@ export function OverviewPage(props: {
   }, [discoveredProjects])
 
   const runDiscoveryScan = useCallback(async () => {
-    const ok = window.confirm(['即将执行发现扫描（discovery scan）', '', '提示：可能创建/标记 stacks；用于发现 missing/invalid。'].join('\n'))
+    const ok = await confirm({
+      title: '确认执行发现扫描？',
+      body: ['即将执行发现扫描（discovery scan）', '', '提示：可能创建/标记 stacks；用于发现 missing/invalid。'].join('\n'),
+      confirmText: '开始扫描',
+      cancelText: '取消',
+      confirmVariant: 'primary',
+    })
     if (!ok) return
     setBusy(true)
     setError(null)
@@ -245,20 +253,24 @@ export function OverviewPage(props: {
     } finally {
       setBusy(false)
     }
-  }, [])
+  }, [confirm])
 
   const triggerApply = useCallback(
     async (input: { scope: 'all' | 'stack' | 'service'; stackId?: string; serviceId?: string; targetLabel: string }) => {
       const scopeLabel = input.scope === 'all' ? 'all' : input.scope === 'stack' ? 'stack' : 'service'
-      const ok = window.confirm(
-        [
+      const ok = await confirm({
+        title: '确认执行更新？',
+        body: [
           `即将执行更新（mode=apply）`,
           `scope=${scopeLabel}`,
           `target=${input.targetLabel}`,
           '',
           '提示：将拉取镜像并重启容器；失败可能触发回滚。',
         ].join('\n'),
-      )
+        confirmText: '执行更新',
+        cancelText: '取消',
+        confirmVariant: 'danger',
+      })
       if (!ok) return
 
       setBusy(true)
@@ -286,7 +298,7 @@ export function OverviewPage(props: {
         setBusy(false)
       }
     },
-    [],
+    [confirm],
   )
 
   useEffect(() => {

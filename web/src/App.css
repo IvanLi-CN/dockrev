@@ -767,6 +767,52 @@ html[data-theme='light'] .input {
   align-items: center;
 }
 
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.58);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+html[data-theme='light'] .modalOverlay {
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.modalCard {
+  width: min(520px, 100%);
+  border-radius: 16px;
+  border: 1px solid rgba(229, 231, 235, 0.12);
+  background: var(--panel);
+  padding: 18px 18px 16px;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.55);
+}
+
+.modalTitle {
+  font-size: 14px;
+  font-weight: 750;
+  color: var(--text);
+}
+
+.modalBody {
+  margin-top: 10px;
+  color: var(--muted2);
+  font-size: 12px;
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+
+.modalActions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 /* Queue */
 .queueList {
   display: flex;
