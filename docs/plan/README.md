@@ -65,3 +65,5 @@
 | 0010 | Dev/CI: 禁用默认端口（统一高位端口） | 已完成 | `0010:no-default-ports/PLAN.md` | 2026-01-23 | PR #24 |
 | 0011 | Dev/CI: Bun 迁移（替代 npm） | 已完成 | `0011:bun-migration/PLAN.md` | 2026-01-24 | - |
 | 0012 | Dockrev Web: 一键执行更新（service/stack/all）+ 自我升级策略 | 已完成 | `0012:update-buttons-self-upgrade/PLAN.md` | 2026-01-25 | - |
+| 0013 | CI/CD: GitHub Release 追加发布 `dockrev-supervisor` 二进制包 | 待实现 | `0013:release-supervisor-assets/PLAN.md` | 2026-01-26 | - |
+| 0014 | CI/CD: Release workflow 成功后自动清理 Actions Artifacts | 待实现 | `0014:cleanup-actions-artifacts/PLAN.md` | 2026-01-26 | - |
