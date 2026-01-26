@@ -11,6 +11,8 @@ import {
   type SettingsResponse,
 } from '../api'
 import { Button, Mono, Switch } from '../ui'
+import { selfUpgradeBaseUrl } from '../runtimeConfig'
+import { useSupervisorHealth } from '../useSupervisorHealth'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -45,6 +47,8 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [webPushEndpoint, setWebPushEndpoint] = useState<string | null>(null)
+  const supervisor = useSupervisorHealth()
+  const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
 
   const refresh = useCallback(async () => {
     setError(null)
@@ -159,6 +163,48 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                 <div className="label">当前用户展示</div>
                 <div className="mono">ivan</div>
               </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="title">自我升级</div>
+            <div className="muted">Dockrev 更新 Dockrev：由独立 supervisor 提供页面与执行者（默认 {selfUpgradeUrl}）</div>
+
+            <div className="kv">
+              <div className="kvRow">
+                <div className="label">Supervisor 状态</div>
+                <div className="muted">
+                  {supervisor.state.status === 'ok'
+                    ? `ok (${supervisor.state.okAt})`
+                    : supervisor.state.status === 'checking'
+                      ? 'checking…'
+                      : supervisor.state.status === 'offline'
+                        ? `offline (${supervisor.state.errorAt})`
+                        : 'unknown'}
+                </div>
+              </div>
+            </div>
+
+            <div className="formActions">
+              <Button
+                variant="primary"
+                disabled={busy || supervisor.state.status !== 'ok'}
+                title={supervisor.state.status === 'offline' ? '自我升级不可用（supervisor offline）' : undefined}
+                onClick={() => {
+                  window.location.href = selfUpgradeUrl
+                }}
+              >
+                打开自我升级
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={busy || supervisor.state.status === 'checking'}
+                onClick={() => {
+                  void supervisor.check()
+                }}
+              >
+                重试
+              </Button>
             </div>
           </div>
 

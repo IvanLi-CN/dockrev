@@ -64,6 +64,7 @@ async function ensureStaticBuild() {
 }
 
 function startStaticServer({ port }) {
+  const sockets = new Set()
   const server = http.createServer(async (req, res) => {
     const reqUrl = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`)
     const pathname = reqUrl.pathname === '/' ? '/index.html' : reqUrl.pathname
@@ -85,6 +86,11 @@ function startStaticServer({ port }) {
     }
   })
 
+  server.on('connection', (socket) => {
+    sockets.add(socket)
+    socket.on('close', () => sockets.delete(socket))
+  })
+
   const listen = () =>
     new Promise((resolve, reject) => {
       const onError = (err) => {
@@ -100,6 +106,7 @@ function startStaticServer({ port }) {
 
   const cleanup = () =>
     new Promise((resolve) => {
+      for (const s of sockets) s.destroy()
       server.close(() => resolve())
     })
 
@@ -131,58 +138,129 @@ function normalizeBaseUrl(input) {
   return url.toString()
 }
 
-async function runSmoke({ baseUrl, storyIds }) {
-  const { chromium } = await import('playwright')
-  const browser = await chromium.launch()
-  try {
-    if (storyIds.length === 0) {
-      throw new Error(
-        'No stories discovered from index.json. Storybook may be misconfigured or the index schema may have changed.'
+async function runSmoke({ baseUrl, storyIds, browser }) {
+  if (storyIds.length === 0) {
+    throw new Error(
+      'No stories discovered from index.json. Storybook may be misconfigured or the index schema may have changed.'
+    )
+  }
+  console.log(`Testing ${storyIds.length} stories...`)
+  const failures = []
+
+  for (const id of storyIds) {
+    const page = await browser.newPage()
+    const pageErrors = []
+    page.on('pageerror', (err) => pageErrors.push(err))
+
+    try {
+      const base = normalizeBaseUrl(baseUrl)
+      const url = new URL('iframe.html', base)
+      url.searchParams.set('id', id)
+      url.searchParams.set('viewMode', 'story')
+
+      await page.goto(url.toString(), { waitUntil: 'domcontentloaded' })
+      await page.waitForFunction(() => document.body.classList.contains('sb-show-main'), null, {
+        timeout: 60_000,
+      })
+
+      if (pageErrors.length > 0) {
+        failures.push({ id, error: pageErrors[0] })
+      }
+    } catch (error) {
+      failures.push({ id, error })
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
+  if (failures.length > 0) {
+    console.error(`Failed ${failures.length}/${storyIds.length} stories:`)
+    for (const f of failures.slice(0, 20)) {
+      console.error(`- ${f.id}: ${String(f.error?.message ?? f.error)}`)
+    }
+    if (failures.length > 20) {
+      console.error(`...and ${failures.length - 20} more`)
+    }
+    throw new Error(`Storybook smoke test failed (${failures.length}/${storyIds.length}).`)
+  }
+
+  console.log('All stories passed.')
+}
+
+async function runInteractive({ baseUrl, browser }) {
+  const base = normalizeBaseUrl(baseUrl)
+
+  const openStory = async (id) => {
+    const page = await browser.newPage()
+    page.on('dialog', (d) => d.accept().catch(() => {}))
+    const url = new URL('iframe.html', base)
+    url.searchParams.set('id', id)
+    url.searchParams.set('viewMode', 'story')
+    await page.goto(url.toString(), { waitUntil: 'domcontentloaded' })
+    await page.waitForFunction(() => document.body.classList.contains('sb-show-main'), null, { timeout: 60_000 })
+    return page
+  }
+
+  // 1) Disabled state (no candidates): "更新全部" must be disabled.
+  {
+    const page = await openStory('pages-overviewpage--no-candidates-but-has-services')
+    try {
+      const btn = page.getByRole('button', { name: '更新全部' })
+      await btn.waitFor({ timeout: 10_000 })
+      await page.waitForFunction(
+        () => {
+          const el = Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.trim() === '更新全部')
+          return Boolean(el && el.disabled)
+        },
+        null,
+        { timeout: 10_000 },
       )
+      const disabled = await btn.isDisabled()
+      if (!disabled) throw new Error('Expected "更新全部" to be disabled in no-candidates scenario.')
+    } finally {
+      await page.close().catch(() => {})
     }
-    console.log(`Testing ${storyIds.length} stories...`)
-    const failures = []
+  }
 
-    for (const id of storyIds) {
-      const page = await browser.newPage()
-      const pageErrors = []
-      page.on('pageerror', (err) => pageErrors.push(err))
+  // 2) Request parameters: clicking "更新全部" must call POST /api/updates with fixed fields.
+  {
+    const page = await openStory('pages-overviewpage--default')
+    try {
+      const btn = page.getByRole('button', { name: '更新全部' })
+      await btn.waitFor({ timeout: 10_000 })
+      // Wait for page data fetch to populate counts and enable the button.
+      await page.waitForFunction(
+        () => {
+          const el = Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.trim() === '更新全部')
+          return Boolean(el && !el.disabled)
+        },
+        null,
+        { timeout: 10_000 },
+      )
+      await btn.click()
 
-      try {
-        const base = normalizeBaseUrl(baseUrl)
-        const url = new URL('iframe.html', base)
-        url.searchParams.set('id', id)
-        url.searchParams.set('viewMode', 'story')
+      await page.waitForFunction(() => Boolean(globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest), null, {
+        timeout: 10_000,
+      })
+      const req = await page.evaluate(() => globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest ?? null)
+      if (!req || typeof req !== 'object') throw new Error('No update request recorded in mock API.')
 
-        await page.goto(url.toString(), { waitUntil: 'domcontentloaded' })
-        await page.waitForFunction(() => document.body.classList.contains('sb-show-main'), null, {
-          timeout: 60_000,
-        })
+      const scope = req.scope
+      const mode = req.mode
+      const allowArchMismatch = req.allowArchMismatch
+      const backupMode = req.backupMode
+      const reason = req.reason
 
-        if (pageErrors.length > 0) {
-          failures.push({ id, error: pageErrors[0] })
-        }
-      } catch (error) {
-        failures.push({ id, error })
-      } finally {
-        await page.close().catch(() => {})
-      }
+      if (scope !== 'all') throw new Error(`Expected scope=all, got ${String(scope)}`)
+      if (mode !== 'apply') throw new Error(`Expected mode=apply, got ${String(mode)}`)
+      if (allowArchMismatch !== false) throw new Error(`Expected allowArchMismatch=false, got ${String(allowArchMismatch)}`)
+      if (backupMode !== 'inherit') throw new Error(`Expected backupMode=inherit, got ${String(backupMode)}`)
+      if (reason !== 'ui') throw new Error(`Expected reason=ui, got ${String(reason)}`)
+
+      await page.getByText('已创建更新任务').waitFor({ timeout: 5_000 })
+    } finally {
+      await page.close().catch(() => {})
     }
-
-    if (failures.length > 0) {
-      console.error(`Failed ${failures.length}/${storyIds.length} stories:`)
-      for (const f of failures.slice(0, 20)) {
-        console.error(`- ${f.id}: ${String(f.error?.message ?? f.error)}`)
-      }
-      if (failures.length > 20) {
-        console.error(`...and ${failures.length - 20} more`)
-      }
-      throw new Error(`Storybook smoke test failed (${failures.length}/${storyIds.length}).`)
-    }
-
-    console.log('All stories passed.')
-  } finally {
-    await browser.close().catch(() => {})
   }
 }
 
@@ -195,8 +273,15 @@ async function main() {
       console.error('Only --url is supported for now; extra args are not accepted.')
       process.exit(2)
     }
+    const { chromium } = await import('playwright')
+    const browser = await chromium.launch()
     const storyIds = await getStoryIds(targetUrl)
-    await runSmoke({ baseUrl: targetUrl, storyIds })
+    try {
+      await runSmoke({ baseUrl: targetUrl, storyIds, browser })
+      await runInteractive({ baseUrl: targetUrl, browser })
+    } finally {
+      await browser.close().catch(() => {})
+    }
     return
   }
 
@@ -222,8 +307,15 @@ async function main() {
       console.error('Only --url is supported for now; extra args are not accepted.')
       process.exit(2)
     }
+    const { chromium } = await import('playwright')
+    const browser = await chromium.launch()
     const storyIds = await getStoryIds(localUrl)
-    await runSmoke({ baseUrl: localUrl, storyIds })
+    try {
+      await runSmoke({ baseUrl: localUrl, storyIds, browser })
+      await runInteractive({ baseUrl: localUrl, browser })
+    } finally {
+      await browser.close().catch(() => {})
+    }
   } finally {
     await server.cleanup()
   }

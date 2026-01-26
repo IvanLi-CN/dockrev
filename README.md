@@ -23,6 +23,7 @@ Front-end (React + TypeScript):
 ## Repo layout
 
 - `crates/dockrev-api`: Rust HTTP API + worker runtime (initial scaffold)
+- `crates/dockrev-supervisor`: Self-upgrade supervisor (independent console + executor)
 - `web`: React + TypeScript (Vite) front-end
 
 ## Dev quickstart
@@ -31,6 +32,12 @@ Backend:
 
 ```bash
 DOCKREV_HTTP_ADDR=127.0.0.1:50883 DOCKREV_DB_PATH=/tmp/dockrev.sqlite3 cargo run -p dockrev-api --bin dockrev
+```
+
+Supervisor (self-upgrade console):
+
+```bash
+DOCKREV_SUPERVISOR_HTTP_ADDR=127.0.0.1:50884 cargo run -p dockrev-supervisor --bin dockrev-supervisor
 ```
 
 Front-end:
@@ -66,10 +73,34 @@ Environment variables (API):
 - `DOCKREV_COMPOSE_BIN` (default `docker-compose`; set to `docker` to use the plugin)
 - `DOCKREV_AUTH_FORWARD_HEADER_NAME` (default `X-Forwarded-User`)
 - `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV` (default `true`; set to `false` in production)
+- `DOCKREV_SELF_UPGRADE_URL` (default `/supervisor/`) UI jump target for “升级 Dockrev”
+- `DOCKREV_IMAGE_REPO` (default `ghcr.io/ivanli-cn/dockrev`) image repo used by the UI to detect which service is “Dockrev” for showing “升级 Dockrev” (example: set to `dockrev` for local images like `dockrev:local`)
 - `DOCKREV_WEBHOOK_SECRET` (optional) shared secret for `/api/webhooks/trigger`
 - `DOCKREV_HOST_PLATFORM` (optional) override host platform (example `linux/amd64`)
 - `DOCKREV_DISCOVERY_INTERVAL_SECONDS` (default `60`; must be `>= 10`)
 - `DOCKREV_DISCOVERY_MAX_ACTIONS` (default `200`) max actions returned by `POST /api/discovery/scan`
+
+Environment variables (Supervisor):
+
+- `DOCKREV_SUPERVISOR_HTTP_ADDR` (default `0.0.0.0:50884`)
+- `DOCKREV_SUPERVISOR_BASE_PATH` (default `/supervisor`)
+- `DOCKREV_SUPERVISOR_TARGET_IMAGE_REPO` (default `ghcr.io/ivanli-cn/dockrev`)
+- `DOCKREV_SUPERVISOR_TARGET_CONTAINER_ID` (optional) override auto-match
+- `DOCKREV_SUPERVISOR_TARGET_COMPOSE_PROJECT` / `DOCKREV_SUPERVISOR_TARGET_COMPOSE_SERVICE` / `DOCKREV_SUPERVISOR_TARGET_COMPOSE_FILES` (optional overrides)
+- `DOCKREV_SUPERVISOR_DOCKER_HOST` (optional) docker engine endpoint
+- `DOCKREV_SUPERVISOR_COMPOSE_BIN` (default `docker-compose`; set to `docker` to use the plugin)
+- `DOCKREV_SUPERVISOR_STATE_PATH` (default `./data/supervisor/self-upgrade.json`)
+
+## UI: scan / preview / apply
+
+- Scan: Overview/Services “立即扫描”
+- Preview (dry-run): Service detail “预览更新”
+- Apply (one-click):
+  - Overview: “更新全部”
+  - Overview/Services: “更新此 stack” + service row “执行更新”
+  - Service detail: “执行更新”
+- Dockrev self-upgrade:
+  - For the Dockrev service, “升级 Dockrev” jumps to the supervisor console (disabled unless `GET {selfUpgradeBaseUrl}/self-upgrade` returns 2xx; a 401 means auth/forward header is missing).
 
 ## Auto-discovery (Compose projects)
 

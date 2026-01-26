@@ -354,7 +354,8 @@
     minmax(0, 1.2fr)
     minmax(0, 1.9fr)
     minmax(0, 2.2fr)
-    minmax(0, 1.4fr);
+    minmax(0, 1.4fr)
+    minmax(0, 0.9fr);
   align-items: center;
   height: 38px;
   border-radius: 10px;
@@ -384,13 +385,12 @@
     minmax(0, 1.2fr)
     minmax(0, 1.9fr)
     minmax(0, 2.2fr)
-    minmax(0, 1.4fr);
+    minmax(0, 1.4fr)
+    minmax(0, 0.9fr);
   align-items: center;
   height: 36px;
   cursor: pointer;
   text-align: left;
-  border: 0;
-  outline: none;
   background: var(--dockrev-surface);
   border-radius: 12px;
   padding: 0;
@@ -417,12 +417,11 @@
     minmax(0, 1.2fr)
     minmax(0, 1.9fr)
     minmax(0, 2.2fr)
-    minmax(0, 1.4fr);
+    minmax(0, 1.4fr)
+    minmax(0, 0.9fr);
   width: 100%;
   cursor: pointer;
   text-align: left;
-  border: 0;
-  outline: none;
   background: var(--dockrev-surface);
   border-radius: 12px;
   padding: 0;
@@ -434,6 +433,26 @@
 
 .rowLine:hover {
   background: var(--dockrev-surface-strong);
+}
+
+.actionCell {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-right: 12px;
+  min-height: 52px;
+}
+
+.groupHead .actionCell {
+  min-height: 36px;
+}
+
+.actionStack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
 }
 
 .svcName {
@@ -716,6 +735,16 @@ html[data-theme='light'] .input {
   margin-top: 12px;
   color: var(--color-error);
   font-size: 12px;
+}
+
+.success {
+  margin-top: 12px;
+  color: var(--color-success);
+  font-size: 12px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 /* Queue */

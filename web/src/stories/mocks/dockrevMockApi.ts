@@ -22,6 +22,16 @@ export type DockrevApiScenario =
 
 const realFetch = globalThis.fetch.bind(globalThis)
 
+type MockDebug = {
+  lastUpdateRequest: unknown | null
+  lastUpdateUrl: string | null
+  lastUpdateMethod: string | null
+}
+
+declare global {
+  var __DOCKREV_MOCK_DEBUG__: MockDebug | undefined
+}
+
 type Fixture = {
   stacks: StackListItem[]
   stackById: Record<string, StackDetail>
@@ -440,6 +450,8 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
   let ignoreSeq = 0
   let jobSeq = 0
 
+  globalThis.__DOCKREV_MOCK_DEBUG__ = { lastUpdateRequest: null, lastUpdateUrl: null, lastUpdateMethod: null }
+
   function findService(serviceId: string) {
     if (!state) return null
     for (const st of Object.values(state.stackById)) {
@@ -452,8 +464,37 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
     const urlString = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    const url = (() => {
+      try {
+        const baseHref = typeof window !== 'undefined' ? window.location.href : 'http://localhost'
+        return new URL(urlString, baseHref)
+      } catch {
+        return null
+      }
+    })()
+    const urlPath = url ? url.pathname : urlString
+    const urlPathWithQuery = url ? `${url.pathname}${url.search}` : urlString
 
-    if (!urlString.startsWith('/api/')) return realFetch(input, init)
+    if (urlPath === '/supervisor/health' && method === 'GET') {
+      return json({ ok: true })
+    }
+    if (urlPath === '/supervisor/version' && method === 'GET') {
+      return json({ version: '0.0.0-mock' })
+    }
+    if (urlPath === '/supervisor/self-upgrade' && method === 'GET') {
+      return json({
+        state: 'idle',
+        opId: 'sup_mock',
+        target: { image: 'ghcr.io/ivanli-cn/dockrev', tag: 'latest', digest: null },
+        previous: { tag: '0.0.0', digest: null },
+        startedAt: nowIso(-60_000),
+        updatedAt: nowIso(-30_000),
+        progress: { step: 'done', message: 'idle' },
+        logs: [],
+      })
+    }
+
+    if (!urlPath.startsWith('/api/')) return realFetch(input, init)
 
     if (scenario === 'error') {
       return json({ error: 'mock error' }, { status: 500 })
@@ -463,8 +504,8 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
     const f = state
 
     // stacks
-    if (method === 'GET' && (urlString === '/api/stacks' || urlString.startsWith('/api/stacks?'))) {
-      const query = urlString.includes('?') ? urlString.split('?')[1] : ''
+    if (method === 'GET' && (urlPathWithQuery === '/api/stacks' || urlPathWithQuery.startsWith('/api/stacks?'))) {
+      const query = url?.search ? url.search.slice(1) : urlPathWithQuery.includes('?') ? urlPathWithQuery.split('?')[1] : ''
       const params = new URLSearchParams(query)
       const archived = params.get('archived') ?? 'exclude'
 
@@ -474,22 +515,22 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
 
       return json({ stacks })
     }
-    if (method === 'GET' && urlString.startsWith('/api/stacks/')) {
-      const id = decodeURIComponent(urlString.split('?')[0].split('/').slice(3).join('/'))
+    if (method === 'GET' && urlPath.startsWith('/api/stacks/')) {
+      const id = decodeURIComponent(urlPath.split('/').slice(3).join('/'))
       const st = f.stackById[id]
       if (!st) return json({ error: 'not found' }, { status: 404 })
       return json({ stack: st })
     }
-    if (method === 'POST' && urlString.startsWith('/api/stacks/') && urlString.endsWith('/archive')) {
-      const id = decodeURIComponent(urlString.split('?')[0].split('/').slice(3, -1).join('/'))
+    if (method === 'POST' && urlPath.startsWith('/api/stacks/') && urlPath.endsWith('/archive')) {
+      const id = decodeURIComponent(urlPath.split('/').slice(3, -1).join('/'))
       const item = f.stacks.find((s) => s.id === id)
       if (item) item.archived = true
       if (item) item.archivedServices = f.stackById[id]?.services.filter((s) => Boolean(s.archived)).length ?? 0
       if (f.stackById[id]) f.stackById[id].archived = true
       return json({}, { status: 204 })
     }
-    if (method === 'POST' && urlString.startsWith('/api/stacks/') && urlString.endsWith('/restore')) {
-      const id = decodeURIComponent(urlString.split('?')[0].split('/').slice(3, -1).join('/'))
+    if (method === 'POST' && urlPath.startsWith('/api/stacks/') && urlPath.endsWith('/restore')) {
+      const id = decodeURIComponent(urlPath.split('/').slice(3, -1).join('/'))
       const item = f.stacks.find((s) => s.id === id)
       if (item) item.archived = false
       if (f.stackById[id]) f.stackById[id].archived = false
@@ -497,13 +538,19 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
     }
 
     // checks / updates
-    if (method === 'POST' && urlString === '/api/checks') return json({ checkId: `check-${Math.random().toString(16).slice(2)}` })
-    if (method === 'POST' && urlString === '/api/updates') {
+    if (method === 'POST' && urlPath === '/api/checks') return json({ checkId: `check-${Math.random().toString(16).slice(2)}` })
+    if (method === 'POST' && urlPath === '/api/updates') {
       const body = typeof init?.body === 'string' ? init.body : ''
       const parsed = body ? (JSON.parse(body) as Record<string, unknown>) : {}
+      globalThis.__DOCKREV_MOCK_DEBUG__ = {
+        lastUpdateRequest: parsed,
+        lastUpdateUrl: urlPath,
+        lastUpdateMethod: method,
+      }
       const stackId = typeof parsed.stackId === 'string' ? parsed.stackId : null
       const serviceId = typeof parsed.serviceId === 'string' ? parsed.serviceId : null
       const scope = typeof parsed.scope === 'string' ? parsed.scope : 'service'
+      const mode = typeof parsed.mode === 'string' ? parsed.mode : 'dry-run'
 
       jobSeq += 1
       const jobId = `job-ui-${jobSeq}`
@@ -528,22 +575,22 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         ...job,
         logs: [
           { ts: nowIso(-900), level: 'info', msg: 'Queued by UI.' },
-          { ts: nowIso(-300), level: 'info', msg: 'Dry run started...' },
+          { ts: nowIso(-300), level: 'info', msg: mode === 'apply' ? 'Apply started...' : 'Dry run started...' },
         ],
       }
       return json({ jobId })
     }
 
     // discovery
-    if (method === 'POST' && urlString === '/api/discovery/scan')
+    if (method === 'POST' && urlPath === '/api/discovery/scan')
       return json({
         startedAt: new Date().toISOString(),
         durationMs: 12,
         summary: { projectsSeen: 0, stacksCreated: 0, stacksUpdated: 0, stacksSkipped: 0, stacksFailed: 0, stacksMarkedMissing: 0 },
         actions: [],
       })
-    if (method === 'GET' && (urlString === '/api/discovery/projects' || urlString.startsWith('/api/discovery/projects?'))) {
-      const query = urlString.includes('?') ? urlString.split('?')[1] : ''
+    if (method === 'GET' && (urlPathWithQuery === '/api/discovery/projects' || urlPathWithQuery.startsWith('/api/discovery/projects?'))) {
+      const query = url?.search ? url.search.slice(1) : urlPathWithQuery.includes('?') ? urlPathWithQuery.split('?')[1] : ''
       const params = new URLSearchParams(query)
       const archived = params.get('archived') ?? 'exclude'
 
@@ -553,21 +600,21 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       if (archived === 'exclude') out = list.filter((p) => !p.archived)
       return json({ projects: out })
     }
-    if (method === 'POST' && urlString.startsWith('/api/discovery/projects/') && urlString.endsWith('/archive')) return json({}, { status: 204 })
-    if (method === 'POST' && urlString.startsWith('/api/discovery/projects/') && urlString.endsWith('/restore')) return json({}, { status: 204 })
+    if (method === 'POST' && urlPath.startsWith('/api/discovery/projects/') && urlPath.endsWith('/archive')) return json({}, { status: 204 })
+    if (method === 'POST' && urlPath.startsWith('/api/discovery/projects/') && urlPath.endsWith('/restore')) return json({}, { status: 204 })
 
     // jobs
-    if (method === 'GET' && urlString === '/api/jobs') return json({ jobs: f.jobs })
-    if (method === 'GET' && urlString.startsWith('/api/jobs/')) {
-      const id = decodeURIComponent(urlString.split('/').slice(3).join('/'))
+    if (method === 'GET' && urlPath === '/api/jobs') return json({ jobs: f.jobs })
+    if (method === 'GET' && urlPath.startsWith('/api/jobs/')) {
+      const id = decodeURIComponent(urlPath.split('/').slice(3).join('/'))
       const job = f.jobById[id]
       if (!job) return json({ error: 'not found' }, { status: 404 })
       return json({ job })
     }
 
     // ignores
-    if (method === 'GET' && urlString === '/api/ignores') return json({ rules: f.ignores })
-    if (method === 'POST' && urlString === '/api/ignores') {
+    if (method === 'GET' && urlPath === '/api/ignores') return json({ rules: f.ignores })
+    if (method === 'POST' && urlPath === '/api/ignores') {
       const parsed = parseJsonBody(init?.body)
       const rec = isRecord(parsed) ? parsed : {}
       const scope = isRecord(rec.scope) ? rec.scope : {}
@@ -591,7 +638,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       }
       return json({ ruleId })
     }
-    if (method === 'DELETE' && urlString === '/api/ignores') {
+    if (method === 'DELETE' && urlPath === '/api/ignores') {
       const parsed = parseJsonBody(init?.body)
       const rec = isRecord(parsed) ? parsed : {}
       const ruleId = getString(rec.ruleId) ?? ''
@@ -610,8 +657,8 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
     }
 
     // settings
-    if (method === 'GET' && urlString === '/api/settings') return json(f.settings)
-    if (method === 'PUT' && urlString === '/api/settings') {
+    if (method === 'GET' && urlPath === '/api/settings') return json(f.settings)
+    if (method === 'PUT' && urlPath === '/api/settings') {
       const parsed = parseJsonBody(init?.body)
       const rec = isRecord(parsed) ? parsed : null
       const backup = rec && isRecord(rec.backup) ? rec.backup : null
@@ -631,8 +678,8 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
     }
 
     // notifications
-    if (method === 'GET' && urlString === '/api/notifications') return json(f.notifications)
-    if (method === 'PUT' && urlString === '/api/notifications') {
+    if (method === 'GET' && urlPath === '/api/notifications') return json(f.notifications)
+    if (method === 'PUT' && urlPath === '/api/notifications') {
       const parsed = parseJsonBody(init?.body)
       if (isRecord(parsed)) {
         // Best-effort, keep existing values if shape is unexpected.
@@ -664,37 +711,37 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       }
       return json({ ok: true })
     }
-    if (method === 'POST' && urlString === '/api/notifications/test') return json({ ok: true, results: {} })
+    if (method === 'POST' && urlPath === '/api/notifications/test') return json({ ok: true, results: {} })
 
     // web push
-    if (method === 'POST' && urlString === '/api/web-push/subscriptions') return json({ ok: true })
-    if (method === 'DELETE' && urlString === '/api/web-push/subscriptions') return json({ ok: true })
+    if (method === 'POST' && urlPath === '/api/web-push/subscriptions') return json({ ok: true })
+    if (method === 'DELETE' && urlPath === '/api/web-push/subscriptions') return json({ ok: true })
 
     // service settings
-    if (method === 'GET' && urlString.startsWith('/api/services/') && urlString.endsWith('/settings')) {
-      const parts = urlString.split('/').filter(Boolean)
+    if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/settings')) {
+      const parts = urlPath.split('/').filter(Boolean)
       const serviceId = decodeURIComponent(parts[2])
       const st = f.serviceSettingsById[serviceId]
       if (!st) return json({ error: 'not found' }, { status: 404 })
       return json(st)
     }
-    if (method === 'PUT' && urlString.startsWith('/api/services/') && urlString.endsWith('/settings')) {
-      const parts = urlString.split('/').filter(Boolean)
+    if (method === 'PUT' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/settings')) {
+      const parts = urlPath.split('/').filter(Boolean)
       const serviceId = decodeURIComponent(parts[2])
       const body = typeof init?.body === 'string' ? init.body : ''
       const parsed = body ? (JSON.parse(body) as ServiceSettings) : null
       if (parsed) f.serviceSettingsById[serviceId] = parsed
       return json({ ok: true })
     }
-    if (method === 'POST' && urlString.startsWith('/api/services/') && urlString.endsWith('/archive')) {
-      const parts = urlString.split('/').filter(Boolean)
+    if (method === 'POST' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/archive')) {
+      const parts = urlPath.split('/').filter(Boolean)
       const serviceId = decodeURIComponent(parts[2])
       const found = findService(serviceId)
       if (found) found.svc.archived = true
       return json({}, { status: 204 })
     }
-    if (method === 'POST' && urlString.startsWith('/api/services/') && urlString.endsWith('/restore')) {
-      const parts = urlString.split('/').filter(Boolean)
+    if (method === 'POST' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/restore')) {
+      const parts = urlPath.split('/').filter(Boolean)
       const serviceId = decodeURIComponent(parts[2])
       const found = findService(serviceId)
       if (found) found.svc.archived = false

@@ -1,4 +1,14 @@
 services:
+  gateway:
+    image: nginx:1.27-alpine
+    ports:
+      - "50883:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - dockrev
+      - supervisor
+
   dockrev:
     image: dockrev:local
     build:
@@ -6,14 +16,16 @@ services:
       dockerfile: Dockerfile
       args:
         APP_EFFECTIVE_VERSION: "0.0.0-local"
-    ports:
-      - "50883:50883"
+    expose:
+      - "50883"
     environment:
       DOCKREV_HTTP_ADDR: "0.0.0.0:50883"
       DOCKREV_DB_PATH: "/data/dockrev.sqlite3"
       DOCKREV_DOCKER_CONFIG: "/data/docker-config.json"
       DOCKREV_COMPOSE_BIN: "docker-compose"
       DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV: "false"
+      DOCKREV_SELF_UPGRADE_URL: "/supervisor/"
+      DOCKREV_IMAGE_REPO: "dockrev"
       # DOCKREV_WEBHOOK_SECRET: "change-me"
       # DOCKREV_HOST_PLATFORM: "linux/amd64"
       # Option B (docker-socket-proxy):
@@ -22,5 +34,26 @@ services:
       - ./data:/data
       - /var/run/docker.sock:/var/run/docker.sock
       # Auto-discovery reads compose file paths from Compose labels (container-visible absolute paths).
+      # If your compose files live on the host at /srv/compose/**, mount them read-only at the same path:
+      # - /srv/compose:/srv/compose:ro
+
+  supervisor:
+    image: dockrev:local
+    command: ["/usr/local/bin/dockrev-supervisor"]
+    expose:
+      - "50884"
+    environment:
+      DOCKREV_SUPERVISOR_HTTP_ADDR: "0.0.0.0:50884"
+      DOCKREV_SUPERVISOR_BASE_PATH: "/supervisor"
+      # For this local compose (image is dockrev:local), make auto-match work:
+      DOCKREV_SUPERVISOR_TARGET_IMAGE_REPO: "dockrev"
+      DOCKREV_SUPERVISOR_STATE_PATH: "/data/supervisor/self-upgrade.json"
+      DOCKREV_SUPERVISOR_COMPOSE_BIN: "docker-compose"
+      # Option B (docker-socket-proxy):
+      # DOCKREV_SUPERVISOR_DOCKER_HOST: "tcp://docker-socket-proxy:2375"
+    volumes:
+      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Self-upgrade requires the target compose files to be readable inside this container too.
       # If your compose files live on the host at /srv/compose/**, mount them read-only at the same path:
       # - /srv/compose:/srv/compose:ro

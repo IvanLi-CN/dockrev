@@ -1,8 +1,10 @@
 # Deploy (minimal)
 
-This directory contains a minimal Docker Compose deployment:
+This directory contains a minimal Docker Compose deployment with a reverse proxy:
 
-- `dockrev`: single container (Rust backend + embedded web UI)
+- `gateway` (nginx): routes `/` + `/api/*` to Dockrev, and `/supervisor/*` to the supervisor
+- `dockrev`: Rust backend + embedded web UI
+- `supervisor`: self-upgrade executor + console (stays available while Dockrev restarts)
 
 ## Quickstart
 
@@ -18,8 +20,9 @@ docker compose up --build
 
 Open:
 
-- UI: `http://127.0.0.1:50883/`
-- API health: `http://127.0.0.1:50883/api/health`
+- UI (via gateway): `http://127.0.0.1:50883/`
+- API health (via gateway): `http://127.0.0.1:50883/api/health`
+- Self-upgrade console (via gateway): `http://127.0.0.1:50883/supervisor/`
 
 ## Registering a stack
 
@@ -29,6 +32,15 @@ Important: Dockrev reads compose files from inside the `dockrev` container. The 
 
 - Bind-mount the host compose directories into the container **read-only at the same absolute path** (example in `docker-compose.yml`)
 - If the mount is missing/mismatched, discovery will not register/update the stack and will surface an actionable error
+
+## Self-upgrade (Dockrev updates Dockrev)
+
+The `supervisor` container is designed to keep the self-upgrade console available during the Dockrev restart window.
+
+Notes:
+
+- The Dockrev UI probes `GET /supervisor/self-upgrade` (same origin) before enabling the “升级 Dockrev” entry (401 means auth/forward header is missing).
+- Self-upgrade uses Docker + Compose on the host via the mounted Docker socket. The target compose files must be readable inside the supervisor container too (same absolute path requirement).
 
 ## Auth / reverse proxy
 

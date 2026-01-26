@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   archiveService,
+  ApiError,
   createIgnore,
   deleteIgnore,
   getServiceSettings,
@@ -14,7 +15,10 @@ import {
   type ServiceSettings,
   type StackDetail,
 } from '../api'
+import { navigate } from '../routes'
 import { Button, Mono, Pill, Switch } from '../ui'
+import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
+import { useSupervisorHealth } from '../useSupervisorHealth'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -48,6 +52,10 @@ function shortDigest(digest: string) {
   return `${digest.slice(0, 12)}…${digest.slice(-8)}`
 }
 
+function isDockrevService(svc: Service): boolean {
+  return isDockrevImageRef(svc.image.ref)
+}
+
 export function ServiceDetailPage(props: {
   stackId: string
   serviceId: string
@@ -61,6 +69,9 @@ export function ServiceDetailPage(props: {
   const [rules, setRules] = useState<IgnoreRule[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
+  const { state: supervisorState, check: checkSupervisor } = useSupervisorHealth()
+  const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
 
   const [newRuleKind, setNewRuleKind] = useState<'exact' | 'prefix' | 'regex' | 'semver'>('regex')
   const [newRuleValue, setNewRuleValue] = useState('.*')
@@ -89,33 +100,137 @@ export function ServiceDetailPage(props: {
   useEffect(() => {
     onTopActions(
       <>
-        <Button
-          variant="primary"
-          disabled={busy || !service}
-          onClick={() => {
-            void (async () => {
-              if (!service) return
-              setBusy(true)
-              setError(null)
-              try {
-                await triggerUpdate({
-                  scope: 'service',
-                  stackId,
-                  serviceId,
-                  mode: 'dry-run',
-                  allowArchMismatch: false,
-                  backupMode: 'inherit',
-                })
-              } catch (e: unknown) {
-                setError(errorMessage(e))
-              } finally {
-                setBusy(false)
+        {service && isDockrevService(service) ? (
+          <>
+            <Button
+              variant="primary"
+              disabled={busy || supervisorState.status !== 'ok'}
+              title={
+                supervisorState.status === 'offline'
+                  ? `自我升级不可用（supervisor offline） · ${supervisorState.errorAt}`
+                  : supervisorState.status === 'checking'
+                    ? '检查 supervisor 中…'
+                    : undefined
               }
-            })()
-          }}
-        >
-          预览更新
-        </Button>
+              onClick={() => {
+                window.location.href = selfUpgradeUrl
+              }}
+            >
+              升级 Dockrev
+            </Button>
+            {supervisorState.status !== 'ok' ? (
+              <Button
+                variant="ghost"
+                disabled={busy || supervisorState.status === 'checking'}
+                onClick={() => {
+                  void checkSupervisor()
+                }}
+              >
+                重试
+              </Button>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <Button
+              variant="primary"
+              disabled={busy || !service}
+              onClick={() => {
+                void (async () => {
+                  if (!service) return
+                  setBusy(true)
+                  setError(null)
+                  setNoticeJobId(null)
+                  try {
+                    const resp = await triggerUpdate({
+                      scope: 'service',
+                      stackId,
+                      serviceId,
+                      mode: 'dry-run',
+                      allowArchMismatch: false,
+                      backupMode: 'inherit',
+                    })
+                    setNoticeJobId(resp.jobId)
+                  } catch (e: unknown) {
+                    if (e instanceof ApiError) {
+                      if (e.status === 401) setError('需要登录/鉴权（forward header）')
+                      else if (e.status === 409) setError('该 stack 正在更新（禁止并发）')
+                      else setError(e.message)
+                    } else {
+                      setError(errorMessage(e))
+                    }
+                  } finally {
+                    setBusy(false)
+                  }
+                })()
+              }}
+            >
+              预览更新
+            </Button>
+            <Button
+              variant="danger"
+              disabled={
+                busy ||
+                !service ||
+                service.ignore?.matched ||
+                !service.candidate ||
+                service.candidate.archMatch === 'mismatch'
+              }
+              title={
+                !service
+                  ? undefined
+                  : service.ignore?.matched
+                    ? service.ignore.reason ?? '被阻止'
+                    : !service.candidate
+                      ? '无候选版本'
+                      : service.candidate.archMatch === 'mismatch'
+                        ? '架构不匹配（仅提示，不允许更新）'
+                        : undefined
+              }
+              onClick={() => {
+                void (async () => {
+                  if (!service) return
+                  const ok = window.confirm(
+                    [
+                      `即将执行更新（mode=apply）`,
+                      `scope=service`,
+                      `target=${stack?.name ?? stackId}/${service.name}`,
+                      '',
+                      '提示：将拉取镜像并重启容器；失败可能触发回滚。',
+                    ].join('\n'),
+                  )
+                  if (!ok) return
+                  setBusy(true)
+                  setError(null)
+                  setNoticeJobId(null)
+                  try {
+                    const resp = await triggerUpdate({
+                      scope: 'service',
+                      stackId,
+                      serviceId,
+                      mode: 'apply',
+                      allowArchMismatch: false,
+                      backupMode: 'inherit',
+                    })
+                    setNoticeJobId(resp.jobId)
+                  } catch (e: unknown) {
+                    if (e instanceof ApiError) {
+                      if (e.status === 401) setError('需要登录/鉴权（forward header）')
+                      else if (e.status === 409) setError('该 stack 正在更新（禁止并发）')
+                      else setError(e.message)
+                    } else {
+                      setError(errorMessage(e))
+                    }
+                  } finally {
+                    setBusy(false)
+                  }
+                })()
+              }}
+            >
+              执行更新
+            </Button>
+          </>
+        )}
         <Button
           variant={service?.archived ? 'primary' : 'ghost'}
           disabled={busy || !service}
@@ -169,7 +284,7 @@ export function ServiceDetailPage(props: {
         </Button>
       </>,
     )
-  }, [busy, onTopActions, refresh, service, serviceId, stackId])
+  }, [busy, checkSupervisor, onTopActions, refresh, selfUpgradeUrl, service, serviceId, stackId, stack?.name, supervisorState.status])
 
   const bindTargets = useMemo(() => (settings ? formatMap(settings.backupTargets.bindPaths) : []), [settings])
   const volTargets = useMemo(() => (settings ? formatMap(settings.backupTargets.volumeNames) : []), [settings])
@@ -239,6 +354,12 @@ export function ServiceDetailPage(props: {
         </div>
         <div className="svcBannerDetail">{bannerDetail}</div>
       </div>
+
+      {isDockrevService(service) && supervisorState.status === 'offline' ? (
+        <div className="muted" style={{ marginTop: 10 }}>
+          supervisor offline · {supervisorState.errorAt}
+        </div>
+      ) : null}
 
       <div className="twoCol">
         <div className="card">
@@ -466,6 +587,14 @@ export function ServiceDetailPage(props: {
       </div>
 
       {error ? <div className="error">{error}</div> : null}
+      {noticeJobId ? (
+        <div className="success">
+          已创建更新任务 <Mono>{noticeJobId}</Mono> ·{' '}
+          <Button variant="ghost" disabled={busy} onClick={() => navigate({ name: 'queue' })}>
+            查看队列
+          </Button>
+        </div>
+      ) : null}
     </div>
   )
 }

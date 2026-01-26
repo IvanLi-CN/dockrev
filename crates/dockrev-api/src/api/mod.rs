@@ -21,7 +21,7 @@ use crate::{
 use types::*;
 
 pub fn router(state: Arc<AppState>) -> Router {
-    Router::new()
+    Router::<Arc<AppState>>::new()
         .route("/api/health", get(health))
         .route("/api/version", get(version))
         .route(
@@ -66,8 +66,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/api/webhooks/trigger", post(webhook_trigger))
         .route("/api/settings", get(get_settings).put(put_settings))
-        .with_state(state)
         .merge(ui::router())
+        .with_state(state)
 }
 
 async fn health() -> &'static str {
@@ -552,25 +552,22 @@ async fn trigger_update(
         req.service_id.as_deref(),
     )?;
 
-    let job_id = run_update_for_job(state, user, req.reason.as_str().to_string(), req, now).await?;
+    let job_id = enqueue_update_job(state, user, req.reason.as_str().to_string(), req, now).await?;
 
     Ok(Json(TriggerUpdateResponse { job_id }))
 }
 
-async fn run_update_for_job(
+async fn enqueue_update_job(
     state: Arc<AppState>,
     created_by: String,
     reason: String,
     req: TriggerUpdateRequest,
     now: String,
 ) -> Result<String, ApiError> {
-    fn extract_changed_service_ids(update: &serde_json::Value) -> Option<Vec<String>> {
-        let ids = update
-            .get("newDigests")
-            .and_then(|v| v.as_object())
-            .map(|m| m.keys().cloned().collect::<Vec<_>>())?;
-        if ids.is_empty() { None } else { Some(ids) }
-    }
+    let stack_ids = resolve_stack_ids_for_update(&state, &req)
+        .await
+        .map_err(map_internal)?;
+    validate_arch_mismatch_for_update(&state, &req, &stack_ids).await?;
 
     let job_id = ids::new_job_id();
     let mut job = JobRecord::new_running(
@@ -603,202 +600,294 @@ async fn run_update_for_job(
         .await
         .map_err(map_internal)?;
 
-    let backup_settings = state.db.get_backup_settings().await.map_err(map_internal)?;
+    let run_state = state.clone();
+    let run_job_id = job_id.clone();
+    let run_req = req.clone();
+    tokio::spawn(async move {
+        let _ = run_update_job(run_state, run_job_id, run_req).await;
+    });
 
+    Ok(job_id)
+}
+
+async fn resolve_stack_ids_for_update(
+    state: &AppState,
+    req: &TriggerUpdateRequest,
+) -> anyhow::Result<Vec<String>> {
     let stack_ids = match req.scope {
-        JobScope::All => state.db.list_stack_ids().await.map_err(map_internal)?,
+        JobScope::All => state.db.list_stack_ids().await?,
         JobScope::Stack => req.stack_id.clone().into_iter().collect(),
         JobScope::Service => {
             let service_id = req.service_id.clone().unwrap_or_default();
             state
                 .db
                 .get_service_stack_id(&service_id)
-                .await
-                .map_err(map_internal)?
+                .await?
                 .map(|id| vec![id])
                 .unwrap_or_default()
         }
     };
+    Ok(stack_ids)
+}
 
-    let mut final_status = "success".to_string();
-    let mut stack_summaries = Vec::new();
-    let mut backups_to_cleanup: Vec<(String, u32)> = Vec::new();
+async fn validate_arch_mismatch_for_update(
+    state: &AppState,
+    req: &TriggerUpdateRequest,
+    stack_ids: &[String],
+) -> Result<(), ApiError> {
+    if req.allow_arch_mismatch {
+        return Ok(());
+    }
 
-    for stack_id in &stack_ids {
+    for stack_id in stack_ids {
         let Some(stack) = state.db.get_stack(stack_id).await.map_err(map_internal)? else {
             continue;
         };
 
-        if !req.allow_arch_mismatch {
-            for svc in &stack.services {
-                if req.scope == JobScope::Service
-                    && req.service_id.as_deref().is_some_and(|id| id != svc.id)
-                {
-                    continue;
-                }
-                if let Some(candidate) = svc.candidate.as_ref()
-                    && matches!(candidate.arch_match, ArchMatch::Mismatch)
-                {
-                    return Err(ApiError::invalid_argument(
-                        "candidate arch mismatch (set allowArchMismatch=true to override)",
-                    ));
-                }
+        for svc in &stack.services {
+            if req.scope == JobScope::Service
+                && req.service_id.as_deref().is_some_and(|id| id != svc.id)
+            {
+                continue;
+            }
+            if let Some(candidate) = svc.candidate.as_ref()
+                && matches!(candidate.arch_match, ArchMatch::Mismatch)
+            {
+                return Err(ApiError::invalid_argument(
+                    "candidate arch mismatch (set allowArchMismatch=true to override)",
+                ));
             }
         }
+    }
 
-        let logging_runner = DbLoggingRunner {
-            db: state.db.clone(),
-            inner: state.runner.clone(),
-            job_id: job_id.clone(),
-        };
+    Ok(())
+}
 
-        let mut stack_summary = serde_json::Map::new();
-        stack_summary.insert("stackId".to_string(), json!(stack_id));
+async fn run_update_job(
+    state: Arc<AppState>,
+    job_id: String,
+    req: TriggerUpdateRequest,
+) -> anyhow::Result<()> {
+    fn extract_changed_service_ids(update: &serde_json::Value) -> Option<Vec<String>> {
+        let ids = update
+            .get("newDigests")
+            .and_then(|v| v.as_object())
+            .map(|m| m.keys().cloned().collect::<Vec<_>>())?;
+        if ids.is_empty() { None } else { Some(ids) }
+    }
 
-        let mut backup_id_for_cleanup: Option<(String, u32)> = None;
-        if req.mode.as_str() == "apply"
-            && backup::should_run_backup(&backup_settings, &job.backup_mode)
-        {
-            let backup_id = ids::new_backup_id();
-            state
-                .db
-                .insert_backup(&backup_id, stack_id, &job_id, &now)
-                .await
-                .map_err(map_internal)?;
-            state
-                .db
-                .insert_job_log(
-                    &job_id,
-                    &JobLogLine {
-                        ts: now.clone(),
-                        level: "info".to_string(),
-                        msg: format!("backup started: {backup_id}"),
-                    },
+    let outcome: anyhow::Result<(String, Vec<serde_json::Value>, Vec<(String, u32)>)> = async {
+        let backup_settings = state.db.get_backup_settings().await?;
+        let stack_ids = resolve_stack_ids_for_update(state.as_ref(), &req).await?;
+
+        let mut final_status = "success".to_string();
+        let mut stack_summaries = Vec::new();
+        let mut backups_to_cleanup: Vec<(String, u32)> = Vec::new();
+
+        for stack_id in &stack_ids {
+            let Some(stack) = state.db.get_stack(stack_id).await? else {
+                continue;
+            };
+
+            let logging_runner = DbLoggingRunner {
+                db: state.db.clone(),
+                inner: state.runner.clone(),
+                job_id: job_id.clone(),
+            };
+
+            let mut stack_summary = serde_json::Map::new();
+            stack_summary.insert("stackId".to_string(), json!(stack_id));
+
+            let mut backup_id_for_cleanup: Option<(String, u32)> = None;
+            if req.mode.as_str() == "apply"
+                && backup::should_run_backup(&backup_settings, req.backup_mode.as_str())
+            {
+                let backup_id = ids::new_backup_id();
+                let now = now_rfc3339()?;
+                state
+                    .db
+                    .insert_backup(&backup_id, stack_id, &job_id, &now)
+                    .await?;
+                state
+                    .db
+                    .insert_job_log(
+                        &job_id,
+                        &JobLogLine {
+                            ts: now.clone(),
+                            level: "info".to_string(),
+                            msg: format!("backup started: {backup_id}"),
+                        },
+                    )
+                    .await?;
+
+                match backup::run_pre_update_backup(
+                    &logging_runner,
+                    &backup_settings,
+                    &stack,
+                    &req.scope,
+                    req.service_id.as_deref(),
+                    &now,
                 )
                 .await
-                .map_err(map_internal)?;
+                {
+                    Ok(res) => {
+                        for msg in &res.log_lines {
+                            let _ = state
+                                .db
+                                .insert_job_log(
+                                    &job_id,
+                                    &JobLogLine {
+                                        ts: now.clone(),
+                                        level: "info".to_string(),
+                                        msg: msg.clone(),
+                                    },
+                                )
+                                .await;
+                        }
 
-            match backup::run_pre_update_backup(
-                &logging_runner,
-                &backup_settings,
-                &stack,
-                &req.scope,
-                req.service_id.as_deref(),
-                &now,
-            )
-            .await
-            {
-                Ok(res) => {
-                    for msg in &res.log_lines {
+                        let _ = state
+                            .db
+                            .finish_backup(
+                                &backup_id,
+                                &res.status,
+                                &now,
+                                res.artifact_path.as_deref(),
+                                res.size_bytes,
+                                None,
+                            )
+                            .await;
+
+                        stack_summary.insert("backup".to_string(), res.summary_json);
+
+                        if res.status == "success" {
+                            backup_id_for_cleanup = Some((
+                                backup_id,
+                                stack.backup.retention.delete_after_stable_seconds,
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        let err = e.to_string();
+                        let _ = state
+                            .db
+                            .finish_backup(&backup_id, "failed", &now, None, None, Some(&err))
+                            .await;
                         let _ = state
                             .db
                             .insert_job_log(
                                 &job_id,
                                 &JobLogLine {
                                     ts: now.clone(),
-                                    level: "info".to_string(),
-                                    msg: msg.clone(),
+                                    level: "warn".to_string(),
+                                    msg: format!("backup failed: {err}"),
                                 },
                             )
                             .await;
+
+                        stack_summary
+                            .insert("backup".to_string(), json!({"status":"failed","error":err}));
+
+                        if backup_settings.require_success {
+                            final_status = "failed".to_string();
+                            stack_summaries.push(serde_json::Value::Object(stack_summary));
+                            break;
+                        }
+                    }
+                }
+            } else {
+                stack_summary.insert(
+                    "backup".to_string(),
+                    if req.mode.as_str() != "apply" {
+                        json!({"status":"skipped","reason":"dry_run"})
+                    } else {
+                        json!({"status":"skipped","reason":"disabled"})
+                    },
+                );
+            }
+
+            let update_outcome = updater::run_update_job(
+                &logging_runner,
+                &state.config.compose_bin,
+                &stack,
+                &req.scope,
+                req.service_id.as_deref(),
+                req.mode.as_str(),
+            )
+            .await;
+            match update_outcome {
+                Ok(outcome) => {
+                    final_status = outcome.status.clone();
+                    stack_summary.insert("update".to_string(), outcome.summary_json);
+                    stack_summaries.push(serde_json::Value::Object(stack_summary));
+
+                    if final_status != "success" {
+                        break;
                     }
 
-                    let _ = state
-                        .db
-                        .finish_backup(
-                            &backup_id,
-                            &res.status,
-                            &now,
-                            res.artifact_path.as_deref(),
-                            res.size_bytes,
-                            None,
-                        )
-                        .await;
-
-                    stack_summary.insert("backup".to_string(), res.summary_json);
-
-                    if res.status == "success" {
-                        backup_id_for_cleanup = Some((
-                            backup_id,
-                            stack.backup.retention.delete_after_stable_seconds,
-                        ));
+                    if let Some(b) = backup_id_for_cleanup.take() {
+                        backups_to_cleanup.push(b);
                     }
                 }
                 Err(e) => {
-                    let err = e.to_string();
-                    let _ = state
-                        .db
-                        .finish_backup(&backup_id, "failed", &now, None, None, Some(&err))
-                        .await;
-                    let _ = state
-                        .db
-                        .insert_job_log(
-                            &job_id,
-                            &JobLogLine {
-                                ts: now.clone(),
-                                level: "warn".to_string(),
-                                msg: format!("backup failed: {err}"),
-                            },
-                        )
-                        .await;
-
-                    stack_summary
-                        .insert("backup".to_string(), json!({"status":"failed","error":err}));
-
-                    if backup_settings.require_success {
-                        final_status = "failed".to_string();
-                        stack_summaries.push(serde_json::Value::Object(stack_summary));
-                        break;
-                    }
+                    final_status = "failed".to_string();
+                    stack_summary.insert("update".to_string(), json!({"error": e.to_string()}));
+                    stack_summaries.push(serde_json::Value::Object(stack_summary));
+                    break;
                 }
             }
-        } else {
-            stack_summary.insert(
-                "backup".to_string(),
-                if req.mode.as_str() != "apply" {
-                    json!({"status":"skipped","reason":"dry_run"})
-                } else {
-                    json!({"status":"skipped","reason":"disabled"})
-                },
-            );
         }
 
-        let outcome = updater::run_update_job(
-            &logging_runner,
-            &state.config.compose_bin,
-            &stack,
-            &req.scope,
-            req.service_id.as_deref(),
-            req.mode.as_str(),
-        )
-        .await
-        .map_err(map_internal)?;
-
-        final_status = outcome.status.clone();
-        stack_summary.insert("update".to_string(), outcome.summary_json);
-
-        stack_summaries.push(serde_json::Value::Object(stack_summary));
-
-        if final_status != "success" {
-            break;
-        }
-
-        if let Some(b) = backup_id_for_cleanup.take() {
-            backups_to_cleanup.push(b);
-        }
+        Ok((final_status, stack_summaries, backups_to_cleanup))
     }
+    .await;
 
-    let final_summary = json!({
-        "mode": req.mode.as_str(),
-        "stacks": stack_summaries.clone(),
-    });
+    let (final_status, stack_summaries, backups_to_cleanup, final_summary, finished_at) =
+        match outcome {
+            Ok((final_status, stack_summaries, backups_to_cleanup)) => {
+                let final_summary = json!({
+                    "mode": req.mode.as_str(),
+                    "stacks": stack_summaries.clone(),
+                });
+                let finished_at = now_rfc3339()?;
+                (
+                    final_status,
+                    stack_summaries,
+                    backups_to_cleanup,
+                    final_summary,
+                    finished_at,
+                )
+            }
+            Err(err) => {
+                let finished_at = now_rfc3339()?;
+                let _ = state
+                    .db
+                    .insert_job_log(
+                        &job_id,
+                        &JobLogLine {
+                            ts: finished_at.clone(),
+                            level: "error".to_string(),
+                            msg: format!("update failed: {err}"),
+                        },
+                    )
+                    .await;
+                let final_summary = json!({
+                    "mode": req.mode.as_str(),
+                    "error": err.to_string(),
+                });
+                (
+                    "failed".to_string(),
+                    Vec::new(),
+                    Vec::new(),
+                    final_summary,
+                    finished_at,
+                )
+            }
+        };
 
-    let finished_at = now_rfc3339().map_err(map_internal)?;
     state
         .db
         .finish_job(&job_id, &final_status, &finished_at, &final_summary)
-        .await
-        .map_err(map_internal)?;
+        .await?;
 
     if final_status == "success"
         && let Ok(now_dt) = time::OffsetDateTime::parse(
@@ -819,84 +908,62 @@ async fn run_update_for_job(
         }
     }
 
+    let force_notify = final_status != "success";
     let mut should_notify = true;
     let mut notify_summary = final_summary.clone();
     let mut notify_skip_reason: Option<String> = None;
-    match req.scope {
-        JobScope::Service => {
-            if let Some(service_id) = req.service_id.as_deref()
-                && let Some(true) = state
-                    .db
-                    .is_service_archived(service_id)
-                    .await
-                    .map_err(map_internal)?
-            {
-                should_notify = false;
-                notify_skip_reason = Some("archived service".to_string());
-            }
-            if should_notify
-                && let Some(service_id) = req.service_id.as_deref()
-                && let Some(stack_id) = state
-                    .db
-                    .get_service_stack_id(service_id)
-                    .await
-                    .map_err(map_internal)?
-                && let Some(true) = state
-                    .db
-                    .is_stack_archived(&stack_id)
-                    .await
-                    .map_err(map_internal)?
-            {
-                should_notify = false;
-                notify_skip_reason = Some("archived stack".to_string());
-            }
-        }
-        JobScope::Stack | JobScope::All => {
-            let mut filtered = Vec::<serde_json::Value>::new();
-            for s in &stack_summaries {
-                let Some(stack_id) = s.get("stackId").and_then(|v| v.as_str()) else {
-                    continue;
-                };
-
-                if let Some(true) = state
-                    .db
-                    .is_stack_archived(stack_id)
-                    .await
-                    .map_err(map_internal)?
+    if !force_notify {
+        match req.scope {
+            JobScope::Service => {
+                if let Some(service_id) = req.service_id.as_deref()
+                    && let Some(true) = state.db.is_service_archived(service_id).await?
                 {
-                    continue;
+                    should_notify = false;
+                    notify_skip_reason = Some("archived service".to_string());
+                }
+                if should_notify
+                    && let Some(service_id) = req.service_id.as_deref()
+                    && let Some(stack_id) = state.db.get_service_stack_id(service_id).await?
+                    && let Some(true) = state.db.is_stack_archived(&stack_id).await?
+                {
+                    should_notify = false;
+                    notify_skip_reason = Some("archived stack".to_string());
+                }
+            }
+            JobScope::Stack | JobScope::All => {
+                let mut filtered = Vec::<serde_json::Value>::new();
+                for s in &stack_summaries {
+                    let Some(stack_id) = s.get("stackId").and_then(|v| v.as_str()) else {
+                        continue;
+                    };
+
+                    if let Some(true) = state.db.is_stack_archived(stack_id).await? {
+                        continue;
+                    }
+
+                    let include = if let Some(update) = s.get("update")
+                        && let Some(changed_ids) = extract_changed_service_ids(update)
+                    {
+                        state.db.has_unarchived_services(&changed_ids).await?
+                    } else {
+                        state.db.has_unarchived_services_in_stack(stack_id).await?
+                    };
+
+                    if include {
+                        filtered.push(s.clone());
+                    }
                 }
 
-                let include = if let Some(update) = s.get("update")
-                    && let Some(changed_ids) = extract_changed_service_ids(update)
-                {
-                    state
-                        .db
-                        .has_unarchived_services(&changed_ids)
-                        .await
-                        .map_err(map_internal)?
+                if filtered.is_empty() {
+                    should_notify = false;
+                    notify_skip_reason =
+                        Some("all stacks archived or only archived services touched".to_string());
                 } else {
-                    state
-                        .db
-                        .has_unarchived_services_in_stack(stack_id)
-                        .await
-                        .map_err(map_internal)?
-                };
-
-                if include {
-                    filtered.push(s.clone());
+                    notify_summary = json!({
+                        "mode": req.mode.as_str(),
+                        "stacks": filtered,
+                    });
                 }
-            }
-
-            if filtered.is_empty() {
-                should_notify = false;
-                notify_skip_reason =
-                    Some("all stacks archived or only archived services touched".to_string());
-            } else {
-                notify_summary = json!({
-                    "mode": req.mode.as_str(),
-                    "stacks": filtered,
-                });
             }
         }
     }
@@ -936,7 +1003,7 @@ async fn run_update_for_job(
         });
     }
 
-    Ok(job_id)
+    Ok(())
 }
 
 struct DbLoggingRunner {
@@ -1367,7 +1434,7 @@ async fn webhook_trigger(
                 reason: UpdateReason::Webhook,
             };
 
-            let job_id = run_update_for_job(
+            let job_id = enqueue_update_job(
                 state,
                 "webhook".to_string(),
                 "webhook".to_string(),
