@@ -216,13 +216,14 @@ export function ServiceDetailPage(props: {
 	                          </div>
 	                          <div className="modalKvLabel">当前 → 候选</div>
 	                          <div className="modalKvValue">
-	                            <Mono>
-	                              {`${service.image.tag}${service.image.digest ? `@${shortDigest(service.image.digest)}` : ''} → ${
-	                                service.candidate
-	                                  ? `${service.candidate.tag}@${shortDigest(service.candidate.digest)}`
-	                                  : '-'
-	                              }`}
-	                            </Mono>
+	                            <span
+	                              className="mono"
+	                              title={
+	                                `${service.image.tag}${service.image.digest ? `@${service.image.digest.includes(':') ? service.image.digest : `sha256:${service.image.digest}`}` : ''} → ${
+	                                  service.candidate ? `${service.candidate.tag}@${service.candidate.digest}` : '-'
+	                                }`
+	                              }
+	                            >{`${service.image.tag} → ${service.candidate ? service.candidate.tag : '-'}`}</span>
 	                          </div>
 	                          <div className="modalKvLabel">状态</div>
 	                          <div className="modalKvValue">

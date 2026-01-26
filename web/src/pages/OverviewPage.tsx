@@ -30,16 +30,14 @@ function formatShort(ts?: string | null) {
   return d.toLocaleString()
 }
 
-function formatDigestShort(digest: string | null | undefined): string | null {
-  if (!digest) return null
-  const m = digest.includes(':') ? digest : `sha256:${digest}`
-  const last2 = m.slice(-2)
-  return `${m.split(':')[0]}:…${last2}`
+function formatTagOnly(tag: string): string {
+  return tag
 }
 
-function formatTagDigest(tag: string, digest: string | null | undefined): string {
-  const d = formatDigestShort(digest)
-  return d ? `${tag}@${d}` : tag
+function formatTagTooltip(tag: string, digest: string | null | undefined): string | undefined {
+  if (!digest) return undefined
+  const m = digest.includes(':') ? digest : `sha256:${digest}`
+  return `${tag}@${m}`
 }
 
 function isDockrevService(svc: Service): boolean {
@@ -186,6 +184,23 @@ export function OverviewPage(props: {
       }
     }
     return c
+  }, [details, stacks])
+
+  const allCandidatesPreview = useMemo(() => {
+    const items: Array<{ stackName: string; svc: Service; status: RowStatus }> = []
+    for (const st of stacks) {
+      const d = details[st.id]
+      if (!d) continue
+      for (const svc of d.services) {
+        if (svc.archived) continue
+        const status = serviceRowStatus(svc)
+        if (status === 'updatable' || status === 'hint' || status === 'crossTag') {
+          items.push({ stackName: d.name, svc, status })
+        }
+      }
+    }
+    const preview = items.slice(0, 8)
+    return { total: items.length, preview }
   }, [details, stacks])
 
   const totalServicesAll = useMemo(() => {
@@ -391,6 +406,38 @@ export function OverviewPage(props: {
                   </div>
                 </div>
                 <div className="modalDivider" />
+                <div className="modalLead">将更新的服务（预览）</div>
+                <div className="modalList">
+                  {allCandidatesPreview.preview.map((item) => {
+                    const current = formatTagOnly(item.svc.image.tag)
+                    const candidate = item.svc.candidate ? formatTagOnly(item.svc.candidate.tag) : '-'
+                    const title = `${formatTagTooltip(item.svc.image.tag, item.svc.image.digest) ?? item.svc.image.tag} → ${
+                      item.svc.candidate
+                        ? formatTagTooltip(item.svc.candidate.tag, item.svc.candidate.digest) ?? item.svc.candidate.tag
+                        : '-'
+                    }`
+                    return (
+                      <div key={`${item.stackName}/${item.svc.id}`} className="modalListItem">
+                        <div className="modalListLeft">
+                          <div className="modalListTitle">
+                            <span className="mono">{`${item.stackName}/${item.svc.name}`}</span>
+                            <span className="muted">{` · ${item.status}`}</span>
+                          </div>
+                          <div className="muted">
+                            <span className="mono">{item.svc.image.ref}</span>
+                          </div>
+                        </div>
+                        <div className="modalListRight">
+                          <span className="mono" title={title}>{`${current} → ${candidate}`}</span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                  {allCandidatesPreview.total > allCandidatesPreview.preview.length ? (
+                    <div className="muted">{`… 以及 ${allCandidatesPreview.total - allCandidatesPreview.preview.length} 个`}</div>
+                  ) : null}
+                </div>
+                <div className="modalDivider" />
                 <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>
               </>
             )
@@ -404,6 +451,8 @@ export function OverviewPage(props: {
   }, [
     allApply.enabled,
     allApply.title,
+    allCandidatesPreview.preview,
+    allCandidatesPreview.total,
     busy,
     countsAll.archMismatch,
     countsAll.blocked,
@@ -562,13 +611,18 @@ export function OverviewPage(props: {
 	                    <Button
 	                      variant="ghost"
 	                      disabled={busy || !stackApply.enabled}
-	                      title={stackApply.title ?? undefined}
-	                      onClick={() => {
-	                        const totalCandidates = counts.updatable + counts.hint + counts.crossTag
-	                        const body = (
-	                          <>
-	                            <div className="modalLead">将为该 stack 内服务创建更新任务（服务端会计算是否实际变更）。</div>
-	                            <div className="modalKvGrid">
+		                      title={stackApply.title ?? undefined}
+		                      onClick={() => {
+		                        const totalCandidates = counts.updatable + counts.hint + counts.crossTag
+		                        const candidateServices = d.services
+		                          .filter((svc) => !svc.archived)
+		                          .map((svc) => ({ svc, status: serviceRowStatus(svc) }))
+		                          .filter((x) => x.status === 'updatable' || x.status === 'hint' || x.status === 'crossTag')
+		                        const preview = candidateServices.slice(0, 8)
+		                        const body = (
+		                          <>
+		                            <div className="modalLead">将为该 stack 内服务创建更新任务（服务端会计算是否实际变更）。</div>
+		                            <div className="modalKvGrid">
 	                              <div className="modalKvLabel">范围</div>
 	                              <div className="modalKvValue">
 	                                <Mono>stack</Mono>
@@ -583,15 +637,47 @@ export function OverviewPage(props: {
 	                              <div className="modalKvValue">
 	                                可更新 {counts.updatable} · 需确认 {counts.hint} · 跨 tag {counts.crossTag}
 	                              </div>
-	                              <div className="modalKvLabel">将跳过</div>
-	                              <div className="modalKvValue">
-	                                架构不匹配 {counts.archMismatch} · 被阻止 {counts.blocked}
-	                              </div>
-	                            </div>
-	                            <div className="modalDivider" />
-	                            <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>
-	                          </>
-	                        )
+		                              <div className="modalKvLabel">将跳过</div>
+		                              <div className="modalKvValue">
+		                                架构不匹配 {counts.archMismatch} · 被阻止 {counts.blocked}
+		                              </div>
+		                            </div>
+		                            <div className="modalDivider" />
+		                            <div className="modalLead">将更新的服务（预览）</div>
+		                            <div className="modalList">
+		                              {preview.map((item) => {
+		                                const current = formatTagOnly(item.svc.image.tag)
+		                                const candidate = item.svc.candidate ? formatTagOnly(item.svc.candidate.tag) : '-'
+		                                const title = `${formatTagTooltip(item.svc.image.tag, item.svc.image.digest) ?? item.svc.image.tag} → ${
+		                                  item.svc.candidate
+		                                    ? formatTagTooltip(item.svc.candidate.tag, item.svc.candidate.digest) ?? item.svc.candidate.tag
+		                                    : '-'
+		                                }`
+		                                return (
+		                                  <div key={item.svc.id} className="modalListItem">
+		                                    <div className="modalListLeft">
+		                                      <div className="modalListTitle">
+		                                        <span className="mono">{item.svc.name}</span>
+		                                        <span className="muted">{` · ${item.status}`}</span>
+		                                      </div>
+		                                      <div className="muted">
+		                                        <span className="mono">{item.svc.image.ref}</span>
+		                                      </div>
+		                                    </div>
+		                                    <div className="modalListRight">
+		                                      <span className="mono" title={title}>{`${current} → ${candidate}`}</span>
+		                                    </div>
+		                                  </div>
+		                                )
+		                              })}
+		                              {candidateServices.length > preview.length ? (
+		                                <div className="muted">{`… 以及 ${candidateServices.length - preview.length} 个`}</div>
+		                              ) : null}
+		                            </div>
+		                            <div className="modalDivider" />
+		                            <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>
+		                          </>
+		                        )
 	                        void triggerApply({
 	                          scope: 'stack',
 	                          stackId: st.id,
@@ -608,8 +694,10 @@ export function OverviewPage(props: {
 
                 {!isCollapsed
                   ? rows.map(({ svc, stt }) => {
-                      const current = formatTagDigest(svc.image.tag, svc.image.digest)
-                      const candidate = svc.candidate ? formatTagDigest(svc.candidate.tag, svc.candidate.digest) : '-'
+	                      const current = formatTagOnly(svc.image.tag)
+	                      const currentTitle = formatTagTooltip(svc.image.tag, svc.image.digest)
+	                      const candidate = svc.candidate ? formatTagOnly(svc.candidate.tag) : '-'
+	                      const candidateTitle = svc.candidate ? formatTagTooltip(svc.candidate.tag, svc.candidate.digest) : undefined
                       const isDockrev = isDockrevService(svc)
                       const svcApply =
                         stt === 'updatable'
@@ -642,10 +730,10 @@ export function OverviewPage(props: {
                             <span className="svcName">{svc.name}</span>
                           </div>
                           <div className="mono cellMono">{svc.image.ref}</div>
-                          <div className="cellTwoLine">
-                            <div className="mono">{current}</div>
-                            <div className="mono">{candidate}</div>
-                          </div>
+	                          <div className="cellTwoLine">
+	                            <div className="mono" title={currentTitle}>{current}</div>
+	                            <div className="mono" title={candidateTitle}>{candidate}</div>
+	                          </div>
                           <StatusRemark service={svc} status={stt} />
                           <div
                             className="actionCell"
@@ -688,13 +776,13 @@ export function OverviewPage(props: {
                             ) : (
                               <Button
                                 variant="ghost"
-                                disabled={busy || !svcApply.enabled}
-                                title={svcApply.title ?? undefined}
-                                onClick={() => {
-                                  const body = (
-                                    <>
-                                      <div className="modalLead">将对该服务执行更新（apply）。</div>
-                                      <div className="modalKvGrid">
+	                                disabled={busy || !svcApply.enabled}
+	                                title={svcApply.title ?? undefined}
+	                                onClick={() => {
+		                                  const body = (
+		                                    <>
+		                                      <div className="modalLead">将对该服务执行更新（apply）。</div>
+		                                      <div className="modalKvGrid">
                                         <div className="modalKvLabel">范围</div>
                                         <div className="modalKvValue">
                                           <Mono>service</Mono>
@@ -707,10 +795,17 @@ export function OverviewPage(props: {
                                         <div className="modalKvValue">
                                           <Mono>{svc.image.ref}</Mono>
                                         </div>
-                                        <div className="modalKvLabel">当前 → 候选</div>
-                                        <div className="modalKvValue">
-                                          <Mono>{`${current} → ${candidate}`}</Mono>
-                                        </div>
+	                                        <div className="modalKvLabel">当前 → 候选</div>
+	                                        <div className="modalKvValue">
+		                                          <span
+		                                            className="mono"
+		                                            title={
+		                                              `${formatTagTooltip(svc.image.tag, svc.image.digest) ?? svc.image.tag} → ${
+		                                                svc.candidate ? formatTagTooltip(svc.candidate.tag, svc.candidate.digest) ?? svc.candidate.tag : '-'
+		                                              }`
+		                                            }
+		                                          >{`${current} → ${candidate}`}</span>
+		                                        </div>
                                         <div className="modalKvLabel">状态</div>
                                         <div className="modalKvValue">
                                           <Mono>{stt}</Mono>
