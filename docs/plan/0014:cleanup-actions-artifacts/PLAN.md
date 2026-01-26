@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 部分完成（2/3）
 - Created: 2026-01-26
 - Last: 2026-01-26
 
@@ -100,8 +100,8 @@ None
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 为 `upload-artifact` 显式设置 `retention-days`（兜底）
-- [ ] M2: 新增 cleanup job（成功后删除本 run 的所有 artifacts，含 `.dockerbuild`）
+- [x] M1: 为 `upload-artifact` 显式设置 `retention-days`（兜底）
+- [x] M2: 新增 cleanup job（成功后删除本 run 的所有 artifacts，含 `.dockerbuild`）
 - [ ] M3: 验证成功/失败两条路径，并冻结失败路径策略与文档口径
 
 ## 方案概述（Approach, high-level）
@@ -117,6 +117,7 @@ None
 ## 变更记录（Change log）
 
 - 2026-01-26: 创建计划。
+- 2026-01-26: 实现 M1+M2：`upload-artifact` 兜底 `retention-days: 1`；新增 `cleanup-artifacts` job（成功清空 artifacts；失败保留关键 artifacts、删除 `*.dockerbuild`）。
 
 ## 参考（References）
 

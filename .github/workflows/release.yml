@@ -135,6 +135,7 @@ jobs:
         with:
           name: web-dist-${{ github.event.workflow_run.head_sha }}
           path: web/dist
+          retention-days: 1
 
   build-binaries-amd64:
     name: Build binaries (amd64)
@@ -215,6 +216,7 @@ jobs:
             target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev-supervisor
             dist/ci/docker/amd64/dockrev
             dist/ci/docker/amd64/dockrev-supervisor
+          retention-days: 1
 
   build-binaries-arm64:
     name: Build binaries (arm64)
@@ -288,6 +290,7 @@ jobs:
             target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev-supervisor
             dist/ci/docker/arm64/dockrev
             dist/ci/docker/arm64/dockrev-supervisor
+          retention-days: 1
 
   publish:
     name: Publish (GHCR + GitHub Release)
@@ -466,3 +469,120 @@ jobs:
           echo "::error::Cause: see step 'Create or update GitHub Release + upload assets' logs above."
           echo "::error::Retry: Actions → workflow 'Release' → Re-run jobs (tag=${RELEASE_TAG})."
           exit 1
+
+  cleanup-artifacts:
+    name: Cleanup Actions artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [prepare, build-web, build-binaries-amd64, build-binaries-arm64, publish]
+    if: ${{ always() && needs.prepare.result == 'success' && needs.prepare.outputs.should_release == 'true' }}
+    permissions:
+      actions: write
+    env:
+      NEEDS_JSON: ${{ toJSON(needs) }}
+    steps:
+      - name: "Delete artifacts (success: all; failure: keep key, delete *.dockerbuild)"
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+            async function withRetry(fn, { label, attempts = 3 } = {}) {
+              let lastErr;
+              for (let i = 0; i < attempts; i++) {
+                try {
+                  return await fn();
+                } catch (err) {
+                  lastErr = err;
+                  const status = err?.status;
+                  const retriable = status >= 500 || status === 429 || status === 502 || status === 503 || status === 504;
+                  if (!retriable || i === attempts - 1) throw err;
+                  const waitMs = 1000 * Math.pow(2, i);
+                  core.warning(`[retry] ${label ?? "op"} failed (status=${status ?? "?"}); retrying in ${waitMs}ms`);
+                  await sleep(waitMs);
+                }
+              }
+              throw lastErr;
+            }
+
+            const needs = JSON.parse(process.env.NEEDS_JSON ?? "{}");
+            const workflowSuccess = Object.values(needs).every((n) => n?.result === "success");
+
+            const keepPrefixes = ["web-dist-", "binaries-amd64-", "binaries-arm64-"];
+            const shouldKeepOnFailure = (name) => keepPrefixes.some((p) => name.startsWith(p));
+            const isDockerBuildRecord = (name) => name.endsWith(".dockerbuild");
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const runId = context.runId;
+
+            async function listAllArtifacts() {
+              const artifacts = [];
+              let page = 1;
+              while (true) {
+                const res = await withRetry(
+                  () =>
+                    github.rest.actions.listWorkflowRunArtifacts({
+                      owner,
+                      repo,
+                      run_id: runId,
+                      per_page: 100,
+                      page,
+                    }),
+                  { label: `list artifacts page=${page}` },
+                );
+
+                artifacts.push(...(res.data?.artifacts ?? []));
+                if ((res.data?.artifacts ?? []).length < 100) break;
+                page += 1;
+              }
+              return artifacts;
+            }
+
+            async function deleteArtifact(artifact) {
+              try {
+                await withRetry(
+                  () =>
+                    github.rest.actions.deleteArtifact({
+                      owner,
+                      repo,
+                      artifact_id: artifact.id,
+                    }),
+                  { label: `delete artifact id=${artifact.id} name=${artifact.name}` },
+                );
+                return { ok: true };
+              } catch (err) {
+                if (err?.status === 404) return { ok: true, ignored: true };
+                return { ok: false, err };
+              }
+            }
+
+            const artifacts = await listAllArtifacts();
+            core.info(`found ${artifacts.length} artifacts (workflowSuccess=${workflowSuccess})`);
+
+            const deleted = [];
+            const kept = [];
+            const failed = [];
+
+            for (const artifact of artifacts) {
+              const name = artifact.name ?? "";
+              const shouldDelete = workflowSuccess
+                ? true
+                : isDockerBuildRecord(name) || !shouldKeepOnFailure(name);
+
+              if (!shouldDelete) {
+                kept.push(name);
+                continue;
+              }
+
+              const res = await deleteArtifact(artifact);
+              if (res.ok) deleted.push(name);
+              else failed.push({ name, status: res.err?.status, message: String(res.err?.message ?? res.err) });
+            }
+
+            core.info(`deleted ${deleted.length} artifacts`);
+            if (!workflowSuccess) core.info(`kept ${kept.length} artifacts: ${kept.join(", ") || "(none)"}`);
+
+            if (failed.length > 0) {
+              core.setFailed(`failed to delete ${failed.length} artifacts: ${failed.map((f) => `${f.name}(status=${f.status ?? "?"})`).join(", ")}`);
+            }
