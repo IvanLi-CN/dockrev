@@ -287,7 +287,19 @@ export function ServiceDetailPage(props: {
         </Button>
       </>,
     )
-  }, [busy, checkSupervisor, onTopActions, refresh, selfUpgradeUrl, service, serviceId, stackId, stack?.name, supervisorState.status])
+  }, [
+    busy,
+    checkSupervisor,
+    onTopActions,
+    refresh,
+    selfUpgradeUrl,
+    service,
+    serviceId,
+    stackId,
+    stack?.name,
+    supervisorState.errorAt,
+    supervisorState.status,
+  ])
 
   const bindTargets = useMemo(() => (settings ? formatMap(settings.backupTargets.bindPaths) : []), [settings])
   const volTargets = useMemo(() => (settings ? formatMap(settings.backupTargets.volumeNames) : []), [settings])

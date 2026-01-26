@@ -371,7 +371,7 @@ export function ServicesPage(props: {
     }
     const filtered = groups.reduce((acc, g) => acc + g.services.length, 0)
     return { total, filtered }
-  }, [details, groups, search, stacks])
+  }, [details, groups, stacks])
 
   const archivedServices = useMemo(() => {
     const out: Array<{ stackId: string; stackName: string; svc: Service }> = []
