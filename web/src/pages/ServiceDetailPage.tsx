@@ -19,6 +19,7 @@ import { navigate } from '../routes'
 import { Button, Mono, Pill, Switch } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
+import { serviceRowStatus, tagSeriesMatches } from '../updateStatus'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -26,19 +27,21 @@ function errorMessage(e: unknown): string {
 }
 
 function svcTone(svc: Service): 'ok' | 'warn' | 'bad' | 'muted' {
-  if (svc.ignore?.matched) return 'bad'
-  if (!svc.candidate) return 'muted'
-  if (svc.candidate.archMatch === 'mismatch') return 'warn'
-  if (svc.candidate.archMatch === 'unknown') return 'warn'
-  return 'ok'
+  const st = serviceRowStatus(svc)
+  if (st === 'updatable') return 'ok'
+  if (st === 'hint' || st === 'crossTag') return 'warn'
+  if (st === 'archMismatch' || st === 'blocked') return 'bad'
+  return 'muted'
 }
 
 function svcBadge(svc: Service): string {
-  if (svc.ignore?.matched) return 'blocked'
-  if (!svc.candidate) return 'no candidate'
-  if (svc.candidate.archMatch === 'mismatch') return 'arch mismatch'
-  if (svc.candidate.archMatch === 'unknown') return 'hint'
-  return 'updatable'
+  const st = serviceRowStatus(svc)
+  if (st === 'blocked') return 'blocked'
+  if (st === 'archMismatch') return 'arch mismatch'
+  if (st === 'crossTag') return 'cross tag'
+  if (st === 'hint') return 'needs confirm'
+  if (st === 'updatable') return 'updatable'
+  return 'no candidate'
 }
 
 function formatMap(map: Record<string, string>) {
@@ -303,11 +306,13 @@ export function ServiceDetailPage(props: {
 
   const bannerTitle = useMemo(() => {
     if (!service) return '加载中…'
-    if (service.ignore?.matched) return '已阻止（忽略规则命中）'
-    if (!service.candidate) return '暂无候选版本'
-    if (service.candidate.archMatch === 'mismatch') return '架构不匹配（仅提示，不允许更新）'
-    if (service.candidate.archMatch === 'unknown') return '新版本提示（同前缀/同 minor）'
-    return '可更新（已发现新 digest）'
+    const st = serviceRowStatus(service)
+    if (st === 'blocked') return '已阻止（忽略规则命中）'
+    if (st === 'ok') return '暂无候选版本'
+    if (st === 'archMismatch') return '架构不匹配（仅提示，不允许更新）'
+    if (st === 'crossTag') return '跨 tag 版本更新（建议确认）'
+    if (st === 'hint') return '需确认（arch 未知 / tag 关系不确定）'
+    return '可更新（匹配当前 tag 序列）'
   }, [service])
 
   const bannerDetail = useMemo(() => {
@@ -320,7 +325,9 @@ export function ServiceDetailPage(props: {
     if (!service.candidate) return `当前: ${current}`
     const cand = `${service.candidate.tag}@${shortDigest(service.candidate.digest)}`
     const arch = service.candidate.arch.length ? ` · arch=${service.candidate.arch.join(',')}` : ''
-    return `当前: ${current} → 候选: ${cand}${arch}`
+    const series = tagSeriesMatches(service.image.tag, service.candidate.tag)
+    const seriesHint = series === false ? ' · cross-tag' : series == null ? ' · tag=?' : ''
+    return `当前: ${current} → 候选: ${cand}${arch}${seriesHint}`
   }, [service])
 
   if (!stack || !service || !settings) {

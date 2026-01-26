@@ -44,6 +44,11 @@ export const ArchMismatch: Story = {
   render: render('stack-infra', 'svc-infra-prom'),
 }
 
+export const CrossTag: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-infra', 'svc-infra-postgres'),
+}
+
 export const Blocked: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
   render: render('stack-prod', 'svc-prod-worker'),

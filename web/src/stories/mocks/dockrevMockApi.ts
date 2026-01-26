@@ -156,7 +156,7 @@ function buildDashboardDemo(): Fixture {
     id: 'svc-infra-loki',
     name: 'loki',
     image: { ref: 'ghcr.io/grafana/loki', tag: '2.9.0', digest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111' },
-    candidate: { tag: '2.10.0', digest: 'sha256:2222222222222222222222222222222222222222222222222222222222222222', archMatch: 'unknown', arch: ['linux/amd64', 'linux/arm64'] },
+    candidate: { tag: '2.9.1', digest: 'sha256:2222222222222222222222222222222222222222222222222222222222222222', archMatch: 'unknown', arch: ['linux/amd64', 'linux/arm64'] },
     ignore: null,
     settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} } },
   } satisfies StackDetail['services'][number]
@@ -170,11 +170,20 @@ function buildDashboardDemo(): Fixture {
     settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} } },
   } satisfies StackDetail['services'][number]
 
+  const infraSvcC = {
+    id: 'svc-infra-postgres',
+    name: 'postgres',
+    image: { ref: 'docker.io/library/postgres', tag: '16', digest: d('p', '16') },
+    candidate: { tag: '18.1', digest: d('p', '18'), archMatch: 'match', arch: ['linux/amd64'] },
+    ignore: null,
+    settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} } },
+  } satisfies StackDetail['services'][number]
+
   const infraDetail = {
     id: infraStackId,
     name: 'infra',
     compose: { type: 'path', composeFiles: ['/srv/app/compose.yml'], envFile: '/srv/app/.env' },
-    services: [infraSvcA, infraSvcB],
+    services: [infraSvcA, infraSvcB, infraSvcC],
   } satisfies StackDetail
 
   const prodListItem = {
@@ -212,6 +221,7 @@ function buildDashboardDemo(): Fixture {
     [serviceProdWorker.id]: serviceProdWorker.settings,
     [infraSvcA.id]: infraSvcA.settings,
     [infraSvcB.id]: infraSvcB.settings,
+    [infraSvcC.id]: infraSvcC.settings,
   }
 
   const job1 = {

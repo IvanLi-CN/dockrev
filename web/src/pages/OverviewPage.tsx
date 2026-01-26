@@ -10,50 +10,13 @@ import {
   type StackListItem,
 } from '../api'
 import { navigate } from '../routes'
-import { Button, Mono } from '../ui'
+import { Button, Mono, StatusRemark } from '../ui'
 import { FilterChips } from '../Shell'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
+import { serviceRowStatus, type RowStatus } from '../updateStatus'
 
-type RowStatus = 'ok' | 'updatable' | 'hint' | 'archMismatch' | 'blocked'
 type Filter = 'all' | Exclude<RowStatus, 'ok'>
-
-function serviceStatus(svc: Service): RowStatus {
-  if (svc.ignore?.matched) return 'blocked'
-  if (!svc.candidate) return 'ok'
-  if (svc.candidate.archMatch === 'mismatch') return 'archMismatch'
-  if (svc.candidate.archMatch === 'unknown') return 'hint'
-  return 'updatable'
-}
-
-function statusDotClass(st: RowStatus): string {
-  if (st === 'updatable') return 'statusDot statusDotOk'
-  if (st === 'hint') return 'statusDot statusDotWarn'
-  if (st === 'archMismatch') return 'statusDot statusDotWarn'
-  if (st === 'blocked') return 'statusDot statusDotBad'
-  return 'statusDot'
-}
-
-function statusLabel(st: RowStatus): string {
-  if (st === 'updatable') return '可更新'
-  if (st === 'hint') return '新版本提示'
-  if (st === 'archMismatch') return '架构不匹配'
-  if (st === 'blocked') return '被阻止'
-  return '无更新'
-}
-
-function noteFor(svc: Service, st: RowStatus): string {
-  if (st === 'blocked') return svc.ignore?.reason ?? '被阻止'
-  if (st === 'archMismatch') return '仅提示，不允许更新'
-  if (st === 'hint') return '同级别/新 minor'
-  if (st === 'updatable') {
-    const hasForceBackup =
-      Object.values(svc.settings.backupTargets.bindPaths).some((v) => v === 'force') ||
-      Object.values(svc.settings.backupTargets.volumeNames).some((v) => v === 'force')
-    return hasForceBackup ? '备份通过后执行' : '按当前 tag 前缀'
-  }
-  return '-'
-}
 
 function formatDigestShort(digest: string | null | undefined): string | null {
   if (!digest) return null
@@ -86,7 +49,8 @@ function StackIcon(props: { variant: 'collapsed' | 'expanded' }) {
 function formatGroupSummary(services: number, counts: Record<Exclude<RowStatus, 'ok'>, number>) {
   const parts: string[] = [`${services} services`]
   if (counts.updatable > 0) parts.push(`${counts.updatable} 可更新`)
-  if (counts.hint > 0) parts.push(`${counts.hint} 新版本提示`)
+  if (counts.crossTag > 0) parts.push(`${counts.crossTag} 跨 tag 版本`)
+  if (counts.hint > 0) parts.push(`${counts.hint} 需确认`)
   if (counts.archMismatch > 0) parts.push(`${counts.archMismatch} 架构不匹配`)
   if (counts.blocked > 0) parts.push(`${counts.blocked} 被阻止`)
   return parts.join(' · ')
@@ -168,13 +132,19 @@ export function OverviewPage(props: {
   }, [refresh])
 
   const countsAll = useMemo(() => {
-    const c: Record<Exclude<RowStatus, 'ok'>, number> = { updatable: 0, hint: 0, archMismatch: 0, blocked: 0 }
+    const c: Record<Exclude<RowStatus, 'ok'>, number> = {
+      updatable: 0,
+      hint: 0,
+      crossTag: 0,
+      archMismatch: 0,
+      blocked: 0,
+    }
     for (const st of stacks) {
       const d = details[st.id]
       if (!d) continue
       for (const svc of d.services) {
         if (svc.archived) continue
-        const stt = serviceStatus(svc)
+        const stt = serviceRowStatus(svc)
         if (stt === 'ok') continue
         c[stt] += 1
       }
@@ -184,15 +154,15 @@ export function OverviewPage(props: {
 
   const allApply = useMemo(() => {
     if (countsAll.updatable > 0) return { enabled: true, note: null as string | null, title: null as string | null }
-    if (countsAll.hint > 0) {
+    if (countsAll.hint > 0 || countsAll.crossTag > 0) {
       return {
         enabled: true,
-        note: '存在未确认是否有更新的服务；将由服务端计算是否实际变更',
-        title: '存在未确认是否有更新的服务；将由服务端计算是否实际变更',
+        note: '存在需确认/跨 tag 的候选；将由服务端计算是否实际变更',
+        title: '存在需确认/跨 tag 的候选；将由服务端计算是否实际变更',
       }
     }
     return { enabled: false, note: null as string | null, title: '无可更新服务' }
-  }, [countsAll.hint, countsAll.updatable])
+  }, [countsAll.crossTag, countsAll.hint, countsAll.updatable])
 
   const triggerApply = useCallback(
     async (input: { scope: 'all' | 'stack' | 'service'; stackId?: string; serviceId?: string; targetLabel: string }) => {
@@ -278,12 +248,17 @@ export function OverviewPage(props: {
         <div className="card statCard">
           <div className="label">可更新</div>
           <div className="statNum">{countsAll.updatable}</div>
-          <div className="muted">需要确认后执行</div>
+          <div className="muted">匹配当前 tag 序列</div>
         </div>
         <div className="card statCard">
-          <div className="label">新版本提示</div>
+          <div className="label">需确认</div>
           <div className="statNum">{countsAll.hint}</div>
-          <div className="muted">同级别/新 minor</div>
+          <div className="muted">arch 未知/无法推断</div>
+        </div>
+        <div className="card statCard">
+          <div className="label">跨 tag 版本</div>
+          <div className="statNum">{countsAll.crossTag}</div>
+          <div className="muted">候选不匹配当前序列</div>
         </div>
         <div className="card statCard">
           <div className="label">架构不匹配</div>
@@ -307,7 +282,8 @@ export function OverviewPage(props: {
             items={[
               { key: 'all', label: '全部' },
               { key: 'updatable', label: '可更新', count: countsAll.updatable },
-              { key: 'hint', label: '新版本提示', count: countsAll.hint },
+              { key: 'hint', label: '需确认', count: countsAll.hint },
+              { key: 'crossTag', label: '跨 tag 版本', count: countsAll.crossTag },
               { key: 'archMismatch', label: '架构不匹配', count: countsAll.archMismatch },
               { key: 'blocked', label: '被阻止', count: countsAll.blocked },
             ]}
@@ -329,13 +305,19 @@ export function OverviewPage(props: {
 
             const rows = d.services
               .filter((svc) => !svc.archived)
-              .map((svc) => ({ svc, stt: serviceStatus(svc) }))
+              .map((svc) => ({ svc, stt: serviceRowStatus(svc) }))
               .filter((x) => filter === 'all' || x.stt === filter)
 
-            const counts: Record<Exclude<RowStatus, 'ok'>, number> = { updatable: 0, hint: 0, archMismatch: 0, blocked: 0 }
+            const counts: Record<Exclude<RowStatus, 'ok'>, number> = {
+              updatable: 0,
+              hint: 0,
+              crossTag: 0,
+              archMismatch: 0,
+              blocked: 0,
+            }
             for (const svc of d.services) {
               if (svc.archived) continue
-              const stt = serviceStatus(svc)
+              const stt = serviceRowStatus(svc)
               if (stt === 'ok') continue
               counts[stt] += 1
             }
@@ -346,8 +328,8 @@ export function OverviewPage(props: {
             const stackApply =
               counts.updatable > 0
                 ? { enabled: true, title: null as string | null }
-                : counts.hint > 0
-                  ? { enabled: true, title: '存在未确认是否有更新的服务；将由服务端计算是否实际变更' }
+                : counts.hint > 0 || counts.crossTag > 0
+                  ? { enabled: true, title: '存在需确认/跨 tag 的候选；将由服务端计算是否实际变更' }
                   : { enabled: false, title: '无可更新服务' }
 
             return (
@@ -398,6 +380,8 @@ export function OverviewPage(props: {
                       const svcApply =
                         stt === 'updatable'
                           ? { enabled: true, title: null as string | null, note: null as string | null }
+                          : stt === 'crossTag'
+                            ? { enabled: true, title: '跨 tag 版本更新；请确认风险后执行', note: '跨 tag' }
                           : stt === 'hint'
                             ? { enabled: true, title: '未确认是否有更新；将由服务端计算是否实际变更', note: '未确认' }
                             : stt === 'ok'
@@ -428,13 +412,7 @@ export function OverviewPage(props: {
                             <div className="mono">{current}</div>
                             <div className="mono">{candidate}</div>
                           </div>
-                          <div className="statusCol">
-                            <div className="statusLine">
-                              <span className={statusDotClass(stt)} aria-hidden="true" />
-                              <span className="label">{statusLabel(stt)}</span>
-                            </div>
-                            <div className="muted statusNote">{noteFor(svc, stt)}</div>
-                          </div>
+                          <StatusRemark service={svc} status={stt} />
                           <div
                             className="actionCell"
                             onClick={(e) => e.stopPropagation()}
