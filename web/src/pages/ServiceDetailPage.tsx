@@ -174,7 +174,7 @@ export function ServiceDetailPage(props: {
               预览更新
             </Button>
             <Button
-              variant="danger"
+              variant="primary"
               disabled={
                 busy ||
                 !service ||
@@ -244,7 +244,9 @@ export function ServiceDetailPage(props: {
 	                    ),
 	                    confirmText: '执行更新',
 	                    cancelText: '取消',
-	                    confirmVariant: 'danger',
+	                    confirmVariant: 'primary',
+                      badgeText: '将更新并重启',
+                      badgeTone: 'warn',
 	                  })
                   if (!ok) return
                   setBusy(true)

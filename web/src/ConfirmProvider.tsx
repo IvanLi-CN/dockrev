@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Button, Pill } from './ui'
-import { ConfirmContext, type ConfirmOptions, type ConfirmVariant } from './confirm'
+import { ConfirmContext, type ConfirmBadgeTone, type ConfirmOptions, type ConfirmVariant } from './confirm'
 
 type ConfirmRequest = ConfirmOptions & { resolve: (ok: boolean) => void }
 
@@ -25,6 +25,8 @@ export function ConfirmProvider(props: { children: ReactNode }) {
           confirmText={req.confirmText}
           cancelText={req.cancelText}
           confirmVariant={req.confirmVariant}
+          badgeText={req.badgeText}
+          badgeTone={req.badgeTone}
           onClose={(ok) => {
             req.resolve(ok)
             setReq(null)
@@ -41,6 +43,8 @@ function ConfirmDialog(props: {
   confirmText?: string
   cancelText?: string
   confirmVariant?: ConfirmVariant
+  badgeText?: string
+  badgeTone?: ConfirmBadgeTone
   onClose: (ok: boolean) => void
 }) {
   const cancelRef = useRef<HTMLButtonElement | null>(null)
@@ -48,8 +52,12 @@ function ConfirmDialog(props: {
   const confirmText = props.confirmText ?? '确定'
   const cancelText = props.cancelText ?? '取消'
 
-  const tone: 'warn' | 'bad' | 'muted' =
+  const defaultBadgeTone: ConfirmBadgeTone =
     confirmVariant === 'danger' ? 'bad' : confirmVariant === 'primary' ? 'warn' : 'muted'
+  const badgeTone = props.badgeTone ?? defaultBadgeTone
+
+  const defaultBadgeText = confirmVariant === 'danger' ? '高影响' : confirmVariant === 'primary' ? '将触发任务' : '确认'
+  const badgeText = props.badgeText ?? defaultBadgeText
 
   useEffect(() => {
     cancelRef.current?.focus()
@@ -83,7 +91,7 @@ function ConfirmDialog(props: {
       >
         <div className="modalHeader">
           <div className="modalTitle">{props.title}</div>
-          <Pill tone={tone}>{confirmVariant === 'danger' ? '危险操作' : confirmVariant === 'primary' ? '将触发任务' : '确认'}</Pill>
+          <Pill tone={badgeTone}>{badgeText}</Pill>
         </div>
         <div className="modalBody">{props.body}</div>
         <div className="modalActions">

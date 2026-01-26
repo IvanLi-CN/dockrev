@@ -217,6 +217,9 @@ export function ServicesPage(props: {
       confirmTitle?: string
     }) => {
       const scopeLabel = input.scope === 'stack' ? 'stack' : 'service'
+      const confirmVariant = input.scope === 'service' ? 'primary' : 'danger'
+      const badgeText = input.scope === 'stack' ? '批量更新' : '将更新并重启'
+      const badgeTone = input.scope === 'service' ? 'warn' : 'bad'
       const ok = await confirm({
         title: input.confirmTitle ?? '确认执行更新？',
         body:
@@ -249,7 +252,9 @@ export function ServicesPage(props: {
           ),
         confirmText: '执行更新',
         cancelText: '取消',
-        confirmVariant: 'danger',
+        confirmVariant,
+        badgeText,
+        badgeTone,
       })
       if (!ok) return
 

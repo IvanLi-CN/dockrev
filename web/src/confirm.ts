@@ -1,6 +1,7 @@
 import { createContext, useContext, type ReactNode } from 'react'
 
 export type ConfirmVariant = 'primary' | 'danger' | 'ghost'
+export type ConfirmBadgeTone = 'ok' | 'warn' | 'bad' | 'muted'
 
 export type ConfirmOptions = {
   title: string
@@ -8,6 +9,8 @@ export type ConfirmOptions = {
   confirmText?: string
   cancelText?: string
   confirmVariant?: ConfirmVariant
+  badgeText?: string
+  badgeTone?: ConfirmBadgeTone
 }
 
 export type ConfirmApi = {
@@ -21,4 +24,3 @@ export function useConfirm(): ConfirmApi['confirm'] {
   if (!ctx) throw new Error('useConfirm must be used within ConfirmProvider')
   return ctx.confirm
 }
-
