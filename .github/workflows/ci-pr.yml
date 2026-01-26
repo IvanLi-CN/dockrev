@@ -215,8 +215,10 @@ jobs:
         run: |
           set -euo pipefail
           cargo build -p dockrev-api --bin dockrev --release --locked --target x86_64-unknown-linux-musl
+          cargo build -p dockrev-supervisor --bin dockrev-supervisor --release --locked --target x86_64-unknown-linux-musl
           mkdir -p dist/ci/docker/amd64
           cp target/ci/pr/x86_64-unknown-linux-musl/release/dockrev dist/ci/docker/amd64/dockrev
+          cp target/ci/pr/x86_64-unknown-linux-musl/release/dockrev-supervisor dist/ci/docker/amd64/dockrev-supervisor
 
       - name: Smoke test (linux/amd64 musl)
         shell: bash

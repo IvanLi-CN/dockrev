@@ -2,9 +2,9 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-01-24
-- Last: 2026-01-24
+- Last: 2026-01-25
 
 ## 背景 / 问题陈述
 
@@ -117,7 +117,7 @@
 - Given 自我升级失败（pull/up/healthcheck 超时或 unhealthy）
   When supervisor 执行回滚（如适用）
   Then 自我升级页面展示失败原因与回滚结果，并提供“查看日志/重试”入口
-- Given Dockrev UI 可用但 supervisor 不可用（`GET /supervisor/health` 非 200 或网络失败）
+- Given Dockrev UI 可用但 supervisor 不可用（`GET /supervisor/self-upgrade` 非 2xx（含 401）或网络失败）
   When 用户查看 Dockrev 服务的“升级 Dockrev”入口
   Then UI 显示“自我升级不可用（supervisor offline）”并禁用该入口，且提供“重试检查/查看说明”的可行动提示
 - Given Dockrev 服务在列表中不可见（被归档/被过滤/未展开）
@@ -166,10 +166,10 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: Web UI 增加 all/stack/service 的 apply 更新入口（含确认、busy、错误提示、队列引导）
-- [ ] M2: Web UI 增加自我升级页面与跳转入口（Dockrev service → self-upgrade page）
-- [ ] M3: Supervisor/agent 落地：自我升级执行、状态 API、状态持久化与恢复、失败处理（含回滚策略）
-- [ ] M4: Storybook stories 与 test-storybook 覆盖新增入口（含参数断言）+ 文档同步（README/deploy）
+- [x] M1: Web UI 增加 all/stack/service 的 apply 更新入口（含确认、busy、错误提示、队列引导）
+- [x] M2: Web UI 增加自我升级页面与跳转入口（Dockrev service → self-upgrade page）
+- [x] M3: Supervisor/agent 落地：自我升级执行、状态 API、状态持久化与恢复、失败处理（含回滚策略）
+- [x] M4: Storybook stories 与 test-storybook 覆盖新增入口（含参数断言）+ 文档同步（README/deploy）
 
 ## 方案概述（Approach, high-level）
 
@@ -194,6 +194,16 @@
 ## 变更记录（Change log）
 
 - 2026-01-24: 创建计划，冻结“新增 UI apply 入口 + 自我升级策略设计”范围与验收草案。
+- 2026-01-25: 实现 M1–M4：UI 增加 apply 入口与队列引导；引入 supervisor（/supervisor）用于自我升级；补齐 deploy 与 README；Storybook smoke + 交互断言覆盖。
+- 2026-01-25: 修复 UI runtime config 注入的 XSS 风险（转义 `<` 等字符）；Storybook 交互测试改为等待明确条件，降低 CI 抖动。
+- 2026-01-25: 修复 Storybook mock 兼容 supervisor 绝对 URL（避免误判 offline）；nginx 增加 `/supervisor` → `/supervisor/` 重定向，避免无尾斜杠落入 Dockrev 反代。
+- 2026-01-25: 修复自我升级关键路径：supervisor 目标容器在同镜像多容器场景下可按 compose service 消歧；Dockrev health/version 端口从 `DOCKREV_HTTP_ADDR` 自动推断；`docker compose` 支持绝对路径；UI Dockrev 服务识别改为 repo 前缀匹配。
+- 2026-01-25: 自我升级鲁棒性补强：后台任务异常会把状态落盘为 failed（避免卡在 running）；UI 注入 `dockrevImageRepo`（支持 `DOCKREV_IMAGE_REPO`）；docker/compose 超时依赖 `kill_on_drop`，避免遗留进程。
+- 2026-01-25: 修复自我升级用户可见问题：rollback 不再在失败时误报成功；supervisor 健康探测改为探测需鉴权的 `/self-upgrade`（避免 UI 误判可用）；空 `DOCKREV_SELF_UPGRADE_URL` 视为未设置。
+- 2026-01-25: 自我升级稳定性补强：`docker compose up` 可能重建容器时，health/version 探测会重新解析 target（避免旧 IP 误判失败）；supervisor console 改用 `textContent` 渲染状态/错误，避免 XSS。
+- 2026-01-25: 自我升级兼容性修复：当 compose label 的 `config_files` 路径在 supervisor 内不可读时，回退到 `DOCKREV_SUPERVISOR_TARGET_COMPOSE_FILES`；rollback 在无 digest 场景下使用上一次运行镜像引用而不是 `/api/version`，避免构造无效镜像 tag。
+- 2026-01-25: 文档修正：UI 启用“升级 Dockrev”的探测口径为 `GET {selfUpgradeBaseUrl}/self-upgrade`，并补充 `DOCKREV_IMAGE_REPO` 的说明。
+- 2026-01-25: 体验与容错：`POST /api/updates` 改为创建 job 后后台执行（避免 UI 请求超时）；`useSupervisorHealth` 在 `DOCKREV_SELF_UPGRADE_URL` 配置非法时降级为 offline（不抛未处理异常）。
 
 ## 参考（References）
 

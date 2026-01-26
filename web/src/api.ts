@@ -155,6 +155,26 @@ export type NotificationConfig = {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
+export class ApiError extends Error {
+  readonly status: number
+  readonly code?: string
+  readonly details?: unknown
+  readonly bodyText?: string
+
+  constructor(input: { status: number; message: string; code?: string; details?: unknown; bodyText?: string }) {
+    super(input.message)
+    this.name = 'ApiError'
+    this.status = input.status
+    this.code = input.code
+    this.details = input.details
+    this.bodyText = input.bodyText
+  }
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null
+}
+
 async function apiFetch(path: string, init?: RequestInit) {
   const resp = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -165,8 +185,31 @@ async function apiFetch(path: string, init?: RequestInit) {
   })
 
   if (!resp.ok) {
+    const contentType = resp.headers.get('content-type') ?? ''
     const text = await resp.text().catch(() => '')
-    throw new Error(`HTTP ${resp.status}: ${text || resp.statusText}`)
+
+    if (contentType.includes('application/json')) {
+      try {
+        const parsed = (text ? JSON.parse(text) : null) as unknown
+        const err = isRecord(parsed) && isRecord(parsed.error) ? parsed.error : null
+        const code = err && typeof err.code === 'string' ? err.code : undefined
+        const message =
+          err && typeof err.message === 'string'
+            ? err.message
+            : text || resp.statusText || `HTTP ${resp.status}`
+        const details = err ? (err.details as unknown) : undefined
+        throw new ApiError({ status: resp.status, code, message, details, bodyText: text || undefined })
+      } catch (e) {
+        if (e instanceof ApiError) throw e
+        // fall through to plain text error for invalid/unexpected JSON
+      }
+    }
+
+    throw new ApiError({
+      status: resp.status,
+      message: text || resp.statusText || `HTTP ${resp.status}`,
+      bodyText: text || undefined,
+    })
   }
   return resp
 }

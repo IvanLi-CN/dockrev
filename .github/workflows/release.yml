@@ -186,6 +186,8 @@ jobs:
           set -euo pipefail
           cargo build -p dockrev-api --bin dockrev --release --locked
           cargo build -p dockrev-api --bin dockrev --release --locked --target x86_64-unknown-linux-musl
+          cargo build -p dockrev-supervisor --bin dockrev-supervisor --release --locked
+          cargo build -p dockrev-supervisor --bin dockrev-supervisor --release --locked --target x86_64-unknown-linux-musl
 
       - name: Stage docker artifact (linux/amd64 musl)
         shell: bash
@@ -193,6 +195,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist/ci/docker/amd64
           cp target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev dist/ci/docker/amd64/dockrev
+          cp target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev-supervisor dist/ci/docker/amd64/dockrev-supervisor
 
       - name: Smoke test (linux/amd64 musl)
         shell: bash
@@ -208,7 +211,10 @@ jobs:
           path: |
             target/ci/amd64/release/dockrev
             target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev
+            target/ci/amd64/release/dockrev-supervisor
+            target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev-supervisor
             dist/ci/docker/amd64/dockrev
+            dist/ci/docker/amd64/dockrev-supervisor
 
   build-binaries-arm64:
     name: Build binaries (arm64)
@@ -260,6 +266,8 @@ jobs:
           set -euo pipefail
           cargo build -p dockrev-api --bin dockrev --release --locked
           cargo build -p dockrev-api --bin dockrev --release --locked --target aarch64-unknown-linux-musl
+          cargo build -p dockrev-supervisor --bin dockrev-supervisor --release --locked
+          cargo build -p dockrev-supervisor --bin dockrev-supervisor --release --locked --target aarch64-unknown-linux-musl
 
       - name: Stage docker artifact (linux/arm64 musl)
         shell: bash
@@ -267,6 +275,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist/ci/docker/arm64
           cp target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev dist/ci/docker/arm64/dockrev
+          cp target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev-supervisor dist/ci/docker/arm64/dockrev-supervisor
 
       - name: Upload binaries artifact (arm64)
         uses: actions/upload-artifact@v4
@@ -275,7 +284,10 @@ jobs:
           path: |
             target/ci/arm64/release/dockrev
             target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev
+            target/ci/arm64/release/dockrev-supervisor
+            target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev-supervisor
             dist/ci/docker/arm64/dockrev
+            dist/ci/docker/arm64/dockrev-supervisor
 
   publish:
     name: Publish (GHCR + GitHub Release)

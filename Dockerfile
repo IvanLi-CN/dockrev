@@ -47,11 +47,15 @@ RUN case "${TARGETARCH}" in \
   esac \
   && rustup target add "${target}" \
   && cargo build -p dockrev-api --bin dockrev --release --locked --target "${target}" \
-  && cp "target/${target}/release/dockrev" /src/dockrev
+  && cargo build -p dockrev-supervisor --bin dockrev-supervisor --release --locked --target "${target}" \
+  && cp "target/${target}/release/dockrev" /src/dockrev \
+  && cp "target/${target}/release/dockrev-supervisor" /src/dockrev-supervisor
 
 FROM runtime-base AS runtime-prebuilt
 ARG TARGETARCH
 COPY dist/ci/docker/${TARGETARCH}/dockrev /usr/local/bin/dockrev
+COPY dist/ci/docker/${TARGETARCH}/dockrev-supervisor /usr/local/bin/dockrev-supervisor
 
 FROM runtime-base AS runtime
 COPY --from=builder /src/dockrev /usr/local/bin/dockrev
+COPY --from=builder /src/dockrev-supervisor /usr/local/bin/dockrev-supervisor

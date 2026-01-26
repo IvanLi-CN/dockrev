@@ -68,6 +68,8 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
         compose_bin: "docker-compose".to_string(),
         auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
         auth_allow_anonymous_in_dev: true,
+        self_upgrade_url: "/supervisor/".to_string(),
+        dockrev_image_repo: "ghcr.io/ivanli-cn/dockrev".to_string(),
         webhook_secret: Some("secret".to_string()),
         host_platform: Some("linux/amd64".to_string()),
         discovery_interval_seconds: 60,
@@ -427,18 +429,29 @@ services:
             .any(|j| j["id"].as_str().unwrap() == job_id)
     );
 
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/jobs/{job_id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let job = response_json(resp).await;
+    let job = {
+        let mut out = None;
+        for _ in 0..50 {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/api/jobs/{job_id}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), 200);
+            let job = response_json(resp).await;
+            if job["job"]["status"].as_str().unwrap() != "running" {
+                out = Some(job);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        out.expect("job did not finish in time")
+    };
     assert_eq!(job["job"]["id"].as_str().unwrap(), job_id);
     assert!(!job["job"]["logs"].as_array().unwrap().is_empty());
     assert_eq!(
@@ -883,18 +896,29 @@ services:
     let triggered = response_json(resp).await;
     let job_id = triggered["jobId"].as_str().unwrap().to_string();
 
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/jobs/{job_id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let job = response_json(resp).await;
+    let job = {
+        let mut out = None;
+        for _ in 0..50 {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/api/jobs/{job_id}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), 200);
+            let job = response_json(resp).await;
+            if job["job"]["status"].as_str().unwrap() != "running" {
+                out = Some(job);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        out.expect("job did not finish in time")
+    };
     assert_eq!(job["job"]["id"].as_str().unwrap(), job_id);
     assert_eq!(job["job"]["createdBy"].as_str().unwrap(), "webhook");
     assert_eq!(job["job"]["reason"].as_str().unwrap(), "webhook");

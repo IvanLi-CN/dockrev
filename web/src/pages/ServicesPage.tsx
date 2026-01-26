@@ -6,12 +6,16 @@ import {
   restoreService,
   restoreStack,
   triggerCheck,
+  triggerUpdate,
+  ApiError,
   type Service,
   type StackDetail,
   type StackListItem,
 } from '../api'
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
+import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
+import { useSupervisorHealth } from '../useSupervisorHealth'
 
 function formatShort(ts: string) {
   const d = new Date(ts)
@@ -79,6 +83,10 @@ function formatTagDigest(tag: string, digest: string | null | undefined): string
   return d ? `${tag}@${d}` : tag
 }
 
+function isDockrevService(svc: Service): boolean {
+  return isDockrevImageRef(svc.image.ref)
+}
+
 function StackIcon(props: { variant: 'collapsed' | 'expanded' }) {
   return (
     <svg className="stackIcon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -128,7 +136,10 @@ export function ServicesPage(props: {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [search, setSearch] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const supervisor = useSupervisorHealth()
+  const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
 
   const [archivedStacks, setArchivedStacks] = useState<StackListItem[]>([])
   const [archivedDetails, setArchivedDetails] = useState<Record<string, StackDetail | undefined>>({})
@@ -229,6 +240,48 @@ export function ServicesPage(props: {
     )
   }, [busy, onTopActions, refresh])
 
+  const triggerApply = useCallback(
+    async (input: { scope: 'stack' | 'service'; stackId: string; serviceId?: string; targetLabel: string }) => {
+      const scopeLabel = input.scope === 'stack' ? 'stack' : 'service'
+      const ok = window.confirm(
+        [
+          `即将执行更新（mode=apply）`,
+          `scope=${scopeLabel}`,
+          `target=${input.targetLabel}`,
+          '',
+          '提示：将拉取镜像并重启容器；失败可能触发回滚。',
+        ].join('\n'),
+      )
+      if (!ok) return
+
+      setBusy(true)
+      setError(null)
+      setNoticeJobId(null)
+      try {
+        const resp = await triggerUpdate({
+          scope: input.scope,
+          stackId: input.stackId,
+          serviceId: input.serviceId,
+          mode: 'apply',
+          allowArchMismatch: false,
+          backupMode: 'inherit',
+        })
+        setNoticeJobId(resp.jobId)
+      } catch (e: unknown) {
+        if (e instanceof ApiError) {
+          if (e.status === 401) setError('需要登录/鉴权（forward header）')
+          else if (e.status === 409) setError('该 stack 正在更新（禁止并发）')
+          else setError(e.message)
+        } else {
+          setError(e instanceof Error ? e.message : String(e))
+        }
+      } finally {
+        setBusy(false)
+      }
+    },
+    [],
+  )
+
   const groups = useMemo(() => {
     const q = search.trim().toLowerCase()
     const out: Array<{
@@ -318,17 +371,32 @@ export function ServicesPage(props: {
             <div>Image</div>
             <div>Current → Candidate</div>
             <div>状态 / 备注</div>
+            <div>操作</div>
           </div>
 
           {groups.map((g) => {
             const isCollapsed = collapsed[g.stackId] ?? false
             const groupSummary = formatGroupSummary(g.totalServices, g.counts)
+            const stackApply =
+              g.counts.updatable > 0
+                ? { enabled: true, title: null as string | null }
+                : g.counts.hint > 0
+                  ? { enabled: true, title: '存在未确认是否有更新的服务；将由服务端计算是否实际变更' }
+                  : { enabled: false, title: '无可更新服务' }
             return (
               <div key={g.stackId} className={isCollapsed ? 'tableGroup' : 'tableGroup tableGroupExpanded'}>
                 {!isCollapsed ? <GroupGuide rows={g.services.length} /> : null}
-                <button
+                <div
                   className="groupHead"
                   onClick={() => setCollapsed((prev) => ({ ...prev, [g.stackId]: !isCollapsed }))}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      setCollapsed((prev) => ({ ...prev, [g.stackId]: !isCollapsed }))
+                    }
+                  }}
                 >
                   <div className="cellService cellServiceGroup">
                     <StackIcon variant={isCollapsed ? 'collapsed' : 'expanded'} />
@@ -337,17 +405,52 @@ export function ServicesPage(props: {
                   <div className="groupMeta">{groupSummary}</div>
                   <div />
                   <div />
-                </button>
+                  <div
+                    className="actionCell"
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    <Button
+                      variant="ghost"
+                      disabled={busy || !stackApply.enabled}
+                      title={stackApply.title ?? undefined}
+                      onClick={() => {
+                        void triggerApply({ scope: 'stack', stackId: g.stackId, targetLabel: `stack:${g.stackName}` })
+                      }}
+                    >
+                      更新此 stack
+                    </Button>
+                  </div>
+                </div>
 
                 {!isCollapsed
                   ? g.services.map(({ svc, status }) => {
                       const current = formatTagDigest(svc.image.tag, svc.image.digest)
                       const candidate = svc.candidate ? formatTagDigest(svc.candidate.tag, svc.candidate.digest) : '-'
+                      const isDockrev = isDockrevService(svc)
+                      const svcApply =
+                        status === 'updatable'
+                          ? { enabled: true, title: null as string | null }
+                          : status === 'hint'
+                            ? { enabled: true, title: '未确认是否有更新；将由服务端计算是否实际变更' }
+                            : status === 'ok'
+                              ? { enabled: false, title: '无候选版本' }
+                              : status === 'archMismatch'
+                                ? { enabled: false, title: '架构不匹配（仅提示，不允许更新）' }
+                                : { enabled: false, title: svc.ignore?.reason ?? '被阻止' }
                       return (
-                        <button
+                        <div
                           key={svc.id}
                           className="rowLine"
                           onClick={() => navigate({ name: 'service', stackId: g.stackId, serviceId: svc.id })}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault()
+                              navigate({ name: 'service', stackId: g.stackId, serviceId: svc.id })
+                            }
+                          }}
                         >
                           <div className="cellService">
                             <span className="svcBullet" aria-hidden="true" />
@@ -365,7 +468,63 @@ export function ServicesPage(props: {
                             </div>
                             <div className="muted statusNote">{noteFor(svc, status)}</div>
                           </div>
-                        </button>
+                          <div
+                            className="actionCell"
+                            onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => e.stopPropagation()}
+                          >
+                            {isDockrev ? (
+                              <div className="actionStack">
+                                <Button
+                                  variant="ghost"
+                                  disabled={busy || supervisor.state.status !== 'ok'}
+                                  title={
+                                    supervisor.state.status === 'offline'
+                                      ? `自我升级不可用（supervisor offline） · ${supervisor.state.errorAt}`
+                                      : supervisor.state.status === 'checking'
+                                        ? '检查 supervisor 中…'
+                                        : undefined
+                                  }
+                                  onClick={() => {
+                                    window.location.href = selfUpgradeUrl
+                                  }}
+                                >
+                                  升级 Dockrev
+                                </Button>
+                                {supervisor.state.status !== 'ok' ? (
+                                  <Button
+                                    variant="ghost"
+                                    disabled={busy || supervisor.state.status === 'checking'}
+                                    onClick={() => {
+                                      void supervisor.check()
+                                    }}
+                                  >
+                                    重试
+                                  </Button>
+                                ) : null}
+                                {supervisor.state.status === 'offline' ? (
+                                  <div className="muted">supervisor offline · {supervisor.state.errorAt}</div>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                disabled={busy || !svcApply.enabled}
+                                title={svcApply.title ?? undefined}
+                                onClick={() => {
+                                  void triggerApply({
+                                    scope: 'service',
+                                    stackId: g.stackId,
+                                    serviceId: svc.id,
+                                    targetLabel: `service:${g.stackName}/${svc.name}`,
+                                  })
+                                }}
+                              >
+                                执行更新
+                              </Button>
+                            )}
+                          </div>
+                        </div>
                       )
                     })
                   : null}
@@ -439,7 +598,7 @@ export function ServicesPage(props: {
           </div>
         ) : null}
 
-        {archivedServices.length > 0 ? (
+      {archivedServices.length > 0 ? (
           <div style={{ marginTop: 16 }}>
             <div className="muted" style={{ marginBottom: 8 }}>
               已归档 services（按所属 stack 聚合）
@@ -496,6 +655,15 @@ export function ServicesPage(props: {
       </div>
 
       {error ? <div className="error">{error}</div> : null}
+      {noticeJobId ? (
+        <div className="success">
+          已创建更新任务 <Mono>{noticeJobId}</Mono> ·{' '}
+          <Button variant="ghost" disabled={busy} onClick={() => navigate({ name: 'queue' })}>
+            查看队列
+          </Button>
+        </div>
+      ) : null}
+      {busy ? <div className="muted">处理中…</div> : null}
     </div>
   )
 }
