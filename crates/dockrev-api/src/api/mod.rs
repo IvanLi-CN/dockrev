@@ -663,6 +663,10 @@ async fn validate_arch_mismatch_for_update(
     Ok(())
 }
 
+type UpdateStackSummaries = Vec<serde_json::Value>;
+type UpdateBackupsToCleanup = Vec<(String, u32)>;
+type UpdateJobOutcome = (String, UpdateStackSummaries, UpdateBackupsToCleanup);
+
 async fn run_update_job(
     state: Arc<AppState>,
     job_id: String,
@@ -676,7 +680,7 @@ async fn run_update_job(
         if ids.is_empty() { None } else { Some(ids) }
     }
 
-    let outcome: anyhow::Result<(String, Vec<serde_json::Value>, Vec<(String, u32)>)> = async {
+    let outcome: anyhow::Result<UpdateJobOutcome> = async {
         let backup_settings = state.db.get_backup_settings().await?;
         let stack_ids = resolve_stack_ids_for_update(state.as_ref(), &req).await?;
 
