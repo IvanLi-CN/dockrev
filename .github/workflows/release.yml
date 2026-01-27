@@ -336,6 +336,7 @@ jobs:
               echo "missing binary: ${bin}" >&2
               exit 1
             fi
+            chmod +x "${bin}"
             local base="${name}_${ver}_linux_${arch}_${libc}.tar.gz"
             tar -czf "${out_dir}/${base}" -C "$(dirname "${bin}")" "${name}"
             sha256sum "${out_dir}/${base}" > "${out_dir}/${base}.sha256"
