@@ -3,6 +3,8 @@ import { useState } from 'react'
 import { ConfirmProvider } from '../../ConfirmProvider'
 import { useConfirm } from '../../confirm'
 import { Mono } from '../../ui'
+import { UpdateTargetSelect } from '../../components/UpdateTargetSelect'
+import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 
 function ConfirmSandbox() {
   const confirm = useConfirm()
@@ -51,6 +53,7 @@ function ConfirmSandbox() {
           className="btn btnPrimary"
           onClick={() => {
             void (async () => {
+              const selected = { tag: '5.2.4', digest: null as string | null }
               const ok = await confirm({
                 title: '确认更新服务 svc-api？',
                 body: (
@@ -65,11 +68,26 @@ function ConfirmSandbox() {
                       <div className="modalKvValue">
                         <Mono>stack-prod/svc-api</Mono>
                       </div>
-                      <div className="modalKvLabel">当前 → 候选</div>
+                      <div className="modalKvLabel">当前 → 目标</div>
                       <div className="modalKvValue">
-                        <span className="mono" title="v1.2.3@sha256:... → v1.3.0@sha256:...">
-                          v1.2.3 → v1.3.0
+                        <span className="mono">5.2.1</span>
+                        <span className="mono" style={{ opacity: 0.8 }}>
+                          {' '}
+                          →{' '}
                         </span>
+                        <UpdateTargetSelect
+                          serviceId="svc-prod-api"
+                          currentTag="5.2.1"
+                          initialTag="5.2.4"
+                          initialDigest={null}
+                          variant="inline"
+                          showLabel={false}
+                          showComparison={false}
+                          onChange={(next) => {
+                            selected.tag = next.tag
+                            selected.digest = next.digest ?? null
+                          }}
+                        />
                       </div>
                     </div>
                   </>
@@ -80,7 +98,7 @@ function ConfirmSandbox() {
                 badgeText: '将更新并重启',
                 badgeTone: 'warn',
               })
-              setLast(ok ? 'ok' : 'cancel')
+              setLast(ok ? `ok (target=${selected.tag})` : 'cancel')
             })()
           }}
         >
@@ -266,6 +284,7 @@ function WithProvider() {
 const meta: Meta<typeof WithProvider> = {
   title: 'Components/ConfirmDialog',
   component: WithProvider,
+  decorators: [withDockrevMockApi],
 }
 
 export default meta

@@ -105,11 +105,16 @@ export function UpdateTargetSelect(props: {
         {opts?.map((o) => {
           const disabled = !isSelectable(o)
           const series = tagSeriesMatches(currentTag, o.tag)
-          const prefix = series === true ? '✓ ' : series === false ? '· ' : '? '
-          const suffix = o.ignored ? ' (ignored)' : o.archMatch === 'mismatch' ? ' (arch mismatch)' : o.digest ? '' : ' (no digest)'
+          const seriesHint = series === true ? '匹配 tag' : series === false ? '跨 tag' : '未知'
+          const suffixParts: string[] = []
+          suffixParts.push(seriesHint)
+          if (o.ignored) suffixParts.push('ignored')
+          if (o.archMatch === 'mismatch') suffixParts.push('arch mismatch')
+          if (!o.digest) suffixParts.push('no digest')
+          const suffix = suffixParts.length ? ` (${suffixParts.join(', ')})` : ''
           return (
             <option key={o.tag} value={o.tag} disabled={disabled}>
-              {`${prefix}${o.tag}${suffix}`}
+              {`${o.tag}${suffix}`}
             </option>
           )
         })}
