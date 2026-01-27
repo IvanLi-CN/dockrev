@@ -185,6 +185,14 @@ function ConfirmSandbox() {
           className="btn btnDanger"
           onClick={() => {
             void (async () => {
+              const items = Array.from({ length: 12 }, (_, i) => ({
+                name: i === 1 ? 'svc-web' : i === 2 ? 'svc-worker' : `svc-${i + 1}`,
+                ref: i === 1 ? 'ghcr.io/acme/web' : i === 2 ? 'ghcr.io/acme/worker' : 'ghcr.io/acme/app',
+                status: i === 1 ? 'hint' : i === 2 ? 'updatable' : 'updatable',
+                current: i === 0 ? 'v1.2.3' : i === 1 ? 'v2.0.0' : `v0.${i}.0`,
+                next: i === 0 ? 'v1.3.0' : i === 1 ? 'v2.0.1' : `v0.${i}.1`,
+                title: i === 0 ? 'v1.2.3@sha256:... → v1.3.0@sha256:...' : `${`v0.${i}.0`}@sha256:... → ${`v0.${i}.1`}@sha256:...`,
+              }))
               const ok = await confirm({
                 title: '确认执行更新？',
                 body: (
@@ -209,55 +217,22 @@ function ConfirmSandbox() {
                     <div className="modalDivider" />
                     <div className="modalLead">将更新的服务（预览）</div>
                     <div className="modalList">
-                      <div className="modalListItem">
-                        <div className="modalListLeft">
-                          <div className="modalListTitle">
-                            <span className="mono">stack-prod/svc-api</span>
-                            <span className="muted"> · updatable</span>
+                      {items.map((it, idx) => (
+                        <div key={idx} className="modalListItem">
+                          <div className="modalListLeft">
+                            <div className="modalListTitle">
+                              <span className="mono">{`stack-prod/${it.name}`}</span>
+                              <span className="muted">{` · ${it.status}`}</span>
+                            </div>
+                            <div className="muted">
+                              <span className="mono">{it.ref}</span>
+                            </div>
                           </div>
-                          <div className="muted">
-                            <span className="mono">ghcr.io/acme/app</span>
-                          </div>
-                        </div>
-                        <div className="modalListRight">
-                          <span className="mono" title="v1.2.3@sha256:... → v1.3.0@sha256:...">
-                            v1.2.3 → v1.3.0
-                          </span>
-                        </div>
-                      </div>
-                      <div className="modalListItem">
-                        <div className="modalListLeft">
-                          <div className="modalListTitle">
-                            <span className="mono">stack-prod/svc-web</span>
-                            <span className="muted"> · hint</span>
-                          </div>
-                          <div className="muted">
-                            <span className="mono">ghcr.io/acme/web</span>
+                          <div className="modalListRight">
+                            <span className="mono" title={it.title}>{`${it.current} → ${it.next}`}</span>
                           </div>
                         </div>
-                        <div className="modalListRight">
-                          <span className="mono" title="v2.0.0@sha256:... → v2.0.1@sha256:...">
-                            v2.0.0 → v2.0.1
-                          </span>
-                        </div>
-                      </div>
-                      <div className="modalListItem">
-                        <div className="modalListLeft">
-                          <div className="modalListTitle">
-                            <span className="mono">stack-stage/svc-worker</span>
-                            <span className="muted"> · crossTag</span>
-                          </div>
-                          <div className="muted">
-                            <span className="mono">ghcr.io/acme/worker</span>
-                          </div>
-                        </div>
-                        <div className="modalListRight">
-                          <span className="mono" title="v0.9.0@sha256:... → v1.0.0@sha256:...">
-                            v0.9.0 → v1.0.0
-                          </span>
-                        </div>
-                      </div>
-                      <div className="muted">… 以及 2 个</div>
+                      ))}
                     </div>
                     <div className="modalDivider" />
                     <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>

@@ -790,6 +790,9 @@ html[data-theme='light'] .modalOverlay {
   background: var(--panel);
   padding: 18px 18px 16px;
   box-shadow: 0 28px 80px rgba(0, 0, 0, 0.55);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
 }
 
 .modalHeader {
@@ -810,6 +813,8 @@ html[data-theme='light'] .modalOverlay {
   color: var(--muted2);
   font-size: 12px;
   line-height: 1.55;
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .modalLead {
@@ -854,6 +859,10 @@ html[data-theme='light'] .modalOverlay {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  max-height: 260px;
+  overflow: auto;
+  padding-right: 6px;
+  overscroll-behavior: contain;
 }
 
 .modalListItem {

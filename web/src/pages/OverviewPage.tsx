@@ -186,7 +186,7 @@ export function OverviewPage(props: {
     return c
   }, [details, stacks])
 
-  const allCandidatesPreview = useMemo(() => {
+  const allCandidates = useMemo(() => {
     const items: Array<{ stackName: string; svc: Service; status: RowStatus }> = []
     for (const st of stacks) {
       const d = details[st.id]
@@ -199,8 +199,7 @@ export function OverviewPage(props: {
         }
       }
     }
-    const preview = items.slice(0, 8)
-    return { total: items.length, preview }
+    return items
   }, [details, stacks])
 
   const totalServicesAll = useMemo(() => {
@@ -416,7 +415,7 @@ export function OverviewPage(props: {
                 <div className="modalDivider" />
                 <div className="modalLead">将更新的服务（预览）</div>
                 <div className="modalList">
-                  {allCandidatesPreview.preview.map((item) => {
+                  {allCandidates.map((item) => {
                     const current = formatTagOnly(item.svc.image.tag)
                     const candidate = item.svc.candidate ? formatTagOnly(item.svc.candidate.tag) : '-'
                     const title = `${formatTagTooltip(item.svc.image.tag, item.svc.image.digest) ?? item.svc.image.tag} → ${
@@ -441,9 +440,6 @@ export function OverviewPage(props: {
                       </div>
                     )
                   })}
-                  {allCandidatesPreview.total > allCandidatesPreview.preview.length ? (
-                    <div className="muted">{`… 以及 ${allCandidatesPreview.total - allCandidatesPreview.preview.length} 个`}</div>
-                  ) : null}
                 </div>
                 <div className="modalDivider" />
                 <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>
@@ -459,8 +455,7 @@ export function OverviewPage(props: {
   }, [
     allApply.enabled,
     allApply.title,
-    allCandidatesPreview.preview,
-    allCandidatesPreview.total,
+    allCandidates,
     busy,
     countsAll.archMismatch,
     countsAll.blocked,
@@ -626,7 +621,6 @@ export function OverviewPage(props: {
 		                          .filter((svc) => !svc.archived)
 		                          .map((svc) => ({ svc, status: serviceRowStatus(svc) }))
 		                          .filter((x) => x.status === 'updatable' || x.status === 'hint' || x.status === 'crossTag')
-		                        const preview = candidateServices.slice(0, 8)
 		                        const body = (
 		                          <>
 		                            <div className="modalLead">将为该 stack 内服务创建更新任务（服务端会计算是否实际变更）。</div>
@@ -653,7 +647,7 @@ export function OverviewPage(props: {
 		                            <div className="modalDivider" />
 		                            <div className="modalLead">将更新的服务（预览）</div>
 		                            <div className="modalList">
-		                              {preview.map((item) => {
+		                              {candidateServices.map((item) => {
 		                                const current = formatTagOnly(item.svc.image.tag)
 		                                const candidate = item.svc.candidate ? formatTagOnly(item.svc.candidate.tag) : '-'
 		                                const title = `${formatTagTooltip(item.svc.image.tag, item.svc.image.digest) ?? item.svc.image.tag} → ${
@@ -678,9 +672,6 @@ export function OverviewPage(props: {
 		                                  </div>
 		                                )
 		                              })}
-		                              {candidateServices.length > preview.length ? (
-		                                <div className="muted">{`… 以及 ${candidateServices.length - preview.length} 个`}</div>
-		                              ) : null}
 		                            </div>
 		                            <div className="modalDivider" />
 		                            <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>
