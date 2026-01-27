@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { listServiceCandidates, type ServiceCandidateOption } from '../api'
 import { Mono } from '../ui'
 import { tagSeriesMatches } from '../updateStatus'
@@ -21,6 +21,10 @@ export function UpdateTargetSelect(props: {
   onChange: (next: SelectedTarget) => void
 }) {
   const { serviceId, currentTag, initialTag, initialDigest, onChange } = props
+  const onChangeRef = useRef(onChange)
+  useEffect(() => {
+    onChangeRef.current = onChange
+  }, [onChange])
   const [opts, setOpts] = useState<ServiceCandidateOption[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
@@ -71,8 +75,8 @@ export function UpdateTargetSelect(props: {
   useEffect(() => {
     if (!opts) return
     if (selectable.length === 0) return
-    onChange({ tag: effectiveTag, digest: effectiveDigest })
-  }, [effectiveDigest, effectiveTag, onChange, opts, selectable.length])
+    onChangeRef.current({ tag: effectiveTag, digest: effectiveDigest })
+  }, [effectiveDigest, effectiveTag, opts, selectable.length])
 
   return (
     <div className="targetSelect">
@@ -95,7 +99,7 @@ export function UpdateTargetSelect(props: {
                 const nextTag = e.target.value
                 setSelectedTag(nextTag)
                 const hit = (opts ?? []).find((o) => o.tag === nextTag) ?? null
-                onChange({ tag: nextTag, digest: hit?.digest ?? null })
+                onChangeRef.current({ tag: nextTag, digest: hit?.digest ?? null })
               }}
             >
               {opts?.map((o) => {
