@@ -123,6 +123,7 @@ See `deploy/README.md` for a minimal Docker Compose deployment.
 
 - GHCR: `ghcr.io/ivanli-cn/dockrev:<semver>` (single image)
 - The `Release` workflow runs only via `workflow_run` after `CI (main)` succeeds on `main`
+- The `Release` workflow cleans up Actions artifacts after a successful run; on non-success, it keeps key artifacts with `retention-days: 1` and deletes `*.dockerbuild` build records to avoid long-tail storage usage
 - Automatic releases are gated by PR intent labels (exactly one required on PRs targeting `main`):
   - `type:docs` / `type:skip` → skip release
   - `type:patch` / `type:minor` / `type:major` → publish with the corresponding semver bump

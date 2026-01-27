@@ -4,7 +4,7 @@
 
 - Status: 部分完成（2/3）
 - Created: 2026-01-26
-- Last: 2026-01-26
+- Last: 2026-01-27
 
 ## 背景 / 问题陈述
 
@@ -118,6 +118,7 @@ None
 
 - 2026-01-26: 创建计划。
 - 2026-01-26: 实现 M1+M2：`upload-artifact` 兜底 `retention-days: 1`；新增 `cleanup-artifacts` job（成功清空 artifacts；失败保留关键 artifacts、删除 `*.dockerbuild`）。
+- 2026-01-27: 补充文档说明（仓库 README）；确认 Release run `21369236545` 为 `should_release=false`（build/publish/cleanup 均 skipped），因此仍需一次真实的 `should_release=true` Release run 完成成功/失败两条路径验证。
 
 ## 参考（References）
 
