@@ -216,17 +216,13 @@ export function ServiceDetailPage(props: {
 	                          <div className="modalKvValue">
 	                            <Mono>{service.image.ref}</Mono>
 	                          </div>
-                            <div className="modalKvLabel">当前版本</div>
-                            <div className="modalKvValue">
-                              <span
-                                className="mono"
-                                title={service.image.digest ? `${service.image.tag}@${service.image.digest.slice(0, 12)}` : service.image.tag}
-                              >
-                                {service.image.tag}
-                              </span>
-                            </div>
 	                          <div className="modalKvLabel">目标版本</div>
 	                          <div className="modalKvValue">
+                              <span className="mono">{service.image.tag}</span>
+                              <span className="mono" style={{ opacity: 0.8 }}>
+                                {' '}
+                                →{' '}
+                              </span>
                               <UpdateTargetSelect
                                 serviceId={service.id}
                                 currentTag={service.image.tag}
@@ -234,6 +230,7 @@ export function ServiceDetailPage(props: {
                                 initialDigest={service.candidate?.digest ?? null}
                                 variant="inline"
                                 showLabel={false}
+                                showComparison={false}
                                 onChange={(next) => {
                                   selected.tag = next.tag
                                   selected.digest = next.digest ?? null

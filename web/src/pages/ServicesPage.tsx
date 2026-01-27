@@ -681,17 +681,13 @@ export function ServicesPage(props: {
 	                                        <div className="modalKvValue">
 	                                          <Mono>{svc.image.ref}</Mono>
 	                                        </div>
-                                          <div className="modalKvLabel">当前版本</div>
-                                          <div className="modalKvValue">
-                                            <span
-                                              className="mono"
-                                              title={svc.image.digest ? `${svc.image.tag}@${svc.image.digest.slice(0, 12)}` : svc.image.tag}
-                                            >
-                                              {svc.image.tag}
-                                            </span>
-                                          </div>
 	                                        <div className="modalKvLabel">目标版本</div>
 	                                        <div className="modalKvValue">
+                                            <span className="mono">{svc.image.tag}</span>
+                                            <span className="mono" style={{ opacity: 0.8 }}>
+                                              {' '}
+                                              →{' '}
+                                            </span>
                                               <UpdateTargetSelect
                                                 serviceId={svc.id}
                                                 currentTag={svc.image.tag}
@@ -699,6 +695,7 @@ export function ServicesPage(props: {
                                                 initialDigest={svc.candidate?.digest ?? null}
                                                 variant="inline"
                                                 showLabel={false}
+                                                showComparison={false}
                                                 onChange={(next) => {
                                                   selected.tag = next.tag
                                                   selected.digest = next.digest ?? null

@@ -837,14 +837,22 @@ export function OverviewPage(props: {
                                         <div className="modalKvValue">
                                           <Mono>{svc.image.ref}</Mono>
                                         </div>
-                                        <div className="modalKvLabel">当前版本</div>
-                                        <div className="modalKvValue">
-                                          <span className="mono" title={currentTitle ?? undefined}>
-                                            {current}
-                                          </span>
-                                        </div>
 	                                        <div className="modalKvLabel">目标版本</div>
 	                                        <div className="modalKvValue">
+                                          <span
+                                            className="mono"
+                                            title={
+                                              `${formatTagTooltip(svc.image.tag, svc.image.digest) ?? svc.image.tag} → ${
+                                                svc.candidate ? formatTagTooltip(svc.candidate.tag, svc.candidate.digest) ?? svc.candidate.tag : '-'
+                                              }`
+                                            }
+                                          >
+                                            {current}
+                                          </span>
+                                          <span className="mono" style={{ opacity: 0.8 }}>
+                                            {' '}
+                                            →{' '}
+                                          </span>
                                           <UpdateTargetSelect
                                             serviceId={svc.id}
                                             currentTag={svc.image.tag}
@@ -852,6 +860,7 @@ export function OverviewPage(props: {
                                             initialDigest={svc.candidate?.digest ?? null}
                                             variant="inline"
                                             showLabel={false}
+                                            showComparison={false}
                                             onChange={(next) => {
                                               selected.tag = next.tag
                                               selected.digest = next.digest ?? null
