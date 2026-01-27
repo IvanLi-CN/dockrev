@@ -20,6 +20,7 @@ import { Button, Mono, Pill, Switch } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { serviceRowStatus, tagSeriesMatches } from '../updateStatus'
+import { UpdateTargetSelect } from '../components/UpdateTargetSelect'
 import { useConfirm } from '../confirm'
 
 function errorMessage(e: unknown): string {
@@ -196,6 +197,7 @@ export function ServiceDetailPage(props: {
               onClick={() => {
                 void (async () => {
 	                  if (!service) return
+                    const selected = { tag: service.candidate?.tag ?? '-', digest: service.candidate?.digest ?? null }
 	                  const ok = await confirm({
 	                    title: `确认更新服务 ${service.name}？`,
 	                    body: (
@@ -214,16 +216,19 @@ export function ServiceDetailPage(props: {
 	                          <div className="modalKvValue">
 	                            <Mono>{service.image.ref}</Mono>
 	                          </div>
-	                          <div className="modalKvLabel">当前 → 候选</div>
+	                          <div className="modalKvLabel">目标版本</div>
 	                          <div className="modalKvValue">
-	                            <span
-	                              className="mono"
-	                              title={
-	                                `${service.image.tag}${service.image.digest ? `@${service.image.digest.includes(':') ? service.image.digest : `sha256:${service.image.digest}`}` : ''} → ${
-	                                  service.candidate ? `${service.candidate.tag}@${service.candidate.digest}` : '-'
-	                                }`
-	                              }
-	                            >{`${service.image.tag} → ${service.candidate ? service.candidate.tag : '-'}`}</span>
+                              <UpdateTargetSelect
+                                serviceId={service.id}
+                                currentTag={service.image.tag}
+                                initialTag={service.candidate?.tag ?? null}
+                                initialDigest={service.candidate?.digest ?? null}
+                                showLabel={false}
+                                onChange={(next) => {
+                                  selected.tag = next.tag
+                                  selected.digest = next.digest ?? null
+                                }}
+                              />
 	                          </div>
 	                          <div className="modalKvLabel">状态</div>
 	                          <div className="modalKvValue">
@@ -257,6 +262,8 @@ export function ServiceDetailPage(props: {
                       scope: 'service',
                       stackId,
                       serviceId,
+                      targetTag: selected.tag !== '-' ? selected.tag : undefined,
+                      targetDigest: selected.digest ?? undefined,
                       mode: 'apply',
                       allowArchMismatch: false,
                       backupMode: 'inherit',

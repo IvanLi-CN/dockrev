@@ -3,13 +3,13 @@ import {
   triggerDiscoveryScan,
   listDiscoveryProjects,
   listJobs,
+  getJob,
   getStack,
   listStacks,
   triggerCheck,
   triggerUpdate,
   ApiError,
   type DiscoveredProject,
-  type DiscoveryScanResponse,
   type JobListItem,
   type Service,
   type StackDetail,
@@ -21,6 +21,7 @@ import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { serviceRowStatus, type RowStatus } from '../updateStatus'
 import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
+import { UpdateTargetSelect } from '../components/UpdateTargetSelect'
 import { useConfirm } from '../confirm'
 
 function formatShort(ts?: string | null) {
@@ -38,6 +39,14 @@ function formatTagTooltip(tag: string, digest: string | null | undefined): strin
   if (!digest) return undefined
   const m = digest.includes(':') ? digest : `sha256:${digest}`
   return `${tag}@${m}`
+}
+
+function getDiscoveryScanStartedAt(summary: unknown): string | null {
+  if (typeof summary !== 'object' || summary === null) return null
+  const scan = (summary as Record<string, unknown>).scan
+  if (typeof scan !== 'object' || scan === null) return null
+  const startedAt = (scan as Record<string, unknown>).startedAt
+  return typeof startedAt === 'string' ? startedAt : null
 }
 
 function isDockrevService(svc: Service): boolean {
@@ -105,12 +114,30 @@ export function OverviewPage(props: {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [jobs, setJobs] = useState<JobListItem[]>([])
   const [discoveredProjects, setDiscoveredProjects] = useState<DiscoveredProject[]>([])
-  const [lastDiscoveryScan, setLastDiscoveryScan] = useState<DiscoveryScanResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
+  const [noticeDiscoveryJobId, setNoticeDiscoveryJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const supervisor = useSupervisorHealth()
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
+
+  const lastDiscoveryScanAt = useMemo(() => {
+    const candidates = jobs
+      .filter((j) => j.type === 'discovery' && j.status === 'success')
+      .sort((a, b) => String(b.finishedAt ?? b.createdAt ?? '').localeCompare(String(a.finishedAt ?? a.createdAt ?? '')))
+    const j = candidates[0]
+    if (!j) return null
+    return getDiscoveryScanStartedAt(j.summary) ?? j.finishedAt ?? j.createdAt ?? null
+  }, [jobs])
+
+  const lastDiscoveryProjectsScanAt = useMemo(() => {
+    const ts = discoveredProjects
+      .map((p) => p.lastScanAt ?? '')
+      .filter(Boolean)
+      .sort()
+      .at(-1)
+    return ts || null
+  }, [discoveredProjects])
 
   const refresh = useCallback(async () => {
     const errors: string[] = []
@@ -276,7 +303,15 @@ export function OverviewPage(props: {
     setError(null)
     try {
       const resp = await triggerDiscoveryScan()
-      setLastDiscoveryScan(resp)
+      setNoticeDiscoveryJobId(resp.jobId)
+      setJobs(await listJobs())
+
+      const started = Date.now()
+      while (Date.now() - started < 60_000) {
+        const job = await getJob(resp.jobId)
+        if (job.status !== 'running') break
+        await new Promise((r) => setTimeout(r, 500))
+      }
       setDiscoveredProjects(await listDiscoveryProjects('exclude'))
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
@@ -291,6 +326,8 @@ export function OverviewPage(props: {
       stackId?: string
       serviceId?: string
       targetLabel: string
+      targetTag?: string
+      targetDigest?: string | null
       confirmBody?: React.ReactNode
       confirmTitle?: string
     }) => {
@@ -345,6 +382,8 @@ export function OverviewPage(props: {
           scope: input.scope,
           stackId: input.stackId,
           serviceId: input.serviceId,
+          targetTag: input.targetTag,
+          targetDigest: input.targetDigest ?? undefined,
           mode: 'apply',
           allowArchMismatch: false,
           backupMode: 'inherit',
@@ -513,7 +552,10 @@ export function OverviewPage(props: {
             <div className="chipStatic">{`active: ${discoverySummary.active.length}`}</div>
             <div className="chipStatic">{`missing: ${discoverySummary.missing.length}`}</div>
             <div className="chipStatic">{`invalid: ${discoverySummary.invalid.length}`}</div>
-            {lastDiscoveryScan ? <div className="chipStatic">{`last scan: ${formatShort(lastDiscoveryScan.startedAt)}`}</div> : null}
+            {lastDiscoveryScanAt ? <div className="chipStatic">{`last scan: ${formatShort(lastDiscoveryScanAt)}`}</div> : null}
+            {!lastDiscoveryScanAt && lastDiscoveryProjectsScanAt ? (
+              <div className="chipStatic">{`last scan: ${formatShort(lastDiscoveryProjectsScanAt)}`}</div>
+            ) : null}
           </div>
           {discoverySummary.issues.length > 0 ? (
             <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -778,6 +820,7 @@ export function OverviewPage(props: {
 	                                disabled={busy || !svcApply.enabled}
 	                                title={svcApply.title ?? undefined}
 	                                onClick={() => {
+                                      const selected = { tag: svc.candidate?.tag ?? '-', digest: svc.candidate?.digest ?? null }
 		                                  const body = (
 		                                    <>
 		                                      <div className="modalLead">将对该服务执行更新（apply）。</div>
@@ -794,16 +837,19 @@ export function OverviewPage(props: {
                                         <div className="modalKvValue">
                                           <Mono>{svc.image.ref}</Mono>
                                         </div>
-	                                        <div className="modalKvLabel">当前 → 候选</div>
+	                                        <div className="modalKvLabel">目标版本</div>
 	                                        <div className="modalKvValue">
-		                                          <span
-		                                            className="mono"
-		                                            title={
-		                                              `${formatTagTooltip(svc.image.tag, svc.image.digest) ?? svc.image.tag} → ${
-		                                                svc.candidate ? formatTagTooltip(svc.candidate.tag, svc.candidate.digest) ?? svc.candidate.tag : '-'
-		                                              }`
-		                                            }
-		                                          >{`${current} → ${candidate}`}</span>
+                                          <UpdateTargetSelect
+                                            serviceId={svc.id}
+                                            currentTag={svc.image.tag}
+                                            initialTag={svc.candidate?.tag ?? null}
+                                            initialDigest={svc.candidate?.digest ?? null}
+                                            showLabel={false}
+                                            onChange={(next) => {
+                                              selected.tag = next.tag
+                                              selected.digest = next.digest ?? null
+                                            }}
+                                          />
 		                                        </div>
                                         <div className="modalKvLabel">状态</div>
                                         <div className="modalKvValue">
@@ -819,6 +865,8 @@ export function OverviewPage(props: {
                                     stackId: st.id,
                                     serviceId: svc.id,
                                     targetLabel: `service:${d.name}/${svc.name}`,
+                                    targetTag: selected.tag !== '-' ? selected.tag : undefined,
+                                    targetDigest: selected.digest,
                                     confirmBody: body,
                                     confirmTitle: `确认更新服务 ${svc.name}？`,
                                   })
@@ -846,6 +894,14 @@ export function OverviewPage(props: {
       {noticeJobId ? (
         <div className="success">
           已创建更新任务 <Mono>{noticeJobId}</Mono> ·{' '}
+          <Button variant="ghost" disabled={busy} onClick={() => navigate({ name: 'queue' })}>
+            查看队列
+          </Button>
+        </div>
+      ) : null}
+      {noticeDiscoveryJobId ? (
+        <div className="success">
+          已创建扫描任务 <Mono>{noticeDiscoveryJobId}</Mono> ·{' '}
           <Button variant="ghost" disabled={busy} onClick={() => navigate({ name: 'queue' })}>
             查看队列
           </Button>

@@ -823,6 +823,47 @@ html[data-theme='light'] .modalOverlay {
   font-weight: 650;
 }
 
+.select {
+  appearance: none;
+  border: 1px solid rgba(229, 231, 235, 0.14);
+  background: rgba(15, 23, 42, 0.35);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.2;
+  outline: none;
+}
+
+.select:disabled {
+  opacity: 0.7;
+}
+
+.targetSelect {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.targetSelectTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.targetSelectLabel {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.targetSelectValue {
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
 .modalKvGrid {
   margin-top: 12px;
   display: grid;

@@ -10,6 +10,15 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
+struct TempFileCleanup(std::path::PathBuf);
+
+impl Drop for TempFileCleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct UpdateOutcome {
     pub status: String,
     pub summary_json: serde_json::Value,
@@ -22,6 +31,9 @@ pub async fn run_update_job(
     scope: &JobScope,
     service_id: Option<&str>,
     mode: &str,
+    target_tag: Option<&str>,
+    target_digest: Option<&str>,
+    allow_arch_mismatch: bool,
 ) -> anyhow::Result<UpdateOutcome> {
     let compose_cfg = ComposeRunnerConfig {
         compose_bin: compose_bin.to_string(),
@@ -31,7 +43,7 @@ pub async fn run_update_job(
         compose: stack.compose.clone(),
     };
 
-    let services = match scope {
+    let mut services = match scope {
         JobScope::All => stack.services.iter().collect::<Vec<_>>(),
         JobScope::Stack => stack.services.iter().collect::<Vec<_>>(),
         JobScope::Service => stack
@@ -40,6 +52,30 @@ pub async fn run_update_job(
             .filter(|s| service_id.is_some_and(|id| id == s.id))
             .collect::<Vec<_>>(),
     };
+
+    // For stack/all updates, only apply to actionable candidates (UI shows others as skipped).
+    if !matches!(scope, JobScope::Service) {
+        services = services
+            .into_iter()
+            .filter(|svc| {
+                if svc.archived.unwrap_or(false) {
+                    return false;
+                }
+                if svc.ignore.as_ref().is_some_and(|i| i.matched) {
+                    return false;
+                }
+                let Some(candidate) = svc.candidate.as_ref() else {
+                    return false;
+                };
+                if !allow_arch_mismatch
+                    && matches!(candidate.arch_match, crate::api::types::ArchMatch::Mismatch)
+                {
+                    return false;
+                }
+                true
+            })
+            .collect();
+    }
 
     if mode == "dry-run" {
         return Ok(UpdateOutcome {
@@ -51,16 +87,29 @@ pub async fn run_update_job(
         });
     }
 
+    let override_path = build_override_file(stack, &services, target_tag, target_digest)?;
+    let _override_cleanup = override_path.as_ref().map(|p| TempFileCleanup(p.clone()));
+    let override_stack = override_path.as_ref().map(|p| ComposeStack {
+        project_name: compose_stack.project_name.clone(),
+        compose: {
+            let mut c = stack.compose.clone();
+            c.compose_files.push(p.to_string_lossy().to_string());
+            c
+        },
+    });
+
     let docker_cfg = docker_runner::DockerRunnerConfig::default();
 
     let mut changed = 0u32;
     let mut old_images = serde_json::Map::new();
     let mut new_images = serde_json::Map::new();
 
+    let compose_for_update = override_stack.as_ref().unwrap_or(&compose_stack);
+
     for svc in services {
         let container_id = run_to_string(
             runner,
-            compose_stack.ps_q_service(&compose_cfg, &svc.name),
+            compose_for_update.ps_q_service(&compose_cfg, &svc.name),
             Duration::from_secs(30),
         )
         .await?;
@@ -80,13 +129,13 @@ pub async fn run_update_job(
 
         run_checked(
             runner,
-            compose_stack.pull_service(&compose_cfg, &svc.name),
+            compose_for_update.pull_service(&compose_cfg, &svc.name),
             Duration::from_secs(300),
         )
         .await?;
         run_checked(
             runner,
-            compose_stack.up_service(&compose_cfg, &svc.name),
+            compose_for_update.up_service(&compose_cfg, &svc.name),
             Duration::from_secs(300),
         )
         .await?;
@@ -157,6 +206,93 @@ pub async fn run_update_job(
             "newDigests": new_images,
         }),
     })
+}
+
+fn build_override_file(
+    stack: &StackRecord,
+    services: &[&crate::api::types::Service],
+    target_tag: Option<&str>,
+    target_digest: Option<&str>,
+) -> anyhow::Result<Option<std::path::PathBuf>> {
+    if services.is_empty() {
+        return Ok(None);
+    }
+
+    let has_explicit_target = target_tag.is_some() || target_digest.is_some();
+
+    let mut lines: Vec<String> = Vec::new();
+    lines.push("services:".to_string());
+
+    let mut any = false;
+    for svc in services {
+        let override_image = if has_explicit_target {
+            let base = strip_tag_and_digest(&svc.image.reference)
+                .unwrap_or_else(|| svc.image.reference.clone());
+            if let Some(d) = target_digest {
+                format!("{base}@{}", normalize_digest(d))
+            } else if let Some(t) = target_tag {
+                replace_tag(&svc.image.reference, t).unwrap_or_else(|| svc.image.reference.clone())
+            } else {
+                svc.image.reference.clone()
+            }
+        } else if let Some(candidate) = svc.candidate.as_ref() {
+            let base = strip_tag_and_digest(&svc.image.reference)
+                .unwrap_or_else(|| svc.image.reference.clone());
+            format!("{base}@{}", normalize_digest(&candidate.digest))
+        } else {
+            continue;
+        };
+
+        any = true;
+        lines.push(format!("  {}:", svc.name));
+        lines.push(format!("    image: {override_image}"));
+    }
+
+    if !any {
+        return Ok(None);
+    }
+
+    let file_name = format!(
+        "dockrev-override-{}-{}.yml",
+        sanitize_project_name(&stack.name),
+        ulid::Ulid::new()
+    );
+    let path = std::env::temp_dir().join(file_name);
+    std::fs::write(&path, lines.join("\n") + "\n")?;
+    Ok(Some(path))
+}
+
+fn normalize_digest(input: &str) -> String {
+    let t = input.trim();
+    if t.is_empty() {
+        return t.to_string();
+    }
+    if t.contains(':') {
+        return t.to_string();
+    }
+    format!("sha256:{t}")
+}
+
+fn strip_tag_and_digest(image_ref: &str) -> Option<String> {
+    let (without_digest, _) = image_ref.split_once('@').unwrap_or((image_ref, ""));
+    let (left, right) = without_digest.rsplit_once(':')?;
+    if right.is_empty() || right.contains('/') || left.is_empty() {
+        return Some(without_digest.to_string());
+    }
+    Some(left.to_string())
+}
+
+fn replace_tag(image_ref: &str, tag: &str) -> Option<String> {
+    let (without_digest, digest) = image_ref.split_once('@').unwrap_or((image_ref, ""));
+    let (left, right) = without_digest.rsplit_once(':')?;
+    if right.is_empty() || right.contains('/') || left.is_empty() {
+        return None;
+    }
+    if digest.is_empty() {
+        Some(format!("{left}:{tag}"))
+    } else {
+        Some(format!("{left}:{tag}@{digest}"))
+    }
 }
 
 async fn wait_healthy(
@@ -311,6 +447,9 @@ mod tests {
             &JobScope::Stack,
             None,
             "dry-run",
+            None,
+            None,
+            false,
         )
         .await
         .unwrap();

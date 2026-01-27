@@ -54,6 +54,18 @@ export type Service = {
   archived?: boolean
 }
 
+export type ServiceCandidateOption = {
+  tag: string
+  digest?: string | null
+  archMatch: ArchMatch
+  arch: string[]
+  ignored: boolean
+}
+
+export type ServiceCandidatesResponse = {
+  candidates: ServiceCandidateOption[]
+}
+
 export type StackDetail = {
   id: string
   name: string
@@ -93,6 +105,10 @@ export type DiscoveryScanResponse = {
     reason?: string | null
     details?: unknown
   }>
+}
+
+export type TriggerDiscoveryScanJobResponse = {
+  jobId: string
 }
 
 export type JobListItem = {
@@ -232,9 +248,9 @@ export async function getStack(stackId: string): Promise<StackDetail> {
   return data.stack as StackDetail
 }
 
-export async function triggerDiscoveryScan(): Promise<DiscoveryScanResponse> {
+export async function triggerDiscoveryScan(): Promise<TriggerDiscoveryScanJobResponse> {
   const resp = await apiFetch('/api/discovery/scan', { method: 'POST', body: '{}' })
-  return (await resp.json()) as DiscoveryScanResponse
+  return (await resp.json()) as TriggerDiscoveryScanJobResponse
 }
 
 export async function listDiscoveryProjects(filter: 'exclude' | 'include' | 'only' = 'exclude'): Promise<DiscoveredProject[]> {
@@ -267,6 +283,12 @@ export async function restoreService(serviceId: string) {
   await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/restore`, { method: 'POST', body: '{}' })
 }
 
+export async function listServiceCandidates(serviceId: string): Promise<ServiceCandidateOption[]> {
+  const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/candidates`)
+  const data = (await resp.json()) as ServiceCandidatesResponse
+  return data.candidates
+}
+
 export async function triggerCheck(scope: string, stackId?: string, serviceId?: string) {
   const resp = await apiFetch('/api/checks', {
     method: 'POST',
@@ -279,6 +301,8 @@ export async function triggerUpdate(input: {
   scope: string
   stackId?: string
   serviceId?: string
+  targetTag?: string
+  targetDigest?: string
   mode: 'apply' | 'dry-run'
   allowArchMismatch: boolean
   backupMode: 'inherit' | 'skip' | 'force'

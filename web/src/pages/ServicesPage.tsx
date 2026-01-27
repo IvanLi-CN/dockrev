@@ -18,6 +18,7 @@ import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { serviceRowStatus, type RowStatus } from '../updateStatus'
 import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
+import { UpdateTargetSelect } from '../components/UpdateTargetSelect'
 import { useConfirm } from '../confirm'
 
 function formatShort(ts: string) {
@@ -213,6 +214,8 @@ export function ServicesPage(props: {
       stackId: string
       serviceId?: string
       targetLabel: string
+      targetTag?: string
+      targetDigest?: string | null
       confirmBody?: React.ReactNode
       confirmTitle?: string
     }) => {
@@ -266,6 +269,8 @@ export function ServicesPage(props: {
           scope: input.scope,
           stackId: input.stackId,
           serviceId: input.serviceId,
+          targetTag: input.targetTag,
+          targetDigest: input.targetDigest ?? undefined,
           mode: 'apply',
           allowArchMismatch: false,
           backupMode: 'inherit',
@@ -659,8 +664,7 @@ export function ServicesPage(props: {
 	                                disabled={busy || !svcApply.enabled}
 	                                title={svcApply.title ?? undefined}
 	                                onClick={() => {
-	                                  const current = formatTagOnly(svc.image.tag)
-	                                  const candidate = svc.candidate ? formatTagOnly(svc.candidate.tag) : '-'
+	                                  const selected = { tag: svc.candidate?.tag ?? '-', digest: svc.candidate?.digest ?? null }
 	                                  const body = (
 	                                    <>
 	                                      <div className="modalLead">将对该服务执行更新（apply）。</div>
@@ -677,16 +681,19 @@ export function ServicesPage(props: {
 	                                        <div className="modalKvValue">
 	                                          <Mono>{svc.image.ref}</Mono>
 	                                        </div>
-	                                        <div className="modalKvLabel">当前 → 候选</div>
+	                                        <div className="modalKvLabel">目标版本</div>
 	                                        <div className="modalKvValue">
-	                                          <span
-	                                            className="mono"
-	                                            title={
-	                                              `${formatTagTooltip(svc.image.tag, svc.image.digest) ?? svc.image.tag} → ${
-	                                                svc.candidate ? formatTagTooltip(svc.candidate.tag, svc.candidate.digest) ?? svc.candidate.tag : '-'
-	                                              }`
-	                                            }
-	                                          >{`${current} → ${candidate}`}</span>
+                                              <UpdateTargetSelect
+                                                serviceId={svc.id}
+                                                currentTag={svc.image.tag}
+                                                initialTag={svc.candidate?.tag ?? null}
+                                                initialDigest={svc.candidate?.digest ?? null}
+                                                showLabel={false}
+                                                onChange={(next) => {
+                                                  selected.tag = next.tag
+                                                  selected.digest = next.digest ?? null
+                                                }}
+                                              />
 	                                        </div>
 		                                        <div className="modalKvLabel">状态</div>
 		                                        <div className="modalKvValue">
@@ -702,6 +709,8 @@ export function ServicesPage(props: {
 	                                    stackId: g.stackId,
 	                                    serviceId: svc.id,
 	                                    targetLabel: `service:${g.stackName}/${svc.name}`,
+                                        targetTag: selected.tag !== '-' ? selected.tag : undefined,
+                                        targetDigest: selected.digest,
 	                                    confirmBody: body,
 	                                    confirmTitle: `确认更新服务 ${svc.name}？`,
 	                                  })

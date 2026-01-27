@@ -33,6 +33,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/stacks/{stack_id}/restore", post(restore_stack))
         .route("/api/services/{service_id}/archive", post(archive_service))
         .route("/api/services/{service_id}/restore", post(restore_service))
+        .route(
+            "/api/services/{service_id}/candidates",
+            get(list_service_candidates),
+        )
         .route("/api/discovery/scan", post(trigger_discovery_scan))
         .route("/api/discovery/projects", get(list_discovery_projects))
         .route(
@@ -226,12 +230,61 @@ async fn restore_service(
 async fn trigger_discovery_scan(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Result<Json<TriggerDiscoveryScanResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
-    let resp = discovery::run_scan(state.as_ref())
-        .await
-        .map_err(map_internal)?;
-    Ok(Json(resp))
+) -> Result<Json<TriggerDiscoveryScanJobResponse>, ApiError> {
+    let user = require_user(&state, &headers)?;
+    let now = now_rfc3339().map_err(map_internal)?;
+
+    let job_id = ids::new_discovery_id();
+    let job = JobRecord::new_running(
+        job_id.clone(),
+        JobType::Discovery,
+        JobScope::All,
+        None,
+        None,
+        &now,
+    );
+
+    let mut job_db = job.to_db();
+    job_db.created_by = user;
+    job_db.reason = "ui".to_string();
+    state.db.insert_job(job_db).await.map_err(map_internal)?;
+
+    let run_state = state.clone();
+    let run_job_id = job_id.clone();
+    tokio::spawn(async move {
+        let finished_at =
+            now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+        let outcome = discovery::run_scan(run_state.as_ref()).await;
+        match outcome {
+            Ok(resp) => {
+                let summary = json!({ "scan": resp });
+                let _ = run_state
+                    .db
+                    .finish_job(&run_job_id, "success", &finished_at, &summary)
+                    .await;
+            }
+            Err(e) => {
+                let _ = run_state
+                    .db
+                    .insert_job_log(
+                        &run_job_id,
+                        &JobLogLine {
+                            ts: finished_at.clone(),
+                            level: "error".to_string(),
+                            msg: format!("discovery scan failed: {e}"),
+                        },
+                    )
+                    .await;
+                let summary = json!({ "error": e.to_string() });
+                let _ = run_state
+                    .db
+                    .finish_job(&run_job_id, "failed", &finished_at, &summary)
+                    .await;
+            }
+        }
+    });
+
+    Ok(Json(TriggerDiscoveryScanJobResponse { job_id }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -552,6 +605,14 @@ async fn trigger_update(
         req.service_id.as_deref(),
     )?;
 
+    if req.target_tag.is_some() || req.target_digest.is_some() {
+        if req.scope != JobScope::Service {
+            return Err(ApiError::invalid_argument(
+                "targetTag/targetDigest is only supported for scope=service",
+            ));
+        }
+    }
+
     let job_id = enqueue_update_job(state, user, req.reason.as_str().to_string(), req, now).await?;
 
     Ok(Json(TriggerUpdateResponse { job_id }))
@@ -639,17 +700,71 @@ async fn validate_arch_mismatch_for_update(
         return Ok(());
     }
 
+    // For stack/all updates we intentionally skip arch-mismatch services (UI shows them as non-actionable),
+    // so only enforce mismatch blocking for service-scoped updates.
+    if req.scope != JobScope::Service {
+        return Ok(());
+    }
+
     for stack_id in stack_ids {
         let Some(stack) = state.db.get_stack(stack_id).await.map_err(map_internal)? else {
             continue;
         };
 
         for svc in &stack.services {
-            if req.scope == JobScope::Service
-                && req.service_id.as_deref().is_some_and(|id| id != svc.id)
-            {
+            if req.service_id.as_deref().is_some_and(|id| id != svc.id) {
                 continue;
             }
+
+            if let Some(tag) = req.target_tag.as_deref() {
+                let img = registry::ImageRef::parse(&svc.image.reference).map_err(|_| {
+                    ApiError::invalid_argument("invalid image ref (expected repo/name:tag)")
+                })?;
+
+                let reference = req.target_digest.as_deref().unwrap_or(tag);
+                let manifest = state
+                    .registry
+                    .get_manifest(&img, reference)
+                    .await
+                    .map_err(map_internal)?;
+                let arch_match = registry::compute_arch_match(
+                    registry::host_platform_override(state.config.host_platform.as_deref())
+                        .unwrap_or_else(|| "linux/amd64".to_string())
+                        .as_str(),
+                    &manifest.arch,
+                );
+                if matches!(arch_match, ArchMatch::Mismatch) {
+                    return Err(ApiError::invalid_argument(
+                        "candidate arch mismatch (set allowArchMismatch=true to override)",
+                    ));
+                }
+                continue;
+            }
+
+            if req.target_digest.is_some() {
+                let img = registry::ImageRef::parse(&svc.image.reference).map_err(|_| {
+                    ApiError::invalid_argument("invalid image ref (expected repo/name:tag)")
+                })?;
+                let reference = req.target_digest.as_deref().unwrap();
+                let manifest = state
+                    .registry
+                    .get_manifest(&img, reference)
+                    .await
+                    .map_err(map_internal)?;
+                let arch_match = registry::compute_arch_match(
+                    registry::host_platform_override(state.config.host_platform.as_deref())
+                        .unwrap_or_else(|| "linux/amd64".to_string())
+                        .as_str(),
+                    &manifest.arch,
+                );
+                if matches!(arch_match, ArchMatch::Mismatch) {
+                    return Err(ApiError::invalid_argument(
+                        "candidate arch mismatch (set allowArchMismatch=true to override)",
+                    ));
+                }
+                continue;
+            }
+
             if let Some(candidate) = svc.candidate.as_ref()
                 && matches!(candidate.arch_match, ArchMatch::Mismatch)
             {
@@ -816,6 +931,9 @@ async fn run_update_job(
                 &req.scope,
                 req.service_id.as_deref(),
                 req.mode.as_str(),
+                req.target_tag.as_deref(),
+                req.target_digest.as_deref(),
+                req.allow_arch_mismatch,
             )
             .await;
             match update_outcome {
@@ -887,30 +1005,6 @@ async fn run_update_job(
                 )
             }
         };
-
-    state
-        .db
-        .finish_job(&job_id, &final_status, &finished_at, &final_summary)
-        .await?;
-
-    if final_status == "success"
-        && let Ok(now_dt) = time::OffsetDateTime::parse(
-            &finished_at,
-            &time::format_description::well_known::Rfc3339,
-        )
-    {
-        for (backup_id, after_seconds) in backups_to_cleanup {
-            let cleanup_after = now_dt + time::Duration::seconds(after_seconds as i64);
-            if let Ok(cleanup_after) =
-                cleanup_after.format(&time::format_description::well_known::Rfc3339)
-            {
-                let _ = state
-                    .db
-                    .schedule_backup_cleanup(&backup_id, &cleanup_after)
-                    .await;
-            }
-        }
-    }
 
     let force_notify = final_status != "success";
     let mut should_notify = true;
@@ -987,6 +1081,30 @@ async fn run_update_job(
                 },
             )
             .await;
+    }
+
+    state
+        .db
+        .finish_job(&job_id, &final_status, &finished_at, &final_summary)
+        .await?;
+
+    if final_status == "success"
+        && let Ok(now_dt) = time::OffsetDateTime::parse(
+            &finished_at,
+            &time::format_description::well_known::Rfc3339,
+        )
+    {
+        for (backup_id, after_seconds) in backups_to_cleanup {
+            let cleanup_after = now_dt + time::Duration::seconds(after_seconds as i64);
+            if let Ok(cleanup_after) =
+                cleanup_after.format(&time::format_description::well_known::Rfc3339)
+            {
+                let _ = state
+                    .db
+                    .schedule_backup_cleanup(&backup_id, &cleanup_after)
+                    .await;
+            }
+        }
     }
 
     if should_notify {
@@ -1207,6 +1325,129 @@ async fn get_service_settings(
         auto_rollback: settings.auto_rollback,
         backup_targets: settings.backup_targets,
     }))
+}
+
+async fn list_service_candidates(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(service_id): Path<String>,
+) -> Result<Json<ServiceCandidatesResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+
+    let stack_id = state
+        .db
+        .get_service_stack_id(&service_id)
+        .await
+        .map_err(map_internal)?;
+    let Some(stack_id) = stack_id else {
+        return Err(ApiError::not_found("service not found"));
+    };
+
+    let stack = state.db.get_stack(&stack_id).await.map_err(map_internal)?;
+    let Some(stack) = stack else {
+        return Err(ApiError::not_found("stack not found"));
+    };
+
+    let svc = stack
+        .services
+        .iter()
+        .find(|s| s.id == service_id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found("service not found"))?;
+
+    let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
+        .unwrap_or_else(|| "linux/amd64".to_string());
+
+    let img = registry::ImageRef::parse(&svc.image.reference)
+        .map_err(|_| ApiError::invalid_argument("invalid image ref (expected repo/name:tag)"))?;
+
+    let ignore_rules = state
+        .db
+        .list_ignore_rules_for_service(&svc.id)
+        .await
+        .map_err(map_internal)?;
+    let matchers = ignore_rules
+        .iter()
+        .map(|r| {
+            let kind = ignore::IgnoreKind::parse(&r.matcher.kind);
+            (
+                r.id.clone(),
+                ignore::IgnoreRuleMatcher {
+                    kind,
+                    value: r.matcher.value.clone(),
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let tags = state.registry.list_tags(&img).await.map_err(map_internal)?;
+
+    let current_tag = svc.image.tag.clone();
+    let current_semver = ignore::parse_version(&current_tag);
+
+    let mut semver_tags: Vec<(semver::Version, String)> = Vec::new();
+    let mut other_tags: Vec<String> = Vec::new();
+
+    for tag in tags {
+        if tag == current_tag {
+            continue;
+        }
+        if let Some(current) = current_semver.as_ref() {
+            if let Some(v) = ignore::parse_version(&tag)
+                && v > *current
+            {
+                semver_tags.push((v, tag));
+            }
+            continue;
+        }
+        other_tags.push(tag);
+    }
+
+    semver_tags.sort_by(|a, b| b.0.cmp(&a.0));
+    other_tags.sort_by(|a, b| b.cmp(a));
+
+    let mut picked: Vec<String> = Vec::new();
+    for (_, tag) in semver_tags {
+        picked.push(tag);
+    }
+    for tag in other_tags {
+        picked.push(tag);
+    }
+
+    // Avoid expensive manifest fan-out.
+    if picked.len() > 30 {
+        picked.truncate(30);
+    }
+
+    let is_ignored = |tag: &str| matchers.iter().any(|(_, m)| m.matches(tag));
+
+    let mut out: Vec<ServiceCandidateOption> = Vec::new();
+    for tag in picked {
+        let ignored = is_ignored(&tag);
+        match state.registry.get_manifest(&img, &tag).await {
+            Ok(m) => {
+                let arch_match = registry::compute_arch_match(&host_platform, &m.arch);
+                out.push(ServiceCandidateOption {
+                    tag,
+                    digest: m.digest,
+                    arch_match,
+                    arch: m.arch,
+                    ignored,
+                });
+            }
+            Err(_) => {
+                out.push(ServiceCandidateOption {
+                    tag,
+                    digest: None,
+                    arch_match: ArchMatch::Unknown,
+                    arch: Vec::new(),
+                    ignored,
+                });
+            }
+        }
+    }
+
+    Ok(Json(ServiceCandidatesResponse { candidates: out }))
 }
 
 async fn put_service_settings(
@@ -1432,6 +1673,8 @@ async fn webhook_trigger(
                 scope,
                 stack_id,
                 service_id,
+                target_tag: None,
+                target_digest: None,
                 mode: UpdateMode::Apply,
                 allow_arch_mismatch,
                 backup_mode,
