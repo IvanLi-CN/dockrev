@@ -450,6 +450,10 @@
   min-width: 0;
 }
 
+.rowLine .cellMono {
+  align-self: center;
+}
+
 .rowLine:hover {
   background: var(--dockrev-surface-strong);
 }
