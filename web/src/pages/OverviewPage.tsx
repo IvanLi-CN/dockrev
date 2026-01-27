@@ -837,6 +837,12 @@ export function OverviewPage(props: {
                                         <div className="modalKvValue">
                                           <Mono>{svc.image.ref}</Mono>
                                         </div>
+                                        <div className="modalKvLabel">当前版本</div>
+                                        <div className="modalKvValue">
+                                          <span className="mono" title={currentTitle ?? undefined}>
+                                            {current}
+                                          </span>
+                                        </div>
 	                                        <div className="modalKvLabel">目标版本</div>
 	                                        <div className="modalKvValue">
                                           <UpdateTargetSelect
@@ -844,6 +850,7 @@ export function OverviewPage(props: {
                                             currentTag={svc.image.tag}
                                             initialTag={svc.candidate?.tag ?? null}
                                             initialDigest={svc.candidate?.digest ?? null}
+                                            variant="inline"
                                             showLabel={false}
                                             onChange={(next) => {
                                               selected.tag = next.tag
