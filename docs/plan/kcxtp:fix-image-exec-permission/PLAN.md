@@ -101,9 +101,9 @@ None
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 修复 Dockerfile：确保 `runtime-prebuilt` 复制的 `dockrev*` 在镜像内为可执行（推荐 `COPY --chmod=0755` 或等价手段）。
-- [ ] M2: 修复 Release workflow：在 `publish` job 下载 artifacts 后、build/push 前补齐 `dockrev*` 可执行位，并增加阻断性校验。
-- [ ] M3: 增加发布前 smoke test：构建并运行镜像验证 `dockrev` 可执行（至少 `linux/amd64`），并将其作为 push 前门槛。
+- [x] M1: 修复 Dockerfile：确保 `runtime-prebuilt` 复制的 `dockrev*` 在镜像内为可执行（推荐 `COPY --chmod=0755` 或等价手段）。
+- [x] M2: 修复 Release workflow：在 `publish` job 下载 artifacts 后、build/push 前补齐 `dockrev*` 可执行位，并增加阻断性校验。
+- [x] M3: 增加发布前 smoke test：构建并运行镜像验证 `dockrev` 可执行（至少 `linux/amd64`），并将其作为 push 前门槛。
 - [ ] M4: 文档更新：说明镜像运行约定；记录已修复版本范围；提示生产侧可在后续变更移除 workaround。
 
 ## 方案概述（Approach, high-level）
@@ -125,3 +125,4 @@ None
 ## 变更记录（Change log）
 
 - 2026-01-28: 创建计划；完成最小 repo 侦察（Dockerfile + Release workflow 路径已定位）。
+- 2026-01-28: 完成 M1+M2+M3：Dockerfile 打包阶段强制 `dockrev*` 可执行；Release push 前校验/补齐 exec bit；新增 amd64 镜像阻断性 smoke test。
