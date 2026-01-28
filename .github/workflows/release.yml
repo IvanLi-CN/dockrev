@@ -490,7 +490,7 @@ jobs:
             -e DOCKREV_DB_PATH="/tmp/dockrev.sqlite3" \
             "${SMOKE_IMAGE}" >/dev/null
 
-          host_port="$(docker port "${name}" 50883/tcp | sed -E 's/.*:([0-9]+)$/\\1/' | head -n1)"
+          host_port="$(docker port "${name}" 50883/tcp | sed -E 's/.*:([0-9]+)$/\1/' | head -n1)"
           if [[ -z "${host_port}" ]]; then
             echo "[smoke] failed to detect mapped host port" >&2
             docker port "${name}" >&2 || true
