@@ -319,6 +319,30 @@ jobs:
           name: binaries-arm64-${{ github.event.workflow_run.head_sha }}
           path: .
 
+      - name: Ensure docker artifacts are executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            dist/ci/docker/amd64/dockrev
+            dist/ci/docker/amd64/dockrev-supervisor
+            dist/ci/docker/arm64/dockrev
+            dist/ci/docker/arm64/dockrev-supervisor
+          )
+
+          for f in "${files[@]}"; do
+            if [[ ! -f "${f}" ]]; then
+              echo "missing docker artifact: ${f}" >&2
+              exit 1
+            fi
+            chmod +x "${f}"
+            if [[ ! -x "${f}" ]]; then
+              echo "docker artifact is not executable after chmod: ${f}" >&2
+              ls -l "${f}" >&2 || true
+              exit 1
+            fi
+          done
+
       - name: Package release assets
         shell: bash
         run: |
@@ -426,6 +450,87 @@ jobs:
             echo "${image}:latest"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Build linux/amd64 image (smoke test; runtime-prebuilt)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: runtime-prebuilt
+          platforms: linux/amd64
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max,ignore-error=true
+          tags: dockrev-smoke:${{ github.run_id }}-${{ github.run_attempt }}
+          build-args: |
+            APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
+
+      - name: Smoke test Docker image (linux/amd64; blocking)
+        shell: bash
+        env:
+          SMOKE_IMAGE: dockrev-smoke:${{ github.run_id }}-${{ github.run_attempt }}
+          APP_EFFECTIVE_VERSION: ${{ env.APP_EFFECTIVE_VERSION }}
+        run: |
+          set -euo pipefail
+
+          name="dockrev-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          cleanup() {
+            local exit_code="$?"
+            trap - EXIT
+            docker rm -f "${name}" >/dev/null 2>&1 || true
+            docker image rm -f "${SMOKE_IMAGE}" >/dev/null 2>&1 || true
+            exit "${exit_code}"
+          }
+          trap cleanup EXIT
+
+          docker run -d \
+            --name "${name}" \
+            -p "127.0.0.1::50883" \
+            -e DOCKREV_HTTP_ADDR="0.0.0.0:50883" \
+            -e DOCKREV_DB_PATH="/tmp/dockrev.sqlite3" \
+            "${SMOKE_IMAGE}" >/dev/null
+
+          host_port="$(docker port "${name}" 50883/tcp | sed -E 's/.*:([0-9]+)$/\1/' | head -n1)"
+          if [[ -z "${host_port}" ]]; then
+            echo "[smoke] failed to detect mapped host port" >&2
+            docker port "${name}" >&2 || true
+            exit 1
+          fi
+          base_url="http://127.0.0.1:${host_port}"
+
+          deadline="$((SECONDS + 30))"
+          while true; do
+            if body="$(curl -fsS "${base_url}/api/health" 2>/dev/null)" && [[ "${body}" == "ok" ]]; then
+              echo "[smoke] health ok"
+              break
+            fi
+
+            if (( SECONDS >= deadline )); then
+              echo "[smoke] timeout waiting for ${base_url}/api/health" >&2
+              docker logs --tail 200 "${name}" >&2 || true
+              exit 1
+            fi
+
+            sleep 0.5
+          done
+
+          ver_json="$(curl -fsS "${base_url}/api/version")"
+          DOCKREV_SMOKE_JSON="${ver_json}" python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          expected = os.environ.get("APP_EFFECTIVE_VERSION")
+          data = json.loads(os.environ["DOCKREV_SMOKE_JSON"])
+          got = data.get("version")
+          if got != expected:
+            print(f"[smoke] version mismatch: got={got} expected={expected}", file=sys.stderr)
+            sys.exit(1)
+          print("[smoke] version ok")
+          PY
+
+          echo "[smoke] passed"
 
       - name: Build and push Docker image (artifact-first)
         uses: docker/build-push-action@v6
