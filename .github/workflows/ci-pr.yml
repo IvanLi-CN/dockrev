@@ -249,4 +249,4 @@ jobs:
         run: |
           set -euo pipefail
           image="dockrev-pr:${{ github.sha }}"
-          docker run --rm "$image" sh -lc 'set -euo pipefail; test -x /usr/local/bin/dockrev; test -x /usr/local/bin/dockrev-supervisor'
+          docker run --rm "$image" sh -lc 'set -eu; test -x /usr/local/bin/dockrev; test -x /usr/local/bin/dockrev-supervisor'

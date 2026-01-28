@@ -477,11 +477,12 @@ jobs:
 
           cleanup() {
             local exit_code="$?"
+            trap - EXIT
             docker rm -f "${name}" >/dev/null 2>&1 || true
             docker image rm -f "${SMOKE_IMAGE}" >/dev/null 2>&1 || true
             exit "${exit_code}"
           }
-          trap cleanup EXIT INT TERM
+          trap cleanup EXIT
 
           docker run -d \
             --name "${name}" \
