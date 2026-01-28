@@ -606,14 +606,26 @@ export function ServicesPage(props: {
                           key={svc.id}
                           className="rowLine"
                           onClick={(e) => {
-                            const el = e.target as HTMLElement | null
+                            const t = e.target as unknown
+                            const el =
+                              t instanceof Element
+                                ? t
+                                : t && (t as { parentElement?: unknown }).parentElement instanceof Element
+                                  ? (t as { parentElement: Element }).parentElement
+                                  : null
                             if (el?.closest('button, a, input, select, textarea')) return
                             navigate({ name: 'service', stackId: g.stackId, serviceId: svc.id })
                           }}
                           role="button"
                           tabIndex={0}
                           onKeyDown={(e) => {
-                            const el = e.target as HTMLElement | null
+                            const t = e.target as unknown
+                            const el =
+                              t instanceof Element
+                                ? t
+                                : t && (t as { parentElement?: unknown }).parentElement instanceof Element
+                                  ? (t as { parentElement: Element }).parentElement
+                                  : null
                             if (el?.closest('button, a, input, select, textarea')) return
                             if (e.key === 'Enter' || e.key === ' ') {
                               e.preventDefault()
