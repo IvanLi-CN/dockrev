@@ -229,15 +229,24 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Docker build (multi-arch; no push)
+      - name: Docker build (single-arch; load; no push)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           platforms: ${{ env.PLATFORMS }}
           push: false
+          load: true
+          tags: dockrev-pr:${{ github.sha }}
           target: runtime-prebuilt
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
           build-args: |
             APP_EFFECTIVE_VERSION=0.0.0-pr
+
+      - name: Docker smoke (verify binaries executable)
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="dockrev-pr:${{ github.sha }}"
+          docker run --rm "$image" sh -lc 'set -euo pipefail; test -x /usr/local/bin/dockrev; test -x /usr/local/bin/dockrev-supervisor'
