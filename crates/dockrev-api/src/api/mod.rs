@@ -252,9 +252,9 @@ async fn trigger_discovery_scan(
     let run_state = state.clone();
     let run_job_id = job_id.clone();
     tokio::spawn(async move {
+        let outcome = discovery::run_scan(run_state.as_ref()).await;
         let finished_at =
             now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
-        let outcome = discovery::run_scan(run_state.as_ref()).await;
         match outcome {
             Ok(resp) => {
                 let summary = json!({ "scan": resp });

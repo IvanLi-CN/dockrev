@@ -275,7 +275,9 @@ fn normalize_digest(input: &str) -> String {
 
 fn strip_tag_and_digest(image_ref: &str) -> Option<String> {
     let (without_digest, _) = image_ref.split_once('@').unwrap_or((image_ref, ""));
-    let (left, right) = without_digest.rsplit_once(':')?;
+    let Some((left, right)) = without_digest.rsplit_once(':') else {
+        return Some(without_digest.to_string());
+    };
     if right.is_empty() || right.contains('/') || left.is_empty() {
         return Some(without_digest.to_string());
     }
@@ -455,5 +457,17 @@ mod tests {
         .unwrap();
         assert_eq!(outcome.status, "success");
         assert_eq!(runner.calls.lock().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn strip_tag_and_digest_handles_digest_only_refs() {
+        assert_eq!(
+            strip_tag_and_digest("alpine@sha256:deadbeef"),
+            Some("alpine".to_string())
+        );
+        assert_eq!(
+            strip_tag_and_digest("ghcr.io/org/web@sha256:deadbeef"),
+            Some("ghcr.io/org/web".to_string())
+        );
     }
 }

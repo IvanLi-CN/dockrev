@@ -216,6 +216,7 @@ export function ServicesPage(props: {
       targetLabel: string
       targetTag?: string
       targetDigest?: string | null
+      getTarget?: () => { targetTag?: string; targetDigest?: string | null }
       confirmBody?: React.ReactNode
       confirmTitle?: string
     }) => {
@@ -261,6 +262,10 @@ export function ServicesPage(props: {
       })
       if (!ok) return
 
+      const finalTarget = input.getTarget
+        ? input.getTarget()
+        : { targetTag: input.targetTag, targetDigest: input.targetDigest }
+
       setBusy(true)
       setError(null)
       setNoticeJobId(null)
@@ -269,8 +274,8 @@ export function ServicesPage(props: {
           scope: input.scope,
           stackId: input.stackId,
           serviceId: input.serviceId,
-          targetTag: input.targetTag,
-          targetDigest: input.targetDigest ?? undefined,
+          targetTag: finalTarget.targetTag,
+          targetDigest: finalTarget.targetDigest ?? undefined,
           mode: 'apply',
           allowArchMismatch: false,
           backupMode: 'inherit',
@@ -716,8 +721,10 @@ export function ServicesPage(props: {
 	                                    stackId: g.stackId,
 	                                    serviceId: svc.id,
 	                                    targetLabel: `service:${g.stackName}/${svc.name}`,
-                                        targetTag: selected.tag !== '-' ? selected.tag : undefined,
-                                        targetDigest: selected.digest,
+	                                    getTarget: () => ({
+	                                      targetTag: selected.tag !== '-' ? selected.tag : undefined,
+	                                      targetDigest: selected.digest,
+	                                    }),
 	                                    confirmBody: body,
 	                                    confirmTitle: `确认更新服务 ${svc.name}？`,
 	                                  })
