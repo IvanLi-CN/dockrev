@@ -4,7 +4,7 @@
 
 ## 快速新增一个计划
 
-1. 分配一个新的四位编号 `ID`（查看下方 Index，取未使用的最小或递增编号）。
+1. 分配一个新的 `ID`（推荐 5 字符 nanoId 风格；兼容旧的四位数字 `0001`–`9999`）。
 2. 新建目录：`docs/plan/<id>:<title>/`（`<title>` 用简短 slug，建议 kebab-case）。
 3. 在该目录下创建 `PLAN.md`（模板见下方“PLAN.md 写法（简要）”）。
 4. 在下方 Index 表新增一行，并把 `Status` 设为 `待设计` 或 `待实现`（取决于是否已冻结验收标准），并填入 `Last`（通常为当天）。
@@ -12,7 +12,9 @@
 ## 目录与命名规则
 
 - 每个计划一个目录：`docs/plan/<id>:<title>/`
-- `<id>`：四位数字（`0001`–`9999`），一经分配不要变更。
+- `<id>`：
+  - 推荐：5 字符 nanoId 风格（避免并行分支/worktree 下的 ID 冲突）。
+  - 兼容：四位数字（`0001`–`9999`）的旧 ID（仓库历史计划仍沿用）。
 - `<title>`：短标题 slug（建议 kebab-case，避免空格与特殊字符）；目录名尽量稳定。
 - 人类可读标题写在 Index 的 `Title` 列；标题变更优先改 `Title`，不强制改目录名。
 
@@ -67,3 +69,4 @@
 | 0012 | Dockrev Web: 一键执行更新（service/stack/all）+ 自我升级策略 | 已完成 | `0012:update-buttons-self-upgrade/PLAN.md` | 2026-01-25 | - |
 | 0013 | CI/CD: GitHub Release 追加发布 `dockrev-supervisor` 二进制包 | 已完成 | `0013:release-supervisor-assets/PLAN.md` | 2026-01-26 | - |
 | 0014 | CI/CD: Release workflow 成功后自动清理 Actions Artifacts | 已完成 | `0014:cleanup-actions-artifacts/PLAN.md` | 2026-01-27 | PR #32, #33, #34；验证：Release run `21397351262`（success→artifacts=0）+ `21396639515`（failure→保留关键 artifacts 且无 `*.dockerbuild`） |
+| kcxtp | CI/CD: 修复 GHCR 镜像 `dockrev` 主程序不可执行（exec bit 丢失） | 待实现 | `kcxtp:fix-image-exec-permission/PLAN.md` | 2026-01-28 | - |
