@@ -226,10 +226,36 @@ async function cmdStop({ port, force }) {
   if (!pidFile) {
     const tcpOpen = await isTcpPortOpen(port)
     if (tcpOpen) {
-      console.error(
-        `Port ${port} is in use but no PID was recorded by this tool; refusing to stop it without --force.`
-      )
-      process.exit(1)
+      const pids = await getListenerPids(port)
+      if (!force) {
+        console.error(
+          `Port ${port} is in use but no PID was recorded by this tool; refusing to stop it without --force.`
+        )
+        process.exit(1)
+      }
+      if (pids.length === 0) {
+        console.error(`Port ${port} is in use but no listening PID was found (lsof unavailable?).`)
+        process.exit(1)
+      }
+      for (const pid of pids) {
+        try {
+          process.kill(pid, 'SIGTERM')
+        } catch {}
+      }
+      const startedAt = Date.now()
+      while (Date.now() - startedAt < 10_000) {
+        if (!(await isTcpPortOpen(port))) break
+        await new Promise((r) => setTimeout(r, 250))
+      }
+      if (await isTcpPortOpen(port)) {
+        for (const pid of pids) {
+          try {
+            process.kill(pid, 'SIGKILL')
+          } catch {}
+        }
+      }
+      console.log(`Stopped Storybook on port ${port} (force).`)
+      return
     }
     console.log(`No Storybook listener found on port ${port}.`)
     return

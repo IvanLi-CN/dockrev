@@ -239,6 +239,11 @@ async function runInteractive({ baseUrl, browser }) {
       )
       await btn.click()
 
+      // The app uses a custom confirm dialog (not the browser's built-in confirm).
+      const modal = page.getByRole('dialog')
+      await modal.waitFor({ timeout: 10_000 })
+      await modal.getByRole('button', { name: '执行更新' }).click()
+
       await page.waitForFunction(() => Boolean(globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest), null, {
         timeout: 10_000,
       })

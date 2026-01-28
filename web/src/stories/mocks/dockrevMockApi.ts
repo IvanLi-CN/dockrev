@@ -156,7 +156,7 @@ function buildDashboardDemo(): Fixture {
     id: 'svc-infra-loki',
     name: 'loki',
     image: { ref: 'ghcr.io/grafana/loki', tag: '2.9.0', digest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111' },
-    candidate: { tag: '2.10.0', digest: 'sha256:2222222222222222222222222222222222222222222222222222222222222222', archMatch: 'unknown', arch: ['linux/amd64', 'linux/arm64'] },
+    candidate: { tag: '2.9.1', digest: 'sha256:2222222222222222222222222222222222222222222222222222222222222222', archMatch: 'unknown', arch: ['linux/amd64', 'linux/arm64'] },
     ignore: null,
     settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} } },
   } satisfies StackDetail['services'][number]
@@ -170,11 +170,20 @@ function buildDashboardDemo(): Fixture {
     settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} } },
   } satisfies StackDetail['services'][number]
 
+  const infraSvcC = {
+    id: 'svc-infra-postgres',
+    name: 'postgres',
+    image: { ref: 'docker.io/library/postgres', tag: '16', digest: d('p', '16') },
+    candidate: { tag: '18.1', digest: d('p', '18'), archMatch: 'match', arch: ['linux/amd64'] },
+    ignore: null,
+    settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} } },
+  } satisfies StackDetail['services'][number]
+
   const infraDetail = {
     id: infraStackId,
     name: 'infra',
     compose: { type: 'path', composeFiles: ['/srv/app/compose.yml'], envFile: '/srv/app/.env' },
-    services: [infraSvcA, infraSvcB],
+    services: [infraSvcA, infraSvcB, infraSvcC],
   } satisfies StackDetail
 
   const prodListItem = {
@@ -212,7 +221,31 @@ function buildDashboardDemo(): Fixture {
     [serviceProdWorker.id]: serviceProdWorker.settings,
     [infraSvcA.id]: infraSvcA.settings,
     [infraSvcB.id]: infraSvcB.settings,
+    [infraSvcC.id]: infraSvcC.settings,
   }
+
+  f.discoveredProjects = [
+    {
+      project: 'missing-compose',
+      status: 'missing',
+      stackId: null,
+      configFiles: ['/srv/missing/docker-compose.yml'],
+      lastSeenAt: nowIso(-600_000),
+      lastScanAt: nowIso(-300_000),
+      lastError: 'compose file not found',
+      archived: false,
+    },
+    {
+      project: 'invalid-compose',
+      status: 'invalid',
+      stackId: null,
+      configFiles: ['/srv/invalid/docker-compose.yml'],
+      lastSeenAt: nowIso(-520_000),
+      lastScanAt: nowIso(-290_000),
+      lastError: 'yaml parse error: unexpected indent',
+      archived: false,
+    },
+  ]
 
   const job1 = {
     id: 'job-1',
@@ -311,8 +344,8 @@ function buildQueueMixed(): Fixture {
       id: input.id,
       type: input.type ?? 'update',
       scope: input.scope ?? 'service',
-      stackId: input.stackId ?? 'stack-prod',
-      serviceId: input.serviceId ?? 'svc-prod-api',
+      stackId: input.stackId !== undefined ? input.stackId : 'stack-prod',
+      serviceId: input.serviceId !== undefined ? input.serviceId : 'svc-prod-api',
       status: input.status,
       createdBy: input.createdBy ?? 'ivan',
       reason: input.reason ?? 'ui',
@@ -328,6 +361,18 @@ function buildQueueMixed(): Fixture {
 
   const jobs: JobListItem[] = [
     makeJob({ id: 'job-running', status: 'running', finishedAt: null, startedAt: nowIso(-20_000), createdAt: nowIso(-40_000) }),
+    makeJob({
+      id: 'job-discovery',
+      type: 'discovery',
+      scope: 'all',
+      stackId: null,
+      serviceId: null,
+      status: 'success',
+      createdAt: nowIso(-90_000),
+      startedAt: nowIso(-89_000),
+      finishedAt: nowIso(-88_000),
+      summary: { scan: { startedAt: nowIso(-89_000), durationMs: 12, summary: {}, actions: [] } },
+    }),
     makeJob({ id: 'job-success', status: 'success' }),
     makeJob({ id: 'job-failed', status: 'failed' }),
     makeJob({ id: 'job-rolled', status: 'rolled_back' }),
@@ -582,13 +627,37 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
     }
 
     // discovery
-    if (method === 'POST' && urlPath === '/api/discovery/scan')
-      return json({
-        startedAt: new Date().toISOString(),
+    if (method === 'POST' && urlPath === '/api/discovery/scan') {
+      jobSeq += 1
+      const jobId = `job-discovery-${jobSeq}`
+      const startedAt = nowIso(-500)
+      const finishedAt = nowIso(-200)
+      const scan = {
+        startedAt,
         durationMs: 12,
         summary: { projectsSeen: 0, stacksCreated: 0, stacksUpdated: 0, stacksSkipped: 0, stacksFailed: 0, stacksMarkedMissing: 0 },
         actions: [],
-      })
+      }
+      const job: JobListItem = {
+        id: jobId,
+        type: 'discovery',
+        scope: 'all',
+        stackId: null,
+        serviceId: null,
+        status: 'success',
+        createdBy: 'ivan',
+        reason: 'ui',
+        createdAt: startedAt,
+        startedAt,
+        finishedAt,
+        allowArchMismatch: false,
+        backupMode: 'inherit',
+        summary: { scan },
+      }
+      f.jobs = [job, ...f.jobs]
+      f.jobById[jobId] = { ...job, logs: [{ ts: startedAt, level: 'info', msg: 'discovery scan finished' }] }
+      return json({ jobId })
+    }
     if (method === 'GET' && (urlPathWithQuery === '/api/discovery/projects' || urlPathWithQuery.startsWith('/api/discovery/projects?'))) {
       const query = url?.search ? url.search.slice(1) : urlPathWithQuery.includes('?') ? urlPathWithQuery.split('?')[1] : ''
       const params = new URLSearchParams(query)
@@ -716,6 +785,29 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
     // web push
     if (method === 'POST' && urlPath === '/api/web-push/subscriptions') return json({ ok: true })
     if (method === 'DELETE' && urlPath === '/api/web-push/subscriptions') return json({ ok: true })
+
+    // service candidates
+    if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/candidates')) {
+      const parts = urlPath.split('/').filter(Boolean)
+      const serviceId = decodeURIComponent(parts[2])
+      const found = findService(serviceId)
+      if (!found) return json({ error: 'not found' }, { status: 404 })
+
+      const base = found.svc.candidate
+      const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
+      const candidates =
+        serviceId === 'svc-prod-api'
+          ? [
+              { tag: '5.3.0', digest: d('b', 'b0'), archMatch: 'match', arch: ['linux/amd64'], ignored: false },
+              { tag: '5.2.4', digest: d('b', 'a0'), archMatch: 'match', arch: ['linux/amd64'], ignored: false },
+              { tag: '5.2.3', digest: d('b', '9f'), archMatch: 'match', arch: ['linux/amd64'], ignored: false },
+            ]
+          : base
+            ? [{ ...base, ignored: false }]
+            : []
+
+      return json({ candidates })
+    }
 
     // service settings
     if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/settings')) {

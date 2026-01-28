@@ -20,6 +20,10 @@ pub fn new_check_id() -> String {
     format!("chk_{}", Ulid::new())
 }
 
+pub fn new_discovery_id() -> String {
+    format!("dsc_{}", Ulid::new())
+}
+
 pub fn new_backup_id() -> String {
     format!("bkp_{}", Ulid::new())
 }

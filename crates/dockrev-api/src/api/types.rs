@@ -245,6 +245,10 @@ pub struct TriggerUpdateRequest {
     pub stack_id: Option<String>,
     #[serde(default)]
     pub service_id: Option<String>,
+    #[serde(default)]
+    pub target_tag: Option<String>,
+    #[serde(default)]
+    pub target_digest: Option<String>,
     pub mode: UpdateMode,
     pub allow_arch_mismatch: bool,
     pub backup_mode: BackupMode,
@@ -338,6 +342,7 @@ impl JobScope {
 #[derive(Clone, Debug)]
 pub enum JobType {
     Check,
+    Discovery,
     Update,
     Rollback,
 }
@@ -346,6 +351,7 @@ impl JobType {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Check => "check",
+            Self::Discovery => "discovery",
             Self::Update => "update",
             Self::Rollback => "rollback",
         }
@@ -354,6 +360,7 @@ impl JobType {
     pub fn from_str(input: &str) -> Self {
         match input {
             "check" => Self::Check,
+            "discovery" => Self::Discovery,
             "rollback" => Self::Rollback,
             _ => Self::Update,
         }
@@ -912,4 +919,28 @@ pub struct TriggerDiscoveryScanResponse {
     pub duration_ms: u64,
     pub summary: DiscoveryScanSummary,
     pub actions: Vec<DiscoveryAction>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerDiscoveryScanJobResponse {
+    pub job_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceCandidatesResponse {
+    pub candidates: Vec<ServiceCandidateOption>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceCandidateOption {
+    pub tag: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+    pub arch_match: ArchMatch,
+    #[serde(default)]
+    pub arch: Vec<String>,
+    pub ignored: bool,
 }

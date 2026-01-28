@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react'
+import type { Service } from './api'
+import { noteFor, statusDotClass, statusLabel, type RowStatus } from './updateStatus'
 
 export function Button(props: {
   variant?: 'primary' | 'danger' | 'ghost'
@@ -58,4 +60,16 @@ export function Mono(props: { children: ReactNode }) {
 
 export function SectionTitle(props: { children: ReactNode }) {
   return <div className="sectionTitle">{props.children}</div>
+}
+
+export function StatusRemark(props: { service: Service; status: RowStatus }) {
+  return (
+    <div className="statusCol">
+      <div className="statusLine">
+        <span className={statusDotClass(props.status)} aria-hidden="true" />
+        <span className="label">{statusLabel(props.status)}</span>
+      </div>
+      <div className="muted statusNote">{noteFor(props.service, props.status)}</div>
+    </div>
+  )
 }

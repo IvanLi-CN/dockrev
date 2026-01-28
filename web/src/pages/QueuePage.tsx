@@ -90,7 +90,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
     <div className="page twoCol">
       <div className="card">
         <div className="sectionRow">
-          <div className="title">更新队列</div>
+          <div className="title">任务队列</div>
           <div className="chipRow" style={{ marginLeft: 'auto' }}>
             {(['all', 'running', 'success', 'failed', 'rolled_back'] as const).map((k) => (
               <button
