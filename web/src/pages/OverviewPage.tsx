@@ -761,10 +761,16 @@ export function OverviewPage(props: {
                         <div
                           key={svc.id}
                           className="rowLine"
-                          onClick={() => navigate({ name: 'service', stackId: st.id, serviceId: svc.id })}
+                          onClick={(e) => {
+                            const el = e.target as HTMLElement | null
+                            if (el?.closest('button, a, input, select, textarea')) return
+                            navigate({ name: 'service', stackId: st.id, serviceId: svc.id })
+                          }}
                           role="button"
                           tabIndex={0}
                           onKeyDown={(e) => {
+                            const el = e.target as HTMLElement | null
+                            if (el?.closest('button, a, input, select, textarea')) return
                             if (e.key === 'Enter' || e.key === ' ') {
                               e.preventDefault()
                               navigate({ name: 'service', stackId: st.id, serviceId: svc.id })
