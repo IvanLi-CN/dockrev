@@ -24,6 +24,7 @@ pub struct UpdateOutcome {
     pub summary_json: serde_json::Value,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_update_job(
     runner: &dyn CommandRunner,
     compose_bin: &str,
@@ -55,26 +56,23 @@ pub async fn run_update_job(
 
     // For stack/all updates, only apply to actionable candidates (UI shows others as skipped).
     if !matches!(scope, JobScope::Service) {
-        services = services
-            .into_iter()
-            .filter(|svc| {
-                if svc.archived.unwrap_or(false) {
-                    return false;
-                }
-                if svc.ignore.as_ref().is_some_and(|i| i.matched) {
-                    return false;
-                }
-                let Some(candidate) = svc.candidate.as_ref() else {
-                    return false;
-                };
-                if !allow_arch_mismatch
-                    && matches!(candidate.arch_match, crate::api::types::ArchMatch::Mismatch)
-                {
-                    return false;
-                }
-                true
-            })
-            .collect();
+        services.retain(|svc| {
+            if svc.archived.unwrap_or(false) {
+                return false;
+            }
+            if svc.ignore.as_ref().is_some_and(|i| i.matched) {
+                return false;
+            }
+            let Some(candidate) = svc.candidate.as_ref() else {
+                return false;
+            };
+            if !allow_arch_mismatch
+                && matches!(candidate.arch_match, crate::api::types::ArchMatch::Mismatch)
+            {
+                return false;
+            }
+            true
+        });
     }
 
     if mode == "dry-run" {

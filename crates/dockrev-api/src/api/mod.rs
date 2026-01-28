@@ -605,12 +605,10 @@ async fn trigger_update(
         req.service_id.as_deref(),
     )?;
 
-    if req.target_tag.is_some() || req.target_digest.is_some() {
-        if req.scope != JobScope::Service {
-            return Err(ApiError::invalid_argument(
-                "targetTag/targetDigest is only supported for scope=service",
-            ));
-        }
+    if (req.target_tag.is_some() || req.target_digest.is_some()) && req.scope != JobScope::Service {
+        return Err(ApiError::invalid_argument(
+            "targetTag/targetDigest is only supported for scope=service",
+        ));
     }
 
     let job_id = enqueue_update_job(state, user, req.reason.as_str().to_string(), req, now).await?;
