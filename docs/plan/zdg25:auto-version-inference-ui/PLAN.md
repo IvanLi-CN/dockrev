@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 部分完成（3/3）
 - Created: 2026-01-29
 - Last: 2026-01-29
 
@@ -127,9 +127,9 @@ None
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 后端 check 采集 runtime digest + 推断 resolvedTag + DB 持久化
-- [ ] M2: HTTP API 返回字段 + Web UI 展示与状态/提示逻辑对齐
-- [ ] M3: 补齐关键单测与前端类型/构建门槛
+- [x] M1: 后端 check 采集 runtime digest + 推断 resolvedTag + DB 持久化
+- [x] M2: HTTP API 返回字段 + Web UI 展示与状态/提示逻辑对齐
+- [x] M3: 补齐关键单测与前端类型/构建门槛
 
 ## 方案概述（Approach, high-level）
 
@@ -149,6 +149,7 @@ None
 ## 变更记录（Change log）
 
 - 2026-01-29: 创建计划并冻结验收/契约；冻结 digest=runtime、resolvedTag=highest semver、resolvedTags=all matches；状态更新为 `待实现`。
+- 2026-01-29: 完成实现与最小验证（后端/前端/关键测试）；状态更新为 `部分完成（3/3）`（待合入主干或创建 PR 追踪）。
 
 ## 参考（References）
 
