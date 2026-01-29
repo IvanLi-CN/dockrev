@@ -25,6 +25,19 @@ export const Default: Story = {
   },
 }
 
+export const ResolvedTag: Story = {
+  parameters: { dockrevApiScenario: 'resolved-tag-demo' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务" pageSubtitle="浮动 tag：latest ≈ resolvedTag">
+        {({ onComposeHint, onTopActions }) => (
+          <ServicesPage onComposeHint={onComposeHint} onTopActions={onTopActions} />
+        )}
+      </PageHarness>
+    )
+  },
+}
+
 export const Empty: Story = {
   parameters: { dockrevApiScenario: 'empty' },
   render: () => {
