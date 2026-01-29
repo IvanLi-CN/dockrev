@@ -74,8 +74,12 @@ pub struct ManifestInfo {
 #[async_trait]
 pub trait RegistryClient: Send + Sync {
     async fn list_tags(&self, image: &ImageRef) -> anyhow::Result<Vec<String>>;
-    async fn get_manifest(&self, image: &ImageRef, reference: &str)
-    -> anyhow::Result<ManifestInfo>;
+    async fn get_manifest(
+        &self,
+        image: &ImageRef,
+        reference: &str,
+        host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo>;
 }
 
 #[derive(Clone)]
@@ -123,6 +127,7 @@ impl RegistryClient for HttpRegistryClient {
         &self,
         image: &ImageRef,
         reference: &str,
+        host_platform: &str,
     ) -> anyhow::Result<ManifestInfo> {
         let scope = format!("repository:{}:pull", image.name);
         let url = format!(
@@ -146,7 +151,7 @@ impl RegistryClient for HttpRegistryClient {
             .map(|s| s.to_string());
 
         let body = resp.text().await?;
-        parse_manifest_json(&body, digest)
+        parse_manifest_json(&body, digest, host_platform)
     }
 }
 
@@ -380,10 +385,15 @@ fn normalize_auth_key(input: &str) -> String {
     }
 }
 
-pub fn parse_manifest_json(body: &str, digest: Option<String>) -> anyhow::Result<ManifestInfo> {
+pub fn parse_manifest_json(
+    body: &str,
+    digest: Option<String>,
+    host_platform: &str,
+) -> anyhow::Result<ManifestInfo> {
     let value: serde_json::Value = serde_json::from_str(body).context("parse manifest json")?;
 
     let mut arch = Vec::new();
+    let mut host_platform_digest: Option<String> = None;
     if let Some(manifests) = value.get("manifests").and_then(|v| v.as_array()) {
         for m in manifests {
             let os = m
@@ -407,6 +417,14 @@ pub fn parse_manifest_json(body: &str, digest: Option<String>) -> anyhow::Result
                 };
                 arch.push(plat);
             }
+
+            let digest = m.get("digest").and_then(|v| v.as_str());
+            if host_platform_digest.is_none()
+                && digest.is_some()
+                && platform_matches(host_platform, os, architecture, variant)
+            {
+                host_platform_digest = digest.map(|s| s.to_string());
+            }
         }
     } else if let (Some(os), Some(architecture)) = (
         value.get("os").and_then(|v| v.as_str()),
@@ -418,7 +436,35 @@ pub fn parse_manifest_json(body: &str, digest: Option<String>) -> anyhow::Result
     arch.sort();
     arch.dedup();
 
+    let digest = host_platform_digest.or(digest);
     Ok(ManifestInfo { digest, arch })
+}
+
+fn platform_matches(
+    host_platform: &str,
+    os: Option<&str>,
+    architecture: Option<&str>,
+    variant: Option<&str>,
+) -> bool {
+    let (Some(os), Some(architecture)) = (os, architecture) else {
+        return false;
+    };
+    let candidate = if let Some(variant) = variant {
+        format!("{os}/{architecture}/{variant}")
+    } else {
+        format!("{os}/{architecture}")
+    };
+    if candidate == host_platform {
+        return true;
+    }
+
+    let host_base = host_platform
+        .split('/')
+        .take(2)
+        .collect::<Vec<_>>()
+        .join("/");
+    let candidate_base = candidate.split('/').take(2).collect::<Vec<_>>().join("/");
+    host_base == candidate_base
 }
 
 pub fn host_platform_override(config_value: Option<&str>) -> Option<String> {
@@ -483,12 +529,13 @@ mod tests {
   "schemaVersion": 2,
   "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
   "manifests": [
-    { "platform": { "architecture": "amd64", "os": "linux" } },
-    { "platform": { "architecture": "arm64", "os": "linux" } }
+    { "digest": "sha256:amd64", "platform": { "architecture": "amd64", "os": "linux" } },
+    { "digest": "sha256:arm64", "platform": { "architecture": "arm64", "os": "linux" } }
   ]
 }"#;
-        let info = parse_manifest_json(json, Some("sha256:deadbeef".to_string())).unwrap();
-        assert_eq!(info.digest.as_deref(), Some("sha256:deadbeef"));
+        let info =
+            parse_manifest_json(json, Some("sha256:deadbeef".to_string()), "linux/amd64").unwrap();
+        assert_eq!(info.digest.as_deref(), Some("sha256:amd64"));
         assert_eq!(info.arch, vec!["linux/amd64", "linux/arm64"]);
     }
 

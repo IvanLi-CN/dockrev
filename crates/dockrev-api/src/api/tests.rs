@@ -32,6 +32,7 @@ impl RegistryClient for FakeRegistry {
         &self,
         _image: &ImageRef,
         reference: &str,
+        _host_platform: &str,
     ) -> anyhow::Result<ManifestInfo> {
         let digest = match reference {
             "5.2" => "sha256:old",
@@ -460,6 +461,48 @@ services:
             .unwrap(),
         "skipped"
     );
+}
+
+#[test]
+fn infer_resolved_tag_picks_highest_semver_and_exposes_all_matches() {
+    let runtime_digest = "sha256:run";
+    let current_tag = "latest";
+    let tags = vec![
+        "latest".to_string(),
+        "v1.0.0-alpha.1".to_string(),
+        "1.0.0".to_string(),
+        "v1.0.0".to_string(),
+        "v0.9.0".to_string(),
+    ];
+
+    let digest_for_tag = |tag: &str| -> Option<&'static str> {
+        match tag {
+            "v1.0.0" => Some("sha256:run"),
+            "1.0.0" => Some("sha256:run"),
+            "v1.0.0-alpha.1" => Some("sha256:run"),
+            "v0.9.0" => Some("sha256:old"),
+            _ => None,
+        }
+    };
+
+    let mut semver_tags: Vec<(semver::Version, String)> = tags
+        .iter()
+        .filter_map(|t| crate::ignore::parse_version(t).map(|v| (v, t.clone())))
+        .collect();
+    semver_tags.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+
+    let mut resolved_tags: Vec<String> = Vec::new();
+    for (_v, tag) in semver_tags {
+        if let Some(d) = digest_for_tag(&tag)
+            && d == runtime_digest
+            && tag != current_tag
+        {
+            resolved_tags.push(tag);
+        }
+    }
+
+    assert_eq!(resolved_tags, vec!["v1.0.0", "1.0.0", "v1.0.0-alpha.1"]);
+    assert_eq!(resolved_tags.first().map(String::as_str), Some("v1.0.0"));
 }
 
 #[tokio::test]
