@@ -39,14 +39,33 @@ function formatGroupSummary(services: number, counts: Record<Exclude<RowStatus, 
   return parts.join(' · ')
 }
 
-function formatTagOnly(tag: string): string {
-  return tag
+function formatTagDisplay(tag: string, resolvedTag: string | null | undefined): string {
+  const r = (resolvedTag ?? '').trim()
+  if (!r || r === tag) return tag
+  return `${tag} ≈ ${r}`
 }
 
-function formatTagTooltip(tag: string, digest: string | null | undefined): string | undefined {
-  if (!digest) return undefined
-  const m = digest.includes(':') ? digest : `sha256:${digest}`
-  return `${tag}@${m}`
+function formatTagTooltip(
+  tag: string,
+  digest: string | null | undefined,
+  resolvedTag: string | null | undefined,
+  resolvedTags: string[] | null | undefined,
+): string | undefined {
+  const display = formatTagDisplay(tag, resolvedTag)
+  const lines: string[] = []
+
+  if (digest) {
+    const m = digest.includes(':') ? digest : `sha256:${digest}`
+    lines.push(`${display}@${m}`)
+  } else {
+    lines.push(display)
+  }
+
+  if (resolvedTags && resolvedTags.length > 1) {
+    lines.push(`resolvedTags: ${resolvedTags.join(', ')}`)
+  }
+
+  return lines.join('\n')
 }
 
 function isDockrevService(svc: Service): boolean {
@@ -539,11 +558,11 @@ export function ServicesPage(props: {
 		                            <div className="modalLead">将更新的服务（预览）</div>
 		                            <div className="modalList">
 		                              {candidateServices.map((item) => {
-		                                const current = formatTagOnly(item.svc.image.tag)
-		                                const candidate = item.svc.candidate ? formatTagOnly(item.svc.candidate.tag) : '-'
-		                                const title = `${formatTagTooltip(item.svc.image.tag, item.svc.image.digest) ?? item.svc.image.tag} → ${
+		                                const current = formatTagDisplay(item.svc.image.tag, item.svc.image.resolvedTag)
+		                                const candidate = item.svc.candidate ? formatTagDisplay(item.svc.candidate.tag, undefined) : '-'
+		                                const title = `${formatTagTooltip(item.svc.image.tag, item.svc.image.digest, item.svc.image.resolvedTag, item.svc.image.resolvedTags) ?? current} → ${
 		                                  item.svc.candidate
-		                                    ? formatTagTooltip(item.svc.candidate.tag, item.svc.candidate.digest) ?? item.svc.candidate.tag
+		                                    ? formatTagTooltip(item.svc.candidate.tag, item.svc.candidate.digest, undefined, undefined) ?? item.svc.candidate.tag
 		                                    : '-'
 		                                }`
 		                                return (
@@ -584,10 +603,10 @@ export function ServicesPage(props: {
 
                 {!isCollapsed
                   ? g.services.map(({ svc, status }) => {
-	                      const current = formatTagOnly(svc.image.tag)
-	                      const currentTitle = formatTagTooltip(svc.image.tag, svc.image.digest)
-	                      const candidate = svc.candidate ? formatTagOnly(svc.candidate.tag) : '-'
-	                      const candidateTitle = svc.candidate ? formatTagTooltip(svc.candidate.tag, svc.candidate.digest) : undefined
+	                      const current = formatTagDisplay(svc.image.tag, svc.image.resolvedTag)
+	                      const currentTitle = formatTagTooltip(svc.image.tag, svc.image.digest, svc.image.resolvedTag, svc.image.resolvedTags)
+	                      const candidate = svc.candidate ? formatTagDisplay(svc.candidate.tag, undefined) : '-'
+	                      const candidateTitle = svc.candidate ? formatTagTooltip(svc.candidate.tag, svc.candidate.digest, undefined, undefined) : undefined
                       const isDockrev = isDockrevService(svc)
                       const svcApply =
                         status === 'updatable'
@@ -706,14 +725,14 @@ export function ServicesPage(props: {
 	                                        </div>
 	                                        <div className="modalKvLabel">目标版本</div>
 	                                        <div className="modalKvValue">
-                                            <span className="mono">{svc.image.tag}</span>
+                                            <span className="mono">{formatTagDisplay(svc.image.tag, svc.image.resolvedTag)}</span>
                                             <span className="mono" style={{ opacity: 0.8 }}>
                                               {' '}
                                               →{' '}
                                             </span>
                                               <UpdateTargetSelect
                                                 serviceId={svc.id}
-                                                currentTag={svc.image.tag}
+                                                currentTag={svc.image.resolvedTag ?? svc.image.tag}
                                                 initialTag={svc.candidate?.tag ?? null}
                                                 initialDigest={svc.candidate?.digest ?? null}
                                                 variant="inline"
@@ -843,7 +862,8 @@ export function ServicesPage(props: {
                       stack <Mono>{x.stackName}</Mono>
                     </div>
                     <div className="muted">
-                      image <Mono>{x.svc.image.ref}</Mono> · current <Mono>{x.svc.image.tag}</Mono>
+                      image <Mono>{x.svc.image.ref}</Mono> · current{' '}
+                      <Mono>{formatTagDisplay(x.svc.image.tag, x.svc.image.resolvedTag)}</Mono>
                     </div>
                     <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                       <Button

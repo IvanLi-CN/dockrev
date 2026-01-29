@@ -44,7 +44,8 @@ export function serviceRowStatus(svc: Service): RowStatus {
   if (!svc.candidate) return 'ok'
   if (svc.candidate.archMatch === 'mismatch') return 'archMismatch'
 
-  const seriesMatch = tagSeriesMatches(svc.image.tag, svc.candidate.tag)
+  const effectiveCurrentTag = svc.image.resolvedTag ?? svc.image.tag
+  const seriesMatch = tagSeriesMatches(effectiveCurrentTag, svc.candidate.tag)
   if (seriesMatch === false) return 'crossTag'
 
   // "unknown" arch and/or unparseable tags are still actionable, but should be treated as "needs confirmation".
@@ -86,4 +87,3 @@ export function noteFor(svc: Service, st: RowStatus): string {
   }
   return '-'
 }
-

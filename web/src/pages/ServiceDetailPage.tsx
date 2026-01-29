@@ -57,6 +57,12 @@ function shortDigest(digest: string) {
   return `${digest.slice(0, 12)}…${digest.slice(-8)}`
 }
 
+function formatTagDisplay(tag: string, resolvedTag: string | null | undefined): string {
+  const r = (resolvedTag ?? '').trim()
+  if (!r || r === tag) return tag
+  return `${tag} ≈ ${r}`
+}
+
 function isDockrevService(svc: Service): boolean {
   return isDockrevImageRef(svc.image.ref)
 }
@@ -218,14 +224,14 @@ export function ServiceDetailPage(props: {
 	                          </div>
 	                          <div className="modalKvLabel">目标版本</div>
 	                          <div className="modalKvValue">
-                              <span className="mono">{service.image.tag}</span>
+                              <span className="mono">{formatTagDisplay(service.image.tag, service.image.resolvedTag)}</span>
                               <span className="mono" style={{ opacity: 0.8 }}>
                                 {' '}
                                 →{' '}
                               </span>
                               <UpdateTargetSelect
                                 serviceId={service.id}
-                                currentTag={service.image.tag}
+                                currentTag={service.image.resolvedTag ?? service.image.tag}
                                 initialTag={service.candidate?.tag ?? null}
                                 initialDigest={service.candidate?.digest ?? null}
                                 variant="inline"
@@ -390,7 +396,8 @@ export function ServiceDetailPage(props: {
 
   const bannerDetail = useMemo(() => {
     if (!service) return ''
-    const current = `${service.image.tag}${service.image.digest ? `@${shortDigest(service.image.digest)}` : ''}`
+    const currentTag = formatTagDisplay(service.image.tag, service.image.resolvedTag)
+    const current = `${currentTag}${service.image.digest ? `@${shortDigest(service.image.digest)}` : ''}`
     if (service.ignore?.matched) {
       const why = service.ignore.reason ? ` · reason: ${service.ignore.reason}` : ''
       return `当前: ${current} · rule: ${service.ignore.ruleId}${why}`
@@ -398,7 +405,8 @@ export function ServiceDetailPage(props: {
     if (!service.candidate) return `当前: ${current}`
     const cand = `${service.candidate.tag}@${shortDigest(service.candidate.digest)}`
     const arch = service.candidate.arch.length ? ` · arch=${service.candidate.arch.join(',')}` : ''
-    const series = tagSeriesMatches(service.image.tag, service.candidate.tag)
+    const effectiveCurrentTag = service.image.resolvedTag ?? service.image.tag
+    const series = tagSeriesMatches(effectiveCurrentTag, service.candidate.tag)
     const seriesHint = series === false ? ' · cross-tag' : series == null ? ' · tag=?' : ''
     return `当前: ${current} → 候选: ${cand}${arch}${seriesHint}`
   }, [service])

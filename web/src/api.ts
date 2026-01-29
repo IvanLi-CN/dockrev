@@ -31,14 +31,18 @@ export type ServiceSettings = {
   backupTargets: BackupTargetOverrides
 }
 
+export type ServiceImage = {
+  ref: string
+  tag: string
+  digest?: string | null
+  resolvedTag?: string | null
+  resolvedTags?: string[] | null
+}
+
 export type Service = {
   id: string
   name: string
-  image: {
-    ref: string
-    tag: string
-    digest?: string | null
-  }
+  image: ServiceImage
   candidate?: {
     tag: string
     digest: string
