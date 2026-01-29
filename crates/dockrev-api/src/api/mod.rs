@@ -803,10 +803,10 @@ async fn docker_compose_service_runtime_digest(
         let parsed = serde_json::from_str::<Vec<String>>(inspect.stdout.trim()).unwrap_or_default();
         for d in parsed {
             for repo in repo_candidates {
-                if let Some(rest) = d.strip_prefix(&format!("{repo}@")) {
-                    if !rest.trim().is_empty() {
-                        digests.insert(rest.trim().to_string());
-                    }
+                if let Some(rest) = d.strip_prefix(&format!("{repo}@"))
+                    && !rest.trim().is_empty()
+                {
+                    digests.insert(rest.trim().to_string());
                 }
             }
         }

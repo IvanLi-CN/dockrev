@@ -467,13 +467,10 @@ services:
 fn infer_resolved_tag_picks_highest_semver_and_exposes_all_matches() {
     let runtime_digest = "sha256:run";
     let current_tag = "latest";
-    let tags = vec![
-        "latest".to_string(),
-        "v1.0.0-alpha.1".to_string(),
-        "1.0.0".to_string(),
-        "v1.0.0".to_string(),
-        "v0.9.0".to_string(),
-    ];
+    let tags: Vec<String> = ["latest", "v1.0.0-alpha.1", "1.0.0", "v1.0.0", "v0.9.0"]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
 
     let digest_for_tag = |tag: &str| -> Option<&'static str> {
         match tag {
