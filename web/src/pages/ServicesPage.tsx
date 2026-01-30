@@ -727,7 +727,7 @@ export function ServicesPage(props: {
 	                          })()}
 	                          <div className="cellTwoLine">
 	                            <div className="mono monoPrimary" title={currentTitle}>{current}</div>
-	                            <div className="mono monoPrimary" title={candidateTitle}>{candidate}</div>
+	                            <div className="mono monoSecondary" title={candidateTitle}>{candidate !== '-' ? `→ ${candidate}` : candidate}</div>
 	                          </div>
                           <StatusRemark service={svc} status={status} />
 	                          <div
