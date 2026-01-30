@@ -117,6 +117,7 @@ export function ServiceDetailPage(props: {
   const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
   const { state: supervisorState, check: checkSupervisor } = useSupervisorHealth()
   const supervisorErrorAt = supervisorState.status === 'offline' ? supervisorState.errorAt : undefined
+  const supervisorError = supervisorState.status === 'offline' ? supervisorState.error : undefined
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
 
   const [newRuleKind, setNewRuleKind] = useState<'exact' | 'prefix' | 'regex' | 'semver'>('regex')
@@ -153,7 +154,7 @@ export function ServiceDetailPage(props: {
               disabled={busy || supervisorState.status !== 'ok'}
               title={
                 supervisorState.status === 'offline'
-                  ? `自我升级不可用（supervisor offline） · ${supervisorErrorAt ?? '-'}`
+                  ? `自我升级不可用（supervisor offline） · ${supervisorErrorAt ?? '-'} · ${supervisorError ?? '-'}`
                   : supervisorState.status === 'checking'
                     ? '检查 supervisor 中…'
                     : undefined
@@ -411,6 +412,7 @@ export function ServiceDetailPage(props: {
     stackId,
     stack?.name,
     supervisorErrorAt,
+    supervisorError,
     supervisorState.status,
   ])
 

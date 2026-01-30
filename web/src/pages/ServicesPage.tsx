@@ -768,7 +768,7 @@ export function ServicesPage(props: {
                                   disabled={busy || supervisor.state.status !== 'ok'}
                                   title={
                                     supervisor.state.status === 'offline'
-                                      ? `自我升级不可用（supervisor offline） · ${supervisor.state.errorAt}`
+                                      ? `自我升级不可用（supervisor offline） · ${supervisor.state.errorAt} · ${supervisor.state.error}`
                                       : supervisor.state.status === 'checking'
                                         ? '检查 supervisor 中…'
                                         : undefined
@@ -791,10 +791,12 @@ export function ServicesPage(props: {
                                   </Button>
                                 ) : null}
                                 {supervisor.state.status === 'offline' ? (
-                                  <div className="muted">supervisor offline · {supervisor.state.errorAt}</div>
+                                  <div className="muted">
+                                    supervisor offline · {supervisor.state.errorAt} · <Mono>{supervisor.state.error}</Mono>
+                                  </div>
                                 ) : null}
                               </div>
-	                            ) : (
+                            ) : (
 	                              <Button
 	                                variant="ghost"
 	                                disabled={busy || !svcApply.enabled}

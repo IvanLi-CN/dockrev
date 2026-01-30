@@ -183,6 +183,14 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                         : 'unknown'}
                 </div>
               </div>
+              {supervisor.state.status === 'offline' ? (
+                <div className="kvRow">
+                  <div className="label">原因</div>
+                  <div className="muted">
+                    <Mono>{supervisor.state.error}</Mono>
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className="formActions">
