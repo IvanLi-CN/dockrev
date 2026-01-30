@@ -393,7 +393,13 @@ pub fn parse_manifest_json(
     let value: serde_json::Value = serde_json::from_str(body).context("parse manifest json")?;
 
     let mut arch = Vec::new();
-    let mut host_platform_digest: Option<String> = None;
+    let mut host_platform_digest_exact: Option<String> = None;
+    let mut host_platform_digest_base_matches: Vec<String> = Vec::new();
+    let host_base = host_platform
+        .split('/')
+        .take(2)
+        .collect::<Vec<_>>()
+        .join("/");
     if let Some(manifests) = value.get("manifests").and_then(|v| v.as_array()) {
         for m in manifests {
             let os = m
@@ -419,11 +425,26 @@ pub fn parse_manifest_json(
             }
 
             let digest = m.get("digest").and_then(|v| v.as_str());
-            if host_platform_digest.is_none()
-                && digest.is_some()
+            if digest.is_none() {
+                continue;
+            }
+            let digest = digest.unwrap();
+
+            if host_platform_digest_exact.is_none()
                 && platform_matches(host_platform, os, architecture, variant)
             {
-                host_platform_digest = digest.map(|s| s.to_string());
+                host_platform_digest_exact = Some(digest.to_string());
+                continue;
+            }
+
+            // Best-effort fallback: if the host platform doesn't match exactly (e.g. missing/unknown
+            // variant), allow os/arch match ONLY when it is unambiguous. This avoids picking the
+            // wrong digest for multi-variant lists like linux/arm/v6 + linux/arm/v7.
+            if let (Some(os), Some(architecture)) = (os, architecture) {
+                let base = format!("{os}/{architecture}");
+                if base == host_base {
+                    host_platform_digest_base_matches.push(digest.to_string());
+                }
             }
         }
     } else if let (Some(os), Some(architecture)) = (
@@ -436,7 +457,18 @@ pub fn parse_manifest_json(
     arch.sort();
     arch.dedup();
 
-    let digest = host_platform_digest.or(digest);
+    let digest = if host_platform_digest_exact.is_some() {
+        host_platform_digest_exact
+    } else {
+        host_platform_digest_base_matches.sort();
+        host_platform_digest_base_matches.dedup();
+        if host_platform_digest_base_matches.len() == 1 {
+            host_platform_digest_base_matches.into_iter().next()
+        } else {
+            None
+        }
+    }
+    .or(digest);
     Ok(ManifestInfo { digest, arch })
 }
 
@@ -454,17 +486,7 @@ fn platform_matches(
     } else {
         format!("{os}/{architecture}")
     };
-    if candidate == host_platform {
-        return true;
-    }
-
-    let host_base = host_platform
-        .split('/')
-        .take(2)
-        .collect::<Vec<_>>()
-        .join("/");
-    let candidate_base = candidate.split('/').take(2).collect::<Vec<_>>().join("/");
-    host_base == candidate_base
+    candidate == host_platform
 }
 
 pub fn host_platform_override(config_value: Option<&str>) -> Option<String> {
@@ -537,6 +559,47 @@ mod tests {
             parse_manifest_json(json, Some("sha256:deadbeef".to_string()), "linux/amd64").unwrap();
         assert_eq!(info.digest.as_deref(), Some("sha256:amd64"));
         assert_eq!(info.arch, vec!["linux/amd64", "linux/arm64"]);
+    }
+
+    #[test]
+    fn parse_manifest_json_selects_exact_variant_digest() {
+        let json = r#"{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+  "manifests": [
+    { "digest": "sha256:armv6", "platform": { "architecture": "arm", "os": "linux", "variant": "v6" } },
+    { "digest": "sha256:armv7", "platform": { "architecture": "arm", "os": "linux", "variant": "v7" } }
+  ]
+}"#;
+        let info = parse_manifest_json(json, None, "linux/arm/v7").unwrap();
+        assert_eq!(info.digest.as_deref(), Some("sha256:armv7"));
+    }
+
+    #[test]
+    fn parse_manifest_json_avoids_ambiguous_os_arch_fallback() {
+        let json = r#"{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+  "manifests": [
+    { "digest": "sha256:armv6", "platform": { "architecture": "arm", "os": "linux", "variant": "v6" } },
+    { "digest": "sha256:armv7", "platform": { "architecture": "arm", "os": "linux", "variant": "v7" } }
+  ]
+}"#;
+        let info = parse_manifest_json(json, None, "linux/arm").unwrap();
+        assert_eq!(info.digest, None);
+    }
+
+    #[test]
+    fn parse_manifest_json_allows_unambiguous_os_arch_fallback() {
+        let json = r#"{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",
+  "manifests": [
+    { "digest": "sha256:amd64", "platform": { "architecture": "amd64", "os": "linux" } }
+  ]
+}"#;
+        let info = parse_manifest_json(json, None, "linux/amd64/v3").unwrap();
+        assert_eq!(info.digest.as_deref(), Some("sha256:amd64"));
     }
 
     #[test]

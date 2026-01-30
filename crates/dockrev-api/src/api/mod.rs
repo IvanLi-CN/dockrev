@@ -537,7 +537,9 @@ async fn run_check_for_job(
                 .and_then(|m| m.digest);
             let effective_current_digest =
                 runtime_digest.clone().or(current_digest_registry.clone());
-            let current_digest = runtime_digest.clone();
+            // Persist the best-known digest so that pinned tags and offline/missing compose projects
+            // don't lose observability just because the runtime digest is unavailable.
+            let current_digest = effective_current_digest.clone();
 
             let (
                 candidate_digest_for_infer,
@@ -609,7 +611,9 @@ async fn run_check_for_job(
 
                 let mut resolved_tags: Vec<String> = Vec::new();
                 for (_v, tag) in semver_tags.into_iter().take(60) {
-                    let digest = if candidate_tag.as_deref().is_some_and(|c| c == tag.as_str()) {
+                    let digest = if candidate_tag.as_deref().is_some_and(|c| c == tag.as_str())
+                        && candidate_digest.is_some()
+                    {
                         candidate_digest.clone()
                     } else {
                         let cache_key = format!("{}/{}:{}", img.registry, img.name, tag);
