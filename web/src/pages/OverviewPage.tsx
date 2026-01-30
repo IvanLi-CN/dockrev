@@ -540,9 +540,11 @@ export function OverviewPage(props: {
                             const dn = splitImageNameForDisplay(img.name, item.svc.image.tag)
                             return (
                               <div className="cellTwoLine">
-                                <div className="mono monoPrimary monoSplit">
+                                <div
+                                  className="mono monoPrimary monoSplit"
+                                  title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}
+                                >
                                   <span className="monoSplitBase">{dn.base}</span>
-                                  {dn.suffix ? <span className="monoSplitTail">{dn.suffix}</span> : null}
                                 </div>
                                 <div className="mono monoSecondary">{img.registry}</div>
                               </div>
@@ -785,9 +787,11 @@ export function OverviewPage(props: {
 		                                        const dn = splitImageNameForDisplay(img.name, item.svc.image.tag)
 		                                        return (
 		                                          <div className="cellTwoLine">
-		                                            <div className="mono monoPrimary monoSplit">
+		                                            <div
+		                                              className="mono monoPrimary monoSplit"
+		                                              title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}
+		                                            >
 		                                              <span className="monoSplitBase">{dn.base}</span>
-		                                              {dn.suffix ? <span className="monoSplitTail">{dn.suffix}</span> : null}
 		                                            </div>
 		                                            <div className="mono monoSecondary">{img.registry}</div>
 		                                          </div>
@@ -877,9 +881,11 @@ export function OverviewPage(props: {
 	                            const dn = splitImageNameForDisplay(img.name, svc.image.tag)
 	                            return (
 	                              <div className="cellTwoLine">
-	                                <div className="mono monoPrimary monoSplit">
+	                                <div
+	                                  className="mono monoPrimary monoSplit"
+	                                  title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}
+	                                >
 	                                  <span className="monoSplitBase">{dn.base}</span>
-	                                  {dn.suffix ? <span className="monoSplitTail">{dn.suffix}</span> : null}
 	                                </div>
 	                                <div className="mono monoSecondary">{img.registry}</div>
 	                              </div>
@@ -966,9 +972,11 @@ export function OverviewPage(props: {
 	                                            const dn = splitImageNameForDisplay(img.name, svc.image.tag)
 	                                            return (
 	                                              <div className="cellTwoLine">
-	                                                <div className="mono monoPrimary monoSplit">
+	                                                <div
+	                                                  className="mono monoPrimary monoSplit"
+	                                                  title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}
+	                                                >
 	                                                  <span className="monoSplitBase">{dn.base}</span>
-	                                                  {dn.suffix ? <span className="monoSplitTail">{dn.suffix}</span> : null}
 	                                                </div>
 	                                                <div className="mono monoSecondary">{img.registry}</div>
 	                                              </div>

@@ -53,17 +53,6 @@ function splitImageRef(ref: string): { registry: string; name: string } {
   return { registry: 'docker.io', name: withoutDigest }
 }
 
-function formatImageName(name: string, tag: string | null | undefined): string {
-  const t = (tag ?? '').trim()
-  if (!t) return name
-  if (name.includes('@')) return name
-  const lastSlash = name.lastIndexOf('/')
-  const lastColon = name.lastIndexOf(':')
-  if (lastColon > lastSlash) return name
-  if (t.startsWith('sha256:')) return `${name}@${t}`
-  return `${name}:${t}`
-}
-
 function splitImageNameForDisplay(
   name: string,
   tag: string | null | undefined,
@@ -630,9 +619,8 @@ export function ServicesPage(props: {
 		                                        const dn = splitImageNameForDisplay(img.name, item.svc.image.tag)
 		                                        return (
 		                                          <div className="cellTwoLine">
-		                                            <div className="mono monoPrimary monoSplit">
+		                                            <div className="mono monoPrimary monoSplit" title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}>
 		                                              <span className="monoSplitBase">{dn.base}</span>
-		                                              {dn.suffix ? <span className="monoSplitTail">{dn.suffix}</span> : null}
 		                                            </div>
 		                                            <div className="mono monoSecondary">{img.registry}</div>
 		                                          </div>
@@ -722,9 +710,8 @@ export function ServicesPage(props: {
 	                            const dn = splitImageNameForDisplay(img.name, svc.image.tag)
 	                            return (
 	                              <div className="cellTwoLine">
-	                                <div className="mono monoPrimary monoSplit">
+	                                <div className="mono monoPrimary monoSplit" title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}>
 	                                  <span className="monoSplitBase">{dn.base}</span>
-	                                  {dn.suffix ? <span className="monoSplitTail">{dn.suffix}</span> : null}
 	                                </div>
 	                                <div className="mono monoSecondary">{img.registry}</div>
 	                              </div>
@@ -811,9 +798,8 @@ export function ServicesPage(props: {
 		                                        const dn = splitImageNameForDisplay(img.name, svc.image.tag)
 		                                        return (
 		                                          <div className="cellTwoLine">
-		                                            <div className="mono monoPrimary monoSplit">
+		                                            <div className="mono monoPrimary monoSplit" title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}>
 		                                              <span className="monoSplitBase">{dn.base}</span>
-		                                              {dn.suffix ? <span className="monoSplitTail">{dn.suffix}</span> : null}
 		                                            </div>
 		                                            <div className="mono monoSecondary">{img.registry}</div>
 		                                          </div>
@@ -960,9 +946,14 @@ export function ServicesPage(props: {
                     </div>
 	                    {(() => {
 	                      const img = splitImageRef(x.svc.image.ref)
+	                      const dn = splitImageNameForDisplay(img.name, x.svc.image.tag)
 	                      return (
 	                        <div className="muted">
-	                          image <Mono>{formatImageName(img.name, x.svc.image.tag)}</Mono> · registry <Mono>{img.registry}</Mono> · current{' '}
+	                          image{' '}
+	                          <span className="mono" title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}>
+	                            {dn.base}
+	                          </span>{' '}
+	                          · registry <Mono>{img.registry}</Mono> · current{' '}
 	                          <Mono>{formatTagDisplay(x.svc.image.tag, x.svc.image.resolvedTag)}</Mono>
 	                        </div>
 	                      )
