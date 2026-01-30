@@ -301,6 +301,39 @@ async fn unknown_api_path_is_not_swallowed_by_ui_fallback() {
 }
 
 #[tokio::test]
+async fn supervisor_paths_are_not_swallowed_by_ui_fallback() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/supervisor/self-upgrade")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 502);
+    let body = response_json(resp).await;
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["code"], "supervisor_misrouted");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/supervisor/")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 502);
+}
+
+#[tokio::test]
 async fn register_stack_then_check_updates() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
