@@ -45,6 +45,17 @@ function splitImageRef(ref: string): { registry: string; name: string } {
   return { registry: 'docker.io', name: withoutDigest }
 }
 
+function formatImageName(name: string, tag: string | null | undefined): string {
+  const t = (tag ?? '').trim()
+  if (!t) return name
+  if (name.includes('@')) return name
+  const lastSlash = name.lastIndexOf('/')
+  const lastColon = name.lastIndexOf(':')
+  if (lastColon > lastSlash) return name
+  if (t.startsWith('sha256:')) return `${name}@${t}`
+  return `${name}:${t}`
+}
+
 function formatTagDisplay(tag: string, resolvedTag: string | null | undefined): string {
   const r = (resolvedTag ?? '').trim()
   return r && r !== tag ? r : tag
@@ -512,8 +523,8 @@ export function OverviewPage(props: {
                             const img = splitImageRef(item.svc.image.ref)
                             return (
                               <div className="cellTwoLine">
+                                <div className="mono">{formatImageName(img.name, item.svc.image.tag)}</div>
                                 <div className="mono muted">{img.registry}</div>
-                                <div className="mono">{img.name}</div>
                               </div>
                             )
                           })()}
@@ -753,8 +764,8 @@ export function OverviewPage(props: {
 		                                        const img = splitImageRef(item.svc.image.ref)
 		                                        return (
 		                                          <div className="cellTwoLine">
+		                                            <div className="mono">{formatImageName(img.name, item.svc.image.tag)}</div>
 		                                            <div className="mono muted">{img.registry}</div>
-		                                            <div className="mono">{img.name}</div>
 		                                          </div>
 		                                        )
 		                                      })()}
@@ -843,8 +854,8 @@ export function OverviewPage(props: {
 	                            const img = splitImageRef(svc.image.ref)
 	                            return (
 	                              <div className="cellTwoLine">
+	                                <div className="mono">{formatImageName(img.name, svc.image.tag)}</div>
 	                                <div className="mono muted">{img.registry}</div>
-	                                <div className="mono">{img.name}</div>
 	                              </div>
 	                            )
 	                          })()}
@@ -916,8 +927,8 @@ export function OverviewPage(props: {
 	                                            const img = splitImageRef(svc.image.ref)
 	                                            return (
 	                                              <div className="cellTwoLine">
+	                                                <div className="mono">{formatImageName(img.name, svc.image.tag)}</div>
 	                                                <div className="mono muted">{img.registry}</div>
-	                                                <div className="mono">{img.name}</div>
 	                                              </div>
 	                                            )
 	                                          })()}
