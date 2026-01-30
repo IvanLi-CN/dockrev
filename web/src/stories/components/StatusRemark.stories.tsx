@@ -62,7 +62,7 @@ export const AllStatuses: Story = {
     const crossTag = {
       ...baseService(),
       id: 'svc-cross-tag',
-      name: 'cross tag',
+      name: '跨标签',
       image: { ref: 'docker.io/library/postgres', tag: '16', digest: d('p', '16') },
       candidate: { tag: '18.1', digest: d('p', '18'), archMatch: 'match', arch: ['linux/amd64'] },
     } satisfies Service

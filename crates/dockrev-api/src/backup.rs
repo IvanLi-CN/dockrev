@@ -514,6 +514,8 @@ mod tests {
                     reference: "ghcr.io/acme/web:5.2".to_string(),
                     tag: "5.2".to_string(),
                     digest: None,
+                    resolved_tag: None,
+                    resolved_tags: None,
                 },
                 candidate: None,
                 ignore: None,

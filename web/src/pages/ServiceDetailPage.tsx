@@ -16,7 +16,7 @@ import {
   type StackDetail,
 } from '../api'
 import { navigate } from '../routes'
-import { Button, Mono, Pill, Switch } from '../ui'
+import { ArrowRightIcon, Button, Mono, Pill, Switch } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { serviceRowStatus, tagSeriesMatches } from '../updateStatus'
@@ -38,12 +38,12 @@ function svcTone(svc: Service): 'ok' | 'warn' | 'bad' | 'muted' {
 
 function svcBadge(svc: Service): string {
   const st = serviceRowStatus(svc)
-  if (st === 'blocked') return 'blocked'
-  if (st === 'archMismatch') return 'arch mismatch'
-  if (st === 'crossTag') return 'cross tag'
-  if (st === 'hint') return 'needs confirm'
-  if (st === 'updatable') return 'updatable'
-  return 'no candidate'
+  if (st === 'blocked') return '被阻止'
+  if (st === 'archMismatch') return '架构不匹配'
+  if (st === 'crossTag') return '跨标签'
+  if (st === 'hint') return '需确认'
+  if (st === 'updatable') return '可更新'
+  return '无候选'
 }
 
 function formatMap(map: Record<string, string>) {
@@ -55,6 +55,45 @@ function formatMap(map: Record<string, string>) {
 function shortDigest(digest: string) {
   if (digest.length <= 24) return digest
   return `${digest.slice(0, 12)}…${digest.slice(-8)}`
+}
+
+function splitImageRef(ref: string): { registry: string; name: string } {
+  const s = ref.trim()
+  const withoutDigest = s.includes('@') ? s.split('@', 1)[0] : s
+  const firstSlash = withoutDigest.indexOf('/')
+  if (firstSlash < 0) {
+    return { registry: 'docker.io', name: withoutDigest }
+  }
+  const firstSeg = withoutDigest.slice(0, firstSlash)
+  const rest = withoutDigest.slice(firstSlash + 1)
+  const isRegistry = firstSeg.includes('.') || firstSeg.includes(':') || firstSeg === 'localhost'
+  if (isRegistry) return { registry: firstSeg, name: rest }
+  return { registry: 'docker.io', name: withoutDigest }
+}
+
+function splitImageNameForDisplay(
+  name: string,
+  tag: string | null | undefined,
+): { base: string; suffix: string } {
+  const n = name.trim()
+  if (!n) return { base: '', suffix: '' }
+
+  const at = n.indexOf('@')
+  if (at >= 0) return { base: n.slice(0, at), suffix: n.slice(at) }
+
+  const lastSlash = n.lastIndexOf('/')
+  const lastColon = n.lastIndexOf(':')
+  if (lastColon > lastSlash) return { base: n.slice(0, lastColon), suffix: n.slice(lastColon) }
+
+  const t = (tag ?? '').trim()
+  if (!t) return { base: n, suffix: '' }
+  if (t.startsWith('sha256:')) return { base: n, suffix: `@${t}` }
+  return { base: n, suffix: `:${t}` }
+}
+
+function formatTagDisplay(tag: string, resolvedTag: string | null | undefined): string {
+  const r = (resolvedTag ?? '').trim()
+  return r && r !== tag ? r : tag
 }
 
 function isDockrevService(svc: Service): boolean {
@@ -212,20 +251,33 @@ export function ServiceDetailPage(props: {
 	                          <div className="modalKvValue">
 	                            <Mono>{`${stack?.name ?? stackId}/${service.name}`}</Mono>
 	                          </div>
-	                          <div className="modalKvLabel">镜像</div>
-	                          <div className="modalKvValue">
-	                            <Mono>{service.image.ref}</Mono>
-	                          </div>
-	                          <div className="modalKvLabel">目标版本</div>
-	                          <div className="modalKvValue">
-                              <span className="mono">{service.image.tag}</span>
-                              <span className="mono" style={{ opacity: 0.8 }}>
-                                {' '}
-                                →{' '}
+		                          <div className="modalKvLabel">镜像</div>
+		                          <div className="modalKvValue">
+		                            {(() => {
+		                              const img = splitImageRef(service.image.ref)
+		                              const dn = splitImageNameForDisplay(img.name, service.image.tag)
+		                              return (
+		                                <div className="cellTwoLine">
+		                                  <div
+		                                    className="mono monoPrimary monoSplit"
+		                                    title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}
+		                                  >
+		                                    <span className="monoSplitBase">{dn.base}</span>
+		                                  </div>
+		                                  <div className="mono monoSecondary">{img.registry}</div>
+		                                </div>
+		                              )
+		                            })()}
+		                          </div>
+		                          <div className="modalKvLabel">目标版本</div>
+		                          <div className="modalKvValue">
+                              <span className="mono">{formatTagDisplay(service.image.tag, service.image.resolvedTag)}</span>
+                              <span style={{ opacity: 0.8, margin: '0 6px' }}>
+                                <ArrowRightIcon className="inlineIcon" />
                               </span>
                               <UpdateTargetSelect
                                 serviceId={service.id}
-                                currentTag={service.image.tag}
+                                currentTag={service.image.resolvedTag ?? service.image.tag}
                                 initialTag={service.candidate?.tag ?? null}
                                 initialDigest={service.candidate?.digest ?? null}
                                 variant="inline"
@@ -383,14 +435,15 @@ export function ServiceDetailPage(props: {
     if (st === 'blocked') return '已阻止（忽略规则命中）'
     if (st === 'ok') return '暂无候选版本'
     if (st === 'archMismatch') return '架构不匹配（仅提示，不允许更新）'
-    if (st === 'crossTag') return '跨 tag 版本更新（建议确认）'
+    if (st === 'crossTag') return '跨标签版本更新（建议确认）'
     if (st === 'hint') return '需确认（arch 未知 / tag 关系不确定）'
-    return '可更新（匹配当前 tag 序列）'
+    return '可更新（匹配当前标签序列）'
   }, [service])
 
   const bannerDetail = useMemo(() => {
     if (!service) return ''
-    const current = `${service.image.tag}${service.image.digest ? `@${shortDigest(service.image.digest)}` : ''}`
+    const currentTag = formatTagDisplay(service.image.tag, service.image.resolvedTag)
+    const current = `${currentTag}${service.image.digest ? `@${shortDigest(service.image.digest)}` : ''}`
     if (service.ignore?.matched) {
       const why = service.ignore.reason ? ` · reason: ${service.ignore.reason}` : ''
       return `当前: ${current} · rule: ${service.ignore.ruleId}${why}`
@@ -398,8 +451,9 @@ export function ServiceDetailPage(props: {
     if (!service.candidate) return `当前: ${current}`
     const cand = `${service.candidate.tag}@${shortDigest(service.candidate.digest)}`
     const arch = service.candidate.arch.length ? ` · arch=${service.candidate.arch.join(',')}` : ''
-    const series = tagSeriesMatches(service.image.tag, service.candidate.tag)
-    const seriesHint = series === false ? ' · cross-tag' : series == null ? ' · tag=?' : ''
+    const effectiveCurrentTag = service.image.resolvedTag ?? service.image.tag
+    const series = tagSeriesMatches(effectiveCurrentTag, service.candidate.tag)
+    const seriesHint = series === false ? ' · 跨标签' : series == null ? ' · 标签=?' : ''
     return `当前: ${current} → 候选: ${cand}${arch}${seriesHint}`
   }, [service])
 
@@ -417,7 +471,21 @@ export function ServiceDetailPage(props: {
             </div>
             <Pill tone="muted">{stack.name}</Pill>
           </div>
-          <div className="mono">{service.image.ref}</div>
+          {(() => {
+            const img = splitImageRef(service.image.ref)
+            const dn = splitImageNameForDisplay(img.name, service.image.tag)
+            return (
+              <div className="cellTwoLine">
+                <div
+                  className="mono monoPrimary monoSplit"
+                  title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}
+                >
+                  <span className="monoSplitBase">{dn.base}</span>
+                </div>
+                <div className="mono monoSecondary">{img.registry}</div>
+              </div>
+            )
+          })()}
           <div className="muted">
             id <Mono>{service.id}</Mono> · stack <Mono>{stack.id}</Mono>
           </div>

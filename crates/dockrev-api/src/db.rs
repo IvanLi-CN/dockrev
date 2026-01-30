@@ -32,6 +32,7 @@ pub struct ComposeServiceSpec {
 #[derive(Clone, Debug)]
 pub struct ServiceForCheck {
     pub id: String,
+    pub name: String,
     pub image_ref: String,
     pub image_tag: String,
 }
@@ -308,6 +309,8 @@ WHERE id = ?1
 	  image_ref,
 	  image_tag,
 	  current_digest,
+	  current_resolved_tag,
+	  current_resolved_tags_json,
 	  candidate_tag,
 	  candidate_digest,
 	  candidate_arch_match,
@@ -326,8 +329,8 @@ WHERE id = ?1
             let mut rows = stmt.query(params![stack.id.clone()])?;
 
             while let Some(row) = rows.next()? {
-                let bind_paths_json: String = row.get(13)?;
-                let volume_names_json: String = row.get(14)?;
+                let bind_paths_json: String = row.get(15)?;
+                let volume_names_json: String = row.get(16)?;
                 let bind_paths: BTreeMap<String, crate::api::types::TernaryChoice> =
                     serde_json::from_str(&bind_paths_json).map_err(|e| {
                         rusqlite::Error::FromSqlConversionFailure(
@@ -345,12 +348,20 @@ WHERE id = ?1
                         )
                     })?;
 
-                let candidate_tag: Option<String> = row.get(5)?;
-                let candidate_digest: Option<String> = row.get(6)?;
-                let candidate_arch_match: Option<String> = row.get(7)?;
-                let candidate_arch_json: Option<String> = row.get(8)?;
-                let ignore_rule_id: Option<String> = row.get(9)?;
-                let ignore_reason: Option<String> = row.get(10)?;
+                let current_resolved_tag: Option<String> = row.get(5)?;
+                let current_resolved_tags_json: Option<String> = row.get(6)?;
+
+                let candidate_tag: Option<String> = row.get(7)?;
+                let candidate_digest: Option<String> = row.get(8)?;
+                let candidate_arch_match: Option<String> = row.get(9)?;
+                let candidate_arch_json: Option<String> = row.get(10)?;
+                let ignore_rule_id: Option<String> = row.get(11)?;
+                let ignore_reason: Option<String> = row.get(12)?;
+
+                let current_resolved_tags: Option<Vec<String>> = current_resolved_tags_json
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                    .and_then(|v| if v.is_empty() { None } else { Some(v) });
 
                 let candidate_arch: Vec<String> = candidate_arch_json
                     .as_deref()
@@ -385,17 +396,19 @@ WHERE id = ?1
                         reference: row.get(2)?,
                         tag: row.get(3)?,
                         digest: row.get(4)?,
+                        resolved_tag: current_resolved_tag,
+                        resolved_tags: current_resolved_tags,
                     },
                     candidate,
                     ignore,
                     settings: ServiceSettings {
-                        auto_rollback: row.get::<_, i64>(11)? != 0,
+                        auto_rollback: row.get::<_, i64>(13)? != 0,
                         backup_targets: crate::api::types::BackupTargetOverrides {
                             bind_paths,
                             volume_names,
                         },
                     },
-                    archived: Some(row.get::<_, i64>(12)? != 0),
+                    archived: Some(row.get::<_, i64>(14)? != 0),
                 });
             }
 
@@ -623,6 +636,8 @@ SET
   image_ref = ?2,
   image_tag = ?3,
   current_digest = NULL,
+  current_resolved_tag = NULL,
+  current_resolved_tags_json = NULL,
   candidate_tag = NULL,
   candidate_digest = NULL,
   candidate_arch_match = NULL,
@@ -703,7 +718,7 @@ INSERT INTO services (
         self.call(move |conn| {
             let mut stmt = conn.prepare(
                 r#"
-SELECT id, image_ref, image_tag
+SELECT id, name, image_ref, image_tag
 FROM services
 WHERE stack_id = ?1
 ORDER BY name ASC
@@ -712,14 +727,42 @@ ORDER BY name ASC
             let rows = stmt.query_map(params![stack_id], |row| {
                 Ok(ServiceForCheck {
                     id: row.get(0)?,
-                    image_ref: row.get(1)?,
-                    image_tag: row.get(2)?,
+                    name: row.get(1)?,
+                    image_ref: row.get(2)?,
+                    image_tag: row.get(3)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
         })
         .await
         .context("list services for check")
+    }
+
+    pub async fn get_stack_compose_project(
+        &self,
+        stack_id: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let stack_id = stack_id.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    r#"
+SELECT project
+FROM discovered_compose_projects
+WHERE
+  stack_id = ?1
+  AND status != 'missing'
+  AND archived = 0
+ORDER BY last_scan_at DESC
+LIMIT 1
+"#,
+                    params![stack_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?)
+        })
+        .await
+        .context("get stack compose project")
     }
 
     pub async fn get_service_stack_id(&self, service_id: &str) -> anyhow::Result<Option<String>> {
@@ -1104,6 +1147,8 @@ ORDER BY created_at DESC
         &self,
         service_id: &str,
         current_digest: Option<String>,
+        current_resolved_tag: Option<String>,
+        current_resolved_tags_json: Option<String>,
         candidate_tag: Option<String>,
         candidate_digest: Option<String>,
         candidate_arch_match: Option<String>,
@@ -1122,19 +1167,23 @@ ORDER BY created_at DESC
 UPDATE services
 SET
   current_digest = ?2,
-  candidate_tag = ?3,
-  candidate_digest = ?4,
-  candidate_arch_match = ?5,
-  candidate_arch_json = ?6,
-  ignore_rule_id = ?7,
-  ignore_reason = ?8,
-  checked_at = ?9,
-  updated_at = ?10
+  current_resolved_tag = ?3,
+  current_resolved_tags_json = ?4,
+  candidate_tag = ?5,
+  candidate_digest = ?6,
+  candidate_arch_match = ?7,
+  candidate_arch_json = ?8,
+  ignore_rule_id = ?9,
+  ignore_reason = ?10,
+  checked_at = ?11,
+  updated_at = ?12
 WHERE id = ?1
 "#,
                 params![
                     service_id,
                     current_digest,
+                    current_resolved_tag,
+                    current_resolved_tags_json,
                     candidate_tag,
                     candidate_digest,
                     candidate_arch_match,
@@ -1923,6 +1972,14 @@ fn ensure_service_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
             ddl: "ALTER TABLE services ADD COLUMN current_digest TEXT",
         },
         Col {
+            name: "current_resolved_tag",
+            ddl: "ALTER TABLE services ADD COLUMN current_resolved_tag TEXT",
+        },
+        Col {
+            name: "current_resolved_tags_json",
+            ddl: "ALTER TABLE services ADD COLUMN current_resolved_tags_json TEXT",
+        },
+        Col {
             name: "candidate_tag",
             ddl: "ALTER TABLE services ADD COLUMN candidate_tag TEXT",
         },
@@ -2187,6 +2244,8 @@ CREATE TABLE IF NOT EXISTS services (
   image_ref TEXT NOT NULL,
   image_tag TEXT NOT NULL,
   current_digest TEXT,
+  current_resolved_tag TEXT,
+  current_resolved_tags_json TEXT,
   candidate_tag TEXT,
   candidate_digest TEXT,
   candidate_arch_match TEXT,

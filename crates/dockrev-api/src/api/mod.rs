@@ -434,8 +434,16 @@ async fn run_check_for_job(
 
     let mut services_checked = 0u32;
     let mut services_with_candidate = 0u32;
+    let mut manifest_digest_cache: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
 
     for stack_id in &stack_ids {
+        let compose_project = state
+            .db
+            .get_stack_compose_project(stack_id)
+            .await
+            .map_err(map_internal)?;
+
         let services = state
             .db
             .list_services_for_check(stack_id)
@@ -501,11 +509,82 @@ async fn run_check_for_job(
                 }
             };
 
+            let runtime_digest = if let Some(project) = compose_project.as_deref() {
+                docker_compose_service_runtime_digest(
+                    state.as_ref(),
+                    project,
+                    &svc.name,
+                    &repo_candidates(&img),
+                )
+                .await
+                .ok()
+                .flatten()
+            } else {
+                None
+            };
+
             let is_ignored = |tag: &str| matchers.iter().any(|(_, m)| m.matches(tag));
             let candidate_non_ignored =
                 candidates::select_candidate_tag(&svc.image_tag, &tags, is_ignored);
             let candidate_any = candidates::select_candidate_tag(&svc.image_tag, &tags, |_| false);
-            let candidate_tag = candidate_non_ignored.or(candidate_any);
+            let mut candidate_tag = candidate_non_ignored.or(candidate_any);
+
+            let current_digest_registry = state
+                .registry
+                .get_manifest(&img, &svc.image_tag, host_platform)
+                .await
+                .ok()
+                .and_then(|m| m.digest);
+            let effective_current_digest =
+                runtime_digest.clone().or(current_digest_registry.clone());
+            // Persist the best-known digest so that pinned tags and offline/missing compose projects
+            // don't lose observability just because the runtime digest is unavailable.
+            let current_digest = effective_current_digest.clone();
+
+            let (
+                candidate_digest_for_infer,
+                candidate_arch_match_for_infer,
+                candidate_arch_json_for_infer,
+            ) = if let Some(tag) = candidate_tag.as_deref() {
+                match state.registry.get_manifest(&img, tag, host_platform).await {
+                    Ok(m) => {
+                        let arch_match = registry::compute_arch_match(host_platform, &m.arch);
+                        (
+                            m.digest,
+                            Some(arch_match.as_str().to_string()),
+                            Some(serde_json::to_string(&m.arch).unwrap_or_default()),
+                        )
+                    }
+                    Err(_) => (None, None, None),
+                }
+            } else {
+                (None, None, None)
+            };
+
+            let mut candidate_digest = candidate_digest_for_infer;
+            let mut candidate_arch_match = candidate_arch_match_for_infer;
+            let mut candidate_arch_json = candidate_arch_json_for_infer;
+
+            // If the candidate resolves to the same digest as current, there's no actionable update.
+            //
+            // Note: for floating tags (e.g. `latest`) and missing runtime digest, comparing against the
+            // registry digest could be misleading (the tag may have already moved), so we only do the
+            // "no update" fast-path when runtime digest is known OR the current tag is semver/pinned.
+            let can_compare_current =
+                runtime_digest.is_some() || ignore::is_strict_semver(&svc.image_tag);
+            if can_compare_current
+                && let (Some(cur), Some(cand)) = (
+                    effective_current_digest.as_deref(),
+                    candidate_digest.as_deref(),
+                )
+                && cur == cand
+            {
+                candidate_tag = None;
+                candidate_digest = None;
+                candidate_arch_match = None;
+                candidate_arch_json = None;
+            }
+
             if candidate_tag.is_some() {
                 services_with_candidate += 1;
             }
@@ -520,35 +599,63 @@ async fn run_check_for_job(
                 ));
             }
 
-            let current_digest = state
-                .registry
-                .get_manifest(&img, &svc.image_tag)
-                .await
-                .ok()
-                .and_then(|m| m.digest);
+            let (current_resolved_tag, current_resolved_tags_json) = if let Some(runtime_digest) =
+                runtime_digest.as_deref()
+                && !ignore::is_strict_semver(&svc.image_tag)
+            {
+                let mut semver_tags: Vec<(semver::Version, String)> = tags
+                    .iter()
+                    .filter_map(|t| ignore::parse_version(t).map(|v| (v, t.clone())))
+                    .collect();
+                semver_tags.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
 
-            let (candidate_digest, candidate_arch_match, candidate_arch_json) =
-                if let Some(tag) = candidate_tag.as_deref() {
-                    match state.registry.get_manifest(&img, tag).await {
-                        Ok(m) => {
-                            let arch_match = registry::compute_arch_match(host_platform, &m.arch);
-                            (
-                                m.digest,
-                                Some(arch_match.as_str().to_string()),
-                                Some(serde_json::to_string(&m.arch).unwrap_or_default()),
-                            )
+                let mut resolved_tags: Vec<String> = Vec::new();
+                for (_v, tag) in semver_tags.into_iter().take(60) {
+                    let digest = if candidate_tag.as_deref().is_some_and(|c| c == tag.as_str())
+                        && candidate_digest.is_some()
+                    {
+                        candidate_digest.clone()
+                    } else {
+                        let cache_key = format!("{}/{}:{}", img.registry, img.name, tag);
+                        if let Some(v) = manifest_digest_cache.get(&cache_key) {
+                            v.clone()
+                        } else {
+                            let v = state
+                                .registry
+                                .get_manifest(&img, &tag, host_platform)
+                                .await
+                                .ok()
+                                .and_then(|m| m.digest);
+                            manifest_digest_cache.insert(cache_key, v.clone());
+                            v
                         }
-                        Err(_) => (None, None, None),
+                    };
+
+                    if digest.as_deref().is_some_and(|d| d == runtime_digest) {
+                        resolved_tags.push(tag);
                     }
+                }
+
+                resolved_tags.retain(|t| t != &svc.image_tag);
+                let resolved_tag = resolved_tags.first().cloned();
+                let resolved_tags_json = if resolved_tags.len() > 1 {
+                    serde_json::to_string(&resolved_tags).ok()
                 } else {
-                    (None, None, None)
+                    None
                 };
+
+                (resolved_tag, resolved_tags_json)
+            } else {
+                (None, None)
+            };
 
             state
                 .db
                 .update_service_check_result(
                     &svc.id,
                     current_digest,
+                    current_resolved_tag,
+                    current_resolved_tags_json,
                     candidate_tag.clone(),
                     candidate_digest,
                     candidate_arch_match,
@@ -589,6 +696,131 @@ async fn run_check_for_job(
         "servicesChecked": services_checked,
         "servicesWithCandidate": services_with_candidate,
     }))
+}
+
+fn repo_candidates(img: &registry::ImageRef) -> Vec<String> {
+    let mut out = Vec::<String>::new();
+    out.push(format!("{}/{}", img.registry, img.name));
+    if img.registry == "docker.io" {
+        out.push(img.name.clone());
+        if let Some(short) = img.name.strip_prefix("library/") {
+            out.push(short.to_string());
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+async fn docker_compose_service_runtime_digest(
+    state: &AppState,
+    compose_project: &str,
+    compose_service: &str,
+    repo_candidates: &[String],
+) -> anyhow::Result<Option<String>> {
+    use crate::runner::CommandSpec;
+
+    let ps = state
+        .runner
+        .run(
+            CommandSpec {
+                program: "docker".to_string(),
+                args: vec![
+                    "ps".to_string(),
+                    "-q".to_string(),
+                    "--filter".to_string(),
+                    format!("label=com.docker.compose.project={compose_project}"),
+                    "--filter".to_string(),
+                    format!("label=com.docker.compose.service={compose_service}"),
+                ],
+                env: Vec::new(),
+            },
+            std::time::Duration::from_secs(8),
+        )
+        .await?;
+
+    if ps.status != 0 {
+        return Err(anyhow::anyhow!(
+            "docker ps failed status={} stderr={}",
+            ps.status,
+            ps.stderr
+        ));
+    }
+
+    let container_ids = ps
+        .stdout
+        .lines()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>();
+    if container_ids.is_empty() {
+        return Ok(None);
+    }
+
+    let mut digests = std::collections::BTreeSet::<String>::new();
+    for id in container_ids {
+        let img_id = state
+            .runner
+            .run(
+                CommandSpec {
+                    program: "docker".to_string(),
+                    args: vec![
+                        "inspect".to_string(),
+                        "--format".to_string(),
+                        "{{.Image}}".to_string(),
+                        id,
+                    ],
+                    env: Vec::new(),
+                },
+                std::time::Duration::from_secs(10),
+            )
+            .await?;
+        if img_id.status != 0 {
+            continue;
+        }
+        let img_id = img_id.stdout.trim().to_string();
+        if img_id.is_empty() {
+            continue;
+        }
+
+        let inspect = state
+            .runner
+            .run(
+                CommandSpec {
+                    program: "docker".to_string(),
+                    args: vec![
+                        "image".to_string(),
+                        "inspect".to_string(),
+                        img_id,
+                        "--format".to_string(),
+                        "{{json .RepoDigests}}".to_string(),
+                    ],
+                    env: Vec::new(),
+                },
+                std::time::Duration::from_secs(10),
+            )
+            .await?;
+        if inspect.status != 0 {
+            continue;
+        }
+
+        let parsed = serde_json::from_str::<Vec<String>>(inspect.stdout.trim()).unwrap_or_default();
+        for d in parsed {
+            for repo in repo_candidates {
+                if let Some(rest) = d.strip_prefix(&format!("{repo}@"))
+                    && !rest.trim().is_empty()
+                {
+                    digests.insert(rest.trim().to_string());
+                }
+            }
+        }
+    }
+
+    if digests.len() == 1 {
+        Ok(digests.iter().next().cloned())
+    } else {
+        Ok(None)
+    }
 }
 
 async fn trigger_update(
@@ -694,6 +926,9 @@ async fn validate_arch_mismatch_for_update(
     req: &TriggerUpdateRequest,
     stack_ids: &[String],
 ) -> Result<(), ApiError> {
+    let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
+        .unwrap_or_else(|| "linux/amd64".to_string());
+
     if req.allow_arch_mismatch {
         return Ok(());
     }
@@ -722,15 +957,11 @@ async fn validate_arch_mismatch_for_update(
                 let reference = req.target_digest.as_deref().unwrap_or(tag);
                 let manifest = state
                     .registry
-                    .get_manifest(&img, reference)
+                    .get_manifest(&img, reference, &host_platform)
                     .await
                     .map_err(map_internal)?;
-                let arch_match = registry::compute_arch_match(
-                    registry::host_platform_override(state.config.host_platform.as_deref())
-                        .unwrap_or_else(|| "linux/amd64".to_string())
-                        .as_str(),
-                    &manifest.arch,
-                );
+                let arch_match =
+                    registry::compute_arch_match(host_platform.as_str(), &manifest.arch);
                 if matches!(arch_match, ArchMatch::Mismatch) {
                     return Err(ApiError::invalid_argument(
                         "candidate arch mismatch (set allowArchMismatch=true to override)",
@@ -746,15 +977,11 @@ async fn validate_arch_mismatch_for_update(
                 let reference = req.target_digest.as_deref().unwrap();
                 let manifest = state
                     .registry
-                    .get_manifest(&img, reference)
+                    .get_manifest(&img, reference, &host_platform)
                     .await
                     .map_err(map_internal)?;
-                let arch_match = registry::compute_arch_match(
-                    registry::host_platform_override(state.config.host_platform.as_deref())
-                        .unwrap_or_else(|| "linux/amd64".to_string())
-                        .as_str(),
-                    &manifest.arch,
-                );
+                let arch_match =
+                    registry::compute_arch_match(host_platform.as_str(), &manifest.arch);
                 if matches!(arch_match, ArchMatch::Mismatch) {
                     return Err(ApiError::invalid_argument(
                         "candidate arch mismatch (set allowArchMismatch=true to override)",
@@ -1422,7 +1649,11 @@ async fn list_service_candidates(
     let mut out: Vec<ServiceCandidateOption> = Vec::new();
     for tag in picked {
         let ignored = is_ignored(&tag);
-        match state.registry.get_manifest(&img, &tag).await {
+        match state
+            .registry
+            .get_manifest(&img, &tag, &host_platform)
+            .await
+        {
             Ok(m) => {
                 let arch_match = registry::compute_arch_match(&host_platform, &m.arch);
                 out.push(ServiceCandidateOption {

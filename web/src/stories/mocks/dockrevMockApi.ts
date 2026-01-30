@@ -13,6 +13,7 @@ import type {
 export type DockrevApiScenario =
   | 'default'
   | 'dashboard-demo'
+  | 'resolved-tag-demo'
   | 'multi-stack-mixed'
   | 'queue-mixed'
   | 'settings-configured'
@@ -336,6 +337,51 @@ function buildNoCandidates(): Fixture {
   return f
 }
 
+function buildResolvedTagDemo(): Fixture {
+  const f = baseEmpty()
+  const lastCheckAt = nowIso(-60_000)
+
+  const stackId = 'stack-resolved'
+  const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
+
+  const service = {
+    id: 'svc-resolved-web',
+    name: 'web',
+    image: {
+      ref: 'ghcr.io/acme/web',
+      tag: 'latest',
+      digest: d('a', 'b1'),
+      resolvedTag: 'v5.2.1',
+      resolvedTags: ['v5.2.1', '5.2.1'],
+    },
+    candidate: { tag: 'v5.2.3', digest: d('b', '9f'), archMatch: 'match', arch: ['linux/amd64'] },
+    ignore: null,
+    settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} } },
+  } satisfies StackDetail['services'][number]
+
+  const detail = {
+    id: stackId,
+    name: 'prod',
+    compose: { type: 'path', composeFiles: ['/srv/prod/compose.yml'], envFile: '/srv/prod/.env' },
+    services: [service],
+  } satisfies StackDetail
+
+  f.stacks = [
+    {
+      id: stackId,
+      name: 'prod',
+      status: 'healthy',
+      services: detail.services.length,
+      updates: 1,
+      lastCheckAt,
+    } satisfies StackListItem,
+  ]
+  f.stackById = { [stackId]: detail }
+  f.serviceSettingsById = { [service.id]: service.settings }
+
+  return f
+}
+
 function buildQueueMixed(): Fixture {
   const f = buildDashboardDemo()
 
@@ -484,6 +530,7 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'empty') return baseEmpty()
   if (scenario === 'no-candidates') return buildNoCandidates()
   if (scenario === 'dashboard-demo') return buildDashboardDemo()
+  if (scenario === 'resolved-tag-demo') return buildResolvedTagDemo()
   if (scenario === 'queue-mixed') return buildQueueMixed()
   if (scenario === 'settings-configured') return buildSettingsConfigured()
   if (scenario === 'multi-stack-mixed') return buildMultiStackMixed()

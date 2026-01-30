@@ -32,6 +32,7 @@ impl RegistryClient for FakeRegistry {
         &self,
         _image: &ImageRef,
         reference: &str,
+        _host_platform: &str,
     ) -> anyhow::Result<ManifestInfo> {
         let digest = match reference {
             "5.2" => "sha256:old",
@@ -57,6 +58,125 @@ impl CommandRunner for FakeRunner {
             stderr: String::new(),
         })
     }
+}
+
+#[derive(Clone)]
+struct StatefulRegistry {
+    calls: Arc<std::sync::Mutex<std::collections::BTreeMap<String, u32>>>,
+}
+
+impl Default for StatefulRegistry {
+    fn default() -> Self {
+        Self {
+            calls: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl RegistryClient for StatefulRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        Ok(vec!["5.2.0".to_string(), "5.3.0".to_string()])
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        let mut calls = self.calls.lock().unwrap();
+        let count = calls.entry(reference.to_string()).or_insert(0);
+        *count += 1;
+
+        // Simulate a transient failure for the would-be candidate tag on its first lookup.
+        if reference == "5.3.0" && *count == 1 {
+            return Err(anyhow::anyhow!("transient registry error"));
+        }
+
+        let digest = match reference {
+            "5.2.0" => "sha256:other",
+            "5.3.0" => "sha256:match",
+            // For floating tags (e.g. latest), we don't rely on this value in the test.
+            _ => "sha256:unknown",
+        };
+        Ok(ManifestInfo {
+            digest: Some(digest.to_string()),
+            arch: vec!["linux/amd64".to_string()],
+        })
+    }
+}
+
+#[derive(Clone)]
+struct ScriptedRunner {
+    calls: Arc<std::sync::Mutex<Vec<Vec<String>>>>,
+}
+
+impl Default for ScriptedRunner {
+    fn default() -> Self {
+        Self {
+            calls: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl CommandRunner for ScriptedRunner {
+    async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        self.calls.lock().unwrap().push(spec.args.clone());
+        let args = spec.args;
+        let (status, stdout) = if args.first().map(|s| s.as_str()) == Some("ps")
+            && args.get(1).map(|s| s.as_str()) == Some("-q")
+        {
+            (0, "cid1\n".to_string())
+        } else if args.first().map(|s| s.as_str()) == Some("inspect")
+            && args.get(1).map(|s| s.as_str()) == Some("--format")
+            && args.get(2).map(|s| s.as_str()) == Some("{{.Image}}")
+        {
+            (0, "img1\n".to_string())
+        } else if args.first().map(|s| s.as_str()) == Some("image")
+            && args.get(1).map(|s| s.as_str()) == Some("inspect")
+            && args.get(3).map(|s| s.as_str()) == Some("--format")
+            && args
+                .get(4)
+                .map(|s| s.as_str())
+                .is_some_and(|s| s.contains("RepoDigests"))
+        {
+            (0, "[\"ghcr.io/acme/web@sha256:match\"]".to_string())
+        } else {
+            (0, String::new())
+        };
+        Ok(CommandOutput {
+            status,
+            stdout,
+            stderr: String::new(),
+        })
+    }
+}
+
+async fn test_state_with(
+    db_path: &str,
+    registry: Arc<dyn RegistryClient>,
+    runner: Arc<dyn CommandRunner>,
+) -> Arc<AppState> {
+    let config = Config {
+        app_effective_version: "0.1.0".to_string(),
+        http_addr: "127.0.0.1:0".to_string(),
+        db_path: PathBuf::from(db_path),
+        docker_config_path: None,
+        compose_bin: "docker-compose".to_string(),
+        auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
+        auth_allow_anonymous_in_dev: true,
+        self_upgrade_url: "/supervisor/".to_string(),
+        dockrev_image_repo: "ghcr.io/ivanli-cn/dockrev".to_string(),
+        webhook_secret: Some("secret".to_string()),
+        host_platform: Some("linux/amd64".to_string()),
+        discovery_interval_seconds: 60,
+        discovery_max_actions: 200,
+    };
+
+    let db = Db::open(&config.db_path).await.unwrap();
+    AppState::new(config, db, registry, runner)
 }
 
 async fn test_state(db_path: &str) -> Arc<AppState> {
@@ -462,6 +582,45 @@ services:
     );
 }
 
+#[test]
+fn infer_resolved_tag_picks_highest_semver_and_exposes_all_matches() {
+    let runtime_digest = "sha256:run";
+    let current_tag = "latest";
+    let tags: Vec<String> = ["latest", "v1.0.0-alpha.1", "1.0.0", "v1.0.0", "v0.9.0"]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+
+    let digest_for_tag = |tag: &str| -> Option<&'static str> {
+        match tag {
+            "v1.0.0" => Some("sha256:run"),
+            "1.0.0" => Some("sha256:run"),
+            "v1.0.0-alpha.1" => Some("sha256:run"),
+            "v0.9.0" => Some("sha256:old"),
+            _ => None,
+        }
+    };
+
+    let mut semver_tags: Vec<(semver::Version, String)> = tags
+        .iter()
+        .filter_map(|t| crate::ignore::parse_version(t).map(|v| (v, t.clone())))
+        .collect();
+    semver_tags.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+
+    let mut resolved_tags: Vec<String> = Vec::new();
+    for (_v, tag) in semver_tags {
+        if let Some(d) = digest_for_tag(&tag)
+            && d == runtime_digest
+            && tag != current_tag
+        {
+            resolved_tags.push(tag);
+        }
+    }
+
+    assert_eq!(resolved_tags, vec!["v1.0.0", "1.0.0", "v1.0.0-alpha.1"]);
+    assert_eq!(resolved_tags.first().map(String::as_str), Some("v1.0.0"));
+}
+
 #[tokio::test]
 async fn archived_stack_update_skips_notify() {
     let state = test_state(":memory:").await;
@@ -851,6 +1010,326 @@ services:
     assert_eq!(job["createdBy"].as_str().unwrap(), "webhook");
     assert_eq!(job["reason"].as_str().unwrap(), "webhook");
     assert_eq!(job["type"].as_str().unwrap(), "check");
+}
+
+#[tokio::test]
+async fn check_persists_registry_digest_when_runtime_digest_missing() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let check = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(check.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let check_id = triggered["checkId"].as_str().unwrap().to_string();
+
+    let mut finished = false;
+    for _ in 0..50 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{check_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(finished, "check job did not finish in time");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let digest = detail["stack"]["services"][0]["image"]["digest"]
+        .as_str()
+        .unwrap();
+    assert_eq!(digest, "sha256:old");
+}
+
+#[tokio::test]
+async fn resolved_tag_inference_does_not_skip_candidate_tag_when_candidate_digest_none() {
+    let runner: Arc<ScriptedRunner> = Arc::new(ScriptedRunner::default());
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(StatefulRegistry::default()),
+        runner.clone(),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "demo".to_string(),
+            stack_id: Some(stack_id.clone()),
+            status: "active".to_string(),
+            last_seen_at: Some(now.clone()),
+            last_scan_at: now,
+            last_error: None,
+            last_config_files: Some(vec![compose_path.clone()]),
+            unarchive_if_active: true,
+        })
+        .await
+        .unwrap();
+    let compose_project = state.db.get_stack_compose_project(&stack_id).await.unwrap();
+    assert_eq!(compose_project.as_deref(), Some("demo"));
+
+    let img = crate::registry::ImageRef::parse("ghcr.io/acme/web:latest").unwrap();
+    let runtime = super::docker_compose_service_runtime_digest(
+        &state,
+        "demo",
+        "web",
+        &super::repo_candidates(&img),
+    )
+    .await
+    .unwrap();
+    assert_eq!(runtime.as_deref(), Some("sha256:match"));
+
+    let check = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(check.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let check_id = triggered["checkId"].as_str().unwrap().to_string();
+
+    let mut finished = false;
+    for _ in 0..80 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{check_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(finished, "check job did not finish in time");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/jobs/{check_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let job_detail = response_json(resp).await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let image = &detail["stack"]["services"][0]["image"];
+    let digest = image["digest"].as_str().unwrap_or("<none>");
+    let resolved = image["resolvedTag"].as_str().unwrap_or("<none>");
+    let runner_calls = runner.calls.lock().unwrap().clone();
+    assert_eq!(
+        digest, "sha256:match",
+        "unexpected stack detail: {detail}\njob detail: {job_detail}\nrunner calls: {runner_calls:?}"
+    );
+    assert_eq!(
+        resolved, "5.3.0",
+        "unexpected stack detail: {detail}\njob detail: {job_detail}\nrunner calls: {runner_calls:?}"
+    );
+}
+
+#[tokio::test]
+async fn resolved_tag_inference_runs_for_major_minor_tags() {
+    let runner: Arc<ScriptedRunner> = Arc::new(ScriptedRunner::default());
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(StatefulRegistry::default()),
+        runner.clone(),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "demo".to_string(),
+            stack_id: Some(stack_id.clone()),
+            status: "active".to_string(),
+            last_seen_at: Some(now.clone()),
+            last_scan_at: now,
+            last_error: None,
+            last_config_files: Some(vec![compose_path.clone()]),
+            unarchive_if_active: true,
+        })
+        .await
+        .unwrap();
+
+    let check = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(check.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let check_id = triggered["checkId"].as_str().unwrap().to_string();
+
+    let mut finished = false;
+    for _ in 0..80 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{check_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(finished, "check job did not finish in time");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let resolved = detail["stack"]["services"][0]["image"]["resolvedTag"]
+        .as_str()
+        .unwrap_or("<none>");
+    assert_ne!(
+        resolved, "<none>",
+        "expected resolvedTag for 5.2 tag: {detail}"
+    );
 }
 
 #[tokio::test]

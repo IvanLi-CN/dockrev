@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   triggerDiscoveryScan,
   listDiscoveryProjects,
@@ -16,7 +16,7 @@ import {
   type StackListItem,
 } from '../api'
 import { navigate } from '../routes'
-import { Button, Mono, StatusRemark } from '../ui'
+import { ArrowRightIcon, Button, Mono, StatusRemark } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { serviceRowStatus, type RowStatus } from '../updateStatus'
@@ -31,14 +31,92 @@ function formatShort(ts?: string | null) {
   return d.toLocaleString()
 }
 
-function formatTagOnly(tag: string): string {
-  return tag
+function splitImageRef(ref: string): { registry: string; name: string } {
+  const s = ref.trim()
+  const withoutDigest = s.includes('@') ? s.split('@', 1)[0] : s
+  const firstSlash = withoutDigest.indexOf('/')
+  if (firstSlash < 0) {
+    return { registry: 'docker.io', name: withoutDigest }
+  }
+  const firstSeg = withoutDigest.slice(0, firstSlash)
+  const rest = withoutDigest.slice(firstSlash + 1)
+  const isRegistry = firstSeg.includes('.') || firstSeg.includes(':') || firstSeg === 'localhost'
+  if (isRegistry) return { registry: firstSeg, name: rest }
+  return { registry: 'docker.io', name: withoutDigest }
 }
 
-function formatTagTooltip(tag: string, digest: string | null | undefined): string | undefined {
-  if (!digest) return undefined
-  const m = digest.includes(':') ? digest : `sha256:${digest}`
-  return `${tag}@${m}`
+function splitImageNameForDisplay(
+  name: string,
+  tag: string | null | undefined,
+): { base: string; suffix: string } {
+  const n = name.trim()
+  if (!n) return { base: '', suffix: '' }
+
+  const at = n.indexOf('@')
+  if (at >= 0) return { base: n.slice(0, at), suffix: n.slice(at) }
+
+  const lastSlash = n.lastIndexOf('/')
+  const lastColon = n.lastIndexOf(':')
+  if (lastColon > lastSlash) return { base: n.slice(0, lastColon), suffix: n.slice(lastColon) }
+
+  const t = (tag ?? '').trim()
+  if (!t) return { base: n, suffix: '' }
+  if (t.startsWith('sha256:')) return { base: n, suffix: `@${t}` }
+  return { base: n, suffix: `:${t}` }
+}
+
+function formatTagDisplay(tag: string, resolvedTag: string | null | undefined): string {
+  const r = (resolvedTag ?? '').trim()
+  return r && r !== tag ? r : tag
+}
+
+function isStrictSemverTag(tag: string): boolean {
+  const t = tag.trim()
+  if (!t) return false
+  return /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(t)
+}
+
+function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefined): string {
+  const r = (resolvedTag ?? '').trim()
+  if (r) return r
+  if (isStrictSemverTag(tag)) return tag
+  return '?'
+}
+
+function formatCurrentCandidateTagLine(currentTag: string, candidateTag: string | null): ReactNode {
+  const cur = currentTag.trim()
+  const cand = (candidateTag ?? '').trim()
+  if (!cand || cand === '-' || cand === cur) return cur
+  return (
+    <>
+      <span>{cur}</span> <ArrowRightIcon className="inlineIcon" /> <span>{cand}</span>
+    </>
+  )
+}
+
+function formatTagTooltip(
+  tag: string,
+  digest: string | null | undefined,
+  resolvedTag: string | null | undefined,
+  resolvedTags: string[] | null | undefined,
+): string | undefined {
+  const inferred = (resolvedTag ?? '').trim()
+  const lines: string[] = []
+
+  const digestSuffix = digest ? (digest.includes(':') ? digest : `sha256:${digest}`) : null
+
+  if (inferred && inferred !== tag) {
+    lines.push(digestSuffix ? `${inferred}@${digestSuffix}` : inferred)
+    lines.push(`原始标签: ${tag}`)
+  } else {
+    lines.push(digestSuffix ? `${tag}@${digestSuffix}` : tag)
+  }
+
+  if (resolvedTags && resolvedTags.length > 1) {
+    lines.push(`resolvedTags: ${resolvedTags.join(', ')}`)
+  }
+
+  return lines.join('\n')
 }
 
 function getDiscoveryScanStartedAt(summary: unknown): string | null {
@@ -68,7 +146,7 @@ function StackIcon(props: { variant: 'collapsed' | 'expanded' }) {
 function formatGroupSummary(services: number, counts: Record<Exclude<RowStatus, 'ok'>, number>) {
   const parts: string[] = [`${services} services`]
   if (counts.updatable > 0) parts.push(`${counts.updatable} 可更新`)
-  if (counts.crossTag > 0) parts.push(`${counts.crossTag} 跨 tag 版本`)
+  if (counts.crossTag > 0) parts.push(`${counts.crossTag} 跨标签版本`)
   if (counts.hint > 0) parts.push(`${counts.hint} 需确认`)
   if (counts.archMismatch > 0) parts.push(`${counts.archMismatch} 架构不匹配`)
   if (counts.blocked > 0) parts.push(`${counts.blocked} 被阻止`)
@@ -244,8 +322,8 @@ export function OverviewPage(props: {
     if (countsAll.hint > 0 || countsAll.crossTag > 0) {
       return {
         enabled: true,
-        note: '存在需确认/跨 tag 的候选；将由服务端计算是否实际变更',
-        title: '存在需确认/跨 tag 的候选；将由服务端计算是否实际变更',
+        note: '存在需确认/跨标签的候选；将由服务端计算是否实际变更',
+        title: '存在需确认/跨标签的候选；将由服务端计算是否实际变更',
       }
     }
     return { enabled: false, note: null as string | null, title: '无可更新服务' }
@@ -446,10 +524,10 @@ export function OverviewPage(props: {
                     <Mono>all</Mono>
                   </div>
                   <div className="modalKvLabel">候选服务</div>
-                  <div className="modalKvValue">{totalCandidates} 个（可更新/需确认/跨 tag）</div>
+                  <div className="modalKvValue">{totalCandidates} 个（可更新/需确认/跨标签）</div>
                   <div className="modalKvLabel">其中</div>
                   <div className="modalKvValue">
-                    可更新 {countsAll.updatable} · 需确认 {countsAll.hint} · 跨 tag {countsAll.crossTag}
+                    可更新 {countsAll.updatable} · 需确认 {countsAll.hint} · 跨标签 {countsAll.crossTag}
                   </div>
                   <div className="modalKvLabel">将跳过</div>
                   <div className="modalKvValue">
@@ -460,11 +538,11 @@ export function OverviewPage(props: {
                 <div className="modalLead">将更新的服务（预览）</div>
                 <div className="modalList">
                   {allCandidates.map((item) => {
-                    const current = formatTagOnly(item.svc.image.tag)
-                    const candidate = item.svc.candidate ? formatTagOnly(item.svc.candidate.tag) : '-'
-                    const title = `${formatTagTooltip(item.svc.image.tag, item.svc.image.digest) ?? item.svc.image.tag} → ${
+                    const current = formatTagDisplay(item.svc.image.tag, item.svc.image.resolvedTag)
+                    const candidate = item.svc.candidate ? formatTagDisplay(item.svc.candidate.tag, undefined) : '-'
+                    const title = `${formatTagTooltip(item.svc.image.tag, item.svc.image.digest, item.svc.image.resolvedTag, item.svc.image.resolvedTags) ?? current} → ${
                       item.svc.candidate
-                        ? formatTagTooltip(item.svc.candidate.tag, item.svc.candidate.digest) ?? item.svc.candidate.tag
+                        ? formatTagTooltip(item.svc.candidate.tag, item.svc.candidate.digest, undefined, undefined) ?? item.svc.candidate.tag
                         : '-'
                     }`
                     return (
@@ -474,12 +552,26 @@ export function OverviewPage(props: {
                             <span className="mono">{`${item.stackName}/${item.svc.name}`}</span>
                             <span className="muted">{` · ${item.status}`}</span>
                           </div>
-                          <div className="muted">
-                            <span className="mono">{item.svc.image.ref}</span>
-                          </div>
+                          {(() => {
+                            const img = splitImageRef(item.svc.image.ref)
+                            const dn = splitImageNameForDisplay(img.name, item.svc.image.tag)
+                            return (
+                              <div className="cellTwoLine">
+                                <div
+                                  className="mono monoPrimary monoSplit"
+                                  title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}
+                                >
+                                  <span className="monoSplitBase">{dn.base}</span>
+                                </div>
+                                <div className="mono monoSecondary">{img.registry}</div>
+                              </div>
+                            )
+                          })()}
                         </div>
                         <div className="modalListRight">
-                          <span className="mono" title={title}>{`${current} → ${candidate}`}</span>
+                          <span className="mono" title={title}>
+                            <span>{current}</span> <ArrowRightIcon className="inlineIcon" /> <span>{candidate}</span>
+                          </span>
                         </div>
                       </div>
                     )
@@ -591,7 +683,7 @@ export function OverviewPage(props: {
           <div className="tableHeader">
             <div>Service</div>
             <div>Image</div>
-            <div>Current → Candidate</div>
+            <div>Versions</div>
             <div>状态 / 备注</div>
             <div>操作</div>
           </div>
@@ -628,7 +720,7 @@ export function OverviewPage(props: {
               counts.updatable > 0
                 ? { enabled: true, title: null as string | null }
                 : counts.hint > 0 || counts.crossTag > 0
-                  ? { enabled: true, title: '存在需确认/跨 tag 的候选；将由服务端计算是否实际变更' }
+                  ? { enabled: true, title: '存在需确认/跨标签的候选；将由服务端计算是否实际变更' }
                   : { enabled: false, title: '无可更新服务' }
 
             return (
@@ -681,10 +773,10 @@ export function OverviewPage(props: {
 	                                <Mono>{d.name}</Mono>
 	                              </div>
 	                              <div className="modalKvLabel">候选服务</div>
-	                              <div className="modalKvValue">{totalCandidates} 个（可更新/需确认/跨 tag）</div>
+	                              <div className="modalKvValue">{totalCandidates} 个（可更新/需确认/跨标签）</div>
 	                              <div className="modalKvLabel">其中</div>
 	                              <div className="modalKvValue">
-	                                可更新 {counts.updatable} · 需确认 {counts.hint} · 跨 tag {counts.crossTag}
+	                                可更新 {counts.updatable} · 需确认 {counts.hint} · 跨标签 {counts.crossTag}
 	                              </div>
 		                              <div className="modalKvLabel">将跳过</div>
 		                              <div className="modalKvValue">
@@ -695,11 +787,11 @@ export function OverviewPage(props: {
 		                            <div className="modalLead">将更新的服务（预览）</div>
 		                            <div className="modalList">
 		                              {candidateServices.map((item) => {
-		                                const current = formatTagOnly(item.svc.image.tag)
-		                                const candidate = item.svc.candidate ? formatTagOnly(item.svc.candidate.tag) : '-'
-		                                const title = `${formatTagTooltip(item.svc.image.tag, item.svc.image.digest) ?? item.svc.image.tag} → ${
-		                                  item.svc.candidate
-		                                    ? formatTagTooltip(item.svc.candidate.tag, item.svc.candidate.digest) ?? item.svc.candidate.tag
+		                                const current = formatTagDisplay(item.svc.image.tag, item.svc.image.resolvedTag)
+		                                const candidate = item.svc.candidate ? formatTagDisplay(item.svc.candidate.tag, undefined) : '-'
+		                                const title = `${formatTagTooltip(item.svc.image.tag, item.svc.image.digest, item.svc.image.resolvedTag, item.svc.image.resolvedTags) ?? current} → ${
+		                                    item.svc.candidate
+		                                    ? formatTagTooltip(item.svc.candidate.tag, item.svc.candidate.digest, undefined, undefined) ?? item.svc.candidate.tag
 		                                    : '-'
 		                                }`
 		                                return (
@@ -709,12 +801,26 @@ export function OverviewPage(props: {
 		                                        <span className="mono">{item.svc.name}</span>
 		                                        <span className="muted">{` · ${item.status}`}</span>
 		                                      </div>
-		                                      <div className="muted">
-		                                        <span className="mono">{item.svc.image.ref}</span>
-		                                      </div>
+		                                      {(() => {
+		                                        const img = splitImageRef(item.svc.image.ref)
+		                                        const dn = splitImageNameForDisplay(img.name, item.svc.image.tag)
+		                                        return (
+		                                          <div className="cellTwoLine">
+		                                            <div
+		                                              className="mono monoPrimary monoSplit"
+		                                              title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}
+		                                            >
+		                                              <span className="monoSplitBase">{dn.base}</span>
+		                                            </div>
+		                                            <div className="mono monoSecondary">{img.registry}</div>
+		                                          </div>
+		                                        )
+		                                      })()}
 		                                    </div>
 		                                    <div className="modalListRight">
-		                                      <span className="mono" title={title}>{`${current} → ${candidate}`}</span>
+		                                      <span className="mono" title={title}>
+		                                        <span>{current}</span> <ArrowRightIcon className="inlineIcon" /> <span>{candidate}</span>
+		                                      </span>
 		                                    </div>
 		                                  </div>
 		                                )
@@ -740,16 +846,14 @@ export function OverviewPage(props: {
 
                 {!isCollapsed
                   ? rows.map(({ svc, stt }) => {
-	                      const current = formatTagOnly(svc.image.tag)
-	                      const currentTitle = formatTagTooltip(svc.image.tag, svc.image.digest)
-	                      const candidate = svc.candidate ? formatTagOnly(svc.candidate.tag) : '-'
-	                      const candidateTitle = svc.candidate ? formatTagTooltip(svc.candidate.tag, svc.candidate.digest) : undefined
+	                      const currentTitle = formatTagTooltip(svc.image.tag, svc.image.digest, svc.image.resolvedTag, svc.image.resolvedTags)
+	                      const candidateTitle = svc.candidate ? formatTagTooltip(svc.candidate.tag, svc.candidate.digest, undefined, undefined) : undefined
                       const isDockrev = isDockrevService(svc)
                       const svcApply =
                         stt === 'updatable'
                           ? { enabled: true, title: null as string | null, note: null as string | null }
                           : stt === 'crossTag'
-                            ? { enabled: true, title: '跨 tag 版本更新；请确认风险后执行', note: '跨 tag' }
+                            ? { enabled: true, title: '跨标签版本更新；请确认风险后执行', note: '跨标签' }
                           : stt === 'hint'
                             ? { enabled: true, title: '未确认是否有更新；将由服务端计算是否实际变更', note: '未确认' }
                             : stt === 'ok'
@@ -788,17 +892,46 @@ export function OverviewPage(props: {
                               navigate({ name: 'service', stackId: st.id, serviceId: svc.id })
                             }
                           }}
-                        >
-                          <div className="cellService">
-                            <span className="svcBullet" aria-hidden="true" />
-                            <span className="svcName">{svc.name}</span>
-                          </div>
-                          <div className="mono cellMono">{svc.image.ref}</div>
-	                          <div className="cellTwoLine">
-	                            <div className="mono" title={currentTitle}>{current}</div>
-	                            <div className="mono" title={candidateTitle}>{candidate}</div>
+	                        >
+	                          <div className="cellService">
+	                            <span className="svcBullet" aria-hidden="true" />
+	                            <span className="svcName">{svc.name}</span>
 	                          </div>
-                          <StatusRemark service={svc} status={stt} />
+	                          {(() => {
+	                            const img = splitImageRef(svc.image.ref)
+	                            const dn = splitImageNameForDisplay(img.name, svc.image.tag)
+	                            return (
+	                              <div className="cellTwoLine">
+	                                <div
+	                                  className="mono monoPrimary monoSplit"
+	                                  title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}
+	                                >
+	                                  <span className="monoSplitBase">{dn.base}</span>
+	                                </div>
+	                                <div className="mono monoSecondary">{img.registry}</div>
+	                              </div>
+	                            )
+	                          })()}
+	                          <div className="cellTwoLine">
+	                            <div
+	                              className="mono monoPrimary"
+	                              title={
+	                                [
+	                                  currentTitle,
+	                                  candidateTitle ? `candidate: ${candidateTitle}` : null,
+	                                ]
+	                                  .filter(Boolean)
+	                                  .join('\n')
+	                              }
+	                            >
+	                              {formatCurrentCandidateTagLine(
+	                                inferredTagForDisplay(svc.image.tag, svc.image.resolvedTag),
+	                                svc.candidate?.tag ?? null,
+	                              )}
+	                            </div>
+	                            <div className="mono monoSecondary">{svc.image.tag}</div>
+	                          </div>
+	                          <StatusRemark service={svc} status={stt} />
                           <div
                             className="actionCell"
                             onClick={(e) => e.stopPropagation()}
@@ -855,30 +988,43 @@ export function OverviewPage(props: {
                                         <div className="modalKvLabel">目标</div>
                                         <div className="modalKvValue">
                                           <Mono>{`${d.name}/${svc.name}`}</Mono>
-                                        </div>
-                                        <div className="modalKvLabel">镜像</div>
-                                        <div className="modalKvValue">
-                                          <Mono>{svc.image.ref}</Mono>
-                                        </div>
-	                                        <div className="modalKvLabel">目标版本</div>
+	                                        </div>
+	                                        <div className="modalKvLabel">镜像</div>
 	                                        <div className="modalKvValue">
+	                                          {(() => {
+	                                            const img = splitImageRef(svc.image.ref)
+	                                            const dn = splitImageNameForDisplay(img.name, svc.image.tag)
+	                                            return (
+	                                              <div className="cellTwoLine">
+	                                                <div
+	                                                  className="mono monoPrimary monoSplit"
+	                                                  title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}
+	                                                >
+	                                                  <span className="monoSplitBase">{dn.base}</span>
+	                                                </div>
+	                                                <div className="mono monoSecondary">{img.registry}</div>
+	                                              </div>
+	                                            )
+	                                          })()}
+	                                        </div>
+		                                        <div className="modalKvLabel">目标版本</div>
+		                                        <div className="modalKvValue">
                                           <span
                                             className="mono"
                                             title={
-                                              `${formatTagTooltip(svc.image.tag, svc.image.digest) ?? svc.image.tag} → ${
-                                                svc.candidate ? formatTagTooltip(svc.candidate.tag, svc.candidate.digest) ?? svc.candidate.tag : '-'
+                                              `${formatTagTooltip(svc.image.tag, svc.image.digest, svc.image.resolvedTag, svc.image.resolvedTags) ?? formatTagDisplay(svc.image.tag, svc.image.resolvedTag)} → ${
+                                                svc.candidate ? formatTagTooltip(svc.candidate.tag, svc.candidate.digest, undefined, undefined) ?? svc.candidate.tag : '-'
                                               }`
                                             }
                                           >
-                                            {current}
+                                            {formatTagDisplay(svc.image.tag, svc.image.resolvedTag)}
                                           </span>
-                                          <span className="mono" style={{ opacity: 0.8 }}>
-                                            {' '}
-                                            →{' '}
+                                          <span style={{ opacity: 0.8, margin: '0 6px' }}>
+                                            <ArrowRightIcon className="inlineIcon" />
                                           </span>
                                           <UpdateTargetSelect
                                             serviceId={svc.id}
-                                            currentTag={svc.image.tag}
+                                            currentTag={svc.image.resolvedTag ?? svc.image.tag}
                                             initialTag={svc.candidate?.tag ?? null}
                                             initialDigest={svc.candidate?.digest ?? null}
                                             variant="inline"

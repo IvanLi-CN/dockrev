@@ -607,6 +607,8 @@ mod tests {
                     reference: "ghcr.io/acme/web:1.0".to_string(),
                     tag: "1.0".to_string(),
                     digest: None,
+                    resolved_tag: None,
+                    resolved_tags: None,
                 },
                 candidate: None,
                 ignore: None,

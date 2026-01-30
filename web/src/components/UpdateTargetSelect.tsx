@@ -105,7 +105,7 @@ export function UpdateTargetSelect(props: {
         {opts?.map((o) => {
           const disabled = !isSelectable(o)
           const series = tagSeriesMatches(currentTag, o.tag)
-          const seriesHint = series === true ? '匹配 tag' : series === false ? '跨 tag' : '未知'
+          const seriesHint = series === true ? '匹配标签' : series === false ? '跨标签' : '未知'
           const suffixParts: string[] = []
           suffixParts.push(seriesHint)
           if (o.ignored) suffixParts.push('ignored')

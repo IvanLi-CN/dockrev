@@ -82,6 +82,10 @@ pub struct ComposeRef {
     pub tag: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_tags: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

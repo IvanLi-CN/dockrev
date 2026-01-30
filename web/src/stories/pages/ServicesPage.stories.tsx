@@ -25,6 +25,24 @@ export const Default: Story = {
   },
 }
 
+export const ResolvedTag: Story = {
+  parameters: { dockrevApiScenario: 'resolved-tag-demo' },
+  render: () => {
+    return (
+      <PageHarness
+        route={{ name: 'services' }}
+        title="服务"
+        topbarHint="服务"
+        pageSubtitle="浮动 tag：展示 resolvedTag（hover 可见原 tag）"
+      >
+        {({ onComposeHint, onTopActions }) => (
+          <ServicesPage onComposeHint={onComposeHint} onTopActions={onTopActions} />
+        )}
+      </PageHarness>
+    )
+  },
+}
+
 export const Empty: Story = {
   parameters: { dockrevApiScenario: 'empty' },
   render: () => {
@@ -55,7 +73,7 @@ export const DashboardDemo: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
   render: () => {
     return (
-      <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务" pageSubtitle="代表性：可更新/需确认/跨 tag/架构不匹配/被阻止 + 可交互">
+      <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务" pageSubtitle="代表性：可更新/需确认/跨标签/架构不匹配/被阻止 + 可交互">
         {({ onComposeHint, onTopActions }) => (
           <ServicesPage onComposeHint={onComposeHint} onTopActions={onTopActions} />
         )}
