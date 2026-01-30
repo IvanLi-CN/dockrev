@@ -330,7 +330,7 @@ async fn supervisor_paths_are_not_swallowed_by_ui_fallback() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), 502);
+    assert_eq!(resp.status(), 200);
 }
 
 #[tokio::test]

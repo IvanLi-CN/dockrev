@@ -157,7 +157,9 @@ curl -i {self_upgrade_url}self-upgrade</pre>
     let mime_value = HeaderValue::from_str(mime.as_ref()).ok();
 
     let mut resp = Response::new(Body::from(body.into_bytes()));
-    *resp.status_mut() = StatusCode::BAD_GATEWAY;
+    // Use 200 to ensure browsers render the fallback page without treating it as a hard error,
+    // while supervisor API paths still fail with non-2xx to avoid false "ok" probes.
+    *resp.status_mut() = StatusCode::OK;
     if let Some(v) = mime_value {
         resp.headers_mut().insert(header::CONTENT_TYPE, v);
     }

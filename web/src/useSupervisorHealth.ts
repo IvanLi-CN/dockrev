@@ -24,6 +24,30 @@ async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Respons
   }
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  return value as Record<string, unknown>
+}
+
+async function readErrorDetail(resp: Response): Promise<string | undefined> {
+  try {
+    const ct = resp.headers.get('content-type') || ''
+    if (ct.includes('application/json')) {
+      const body = (await resp.json()) as unknown
+      const record = asRecord(body)
+      if (record && typeof record.message === 'string') return record.message
+      if (typeof body === 'string') return body
+      return JSON.stringify(body)
+    }
+
+    const text = (await resp.text()).trim()
+    if (!text) return undefined
+    return text.length > 240 ? `${text.slice(0, 240)}…` : text
+  } catch {
+    return undefined
+  }
+}
+
 export function useSupervisorHealth() {
   const baseUrl = useMemo(() => selfUpgradeBaseUrl(), [])
   const [state, setState] = useState<HealthState>({ status: 'idle' })
@@ -40,7 +64,10 @@ export function useSupervisorHealth() {
       const url = resolveUrl('self-upgrade', baseUrl)
       const resp = await fetchWithTimeout(url, 1200)
       if (resp.status === 401) throw new Error('需要登录/鉴权（forward header）')
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      if (!resp.ok) {
+        const detail = await readErrorDetail(resp)
+        throw new Error(detail ? `HTTP ${resp.status}: ${detail}` : `HTTP ${resp.status}`)
+      }
       setState({ status: 'ok', okAt: new Date().toISOString() })
     } catch (e: unknown) {
       const msgRaw = e instanceof Error ? e.message : String(e)
