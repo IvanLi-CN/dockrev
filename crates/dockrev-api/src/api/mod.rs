@@ -571,7 +571,7 @@ async fn run_check_for_job(
             // registry digest could be misleading (the tag may have already moved), so we only do the
             // "no update" fast-path when runtime digest is known OR the current tag is semver/pinned.
             let can_compare_current =
-                runtime_digest.is_some() || ignore::parse_version(&svc.image_tag).is_some();
+                runtime_digest.is_some() || ignore::is_strict_semver(&svc.image_tag);
             if can_compare_current
                 && let (Some(cur), Some(cand)) = (
                     effective_current_digest.as_deref(),
@@ -601,7 +601,7 @@ async fn run_check_for_job(
 
             let (current_resolved_tag, current_resolved_tags_json) = if let Some(runtime_digest) =
                 runtime_digest.as_deref()
-                && ignore::parse_version(&svc.image_tag).is_none()
+                && !ignore::is_strict_semver(&svc.image_tag)
             {
                 let mut semver_tags: Vec<(semver::Version, String)> = tags
                     .iter()

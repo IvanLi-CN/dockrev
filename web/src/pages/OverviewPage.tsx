@@ -70,6 +70,19 @@ function formatTagDisplay(tag: string, resolvedTag: string | null | undefined): 
   return r && r !== tag ? r : tag
 }
 
+function isStrictSemverTag(tag: string): boolean {
+  const t = tag.trim()
+  if (!t) return false
+  return /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(t)
+}
+
+function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefined): string {
+  const r = (resolvedTag ?? '').trim()
+  if (r) return r
+  if (isStrictSemverTag(tag)) return tag
+  return '?'
+}
+
 function formatCurrentCandidateTagLine(currentTag: string, candidateTag: string | null): string {
   const cur = currentTag.trim()
   const cand = (candidateTag ?? '').trim()
@@ -664,7 +677,7 @@ export function OverviewPage(props: {
           <div className="tableHeader">
             <div>Service</div>
             <div>Image</div>
-            <div>Current → Candidate</div>
+            <div>Versions</div>
             <div>状态 / 备注</div>
             <div>操作</div>
           </div>
@@ -903,7 +916,10 @@ export function OverviewPage(props: {
 	                                  .join('\n')
 	                              }
 	                            >
-	                              {formatCurrentCandidateTagLine(svc.image.resolvedTag ?? svc.image.tag, svc.candidate?.tag ?? null)}
+	                              {formatCurrentCandidateTagLine(
+	                                inferredTagForDisplay(svc.image.tag, svc.image.resolvedTag),
+	                                svc.candidate?.tag ?? null,
+	                              )}
 	                            </div>
 	                            <div className="mono monoSecondary">{svc.image.tag}</div>
 	                          </div>

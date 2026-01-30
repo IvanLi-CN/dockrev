@@ -66,6 +66,14 @@ pub fn parse_version(tag: &str) -> Option<Version> {
     Version::parse(&coerced).ok()
 }
 
+pub fn is_strict_semver(tag: &str) -> bool {
+    let trimmed = tag.trim().strip_prefix('v').unwrap_or(tag.trim());
+    if trimmed.is_empty() {
+        return false;
+    }
+    Version::parse(trimmed).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
