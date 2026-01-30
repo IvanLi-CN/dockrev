@@ -70,6 +70,13 @@ function formatTagDisplay(tag: string, resolvedTag: string | null | undefined): 
   return r && r !== tag ? r : tag
 }
 
+function formatCurrentCandidateTagLine(currentTag: string, candidateTag: string | null): string {
+  const cur = currentTag.trim()
+  const cand = (candidateTag ?? '').trim()
+  if (!cand || cand === '-' || cand === cur) return cur
+  return `${cur} -> ${cand}`
+}
+
 function formatTagTooltip(
   tag: string,
   digest: string | null | undefined,
@@ -814,9 +821,7 @@ export function OverviewPage(props: {
 
                 {!isCollapsed
                   ? rows.map(({ svc, stt }) => {
-	                      const current = formatTagDisplay(svc.image.tag, svc.image.resolvedTag)
 	                      const currentTitle = formatTagTooltip(svc.image.tag, svc.image.digest, svc.image.resolvedTag, svc.image.resolvedTags)
-	                      const candidate = svc.candidate ? formatTagDisplay(svc.candidate.tag, undefined) : '-'
 	                      const candidateTitle = svc.candidate ? formatTagTooltip(svc.candidate.tag, svc.candidate.digest, undefined, undefined) : undefined
                       const isDockrev = isDockrevService(svc)
                       const svcApply =
@@ -881,8 +886,20 @@ export function OverviewPage(props: {
 	                            )
 	                          })()}
 	                          <div className="cellTwoLine">
-	                            <div className="mono monoPrimary" title={currentTitle}>{current}</div>
-	                            <div className="mono monoSecondary" title={candidateTitle}>{candidate !== '-' ? `→ ${candidate}` : candidate}</div>
+	                            <div
+	                              className="mono monoPrimary"
+	                              title={
+	                                [
+	                                  currentTitle,
+	                                  candidateTitle ? `candidate: ${candidateTitle}` : null,
+	                                ]
+	                                  .filter(Boolean)
+	                                  .join('\n')
+	                              }
+	                            >
+	                              {formatCurrentCandidateTagLine(svc.image.resolvedTag ?? svc.image.tag, svc.candidate?.tag ?? null)}
+	                            </div>
+	                            <div className="mono monoSecondary">{svc.image.tag}</div>
 	                          </div>
 	                          <StatusRemark service={svc} status={stt} />
                           <div
@@ -968,7 +985,7 @@ export function OverviewPage(props: {
                                               }`
                                             }
                                           >
-                                            {current}
+                                            {formatTagDisplay(svc.image.tag, svc.image.resolvedTag)}
                                           </span>
                                           <span className="mono" style={{ opacity: 0.8 }}>
                                             {' '}
