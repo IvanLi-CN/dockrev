@@ -15,6 +15,7 @@ use url::Url;
 use crate::state::AppState;
 
 static WEB_DIST: Dir<'_> = include_dir!("$OUT_DIR/dockrev-ui-dist");
+const RUNTIME_CONFIG_MARKER: &str = "<!-- DOCKREV_RUNTIME_CONFIG -->";
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::<Arc<AppState>>::new()
@@ -48,6 +49,12 @@ async fn fallback(State(state): State<Arc<AppState>>, Path(path): Path<String>) 
     if let Some(base_prefix) = self_upgrade_base_prefix(state.config.self_upgrade_url.as_str()) {
         if let Some(remaining) = strip_prefix_path(&path, &base_prefix) {
             if remaining.is_empty() {
+                // Prefer rendering an in-app page (so the UI style matches Dockrev), if the UI assets
+                // are built and contain the runtime config marker. Otherwise fall back to a simple HTML page.
+                if ui_has_runtime_config_marker() {
+                    return serve_index(state.as_ref())
+                        .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response());
+                }
                 return supervisor_fallback_html(&state.config.self_upgrade_url);
             }
             return supervisor_api_misroute_json(&state.config.self_upgrade_url, &remaining);
@@ -208,6 +215,16 @@ fn serve_index(state: &AppState) -> Option<Response> {
     let mut resp = Response::new(Body::from(body.into_bytes()));
     resp.headers_mut().insert(header::CONTENT_TYPE, mime_value);
     Some(resp)
+}
+
+fn ui_has_runtime_config_marker() -> bool {
+    let Some(file) = WEB_DIST.get_file("index.html") else {
+        return false;
+    };
+    let Ok(raw) = std::str::from_utf8(file.contents()) else {
+        return false;
+    };
+    raw.contains(RUNTIME_CONFIG_MARKER)
 }
 
 fn escape_json_for_inline_script(json: &str) -> String {

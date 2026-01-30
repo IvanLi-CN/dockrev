@@ -7,6 +7,7 @@ import { QueuePage } from './pages/QueuePage'
 import { ServicesPage } from './pages/ServicesPage'
 import { ServiceDetailPage } from './pages/ServiceDetailPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { SupervisorMisroutePage } from './pages/SupervisorMisroutePage'
 import { useRoute } from './useRoute'
 
 function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbarHint?: string } {
@@ -29,6 +30,8 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
       }
     case 'service':
       return { title: '服务详情', topbarHint: '服务详情' }
+    case 'supervisor-misroute':
+      return { title: '部署问题', topbarHint: '自我升级（Supervisor）' }
   }
 }
 
@@ -62,6 +65,9 @@ export default function App() {
           onComposeHint={setComposeHint}
           onTopActions={setPageActions}
         />
+      ) : null}
+      {route.name === 'supervisor-misroute' ? (
+        <SupervisorMisroutePage basePath={route.basePath} pathname={route.pathname} onTopActions={setPageActions} />
       ) : null}
     </AppShell>
   )
