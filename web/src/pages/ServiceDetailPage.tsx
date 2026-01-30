@@ -57,10 +57,23 @@ function shortDigest(digest: string) {
   return `${digest.slice(0, 12)}…${digest.slice(-8)}`
 }
 
+function splitImageRef(ref: string): { registry: string; name: string } {
+  const s = ref.trim()
+  const withoutDigest = s.includes('@') ? s.split('@', 1)[0] : s
+  const firstSlash = withoutDigest.indexOf('/')
+  if (firstSlash < 0) {
+    return { registry: 'docker.io', name: withoutDigest }
+  }
+  const firstSeg = withoutDigest.slice(0, firstSlash)
+  const rest = withoutDigest.slice(firstSlash + 1)
+  const isRegistry = firstSeg.includes('.') || firstSeg.includes(':') || firstSeg === 'localhost'
+  if (isRegistry) return { registry: firstSeg, name: rest }
+  return { registry: 'docker.io', name: withoutDigest }
+}
+
 function formatTagDisplay(tag: string, resolvedTag: string | null | undefined): string {
   const r = (resolvedTag ?? '').trim()
-  if (!r || r === tag) return tag
-  return `${tag} ≈ ${r}`
+  return r && r !== tag ? r : tag
 }
 
 function isDockrevService(svc: Service): boolean {
@@ -218,12 +231,20 @@ export function ServiceDetailPage(props: {
 	                          <div className="modalKvValue">
 	                            <Mono>{`${stack?.name ?? stackId}/${service.name}`}</Mono>
 	                          </div>
-	                          <div className="modalKvLabel">镜像</div>
-	                          <div className="modalKvValue">
-	                            <Mono>{service.image.ref}</Mono>
-	                          </div>
-	                          <div className="modalKvLabel">目标版本</div>
-	                          <div className="modalKvValue">
+		                          <div className="modalKvLabel">镜像</div>
+		                          <div className="modalKvValue">
+		                            {(() => {
+		                              const img = splitImageRef(service.image.ref)
+		                              return (
+		                                <div className="cellTwoLine">
+		                                  <div className="mono muted">{img.registry}</div>
+		                                  <div className="mono">{img.name}</div>
+		                                </div>
+		                              )
+		                            })()}
+		                          </div>
+		                          <div className="modalKvLabel">目标版本</div>
+		                          <div className="modalKvValue">
                               <span className="mono">{formatTagDisplay(service.image.tag, service.image.resolvedTag)}</span>
                               <span className="mono" style={{ opacity: 0.8 }}>
                                 {' '}
@@ -425,7 +446,15 @@ export function ServiceDetailPage(props: {
             </div>
             <Pill tone="muted">{stack.name}</Pill>
           </div>
-          <div className="mono">{service.image.ref}</div>
+          {(() => {
+            const img = splitImageRef(service.image.ref)
+            return (
+              <div className="cellTwoLine">
+                <div className="mono muted">{img.registry}</div>
+                <div className="mono">{img.name}</div>
+              </div>
+            )
+          })()}
           <div className="muted">
             id <Mono>{service.id}</Mono> · stack <Mono>{stack.id}</Mono>
           </div>

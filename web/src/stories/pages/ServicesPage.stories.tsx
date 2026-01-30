@@ -29,7 +29,12 @@ export const ResolvedTag: Story = {
   parameters: { dockrevApiScenario: 'resolved-tag-demo' },
   render: () => {
     return (
-      <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务" pageSubtitle="浮动 tag：latest ≈ resolvedTag">
+      <PageHarness
+        route={{ name: 'services' }}
+        title="服务"
+        topbarHint="服务"
+        pageSubtitle="浮动 tag：展示 resolvedTag（hover 可见原 tag）"
+      >
         {({ onComposeHint, onTopActions }) => (
           <ServicesPage onComposeHint={onComposeHint} onTopActions={onTopActions} />
         )}

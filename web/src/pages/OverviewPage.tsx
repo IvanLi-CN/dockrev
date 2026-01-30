@@ -31,10 +31,23 @@ function formatShort(ts?: string | null) {
   return d.toLocaleString()
 }
 
+function splitImageRef(ref: string): { registry: string; name: string } {
+  const s = ref.trim()
+  const withoutDigest = s.includes('@') ? s.split('@', 1)[0] : s
+  const firstSlash = withoutDigest.indexOf('/')
+  if (firstSlash < 0) {
+    return { registry: 'docker.io', name: withoutDigest }
+  }
+  const firstSeg = withoutDigest.slice(0, firstSlash)
+  const rest = withoutDigest.slice(firstSlash + 1)
+  const isRegistry = firstSeg.includes('.') || firstSeg.includes(':') || firstSeg === 'localhost'
+  if (isRegistry) return { registry: firstSeg, name: rest }
+  return { registry: 'docker.io', name: withoutDigest }
+}
+
 function formatTagDisplay(tag: string, resolvedTag: string | null | undefined): string {
   const r = (resolvedTag ?? '').trim()
-  if (!r || r === tag) return tag
-  return `${tag} ≈ ${r}`
+  return r && r !== tag ? r : tag
 }
 
 function formatTagTooltip(
@@ -43,14 +56,16 @@ function formatTagTooltip(
   resolvedTag: string | null | undefined,
   resolvedTags: string[] | null | undefined,
 ): string | undefined {
-  const display = formatTagDisplay(tag, resolvedTag)
+  const inferred = (resolvedTag ?? '').trim()
   const lines: string[] = []
 
-  if (digest) {
-    const m = digest.includes(':') ? digest : `sha256:${digest}`
-    lines.push(`${display}@${m}`)
+  const digestSuffix = digest ? (digest.includes(':') ? digest : `sha256:${digest}`) : null
+
+  if (inferred && inferred !== tag) {
+    lines.push(digestSuffix ? `${inferred}@${digestSuffix}` : inferred)
+    lines.push(`tag: ${tag}`)
   } else {
-    lines.push(display)
+    lines.push(digestSuffix ? `${tag}@${digestSuffix}` : tag)
   }
 
   if (resolvedTags && resolvedTags.length > 1) {
@@ -493,9 +508,15 @@ export function OverviewPage(props: {
                             <span className="mono">{`${item.stackName}/${item.svc.name}`}</span>
                             <span className="muted">{` · ${item.status}`}</span>
                           </div>
-                          <div className="muted">
-                            <span className="mono">{item.svc.image.ref}</span>
-                          </div>
+                          {(() => {
+                            const img = splitImageRef(item.svc.image.ref)
+                            return (
+                              <div className="cellTwoLine">
+                                <div className="mono muted">{img.registry}</div>
+                                <div className="mono">{img.name}</div>
+                              </div>
+                            )
+                          })()}
                         </div>
                         <div className="modalListRight">
                           <span className="mono" title={title}>{`${current} → ${candidate}`}</span>
@@ -728,9 +749,15 @@ export function OverviewPage(props: {
 		                                        <span className="mono">{item.svc.name}</span>
 		                                        <span className="muted">{` · ${item.status}`}</span>
 		                                      </div>
-		                                      <div className="muted">
-		                                        <span className="mono">{item.svc.image.ref}</span>
-		                                      </div>
+		                                      {(() => {
+		                                        const img = splitImageRef(item.svc.image.ref)
+		                                        return (
+		                                          <div className="cellTwoLine">
+		                                            <div className="mono muted">{img.registry}</div>
+		                                            <div className="mono">{img.name}</div>
+		                                          </div>
+		                                        )
+		                                      })()}
 		                                    </div>
 		                                    <div className="modalListRight">
 		                                      <span className="mono" title={title}>{`${current} → ${candidate}`}</span>
@@ -807,17 +834,25 @@ export function OverviewPage(props: {
                               navigate({ name: 'service', stackId: st.id, serviceId: svc.id })
                             }
                           }}
-                        >
-                          <div className="cellService">
-                            <span className="svcBullet" aria-hidden="true" />
-                            <span className="svcName">{svc.name}</span>
-                          </div>
-                          <div className="mono cellMono">{svc.image.ref}</div>
+	                        >
+	                          <div className="cellService">
+	                            <span className="svcBullet" aria-hidden="true" />
+	                            <span className="svcName">{svc.name}</span>
+	                          </div>
+	                          {(() => {
+	                            const img = splitImageRef(svc.image.ref)
+	                            return (
+	                              <div className="cellTwoLine">
+	                                <div className="mono muted">{img.registry}</div>
+	                                <div className="mono">{img.name}</div>
+	                              </div>
+	                            )
+	                          })()}
 	                          <div className="cellTwoLine">
 	                            <div className="mono" title={currentTitle}>{current}</div>
 	                            <div className="mono" title={candidateTitle}>{candidate}</div>
 	                          </div>
-                          <StatusRemark service={svc} status={stt} />
+	                          <StatusRemark service={svc} status={stt} />
                           <div
                             className="actionCell"
                             onClick={(e) => e.stopPropagation()}
@@ -874,13 +909,21 @@ export function OverviewPage(props: {
                                         <div className="modalKvLabel">目标</div>
                                         <div className="modalKvValue">
                                           <Mono>{`${d.name}/${svc.name}`}</Mono>
-                                        </div>
-                                        <div className="modalKvLabel">镜像</div>
-                                        <div className="modalKvValue">
-                                          <Mono>{svc.image.ref}</Mono>
-                                        </div>
-	                                        <div className="modalKvLabel">目标版本</div>
+	                                        </div>
+	                                        <div className="modalKvLabel">镜像</div>
 	                                        <div className="modalKvValue">
+	                                          {(() => {
+	                                            const img = splitImageRef(svc.image.ref)
+	                                            return (
+	                                              <div className="cellTwoLine">
+	                                                <div className="mono muted">{img.registry}</div>
+	                                                <div className="mono">{img.name}</div>
+	                                              </div>
+	                                            )
+	                                          })()}
+	                                        </div>
+		                                        <div className="modalKvLabel">目标版本</div>
+		                                        <div className="modalKvValue">
                                           <span
                                             className="mono"
                                             title={
