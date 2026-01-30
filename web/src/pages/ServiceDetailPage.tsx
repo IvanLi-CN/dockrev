@@ -38,12 +38,12 @@ function svcTone(svc: Service): 'ok' | 'warn' | 'bad' | 'muted' {
 
 function svcBadge(svc: Service): string {
   const st = serviceRowStatus(svc)
-  if (st === 'blocked') return 'blocked'
-  if (st === 'archMismatch') return 'arch mismatch'
-  if (st === 'crossTag') return 'cross tag'
-  if (st === 'hint') return 'needs confirm'
-  if (st === 'updatable') return 'updatable'
-  return 'no candidate'
+  if (st === 'blocked') return '被阻止'
+  if (st === 'archMismatch') return '架构不匹配'
+  if (st === 'crossTag') return '跨标签'
+  if (st === 'hint') return '需确认'
+  if (st === 'updatable') return '可更新'
+  return '无候选'
 }
 
 function formatMap(map: Record<string, string>) {
@@ -71,15 +71,24 @@ function splitImageRef(ref: string): { registry: string; name: string } {
   return { registry: 'docker.io', name: withoutDigest }
 }
 
-function formatImageName(name: string, tag: string | null | undefined): string {
+function splitImageNameForDisplay(
+  name: string,
+  tag: string | null | undefined,
+): { base: string; suffix: string } {
+  const n = name.trim()
+  if (!n) return { base: '', suffix: '' }
+
+  const at = n.indexOf('@')
+  if (at >= 0) return { base: n.slice(0, at), suffix: n.slice(at) }
+
+  const lastSlash = n.lastIndexOf('/')
+  const lastColon = n.lastIndexOf(':')
+  if (lastColon > lastSlash) return { base: n.slice(0, lastColon), suffix: n.slice(lastColon) }
+
   const t = (tag ?? '').trim()
-  if (!t) return name
-  if (name.includes('@')) return name
-  const lastSlash = name.lastIndexOf('/')
-  const lastColon = name.lastIndexOf(':')
-  if (lastColon > lastSlash) return name
-  if (t.startsWith('sha256:')) return `${name}@${t}`
-  return `${name}:${t}`
+  if (!t) return { base: n, suffix: '' }
+  if (t.startsWith('sha256:')) return { base: n, suffix: `@${t}` }
+  return { base: n, suffix: `:${t}` }
 }
 
 function formatTagDisplay(tag: string, resolvedTag: string | null | undefined): string {
@@ -246,10 +255,14 @@ export function ServiceDetailPage(props: {
 		                          <div className="modalKvValue">
 		                            {(() => {
 		                              const img = splitImageRef(service.image.ref)
+		                              const dn = splitImageNameForDisplay(img.name, service.image.tag)
 		                              return (
 		                                <div className="cellTwoLine">
-		                                  <div className="mono">{formatImageName(img.name, service.image.tag)}</div>
-		                                  <div className="mono muted">{img.registry}</div>
+		                                  <div className="mono monoPrimary monoSplit">
+		                                    <span className="monoSplitBase">{dn.base}</span>
+		                                    {dn.suffix ? <span className="monoSplitTail">{dn.suffix}</span> : null}
+		                                  </div>
+		                                  <div className="mono monoSecondary">{img.registry}</div>
 		                                </div>
 		                              )
 		                            })()}
@@ -421,9 +434,9 @@ export function ServiceDetailPage(props: {
     if (st === 'blocked') return '已阻止（忽略规则命中）'
     if (st === 'ok') return '暂无候选版本'
     if (st === 'archMismatch') return '架构不匹配（仅提示，不允许更新）'
-    if (st === 'crossTag') return '跨 tag 版本更新（建议确认）'
+    if (st === 'crossTag') return '跨标签版本更新（建议确认）'
     if (st === 'hint') return '需确认（arch 未知 / tag 关系不确定）'
-    return '可更新（匹配当前 tag 序列）'
+    return '可更新（匹配当前标签序列）'
   }, [service])
 
   const bannerDetail = useMemo(() => {
@@ -439,7 +452,7 @@ export function ServiceDetailPage(props: {
     const arch = service.candidate.arch.length ? ` · arch=${service.candidate.arch.join(',')}` : ''
     const effectiveCurrentTag = service.image.resolvedTag ?? service.image.tag
     const series = tagSeriesMatches(effectiveCurrentTag, service.candidate.tag)
-    const seriesHint = series === false ? ' · cross-tag' : series == null ? ' · tag=?' : ''
+    const seriesHint = series === false ? ' · 跨标签' : series == null ? ' · 标签=?' : ''
     return `当前: ${current} → 候选: ${cand}${arch}${seriesHint}`
   }, [service])
 
@@ -459,10 +472,14 @@ export function ServiceDetailPage(props: {
           </div>
           {(() => {
             const img = splitImageRef(service.image.ref)
+            const dn = splitImageNameForDisplay(img.name, service.image.tag)
             return (
               <div className="cellTwoLine">
-                <div className="mono">{formatImageName(img.name, service.image.tag)}</div>
-                <div className="mono muted">{img.registry}</div>
+                <div className="mono monoPrimary monoSplit">
+                  <span className="monoSplitBase">{dn.base}</span>
+                  {dn.suffix ? <span className="monoSplitTail">{dn.suffix}</span> : null}
+                </div>
+                <div className="mono monoSecondary">{img.registry}</div>
               </div>
             )
           })()}

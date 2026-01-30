@@ -45,15 +45,24 @@ function splitImageRef(ref: string): { registry: string; name: string } {
   return { registry: 'docker.io', name: withoutDigest }
 }
 
-function formatImageName(name: string, tag: string | null | undefined): string {
+function splitImageNameForDisplay(
+  name: string,
+  tag: string | null | undefined,
+): { base: string; suffix: string } {
+  const n = name.trim()
+  if (!n) return { base: '', suffix: '' }
+
+  const at = n.indexOf('@')
+  if (at >= 0) return { base: n.slice(0, at), suffix: n.slice(at) }
+
+  const lastSlash = n.lastIndexOf('/')
+  const lastColon = n.lastIndexOf(':')
+  if (lastColon > lastSlash) return { base: n.slice(0, lastColon), suffix: n.slice(lastColon) }
+
   const t = (tag ?? '').trim()
-  if (!t) return name
-  if (name.includes('@')) return name
-  const lastSlash = name.lastIndexOf('/')
-  const lastColon = name.lastIndexOf(':')
-  if (lastColon > lastSlash) return name
-  if (t.startsWith('sha256:')) return `${name}@${t}`
-  return `${name}:${t}`
+  if (!t) return { base: n, suffix: '' }
+  if (t.startsWith('sha256:')) return { base: n, suffix: `@${t}` }
+  return { base: n, suffix: `:${t}` }
 }
 
 function formatTagDisplay(tag: string, resolvedTag: string | null | undefined): string {
@@ -74,7 +83,7 @@ function formatTagTooltip(
 
   if (inferred && inferred !== tag) {
     lines.push(digestSuffix ? `${inferred}@${digestSuffix}` : inferred)
-    lines.push(`tag: ${tag}`)
+    lines.push(`原始标签: ${tag}`)
   } else {
     lines.push(digestSuffix ? `${tag}@${digestSuffix}` : tag)
   }
@@ -113,7 +122,7 @@ function StackIcon(props: { variant: 'collapsed' | 'expanded' }) {
 function formatGroupSummary(services: number, counts: Record<Exclude<RowStatus, 'ok'>, number>) {
   const parts: string[] = [`${services} services`]
   if (counts.updatable > 0) parts.push(`${counts.updatable} 可更新`)
-  if (counts.crossTag > 0) parts.push(`${counts.crossTag} 跨 tag 版本`)
+  if (counts.crossTag > 0) parts.push(`${counts.crossTag} 跨标签版本`)
   if (counts.hint > 0) parts.push(`${counts.hint} 需确认`)
   if (counts.archMismatch > 0) parts.push(`${counts.archMismatch} 架构不匹配`)
   if (counts.blocked > 0) parts.push(`${counts.blocked} 被阻止`)
@@ -289,8 +298,8 @@ export function OverviewPage(props: {
     if (countsAll.hint > 0 || countsAll.crossTag > 0) {
       return {
         enabled: true,
-        note: '存在需确认/跨 tag 的候选；将由服务端计算是否实际变更',
-        title: '存在需确认/跨 tag 的候选；将由服务端计算是否实际变更',
+        note: '存在需确认/跨标签的候选；将由服务端计算是否实际变更',
+        title: '存在需确认/跨标签的候选；将由服务端计算是否实际变更',
       }
     }
     return { enabled: false, note: null as string | null, title: '无可更新服务' }
@@ -491,10 +500,10 @@ export function OverviewPage(props: {
                     <Mono>all</Mono>
                   </div>
                   <div className="modalKvLabel">候选服务</div>
-                  <div className="modalKvValue">{totalCandidates} 个（可更新/需确认/跨 tag）</div>
+                  <div className="modalKvValue">{totalCandidates} 个（可更新/需确认/跨标签）</div>
                   <div className="modalKvLabel">其中</div>
                   <div className="modalKvValue">
-                    可更新 {countsAll.updatable} · 需确认 {countsAll.hint} · 跨 tag {countsAll.crossTag}
+                    可更新 {countsAll.updatable} · 需确认 {countsAll.hint} · 跨标签 {countsAll.crossTag}
                   </div>
                   <div className="modalKvLabel">将跳过</div>
                   <div className="modalKvValue">
@@ -521,10 +530,14 @@ export function OverviewPage(props: {
                           </div>
                           {(() => {
                             const img = splitImageRef(item.svc.image.ref)
+                            const dn = splitImageNameForDisplay(img.name, item.svc.image.tag)
                             return (
                               <div className="cellTwoLine">
-                                <div className="mono">{formatImageName(img.name, item.svc.image.tag)}</div>
-                                <div className="mono muted">{img.registry}</div>
+                                <div className="mono monoPrimary monoSplit">
+                                  <span className="monoSplitBase">{dn.base}</span>
+                                  {dn.suffix ? <span className="monoSplitTail">{dn.suffix}</span> : null}
+                                </div>
+                                <div className="mono monoSecondary">{img.registry}</div>
                               </div>
                             )
                           })()}
@@ -679,7 +692,7 @@ export function OverviewPage(props: {
               counts.updatable > 0
                 ? { enabled: true, title: null as string | null }
                 : counts.hint > 0 || counts.crossTag > 0
-                  ? { enabled: true, title: '存在需确认/跨 tag 的候选；将由服务端计算是否实际变更' }
+                  ? { enabled: true, title: '存在需确认/跨标签的候选；将由服务端计算是否实际变更' }
                   : { enabled: false, title: '无可更新服务' }
 
             return (
@@ -732,10 +745,10 @@ export function OverviewPage(props: {
 	                                <Mono>{d.name}</Mono>
 	                              </div>
 	                              <div className="modalKvLabel">候选服务</div>
-	                              <div className="modalKvValue">{totalCandidates} 个（可更新/需确认/跨 tag）</div>
+	                              <div className="modalKvValue">{totalCandidates} 个（可更新/需确认/跨标签）</div>
 	                              <div className="modalKvLabel">其中</div>
 	                              <div className="modalKvValue">
-	                                可更新 {counts.updatable} · 需确认 {counts.hint} · 跨 tag {counts.crossTag}
+	                                可更新 {counts.updatable} · 需确认 {counts.hint} · 跨标签 {counts.crossTag}
 	                              </div>
 		                              <div className="modalKvLabel">将跳过</div>
 		                              <div className="modalKvValue">
@@ -762,10 +775,14 @@ export function OverviewPage(props: {
 		                                      </div>
 		                                      {(() => {
 		                                        const img = splitImageRef(item.svc.image.ref)
+		                                        const dn = splitImageNameForDisplay(img.name, item.svc.image.tag)
 		                                        return (
 		                                          <div className="cellTwoLine">
-		                                            <div className="mono">{formatImageName(img.name, item.svc.image.tag)}</div>
-		                                            <div className="mono muted">{img.registry}</div>
+		                                            <div className="mono monoPrimary monoSplit">
+		                                              <span className="monoSplitBase">{dn.base}</span>
+		                                              {dn.suffix ? <span className="monoSplitTail">{dn.suffix}</span> : null}
+		                                            </div>
+		                                            <div className="mono monoSecondary">{img.registry}</div>
 		                                          </div>
 		                                        )
 		                                      })()}
@@ -806,7 +823,7 @@ export function OverviewPage(props: {
                         stt === 'updatable'
                           ? { enabled: true, title: null as string | null, note: null as string | null }
                           : stt === 'crossTag'
-                            ? { enabled: true, title: '跨 tag 版本更新；请确认风险后执行', note: '跨 tag' }
+                            ? { enabled: true, title: '跨标签版本更新；请确认风险后执行', note: '跨标签' }
                           : stt === 'hint'
                             ? { enabled: true, title: '未确认是否有更新；将由服务端计算是否实际变更', note: '未确认' }
                             : stt === 'ok'
@@ -852,16 +869,20 @@ export function OverviewPage(props: {
 	                          </div>
 	                          {(() => {
 	                            const img = splitImageRef(svc.image.ref)
+	                            const dn = splitImageNameForDisplay(img.name, svc.image.tag)
 	                            return (
 	                              <div className="cellTwoLine">
-	                                <div className="mono">{formatImageName(img.name, svc.image.tag)}</div>
-	                                <div className="mono muted">{img.registry}</div>
+	                                <div className="mono monoPrimary monoSplit">
+	                                  <span className="monoSplitBase">{dn.base}</span>
+	                                  {dn.suffix ? <span className="monoSplitTail">{dn.suffix}</span> : null}
+	                                </div>
+	                                <div className="mono monoSecondary">{img.registry}</div>
 	                              </div>
 	                            )
 	                          })()}
 	                          <div className="cellTwoLine">
-	                            <div className="mono" title={currentTitle}>{current}</div>
-	                            <div className="mono" title={candidateTitle}>{candidate}</div>
+	                            <div className="mono monoPrimary" title={currentTitle}>{current}</div>
+	                            <div className="mono monoPrimary" title={candidateTitle}>{candidate}</div>
 	                          </div>
 	                          <StatusRemark service={svc} status={stt} />
                           <div
@@ -925,10 +946,14 @@ export function OverviewPage(props: {
 	                                        <div className="modalKvValue">
 	                                          {(() => {
 	                                            const img = splitImageRef(svc.image.ref)
+	                                            const dn = splitImageNameForDisplay(img.name, svc.image.tag)
 	                                            return (
 	                                              <div className="cellTwoLine">
-	                                                <div className="mono">{formatImageName(img.name, svc.image.tag)}</div>
-	                                                <div className="mono muted">{img.registry}</div>
+	                                                <div className="mono monoPrimary monoSplit">
+	                                                  <span className="monoSplitBase">{dn.base}</span>
+	                                                  {dn.suffix ? <span className="monoSplitTail">{dn.suffix}</span> : null}
+	                                                </div>
+	                                                <div className="mono monoSecondary">{img.registry}</div>
 	                                              </div>
 	                                            )
 	                                          })()}

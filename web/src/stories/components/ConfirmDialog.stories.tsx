@@ -124,9 +124,9 @@ function ConfirmSandbox() {
                         <Mono>stack-prod</Mono>
                       </div>
                       <div className="modalKvLabel">候选服务</div>
-                      <div className="modalKvValue">3 个（可更新/需确认/跨 tag）</div>
+                      <div className="modalKvValue">3 个（可更新/需确认/跨标签）</div>
                       <div className="modalKvLabel">其中</div>
-                      <div className="modalKvValue">可更新 2 · 需确认 1 · 跨 tag 0</div>
+                      <div className="modalKvValue">可更新 2 · 需确认 1 · 跨标签 0</div>
                       <div className="modalKvLabel">将跳过</div>
                       <div className="modalKvValue">架构不匹配 0 · 被阻止 1</div>
                     </div>
@@ -226,9 +226,9 @@ function ConfirmSandbox() {
                         <Mono>all stacks</Mono>
                       </div>
                       <div className="modalKvLabel">候选服务</div>
-                      <div className="modalKvValue">5 个（可更新/需确认/跨 tag）</div>
+                      <div className="modalKvValue">5 个（可更新/需确认/跨标签）</div>
                       <div className="modalKvLabel">其中</div>
-                      <div className="modalKvValue">可更新 3 · 需确认 1 · 跨 tag 1</div>
+                      <div className="modalKvValue">可更新 3 · 需确认 1 · 跨标签 1</div>
                       <div className="modalKvLabel">将跳过</div>
                       <div className="modalKvValue">架构不匹配 1 · 被阻止 2</div>
                     </div>

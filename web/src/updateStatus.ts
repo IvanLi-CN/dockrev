@@ -65,7 +65,7 @@ export function statusDotClass(st: RowStatus): string {
 export function statusLabel(st: RowStatus): string {
   if (st === 'updatable') return '可更新'
   if (st === 'hint') return '需确认'
-  if (st === 'crossTag') return '跨 tag 版本'
+  if (st === 'crossTag') return '跨标签版本'
   if (st === 'archMismatch') return '架构不匹配'
   if (st === 'blocked') return '被阻止'
   return '无更新'
@@ -74,16 +74,16 @@ export function statusLabel(st: RowStatus): string {
 export function noteFor(svc: Service, st: RowStatus): string {
   if (st === 'blocked') return svc.ignore?.reason ?? '被阻止'
   if (st === 'archMismatch') return '仅提示，不允许更新'
-  if (st === 'crossTag') return '候选 tag 不匹配当前序列'
+  if (st === 'crossTag') return '候选标签不匹配当前序列'
   if (st === 'hint') {
     if (svc.candidate?.archMatch === 'unknown') return 'arch 未知'
-    return 'tag 关系不确定'
+    return '标签关系不确定'
   }
   if (st === 'updatable') {
     const hasForceBackup =
       Object.values(svc.settings.backupTargets.bindPaths).some((v) => v === 'force') ||
       Object.values(svc.settings.backupTargets.volumeNames).some((v) => v === 'force')
-    return hasForceBackup ? '备份通过后执行' : '按当前 tag 序列'
+    return hasForceBackup ? '备份通过后执行' : '按当前标签序列'
   }
   return '-'
 }

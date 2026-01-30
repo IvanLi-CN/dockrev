@@ -202,6 +202,35 @@
   color: var(--muted);
 }
 
+.mono.muted {
+  color: var(--muted2);
+}
+
+.monoPrimary {
+  color: var(--text);
+}
+
+.monoSecondary {
+  color: var(--muted2);
+}
+
+.monoSplit {
+  display: flex;
+  min-width: 0;
+}
+
+.monoSplitBase {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monoSplitTail {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .btn {
   height: 28px;
   padding: 0 12px;
