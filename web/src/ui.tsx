@@ -2,6 +2,20 @@ import type { ReactNode } from 'react'
 import type { Service } from './api'
 import { noteFor, statusDotClass, statusLabel, type RowStatus } from './updateStatus'
 
+export function ArrowRightIcon(props: { className?: string }) {
+  return (
+    <svg
+      className={props.className}
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M3 8h9" />
+      <path d="M9 4l4 4-4 4" />
+    </svg>
+  )
+}
+
 export function Button(props: {
   variant?: 'primary' | 'danger' | 'ghost'
   disabled?: boolean

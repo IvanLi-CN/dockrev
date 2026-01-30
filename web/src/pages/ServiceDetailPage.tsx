@@ -16,7 +16,7 @@ import {
   type StackDetail,
 } from '../api'
 import { navigate } from '../routes'
-import { Button, Mono, Pill, Switch } from '../ui'
+import { ArrowRightIcon, Button, Mono, Pill, Switch } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { serviceRowStatus, tagSeriesMatches } from '../updateStatus'
@@ -272,9 +272,8 @@ export function ServiceDetailPage(props: {
 		                          <div className="modalKvLabel">目标版本</div>
 		                          <div className="modalKvValue">
                               <span className="mono">{formatTagDisplay(service.image.tag, service.image.resolvedTag)}</span>
-                              <span className="mono" style={{ opacity: 0.8 }}>
-                                {' '}
-                                →{' '}
+                              <span style={{ opacity: 0.8, margin: '0 6px' }}>
+                                <ArrowRightIcon className="inlineIcon" />
                               </span>
                               <UpdateTargetSelect
                                 serviceId={service.id}

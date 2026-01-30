@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   triggerDiscoveryScan,
   listDiscoveryProjects,
@@ -16,7 +16,7 @@ import {
   type StackListItem,
 } from '../api'
 import { navigate } from '../routes'
-import { Button, Mono, StatusRemark } from '../ui'
+import { ArrowRightIcon, Button, Mono, StatusRemark } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { serviceRowStatus, type RowStatus } from '../updateStatus'
@@ -83,11 +83,15 @@ function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefin
   return '?'
 }
 
-function formatCurrentCandidateTagLine(currentTag: string, candidateTag: string | null): string {
+function formatCurrentCandidateTagLine(currentTag: string, candidateTag: string | null): ReactNode {
   const cur = currentTag.trim()
   const cand = (candidateTag ?? '').trim()
   if (!cand || cand === '-' || cand === cur) return cur
-  return `${cur} -> ${cand}`
+  return (
+    <>
+      <span>{cur}</span> <ArrowRightIcon className="inlineIcon" /> <span>{cand}</span>
+    </>
+  )
 }
 
 function formatTagTooltip(
@@ -565,7 +569,9 @@ export function OverviewPage(props: {
                           })()}
                         </div>
                         <div className="modalListRight">
-                          <span className="mono" title={title}>{`${current} → ${candidate}`}</span>
+                          <span className="mono" title={title}>
+                            <span>{current}</span> <ArrowRightIcon className="inlineIcon" /> <span>{candidate}</span>
+                          </span>
                         </div>
                       </div>
                     )
@@ -812,7 +818,9 @@ export function OverviewPage(props: {
 		                                      })()}
 		                                    </div>
 		                                    <div className="modalListRight">
-		                                      <span className="mono" title={title}>{`${current} → ${candidate}`}</span>
+		                                      <span className="mono" title={title}>
+		                                        <span>{current}</span> <ArrowRightIcon className="inlineIcon" /> <span>{candidate}</span>
+		                                      </span>
 		                                    </div>
 		                                  </div>
 		                                )
@@ -1011,9 +1019,8 @@ export function OverviewPage(props: {
                                           >
                                             {formatTagDisplay(svc.image.tag, svc.image.resolvedTag)}
                                           </span>
-                                          <span className="mono" style={{ opacity: 0.8 }}>
-                                            {' '}
-                                            →{' '}
+                                          <span style={{ opacity: 0.8, margin: '0 6px' }}>
+                                            <ArrowRightIcon className="inlineIcon" />
                                           </span>
                                           <UpdateTargetSelect
                                             serviceId={svc.id}
