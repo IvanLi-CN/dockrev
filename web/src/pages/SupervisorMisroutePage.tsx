@@ -4,13 +4,14 @@ import { href, navigate } from '../routes'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 
-export function SupervisorMisroutePage(props: { basePath: string; pathname: string; onTopActions: (node: ReactNode) => void }) {
+export function SupervisorMisroutePage(props: { basePath: string; pathname: string; onTopActions?: (node: ReactNode) => void }) {
   const { basePath, onTopActions } = props
   const supervisor = useSupervisorHealth()
   const { state, check } = supervisor
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
 
   useEffect(() => {
+    if (!onTopActions) return
     onTopActions(
       <>
         <Button
@@ -74,6 +75,28 @@ export function SupervisorMisroutePage(props: { basePath: string; pathname: stri
             </div>
           ) : null}
         </div>
+
+        {!onTopActions ? (
+          <div className="formActions" style={{ marginTop: 12 }}>
+            <Button
+              variant="primary"
+              onClick={() => {
+                navigate({ name: 'overview' })
+              }}
+            >
+              返回 Dockrev
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={state.status === 'checking'}
+              onClick={() => {
+                void check()
+              }}
+            >
+              重试
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       <div className="card">
