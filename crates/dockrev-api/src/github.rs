@@ -171,8 +171,8 @@ impl GitHubClient {
         owner: &str,
         repo: &str,
     ) -> anyhow::Result<Vec<GitHubWebhook>> {
-        let path = format!("repos/{owner}/{repo}/hooks?per_page=100");
-        self.request_json(reqwest::Method::GET, &path, None).await
+        let path = format!("repos/{owner}/{repo}/hooks");
+        self.paginated_get::<GitHubWebhook>(&path).await
     }
 
     pub async fn create_repo_hook(
@@ -279,6 +279,13 @@ mod tests {
             parse_next_link(link).as_deref(),
             Some("https://api.github.com/organizations/1/repos?per_page=100&page=2")
         );
+    }
+
+    #[test]
+    fn parse_next_link_returns_none_when_no_next() {
+        let link =
+            "<https://api.github.com/organizations/1/repos?per_page=100&page=4>; rel=\"last\"";
+        assert_eq!(parse_next_link(link), None);
     }
 }
 
