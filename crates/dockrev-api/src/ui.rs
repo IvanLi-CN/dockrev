@@ -46,19 +46,19 @@ async fn fallback(State(state): State<Arc<AppState>>, Path(path): Path<String>) 
         return index(State(state)).await;
     }
 
-    if let Some(base_prefix) = self_upgrade_base_prefix(state.config.self_upgrade_url.as_str()) {
-        if let Some(remaining) = strip_prefix_path(&path, &base_prefix) {
-            if remaining.is_empty() {
-                // Prefer rendering an in-app page (so the UI style matches Dockrev), if the UI assets
-                // are built and contain the runtime config marker. Otherwise fall back to a simple HTML page.
-                if ui_has_runtime_config_marker() {
-                    return serve_index(state.as_ref())
-                        .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response());
-                }
-                return supervisor_fallback_html(&state.config.self_upgrade_url);
+    if let Some(base_prefix) = self_upgrade_base_prefix(state.config.self_upgrade_url.as_str())
+        && let Some(remaining) = strip_prefix_path(&path, &base_prefix)
+    {
+        if remaining.is_empty() {
+            // Prefer rendering an in-app page (so the UI style matches Dockrev), if the UI assets
+            // are built and contain the runtime config marker. Otherwise fall back to a simple HTML page.
+            if ui_has_runtime_config_marker() {
+                return serve_index(state.as_ref())
+                    .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response());
             }
-            return supervisor_api_misroute_json(&state.config.self_upgrade_url, &remaining);
+            return supervisor_fallback_html(&state.config.self_upgrade_url);
         }
+        return supervisor_api_misroute_json(&state.config.self_upgrade_url, remaining);
     }
 
     if path == "api" || path.starts_with("api/") {
@@ -116,6 +116,10 @@ fn supervisor_api_misroute_json(self_upgrade_url: &str, path: &str) -> Response 
 }
 
 fn supervisor_fallback_html(self_upgrade_url: &str) -> Response {
+    let display_url = escape_html(self_upgrade_url.trim());
+    let curl_base = ensure_trailing_slash(self_upgrade_url.trim());
+    let curl_base = escape_html(&curl_base);
+
     let body = format!(
         r#"<!doctype html>
 <html lang="zh-CN">
@@ -138,18 +142,18 @@ fn supervisor_fallback_html(self_upgrade_url: &str) -> Response {
 </head>
 <body>
   <div class="card">
-    <h1>部署问题：<code>{self_upgrade_url}</code> 未映射到 Dockrev Supervisor</h1>
+    <h1>部署问题：<code>{display_url}</code> 未映射到 Dockrev Supervisor</h1>
     <p>你正在访问的是自我升级入口（Supervisor）。但当前响应来自 <strong>Dockrev 主服务</strong>，这通常意味着反向代理/路由配置漏配或误配。</p>
-    <p class="muted">正确情况下：<code>{self_upgrade_url}</code> 应该由 <code>dockrev-supervisor</code> 提供（含 UI 与 API）。</p>
+    <p class="muted">正确情况下：<code>{display_url}</code> 应该由 <code>dockrev-supervisor</code> 提供（含 UI 与 API）。</p>
 
     <h2 style="font-size:16px; margin: 18px 0 8px;">如何验证</h2>
     <p>请在同域下验证以下接口应由 supervisor 返回：</p>
-    <pre>curl -i {self_upgrade_url}health
-curl -i {self_upgrade_url}version
-curl -i {self_upgrade_url}self-upgrade</pre>
+    <pre>curl -i {curl_base}health
+curl -i {curl_base}version
+curl -i {curl_base}self-upgrade</pre>
 
     <h2 style="font-size:16px; margin: 18px 0 8px;">如何修复（思路）</h2>
-    <p>在你的反向代理中，把 <code>{self_upgrade_url}</code> 路由到 supervisor 的 HTTP 地址（并保持 base path 一致）。</p>
+    <p>在你的反向代理中，把 <code>{display_url}</code> 路由到 supervisor 的 HTTP 地址（并保持 base path 一致）。</p>
     <p class="muted">常见相关配置：<code>DOCKREV_SELF_UPGRADE_URL</code>（Dockrev 主服务/前端使用）与 <code>DOCKREV_SUPERVISOR_BASE_PATH</code>（supervisor 使用）。</p>
 
     <div class="row">
@@ -171,6 +175,25 @@ curl -i {self_upgrade_url}self-upgrade</pre>
         resp.headers_mut().insert(header::CONTENT_TYPE, v);
     }
     resp
+}
+
+fn escape_html(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn ensure_trailing_slash(s: &str) -> String {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if trimmed.ends_with('/') {
+        return trimmed.to_string();
+    }
+    format!("{trimmed}/")
 }
 
 fn serve_path(path: &str) -> Option<Response> {
@@ -235,7 +258,7 @@ fn escape_json_for_inline_script(json: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::escape_json_for_inline_script;
+    use super::{ensure_trailing_slash, escape_html, escape_json_for_inline_script};
 
     #[test]
     fn escape_json_for_inline_script_prevents_script_breakout() {
@@ -252,5 +275,23 @@ mod tests {
         let out = escape_json_for_inline_script(json);
         assert!(out.contains("\\u2028"));
         assert!(out.contains("\\u2029"));
+    }
+
+    #[test]
+    fn escape_html_escapes_special_chars() {
+        let s = r#"<a href="x&y">O'Reilly</a>"#;
+        let out = escape_html(s);
+        assert_eq!(
+            out,
+            "&lt;a href=&quot;x&amp;y&quot;&gt;O&#39;Reilly&lt;/a&gt;"
+        );
+    }
+
+    #[test]
+    fn ensure_trailing_slash_adds_one_when_missing() {
+        assert_eq!(ensure_trailing_slash("/supervisor"), "/supervisor/");
+        assert_eq!(ensure_trailing_slash("/supervisor/"), "/supervisor/");
+        assert_eq!(ensure_trailing_slash(""), "");
+        assert_eq!(ensure_trailing_slash("   "), "");
     }
 }
