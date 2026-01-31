@@ -71,4 +71,4 @@
 | 0014 | CI/CD: Release workflow 成功后自动清理 Actions Artifacts | 已完成 | `0014:cleanup-actions-artifacts/PLAN.md` | 2026-01-27 | PR #32, #33, #34；验证：Release run `21397351262`（success→artifacts=0）+ `21396639515`（failure→保留关键 artifacts 且无 `*.dockerbuild`） |
 | kcxtp | CI/CD: 修复 GHCR 镜像 `dockrev` 主程序不可执行（exec bit 丢失） | 部分完成（3/4） | `kcxtp:fix-image-exec-permission/PLAN.md` | 2026-01-28 | PR #37 |
 | zdg25 | Dockrev: floating tag 当前版本推测（latest≈semver）+ UI/交互对齐 | 部分完成（3/3） | `zdg25:auto-version-inference-ui/PLAN.md` | 2026-01-29 | local: `feat/zdg25-auto-version-inference-ui` |
-| a2zdt | Dockrev: /supervisor 路由防呆（兜底页 + API 不可吞） | 待实现 | `a2zdt:supervisor-route-failsafe/PLAN.md` | 2026-01-30 | - |
+| a2zdt | Dockrev: /supervisor 路由防呆（兜底页 + API 不可吞） | 已完成 | `a2zdt:supervisor-route-failsafe/PLAN.md` | 2026-01-31 | - |

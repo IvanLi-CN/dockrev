@@ -2,9 +2,9 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-01-30
-- Last: 2026-01-30
+- Last: 2026-01-31
 
 ## 背景 / 问题陈述
 
@@ -81,3 +81,6 @@
 
 - base path 不一定是 `/supervisor/`（可能通过 `DOCKREV_SELF_UPGRADE_URL` 改为其它路径或绝对 URL）；实现需要从配置中提取同域 path 作为拦截前缀。
 
+## 截图
+
+![Supervisor misroute fallback (standalone)](./assets/supervisor-misroute-standalone.png)
