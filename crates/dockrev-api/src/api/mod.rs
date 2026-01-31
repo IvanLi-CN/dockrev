@@ -2408,6 +2408,13 @@ async fn github_packages_webhook(
         .get_github_packages_settings()
         .await
         .map_err(map_internal)?;
+
+    if !settings.enabled {
+        return Ok(Json(
+            json!({"ok": true, "ignored": true, "reason": "disabled"}),
+        ));
+    }
+
     let Some(secret) = settings.webhook_secret else {
         return Err(ApiError::unauthorized()
             .with_details(json!({"reason":"webhook_secret_not_configured"})));

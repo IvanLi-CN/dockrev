@@ -1722,3 +1722,65 @@ async fn github_packages_webhook_validates_signature_and_dedupes_delivery() {
     assert_eq!(body["ignored"], true);
     assert_eq!(body["reason"], "duplicate_delivery");
 }
+
+#[tokio::test]
+async fn github_packages_webhook_respects_disabled_setting() {
+    use ring::hmac;
+
+    let state = test_state(":memory:").await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .put_github_packages_settings(
+            &crate::api::types::GitHubPackagesSettingsDb {
+                enabled: false,
+                callback_url: "https://dockrev.example.com/api/webhooks/github-packages"
+                    .to_string(),
+                pat: Some("ghp_example".to_string()),
+                webhook_secret: Some("secret123".to_string()),
+                updated_at: Some(now.clone()),
+            },
+            &now,
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .put_github_packages_repos(
+            &[(String::from("acme"), String::from("widgets"), true)],
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let app = api::router(state);
+    let payload = serde_json::json!({
+      "action": "published",
+      "repository": { "full_name": "acme/widgets", "owner": { "login": "acme" } }
+    });
+    let payload_bytes = payload.to_string().into_bytes();
+    let key = hmac::Key::new(hmac::HMAC_SHA256, b"secret123");
+    let tag = hmac::sign(&key, &payload_bytes);
+    let sig = format!("sha256={}", hex::encode(tag.as_ref()));
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "disabled-1")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["ignored"], true);
+    assert_eq!(body["reason"], "disabled");
+}

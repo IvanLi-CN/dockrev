@@ -154,15 +154,12 @@ impl GitHubClient {
             return Err(anyhow::anyhow!("owner is empty"));
         }
 
-        let org_path = format!("orgs/{owner}/repos?per_page=100");
-        match self
-            .request_json::<Vec<GitHubRepo>>(reqwest::Method::GET, &org_path, None)
-            .await
-        {
+        let org_path = format!("orgs/{owner}/repos");
+        match self.paginated_get::<GitHubRepo>(&org_path).await {
             Ok(v) => Ok(v),
             Err(org_err) => {
-                let user_path = format!("users/{owner}/repos?per_page=100");
-                self.request_json::<Vec<GitHubRepo>>(reqwest::Method::GET, &user_path, None)
+                let user_path = format!("users/{owner}/repos");
+                self.paginated_get::<GitHubRepo>(&user_path)
                     .await
                     .with_context(|| format!("list repos failed (org_err={org_err})"))
             }
@@ -213,6 +210,75 @@ impl GitHubClient {
         self.request_empty(reqwest::Method::DELETE, &path, None)
             .await?;
         Ok(())
+    }
+
+    async fn paginated_get<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<Vec<T>> {
+        let mut out = Vec::new();
+        let mut next: Option<Url> = Some({
+            let mut url = self.base_url.join(path)?;
+            {
+                let mut qp = url.query_pairs_mut();
+                qp.append_pair("per_page", "100");
+                qp.append_pair("page", "1");
+            }
+            url
+        });
+
+        while let Some(url) = next.take() {
+            let resp = self
+                .client
+                .request(reqwest::Method::GET, url.clone())
+                .headers(self.headers.clone())
+                .send()
+                .await?;
+            let status = resp.status();
+            let link = resp
+                .headers()
+                .get("link")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let text = resp.text().await.unwrap_or_default();
+            if !status.is_success() {
+                return Err(anyhow::anyhow!("github http {}: {}", status, text));
+            }
+            let mut page: Vec<T> = serde_json::from_str(&text).context("decode github json")?;
+            out.append(&mut page);
+            next = link
+                .and_then(|l| parse_next_link(&l))
+                .and_then(|u| Url::parse(&u).ok());
+        }
+
+        Ok(out)
+    }
+}
+
+fn parse_next_link(link_header: &str) -> Option<String> {
+    for part in link_header.split(',') {
+        let part = part.trim();
+        if !part.contains("rel=\"next\"") {
+            continue;
+        }
+        let start = part.find('<')?;
+        let end = part.find('>')?;
+        if end <= start + 1 {
+            continue;
+        }
+        return Some(part[start + 1..end].to_string());
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_next_link_extracts_next() {
+        let link = "<https://api.github.com/organizations/1/repos?per_page=100&page=2>; rel=\"next\", <https://api.github.com/organizations/1/repos?per_page=100&page=4>; rel=\"last\"";
+        assert_eq!(
+            parse_next_link(link).as_deref(),
+            Some("https://api.github.com/organizations/1/repos?per_page=100&page=2")
+        );
     }
 }
 
