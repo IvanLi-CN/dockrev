@@ -78,11 +78,7 @@ pub async fn resolve_target(cfg: &Config) -> anyhow::Result<TargetRuntime> {
         }
     }
 
-    let container_ip = inspect
-        .network_settings
-        .networks
-        .values()
-        .find_map(|n| non_empty(&n.ip_address))
+    let container_ip = pick_container_ip(&inspect.network_settings.networks, &compose_project)
         .ok_or_else(|| anyhow::anyhow!("container IP not found in docker inspect output"))?;
 
     let dockrev_http_port = inspect
@@ -133,6 +129,28 @@ fn non_empty(v: &str) -> Option<String> {
     } else {
         Some(v.to_string())
     }
+}
+
+fn non_empty_opt(v: Option<&str>) -> Option<String> {
+    v.and_then(non_empty)
+}
+
+fn pick_container_ip(
+    networks: &HashMap<String, DockerNetwork>,
+    compose_project: &str,
+) -> Option<String> {
+    let preferred = format!("{compose_project}_default");
+    if let Some(n) = networks.get(&preferred) {
+        if let Some(ip) = non_empty_opt(n.ip_address.as_deref()) {
+            return Some(ip);
+        }
+    }
+
+    let mut entries: Vec<(&String, &DockerNetwork)> = networks.iter().collect();
+    entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+    entries
+        .into_iter()
+        .find_map(|(_, n)| non_empty_opt(n.ip_address.as_deref()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -221,8 +239,68 @@ struct DockerNetworkSettings {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct DockerNetwork {
-    #[serde(default)]
-    ip_address: String,
+    #[serde(default, rename = "IPAddress", alias = "IpAddress")]
+    ip_address: Option<String>,
+}
+
+#[cfg(test)]
+mod docker_inspect_tests {
+    use super::*;
+
+    #[test]
+    fn docker_network_parses_ip_address() {
+        let json = r#"
+        {
+          "Image": "sha256:deadbeef",
+          "Config": { "Labels": {}, "Env": [], "Image": "dockrev:latest" },
+          "NetworkSettings": {
+            "Networks": {
+              "dockrev_default": { "IPAddress": "172.18.0.2" }
+            }
+          }
+        }
+        "#;
+        let parsed: DockerInspect = serde_json::from_str(json).unwrap();
+        let ip = pick_container_ip(&parsed.network_settings.networks, "dockrev").unwrap();
+        assert_eq!(ip, "172.18.0.2");
+    }
+
+    #[test]
+    fn pick_container_ip_prefers_compose_default_network() {
+        let json = r#"
+        {
+          "Image": "sha256:deadbeef",
+          "Config": { "Labels": {}, "Env": [], "Image": "dockrev:latest" },
+          "NetworkSettings": {
+            "Networks": {
+              "traefik": { "IPAddress": "10.0.0.2" },
+              "dockrev_default": { "IPAddress": "172.18.0.2" }
+            }
+          }
+        }
+        "#;
+        let parsed: DockerInspect = serde_json::from_str(json).unwrap();
+        let ip = pick_container_ip(&parsed.network_settings.networks, "dockrev").unwrap();
+        assert_eq!(ip, "172.18.0.2");
+    }
+
+    #[test]
+    fn docker_network_accepts_legacy_ipaddress_key() {
+        let json = r#"
+        {
+          "Image": "sha256:deadbeef",
+          "Config": { "Labels": {}, "Env": [], "Image": "dockrev:latest" },
+          "NetworkSettings": {
+            "Networks": {
+              "dockrev_default": { "IpAddress": "172.18.0.3" }
+            }
+          }
+        }
+        "#;
+        let parsed: DockerInspect = serde_json::from_str(json).unwrap();
+        let ip = pick_container_ip(&parsed.network_settings.networks, "dockrev").unwrap();
+        assert_eq!(ip, "172.18.0.3");
+    }
 }
 
 async fn docker_inspect(cfg: &Config, container_id: &str) -> anyhow::Result<DockerInspect> {
