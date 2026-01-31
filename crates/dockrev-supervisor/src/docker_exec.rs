@@ -140,10 +140,11 @@ fn pick_container_ip(
     compose_project: &str,
 ) -> Option<String> {
     let preferred = format!("{compose_project}_default");
-    if let Some(n) = networks.get(&preferred) {
-        if let Some(ip) = non_empty_opt(n.ip_address.as_deref()) {
-            return Some(ip);
-        }
+    if let Some(ip) = networks
+        .get(&preferred)
+        .and_then(|n| non_empty_opt(n.ip_address.as_deref()))
+    {
+        return Some(ip);
     }
 
     let mut entries: Vec<(&String, &DockerNetwork)> = networks.iter().collect();
