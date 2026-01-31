@@ -2219,28 +2219,10 @@ async fn sync_github_packages_webhooks(
         }
 
         let existing = matches[0];
-        let needs_update = !existing.active || !existing.events.iter().any(|e| e == "package");
-        if !needs_update {
-            let _ = state
-                .db
-                .set_github_packages_repo_sync_result(
-                    &owner,
-                    &repo,
-                    Some(existing.id),
-                    Some(&now),
-                    None,
-                    &now,
-                )
-                .await;
-            results.push(SyncGitHubPackagesWebhookResult {
-                repo: full,
-                action: "noop".to_string(),
-                hook_id: Some(existing.id),
-                conflict_hooks: None,
-                message: None,
-            });
-            continue;
-        }
+        // Even if the matching hook looks "good enough" (active + has `package`),
+        // we still PATCH it to ensure:
+        // - secret is set to our current secret (GitHub doesn't let us read it back to compare)
+        // - events are exactly what we want (avoid unnecessary traffic)
 
         if dry_run {
             results.push(SyncGitHubPackagesWebhookResult {
