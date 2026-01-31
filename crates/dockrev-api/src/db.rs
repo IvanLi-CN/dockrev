@@ -9,9 +9,10 @@ use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 use tokio_rusqlite::Connection;
 
 use crate::api::types::{
-    BackupSettings, ComposeConfig, ComposeRef, IgnoreRule, IgnoreRuleMatch, IgnoreRuleScope,
-    JobListItem, JobLogLine, JobScope, JobType, NotificationSettings, ServiceSettings,
-    StackListItem, StackRecord, StackStatus,
+    BackupSettings, ComposeConfig, ComposeRef, GitHubPackagesRepoDb, GitHubPackagesSettingsDb,
+    GitHubPackagesTargetDb, IgnoreRule, IgnoreRuleMatch, IgnoreRuleScope, JobListItem, JobLogLine,
+    JobScope, JobType, NotificationSettings, ServiceSettings, StackListItem, StackRecord,
+    StackStatus,
 };
 
 #[derive(Clone, Debug)]
@@ -170,6 +171,25 @@ INSERT OR IGNORE INTO notification_settings (
                     Option::<String>::None,
                     0i64,
                     Option::<String>::None,
+                    Option::<String>::None,
+                    Option::<String>::None
+                ],
+            )?;
+
+            tx.execute(
+                r#"
+INSERT OR IGNORE INTO github_packages_settings (
+  id,
+  enabled,
+  callback_url,
+  pat,
+  webhook_secret
+) VALUES (?1, ?2, ?3, ?4, ?5)
+"#,
+                params![
+                    "default",
+                    0i64,
+                    "",
                     Option::<String>::None,
                     Option::<String>::None
                 ],
@@ -1447,6 +1467,280 @@ WHERE id = 'default'
         .context("put notification settings")
     }
 
+    pub async fn get_github_packages_settings(&self) -> anyhow::Result<GitHubPackagesSettingsDb> {
+        self.call(|conn| {
+            Ok(conn.query_row(
+                r#"
+SELECT
+  enabled,
+  callback_url,
+  pat,
+  webhook_secret,
+  updated_at
+FROM github_packages_settings
+WHERE id = 'default'
+"#,
+                [],
+                |row| {
+                    Ok(GitHubPackagesSettingsDb {
+                        enabled: row.get::<_, i64>(0)? != 0,
+                        callback_url: row.get(1)?,
+                        pat: row.get(2)?,
+                        webhook_secret: row.get(3)?,
+                        updated_at: row.get(4)?,
+                    })
+                },
+            )?)
+        })
+        .await
+        .context("get github packages settings")
+    }
+
+    pub async fn put_github_packages_settings(
+        &self,
+        settings: &GitHubPackagesSettingsDb,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let settings = settings.clone();
+        let now = now.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                r#"
+UPDATE github_packages_settings
+SET
+  enabled = ?1,
+  callback_url = ?2,
+  pat = ?3,
+  webhook_secret = ?4,
+  updated_at = ?5
+WHERE id = 'default'
+"#,
+                params![
+                    settings.enabled as i64,
+                    settings.callback_url,
+                    settings.pat,
+                    settings.webhook_secret,
+                    now
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("put github packages settings")
+    }
+
+    pub async fn list_github_packages_targets(
+        &self,
+    ) -> anyhow::Result<Vec<GitHubPackagesTargetDb>> {
+        self.call(|conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT
+  id,
+  input,
+  kind,
+  owner,
+  warnings_json,
+  updated_at
+FROM github_packages_targets
+ORDER BY owner ASC, input ASC
+"#,
+            )?;
+            let rows = stmt.query_map([], |row| {
+                let warnings_json: String = row.get(4)?;
+                let warnings: Vec<String> =
+                    serde_json::from_str(&warnings_json).unwrap_or_else(|_| Vec::new());
+                Ok(GitHubPackagesTargetDb {
+                    id: row.get(0)?,
+                    input: row.get(1)?,
+                    kind: row.get(2)?,
+                    owner: row.get(3)?,
+                    warnings,
+                    updated_at: row.get(5)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list github packages targets")
+    }
+
+    pub async fn put_github_packages_targets(
+        &self,
+        targets: &[GitHubPackagesTargetDb],
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let targets = targets.to_vec();
+        let now = now.to_string();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute("DELETE FROM github_packages_targets", [])?;
+            for t in targets {
+                tx.execute(
+                    r#"
+INSERT INTO github_packages_targets (
+  id,
+  input,
+  kind,
+  owner,
+  warnings_json,
+  updated_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+"#,
+                    params![
+                        t.id,
+                        t.input,
+                        t.kind,
+                        t.owner,
+                        serde_json::to_string(&t.warnings).unwrap_or_else(|_| "[]".to_string()),
+                        now
+                    ],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .context("put github packages targets")
+    }
+
+    pub async fn list_github_packages_repos(&self) -> anyhow::Result<Vec<GitHubPackagesRepoDb>> {
+        self.call(|conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT
+  owner,
+  repo,
+  selected,
+  hook_id,
+  last_sync_at,
+  last_error,
+  updated_at
+FROM github_packages_repos
+ORDER BY owner ASC, repo ASC
+"#,
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(GitHubPackagesRepoDb {
+                    owner: row.get(0)?,
+                    repo: row.get(1)?,
+                    selected: row.get::<_, i64>(2)? != 0,
+                    hook_id: row.get(3)?,
+                    last_sync_at: row.get(4)?,
+                    last_error: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list github packages repos")
+    }
+
+    pub async fn put_github_packages_repos(
+        &self,
+        repos: &[(String, String, bool)],
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let repos: Vec<(String, String, bool)> = repos.to_vec();
+        let now = now.to_string();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+            for (owner, repo, selected) in &repos {
+                tx.execute(
+                    r#"
+INSERT INTO github_packages_repos (owner, repo, selected, updated_at)
+VALUES (?1, ?2, ?3, ?4)
+ON CONFLICT(owner, repo) DO UPDATE SET
+  selected = excluded.selected,
+  updated_at = excluded.updated_at
+"#,
+                    params![owner, repo, *selected as i64, now],
+                )?;
+            }
+
+            if repos.is_empty() {
+                tx.execute("DELETE FROM github_packages_repos", [])?;
+            } else {
+                let mut full_names: Vec<String> = Vec::with_capacity(repos.len());
+                for (owner, repo, _) in &repos {
+                    full_names.push(format!("{owner}/{repo}"));
+                }
+                let placeholders = vec!["?"; full_names.len()].join(",");
+                let sql = format!(
+                    "DELETE FROM github_packages_repos WHERE (owner || '/' || repo) NOT IN ({placeholders})"
+                );
+                let params: Vec<&dyn rusqlite::ToSql> =
+                    full_names.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+                tx.execute(&sql, params.as_slice())?;
+            }
+
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .context("put github packages repos")
+    }
+
+    pub async fn set_github_packages_repo_sync_result(
+        &self,
+        owner: &str,
+        repo: &str,
+        hook_id: Option<i64>,
+        last_sync_at: Option<&str>,
+        last_error: Option<&str>,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let owner = owner.to_string();
+        let repo = repo.to_string();
+        let last_sync_at = last_sync_at.map(|s| s.to_string());
+        let last_error = last_error.map(|s| s.to_string());
+        let now = now.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                r#"
+UPDATE github_packages_repos
+SET
+  hook_id = ?3,
+  last_sync_at = ?4,
+  last_error = ?5,
+  updated_at = ?6
+WHERE owner = ?1 AND repo = ?2
+"#,
+                params![owner, repo, hook_id, last_sync_at, last_error, now],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("set github packages repo sync result")
+    }
+
+    pub async fn insert_github_packages_delivery_if_new(
+        &self,
+        delivery_id: &str,
+        received_at: &str,
+        owner: Option<&str>,
+        repo: Option<&str>,
+    ) -> anyhow::Result<bool> {
+        let delivery_id = delivery_id.to_string();
+        let received_at = received_at.to_string();
+        let owner = owner.map(|s| s.to_string());
+        let repo = repo.map(|s| s.to_string());
+        self.call(move |conn| {
+            let changed = conn.execute(
+                r#"
+INSERT OR IGNORE INTO github_packages_deliveries (delivery_id, received_at, owner, repo)
+VALUES (?1, ?2, ?3, ?4)
+"#,
+                params![delivery_id, received_at, owner, repo],
+            )?;
+            Ok(changed > 0)
+        })
+        .await
+        .context("insert github packages delivery")
+    }
+
     pub async fn upsert_web_push_subscription(
         &self,
         endpoint: &str,
@@ -2325,6 +2619,43 @@ CREATE TABLE IF NOT EXISTS web_push_subscriptions (
   p256dh TEXT NOT NULL,
   auth TEXT NOT NULL,
   created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS github_packages_settings (
+  id TEXT PRIMARY KEY NOT NULL,
+  enabled INTEGER NOT NULL,
+  callback_url TEXT NOT NULL,
+  pat TEXT,
+  webhook_secret TEXT,
+  updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS github_packages_targets (
+  id TEXT PRIMARY KEY NOT NULL,
+  input TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  warnings_json TEXT NOT NULL,
+  updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS github_packages_repos (
+  owner TEXT NOT NULL,
+  repo TEXT NOT NULL,
+  selected INTEGER NOT NULL,
+  hook_id INTEGER,
+  last_sync_at TEXT,
+  last_error TEXT,
+  updated_at TEXT,
+  PRIMARY KEY (owner, repo)
+);
+CREATE INDEX IF NOT EXISTS idx_github_packages_repos_selected ON github_packages_repos(selected);
+
+CREATE TABLE IF NOT EXISTS github_packages_deliveries (
+  delivery_id TEXT PRIMARY KEY NOT NULL,
+  received_at TEXT NOT NULL,
+  owner TEXT,
+  repo TEXT
 );
 
 CREATE TABLE IF NOT EXISTS jobs (
