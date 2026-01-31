@@ -24,3 +24,6 @@ build/
 # IDE
 .idea/
 .vscode/
+
+# Codex / local tooling
+.codex/

@@ -7,6 +7,7 @@ import { QueuePage } from './pages/QueuePage'
 import { ServicesPage } from './pages/ServicesPage'
 import { ServiceDetailPage } from './pages/ServiceDetailPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { SupervisorMisroutePage } from './pages/SupervisorMisroutePage'
 import { useRoute } from './useRoute'
 
 function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbarHint?: string } {
@@ -29,6 +30,8 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
       }
     case 'service':
       return { title: '服务详情', topbarHint: '服务详情' }
+    case 'supervisor-misroute':
+      return { title: '部署问题', topbarHint: '自我升级（Supervisor）' }
   }
 }
 
@@ -41,6 +44,23 @@ export default function App() {
   const topActions = useMemo(() => {
     return <>{pageActions}</>
   }, [pageActions])
+
+  if (route.name === 'supervisor-misroute') {
+    return (
+      <div className="standaloneShell">
+        <div className="standaloneContent">
+          <div className="standaloneHead">
+            <div className="standaloneHeadLeft">
+              <div className="brand">Dockrev</div>
+              <div className="topbarHint">自我升级（Supervisor）</div>
+            </div>
+            <div className="chipStatic chipStaticUser">用户：ivan（FH）</div>
+          </div>
+          <SupervisorMisroutePage basePath={route.basePath} pathname={route.pathname} />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <AppShell

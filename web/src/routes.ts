@@ -1,11 +1,17 @@
+import { selfUpgradeBaseUrl } from './runtimeConfig'
+
 export type Route =
   | { name: 'overview' }
   | { name: 'queue' }
   | { name: 'services' }
   | { name: 'settings' }
   | { name: 'service'; stackId: string; serviceId: string }
+  | { name: 'supervisor-misroute'; basePath: string; pathname: string }
 
 export function parseRoute(pathname: string): Route {
+  const sup = parseSupervisorMisroute(pathname)
+  if (sup) return sup
+
   const parts = pathname.split('/').filter(Boolean).map(decodeURIComponent)
   if (parts.length === 0) return { name: 'overview' }
   if (parts.length === 1 && parts[0] === 'queue') return { name: 'queue' }
@@ -29,6 +35,28 @@ export function href(route: Route): string {
       return '/settings'
     case 'service':
       return `/services/${encodeURIComponent(route.stackId)}/${encodeURIComponent(route.serviceId)}`
+    case 'supervisor-misroute': {
+      const p = route.basePath.endsWith('/') ? route.basePath : `${route.basePath}/`
+      return p
+    }
+  }
+}
+
+function parseSupervisorMisroute(pathname: string): Route | null {
+  try {
+    const base = new URL(selfUpgradeBaseUrl(), window.location.href)
+    if (base.origin !== window.location.origin) return null
+    let basePath = base.pathname
+    if (!basePath.startsWith('/')) basePath = `/${basePath}`
+    basePath = basePath.replace(/\/+$/, '')
+    if (!basePath || basePath === '/' || basePath === '/api') return null
+
+    if (pathname === basePath || pathname.startsWith(`${basePath}/`)) {
+      return { name: 'supervisor-misroute', basePath, pathname }
+    }
+    return null
+  } catch {
+    return null
   }
 }
 
