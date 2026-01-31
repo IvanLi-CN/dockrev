@@ -60,4 +60,5 @@ services:
 Notes:
 
 - `latest` is updated only by the automatic release path after `CI (main)` succeeds on `main`.
+- Use `0.3.5` or newer to avoid the historical exec-bit issue (`/usr/local/bin/dockrev`: permission denied).
 - The image supports both direct socket mount and `DOCKER_HOST` (e.g. `tcp://docker-socket-proxy:2375`).
