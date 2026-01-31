@@ -173,6 +173,63 @@ export type NotificationConfig = {
   }
 }
 
+export type GitHubPackagesTarget = {
+  input: string
+  kind: 'repo' | 'owner' | string
+  owner: string
+  warnings: string[]
+}
+
+export type GitHubPackagesRepo = {
+  fullName: string
+  selected: boolean
+  hookId?: number | null
+  lastSyncAt?: string | null
+  lastError?: string | null
+}
+
+export type GitHubPackagesSettingsResponse = {
+  enabled: boolean
+  callbackUrl: string
+  targets: GitHubPackagesTarget[]
+  repos: GitHubPackagesRepo[]
+  patMasked?: string | null
+  secretMasked?: string | null
+}
+
+export type PutGitHubPackagesSettingsRequest = {
+  enabled: boolean
+  callbackUrl: string
+  targets: Array<{ input: string }>
+  repos: Array<{ fullName: string; selected: boolean }>
+  pat?: string | null
+}
+
+export type ResolveGitHubPackagesTargetResponse = {
+  kind: 'repo' | 'owner' | string
+  owner: string
+  repos: Array<{ fullName: string; selected: boolean }>
+  warnings: string[]
+}
+
+export type SyncGitHubPackagesWebhookResult = {
+  repo: string
+  action: 'noop' | 'created' | 'updated' | 'conflict' | 'error' | string
+  hookId?: number | null
+  conflictHooks?: Array<{ id: number; url: string; events: string[]; active: boolean }> | null
+  message?: string | null
+}
+
+export type SyncGitHubPackagesWebhooksRequest = {
+  dryRun?: boolean
+  resolveConflicts?: Array<{ repo: string; keepHookId: number; deleteHookIds: number[] }>
+}
+
+export type SyncGitHubPackagesWebhooksResponse = {
+  ok: boolean
+  results: SyncGitHubPackagesWebhookResult[]
+}
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
 export class ApiError extends Error {
@@ -387,6 +444,37 @@ export async function putNotifications(input: NotificationConfig) {
     body: JSON.stringify(input),
   })
   return (await resp.json()) as { ok: boolean }
+}
+
+export async function getGitHubPackagesSettings(): Promise<GitHubPackagesSettingsResponse> {
+  const resp = await apiFetch('/api/github-packages/settings')
+  return (await resp.json()) as GitHubPackagesSettingsResponse
+}
+
+export async function putGitHubPackagesSettings(input: PutGitHubPackagesSettingsRequest) {
+  const resp = await apiFetch('/api/github-packages/settings', {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  })
+  return (await resp.json()) as { ok: boolean }
+}
+
+export async function resolveGitHubPackagesTarget(input: string): Promise<ResolveGitHubPackagesTargetResponse> {
+  const resp = await apiFetch('/api/github-packages/resolve', {
+    method: 'POST',
+    body: JSON.stringify({ input }),
+  })
+  return (await resp.json()) as ResolveGitHubPackagesTargetResponse
+}
+
+export async function syncGitHubPackagesWebhooks(
+  input: SyncGitHubPackagesWebhooksRequest,
+): Promise<SyncGitHubPackagesWebhooksResponse> {
+  const resp = await apiFetch('/api/github-packages/sync', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+  return (await resp.json()) as SyncGitHubPackagesWebhooksResponse
 }
 
 export async function testNotifications(message?: string) {

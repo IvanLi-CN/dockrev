@@ -2,11 +2,18 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   createWebPushSubscription,
   deleteWebPushSubscription,
+  getGitHubPackagesSettings,
   getNotifications,
   getSettings,
+  putGitHubPackagesSettings,
   putNotifications,
   putSettings,
+  resolveGitHubPackagesTarget,
+  syncGitHubPackagesWebhooks,
   testNotifications,
+  type GitHubPackagesRepo,
+  type GitHubPackagesSettingsResponse,
+  type SyncGitHubPackagesWebhookResult,
   type NotificationConfig,
   type SettingsResponse,
 } from '../api'
@@ -44,6 +51,10 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   const { onTopActions } = props
   const [settings, setSettings] = useState<SettingsResponse | null>(null)
   const [notifications, setNotifications] = useState<NotificationConfig | null>(null)
+  const [githubPackages, setGitHubPackages] = useState<GitHubPackagesSettingsResponse | null>(null)
+  const [githubPackagesPat, setGitHubPackagesPat] = useState('')
+  const [githubPackagesNewTarget, setGitHubPackagesNewTarget] = useState('')
+  const [githubPackagesSyncResults, setGitHubPackagesSyncResults] = useState<SyncGitHubPackagesWebhookResult[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [webPushEndpoint, setWebPushEndpoint] = useState<string | null>(null)
@@ -54,6 +65,13 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     setError(null)
     setSettings(await getSettings())
     setNotifications(await getNotifications())
+    const gh = await getGitHubPackagesSettings()
+    const defaultCallbackUrl =
+      typeof window !== 'undefined' ? new URL('/api/webhooks/github-packages', window.location.origin).toString() : ''
+    const callbackUrl = gh.callbackUrl || defaultCallbackUrl
+    setGitHubPackages({ ...gh, callbackUrl })
+    setGitHubPackagesPat(gh.patMasked ?? '')
+    setGitHubPackagesSyncResults(null)
   }, [])
 
   useEffect(() => {
@@ -64,15 +82,22 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     onTopActions(
       <Button
         variant="primary"
-        disabled={busy || !settings || !notifications}
+        disabled={busy || !settings || !notifications || !githubPackages}
         onClick={() => {
           void (async () => {
-            if (!settings || !notifications) return
+            if (!settings || !notifications || !githubPackages) return
             setBusy(true)
             setError(null)
             try {
               await putSettings(settings.backup)
               await putNotifications(notifications)
+              await putGitHubPackagesSettings({
+                enabled: githubPackages.enabled,
+                callbackUrl: githubPackages.callbackUrl,
+                targets: githubPackages.targets.map((t) => ({ input: t.input })),
+                repos: githubPackages.repos.map((r) => ({ fullName: r.fullName, selected: r.selected })),
+                pat: githubPackagesPat || null,
+              })
               await refresh()
             } catch (e: unknown) {
               setError(errorMessage(e))
@@ -85,7 +110,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
         保存设置
       </Button>,
     )
-  }, [busy, notifications, onTopActions, refresh, settings])
+  }, [busy, githubPackages, githubPackagesPat, notifications, onTopActions, refresh, settings])
 
   const canWebPush = useMemo(() => {
     return typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window
@@ -125,7 +150,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     setWebPushEndpoint(null)
   }
 
-  if (!settings || !notifications) {
+  if (!settings || !notifications || !githubPackages) {
     return <div className="muted">加载中…</div>
   }
 
@@ -270,6 +295,250 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                 </div>
               </div>
             </div>
+          </div>
+
+          {error ? <div className="error">{error}</div> : null}
+        </div>
+
+        <div className="card">
+          <div className="title">GitHub Packages（GHCR）Webhook</div>
+          <div className="muted">在 GHCR 发布新版本时自动触发 Dockrev 扫描（事件：package.published）</div>
+
+          <div className="settingsSection">
+            <div className="settingHead">
+              <div className="sectionTitle">启用</div>
+              <Switch
+                checked={githubPackages.enabled}
+                disabled={busy}
+                onChange={(v) => setGitHubPackages({ ...githubPackages, enabled: v })}
+              />
+            </div>
+
+            <div className="kv">
+              <div className="kvRow">
+                <div className="label">GitHub PAT（留空=保持原值）</div>
+                <input
+                  className="input"
+                  value={githubPackagesPat}
+                  onChange={(e) => setGitHubPackagesPat(e.target.value)}
+                  placeholder="ghp_..."
+                />
+                <div className="muted" style={{ marginTop: 6 }}>
+                  提示：解析 profile/username 与同步 webhook 需要先“保存设置”把 PAT 写入后端。
+                </div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">Callback URL</div>
+                <input
+                  className="input"
+                  value={githubPackages.callbackUrl}
+                  onChange={(e) => setGitHubPackages({ ...githubPackages, callbackUrl: e.target.value })}
+                  placeholder="https://dockrev.example.com/api/webhooks/github-packages"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="settingsSection">
+            <div className="settingHead">
+              <div className="sectionTitle">Targets</div>
+              <div className="muted">{githubPackages.targets.length} 个</div>
+            </div>
+
+            <div className="kv">
+              <div className="kvRow">
+                <div className="label">新增 Target</div>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                  <input
+                    className="input"
+                    value={githubPackagesNewTarget}
+                    onChange={(e) => setGitHubPackagesNewTarget(e.target.value)}
+                    placeholder="https://github.com/org/repo 或 https://github.com/org 或 org"
+                    style={{ flex: 1 }}
+                  />
+                  <Button
+                    variant="ghost"
+                    disabled={busy || !githubPackagesNewTarget.trim()}
+                    onClick={() => {
+                      void (async () => {
+                        setBusy(true)
+                        setError(null)
+                        try {
+                          const input = githubPackagesNewTarget.trim()
+                          const resp = await resolveGitHubPackagesTarget(input)
+
+                          const nextTargets = githubPackages.targets.some((t) => t.input === input)
+                            ? githubPackages.targets
+                            : [...githubPackages.targets, { input, kind: resp.kind, owner: resp.owner, warnings: resp.warnings }]
+
+                          const repoMap = new Map<string, GitHubPackagesRepo>()
+                          for (const r of githubPackages.repos) repoMap.set(r.fullName, r)
+                          for (const r of resp.repos) {
+                            const prev = repoMap.get(r.fullName)
+                            repoMap.set(r.fullName, prev ? { ...prev, selected: prev.selected || r.selected } : { ...r })
+                          }
+                          const nextRepos = Array.from(repoMap.values()).sort((a, b) => a.fullName.localeCompare(b.fullName))
+
+                          setGitHubPackages({ ...githubPackages, targets: nextTargets, repos: nextRepos })
+                          setGitHubPackagesNewTarget('')
+                        } catch (e: unknown) {
+                          setError(errorMessage(e))
+                        } finally {
+                          setBusy(false)
+                        }
+                      })()
+                    }}
+                  >
+                    解析并添加
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {githubPackages.targets.length ? (
+              <div className="kv" style={{ marginTop: 10 }}>
+                {githubPackages.targets.map((t) => (
+                  <div className="kvRow" key={t.input}>
+                    <div className="label">Target</div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                      <div className="mono">
+                        {t.input} <span className="muted">({t.kind}:{t.owner})</span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        disabled={busy}
+                        onClick={() => {
+                          setGitHubPackages({ ...githubPackages, targets: githubPackages.targets.filter((x) => x.input !== t.input) })
+                        }}
+                      >
+                        移除
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="muted" style={{ marginTop: 10 }}>
+                尚未添加 target（可直接粘贴 repo URL / profile URL / username）
+              </div>
+            )}
+          </div>
+
+          <div className="settingsSection">
+            <div className="settingHead">
+              <div className="sectionTitle">Repos</div>
+              <div className="muted">{githubPackages.repos.length} 个（默认全选）</div>
+            </div>
+
+            {githubPackages.repos.length ? (
+              <div className="kv">
+                {githubPackages.repos.map((r) => (
+                  <div className="kvRow" key={r.fullName}>
+                    <div className="label">
+                      <input
+                        type="checkbox"
+                        checked={r.selected}
+                        disabled={busy}
+                        onChange={(e) => {
+                          const selected = e.target.checked
+                          setGitHubPackages({
+                            ...githubPackages,
+                            repos: githubPackages.repos.map((x) => (x.fullName === r.fullName ? { ...x, selected } : x)),
+                          })
+                        }}
+                      />
+                    </div>
+                    <div style={{ width: '100%' }}>
+                      <div className="mono">{r.fullName}</div>
+                      {r.hookId ? <div className="muted">hookId: {r.hookId}</div> : null}
+                      {r.lastError ? <div className="muted">lastError: {r.lastError}</div> : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="muted">repo 列表为空：先添加 target 并解析</div>
+            )}
+
+            <div className="formActions" style={{ marginTop: 10 }}>
+              <Button
+                variant="ghost"
+                disabled={busy || !githubPackages.repos.some((r) => r.selected)}
+                onClick={() => {
+                  void (async () => {
+                    setBusy(true)
+                    setError(null)
+                    try {
+                      const resp = await syncGitHubPackagesWebhooks({ dryRun: false })
+                      setGitHubPackagesSyncResults(resp.results)
+                      await refresh()
+                    } catch (e: unknown) {
+                      setError(errorMessage(e))
+                    } finally {
+                      setBusy(false)
+                    }
+                  })()
+                }}
+              >
+                同步 webhook
+              </Button>
+            </div>
+
+            {githubPackagesSyncResults ? (
+              <div className="kv" style={{ marginTop: 10 }}>
+                {githubPackagesSyncResults.map((r) => (
+                  <div className="kvRow" key={`${r.repo}:${r.action}:${r.hookId ?? ''}`}>
+                    <div className="label">{r.action}</div>
+                    <div style={{ width: '100%' }}>
+                      <div className="mono">{r.repo}</div>
+                      {r.message ? <div className="muted">{r.message}</div> : null}
+                      {r.action === 'conflict' && r.conflictHooks?.length ? (
+                        <div style={{ marginTop: 6 }}>
+                          <div className="muted">发现重复 webhook（同 callback URL + package 事件）：</div>
+                          <div className="muted" style={{ marginTop: 6 }}>
+                            {r.conflictHooks.map((h) => (
+                              <div key={h.id}>
+                                hook {h.id} active={String(h.active)} events=[{h.events.join(', ')}]
+                              </div>
+                            ))}
+                          </div>
+                          <Button
+                            variant="ghost"
+                            disabled={busy}
+                            onClick={() => {
+                              void (async () => {
+                                const hooks = r.conflictHooks ?? []
+                                if (hooks.length < 2) return
+                                const keep = hooks[0]!
+                                const del = hooks.slice(1).map((h) => h.id)
+                                const ok = window.confirm(`检测到重复 webhook：保留 ${keep.id}，删除其余 ${del.length} 个？`)
+                                if (!ok) return
+                                setBusy(true)
+                                setError(null)
+                                try {
+                                  const resp = await syncGitHubPackagesWebhooks({
+                                    resolveConflicts: [{ repo: r.repo, keepHookId: keep.id, deleteHookIds: del }],
+                                  })
+                                  setGitHubPackagesSyncResults(resp.results)
+                                  await refresh()
+                                } catch (e: unknown) {
+                                  setError(errorMessage(e))
+                                } finally {
+                                  setBusy(false)
+                                }
+                              })()
+                            }}
+                          >
+                            删除旧的并重试
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
 
           {error ? <div className="error">{error}</div> : null}
