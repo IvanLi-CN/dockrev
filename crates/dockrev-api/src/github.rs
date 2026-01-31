@@ -27,6 +27,9 @@ pub fn parse_target_input(input: &str) -> anyhow::Result<TargetKind> {
             .map(|it| it.filter(|s| !s.is_empty()).collect())
             .unwrap_or_else(Vec::new);
         match segments.as_slice() {
+            ["orgs", owner, ..] => Ok(TargetKind::Owner {
+                owner: owner.to_string(),
+            }),
             [owner] => Ok(TargetKind::Owner {
                 owner: owner.to_string(),
             }),
@@ -124,7 +127,7 @@ impl GitHubClient {
         if !status.is_success() {
             return Err(anyhow::anyhow!("github http {}: {}", status, text));
         }
-        Ok(serde_json::from_str(&text).context("decode github json")?)
+        serde_json::from_str(&text).context("decode github json")
     }
 
     async fn request_empty(
@@ -286,6 +289,26 @@ mod tests {
         let link =
             "<https://api.github.com/organizations/1/repos?per_page=100&page=4>; rel=\"last\"";
         assert_eq!(parse_next_link(link), None);
+    }
+
+    #[test]
+    fn parse_target_input_orgs_profile_url_is_owner() {
+        assert_eq!(
+            parse_target_input("https://github.com/orgs/acme").unwrap(),
+            TargetKind::Owner {
+                owner: "acme".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn parse_target_input_orgs_profile_url_with_suffix_is_owner() {
+        assert_eq!(
+            parse_target_input("https://github.com/orgs/acme/people").unwrap(),
+            TargetKind::Owner {
+                owner: "acme".to_string()
+            }
+        );
     }
 }
 
