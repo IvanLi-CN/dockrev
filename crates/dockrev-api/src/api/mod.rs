@@ -5,15 +5,20 @@ mod tests;
 
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use axum::{
     Json, Router,
+    body::Bytes,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     routing::{get, post},
 };
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use url::Url;
 
+use crate::github;
 use crate::{
     backup, candidates, discovery, error::ApiError, ids, ignore, notify, registry, state::AppState,
     ui, updater,
@@ -65,10 +70,26 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/api/notifications/test", post(test_notifications))
         .route(
+            "/api/github-packages/settings",
+            get(get_github_packages_settings).put(put_github_packages_settings),
+        )
+        .route(
+            "/api/github-packages/resolve",
+            post(resolve_github_packages_target),
+        )
+        .route(
+            "/api/github-packages/sync",
+            post(sync_github_packages_webhooks),
+        )
+        .route(
             "/api/web-push/subscriptions",
             post(create_web_push_subscription).delete(delete_web_push_subscription),
         )
         .route("/api/webhooks/trigger", post(webhook_trigger))
+        .route(
+            "/api/webhooks/github-packages",
+            post(github_packages_webhook),
+        )
         .route("/api/settings", get(get_settings).put(put_settings))
         .merge(ui::router())
         .with_state(state)
@@ -1763,6 +1784,738 @@ async fn test_notifications(
         .await
         .map_err(map_internal)?;
     Ok(Json(TestNotificationsResponse { ok: true, results }))
+}
+
+fn mask_if_some(input: &Option<String>) -> Option<String> {
+    input.as_ref().map(|_| "******".to_string())
+}
+
+fn gen_webhook_secret() -> anyhow::Result<String> {
+    let rng = ring::rand::SystemRandom::new();
+    let mut buf = [0u8; 32];
+    ring::rand::SecureRandom::fill(&rng, &mut buf)
+        .map_err(|_| anyhow::anyhow!("failed to generate webhook secret"))?;
+    Ok(base64::engine::general_purpose::STANDARD_NO_PAD.encode(buf))
+}
+
+fn normalize_github_repo_selection(
+    repos: Vec<GitHubPackagesRepoSelection>,
+) -> anyhow::Result<Vec<(String, String, bool)>> {
+    use std::collections::BTreeMap;
+
+    let mut merged: BTreeMap<(String, String), bool> = BTreeMap::new();
+    for r in repos {
+        let full = r.full_name.trim();
+        if full.is_empty() {
+            continue;
+        }
+        let mut parts = full.split('/');
+        let owner = parts.next().unwrap_or_default().trim();
+        let repo = parts.next().unwrap_or_default().trim();
+        if owner.is_empty() || repo.is_empty() || parts.next().is_some() {
+            return Err(anyhow::anyhow!("invalid repo fullName: {full}"));
+        }
+        merged
+            .entry((owner.to_string(), repo.to_string()))
+            .and_modify(|v| *v = *v || r.selected)
+            .or_insert(r.selected);
+    }
+    Ok(merged
+        .into_iter()
+        .map(|((o, r), selected)| (o, r, selected))
+        .collect())
+}
+
+async fn get_github_packages_settings(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<GitHubPackagesSettingsResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+
+    let settings = state
+        .db
+        .get_github_packages_settings()
+        .await
+        .map_err(map_internal)?;
+    let targets = state
+        .db
+        .list_github_packages_targets()
+        .await
+        .map_err(map_internal)?;
+    let repos = state
+        .db
+        .list_github_packages_repos()
+        .await
+        .map_err(map_internal)?;
+
+    Ok(Json(GitHubPackagesSettingsResponse {
+        enabled: settings.enabled,
+        callback_url: settings.callback_url,
+        targets: targets
+            .into_iter()
+            .map(|t| GitHubPackagesTarget {
+                input: t.input,
+                kind: t.kind,
+                owner: t.owner,
+                warnings: t.warnings,
+            })
+            .collect(),
+        repos: repos
+            .into_iter()
+            .map(|r| GitHubPackagesRepo {
+                full_name: format!("{}/{}", r.owner, r.repo),
+                selected: r.selected,
+                hook_id: r.hook_id,
+                last_sync_at: r.last_sync_at,
+                last_error: r.last_error,
+            })
+            .collect(),
+        pat_masked: mask_if_some(&settings.pat),
+        secret_masked: mask_if_some(&settings.webhook_secret),
+    }))
+}
+
+async fn put_github_packages_settings(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<PutGitHubPackagesSettingsRequest>,
+) -> Result<Json<PutGitHubPackagesSettingsResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let now = now_rfc3339().map_err(map_internal)?;
+
+    let _ = Url::parse(&req.callback_url)
+        .map_err(|_| ApiError::invalid_argument("invalid callbackUrl"))?;
+
+    let existing = state
+        .db
+        .get_github_packages_settings()
+        .await
+        .map_err(map_internal)?;
+
+    let mut pat = req.pat;
+    merge_secret(&mut pat, existing.pat);
+
+    let mut webhook_secret = existing.webhook_secret;
+    if webhook_secret.as_deref().unwrap_or_default().is_empty() {
+        webhook_secret = Some(gen_webhook_secret().map_err(map_internal)?);
+    }
+
+    if req.enabled && pat.as_deref().unwrap_or_default().is_empty() {
+        return Err(ApiError::invalid_argument(
+            "pat is required when enabled=true",
+        ));
+    }
+
+    let settings = GitHubPackagesSettingsDb {
+        enabled: req.enabled,
+        callback_url: req.callback_url,
+        pat,
+        webhook_secret,
+        updated_at: Some(now.clone()),
+    };
+
+    state
+        .db
+        .put_github_packages_settings(&settings, &now)
+        .await
+        .map_err(map_internal)?;
+
+    let mut targets = Vec::new();
+    for t in req.targets {
+        let kind = github::parse_target_input(&t.input).map_err(|e| {
+            ApiError::invalid_argument("invalid target input")
+                .with_details(json!({"input": t.input, "error": e.to_string()}))
+        })?;
+        let (kind_str, owner) = match kind {
+            github::TargetKind::Owner { owner } => ("owner".to_string(), owner),
+            github::TargetKind::Repo { owner, .. } => ("repo".to_string(), owner),
+        };
+        targets.push(GitHubPackagesTargetDb {
+            id: ulid::Ulid::new().to_string(),
+            input: t.input,
+            kind: kind_str,
+            owner,
+            warnings: Vec::new(),
+            updated_at: Some(now.clone()),
+        });
+    }
+    state
+        .db
+        .put_github_packages_targets(&targets, &now)
+        .await
+        .map_err(map_internal)?;
+
+    let repos = normalize_github_repo_selection(req.repos).map_err(|e| {
+        ApiError::invalid_argument("invalid repos").with_details(json!({"error": e.to_string()}))
+    })?;
+    state
+        .db
+        .put_github_packages_repos(&repos, &now)
+        .await
+        .map_err(map_internal)?;
+
+    Ok(Json(PutGitHubPackagesSettingsResponse { ok: true }))
+}
+
+async fn resolve_github_packages_target(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<ResolveGitHubPackagesTargetRequest>,
+) -> Result<Json<ResolveGitHubPackagesTargetResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+
+    let parsed = github::parse_target_input(&req.input).map_err(|e| {
+        ApiError::invalid_argument("invalid input")
+            .with_details(json!({"input": req.input, "error": e.to_string()}))
+    })?;
+
+    match parsed {
+        github::TargetKind::Repo { owner, repo } => Ok(Json(ResolveGitHubPackagesTargetResponse {
+            kind: "repo".to_string(),
+            owner: owner.clone(),
+            repos: vec![GitHubPackagesRepoSelection {
+                full_name: format!("{owner}/{repo}"),
+                selected: true,
+            }],
+            warnings: Vec::new(),
+        })),
+        github::TargetKind::Owner { owner } => {
+            let settings = state
+                .db
+                .get_github_packages_settings()
+                .await
+                .map_err(map_internal)?;
+            let Some(pat) = settings.pat else {
+                return Err(ApiError::invalid_argument(
+                    "pat is required before resolving owner",
+                ));
+            };
+            let client = github::GitHubClient::new(&pat).map_err(map_internal)?;
+            let repos = client
+                .list_owner_repos(&owner)
+                .await
+                .map_err(map_internal)?;
+            Ok(Json(ResolveGitHubPackagesTargetResponse {
+                kind: "owner".to_string(),
+                owner,
+                repos: repos
+                    .into_iter()
+                    .map(|r| GitHubPackagesRepoSelection {
+                        full_name: r.full_name,
+                        selected: true,
+                    })
+                    .collect(),
+                warnings: Vec::new(),
+            }))
+        }
+    }
+}
+
+fn urls_match(a: &str, b: &str) -> bool {
+    let Ok(au) = Url::parse(a) else { return false };
+    let Ok(bu) = Url::parse(b) else { return false };
+    au == bu
+}
+
+async fn sync_github_packages_webhooks(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<SyncGitHubPackagesWebhooksRequest>,
+) -> Result<Json<SyncGitHubPackagesWebhooksResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let now = now_rfc3339().map_err(map_internal)?;
+
+    let settings = state
+        .db
+        .get_github_packages_settings()
+        .await
+        .map_err(map_internal)?;
+
+    if !settings.enabled {
+        return Err(ApiError::invalid_argument(
+            "github packages webhook is disabled",
+        ));
+    }
+    let Some(pat) = settings.pat.clone() else {
+        return Err(ApiError::invalid_argument("pat is required"));
+    };
+    let Some(secret) = settings.webhook_secret.clone() else {
+        return Err(ApiError::internal("webhook secret missing"));
+    };
+    if settings.callback_url.trim().is_empty() {
+        return Err(ApiError::invalid_argument("callbackUrl is required"));
+    }
+    let _ = Url::parse(&settings.callback_url)
+        .map_err(|_| ApiError::invalid_argument("invalid callbackUrl"))?;
+
+    let selected_repos: Vec<(String, String)> = state
+        .db
+        .list_github_packages_repos()
+        .await
+        .map_err(map_internal)?
+        .into_iter()
+        .filter(|r| r.selected)
+        .map(|r| (r.owner, r.repo))
+        .collect();
+
+    let client = github::GitHubClient::new(&pat).map_err(map_internal)?;
+    let mut results = Vec::new();
+
+    let mut conflict_instructions =
+        std::collections::BTreeMap::<String, ResolveGitHubPackagesConflicts>::new();
+    if let Some(items) = req.resolve_conflicts {
+        for i in items {
+            conflict_instructions.insert(i.repo.clone(), i);
+        }
+    }
+
+    let dry_run = req.dry_run.unwrap_or(false);
+
+    for (owner, repo) in selected_repos {
+        let full = format!("{owner}/{repo}");
+
+        if let Some(instr) = conflict_instructions.get(&full)
+            && !dry_run
+        {
+            for hid in &instr.delete_hook_ids {
+                let _ = client.delete_repo_hook(&owner, &repo, *hid).await;
+            }
+        }
+
+        let hooks = match client.list_repo_hooks(&owner, &repo).await {
+            Ok(v) => v,
+            Err(e) => {
+                let msg = e.to_string();
+                let _ = state
+                    .db
+                    .set_github_packages_repo_sync_result(
+                        &owner,
+                        &repo,
+                        None,
+                        None,
+                        Some(&msg),
+                        &now,
+                    )
+                    .await;
+                results.push(SyncGitHubPackagesWebhookResult {
+                    repo: full,
+                    action: "error".to_string(),
+                    hook_id: None,
+                    conflict_hooks: None,
+                    message: Some(msg),
+                });
+                continue;
+            }
+        };
+
+        let mut matches = Vec::new();
+        for h in &hooks {
+            let Some(url) = h.config.url.as_deref() else {
+                continue;
+            };
+            if urls_match(url, &settings.callback_url) && h.events.iter().any(|e| e == "package") {
+                matches.push(h);
+            }
+        }
+
+        if matches.len() > 1 {
+            let conflict_hooks = matches
+                .into_iter()
+                .map(|h| GitHubPackagesConflictHook {
+                    id: h.id,
+                    url: h.config.url.clone().unwrap_or_default(),
+                    events: h.events.clone(),
+                    active: h.active,
+                })
+                .collect::<Vec<_>>();
+            let msg = "multiple matching webhooks found".to_string();
+            let _ = state
+                .db
+                .set_github_packages_repo_sync_result(&owner, &repo, None, None, Some(&msg), &now)
+                .await;
+            results.push(SyncGitHubPackagesWebhookResult {
+                repo: full,
+                action: "conflict".to_string(),
+                hook_id: None,
+                conflict_hooks: Some(conflict_hooks),
+                message: Some(msg),
+            });
+            continue;
+        }
+
+        if matches.is_empty() {
+            if dry_run {
+                results.push(SyncGitHubPackagesWebhookResult {
+                    repo: full,
+                    action: "created".to_string(),
+                    hook_id: None,
+                    conflict_hooks: None,
+                    message: Some("dryRun: would create".to_string()),
+                });
+                continue;
+            }
+
+            let created = client
+                .create_repo_hook(
+                    &owner,
+                    &repo,
+                    &github::CreateWebhookRequest {
+                        name: "web",
+                        active: true,
+                        events: vec!["package"],
+                        config: github::CreateWebhookConfig {
+                            url: &settings.callback_url,
+                            content_type: "json",
+                            secret: &secret,
+                            insecure_ssl: "0",
+                        },
+                    },
+                )
+                .await;
+            match created {
+                Ok(h) => {
+                    let _ = state
+                        .db
+                        .set_github_packages_repo_sync_result(
+                            &owner,
+                            &repo,
+                            Some(h.id),
+                            Some(&now),
+                            None,
+                            &now,
+                        )
+                        .await;
+                    results.push(SyncGitHubPackagesWebhookResult {
+                        repo: full,
+                        action: "created".to_string(),
+                        hook_id: Some(h.id),
+                        conflict_hooks: None,
+                        message: None,
+                    });
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    let _ = state
+                        .db
+                        .set_github_packages_repo_sync_result(
+                            &owner,
+                            &repo,
+                            None,
+                            None,
+                            Some(&msg),
+                            &now,
+                        )
+                        .await;
+                    results.push(SyncGitHubPackagesWebhookResult {
+                        repo: full,
+                        action: "error".to_string(),
+                        hook_id: None,
+                        conflict_hooks: None,
+                        message: Some(msg),
+                    });
+                }
+            }
+            continue;
+        }
+
+        let existing = matches[0];
+        // Even if the matching hook looks "good enough" (active + has `package`),
+        // we still PATCH it to ensure:
+        // - secret is set to our current secret (GitHub doesn't let us read it back to compare)
+        // - events are exactly what we want (avoid unnecessary traffic)
+
+        if dry_run {
+            results.push(SyncGitHubPackagesWebhookResult {
+                repo: full,
+                action: "updated".to_string(),
+                hook_id: Some(existing.id),
+                conflict_hooks: None,
+                message: Some("dryRun: would update".to_string()),
+            });
+            continue;
+        }
+
+        let updated = client
+            .update_repo_hook(
+                &owner,
+                &repo,
+                existing.id,
+                &github::UpdateWebhookRequest {
+                    active: true,
+                    events: vec!["package"],
+                    config: github::UpdateWebhookConfig {
+                        url: &settings.callback_url,
+                        content_type: "json",
+                        secret: &secret,
+                        insecure_ssl: "0",
+                    },
+                },
+            )
+            .await;
+        match updated {
+            Ok(h) => {
+                let _ = state
+                    .db
+                    .set_github_packages_repo_sync_result(
+                        &owner,
+                        &repo,
+                        Some(h.id),
+                        Some(&now),
+                        None,
+                        &now,
+                    )
+                    .await;
+                results.push(SyncGitHubPackagesWebhookResult {
+                    repo: full,
+                    action: "updated".to_string(),
+                    hook_id: Some(h.id),
+                    conflict_hooks: None,
+                    message: None,
+                });
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                let _ = state
+                    .db
+                    .set_github_packages_repo_sync_result(
+                        &owner,
+                        &repo,
+                        None,
+                        None,
+                        Some(&msg),
+                        &now,
+                    )
+                    .await;
+                results.push(SyncGitHubPackagesWebhookResult {
+                    repo: full,
+                    action: "error".to_string(),
+                    hook_id: None,
+                    conflict_hooks: None,
+                    message: Some(msg),
+                });
+            }
+        }
+    }
+
+    Ok(Json(SyncGitHubPackagesWebhooksResponse {
+        ok: results
+            .iter()
+            .all(|r| r.action != "error" && r.action != "conflict"),
+        results,
+    }))
+}
+
+fn verify_github_signature(secret: &str, sig_header: &str, body: &[u8]) -> anyhow::Result<()> {
+    let header = sig_header.trim();
+    let hex = header
+        .strip_prefix("sha256=")
+        .context("signature must start with sha256=")?;
+    let tag = hex::decode(hex).context("invalid signature hex")?;
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, secret.as_bytes());
+    ring::hmac::verify(&key, body, &tag).map_err(|_| anyhow::anyhow!("signature mismatch"))?;
+    Ok(())
+}
+
+fn extract_repo_full_name(payload: &serde_json::Value) -> Option<String> {
+    payload
+        .get("repository")
+        .and_then(|v| v.get("full_name"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| {
+            payload
+                .get("package")
+                .and_then(|p| p.get("repository"))
+                .and_then(|v| v.get("full_name"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+}
+
+fn extract_owner_login(payload: &serde_json::Value) -> Option<String> {
+    payload
+        .get("organization")
+        .and_then(|v| v.get("login"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| {
+            payload
+                .get("repository")
+                .and_then(|v| v.get("owner"))
+                .and_then(|v| v.get("login"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .or_else(|| {
+            payload
+                .get("sender")
+                .and_then(|v| v.get("login"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+}
+
+async fn github_packages_webhook(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let event = headers
+        .get("X-GitHub-Event")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    if event != "package" {
+        return Ok(Json(
+            json!({"ok": true, "ignored": true, "reason": "not_package_event"}),
+        ));
+    }
+
+    let delivery_id = headers
+        .get("X-GitHub-Delivery")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    if delivery_id.is_empty() {
+        return Err(ApiError::invalid_argument("missing X-GitHub-Delivery"));
+    }
+
+    let sig = headers
+        .get("X-Hub-Signature-256")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+
+    let settings = state
+        .db
+        .get_github_packages_settings()
+        .await
+        .map_err(map_internal)?;
+
+    if !settings.enabled {
+        return Ok(Json(
+            json!({"ok": true, "ignored": true, "reason": "disabled"}),
+        ));
+    }
+
+    let Some(secret) = settings.webhook_secret else {
+        return Err(ApiError::unauthorized()
+            .with_details(json!({"reason":"webhook_secret_not_configured"})));
+    };
+    if verify_github_signature(&secret, &sig, &body).is_err() {
+        return Err(ApiError::unauthorized().with_details(json!({"reason":"invalid_signature"})));
+    }
+
+    let payload: serde_json::Value =
+        serde_json::from_slice(&body).map_err(|_| ApiError::invalid_argument("invalid json"))?;
+    let action = payload
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    if action != "published" {
+        return Ok(Json(
+            json!({"ok": true, "ignored": true, "reason": "not_published"}),
+        ));
+    }
+
+    let repo_full_name = extract_repo_full_name(&payload);
+    let owner = repo_full_name
+        .as_deref()
+        .and_then(|s| s.split('/').next().map(|v| v.to_string()))
+        .or_else(|| extract_owner_login(&payload));
+
+    let is_new = state
+        .db
+        .insert_github_packages_delivery_if_new(
+            &delivery_id,
+            &now_rfc3339().map_err(map_internal)?,
+            owner.as_deref(),
+            repo_full_name.as_deref().and_then(|s| s.split('/').nth(1)),
+        )
+        .await
+        .map_err(map_internal)?;
+    if !is_new {
+        return Ok(Json(
+            json!({"ok": true, "ignored": true, "reason": "duplicate_delivery"}),
+        ));
+    }
+
+    let selected = state
+        .db
+        .list_github_packages_repos()
+        .await
+        .map_err(map_internal)?
+        .into_iter()
+        .filter(|r| r.selected)
+        .map(|r| format!("{}/{}", r.owner, r.repo))
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let should_trigger = if let Some(full) = &repo_full_name {
+        selected.contains(full)
+    } else if let Some(owner) = &owner {
+        selected.iter().any(|r| r.starts_with(&format!("{owner}/")))
+    } else {
+        false
+    };
+
+    if !should_trigger {
+        return Ok(Json(
+            json!({"ok": true, "ignored": true, "reason": "repo_not_selected"}),
+        ));
+    }
+
+    let now = now_rfc3339().map_err(map_internal)?;
+    let job_id = ids::new_discovery_id();
+    let job = JobRecord::new_running(
+        job_id.clone(),
+        JobType::Discovery,
+        JobScope::All,
+        None,
+        None,
+        &now,
+    );
+    let mut job_db = job.to_db();
+    job_db.created_by = "github".to_string();
+    job_db.reason = "github_webhook".to_string();
+    state.db.insert_job(job_db).await.map_err(map_internal)?;
+
+    let run_state = state.clone();
+    let run_job_id = job_id.clone();
+    let run_repo_full_name = repo_full_name.clone();
+    tokio::spawn(async move {
+        let outcome = discovery::run_scan(run_state.as_ref()).await;
+        let finished_at =
+            now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+        match outcome {
+            Ok(resp) => {
+                let summary =
+                    json!({ "scan": resp, "source": "github_webhook", "repo": run_repo_full_name });
+                let _ = run_state
+                    .db
+                    .finish_job(&run_job_id, "success", &finished_at, &summary)
+                    .await;
+            }
+            Err(e) => {
+                let _ = run_state
+                    .db
+                    .insert_job_log(
+                        &run_job_id,
+                        &JobLogLine {
+                            ts: finished_at.clone(),
+                            level: "error".to_string(),
+                            msg: format!("discovery scan failed: {e}"),
+                        },
+                    )
+                    .await;
+                let summary = json!({ "error": e.to_string(), "source": "github_webhook" });
+                let _ = run_state
+                    .db
+                    .finish_job(&run_job_id, "failed", &finished_at, &summary)
+                    .await;
+            }
+        }
+    });
+
+    Ok(Json(json!({"ok": true, "jobId": job_id})))
 }
 
 async fn create_web_push_subscription(

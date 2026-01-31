@@ -141,6 +141,14 @@ Notifications are configured via UI (stored in SQLite; secrets are masked on rea
 - Email: `smtpUrl` supports `?to=a@example.com,b@example.com&from=Dockrev <noreply@example.com>`
 - Web Push: configure VAPID keys, then use the UI buttons to subscribe/unsubscribe and test
 
+## GitHub Packages (GHCR) webhook
+
+Dockrev can register GitHub repository webhooks for the `package` event (GitHub Packages / GHCR). When a new package version is published, GitHub calls back Dockrev and Dockrev triggers a discovery scan.
+
+- Configure in Settings UI: targets (repo URL / profile URL / username), repo selection (default all), PAT (masked), and callback URL.
+- PAT requirements: must be able to list repositories (for owner targets) and manage repository webhooks for the selected repos.
+- Callback URL must be reachable by GitHub (public HTTPS).
+
 VAPID keys can be generated with:
 
 ```bash
