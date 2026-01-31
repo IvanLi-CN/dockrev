@@ -2,9 +2,9 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-01-30
-- Last: 2026-01-30
+- Last: 2026-01-31
 
 ## 背景 / 问题陈述
 
@@ -190,11 +190,11 @@ None
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 后端 settings + resolve + DB 契约落地（含 PAT 掩码策略）
-- [ ] M2: webhook sync（GitHub API 客户端 + 幂等逻辑 + 冲突处理）
-- [ ] M3: webhook receiver（签名校验 + delivery 去重 + 触发 discovery job）
-- [ ] M4: Web UI Settings 配置区（repo 勾选 + PAT 掩码 + callback URL 默认值 + 同步按钮）
-- [ ] M5: 测试补齐 + README 使用说明
+- [x] M1: 后端 settings + resolve + DB 契约落地（含 PAT 掩码策略）
+- [x] M2: webhook sync（GitHub API 客户端 + 幂等逻辑 + 冲突处理）
+- [x] M3: webhook receiver（签名校验 + delivery 去重 + 触发 discovery job）
+- [x] M4: Web UI Settings 配置区（repo 勾选 + PAT 掩码 + callback URL 默认值 + 同步按钮）
+- [x] M5: 测试补齐 + README 使用说明
 
 ## 方案概述（Approach, high-level）
 
@@ -215,7 +215,8 @@ None
 ## 变更记录（Change log）
 
 - 2026-01-30: 创建计划。
- - 2026-01-30: 支持多 owner targets；重复 webhook 由用户确认后可删除；要求先配置 PAT。
+- 2026-01-30: 支持多 owner targets；重复 webhook 由用户确认后可删除；要求先配置 PAT。
+- 2026-01-31: 实现完成（后端/前端/测试/README）。
 
 ## 参考（References）
 
