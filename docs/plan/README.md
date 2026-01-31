@@ -69,6 +69,6 @@
 | 0012 | Dockrev Web: 一键执行更新（service/stack/all）+ 自我升级策略 | 已完成 | `0012:update-buttons-self-upgrade/PLAN.md` | 2026-01-25 | - |
 | 0013 | CI/CD: GitHub Release 追加发布 `dockrev-supervisor` 二进制包 | 已完成 | `0013:release-supervisor-assets/PLAN.md` | 2026-01-26 | - |
 | 0014 | CI/CD: Release workflow 成功后自动清理 Actions Artifacts | 已完成 | `0014:cleanup-actions-artifacts/PLAN.md` | 2026-01-27 | PR #32, #33, #34；验证：Release run `21397351262`（success→artifacts=0）+ `21396639515`（failure→保留关键 artifacts 且无 `*.dockerbuild`） |
-| kcxtp | CI/CD: 修复 GHCR 镜像 `dockrev` 主程序不可执行（exec bit 丢失） | 部分完成（3/4） | `kcxtp:fix-image-exec-permission/PLAN.md` | 2026-01-28 | PR #37 |
+| kcxtp | CI/CD: 修复 GHCR 镜像 `dockrev` 主程序不可执行（exec bit 丢失） | 已完成 | `kcxtp:fix-image-exec-permission/PLAN.md` | 2026-01-31 | PR #37 |
 | zdg25 | Dockrev: floating tag 当前版本推测（latest≈semver）+ UI/交互对齐 | 部分完成（3/3） | `zdg25:auto-version-inference-ui/PLAN.md` | 2026-01-29 | local: `feat/zdg25-auto-version-inference-ui` |
 | a2zdt | Dockrev: /supervisor 路由防呆（兜底页 + API 不可吞） | 已完成 | `a2zdt:supervisor-route-failsafe/PLAN.md` | 2026-01-31 | - |
