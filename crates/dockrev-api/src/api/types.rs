@@ -767,6 +767,7 @@ pub struct GitHubPackagesSettingsDb {
     pub callback_url: String,
     pub pat: Option<String>,
     pub webhook_secret: Option<String>,
+    #[allow(dead_code)]
     pub updated_at: Option<String>,
 }
 
@@ -777,6 +778,7 @@ pub struct GitHubPackagesTargetDb {
     pub kind: String,
     pub owner: String,
     pub warnings: Vec<String>,
+    #[allow(dead_code)]
     pub updated_at: Option<String>,
 }
 
@@ -788,6 +790,7 @@ pub struct GitHubPackagesRepoDb {
     pub hook_id: Option<i64>,
     pub last_sync_at: Option<String>,
     pub last_error: Option<String>,
+    #[allow(dead_code)]
     pub updated_at: Option<String>,
 }
 

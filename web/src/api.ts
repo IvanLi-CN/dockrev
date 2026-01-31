@@ -232,6 +232,10 @@ export type SyncGitHubPackagesWebhooksResponse = {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
 
+export function apiBaseUrl(): string {
+  return API_BASE
+}
+
 export class ApiError extends Error {
   readonly status: number
   readonly code?: string

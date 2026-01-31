@@ -11,6 +11,7 @@ import {
   resolveGitHubPackagesTarget,
   syncGitHubPackagesWebhooks,
   testNotifications,
+  apiBaseUrl,
   type GitHubPackagesRepo,
   type GitHubPackagesSettingsResponse,
   type SyncGitHubPackagesWebhookResult,
@@ -66,8 +67,12 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     setSettings(await getSettings())
     setNotifications(await getNotifications())
     const gh = await getGitHubPackagesSettings()
-    const defaultCallbackUrl =
-      typeof window !== 'undefined' ? new URL('/api/webhooks/github-packages', window.location.origin).toString() : ''
+    const defaultCallbackUrl = (() => {
+      if (typeof window === 'undefined') return ''
+      const base = apiBaseUrl()
+      const resolvedBase = new URL(base || window.location.origin, window.location.origin).toString().replace(/\/$/, '')
+      return `${resolvedBase}/api/webhooks/github-packages`
+    })()
     const callbackUrl = gh.callbackUrl || defaultCallbackUrl
     setGitHubPackages({ ...gh, callbackUrl })
     setGitHubPackagesPat(gh.patMasked ?? '')

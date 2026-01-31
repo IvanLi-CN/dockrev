@@ -2074,11 +2074,11 @@ async fn sync_github_packages_webhooks(
     for (owner, repo) in selected_repos {
         let full = format!("{owner}/{repo}");
 
-        if let Some(instr) = conflict_instructions.get(&full) {
-            if !dry_run {
-                for hid in &instr.delete_hook_ids {
-                    let _ = client.delete_repo_hook(&owner, &repo, *hid).await;
-                }
+        if let Some(instr) = conflict_instructions.get(&full)
+            && !dry_run
+        {
+            for hid in &instr.delete_hook_ids {
+                let _ = client.delete_repo_hook(&owner, &repo, *hid).await;
             }
         }
 
