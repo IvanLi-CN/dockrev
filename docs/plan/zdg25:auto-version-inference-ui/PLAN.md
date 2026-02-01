@@ -2,9 +2,9 @@
 
 ## 状态
 
-- Status: 部分完成（3/3）
+- Status: 已完成
 - Created: 2026-01-29
-- Last: 2026-01-29
+- Last: 2026-01-31
 
 ## 背景 / 问题陈述
 
@@ -150,6 +150,7 @@ None
 
 - 2026-01-29: 创建计划并冻结验收/契约；冻结 digest=runtime、resolvedTag=highest semver、resolvedTags=all matches；状态更新为 `待实现`。
 - 2026-01-29: 完成实现与最小验证（后端/前端/关键测试）；状态更新为 `部分完成（3/3）`（待合入主干或创建 PR 追踪）。
+- 2026-01-31: 通过回归验证（`cargo test -p dockrev-api` + `web` build），同步状态为 `已完成`。
 
 ## 参考（References）
 
