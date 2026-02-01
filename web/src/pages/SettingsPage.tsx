@@ -800,12 +800,26 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
             {githubPackagesRepos?.repos?.length ? (
               <div
-                className="kv"
                 style={{ marginTop: 10, maxHeight: 420, overflowY: 'auto', paddingRight: 6, overscrollBehavior: 'contain' }}
               >
-                {githubPackagesRepos.repos.map((r) => (
-                  <div className="kvRow" key={r.fullName} style={{ gridTemplateColumns: '28px 1fr' }}>
-                    <div className="label">
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+                    gap: 10,
+                    alignItems: 'start',
+                  }}
+                >
+                  {githubPackagesRepos.repos.map((r) => (
+                    <div
+                      key={r.fullName}
+                      style={{
+                        display: 'flex',
+                        gap: 10,
+                        alignItems: 'flex-start',
+                        minWidth: 0,
+                      }}
+                    >
                       <input
                         type="checkbox"
                         checked={r.selected}
@@ -827,14 +841,20 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                           })()
                         }}
                       />
+                      <div style={{ minWidth: 0 }}>
+                        <div className="mono" style={{ overflowWrap: 'anywhere' }}>
+                          {r.fullName}
+                        </div>
+                        {r.hookId ? <div className="muted">hookId: {r.hookId}</div> : null}
+                        {r.lastError ? (
+                          <div className="muted" style={{ overflowWrap: 'anywhere' }}>
+                            lastError: {r.lastError}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
-                    <div style={{ width: '100%' }}>
-                      <div className="mono">{r.fullName}</div>
-                      {r.hookId ? <div className="muted">hookId: {r.hookId}</div> : null}
-                      {r.lastError ? <div className="muted">lastError: {r.lastError}</div> : null}
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             ) : (
               <div className="muted" style={{ marginTop: 10 }}>
