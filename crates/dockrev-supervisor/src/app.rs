@@ -423,7 +423,7 @@ fn render_ui(base_path: &str) -> String {
 	          const st = await fetchJson('self-upgrade');
 	          statusEl.className = `muted ${{statusClass(st)}}`.trim();
 	          statusEl.textContent = renderStatusText(st);
-	          document.getElementById('logs').textContent = (st.logs||[]).map(l => `[${{l.ts}}] ${{l.level}} ${{l.msg}}`).join('\\n');
+	          document.getElementById('logs').textContent = (st.logs||[]).map(l => `[${{l.ts}}] ${{l.level}} ${{l.msg}}`).join('\n');
 	          document.getElementById('rollback').disabled = !st.opId || (st.state !== 'failed' && st.state !== 'rolled_back' && st.state !== 'succeeded');
 	        }} catch (e) {{
 	          statusEl.className = 'muted bad';
@@ -880,6 +880,13 @@ mod tests {
             digest: None,
         };
         assert!(rollback_image_ref(repo, &p).is_err());
+    }
+
+    #[test]
+    fn render_ui_joins_logs_with_real_newlines() {
+        let html = render_ui("/supervisor");
+        assert!(html.contains(r".join('\n')"));
+        assert!(!html.contains(r".join('\\n')"));
     }
 
     #[tokio::test]
