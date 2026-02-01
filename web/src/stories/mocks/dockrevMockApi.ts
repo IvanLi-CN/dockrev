@@ -14,6 +14,7 @@ export type DockrevApiScenario =
   | 'default'
   | 'dashboard-demo'
   | 'resolved-tag-demo'
+  | 'version-tags-popover-demo'
   | 'multi-stack-mixed'
   | 'queue-mixed'
   | 'settings-configured'
@@ -382,6 +383,49 @@ function buildResolvedTagDemo(): Fixture {
   return f
 }
 
+function buildVersionTagsPopoverDemo(): Fixture {
+  const f = baseEmpty()
+  const lastCheckAt = nowIso(-60_000)
+
+  const stackId = 'stack-version-tags'
+  const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
+
+  const service = {
+    id: 'svc-version-tags',
+    name: 'axonhub',
+    image: {
+      ref: 'docker.io/looplj/axonhub',
+      tag: 'latest',
+      digest: d('a', 'b1'),
+    },
+    candidate: { tag: 'v0.8.8-arm64', digest: d('b', '9f'), archMatch: 'match', arch: ['linux/arm64'] },
+    ignore: null,
+    settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} } },
+  } satisfies StackDetail['services'][number]
+
+  const detail = {
+    id: stackId,
+    name: 'ai',
+    compose: { type: 'path', composeFiles: ['/srv/ai/compose.yml'], envFile: '/srv/ai/.env' },
+    services: [service],
+  } satisfies StackDetail
+
+  f.stacks = [
+    {
+      id: stackId,
+      name: 'ai',
+      status: 'healthy',
+      services: detail.services.length,
+      updates: 1,
+      lastCheckAt,
+    } satisfies StackListItem,
+  ]
+  f.stackById = { [stackId]: detail }
+  f.serviceSettingsById = { [service.id]: service.settings }
+
+  return f
+}
+
 function buildQueueMixed(): Fixture {
   const f = buildDashboardDemo()
 
@@ -531,6 +575,7 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'no-candidates') return buildNoCandidates()
   if (scenario === 'dashboard-demo') return buildDashboardDemo()
   if (scenario === 'resolved-tag-demo') return buildResolvedTagDemo()
+  if (scenario === 'version-tags-popover-demo') return buildVersionTagsPopoverDemo()
   if (scenario === 'queue-mixed') return buildQueueMixed()
   if (scenario === 'settings-configured') return buildSettingsConfigured()
   if (scenario === 'multi-stack-mixed') return buildMultiStackMixed()
@@ -842,8 +887,16 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
 
       const base = found.svc.candidate
       const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
+      const candidateDigest = base?.digest ?? d('b', '9f')
       const candidates =
-        serviceId === 'svc-prod-api'
+        scenario === 'version-tags-popover-demo' && serviceId === 'svc-version-tags'
+          ? [
+              { tag: 'v0.8.9-arm64', digest: d('b', 'b0'), archMatch: 'match', arch: ['linux/arm64'], ignored: false },
+              { tag: 'v0.8.8-arm64', digest: candidateDigest, archMatch: 'match', arch: ['linux/arm64'], ignored: false },
+              { tag: 'v0.8.8', digest: candidateDigest, archMatch: 'match', arch: ['linux/arm64'], ignored: false },
+              { tag: '0.8.8', digest: candidateDigest, archMatch: 'match', arch: ['linux/arm64'], ignored: false },
+            ]
+          : serviceId === 'svc-prod-api'
           ? [
               { tag: '5.3.0', digest: d('b', 'b0'), archMatch: 'match', arch: ['linux/amd64'], ignored: false },
               { tag: '5.2.4', digest: d('b', 'a0'), archMatch: 'match', arch: ['linux/amd64'], ignored: false },
