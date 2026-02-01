@@ -601,7 +601,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             {githubPackagesRepos?.repos?.length ? (
               <div className="kv" style={{ marginTop: 10 }}>
                 {githubPackagesRepos.repos.map((r) => (
-                  <div className="kvRow" key={r.fullName}>
+                  <div className="kvRow" key={r.fullName} style={{ gridTemplateColumns: '28px 1fr' }}>
                     <div className="label">
                       <input
                         type="checkbox"
