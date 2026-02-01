@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-01
 - Last: 2026-02-01
 
@@ -61,9 +61,9 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 气泡组件与数据聚合（digest→tags）
-- [ ] M2: Overview/Services 接入 + 样式与可用性（hover/click/关闭）
-- [ ] M3: 最小验证（lint/build）与截图/手工检查
+- [x] M1: 气泡组件与数据聚合（digest→tags）
+- [x] M2: Overview/Services 接入 + 样式与可用性（hover/click/关闭）
+- [x] M3: 最小验证（lint/build）与截图/手工检查
 
 ## 风险 / 开放问题（Risks & Open Questions）
 
@@ -72,4 +72,4 @@
 ## 变更记录（Change log）
 
 - 2026-02-01: 创建计划并冻结范围与验收标准（Status=待实现）。
-
+- 2026-02-01: 完成实现与最小验证；PR #45；Status=已完成。
