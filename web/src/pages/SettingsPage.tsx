@@ -344,11 +344,208 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             </div>
           </div>
 
+          <div className="card">
+            <div className="title">通知</div>
+            <div className="muted">事件：发现更新 / 版本提示 / 更新成功 / 更新失败 / 备份失败</div>
+
+            <div className="settingsSection">
+              <div className="settingHead">
+                <div className="sectionTitle">Email</div>
+                <Switch
+                  checked={notifications.email.enabled}
+                  disabled={busy}
+                  onChange={(v) => setNotifications({ ...notifications, email: { ...notifications.email, enabled: v } })}
+                />
+              </div>
+              <div className="kv">
+                <div className="kvRow">
+                  <div className="label">SMTP URL</div>
+                  <input
+                    className="input"
+                    value={notifications.email.smtpUrl ?? ''}
+                    onChange={(e) => setNotifications({ ...notifications, email: { ...notifications.email, smtpUrl: e.target.value } })}
+                    placeholder="smtp://user:pass@smtp.example.com:587"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="settingsSection">
+              <div className="settingHead">
+                <div className="sectionTitle">Webhook</div>
+                <Switch
+                  checked={notifications.webhook.enabled}
+                  disabled={busy}
+                  onChange={(v) => setNotifications({ ...notifications, webhook: { ...notifications.webhook, enabled: v } })}
+                />
+              </div>
+              <div className="kv">
+                <div className="kvRow">
+                  <div className="label">URL</div>
+                  <input
+                    className="input"
+                    value={notifications.webhook.url ?? ''}
+                    onChange={(e) =>
+                      setNotifications({ ...notifications, webhook: { ...notifications.webhook, url: e.target.value } })
+                    }
+                    placeholder="https://hooks.example.com/dockrev"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="settingsSection">
+              <div className="settingHead">
+                <div className="sectionTitle">Telegram</div>
+                <Switch
+                  checked={notifications.telegram.enabled}
+                  disabled={busy}
+                  onChange={(v) => setNotifications({ ...notifications, telegram: { ...notifications.telegram, enabled: v } })}
+                />
+              </div>
+              <div className="kv">
+                <div className="kvRow">
+                  <div className="label">Bot token</div>
+                  <input
+                    className="input"
+                    value={notifications.telegram.botToken ?? ''}
+                    onChange={(e) =>
+                      setNotifications({ ...notifications, telegram: { ...notifications.telegram, botToken: e.target.value } })
+                    }
+                  />
+                </div>
+                <div className="kvRow">
+                  <div className="label">Chat id</div>
+                  <input
+                    className="input"
+                    value={notifications.telegram.chatId ?? ''}
+                    onChange={(e) =>
+                      setNotifications({ ...notifications, telegram: { ...notifications.telegram, chatId: e.target.value } })
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="settingsSection">
+              <div className="settingHead">
+                <div className="sectionTitle">Web Push（Chrome / VAPID）</div>
+                <Switch
+                  checked={notifications.webPush.enabled}
+                  disabled={busy}
+                  onChange={(v) => setNotifications({ ...notifications, webPush: { ...notifications.webPush, enabled: v } })}
+                />
+              </div>
+
+              <div className="kv">
+                <div className="kvRow">
+                  <div className="label">Public Key</div>
+                  <input
+                    className="input"
+                    value={notifications.webPush.vapidPublicKey ?? ''}
+                    onChange={(e) =>
+                      setNotifications({ ...notifications, webPush: { ...notifications.webPush, vapidPublicKey: e.target.value } })
+                    }
+                  />
+                </div>
+                <div className="kvRow">
+                  <div className="label">Private Key（留空=保持原值）</div>
+                  <input
+                    className="input"
+                    value={notifications.webPush.vapidPrivateKey ?? ''}
+                    onChange={(e) =>
+                      setNotifications({ ...notifications, webPush: { ...notifications.webPush, vapidPrivateKey: e.target.value } })
+                    }
+                  />
+                </div>
+                <div className="kvRow">
+                  <div className="label">Subject</div>
+                  <input
+                    className="input"
+                    value={notifications.webPush.vapidSubject ?? ''}
+                    onChange={(e) =>
+                      setNotifications({ ...notifications, webPush: { ...notifications.webPush, vapidSubject: e.target.value } })
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="formActions" style={{ marginTop: 10 }}>
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => {
+                    void (async () => {
+                      setBusy(true)
+                      setError(null)
+                      try {
+                        await testNotifications('dockrev: test notification')
+                      } catch (e: unknown) {
+                        setError(errorMessage(e))
+                      } finally {
+                        setBusy(false)
+                      }
+                    })()
+                  }}
+                >
+                  发送测试通知
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={busy || !canWebPush}
+                  onClick={() => {
+                    void (async () => {
+                      setBusy(true)
+                      setError(null)
+                      try {
+                        await ensureSubscription()
+                      } catch (e: unknown) {
+                        setError(errorMessage(e))
+                      } finally {
+                        setBusy(false)
+                      }
+                    })()
+                  }}
+                  title={canWebPush ? '当前浏览器订阅 Web Push' : '当前环境不支持'}
+                >
+                  订阅本浏览器
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={busy || !canWebPush}
+                  onClick={() => {
+                    void (async () => {
+                      setBusy(true)
+                      setError(null)
+                      try {
+                        await removeSubscription()
+                      } catch (e: unknown) {
+                        setError(errorMessage(e))
+                      } finally {
+                        setBusy(false)
+                      }
+                    })()
+                  }}
+                >
+                  取消订阅
+                </Button>
+              </div>
+
+              {webPushEndpoint ? (
+                <div className="muted" style={{ marginTop: 10 }}>
+                  endpoint <Mono>{webPushEndpoint.slice(0, 40)}…</Mono>
+                </div>
+              ) : null}
+            </div>
+
+            {error ? <div className="error">{error}</div> : null}
+          </div>
+
           {error ? <div className="error">{error}</div> : null}
         </div>
 
         <div className="settingsCol">
-        <div className="card">
+          <div className="card">
           <div className="title">GitHub Packages（GHCR）Webhook</div>
           <div className="muted">在 GHCR 发布新版本时自动触发 Dockrev 扫描（事件：package.published）</div>
 
@@ -747,197 +944,6 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     </div>
                   </div>
                 ))}
-              </div>
-            ) : null}
-          </div>
-
-          {error ? <div className="error">{error}</div> : null}
-        </div>
-
-        <div className="card">
-          <div className="title">通知</div>
-          <div className="muted">事件：发现更新 / 版本提示 / 更新成功 / 更新失败 / 备份失败</div>
-
-          <div className="settingsSection">
-            <div className="settingHead">
-              <div className="sectionTitle">Email</div>
-              <Switch
-                checked={notifications.email.enabled}
-                disabled={busy}
-                onChange={(v) => setNotifications({ ...notifications, email: { ...notifications.email, enabled: v } })}
-              />
-            </div>
-            <div className="kv">
-              <div className="kvRow">
-                <div className="label">SMTP URL</div>
-                <input
-                  className="input"
-                  value={notifications.email.smtpUrl ?? ''}
-                  onChange={(e) => setNotifications({ ...notifications, email: { ...notifications.email, smtpUrl: e.target.value } })}
-                  placeholder="smtp://user:pass@smtp.example.com:587"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="settingsSection">
-            <div className="settingHead">
-              <div className="sectionTitle">Webhook</div>
-              <Switch
-                checked={notifications.webhook.enabled}
-                disabled={busy}
-                onChange={(v) => setNotifications({ ...notifications, webhook: { ...notifications.webhook, enabled: v } })}
-              />
-            </div>
-            <div className="kv">
-              <div className="kvRow">
-                <div className="label">URL</div>
-                <input
-                  className="input"
-                  value={notifications.webhook.url ?? ''}
-                  onChange={(e) => setNotifications({ ...notifications, webhook: { ...notifications.webhook, url: e.target.value } })}
-                  placeholder="https://hooks.example.com/dockrev"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="settingsSection">
-            <div className="settingHead">
-              <div className="sectionTitle">Telegram</div>
-              <Switch
-                checked={notifications.telegram.enabled}
-                disabled={busy}
-                onChange={(v) => setNotifications({ ...notifications, telegram: { ...notifications.telegram, enabled: v } })}
-              />
-            </div>
-            <div className="kv">
-              <div className="kvRow">
-                <div className="label">Bot token</div>
-                <input
-                  className="input"
-                  value={notifications.telegram.botToken ?? ''}
-                  onChange={(e) => setNotifications({ ...notifications, telegram: { ...notifications.telegram, botToken: e.target.value } })}
-                />
-              </div>
-              <div className="kvRow">
-                <div className="label">Chat id</div>
-                <input
-                  className="input"
-                  value={notifications.telegram.chatId ?? ''}
-                  onChange={(e) => setNotifications({ ...notifications, telegram: { ...notifications.telegram, chatId: e.target.value } })}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="settingsSection">
-            <div className="settingHead">
-              <div className="sectionTitle">Web Push（Chrome / VAPID）</div>
-              <Switch
-                checked={notifications.webPush.enabled}
-                disabled={busy}
-                onChange={(v) => setNotifications({ ...notifications, webPush: { ...notifications.webPush, enabled: v } })}
-              />
-            </div>
-
-            <div className="kv">
-              <div className="kvRow">
-                <div className="label">Public Key</div>
-                <input
-                  className="input"
-                  value={notifications.webPush.vapidPublicKey ?? ''}
-                  onChange={(e) =>
-                    setNotifications({ ...notifications, webPush: { ...notifications.webPush, vapidPublicKey: e.target.value } })
-                  }
-                />
-              </div>
-              <div className="kvRow">
-                <div className="label">Private Key（留空=保持原值）</div>
-                <input
-                  className="input"
-                  value={notifications.webPush.vapidPrivateKey ?? ''}
-                  onChange={(e) =>
-                    setNotifications({ ...notifications, webPush: { ...notifications.webPush, vapidPrivateKey: e.target.value } })
-                  }
-                />
-              </div>
-              <div className="kvRow">
-                <div className="label">Subject</div>
-                <input
-                  className="input"
-                  value={notifications.webPush.vapidSubject ?? ''}
-                  onChange={(e) =>
-                    setNotifications({ ...notifications, webPush: { ...notifications.webPush, vapidSubject: e.target.value } })
-                  }
-                />
-              </div>
-            </div>
-
-            <div className="formActions" style={{ marginTop: 10 }}>
-              <Button
-                variant="ghost"
-                disabled={busy}
-                onClick={() => {
-                  void (async () => {
-                    setBusy(true)
-                    setError(null)
-                    try {
-                      await testNotifications('dockrev: test notification')
-                    } catch (e: unknown) {
-                      setError(errorMessage(e))
-                    } finally {
-                      setBusy(false)
-                    }
-                  })()
-                }}
-              >
-                发送测试通知
-              </Button>
-              <Button
-                variant="ghost"
-                disabled={busy || !canWebPush}
-                onClick={() => {
-                  void (async () => {
-                    setBusy(true)
-                    setError(null)
-                    try {
-                      await ensureSubscription()
-                    } catch (e: unknown) {
-                      setError(errorMessage(e))
-                    } finally {
-                      setBusy(false)
-                    }
-                  })()
-                }}
-                title={canWebPush ? '当前浏览器订阅 Web Push' : '当前环境不支持'}
-              >
-                订阅本浏览器
-              </Button>
-              <Button
-                variant="ghost"
-                disabled={busy || !canWebPush}
-                onClick={() => {
-                  void (async () => {
-                    setBusy(true)
-                    setError(null)
-                    try {
-                      await removeSubscription()
-                    } catch (e: unknown) {
-                      setError(errorMessage(e))
-                    } finally {
-                      setBusy(false)
-                    }
-                  })()
-                }}
-              >
-                取消订阅
-              </Button>
-            </div>
-
-            {webPushEndpoint ? (
-              <div className="muted" style={{ marginTop: 10 }}>
-                endpoint <Mono>{webPushEndpoint.slice(0, 40)}…</Mono>
               </div>
             ) : null}
           </div>
