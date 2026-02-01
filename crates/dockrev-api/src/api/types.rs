@@ -844,7 +844,8 @@ pub struct GitHubPackagesSettingsResponse {
     pub enabled: bool,
     pub callback_url: String,
     pub targets: Vec<GitHubPackagesTarget>,
-    pub repos: Vec<GitHubPackagesRepo>,
+    pub repos_total: u32,
+    pub repos_selected_total: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pat_masked: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -856,8 +857,10 @@ pub struct GitHubPackagesSettingsResponse {
 pub struct PutGitHubPackagesSettingsRequest {
     pub enabled: bool,
     pub callback_url: String,
-    pub targets: Vec<GitHubPackagesTargetInput>,
-    pub repos: Vec<GitHubPackagesRepoSelection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub targets: Option<Vec<GitHubPackagesTargetInput>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repos: Option<Vec<GitHubPackagesRepoSelection>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pat: Option<String>,
 }
@@ -866,6 +869,74 @@ pub struct PutGitHubPackagesSettingsRequest {
 #[serde(rename_all = "camelCase")]
 pub struct GitHubPackagesTargetInput {
     pub input: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListGitHubPackagesReposResponse {
+    pub page: u32,
+    pub per_page: u32,
+    pub total: u32,
+    pub filtered_total: u32,
+    pub selected_total: u32,
+    pub repos: Vec<GitHubPackagesRepo>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetGitHubPackagesRepoSelectedRequest {
+    pub full_name: String,
+    pub selected: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetGitHubPackagesRepoSelectedResponse {
+    pub ok: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkSetGitHubPackagesReposSelectedRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub q: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_filter: Option<String>, // all|selected|unselected
+    pub selected: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkSetGitHubPackagesReposSelectedResponse {
+    pub ok: bool,
+    pub affected: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddGitHubPackagesTargetRequest {
+    pub input: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddGitHubPackagesTargetResponse {
+    pub ok: bool,
+    pub kind: String,  // repo|owner
+    pub owner: String, // resolved owner
+    pub repos_added: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveGitHubPackagesTargetRequest {
+    pub input: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveGitHubPackagesTargetResponse {
+    pub ok: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

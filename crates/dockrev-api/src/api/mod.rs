@@ -74,6 +74,26 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_github_packages_settings).put(put_github_packages_settings),
         )
         .route(
+            "/api/github-packages/repos",
+            get(list_github_packages_repos),
+        )
+        .route(
+            "/api/github-packages/repos/selected",
+            post(set_github_packages_repo_selected),
+        )
+        .route(
+            "/api/github-packages/repos/bulk-selected",
+            post(bulk_set_github_packages_repos_selected),
+        )
+        .route(
+            "/api/github-packages/targets/add",
+            post(add_github_packages_target),
+        )
+        .route(
+            "/api/github-packages/targets/remove",
+            post(remove_github_packages_target),
+        )
+        .route(
             "/api/github-packages/resolve",
             post(resolve_github_packages_target),
         )
@@ -1990,9 +2010,14 @@ async fn get_github_packages_settings(
         .list_github_packages_targets()
         .await
         .map_err(map_internal)?;
-    let repos = state
+    let repos_total = state
         .db
-        .list_github_packages_repos()
+        .count_github_packages_repos_total()
+        .await
+        .map_err(map_internal)?;
+    let repos_selected_total = state
+        .db
+        .count_github_packages_repos_selected_total()
         .await
         .map_err(map_internal)?;
 
@@ -2008,16 +2033,8 @@ async fn get_github_packages_settings(
                 warnings: t.warnings,
             })
             .collect(),
-        repos: repos
-            .into_iter()
-            .map(|r| GitHubPackagesRepo {
-                full_name: format!("{}/{}", r.owner, r.repo),
-                selected: r.selected,
-                hook_id: r.hook_id,
-                last_sync_at: r.last_sync_at,
-                last_error: r.last_error,
-            })
-            .collect(),
+        repos_total,
+        repos_selected_total,
         pat_masked: mask_if_some(&settings.pat),
         secret_masked: mask_if_some(&settings.webhook_secret),
     }))
@@ -2068,41 +2085,259 @@ async fn put_github_packages_settings(
         .await
         .map_err(map_internal)?;
 
-    let mut targets = Vec::new();
-    for t in req.targets {
-        let kind = github::parse_target_input(&t.input).map_err(|e| {
-            ApiError::invalid_argument("invalid target input")
-                .with_details(json!({"input": t.input, "error": e.to_string()}))
-        })?;
-        let (kind_str, owner) = match kind {
-            github::TargetKind::Owner { owner } => ("owner".to_string(), owner),
-            github::TargetKind::Repo { owner, .. } => ("repo".to_string(), owner),
-        };
-        targets.push(GitHubPackagesTargetDb {
-            id: ulid::Ulid::new().to_string(),
-            input: t.input,
-            kind: kind_str,
-            owner,
-            warnings: Vec::new(),
-            updated_at: Some(now.clone()),
-        });
+    if let Some(req_targets) = req.targets {
+        let mut targets = Vec::new();
+        for t in req_targets {
+            let kind = github::parse_target_input(&t.input).map_err(|e| {
+                ApiError::invalid_argument("invalid target input")
+                    .with_details(json!({"input": t.input, "error": e.to_string()}))
+            })?;
+            let (kind_str, owner) = match kind {
+                github::TargetKind::Owner { owner } => ("owner".to_string(), owner),
+                github::TargetKind::Repo { owner, .. } => ("repo".to_string(), owner),
+            };
+            targets.push(GitHubPackagesTargetDb {
+                id: ulid::Ulid::new().to_string(),
+                input: t.input,
+                kind: kind_str,
+                owner,
+                warnings: Vec::new(),
+                updated_at: Some(now.clone()),
+            });
+        }
+        state
+            .db
+            .put_github_packages_targets(&targets, &now)
+            .await
+            .map_err(map_internal)?;
     }
-    state
-        .db
-        .put_github_packages_targets(&targets, &now)
-        .await
-        .map_err(map_internal)?;
 
-    let repos = normalize_github_repo_selection(req.repos).map_err(|e| {
-        ApiError::invalid_argument("invalid repos").with_details(json!({"error": e.to_string()}))
-    })?;
-    state
-        .db
-        .put_github_packages_repos(&repos, &now)
-        .await
-        .map_err(map_internal)?;
+    if let Some(req_repos) = req.repos {
+        let repos = normalize_github_repo_selection(req_repos).map_err(|e| {
+            ApiError::invalid_argument("invalid repos")
+                .with_details(json!({"error": e.to_string()}))
+        })?;
+        state
+            .db
+            .put_github_packages_repos(&repos, &now)
+            .await
+            .map_err(map_internal)?;
+    }
 
     Ok(Json(PutGitHubPackagesSettingsResponse { ok: true }))
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListGitHubPackagesReposQuery {
+    #[serde(default)]
+    page: Option<u32>,
+    #[serde(default)]
+    per_page: Option<u32>,
+    #[serde(default)]
+    q: Option<String>,
+    #[serde(default)]
+    selected_filter: Option<String>, // all|selected|unselected
+}
+
+fn parse_selected_filter(v: Option<&str>) -> Result<Option<bool>, ApiError> {
+    let Some(v) = v else { return Ok(None) };
+    match v.trim() {
+        "" | "all" => Ok(None),
+        "selected" => Ok(Some(true)),
+        "unselected" => Ok(Some(false)),
+        _ => Err(ApiError::invalid_argument("invalid selectedFilter")),
+    }
+}
+
+async fn list_github_packages_repos(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<ListGitHubPackagesReposQuery>,
+) -> Result<Json<ListGitHubPackagesReposResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+
+    let page = q.page.unwrap_or(1).max(1);
+    let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
+    let selected_filter = parse_selected_filter(q.selected_filter.as_deref())?;
+
+    let total = state
+        .db
+        .count_github_packages_repos_total()
+        .await
+        .map_err(map_internal)?;
+    let selected_total = state
+        .db
+        .count_github_packages_repos_selected_total()
+        .await
+        .map_err(map_internal)?;
+    let filtered_total = state
+        .db
+        .count_github_packages_repos_filtered(q.q.as_deref(), selected_filter)
+        .await
+        .map_err(map_internal)?;
+
+    let offset = (page - 1).saturating_mul(per_page);
+    let repos = state
+        .db
+        .list_github_packages_repos_page(q.q.as_deref(), selected_filter, per_page, offset)
+        .await
+        .map_err(map_internal)?;
+
+    Ok(Json(ListGitHubPackagesReposResponse {
+        page,
+        per_page,
+        total,
+        filtered_total,
+        selected_total,
+        repos: repos
+            .into_iter()
+            .map(|r| GitHubPackagesRepo {
+                full_name: format!("{}/{}", r.owner, r.repo),
+                selected: r.selected,
+                hook_id: r.hook_id,
+                last_sync_at: r.last_sync_at,
+                last_error: r.last_error,
+            })
+            .collect(),
+    }))
+}
+
+async fn set_github_packages_repo_selected(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<SetGitHubPackagesRepoSelectedRequest>,
+) -> Result<Json<SetGitHubPackagesRepoSelectedResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let now = now_rfc3339().map_err(map_internal)?;
+
+    let mut parts = req.full_name.split('/');
+    let owner = parts.next().unwrap_or_default().trim();
+    let repo = parts.next().unwrap_or_default().trim();
+    if owner.is_empty() || repo.is_empty() || parts.next().is_some() {
+        return Err(ApiError::invalid_argument("invalid fullName"));
+    }
+
+    let ok = state
+        .db
+        .set_github_packages_repo_selected(owner, repo, req.selected, &now)
+        .await
+        .map_err(map_internal)?;
+
+    if !ok {
+        return Err(ApiError::invalid_argument("repo not found"));
+    }
+
+    Ok(Json(SetGitHubPackagesRepoSelectedResponse { ok: true }))
+}
+
+async fn bulk_set_github_packages_repos_selected(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<BulkSetGitHubPackagesReposSelectedRequest>,
+) -> Result<Json<BulkSetGitHubPackagesReposSelectedResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let now = now_rfc3339().map_err(map_internal)?;
+
+    let selected_filter = parse_selected_filter(req.selected_filter.as_deref())?;
+    let affected = state
+        .db
+        .bulk_set_github_packages_repos_selected(
+            req.q.as_deref(),
+            selected_filter,
+            req.selected,
+            &now,
+        )
+        .await
+        .map_err(map_internal)?;
+
+    Ok(Json(BulkSetGitHubPackagesReposSelectedResponse {
+        ok: true,
+        affected,
+    }))
+}
+
+async fn add_github_packages_target(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<AddGitHubPackagesTargetRequest>,
+) -> Result<Json<AddGitHubPackagesTargetResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let now = now_rfc3339().map_err(map_internal)?;
+
+    let settings = state
+        .db
+        .get_github_packages_settings()
+        .await
+        .map_err(map_internal)?;
+    let Some(pat) = settings.pat else {
+        return Err(ApiError::invalid_argument("pat is required"));
+    };
+
+    let parsed = github::parse_target_input(&req.input).map_err(|e| {
+        ApiError::invalid_argument("invalid target input")
+            .with_details(json!({"input": req.input, "error": e.to_string()}))
+    })?;
+
+    let client = github::GitHubClient::new(&pat).map_err(map_internal)?;
+
+    let (kind, owner, repos): (String, String, Vec<(String, String)>) = match parsed {
+        github::TargetKind::Repo { owner, repo } => {
+            ("repo".to_string(), owner.clone(), vec![(owner, repo)])
+        }
+        github::TargetKind::Owner { owner } => {
+            let repos = client
+                .list_owner_repos(&owner)
+                .await
+                .map_err(map_internal)?;
+            let mut out = Vec::new();
+            for r in repos {
+                let mut parts = r.full_name.split('/');
+                let ro = parts.next().unwrap_or_default().trim();
+                let rr = parts.next().unwrap_or_default().trim();
+                if ro.is_empty() || rr.is_empty() || parts.next().is_some() {
+                    continue;
+                }
+                out.push((ro.to_string(), rr.to_string()));
+            }
+            ("owner".to_string(), owner, out)
+        }
+    };
+
+    state
+        .db
+        .upsert_github_packages_target_by_input(&req.input, &kind, &owner, &[], &now)
+        .await
+        .map_err(map_internal)?;
+
+    let repos_added = state
+        .db
+        .upsert_github_packages_repos_default_selected(&repos, &now)
+        .await
+        .map_err(map_internal)?;
+
+    Ok(Json(AddGitHubPackagesTargetResponse {
+        ok: true,
+        kind,
+        owner,
+        repos_added,
+    }))
+}
+
+async fn remove_github_packages_target(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<RemoveGitHubPackagesTargetRequest>,
+) -> Result<Json<RemoveGitHubPackagesTargetResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+
+    let _ = state
+        .db
+        .delete_github_packages_target_by_input(&req.input)
+        .await
+        .map_err(map_internal)?;
+
+    Ok(Json(RemoveGitHubPackagesTargetResponse { ok: true }))
 }
 
 async fn resolve_github_packages_target(

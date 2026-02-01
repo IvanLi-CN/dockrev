@@ -1,19 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  addGitHubPackagesTarget,
+  bulkSetGitHubPackagesReposSelected,
   createWebPushSubscription,
   deleteWebPushSubscription,
   getGitHubPackagesSettings,
   getNotifications,
   getSettings,
+  listGitHubPackagesRepos,
   putGitHubPackagesSettings,
   putNotifications,
   putSettings,
-  resolveGitHubPackagesTarget,
+  removeGitHubPackagesTarget,
+  setGitHubPackagesRepoSelected,
   syncGitHubPackagesWebhooks,
   testNotifications,
   apiBaseUrl,
-  type GitHubPackagesRepo,
   type GitHubPackagesSettingsResponse,
+  type ListGitHubPackagesReposResponse,
   type SyncGitHubPackagesWebhookResult,
   type NotificationConfig,
   type SettingsResponse,
@@ -56,11 +60,36 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   const [githubPackagesPat, setGitHubPackagesPat] = useState('')
   const [githubPackagesNewTarget, setGitHubPackagesNewTarget] = useState('')
   const [githubPackagesSyncResults, setGitHubPackagesSyncResults] = useState<SyncGitHubPackagesWebhookResult[] | null>(null)
+  const [githubPackagesRepos, setGitHubPackagesRepos] = useState<ListGitHubPackagesReposResponse | null>(null)
+  const [githubPackagesReposPage, setGitHubPackagesReposPage] = useState(1)
+  const [githubPackagesReposPerPage, setGitHubPackagesReposPerPage] = useState(50)
+  const [githubPackagesReposQ, setGitHubPackagesReposQ] = useState('')
+  const [githubPackagesReposSelectedFilter, setGitHubPackagesReposSelectedFilter] = useState<'all' | 'selected' | 'unselected'>(
+    'all',
+  )
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [webPushEndpoint, setWebPushEndpoint] = useState<string | null>(null)
   const supervisor = useSupervisorHealth()
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
+
+  const refreshRepos = useCallback(
+    async (opts?: { page?: number; perPage?: number; q?: string; selectedFilter?: 'all' | 'selected' | 'unselected' }) => {
+      const page = opts?.page ?? githubPackagesReposPage
+      const perPage = opts?.perPage ?? githubPackagesReposPerPage
+      const q = (opts?.q ?? githubPackagesReposQ).trim()
+      const selectedFilter = opts?.selectedFilter ?? githubPackagesReposSelectedFilter
+      setGitHubPackagesRepos(
+        await listGitHubPackagesRepos({
+          page,
+          perPage,
+          q: q || null,
+          selectedFilter,
+        }),
+      )
+    },
+    [githubPackagesReposPage, githubPackagesReposPerPage, githubPackagesReposQ, githubPackagesReposSelectedFilter],
+  )
 
   const refresh = useCallback(async () => {
     setError(null)
@@ -80,8 +109,23 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   }, [])
 
   useEffect(() => {
-    void refresh().catch((e: unknown) => setError(errorMessage(e)))
-  }, [refresh])
+    void (async () => {
+      await refresh()
+      setGitHubPackagesReposPage(1)
+      await refreshRepos({ page: 1 })
+    })().catch((e: unknown) => setError(errorMessage(e)))
+  }, [refresh, refreshRepos])
+
+  useEffect(() => {
+    void refreshRepos({ page: githubPackagesReposPage }).catch((e: unknown) => setError(errorMessage(e)))
+  }, [githubPackagesReposPage, refreshRepos])
+
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      void refreshRepos({ page: 1 }).catch((e: unknown) => setError(errorMessage(e)))
+    }, 250)
+    return () => window.clearTimeout(t)
+  }, [githubPackagesReposPerPage, githubPackagesReposQ, githubPackagesReposSelectedFilter, refreshRepos])
 
   useEffect(() => {
     onTopActions(
@@ -99,8 +143,6 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               await putGitHubPackagesSettings({
                 enabled: githubPackages.enabled,
                 callbackUrl: githubPackages.callbackUrl,
-                targets: githubPackages.targets.map((t) => ({ input: t.input })),
-                repos: githubPackages.repos.map((r) => ({ fullName: r.fullName, selected: r.selected })),
                 pat: githubPackagesPat || null,
               })
               await refresh()
@@ -371,22 +413,11 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                         setError(null)
                         try {
                           const input = githubPackagesNewTarget.trim()
-                          const resp = await resolveGitHubPackagesTarget(input)
-
-                          const nextTargets = githubPackages.targets.some((t) => t.input === input)
-                            ? githubPackages.targets
-                            : [...githubPackages.targets, { input, kind: resp.kind, owner: resp.owner, warnings: resp.warnings }]
-
-                          const repoMap = new Map<string, GitHubPackagesRepo>()
-                          for (const r of githubPackages.repos) repoMap.set(r.fullName, r)
-                          for (const r of resp.repos) {
-                            const prev = repoMap.get(r.fullName)
-                            repoMap.set(r.fullName, prev ? { ...prev, selected: prev.selected || r.selected } : { ...r })
-                          }
-                          const nextRepos = Array.from(repoMap.values()).sort((a, b) => a.fullName.localeCompare(b.fullName))
-
-                          setGitHubPackages({ ...githubPackages, targets: nextTargets, repos: nextRepos })
+                          await addGitHubPackagesTarget({ input })
                           setGitHubPackagesNewTarget('')
+                          await refresh()
+                          setGitHubPackagesReposPage(1)
+                          await refreshRepos({ page: 1 })
                         } catch (e: unknown) {
                           setError(errorMessage(e))
                         } finally {
@@ -414,7 +445,24 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                         variant="ghost"
                         disabled={busy}
                         onClick={() => {
-                          setGitHubPackages({ ...githubPackages, targets: githubPackages.targets.filter((x) => x.input !== t.input) })
+                          void (async () => {
+                            const ok = window.confirm(
+                              `移除 target: ${t.input}\n\n注意：当前版本不会自动删除 repos 记录（仅移除 target）。`,
+                            )
+                            if (!ok) return
+                            setBusy(true)
+                            setError(null)
+                            try {
+                              await removeGitHubPackagesTarget({ input: t.input })
+                              await refresh()
+                              setGitHubPackagesReposPage(1)
+                              await refreshRepos({ page: 1 })
+                            } catch (e: unknown) {
+                              setError(errorMessage(e))
+                            } finally {
+                              setBusy(false)
+                            }
+                          })()
                         }}
                       >
                         移除
@@ -433,12 +481,126 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
           <div className="settingsSection">
             <div className="settingHead">
               <div className="sectionTitle">Repos</div>
-              <div className="muted">{githubPackages.repos.length} 个（默认全选）</div>
+              <div className="muted">
+                {githubPackagesRepos ? (
+                  <>
+                    {githubPackagesRepos.filteredTotal} / {githubPackagesRepos.total} 个，已选 {githubPackagesRepos.selectedTotal} 个
+                  </>
+                ) : (
+                  '加载中…'
+                )}
+              </div>
             </div>
 
-            {githubPackages.repos.length ? (
-              <div className="kv">
-                {githubPackages.repos.map((r) => (
+            <div className="kv" style={{ marginTop: 10 }}>
+              <div className="kvRow">
+                <div className="label">筛选</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
+                  <input
+                    className="input"
+                    style={{ flex: 1 }}
+                    value={githubPackagesReposQ}
+                    disabled={busy}
+                    onChange={(e) => {
+                      setGitHubPackagesReposQ(e.target.value)
+                      setGitHubPackagesReposPage(1)
+                    }}
+                    placeholder="搜索 owner/repo"
+                  />
+                  <select
+                    className="input"
+                    value={githubPackagesReposSelectedFilter}
+                    disabled={busy}
+                    onChange={(e) => {
+                      const v = e.target.value as 'all' | 'selected' | 'unselected'
+                      setGitHubPackagesReposSelectedFilter(v)
+                      setGitHubPackagesReposPage(1)
+                    }}
+                  >
+                    <option value="all">全部</option>
+                    <option value="selected">已选</option>
+                    <option value="unselected">未选</option>
+                  </select>
+                  <select
+                    className="input"
+                    value={String(githubPackagesReposPerPage)}
+                    disabled={busy}
+                    onChange={(e) => {
+                      setGitHubPackagesReposPerPage(Number(e.target.value) || 50)
+                      setGitHubPackagesReposPage(1)
+                    }}
+                  >
+                    <option value="20">20/页</option>
+                    <option value="50">50/页</option>
+                    <option value="100">100/页</option>
+                  </select>
+                </div>
+              </div>
+              <div className="kvRow">
+                <div className="label">批量</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', justifyContent: 'space-between' }}>
+                  <div className="muted">
+                    对“当前筛选结果”批量设置（支持几百条/上千条，不会一次性渲染全部）
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <Button
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => {
+                        void (async () => {
+                          setBusy(true)
+                          setError(null)
+                          try {
+                            await bulkSetGitHubPackagesReposSelected({
+                              q: githubPackagesReposQ.trim() || null,
+                              selectedFilter: githubPackagesReposSelectedFilter,
+                              selected: true,
+                            })
+                            await refreshRepos()
+                            await refresh()
+                          } catch (e: unknown) {
+                            setError(errorMessage(e))
+                          } finally {
+                            setBusy(false)
+                          }
+                        })()
+                      }}
+                    >
+                      全选
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => {
+                        void (async () => {
+                          setBusy(true)
+                          setError(null)
+                          try {
+                            await bulkSetGitHubPackagesReposSelected({
+                              q: githubPackagesReposQ.trim() || null,
+                              selectedFilter: githubPackagesReposSelectedFilter,
+                              selected: false,
+                            })
+                            await refreshRepos()
+                            await refresh()
+                          } catch (e: unknown) {
+                            setError(errorMessage(e))
+                          } finally {
+                            setBusy(false)
+                          }
+                        })()
+                      }}
+                    >
+                      全不选
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {githubPackagesRepos?.repos?.length ? (
+              <div className="kv" style={{ marginTop: 10 }}>
+                {githubPackagesRepos.repos.map((r) => (
                   <div className="kvRow" key={r.fullName}>
                     <div className="label">
                       <input
@@ -446,11 +608,20 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                         checked={r.selected}
                         disabled={busy}
                         onChange={(e) => {
-                          const selected = e.target.checked
-                          setGitHubPackages({
-                            ...githubPackages,
-                            repos: githubPackages.repos.map((x) => (x.fullName === r.fullName ? { ...x, selected } : x)),
-                          })
+                          void (async () => {
+                            const selected = e.target.checked
+                            setBusy(true)
+                            setError(null)
+                            try {
+                              await setGitHubPackagesRepoSelected({ fullName: r.fullName, selected })
+                              await refreshRepos()
+                              await refresh()
+                            } catch (e: unknown) {
+                              setError(errorMessage(e))
+                            } finally {
+                              setBusy(false)
+                            }
+                          })()
                         }}
                       />
                     </div>
@@ -463,13 +634,42 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                 ))}
               </div>
             ) : (
-              <div className="muted">repo 列表为空：先添加 target 并解析</div>
+              <div className="muted" style={{ marginTop: 10 }}>
+                repo 列表为空：先添加 target，然后在这里分页浏览与勾选
+              </div>
             )}
+
+            {githubPackagesRepos ? (
+              <div className="formActions" style={{ marginTop: 10, justifyContent: 'space-between' }}>
+                <div className="muted">
+                  第 {githubPackagesRepos.page} 页（每页 {githubPackagesRepos.perPage}）
+                </div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <Button
+                    variant="ghost"
+                    disabled={busy || githubPackagesRepos.page <= 1}
+                    onClick={() => setGitHubPackagesReposPage((p) => Math.max(1, p - 1))}
+                  >
+                    上一页
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    disabled={
+                      busy ||
+                      githubPackagesRepos.page >= Math.max(1, Math.ceil(githubPackagesRepos.filteredTotal / githubPackagesRepos.perPage))
+                    }
+                    onClick={() => setGitHubPackagesReposPage((p) => p + 1)}
+                  >
+                    下一页
+                  </Button>
+                </div>
+              </div>
+            ) : null}
 
             <div className="formActions" style={{ marginTop: 10 }}>
               <Button
                 variant="ghost"
-                disabled={busy || !githubPackages.repos.some((r) => r.selected)}
+                disabled={busy || !(githubPackagesRepos?.selectedTotal ?? 0)}
                 onClick={() => {
                   void (async () => {
                     setBusy(true)
@@ -477,6 +677,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     try {
                       const resp = await syncGitHubPackagesWebhooks({ dryRun: false })
                       setGitHubPackagesSyncResults(resp.results)
+                      await refreshRepos()
                       await refresh()
                     } catch (e: unknown) {
                       setError(errorMessage(e))

@@ -1,13 +1,23 @@
 import type {
   DiscoveredProject,
+  GitHubPackagesRepo,
+  GitHubPackagesSettingsResponse,
   IgnoreRule,
   JobDetail,
   JobListItem,
+  ListGitHubPackagesReposResponse,
   NotificationConfig,
+  BulkSetGitHubPackagesReposSelectedRequest,
+  PutGitHubPackagesSettingsRequest,
+  SetGitHubPackagesRepoSelectedRequest,
+  AddGitHubPackagesTargetRequest,
+  RemoveGitHubPackagesTargetRequest,
+  ResolveGitHubPackagesTargetResponse,
   ServiceSettings,
   SettingsResponse,
   StackDetail,
   StackListItem,
+  SyncGitHubPackagesWebhooksResponse,
 } from '../../api'
 
 export type DockrevApiScenario =
@@ -44,6 +54,8 @@ type Fixture = {
   discoveredProjects: DiscoveredProject[]
   settings: SettingsResponse
   notifications: NotificationConfig
+  githubPackagesSettings: GitHubPackagesSettingsResponse
+  githubPackagesRepos: GitHubPackagesRepo[]
   serviceSettingsById: Record<string, ServiceSettings>
 }
 
@@ -98,6 +110,18 @@ function makeDefaultNotifications(): NotificationConfig {
   }
 }
 
+function makeDefaultGitHubPackagesSettings(): GitHubPackagesSettingsResponse {
+  return {
+    enabled: false,
+    callbackUrl: '',
+    targets: [],
+    reposTotal: 0,
+    reposSelectedTotal: 0,
+    patMasked: null,
+    secretMasked: null,
+  }
+}
+
 function baseEmpty(): Fixture {
   return {
     stacks: [],
@@ -108,6 +132,8 @@ function baseEmpty(): Fixture {
     discoveredProjects: [],
     settings: makeDefaultSettings(),
     notifications: makeDefaultNotifications(),
+    githubPackagesSettings: makeDefaultGitHubPackagesSettings(),
+    githubPackagesRepos: [],
     serviceSettingsById: {},
   }
 }
@@ -527,6 +553,33 @@ function buildSettingsConfigured(): Fixture {
     telegram: { enabled: true, botToken: '123:bot-token', chatId: '987654' },
     webPush: { enabled: true, vapidPublicKey: 'BBOG...mock', vapidPrivateKey: null, vapidSubject: 'mailto:ops@example.com' },
   }
+  const repos: GitHubPackagesRepo[] = [
+    { fullName: 'IvanLi-CN/dockrev', selected: true, hookId: 1234567, lastSyncAt: nowIso(-60_000), lastError: null },
+    { fullName: 'IvanLi-CN/dockrev-supervisor', selected: true, hookId: null, lastSyncAt: null, lastError: null },
+    { fullName: 'IvanLi-CN/example-private', selected: false, hookId: null, lastSyncAt: null, lastError: 'permission denied (mock)' },
+  ]
+  for (let i = 1; i <= 240; i++) {
+    repos.push({
+      fullName: `IvanLi-CN/repo-${String(i).padStart(3, '0')}`,
+      selected: i <= 200,
+      hookId: i % 9 === 0 ? 7000000 + i : null,
+      lastSyncAt: i % 9 === 0 ? nowIso(-30_000) : null,
+      lastError: null,
+    })
+  }
+  f.githubPackagesRepos = repos
+  f.githubPackagesSettings = {
+    enabled: true,
+    callbackUrl: 'https://dockrev.example.com/api/webhooks/github-packages',
+    targets: [
+      { input: 'IvanLi-CN', kind: 'owner', owner: 'IvanLi-CN', warnings: [] },
+      { input: 'https://github.com/IvanLi-CN/dockrev', kind: 'repo', owner: 'IvanLi-CN', warnings: [] },
+    ],
+    reposTotal: repos.length,
+    reposSelectedTotal: repos.filter((r) => r.selected).length,
+    patMasked: '******',
+    secretMasked: '******',
+  }
   return f
 }
 
@@ -671,6 +724,213 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
 
     if (!state) return json({ error: 'mock not initialized' }, { status: 500 })
     const f = state
+    const recomputeGithubPackagesCounts = () => {
+      f.githubPackagesSettings = {
+        ...f.githubPackagesSettings,
+        reposTotal: f.githubPackagesRepos.length,
+        reposSelectedTotal: f.githubPackagesRepos.filter((r) => r.selected).length,
+      }
+    }
+
+    // github packages (ghcr) webhook integration
+    if (method === 'GET' && urlPath === '/api/github-packages/settings') {
+      recomputeGithubPackagesCounts()
+      return json(f.githubPackagesSettings)
+    }
+    if (method === 'PUT' && urlPath === '/api/github-packages/settings') {
+      const body = typeof init?.body === 'string' ? init.body : ''
+      const parsed = body ? (JSON.parse(body) as PutGitHubPackagesSettingsRequest) : null
+      if (parsed) {
+        let nextPatMasked: string | null = f.githubPackagesSettings.patMasked ?? null
+        if (typeof parsed.pat === 'string' && parsed.pat !== '******' && parsed.pat.trim() !== '') {
+          nextPatMasked = '******'
+        }
+        if (Array.isArray(parsed.targets)) {
+          f.githubPackagesSettings.targets = parsed.targets.map((t) => ({
+            input: t.input,
+            kind: 'owner',
+            owner: t.input,
+            warnings: [],
+          }))
+        }
+        if (Array.isArray(parsed.repos)) {
+          const sel = new Map(parsed.repos.map((r) => [r.fullName, Boolean(r.selected)]))
+          for (const r of f.githubPackagesRepos) {
+            if (sel.has(r.fullName)) r.selected = Boolean(sel.get(r.fullName))
+          }
+        }
+        f.githubPackagesSettings.enabled = parsed.enabled
+        f.githubPackagesSettings.callbackUrl = parsed.callbackUrl
+        f.githubPackagesSettings.patMasked = nextPatMasked
+        recomputeGithubPackagesCounts()
+      }
+      return json({ ok: true })
+    }
+    if (method === 'GET' && urlPath === '/api/github-packages/repos') {
+      const params = url?.searchParams ?? new URLSearchParams()
+      const page = Math.max(1, Number(params.get('page') ?? '1') || 1)
+      const perPage = Math.min(200, Math.max(1, Number(params.get('perPage') ?? '50') || 50))
+      const q = (params.get('q') ?? '').trim().toLowerCase()
+      const selectedFilter = (params.get('selectedFilter') ?? 'all').trim()
+
+      const matchesQ = (r: GitHubPackagesRepo) => (q ? r.fullName.toLowerCase().includes(q) : true)
+      const matchesSelected = (r: GitHubPackagesRepo) => {
+        if (selectedFilter === 'selected') return r.selected
+        if (selectedFilter === 'unselected') return !r.selected
+        return true
+      }
+
+      const filtered = f.githubPackagesRepos.filter((r) => matchesQ(r) && matchesSelected(r))
+      const offset = (page - 1) * perPage
+      const items = filtered.slice(offset, offset + perPage)
+
+      const resp: ListGitHubPackagesReposResponse = {
+        page,
+        perPage,
+        total: f.githubPackagesRepos.length,
+        filteredTotal: filtered.length,
+        selectedTotal: f.githubPackagesRepos.filter((r) => r.selected).length,
+        repos: items,
+      }
+      recomputeGithubPackagesCounts()
+      return json(resp)
+    }
+    if (method === 'POST' && urlPath === '/api/github-packages/repos/selected') {
+      const parsed = parseJsonBody(init?.body) as SetGitHubPackagesRepoSelectedRequest | null
+      const fullName = getString(parsed?.fullName)?.trim() ?? ''
+      const selected = getBoolean(parsed?.selected)
+      if (!fullName || selected === null) return json({ error: 'invalid input' }, { status: 400 })
+      const row = f.githubPackagesRepos.find((r) => r.fullName === fullName)
+      if (!row) return json({ error: 'repo not found' }, { status: 400 })
+      row.selected = selected
+      recomputeGithubPackagesCounts()
+      return json({ ok: true })
+    }
+    if (method === 'POST' && urlPath === '/api/github-packages/repos/bulk-selected') {
+      const parsed = parseJsonBody(init?.body) as BulkSetGitHubPackagesReposSelectedRequest | null
+      const q = (getString(parsed?.q) ?? '').trim().toLowerCase()
+      const selectedFilter = (getString(parsed?.selectedFilter) ?? 'all').trim()
+      const selected = getBoolean(parsed?.selected)
+      if (selected === null) return json({ error: 'invalid input' }, { status: 400 })
+
+      const matchesQ = (r: GitHubPackagesRepo) => (q ? r.fullName.toLowerCase().includes(q) : true)
+      const matchesSelected = (r: GitHubPackagesRepo) => {
+        if (selectedFilter === 'selected') return r.selected
+        if (selectedFilter === 'unselected') return !r.selected
+        return true
+      }
+
+      let affected = 0
+      for (const r of f.githubPackagesRepos) {
+        if (!matchesQ(r) || !matchesSelected(r)) continue
+        if (r.selected !== selected) {
+          r.selected = selected
+          affected++
+        }
+      }
+      recomputeGithubPackagesCounts()
+      return json({ ok: true, affected })
+    }
+    if (method === 'POST' && urlPath === '/api/github-packages/targets/add') {
+      const parsed = parseJsonBody(init?.body) as AddGitHubPackagesTargetRequest | null
+      const inputStr = getString(parsed?.input)?.trim() ?? ''
+      if (!inputStr) return json({ error: 'invalid input' }, { status: 400 })
+      if (!f.githubPackagesSettings.patMasked) return json({ error: 'pat is required' }, { status: 400 })
+
+      let owner = inputStr
+      let repo: string | null = null
+      if (inputStr.includes('github.com/')) {
+        const m = inputStr.match(/github\.com\/(?:orgs\/)?([^/]+)(?:\/([^/]+))?/i)
+        owner = m?.[1] ?? inputStr
+        repo = m?.[2]?.replace(/\\.git$/i, '') ?? null
+      } else if (inputStr.includes('/')) {
+        const parts = inputStr.split('/').filter(Boolean)
+        if (parts.length >= 2) {
+          owner = parts[0] ?? inputStr
+          repo = (parts[1] ?? '').replace(/\\.git$/i, '') || null
+        }
+      }
+
+      if (!f.githubPackagesSettings.targets.some((t) => t.input === inputStr)) {
+        f.githubPackagesSettings.targets.push({
+          input: inputStr,
+          kind: repo ? 'repo' : 'owner',
+          owner,
+          warnings: [],
+        })
+      }
+
+      const before = new Set(f.githubPackagesRepos.map((r) => r.fullName))
+      if (repo) {
+        const fullName = `${owner}/${repo}`
+        if (!before.has(fullName)) f.githubPackagesRepos.push({ fullName, selected: true, hookId: null, lastSyncAt: null, lastError: null })
+      } else {
+        // add a bunch of repos to simulate "hundreds"
+        for (let i = 1; i <= 120; i++) {
+          const fullName = `${owner}/added-${String(i).padStart(3, '0')}`
+          if (!before.has(fullName)) f.githubPackagesRepos.push({ fullName, selected: true, hookId: null, lastSyncAt: null, lastError: null })
+        }
+      }
+
+      recomputeGithubPackagesCounts()
+      const reposAdded = f.githubPackagesRepos.length - before.size
+      return json({ ok: true, kind: repo ? 'repo' : 'owner', owner, reposAdded })
+    }
+    if (method === 'POST' && urlPath === '/api/github-packages/targets/remove') {
+      const parsed = parseJsonBody(init?.body) as RemoveGitHubPackagesTargetRequest | null
+      const inputStr = getString(parsed?.input)?.trim() ?? ''
+      if (!inputStr) return json({ error: 'invalid input' }, { status: 400 })
+      f.githubPackagesSettings.targets = f.githubPackagesSettings.targets.filter((t) => t.input !== inputStr)
+      recomputeGithubPackagesCounts()
+      return json({ ok: true })
+    }
+    if (method === 'POST' && urlPath === '/api/github-packages/resolve') {
+      const body = typeof init?.body === 'string' ? init.body : ''
+      const parsed = body ? (JSON.parse(body) as { input?: string }) : null
+      const inputStr = typeof parsed?.input === 'string' ? parsed.input.trim() : ''
+      if (!inputStr) return json({ error: 'invalid input' }, { status: 400 })
+      if (!f.githubPackagesSettings.patMasked) return json({ error: 'pat is required' }, { status: 400 })
+
+      const mkOwner = (owner: string): ResolveGitHubPackagesTargetResponse => ({
+        kind: 'owner',
+        owner,
+        repos: ['dockrev', 'dockrev-supervisor', 'example-private'].map((r) => ({ fullName: `${owner}/${r}`, selected: true })),
+        warnings: [],
+      })
+
+      if (inputStr.includes('github.com/')) {
+        const m = inputStr.match(/github\.com\/(?:orgs\/)?([^/]+)(?:\/([^/]+))?/i)
+        const owner = m?.[1] ?? 'unknown'
+        const repo = m?.[2]
+        if (repo) {
+          const resp: ResolveGitHubPackagesTargetResponse = {
+            kind: 'repo',
+            owner,
+            repos: [{ fullName: `${owner}/${repo.replace(/\\.git$/i, '')}`, selected: true }],
+            warnings: [],
+          }
+          return json(resp)
+        }
+        return json(mkOwner(owner))
+      }
+
+      return json(mkOwner(inputStr))
+    }
+    if (method === 'POST' && urlPath === '/api/github-packages/sync') {
+      const results = f.githubPackagesRepos
+        .filter((r) => r.selected)
+        .map((r) => ({ repo: r.fullName, action: r.hookId ? 'noop' : 'created', hookId: r.hookId ?? 7654321 }))
+      const resp: SyncGitHubPackagesWebhooksResponse = { ok: true, results }
+
+      for (const it of results) {
+        const rr = f.githubPackagesRepos.find((r) => r.fullName === it.repo)
+        if (rr && !rr.hookId) rr.hookId = it.hookId ?? null
+        if (rr) rr.lastSyncAt = nowIso()
+        if (rr) rr.lastError = null
+      }
+
+      return json(resp)
+    }
 
     // stacks
     if (method === 'GET' && (urlPathWithQuery === '/api/stacks' || urlPathWithQuery.startsWith('/api/stacks?'))) {

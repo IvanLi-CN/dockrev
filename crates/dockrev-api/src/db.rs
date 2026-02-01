@@ -1604,6 +1604,59 @@ INSERT INTO github_packages_targets (
         .context("put github packages targets")
     }
 
+    pub async fn upsert_github_packages_target_by_input(
+        &self,
+        input: &str,
+        kind: &str,
+        owner: &str,
+        warnings: &[String],
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let id = ulid::Ulid::new().to_string();
+        let input = input.to_string();
+        let kind = kind.to_string();
+        let owner = owner.to_string();
+        let warnings_json = serde_json::to_string(warnings).unwrap_or_else(|_| "[]".to_string());
+        let now = now.to_string();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute(
+                "DELETE FROM github_packages_targets WHERE input = ?1",
+                params![input],
+            )?;
+            tx.execute(
+                r#"
+INSERT INTO github_packages_targets (
+  id,
+  input,
+  kind,
+  owner,
+  warnings_json,
+  updated_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+"#,
+                params![id, input, kind, owner, warnings_json, now],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .context("upsert github packages target by input")
+    }
+
+    pub async fn delete_github_packages_target_by_input(&self, input: &str) -> anyhow::Result<u32> {
+        let input = input.to_string();
+        self.call(move |conn| {
+            let n = conn.execute(
+                "DELETE FROM github_packages_targets WHERE input = ?1",
+                params![input],
+            )?;
+            Ok(n as u32)
+        })
+        .await
+        .context("delete github packages target by input")
+    }
+
     pub async fn list_github_packages_repos(&self) -> anyhow::Result<Vec<GitHubPackagesRepoDb>> {
         self.call(|conn| {
             let mut stmt = conn.prepare(
@@ -1635,6 +1688,229 @@ ORDER BY owner ASC, repo ASC
         })
         .await
         .context("list github packages repos")
+    }
+
+    pub async fn upsert_github_packages_repos_default_selected(
+        &self,
+        repos: &[(String, String)],
+        now: &str,
+    ) -> anyhow::Result<u32> {
+        let repos: Vec<(String, String)> = repos.to_vec();
+        let now = now.to_string();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let mut inserted: u32 = 0;
+            for (owner, repo) in repos {
+                let n = tx.execute(
+                    r#"
+INSERT INTO github_packages_repos (owner, repo, selected, updated_at)
+VALUES (?1, ?2, 1, ?3)
+ON CONFLICT(owner, repo) DO NOTHING
+"#,
+                    params![owner, repo, now],
+                )?;
+                inserted += n as u32;
+            }
+            tx.commit()?;
+            Ok(inserted)
+        })
+        .await
+        .context("upsert github packages repos default selected")
+    }
+
+    pub async fn count_github_packages_repos_total(&self) -> anyhow::Result<u32> {
+        self.call(|conn| {
+            Ok(
+                conn.query_row("SELECT COUNT(*) FROM github_packages_repos", [], |row| {
+                    row.get::<_, i64>(0).map(|v| v as u32)
+                })?,
+            )
+        })
+        .await
+        .context("count github packages repos total")
+    }
+
+    pub async fn count_github_packages_repos_selected_total(&self) -> anyhow::Result<u32> {
+        self.call(|conn| {
+            Ok(conn.query_row(
+                "SELECT COUNT(*) FROM github_packages_repos WHERE selected = 1",
+                [],
+                |row| row.get::<_, i64>(0).map(|v| v as u32),
+            )?)
+        })
+        .await
+        .context("count github packages repos selected total")
+    }
+
+    pub async fn count_github_packages_repos_filtered(
+        &self,
+        q: Option<&str>,
+        selected_filter: Option<bool>,
+    ) -> anyhow::Result<u32> {
+        let q = q.map(|s| s.to_string());
+        self.call(move |conn| {
+            let mut sql = "SELECT COUNT(*) FROM github_packages_repos".to_string();
+            let mut clauses: Vec<String> = Vec::new();
+            let mut values: Vec<rusqlite::types::Value> = Vec::new();
+
+            if let Some(sel) = selected_filter {
+                clauses.push("selected = ?".to_string());
+                values.push(rusqlite::types::Value::from(sel as i64));
+            }
+            if let Some(q) = &q
+                && !q.trim().is_empty()
+            {
+                clauses.push("lower(owner || '/' || repo) LIKE '%' || lower(?) || '%'".to_string());
+                values.push(rusqlite::types::Value::from(q.trim().to_string()));
+            }
+
+            if !clauses.is_empty() {
+                sql.push_str(" WHERE ");
+                sql.push_str(&clauses.join(" AND "));
+            }
+
+            let params: Vec<&dyn rusqlite::ToSql> =
+                values.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+            Ok(conn.query_row(&sql, params.as_slice(), |row| {
+                row.get::<_, i64>(0).map(|v| v as u32)
+            })?)
+        })
+        .await
+        .context("count github packages repos filtered")
+    }
+
+    pub async fn list_github_packages_repos_page(
+        &self,
+        q: Option<&str>,
+        selected_filter: Option<bool>,
+        limit: u32,
+        offset: u32,
+    ) -> anyhow::Result<Vec<GitHubPackagesRepoDb>> {
+        let q = q.map(|s| s.to_string());
+        self.call(move |conn| {
+            let mut sql = r#"
+SELECT
+  owner,
+  repo,
+  selected,
+  hook_id,
+  last_sync_at,
+  last_error,
+  updated_at
+FROM github_packages_repos
+"#
+            .to_string();
+
+            let mut clauses: Vec<String> = Vec::new();
+            let mut values: Vec<rusqlite::types::Value> = Vec::new();
+
+            if let Some(sel) = selected_filter {
+                clauses.push("selected = ?".to_string());
+                values.push(rusqlite::types::Value::from(sel as i64));
+            }
+            if let Some(q) = &q
+                && !q.trim().is_empty()
+            {
+                clauses.push("lower(owner || '/' || repo) LIKE '%' || lower(?) || '%'".to_string());
+                values.push(rusqlite::types::Value::from(q.trim().to_string()));
+            }
+
+            if !clauses.is_empty() {
+                sql.push_str(" WHERE ");
+                sql.push_str(&clauses.join(" AND "));
+            }
+
+            sql.push_str(" ORDER BY owner ASC, repo ASC LIMIT ? OFFSET ?");
+            values.push(rusqlite::types::Value::from(limit as i64));
+            values.push(rusqlite::types::Value::from(offset as i64));
+
+            let params: Vec<&dyn rusqlite::ToSql> =
+                values.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(params.as_slice(), |row| {
+                Ok(GitHubPackagesRepoDb {
+                    owner: row.get(0)?,
+                    repo: row.get(1)?,
+                    selected: row.get::<_, i64>(2)? != 0,
+                    hook_id: row.get(3)?,
+                    last_sync_at: row.get(4)?,
+                    last_error: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list github packages repos page")
+    }
+
+    pub async fn set_github_packages_repo_selected(
+        &self,
+        owner: &str,
+        repo: &str,
+        selected: bool,
+        now: &str,
+    ) -> anyhow::Result<bool> {
+        let owner = owner.to_string();
+        let repo = repo.to_string();
+        let now = now.to_string();
+        self.call(move |conn| {
+            let n = conn.execute(
+                r#"
+UPDATE github_packages_repos
+SET selected = ?3, updated_at = ?4
+WHERE owner = ?1 AND repo = ?2
+"#,
+                params![owner, repo, selected as i64, now],
+            )?;
+            Ok(n > 0)
+        })
+        .await
+        .context("set github packages repo selected")
+    }
+
+    pub async fn bulk_set_github_packages_repos_selected(
+        &self,
+        q: Option<&str>,
+        selected_filter: Option<bool>,
+        selected: bool,
+        now: &str,
+    ) -> anyhow::Result<u32> {
+        let q = q.map(|s| s.to_string());
+        let now = now.to_string();
+        self.call(move |conn| {
+            let mut sql =
+                "UPDATE github_packages_repos SET selected = ?, updated_at = ?".to_string();
+            let mut clauses: Vec<String> = Vec::new();
+            let mut values: Vec<rusqlite::types::Value> = Vec::new();
+
+            values.push(rusqlite::types::Value::from(selected as i64));
+            values.push(rusqlite::types::Value::from(now));
+
+            if let Some(sel) = selected_filter {
+                clauses.push("selected = ?".to_string());
+                values.push(rusqlite::types::Value::from(sel as i64));
+            }
+            if let Some(q) = &q
+                && !q.trim().is_empty()
+            {
+                clauses.push("lower(owner || '/' || repo) LIKE '%' || lower(?) || '%'".to_string());
+                values.push(rusqlite::types::Value::from(q.trim().to_string()));
+            }
+
+            if !clauses.is_empty() {
+                sql.push_str(" WHERE ");
+                sql.push_str(&clauses.join(" AND "));
+            }
+
+            let params: Vec<&dyn rusqlite::ToSql> =
+                values.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+            let n = conn.execute(&sql, params.as_slice())?;
+            Ok(n as u32)
+        })
+        .await
+        .context("bulk set github packages repos selected")
     }
 
     pub async fn put_github_packages_repos(
