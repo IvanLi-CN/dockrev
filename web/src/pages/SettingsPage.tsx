@@ -62,7 +62,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   const [githubPackagesSyncResults, setGitHubPackagesSyncResults] = useState<SyncGitHubPackagesWebhookResult[] | null>(null)
   const [githubPackagesRepos, setGitHubPackagesRepos] = useState<ListGitHubPackagesReposResponse | null>(null)
   const [githubPackagesReposPage, setGitHubPackagesReposPage] = useState(1)
-  const [githubPackagesReposPerPage, setGitHubPackagesReposPerPage] = useState(50)
+  const [githubPackagesReposPerPage, setGitHubPackagesReposPerPage] = useState(20)
   const [githubPackagesReposQ, setGitHubPackagesReposQ] = useState('')
   const [githubPackagesReposSelectedFilter, setGitHubPackagesReposSelectedFilter] = useState<'all' | 'selected' | 'unselected'>(
     'all',
@@ -347,6 +347,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
           {error ? <div className="error">{error}</div> : null}
         </div>
 
+        <div className="settingsCol">
         <div className="card">
           <div className="title">GitHub Packages（GHCR）Webhook</div>
           <div className="muted">在 GHCR 发布新版本时自动触发 Dockrev 扫描（事件：package.published）</div>
@@ -526,7 +527,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     value={String(githubPackagesReposPerPage)}
                     disabled={busy}
                     onChange={(e) => {
-                      setGitHubPackagesReposPerPage(Number(e.target.value) || 50)
+                      setGitHubPackagesReposPerPage(Number(e.target.value) || 20)
                       setGitHubPackagesReposPage(1)
                     }}
                   >
@@ -599,7 +600,10 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             </div>
 
             {githubPackagesRepos?.repos?.length ? (
-              <div className="kv" style={{ marginTop: 10 }}>
+              <div
+                className="kv"
+                style={{ marginTop: 10, maxHeight: 420, overflowY: 'auto', paddingRight: 6, overscrollBehavior: 'contain' }}
+              >
                 {githubPackagesRepos.repos.map((r) => (
                   <div className="kvRow" key={r.fullName} style={{ gridTemplateColumns: '28px 1fr' }}>
                     <div className="label">
@@ -939,6 +943,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
           </div>
 
           {error ? <div className="error">{error}</div> : null}
+        </div>
         </div>
       </div>
     </div>
