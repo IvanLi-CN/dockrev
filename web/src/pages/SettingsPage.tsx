@@ -691,12 +691,12 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             </div>
 
             <div className="kv" style={{ marginTop: 10 }}>
-              <div className="kvRow">
+              <div className="kvRow" style={{ gridTemplateColumns: '120px 1fr' }}>
                 <div className="label">筛选</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, rowGap: 8, width: '100%', minWidth: 0 }}>
                   <input
                     className="input"
-                    style={{ flex: 1 }}
+                    style={{ flex: '1 1 240px', minWidth: 160 }}
                     value={githubPackagesReposQ}
                     disabled={busy}
                     onChange={(e) => {
@@ -707,6 +707,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                   />
                   <select
                     className="input"
+                    style={{ flex: '0 0 120px' }}
                     value={githubPackagesReposSelectedFilter}
                     disabled={busy}
                     onChange={(e) => {
@@ -721,6 +722,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                   </select>
                   <select
                     className="input"
+                    style={{ flex: '0 0 120px' }}
                     value={String(githubPackagesReposPerPage)}
                     disabled={busy}
                     onChange={(e) => {
@@ -734,13 +736,13 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                   </select>
                 </div>
               </div>
-              <div className="kvRow">
+              <div className="kvRow" style={{ gridTemplateColumns: '120px 1fr', alignItems: 'start' }}>
                 <div className="label">批量</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', justifyContent: 'space-between' }}>
-                  <div className="muted">
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, rowGap: 8, width: '100%', minWidth: 0 }}>
+                  <div className="muted" style={{ flex: '1 1 280px', minWidth: 200 }}>
                     对“当前筛选结果”批量设置（支持几百条/上千条，不会一次性渲染全部）
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto' }}>
                     <Button
                       variant="ghost"
                       disabled={busy}
