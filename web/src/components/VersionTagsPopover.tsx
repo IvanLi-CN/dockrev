@@ -30,6 +30,9 @@ function digestMatches(a: string | null, b: string | null): boolean {
   return Boolean(aa && bb && aa === bb)
 }
 
+const HOVER_CLOSE_DELAY_MS = 300
+const POPOVER_ANIM_MS = 160
+
 export function VersionTagsPopover(props: {
   serviceId: string
   candidateTag: string | null
@@ -41,10 +44,15 @@ export function VersionTagsPopover(props: {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const hoverCloseTimer = useRef<number | null>(null)
+  const popoverUnmountTimer = useRef<number | null>(null)
+  const popoverShowRaf = useRef<number | null>(null)
+  const pinnedRef = useRef(false)
 
   const [pinned, setPinned] = useState(false)
   const [hoverOpen, setHoverOpen] = useState(false)
   const open = pinned || hoverOpen
+  const [renderPopover, setRenderPopover] = useState(false)
+  const [popoverVisible, setPopoverVisible] = useState(false)
 
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
   const [opts, setOpts] = useState<ServiceCandidateOption[] | null>(null)
@@ -58,26 +66,73 @@ export function VersionTagsPopover(props: {
     hoverCloseTimer.current = null
   }, [])
 
+  const clearPopoverUnmountTimer = useCallback(() => {
+    if (popoverUnmountTimer.current == null) return
+    window.clearTimeout(popoverUnmountTimer.current)
+    popoverUnmountTimer.current = null
+  }, [])
+
+  const clearPopoverShowRaf = useCallback(() => {
+    if (popoverShowRaf.current == null) return
+    window.cancelAnimationFrame(popoverShowRaf.current)
+    popoverShowRaf.current = null
+  }, [])
+
+  const showPopover = useCallback(() => {
+    clearPopoverUnmountTimer()
+
+    if (!renderPopover) {
+      setRenderPopover(true)
+      setPopoverVisible(false)
+      clearPopoverShowRaf()
+      popoverShowRaf.current = window.requestAnimationFrame(() => {
+        setPopoverVisible(true)
+        popoverShowRaf.current = null
+      })
+      return
+    }
+
+    setPopoverVisible(true)
+  }, [clearPopoverShowRaf, clearPopoverUnmountTimer, renderPopover])
+
+  const hidePopover = useCallback(() => {
+    if (!renderPopover) return
+
+    clearPopoverShowRaf()
+    setPopoverVisible(false)
+    clearPopoverUnmountTimer()
+    popoverUnmountTimer.current = window.setTimeout(() => {
+      setRenderPopover(false)
+      popoverUnmountTimer.current = null
+    }, POPOVER_ANIM_MS)
+  }, [clearPopoverShowRaf, clearPopoverUnmountTimer, renderPopover])
+
   const scheduleHoverClose = () => {
-    if (pinned) return
+    if (pinnedRef.current) return
     clearHoverCloseTimer()
     hoverCloseTimer.current = window.setTimeout(() => {
-      setHoverOpen(false)
       hoverCloseTimer.current = null
-    }, 140)
+      if (pinnedRef.current) return
+      setHoverOpen(false)
+      hidePopover()
+    }, HOVER_CLOSE_DELAY_MS)
   }
 
   const close = useCallback(() => {
     clearHoverCloseTimer()
     setPinned(false)
+    pinnedRef.current = false
     setHoverOpen(false)
-  }, [clearHoverCloseTimer])
+    hidePopover()
+  }, [clearHoverCloseTimer, hidePopover])
 
   useEffect(() => {
     return () => {
       clearHoverCloseTimer()
+      clearPopoverShowRaf()
+      clearPopoverUnmountTimer()
     }
-  }, [clearHoverCloseTimer])
+  }, [clearHoverCloseTimer, clearPopoverShowRaf, clearPopoverUnmountTimer])
 
   useEffect(() => {
     if (!open) return
@@ -176,16 +231,18 @@ export function VersionTagsPopover(props: {
     }
   }, [close, pinned])
 
-  const popoverBody = open ? (
+  const popoverBody = renderPopover ? (
     <div
       ref={popoverRef}
       className="versionTagsPopover"
       style={pos ? { left: pos.left, top: pos.top } : undefined}
       role="dialog"
       aria-label="Version tags"
+      data-state={popoverVisible ? 'open' : 'closed'}
       onPointerEnter={() => {
         clearHoverCloseTimer()
         setHoverOpen(true)
+        showPopover()
       }}
       onPointerLeave={() => {
         scheduleHoverClose()
@@ -201,9 +258,6 @@ export function VersionTagsPopover(props: {
           ) : (
             <span className="mono muted">digest 未知</span>
           )}
-        </div>
-        <div className="versionTagsPopoverMeta">
-          <span className={pinned ? 'pill pillOk' : 'pill pillMuted'}>{pinned ? '已固定' : '悬浮预览'}</span>
         </div>
       </div>
 
@@ -260,19 +314,25 @@ export function VersionTagsPopover(props: {
         onPointerEnter={() => {
           clearHoverCloseTimer()
           setHoverOpen(true)
+          showPopover()
         }}
         onPointerLeave={() => {
           scheduleHoverClose()
         }}
         onClick={() => {
           clearHoverCloseTimer()
-          setPinned((prev) => !prev)
+          setPinned((prev) => {
+            const next = !prev
+            pinnedRef.current = next
+            return next
+          })
           setHoverOpen(true)
+          showPopover()
         }}
       >
         {children}
       </button>
-      {open ? createPortal(popoverBody, document.body) : null}
+      {renderPopover ? createPortal(popoverBody, document.body) : null}
     </>
   )
 }

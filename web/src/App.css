@@ -306,6 +306,25 @@
   padding: 12px 12px 10px;
   min-width: 260px;
   max-width: min(520px, calc(100vw - 20px));
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transform-origin: top left;
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+  will-change: opacity, transform;
+}
+
+.versionTagsPopover[data-state='closed'] {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .versionTagsPopover {
+    transition: none;
+  }
 }
 
 html[data-theme='light'] .versionTagsPopover {
