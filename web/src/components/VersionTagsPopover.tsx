@@ -298,7 +298,6 @@ export function VersionTagsPopover(props: {
         )}
       </div>
 
-      <div className="versionTagsPopoverFooter muted">点击版本可固定；按 ESC 或点空白关闭。</div>
     </div>
   ) : null
 
