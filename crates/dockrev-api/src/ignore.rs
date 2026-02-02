@@ -56,8 +56,23 @@ pub fn parse_version(tag: &str) -> Option<Version> {
         return Some(v);
     }
 
+    // Support common docker tag patterns like `15-alpine`, `15.6-alpine`, `5.1.4_v2.0.11` by
+    // extracting a numeric prefix (digits + dots) and coercing it to semver.
+    let prefix = trimmed
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect::<String>();
+    let prefix = prefix.trim_end_matches('.');
+    if prefix.is_empty() {
+        return None;
+    }
+
+    if let Ok(v) = Version::parse(prefix) {
+        return Some(v);
+    }
+
     // Support "major.minor" and "major" tags by coercing to semver.
-    let parts = trimmed.split('.').collect::<Vec<_>>();
+    let parts = prefix.split('.').collect::<Vec<_>>();
     let coerced = match parts.len() {
         1 => format!("{}.0.0", parts[0]),
         2 => format!("{}.{}.0", parts[0], parts[1]),
@@ -77,6 +92,14 @@ pub fn is_strict_semver(tag: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_version_prefix_numeric() {
+        assert_eq!(parse_version("15-alpine"), Some(Version::new(15, 0, 0)));
+        assert_eq!(parse_version("15.6-alpine"), Some(Version::new(15, 6, 0)));
+        assert_eq!(parse_version("5.1.4_v2.0.11"), Some(Version::new(5, 1, 4)));
+        assert_eq!(parse_version("sha-5177f0e"), None);
+    }
 
     #[test]
     fn matches_exact_prefix() {

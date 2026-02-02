@@ -68,4 +68,26 @@ mod tests {
         let picked = select_candidate_tag("alpha", &tags, |_| false).unwrap();
         assert_eq!(picked, "beta");
     }
+
+    #[test]
+    fn prefix_numeric_tag_picks_higher() {
+        let tags = vec![
+            "15-alpine".to_string(),
+            "15.6-alpine".to_string(),
+            "trixie".to_string(),
+        ];
+        let picked = select_candidate_tag("15-alpine", &tags, |_| false).unwrap();
+        assert_eq!(picked, "15.6-alpine");
+    }
+
+    #[test]
+    fn prefix_numeric_tag_skips_non_numeric_variant() {
+        let tags = vec![
+            "7-alpine".to_string(),
+            "7.1-alpine".to_string(),
+            "windowsservercore".to_string(),
+        ];
+        let picked = select_candidate_tag("7-alpine", &tags, |_| false).unwrap();
+        assert_eq!(picked, "7.1-alpine");
+    }
 }
