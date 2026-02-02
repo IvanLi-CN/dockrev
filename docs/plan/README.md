@@ -73,3 +73,4 @@
 | zdg25 | Dockrev: floating tag 当前版本推测（latest≈semver）+ UI/交互对齐 | 已完成 | `zdg25:auto-version-inference-ui/PLAN.md` | 2026-01-31 | local: `feat/zdg25-auto-version-inference-ui-sync` |
 | a2zdt | Dockrev: /supervisor 路由防呆（兜底页 + API 不可吞） | 已完成 | `a2zdt:supervisor-route-failsafe/PLAN.md` | 2026-01-31 | - |
 | 9wyaj | Dockrev: /supervisor 日志区域换行修复 | 已完成 | `9wyaj:supervisor-log-newlines/PLAN.md` | 2026-02-01 | PR #44 |
+| 8fjbt | Dockrev Web: 版本候选 tags 气泡 | 已完成 | `8fjbt:version-tags-popover/PLAN.md` | 2026-02-01 | PR #45 |

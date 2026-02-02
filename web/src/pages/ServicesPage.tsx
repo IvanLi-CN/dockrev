@@ -20,6 +20,7 @@ import { serviceRowStatus, type RowStatus } from '../updateStatus'
 import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
 import { UpdateTargetSelect } from '../components/UpdateTargetSelect'
 import { useConfirm } from '../confirm'
+import { VersionTagsPopover } from '../components/VersionTagsPopover'
 
 function formatShort(ts: string) {
   const d = new Date(ts)
@@ -737,22 +738,43 @@ export function ServicesPage(props: {
 	                            )
 	                          })()}
 	                          <div className="cellTwoLine">
-	                            <div
-	                              className="mono monoPrimary"
-	                              title={
-	                                [
-	                                  currentTitle,
-	                                  candidateTitle ? `candidate: ${candidateTitle}` : null,
-	                                ]
-	                                  .filter(Boolean)
-	                                  .join('\n')
-	                              }
-	                            >
-	                              {formatCurrentCandidateTagLine(
-	                                inferredTagForDisplay(svc.image.tag, svc.image.resolvedTag),
-	                                svc.candidate?.tag ?? null,
-	                              )}
-	                            </div>
+	                            {svc.candidate?.tag && svc.candidate.tag !== '-' ? (
+	                              <VersionTagsPopover
+	                                serviceId={svc.id}
+	                                candidateTag={svc.candidate.tag}
+	                                candidateDigest={svc.candidate.digest ?? null}
+	                                triggerTitle={
+	                                  [
+	                                    currentTitle,
+	                                    candidateTitle ? `candidate: ${candidateTitle}` : null,
+	                                  ]
+	                                    .filter(Boolean)
+	                                    .join('\n') || undefined
+	                                }
+	                              >
+	                                {formatCurrentCandidateTagLine(
+	                                  inferredTagForDisplay(svc.image.tag, svc.image.resolvedTag),
+	                                  svc.candidate?.tag ?? null,
+	                                )}
+	                              </VersionTagsPopover>
+	                            ) : (
+	                              <div
+	                                className="mono monoPrimary"
+	                                title={
+	                                  [
+	                                    currentTitle,
+	                                    candidateTitle ? `candidate: ${candidateTitle}` : null,
+	                                  ]
+	                                    .filter(Boolean)
+	                                    .join('\n')
+	                                }
+	                              >
+	                                {formatCurrentCandidateTagLine(
+	                                  inferredTagForDisplay(svc.image.tag, svc.image.resolvedTag),
+	                                  svc.candidate?.tag ?? null,
+	                                )}
+	                              </div>
+	                            )}
 	                            <div className="mono monoSecondary">{svc.image.tag}</div>
 	                          </div>
                           <StatusRemark service={svc} status={status} />
