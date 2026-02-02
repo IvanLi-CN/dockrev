@@ -2017,6 +2017,20 @@ VALUES (?1, ?2, ?3, ?4)
         .context("insert github packages delivery")
     }
 
+    #[cfg(test)]
+    pub async fn github_packages_delivery_exists(&self, delivery_id: &str) -> anyhow::Result<bool> {
+        let delivery_id = delivery_id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT 1 FROM github_packages_deliveries WHERE delivery_id = ?1 LIMIT 1",
+            )?;
+            let mut rows = stmt.query(params![delivery_id])?;
+            Ok(rows.next()?.is_some())
+        })
+        .await
+        .context("check github packages delivery exists")
+    }
+
     pub async fn upsert_web_push_subscription(
         &self,
         endpoint: &str,

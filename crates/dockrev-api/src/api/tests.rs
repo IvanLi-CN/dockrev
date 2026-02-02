@@ -2005,3 +2005,141 @@ async fn github_packages_webhook_respects_disabled_setting() {
     assert_eq!(body["ignored"], true);
     assert_eq!(body["reason"], "disabled");
 }
+
+#[tokio::test]
+async fn github_packages_webhook_matches_selected_repos_case_insensitively() {
+    use ring::hmac;
+
+    let state = test_state(":memory:").await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .put_github_packages_settings(
+            &crate::api::types::GitHubPackagesSettingsDb {
+                enabled: true,
+                callback_url: "https://dockrev.example.com/api/webhooks/github-packages"
+                    .to_string(),
+                pat: Some("ghp_example".to_string()),
+                webhook_secret: Some("secret123".to_string()),
+                updated_at: Some(now.clone()),
+            },
+            &now,
+        )
+        .await
+        .unwrap();
+    // Store with mixed casing.
+    state
+        .db
+        .put_github_packages_repos(
+            &[(String::from("Acme"), String::from("Widgets"), true)],
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let app = api::router(state);
+
+    // Payload uses different casing than stored.
+    let payload = serde_json::json!({
+      "action": "published",
+      "repository": { "full_name": "acme/widgets", "owner": { "login": "acme" } }
+    });
+    let payload_bytes = payload.to_string().into_bytes();
+    let key = hmac::Key::new(hmac::HMAC_SHA256, b"secret123");
+    let tag = hmac::sign(&key, &payload_bytes);
+    let sig = format!("sha256={}", hex::encode(tag.as_ref()));
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "case-1")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["ok"], true);
+    assert!(
+        body["jobId"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("dsc_")
+    );
+}
+
+#[tokio::test]
+async fn github_packages_webhook_does_not_persist_delivery_for_unselected_repo() {
+    use ring::hmac;
+
+    let state = test_state(":memory:").await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .put_github_packages_settings(
+            &crate::api::types::GitHubPackagesSettingsDb {
+                enabled: true,
+                callback_url: "https://dockrev.example.com/api/webhooks/github-packages"
+                    .to_string(),
+                pat: Some("ghp_example".to_string()),
+                webhook_secret: Some("secret123".to_string()),
+                updated_at: Some(now.clone()),
+            },
+            &now,
+        )
+        .await
+        .unwrap();
+    // Seed a different repo as selected so the incoming event is not eligible.
+    state
+        .db
+        .put_github_packages_repos(&[(String::from("acme"), String::from("other"), true)], &now)
+        .await
+        .unwrap();
+
+    let app = api::router(state.clone());
+
+    let payload = serde_json::json!({
+      "action": "published",
+      "repository": { "full_name": "acme/widgets", "owner": { "login": "acme" } }
+    });
+    let payload_bytes = payload.to_string().into_bytes();
+    let key = hmac::Key::new(hmac::HMAC_SHA256, b"secret123");
+    let tag = hmac::sign(&key, &payload_bytes);
+    let sig = format!("sha256={}", hex::encode(tag.as_ref()));
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "unselected-1")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["ignored"], true);
+    assert_eq!(body["reason"], "repo_not_selected");
+    assert!(
+        !state
+            .db
+            .github_packages_delivery_exists("unselected-1")
+            .await
+            .unwrap()
+    );
+}

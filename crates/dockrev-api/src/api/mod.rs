@@ -2806,6 +2806,38 @@ async fn github_packages_webhook(
         .and_then(|s| s.split('/').next().map(|v| v.to_string()))
         .or_else(|| extract_owner_login(&payload));
 
+    // NOTE: GitHub repo names are case-insensitive but case-preserving; compare in lower-case so we
+    // don't mistakenly drop events due to casing differences between stored data and payloads.
+    let mut selected_repos_lower = std::collections::HashSet::<String>::new();
+    let mut selected_owners_lower = std::collections::HashSet::<String>::new();
+    for r in state
+        .db
+        .list_github_packages_repos()
+        .await
+        .map_err(map_internal)?
+        .into_iter()
+        .filter(|r| r.selected)
+    {
+        selected_owners_lower.insert(r.owner.to_ascii_lowercase());
+        selected_repos_lower.insert(format!("{}/{}", r.owner, r.repo).to_ascii_lowercase());
+    }
+
+    let should_trigger = if let Some(full) = &repo_full_name {
+        selected_repos_lower.contains(&full.to_ascii_lowercase())
+    } else if let Some(owner) = &owner {
+        selected_owners_lower.contains(&owner.to_ascii_lowercase())
+    } else {
+        false
+    };
+
+    if !should_trigger {
+        return Ok(Json(
+            json!({"ok": true, "ignored": true, "reason": "repo_not_selected"}),
+        ));
+    }
+
+    // Only persist delivery IDs for events that are eligible to trigger a scan. This prevents
+    // unbounded growth in the deliveries table when the webhook exists but repos are deselected.
     let is_new = state
         .db
         .insert_github_packages_delivery_if_new(
@@ -2819,30 +2851,6 @@ async fn github_packages_webhook(
     if !is_new {
         return Ok(Json(
             json!({"ok": true, "ignored": true, "reason": "duplicate_delivery"}),
-        ));
-    }
-
-    let selected = state
-        .db
-        .list_github_packages_repos()
-        .await
-        .map_err(map_internal)?
-        .into_iter()
-        .filter(|r| r.selected)
-        .map(|r| format!("{}/{}", r.owner, r.repo))
-        .collect::<std::collections::BTreeSet<_>>();
-
-    let should_trigger = if let Some(full) = &repo_full_name {
-        selected.contains(full)
-    } else if let Some(owner) = &owner {
-        selected.iter().any(|r| r.starts_with(&format!("{owner}/")))
-    } else {
-        false
-    };
-
-    if !should_trigger {
-        return Ok(Json(
-            json!({"ok": true, "ignored": true, "reason": "repo_not_selected"}),
         ));
     }
 
