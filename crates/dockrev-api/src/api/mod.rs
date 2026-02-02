@@ -1732,10 +1732,10 @@ async fn list_service_candidates(
     let deadline = Instant::now() + MANIFEST_BUDGET;
     while let Ok(next) = timeout_at(deadline, join_set.join_next()).await {
         let Some(joined) = next else { break };
-        if let Ok((idx, opt)) = joined {
-            if idx < slots.len() {
-                slots[idx] = Some(opt);
-            }
+        if let Ok((idx, opt)) = joined
+            && idx < slots.len()
+        {
+            slots[idx] = Some(opt);
         }
 
         let Some((idx, tag)) = queue.next() else {
