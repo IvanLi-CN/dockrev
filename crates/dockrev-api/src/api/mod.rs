@@ -2397,7 +2397,39 @@ async fn resolve_github_packages_target(
 fn urls_match(a: &str, b: &str) -> bool {
     let Ok(au) = Url::parse(a) else { return false };
     let Ok(bu) = Url::parse(b) else { return false };
-    au == bu
+
+    // GitHub webhook config URLs are effectively compared by the request destination we will
+    // receive, not by exact `Url` string equality. Be tolerant of benign differences to avoid
+    // re-creating equivalent hooks (e.g. trailing slashes, default port normalization).
+    //
+    // We intentionally ignore fragments because they are not sent to the server.
+    let (Some(ah), Some(bh)) = (au.host_str(), bu.host_str()) else {
+        return false;
+    };
+
+    if !au.scheme().eq_ignore_ascii_case(bu.scheme()) {
+        return false;
+    }
+
+    if !ah.eq_ignore_ascii_case(bh) {
+        return false;
+    }
+
+    if au.port_or_known_default() != bu.port_or_known_default() {
+        return false;
+    }
+
+    fn normalize_path(path: &str) -> &str {
+        if path.len() <= 1 {
+            return path;
+        }
+        path.trim_end_matches('/')
+    }
+    if normalize_path(au.path()) != normalize_path(bu.path()) {
+        return false;
+    }
+
+    au.query() == bu.query()
 }
 
 async fn sync_github_packages_webhooks(

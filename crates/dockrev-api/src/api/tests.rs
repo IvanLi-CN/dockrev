@@ -1834,6 +1834,26 @@ async fn github_packages_resolve_owner_requires_pat_saved() {
     assert_eq!(resp.status(), 400);
 }
 
+#[test]
+fn urls_match_is_tolerant_of_trailing_slash_and_default_ports() {
+    assert!(super::urls_match(
+        "https://dockrev.example.com/api/webhooks/github-packages",
+        "https://dockrev.example.com/api/webhooks/github-packages/",
+    ));
+    assert!(super::urls_match(
+        "https://dockrev.example.com:443/api/webhooks/github-packages",
+        "https://dockrev.example.com/api/webhooks/github-packages",
+    ));
+    assert!(super::urls_match(
+        "http://dockrev.example.com:80/api/webhooks/github-packages",
+        "http://dockrev.example.com/api/webhooks/github-packages/",
+    ));
+    assert!(!super::urls_match(
+        "https://dockrev.example.com/api/webhooks/github-packages",
+        "https://dockrev.example.com/api/webhooks/github-packages?x=1",
+    ));
+}
+
 #[tokio::test]
 async fn github_packages_webhook_validates_signature_and_dedupes_delivery() {
     use ring::hmac;

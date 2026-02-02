@@ -2,6 +2,7 @@ use anyhow::Context as _;
 use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use url::Url;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -161,10 +162,48 @@ impl GitHubClient {
         match self.paginated_get::<GitHubRepo>(&org_path).await {
             Ok(v) => Ok(v),
             Err(org_err) => {
-                let user_path = format!("users/{owner}/repos");
-                self.paginated_get::<GitHubRepo>(&user_path)
+                let mut out = Vec::<GitHubRepo>::new();
+                let mut seen = HashSet::<String>::new();
+
+                // `GET /users/{owner}/repos` never includes private repositories, even when using
+                // a PAT with `repo` scope. For "user" targets, also try `GET /user/repos` and
+                // filter to repos owned by the requested login.
+                //
+                // Notes:
+                // - `GET /user/repos` only returns private repos for the authenticated user, so
+                //   this is best-effort for arbitrary `owner` values.
+                // - We keep the public listing as a baseline to cover non-self owners.
+                let self_path = "user/repos?visibility=all&affiliation=owner";
+                let self_repos = self
+                    .paginated_get::<GitHubRepoWithOwner>(self_path)
                     .await
-                    .with_context(|| format!("list repos failed (org_err={org_err})"))
+                    .ok()
+                    .unwrap_or_default();
+                for r in self_repos {
+                    if r.owner.login.eq_ignore_ascii_case(owner) {
+                        let key = r.full_name.to_ascii_lowercase();
+                        if seen.insert(key) {
+                            out.push(GitHubRepo {
+                                full_name: r.full_name,
+                            });
+                        }
+                    }
+                }
+
+                let user_path = format!("users/{owner}/repos");
+                let public = self
+                    .paginated_get::<GitHubRepo>(&user_path)
+                    .await
+                    .with_context(|| format!("list repos failed (org_err={org_err})"))?;
+                for r in public {
+                    let key = r.full_name.to_ascii_lowercase();
+                    if seen.insert(key) {
+                        out.push(r);
+                    }
+                }
+
+                out.sort_by_key(|r| r.full_name.to_ascii_lowercase());
+                Ok(out)
             }
         }
     }
@@ -315,6 +354,17 @@ mod tests {
 #[derive(Clone, Debug, Deserialize)]
 pub struct GitHubRepo {
     pub full_name: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GitHubRepoWithOwner {
+    pub full_name: String,
+    pub owner: GitHubRepoOwner,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GitHubRepoOwner {
+    pub login: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

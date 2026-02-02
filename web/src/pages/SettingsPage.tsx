@@ -122,6 +122,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
   useEffect(() => {
     const t = window.setTimeout(() => {
+      setGitHubPackagesReposPage(1)
       void refreshRepos({ page: 1 }).catch((e: unknown) => setError(errorMessage(e)))
     }, 250)
     return () => window.clearTimeout(t)
