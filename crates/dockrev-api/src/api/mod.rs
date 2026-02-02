@@ -375,35 +375,69 @@ async fn trigger_check(
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
 
-    let outcome = run_check_for_job(
-        &state,
-        &check_id,
-        &req.scope,
-        req.stack_id.as_deref(),
-        req.service_id.as_deref(),
-        &host_platform,
-        &now,
-    )
-    .await;
+    state
+        .db
+        .insert_job_log(
+            &check_id,
+            &JobLogLine {
+                ts: now.clone(),
+                level: "info".to_string(),
+                msg: "check started".to_string(),
+            },
+        )
+        .await
+        .map_err(map_internal)?;
 
-    let finished_at = now_rfc3339().map_err(map_internal)?;
-    match outcome {
-        Ok(summary) => {
-            state
-                .db
-                .finish_job(&check_id, "success", &finished_at, &summary)
-                .await
-                .map_err(map_internal)?;
+    // Run the check job in the background so it is not tied to the HTTP request lifecycle.
+    // This avoids orphaned `running` jobs when the client disconnects or the gateway times out.
+    let run_state = state.clone();
+    let run_check_id = check_id.clone();
+    let run_scope = req.scope.clone();
+    let run_stack_id = req.stack_id.clone();
+    let run_service_id = req.service_id.clone();
+    let run_host_platform = host_platform.clone();
+    let run_started_at = now.clone();
+    tokio::spawn(async move {
+        let outcome = run_check_for_job(
+            &run_state,
+            &run_check_id,
+            &run_scope,
+            run_stack_id.as_deref(),
+            run_service_id.as_deref(),
+            &run_host_platform,
+            &run_started_at,
+        )
+        .await;
+
+        let finished_at =
+            now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+        match outcome {
+            Ok(summary) => {
+                let _ = run_state
+                    .db
+                    .finish_job(&run_check_id, "success", &finished_at, &summary)
+                    .await;
+            }
+            Err(e) => {
+                let _ = run_state
+                    .db
+                    .insert_job_log(
+                        &run_check_id,
+                        &JobLogLine {
+                            ts: finished_at.clone(),
+                            level: "error".to_string(),
+                            msg: format!("check failed: {e:?}"),
+                        },
+                    )
+                    .await;
+                let summary = json!({"error": format!("{e:?}")});
+                let _ = run_state
+                    .db
+                    .finish_job(&run_check_id, "failed", &finished_at, &summary)
+                    .await;
+            }
         }
-        Err(e) => {
-            let summary = json!({"error": format!("{e:?}")});
-            let _ = state
-                .db
-                .finish_job(&check_id, "failed", &finished_at, &summary)
-                .await;
-            return Err(e);
-        }
-    }
+    });
 
     Ok(Json(TriggerCheckResponse { check_id }))
 }
@@ -1960,36 +1994,57 @@ async fn webhook_trigger(
             let host_platform =
                 registry::host_platform_override(state.config.host_platform.as_deref())
                     .unwrap_or_else(|| "linux/amd64".to_string());
-            let outcome = run_check_for_job(
-                &state,
-                &job_id,
-                &scope,
-                stack_id.as_deref(),
-                service_id.as_deref(),
-                &host_platform,
-                &now,
-            )
-            .await;
 
-            let finished_at = now_rfc3339().map_err(map_internal)?;
-            match outcome {
-                Ok(summary) => {
-                    state
-                        .db
-                        .finish_job(&job_id, "success", &finished_at, &summary)
-                        .await
-                        .map_err(map_internal)?;
-                    Ok(Json(WebhookTriggerResponse { job_id }))
+            let run_state = state.clone();
+            let run_job_id = job_id.clone();
+            let run_scope = scope.clone();
+            let run_stack_id = stack_id.clone();
+            let run_service_id = service_id.clone();
+            let run_host_platform = host_platform.clone();
+            let run_started_at = now.clone();
+            tokio::spawn(async move {
+                let outcome = run_check_for_job(
+                    &run_state,
+                    &run_job_id,
+                    &run_scope,
+                    run_stack_id.as_deref(),
+                    run_service_id.as_deref(),
+                    &run_host_platform,
+                    &run_started_at,
+                )
+                .await;
+
+                let finished_at =
+                    now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+                match outcome {
+                    Ok(summary) => {
+                        let _ = run_state
+                            .db
+                            .finish_job(&run_job_id, "success", &finished_at, &summary)
+                            .await;
+                    }
+                    Err(e) => {
+                        let _ = run_state
+                            .db
+                            .insert_job_log(
+                                &run_job_id,
+                                &JobLogLine {
+                                    ts: finished_at.clone(),
+                                    level: "error".to_string(),
+                                    msg: format!("webhook check failed: {e:?}"),
+                                },
+                            )
+                            .await;
+                        let summary = json!({"error": format!("{e:?}")});
+                        let _ = run_state
+                            .db
+                            .finish_job(&run_job_id, "failed", &finished_at, &summary)
+                            .await;
+                    }
                 }
-                Err(e) => {
-                    let summary = json!({"error": format!("{e:?}")});
-                    let _ = state
-                        .db
-                        .finish_job(&job_id, "failed", &finished_at, &summary)
-                        .await;
-                    Err(e)
-                }
-            }
+            });
+
+            Ok(Json(WebhookTriggerResponse { job_id }))
         }
         WebhookAction::Update => {
             let update_req = TriggerUpdateRequest {
