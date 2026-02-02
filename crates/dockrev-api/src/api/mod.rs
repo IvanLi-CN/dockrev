@@ -1557,6 +1557,13 @@ async fn list_service_candidates(
     headers: HeaderMap,
     Path(service_id): Path<String>,
 ) -> Result<Json<ServiceCandidatesResponse>, ApiError> {
+    use std::time::Duration;
+
+    use tokio::{
+        task::JoinSet,
+        time::{Instant, timeout, timeout_at},
+    };
+
     let _user = require_user(&state, &headers)?;
 
     let stack_id = state
@@ -1605,7 +1612,24 @@ async fn list_service_candidates(
         })
         .collect::<Vec<_>>();
 
-    let tags = state.registry.list_tags(&img).await.map_err(map_internal)?;
+    // Defensive: the candidates endpoint is on the hot path for UI interactivity. We aggressively
+    // bound latency and degrade by returning candidates with missing digests instead of letting
+    // the request hang until the edge gateway drops the connection (observed as HTTP/2 protocol
+    // errors in browsers).
+    const LIST_TAGS_TIMEOUT: Duration = Duration::from_secs(4);
+    const MANIFEST_TIMEOUT: Duration = Duration::from_secs(3);
+    const MANIFEST_BUDGET: Duration = Duration::from_secs(6);
+    const MANIFEST_CONCURRENCY: usize = 6;
+
+    let tags = match timeout(LIST_TAGS_TIMEOUT, state.registry.list_tags(&img)).await {
+        Ok(Ok(tags)) => tags,
+        Ok(Err(e)) => return Err(map_internal(e)),
+        Err(_) => {
+            return Err(ApiError::internal("registry timeout").with_details(json!({
+                "op": "list_tags"
+            })));
+        }
+    };
 
     let current_tag = svc.image.tag.clone();
     let current_semver = ignore::parse_version(&current_tag);
@@ -1646,35 +1670,105 @@ async fn list_service_candidates(
 
     let is_ignored = |tag: &str| matchers.iter().any(|(_, m)| m.matches(tag));
 
-    let mut out: Vec<ServiceCandidateOption> = Vec::new();
-    for tag in picked {
-        let ignored = is_ignored(&tag);
-        match state
-            .registry
-            .get_manifest(&img, &tag, &host_platform)
+    let registry = state.registry.clone();
+    let img = img.clone();
+    let host_platform = host_platform.clone();
+
+    let mut slots: Vec<Option<ServiceCandidateOption>> = vec![None; picked.len()];
+    let mut join_set: JoinSet<(usize, ServiceCandidateOption)> = JoinSet::new();
+    let mut queue = picked.iter().enumerate();
+
+    let spawn_one = |join_set: &mut JoinSet<(usize, ServiceCandidateOption)>,
+                     idx: usize,
+                     tag: String,
+                     ignored: bool,
+                     registry: Arc<dyn registry::RegistryClient>,
+                     img: registry::ImageRef,
+                     host_platform: String| {
+        join_set.spawn(async move {
+            let opt = match timeout(
+                MANIFEST_TIMEOUT,
+                registry.get_manifest(&img, &tag, &host_platform),
+            )
             .await
-        {
-            Ok(m) => {
-                let arch_match = registry::compute_arch_match(&host_platform, &m.arch);
-                out.push(ServiceCandidateOption {
-                    tag,
-                    digest: m.digest,
-                    arch_match,
-                    arch: m.arch,
-                    ignored,
-                });
-            }
-            Err(_) => {
-                out.push(ServiceCandidateOption {
+            {
+                Ok(Ok(m)) => {
+                    let arch_match = registry::compute_arch_match(&host_platform, &m.arch);
+                    ServiceCandidateOption {
+                        tag,
+                        digest: m.digest,
+                        arch_match,
+                        arch: m.arch,
+                        ignored,
+                    }
+                }
+                _ => ServiceCandidateOption {
                     tag,
                     digest: None,
                     arch_match: ArchMatch::Unknown,
                     arch: Vec::new(),
                     ignored,
-                });
+                },
+            };
+            (idx, opt)
+        });
+    };
+
+    for _ in 0..MANIFEST_CONCURRENCY {
+        let Some((idx, tag)) = queue.next() else {
+            break;
+        };
+        spawn_one(
+            &mut join_set,
+            idx,
+            tag.clone(),
+            is_ignored(tag),
+            registry.clone(),
+            img.clone(),
+            host_platform.clone(),
+        );
+    }
+
+    let deadline = Instant::now() + MANIFEST_BUDGET;
+    while let Ok(next) = timeout_at(deadline, join_set.join_next()).await {
+        let Some(joined) = next else { break };
+        if let Ok((idx, opt)) = joined {
+            if idx < slots.len() {
+                slots[idx] = Some(opt);
             }
         }
+
+        let Some((idx, tag)) = queue.next() else {
+            continue;
+        };
+        spawn_one(
+            &mut join_set,
+            idx,
+            tag.clone(),
+            is_ignored(tag),
+            registry.clone(),
+            img.clone(),
+            host_platform.clone(),
+        );
     }
+
+    // If we ran out of time, abort remaining in-flight tasks and degrade gracefully.
+    join_set.abort_all();
+
+    for (idx, tag) in picked.iter().enumerate() {
+        if slots[idx].is_some() {
+            continue;
+        }
+        slots[idx] = Some(ServiceCandidateOption {
+            tag: tag.clone(),
+            digest: None,
+            arch_match: ArchMatch::Unknown,
+            arch: Vec::new(),
+            ignored: is_ignored(tag),
+        });
+    }
+
+    let out = slots.into_iter().flatten().collect::<Vec<_>>();
 
     Ok(Json(ServiceCandidatesResponse { candidates: out }))
 }

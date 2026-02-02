@@ -46,6 +46,36 @@ impl RegistryClient for FakeRegistry {
     }
 }
 
+#[derive(Clone)]
+struct SlowRegistry {
+    delay: Duration,
+}
+
+#[async_trait::async_trait]
+impl RegistryClient for SlowRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        let mut out = Vec::new();
+        // 30 tags (the endpoint has its own cap); keep it deterministic for ordering assertions.
+        for i in 0..30 {
+            out.push(format!("5.{i}.0"));
+        }
+        Ok(out)
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        tokio::time::sleep(self.delay).await;
+        Ok(ManifestInfo {
+            digest: Some(format!("sha256:{reference}")),
+            arch: vec!["linux/amd64".to_string()],
+        })
+    }
+}
+
 #[derive(Clone, Default)]
 struct FakeRunner;
 
@@ -331,6 +361,127 @@ async fn supervisor_paths_are_not_swallowed_by_ui_fallback() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
+async fn service_candidates_is_fast_when_registry_is_slow_but_bounded() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(SlowRegistry {
+            delay: Duration::from_millis(200),
+        }),
+        Arc::new(FakeRunner),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2.0
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let detail = response_json(resp).await;
+    let service_id = detail["stack"]["services"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = tokio::time::timeout(
+        Duration::from_secs(2),
+        app.clone().oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/candidates"))
+                .body(Body::empty())
+                .unwrap(),
+        ),
+    )
+    .await
+    .expect("candidates request should not exceed latency budget")
+    .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    let candidates = body["candidates"].as_array().unwrap();
+    // Tags <= current (5.2.0) are intentionally skipped by the endpoint.
+    assert_eq!(candidates.len(), 27);
+    assert!(candidates.iter().all(|c| !c["digest"].is_null()));
+}
+
+#[tokio::test]
+async fn service_candidates_degrades_when_registry_hangs() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(SlowRegistry {
+            delay: Duration::from_secs(10),
+        }),
+        Arc::new(FakeRunner),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2.0
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let detail = response_json(resp).await;
+    let service_id = detail["stack"]["services"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = tokio::time::timeout(
+        Duration::from_secs(7),
+        app.clone().oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/candidates"))
+                .body(Body::empty())
+                .unwrap(),
+        ),
+    )
+    .await
+    .expect("candidates request should degrade instead of hanging")
+    .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    let candidates = body["candidates"].as_array().unwrap();
+    assert_eq!(candidates.len(), 27);
+    assert!(candidates.iter().any(|c| c["digest"].is_null()));
 }
 
 #[tokio::test]
