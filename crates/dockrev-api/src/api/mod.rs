@@ -2479,15 +2479,20 @@ async fn resolve_github_packages_target(
                 repos: repos
                     .into_iter()
                     .filter_map(|r| {
-                        let mut parts = r.full_name.split('/');
-                        let ro = parts.next().unwrap_or_default().trim();
-                        let rr = parts.next().unwrap_or_default().trim();
-                        if ro.is_empty() || rr.is_empty() || parts.next().is_some() {
-                            return None;
-                        }
+                        // Avoid borrowing `full_name` across moving it into the response.
+                        let full_name = r.full_name;
+                        let selected = {
+                            let mut parts = full_name.split('/');
+                            let ro = parts.next().unwrap_or_default().trim();
+                            let rr = parts.next().unwrap_or_default().trim();
+                            if ro.is_empty() || rr.is_empty() || parts.next().is_some() {
+                                return None;
+                            }
+                            existing_selected.contains(&rr.to_lowercase())
+                        };
                         Some(GitHubPackagesRepoSelection {
-                            full_name: r.full_name,
-                            selected: existing_selected.contains(&rr.to_lowercase()),
+                            full_name,
+                            selected,
                         })
                     })
                     .collect(),
