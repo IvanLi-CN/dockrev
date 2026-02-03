@@ -672,6 +672,10 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
     if (!state) return json({ error: 'mock not initialized' }, { status: 500 })
     const f = state
 
+    if (urlPath === '/api/version' && method === 'GET') {
+      return json({ version: '0.0.0-mock' })
+    }
+
     // stacks
     if (method === 'GET' && (urlPathWithQuery === '/api/stacks' || urlPathWithQuery.startsWith('/api/stacks?'))) {
       const query = url?.search ? url.search.slice(1) : urlPathWithQuery.includes('?') ? urlPathWithQuery.split('?')[1] : ''

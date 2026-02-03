@@ -234,6 +234,15 @@ async function apiFetch(path: string, init?: RequestInit) {
   return resp
 }
 
+export async function getDockrevVersion(): Promise<string> {
+  const resp = await apiFetch('/api/version')
+  const data = (await resp.json()) as unknown
+  if (!isRecord(data) || typeof data.version !== 'string' || !data.version.trim()) {
+    throw new Error('invalid /api/version response')
+  }
+  return data.version
+}
+
 export async function listStacks(): Promise<StackListItem[]> {
   const resp = await apiFetch('/api/stacks')
   const data = await resp.json()

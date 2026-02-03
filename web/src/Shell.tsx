@@ -1,4 +1,5 @@
-import { useMemo, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { getDockrevVersion } from './api'
 import { Chip, Mono } from './ui'
 import { ConfirmProvider } from './ConfirmProvider'
 import type { Route } from './routes'
@@ -21,6 +22,7 @@ export function AppShell(props: {
   children: ReactNode
 }) {
   const active = props.route.name === 'service' ? 'services' : props.route.name
+  const [appVersion, setAppVersion] = useState<string | null>(null)
 
   const composePath = props.composeHint?.path
   const profile = props.composeHint?.profile
@@ -35,6 +37,22 @@ export function AppShell(props: {
     ],
     [],
   )
+
+  useEffect(() => {
+    let cancelled = false
+    void getDockrevVersion()
+      .then((v) => {
+        if (cancelled) return
+        setAppVersion(v)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setAppVersion(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   return (
     <ConfirmProvider>
@@ -92,6 +110,26 @@ export function AppShell(props: {
           ) : (
             <div className="sidebarMuted">-</div>
           )}
+
+          <div className="sidebarMeta">
+            <div className="sidebarMetaDivider" aria-hidden="true" />
+            <div className="sidebarMetaRow">
+              <span className="sidebarMetaLabel">版本</span>
+              <Mono>{appVersion ?? '-'}</Mono>
+            </div>
+            <div className="sidebarMetaRow">
+              <span className="sidebarMetaLabel">开源</span>
+              <a href="https://github.com/IvanLi-CN/dockrev" target="_blank" rel="noreferrer">
+                <Mono>IvanLi-CN/dockrev</Mono>
+              </a>
+            </div>
+            <div className="sidebarMetaRow">
+              <span className="sidebarMetaLabel">开发者</span>
+              <a href="https://github.com/IvanLi-CN" target="_blank" rel="noreferrer">
+                <Mono>Ivan Li</Mono>
+              </a>
+            </div>
+          </div>
         </aside>
 
         <main className="content">
