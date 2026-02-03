@@ -22,7 +22,7 @@ import {
   type NotificationConfig,
   type SettingsResponse,
 } from '../api'
-import { Button, Mono, Switch } from '../ui'
+import { Button, IconButton, Mono, RefreshIcon, Switch, TrashIcon } from '../ui'
 import { useConfirm } from '../confirm'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
@@ -718,8 +718,9 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                       </div>
 
                       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flex: '0 0 auto' }}>
-                        <Button
+                        <IconButton
                           variant="ghost"
+                          title="同步状态"
                           disabled={busy || !githubPackages.enabled}
                           onClick={() => {
                             void (async () => {
@@ -737,11 +738,12 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                             })()
                           }}
                         >
-                          同步状态
-                        </Button>
+                          <RefreshIcon className="uiIcon" />
+                        </IconButton>
 
-                        <Button
+                        <IconButton
                           variant="ghost"
+                          title="删除"
                           disabled={busy}
                           onClick={() => {
                             void (async () => {
@@ -780,8 +782,8 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                             })()
                           }}
                         >
-                          删除
-                        </Button>
+                          <TrashIcon className="uiIcon" />
+                        </IconButton>
                       </div>
                     </div>
                   )
