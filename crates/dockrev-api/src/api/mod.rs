@@ -375,19 +375,6 @@ async fn trigger_check(
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
 
-    state
-        .db
-        .insert_job_log(
-            &check_id,
-            &JobLogLine {
-                ts: now.clone(),
-                level: "info".to_string(),
-                msg: "check started".to_string(),
-            },
-        )
-        .await
-        .map_err(map_internal)?;
-
     // Run the check job in the background so it is not tied to the HTTP request lifecycle.
     // This avoids orphaned `running` jobs when the client disconnects or the gateway times out.
     let run_state = state.clone();
@@ -398,6 +385,18 @@ async fn trigger_check(
     let run_host_platform = host_platform.clone();
     let run_started_at = now.clone();
     tokio::spawn(async move {
+        let _ = run_state
+            .db
+            .insert_job_log(
+                &run_check_id,
+                &JobLogLine {
+                    ts: run_started_at.clone(),
+                    level: "info".to_string(),
+                    msg: "check started".to_string(),
+                },
+            )
+            .await;
+
         let outcome = run_check_for_job(
             &run_state,
             &run_check_id,
@@ -1978,19 +1977,6 @@ async fn webhook_trigger(
             job_db.reason = "webhook".to_string();
             state.db.insert_job(job_db).await.map_err(map_internal)?;
 
-            state
-                .db
-                .insert_job_log(
-                    &job_id,
-                    &JobLogLine {
-                        ts: now.clone(),
-                        level: "info".to_string(),
-                        msg: "webhook check started".to_string(),
-                    },
-                )
-                .await
-                .map_err(map_internal)?;
-
             let host_platform =
                 registry::host_platform_override(state.config.host_platform.as_deref())
                     .unwrap_or_else(|| "linux/amd64".to_string());
@@ -2003,6 +1989,18 @@ async fn webhook_trigger(
             let run_host_platform = host_platform.clone();
             let run_started_at = now.clone();
             tokio::spawn(async move {
+                let _ = run_state
+                    .db
+                    .insert_job_log(
+                        &run_job_id,
+                        &JobLogLine {
+                            ts: run_started_at.clone(),
+                            level: "info".to_string(),
+                            msg: "webhook check started".to_string(),
+                        },
+                    )
+                    .await;
+
                 let outcome = run_check_for_job(
                     &run_state,
                     &run_job_id,
