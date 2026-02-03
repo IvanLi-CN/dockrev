@@ -82,6 +82,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(set_github_packages_repo_selected),
         )
         .route(
+            "/api/github-packages/repos/delete",
+            post(delete_github_packages_repo),
+        )
+        .route(
             "/api/github-packages/repos/bulk-selected",
             post(bulk_set_github_packages_repos_selected),
         )
@@ -2218,17 +2222,88 @@ async fn set_github_packages_repo_selected(
         return Err(ApiError::invalid_argument("invalid fullName"));
     }
 
-    let ok = state
+    state
         .db
-        .set_github_packages_repo_selected(owner, repo, req.selected, &now)
+        .upsert_github_packages_repo_selected(owner, repo, req.selected, &now)
         .await
         .map_err(map_internal)?;
 
-    if !ok {
-        return Err(ApiError::invalid_argument("repo not found"));
+    Ok(Json(SetGitHubPackagesRepoSelectedResponse { ok: true }))
+}
+
+async fn delete_github_packages_repo(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<DeleteGitHubPackagesRepoRequest>,
+) -> Result<Json<DeleteGitHubPackagesRepoResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+
+    let mut parts = req.full_name.split('/');
+    let owner = parts.next().unwrap_or_default().trim();
+    let repo = parts.next().unwrap_or_default().trim();
+    if owner.is_empty() || repo.is_empty() || parts.next().is_some() {
+        return Err(ApiError::invalid_argument("invalid fullName"));
     }
 
-    Ok(Json(SetGitHubPackagesRepoSelectedResponse { ok: true }))
+    let settings = state
+        .db
+        .get_github_packages_settings()
+        .await
+        .map_err(map_internal)?;
+    let Some(pat) = settings.pat.clone() else {
+        return Err(ApiError::invalid_argument("pat is required"));
+    };
+    if settings.callback_url.trim().is_empty() {
+        return Err(ApiError::invalid_argument("callbackUrl is required"));
+    }
+    let _ = Url::parse(&settings.callback_url)
+        .map_err(|_| ApiError::invalid_argument("invalid callbackUrl"))?;
+
+    let client = github::GitHubClient::new(&pat).map_err(map_internal)?;
+    let hooks = client
+        .list_repo_hooks(owner, repo)
+        .await
+        .map_err(map_internal)?;
+
+    // Remove all hooks that match our callback URL + package event.
+    let mut deleted_hook_ids = Vec::new();
+    let mut delete_errors: Vec<String> = Vec::new();
+    for h in hooks {
+        let Some(url) = h.config.url.as_deref() else {
+            continue;
+        };
+        if !urls_match(url, &settings.callback_url) {
+            continue;
+        }
+        if !h.events.iter().any(|e| e == "package") {
+            continue;
+        }
+        match client.delete_repo_hook(owner, repo, h.id).await {
+            Ok(_) => deleted_hook_ids.push(h.id),
+            Err(e) => delete_errors.push(format!("hook {}: {}", h.id, e)),
+        }
+    }
+
+    if !delete_errors.is_empty() {
+        return Err(
+            ApiError::internal("failed to delete webhook").with_details(json!({
+                "repo": req.full_name,
+                "deletedHookIds": deleted_hook_ids,
+                "errors": delete_errors,
+            })),
+        );
+    }
+
+    state
+        .db
+        .delete_github_packages_repo(owner, repo)
+        .await
+        .map_err(map_internal)?;
+
+    Ok(Json(DeleteGitHubPackagesRepoResponse {
+        ok: true,
+        deleted_hook_ids,
+    }))
 }
 
 async fn bulk_set_github_packages_repos_selected(
@@ -2353,15 +2428,23 @@ async fn resolve_github_packages_target(
     })?;
 
     match parsed {
-        github::TargetKind::Repo { owner, repo } => Ok(Json(ResolveGitHubPackagesTargetResponse {
-            kind: "repo".to_string(),
-            owner: owner.clone(),
-            repos: vec![GitHubPackagesRepoSelection {
-                full_name: format!("{owner}/{repo}"),
-                selected: true,
-            }],
-            warnings: Vec::new(),
-        })),
+        github::TargetKind::Repo { owner, repo } => {
+            let selected = state
+                .db
+                .get_github_packages_repo_selected(owner.as_str(), repo.as_str())
+                .await
+                .map_err(map_internal)?
+                .unwrap_or(true);
+            Ok(Json(ResolveGitHubPackagesTargetResponse {
+                kind: "repo".to_string(),
+                owner: owner.clone(),
+                repos: vec![GitHubPackagesRepoSelection {
+                    full_name: format!("{owner}/{repo}"),
+                    selected,
+                }],
+                warnings: Vec::new(),
+            }))
+        }
         github::TargetKind::Owner { owner } => {
             let settings = state
                 .db
@@ -2378,14 +2461,34 @@ async fn resolve_github_packages_target(
                 .list_owner_repos(&owner)
                 .await
                 .map_err(map_internal)?;
+            // Default to "not selected", but keep existing tracked repos selected.
+            let existing = state
+                .db
+                .list_github_packages_repos_selected_by_owner(owner.as_str())
+                .await
+                .map_err(map_internal)?;
+            let mut existing_selected = std::collections::HashSet::<String>::new();
+            for (repo, selected) in existing {
+                if selected {
+                    existing_selected.insert(repo.to_lowercase());
+                }
+            }
             Ok(Json(ResolveGitHubPackagesTargetResponse {
                 kind: "owner".to_string(),
-                owner,
+                owner: owner.clone(),
                 repos: repos
                     .into_iter()
-                    .map(|r| GitHubPackagesRepoSelection {
-                        full_name: r.full_name,
-                        selected: true,
+                    .filter_map(|r| {
+                        let mut parts = r.full_name.split('/');
+                        let ro = parts.next().unwrap_or_default().trim();
+                        let rr = parts.next().unwrap_or_default().trim();
+                        if ro.is_empty() || rr.is_empty() || parts.next().is_some() {
+                            return None;
+                        }
+                        Some(GitHubPackagesRepoSelection {
+                            full_name: r.full_name,
+                            selected: existing_selected.contains(&rr.to_lowercase()),
+                        })
                     })
                     .collect(),
                 warnings: Vec::new(),
@@ -2463,7 +2566,7 @@ async fn sync_github_packages_webhooks(
     let _ = Url::parse(&settings.callback_url)
         .map_err(|_| ApiError::invalid_argument("invalid callbackUrl"))?;
 
-    let selected_repos: Vec<(String, String)> = state
+    let mut selected_repos: Vec<(String, String)> = state
         .db
         .list_github_packages_repos()
         .await
@@ -2472,6 +2575,14 @@ async fn sync_github_packages_webhooks(
         .filter(|r| r.selected)
         .map(|r| (r.owner, r.repo))
         .collect();
+    if let Some(req_repos) = &req.repos {
+        let allow = req_repos
+            .iter()
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect::<std::collections::HashSet<_>>();
+        selected_repos.retain(|(o, r)| allow.contains(&format!("{}/{}", o, r).to_lowercase()));
+    }
 
     let client = github::GitHubClient::new(&pat).map_err(map_internal)?;
     let mut results = Vec::new();

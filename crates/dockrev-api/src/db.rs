@@ -1870,6 +1870,107 @@ WHERE owner = ?1 AND repo = ?2
         .context("set github packages repo selected")
     }
 
+    pub async fn upsert_github_packages_repo_selected(
+        &self,
+        owner: &str,
+        repo: &str,
+        selected: bool,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let owner = owner.to_string();
+        let repo = repo.to_string();
+        let now = now.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                r#"
+INSERT INTO github_packages_repos (owner, repo, selected, updated_at)
+VALUES (?1, ?2, ?3, ?4)
+ON CONFLICT(owner, repo) DO UPDATE SET
+  selected = excluded.selected,
+  updated_at = excluded.updated_at
+"#,
+                params![owner, repo, selected as i64, now],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("upsert github packages repo selected")
+    }
+
+    pub async fn get_github_packages_repo_selected(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> anyhow::Result<Option<bool>> {
+        let owner = owner.to_string();
+        let repo = repo.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT selected
+FROM github_packages_repos
+WHERE lower(owner) = lower(?1) AND lower(repo) = lower(?2)
+LIMIT 1
+"#,
+            )?;
+            let mut rows = stmt.query(params![owner, repo])?;
+            if let Some(row) = rows.next()? {
+                let selected = row.get::<_, i64>(0)? != 0;
+                Ok(Some(selected))
+            } else {
+                Ok(None)
+            }
+        })
+        .await
+        .context("get github packages repo selected")
+    }
+
+    pub async fn list_github_packages_repos_selected_by_owner(
+        &self,
+        owner: &str,
+    ) -> anyhow::Result<Vec<(String, bool)>> {
+        let owner = owner.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT repo, selected
+FROM github_packages_repos
+WHERE lower(owner) = lower(?1)
+ORDER BY repo ASC
+"#,
+            )?;
+            let rows = stmt.query_map(params![owner], |row| {
+                let repo: String = row.get(0)?;
+                let selected = row.get::<_, i64>(1)? != 0;
+                Ok((repo, selected))
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list github packages repos selected by owner")
+    }
+
+    pub async fn delete_github_packages_repo(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> anyhow::Result<bool> {
+        let owner = owner.to_string();
+        let repo = repo.to_string();
+        self.call(move |conn| {
+            let n = conn.execute(
+                r#"
+DELETE FROM github_packages_repos
+WHERE lower(owner) = lower(?1) AND lower(repo) = lower(?2)
+"#,
+                params![owner, repo],
+            )?;
+            Ok(n > 0)
+        })
+        .await
+        .context("delete github packages repo")
+    }
+
     pub async fn bulk_set_github_packages_repos_selected(
         &self,
         q: Option<&str>,

@@ -801,10 +801,23 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       const selected = getBoolean(parsed?.selected)
       if (!fullName || selected === null) return json({ error: 'invalid input' }, { status: 400 })
       const row = f.githubPackagesRepos.find((r) => r.fullName === fullName)
-      if (!row) return json({ error: 'repo not found' }, { status: 400 })
-      row.selected = selected
+      if (!row) {
+        f.githubPackagesRepos.push({ fullName, selected, hookId: null, lastSyncAt: null, lastError: null })
+      } else {
+        row.selected = selected
+      }
       recomputeGithubPackagesCounts()
       return json({ ok: true })
+    }
+    if (method === 'POST' && urlPath === '/api/github-packages/repos/delete') {
+      const parsed = parseJsonBody(init?.body) as { fullName?: unknown } | null
+      const fullName = getString(parsed?.fullName)?.trim() ?? ''
+      if (!fullName) return json({ error: 'invalid input' }, { status: 400 })
+      const idx = f.githubPackagesRepos.findIndex((r) => r.fullName === fullName)
+      const row = idx >= 0 ? f.githubPackagesRepos[idx] : null
+      if (idx >= 0) f.githubPackagesRepos.splice(idx, 1)
+      recomputeGithubPackagesCounts()
+      return json({ ok: true, deletedHookIds: row?.hookId ? [row.hookId] : [] })
     }
     if (method === 'POST' && urlPath === '/api/github-packages/repos/bulk-selected') {
       const parsed = parseJsonBody(init?.body) as BulkSetGitHubPackagesReposSelectedRequest | null
@@ -894,7 +907,11 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       const mkOwner = (owner: string): ResolveGitHubPackagesTargetResponse => ({
         kind: 'owner',
         owner,
-        repos: ['dockrev', 'dockrev-supervisor', 'example-private'].map((r) => ({ fullName: `${owner}/${r}`, selected: true })),
+        repos: ['dockrev', 'dockrev-supervisor', 'example-private'].map((r) => {
+          const fullName = `${owner}/${r}`
+          const existing = f.githubPackagesRepos.find((x) => x.fullName === fullName)
+          return { fullName, selected: existing?.selected ?? false }
+        }),
         warnings: [],
       })
 
@@ -903,10 +920,12 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         const owner = m?.[1] ?? 'unknown'
         const repo = m?.[2]
         if (repo) {
+          const fullName = `${owner}/${repo.replace(/\\.git$/i, '')}`
+          const existing = f.githubPackagesRepos.find((x) => x.fullName === fullName)
           const resp: ResolveGitHubPackagesTargetResponse = {
             kind: 'repo',
             owner,
-            repos: [{ fullName: `${owner}/${repo.replace(/\\.git$/i, '')}`, selected: true }],
+            repos: [{ fullName, selected: existing?.selected ?? true }],
             warnings: [],
           }
           return json(resp)
@@ -917,9 +936,12 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       return json(mkOwner(inputStr))
     }
     if (method === 'POST' && urlPath === '/api/github-packages/sync') {
-      const results = f.githubPackagesRepos
-        .filter((r) => r.selected)
-        .map((r) => ({ repo: r.fullName, action: r.hookId ? 'noop' : 'created', hookId: r.hookId ?? 7654321 }))
+      const parsed = parseJsonBody(init?.body) as { repos?: unknown } | null
+      const allow = Array.isArray(parsed?.repos)
+        ? new Set(parsed?.repos.map((x) => getString(x)?.trim()).filter(Boolean) as string[])
+        : null
+      const selected = f.githubPackagesRepos.filter((r) => r.selected && (!allow || allow.has(r.fullName)))
+      const results = selected.map((r) => ({ repo: r.fullName, action: r.hookId ? 'noop' : 'created', hookId: r.hookId ?? 7654321 }))
       const resp: SyncGitHubPackagesWebhooksResponse = { ok: true, results }
 
       for (const it of results) {

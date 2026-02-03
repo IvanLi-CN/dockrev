@@ -224,6 +224,7 @@ export type SyncGitHubPackagesWebhookResult = {
 export type SyncGitHubPackagesWebhooksRequest = {
   dryRun?: boolean
   resolveConflicts?: Array<{ repo: string; keepHookId: number; deleteHookIds: number[] }>
+  repos?: string[] | null
 }
 
 export type SyncGitHubPackagesWebhooksResponse = {
@@ -258,6 +259,15 @@ export type BulkSetGitHubPackagesReposSelectedRequest = {
 export type BulkSetGitHubPackagesReposSelectedResponse = {
   ok: boolean
   affected: number
+}
+
+export type DeleteGitHubPackagesRepoRequest = {
+  fullName: string
+}
+
+export type DeleteGitHubPackagesRepoResponse = {
+  ok: boolean
+  deletedHookIds: number[]
 }
 
 export type AddGitHubPackagesTargetRequest = {
@@ -551,6 +561,14 @@ export async function setGitHubPackagesRepoSelected(input: SetGitHubPackagesRepo
     body: JSON.stringify(input),
   })
   return (await resp.json()) as SetGitHubPackagesRepoSelectedResponse
+}
+
+export async function deleteGitHubPackagesRepo(input: DeleteGitHubPackagesRepoRequest) {
+  const resp = await apiFetch('/api/github-packages/repos/delete', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+  return (await resp.json()) as DeleteGitHubPackagesRepoResponse
 }
 
 export async function bulkSetGitHubPackagesReposSelected(input: BulkSetGitHubPackagesReposSelectedRequest) {

@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  addGitHubPackagesTarget,
-  bulkSetGitHubPackagesReposSelected,
   createWebPushSubscription,
+  deleteGitHubPackagesRepo,
   deleteWebPushSubscription,
   getGitHubPackagesSettings,
   getNotifications,
@@ -11,18 +10,20 @@ import {
   putGitHubPackagesSettings,
   putNotifications,
   putSettings,
-  removeGitHubPackagesTarget,
+  resolveGitHubPackagesTarget,
   setGitHubPackagesRepoSelected,
   syncGitHubPackagesWebhooks,
   testNotifications,
   apiBaseUrl,
   type GitHubPackagesSettingsResponse,
   type ListGitHubPackagesReposResponse,
+  type ResolveGitHubPackagesTargetResponse,
   type SyncGitHubPackagesWebhookResult,
   type NotificationConfig,
   type SettingsResponse,
 } from '../api'
 import { Button, Mono, Switch } from '../ui'
+import { useConfirm } from '../confirm'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 
@@ -52,44 +53,75 @@ function formatBytes(n: number) {
   return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
 }
 
+function GitHubPackagesRepoPicker({
+  initial,
+  onChange,
+}: {
+  initial: ResolveGitHubPackagesTargetResponse
+  onChange: (repos: Array<{ fullName: string; selected: boolean }>) => void
+}) {
+  const [repos, setRepos] = useState(() => initial.repos.map((r) => ({ ...r })))
+
+  useEffect(() => {
+    onChange(repos)
+  }, [repos, onChange])
+
+  return (
+    <div>
+      <div className="modalLead">
+        profile <Mono>{initial.owner}</Mono> · 选择要跟踪的仓库
+      </div>
+      <div className="modalList" style={{ maxHeight: 420, overflowY: 'auto' }}>
+        {repos.map((r) => (
+          <div key={r.fullName} className="modalListItem">
+            <div className="modalListLeft" style={{ minWidth: 0 }}>
+              <div className="modalListTitle">
+                <span className="mono" style={{ overflowWrap: 'anywhere' }}>
+                  {r.fullName}
+                </span>
+              </div>
+            </div>
+            <div className="modalListRight">
+              <Switch
+                checked={r.selected}
+                onChange={(v) => {
+                  setRepos((prev) => prev.map((x) => (x.fullName === r.fullName ? { ...x, selected: v } : x)))
+                }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => void }) {
   const { onTopActions } = props
+  const confirm = useConfirm()
   const [settings, setSettings] = useState<SettingsResponse | null>(null)
   const [notifications, setNotifications] = useState<NotificationConfig | null>(null)
   const [githubPackages, setGitHubPackages] = useState<GitHubPackagesSettingsResponse | null>(null)
   const [githubPackagesPat, setGitHubPackagesPat] = useState('')
-  const [githubPackagesNewTarget, setGitHubPackagesNewTarget] = useState('')
+  const [githubPackagesNewRepo, setGitHubPackagesNewRepo] = useState('')
   const [githubPackagesSyncResults, setGitHubPackagesSyncResults] = useState<SyncGitHubPackagesWebhookResult[] | null>(null)
-  const [githubPackagesRepos, setGitHubPackagesRepos] = useState<ListGitHubPackagesReposResponse | null>(null)
-  const [githubPackagesReposPage, setGitHubPackagesReposPage] = useState(1)
-  const [githubPackagesReposPerPage, setGitHubPackagesReposPerPage] = useState(20)
-  const [githubPackagesReposQ, setGitHubPackagesReposQ] = useState('')
-  const [githubPackagesReposSelectedFilter, setGitHubPackagesReposSelectedFilter] = useState<'all' | 'selected' | 'unselected'>(
-    'all',
-  )
+  const [githubPackagesTrackedRepos, setGitHubPackagesTrackedRepos] = useState<ListGitHubPackagesReposResponse | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [webPushEndpoint, setWebPushEndpoint] = useState<string | null>(null)
   const supervisor = useSupervisorHealth()
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
 
-  const refreshRepos = useCallback(
-    async (opts?: { page?: number; perPage?: number; q?: string; selectedFilter?: 'all' | 'selected' | 'unselected' }) => {
-      const page = opts?.page ?? githubPackagesReposPage
-      const perPage = opts?.perPage ?? githubPackagesReposPerPage
-      const q = (opts?.q ?? githubPackagesReposQ).trim()
-      const selectedFilter = opts?.selectedFilter ?? githubPackagesReposSelectedFilter
-      setGitHubPackagesRepos(
-        await listGitHubPackagesRepos({
-          page,
-          perPage,
-          q: q || null,
-          selectedFilter,
-        }),
-      )
-    },
-    [githubPackagesReposPage, githubPackagesReposPerPage, githubPackagesReposQ, githubPackagesReposSelectedFilter],
-  )
+  const refreshTrackedRepos = useCallback(async () => {
+    setGitHubPackagesTrackedRepos(
+      await listGitHubPackagesRepos({
+        page: 1,
+        perPage: 200,
+        q: null,
+        selectedFilter: 'selected',
+      }),
+    )
+  }, [])
 
   const refresh = useCallback(async () => {
     setError(null)
@@ -105,28 +137,14 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     const callbackUrl = gh.callbackUrl || defaultCallbackUrl
     setGitHubPackages({ ...gh, callbackUrl })
     setGitHubPackagesPat(gh.patMasked ?? '')
-    setGitHubPackagesSyncResults(null)
   }, [])
 
   useEffect(() => {
     void (async () => {
       await refresh()
-      setGitHubPackagesReposPage(1)
-      await refreshRepos({ page: 1 })
+      await refreshTrackedRepos()
     })().catch((e: unknown) => setError(errorMessage(e)))
-  }, [refresh, refreshRepos])
-
-  useEffect(() => {
-    void refreshRepos({ page: githubPackagesReposPage }).catch((e: unknown) => setError(errorMessage(e)))
-  }, [githubPackagesReposPage, refreshRepos])
-
-  useEffect(() => {
-    const t = window.setTimeout(() => {
-      setGitHubPackagesReposPage(1)
-      void refreshRepos({ page: 1 }).catch((e: unknown) => setError(errorMessage(e)))
-    }, 250)
-    return () => window.clearTimeout(t)
-  }, [githubPackagesReposPerPage, githubPackagesReposQ, githubPackagesReposSelectedFilter, refreshRepos])
+  }, [refresh, refreshTrackedRepos])
 
   useEffect(() => {
     onTopActions(
@@ -588,35 +606,69 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
           <div className="settingsSection">
             <div className="settingHead">
-              <div className="sectionTitle">Targets</div>
-              <div className="muted">{githubPackages.targets.length} 个</div>
+              <div className="sectionTitle">Repos</div>
+              <div className="muted">{githubPackages.reposSelectedTotal} 个</div>
             </div>
 
             <div className="kv">
               <div className="kvRow">
-                <div className="label">新增 Target</div>
+                <div className="label">添加 Repo</div>
                 <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                   <input
                     className="input"
-                    value={githubPackagesNewTarget}
-                    onChange={(e) => setGitHubPackagesNewTarget(e.target.value)}
-                    placeholder="https://github.com/org/repo 或 https://github.com/org 或 org"
+                    value={githubPackagesNewRepo}
+                    onChange={(e) => setGitHubPackagesNewRepo(e.target.value)}
+                    placeholder="https://github.com/org/repo 或 org/repo；也可粘贴 profile/org URL 批量选择"
                     style={{ flex: 1 }}
                   />
                   <Button
                     variant="ghost"
-                    disabled={busy || !githubPackagesNewTarget.trim()}
+                    disabled={busy || !githubPackagesNewRepo.trim()}
                     onClick={() => {
                       void (async () => {
                         setBusy(true)
                         setError(null)
+                        setGitHubPackagesSyncResults(null)
                         try {
-                          const input = githubPackagesNewTarget.trim()
-                          await addGitHubPackagesTarget({ input })
-                          setGitHubPackagesNewTarget('')
-                          await refresh()
-                          setGitHubPackagesReposPage(1)
-                          await refreshRepos({ page: 1 })
+                          const input = githubPackagesNewRepo.trim()
+                          const resolved = await resolveGitHubPackagesTarget(input)
+                          if (resolved.kind === 'repo') {
+                            const fullName = resolved.repos[0]?.fullName?.trim() ?? ''
+                            if (!fullName) throw new Error('resolve returned empty repo')
+                            await setGitHubPackagesRepoSelected({ fullName, selected: true })
+                            setGitHubPackagesNewRepo('')
+                            await refresh()
+                            await refreshTrackedRepos()
+                            return
+                          }
+                          if (resolved.kind === 'owner') {
+                            let picked = resolved.repos.map((r) => ({ ...r }))
+                            const ok = await confirm({
+                              title: '选择要跟踪的仓库',
+                              body: (
+                                <GitHubPackagesRepoPicker
+                                  initial={resolved}
+                                  onChange={(next) => {
+                                    picked = next
+                                  }}
+                                />
+                              ),
+                              confirmText: '确认',
+                              cancelText: '取消',
+                              confirmVariant: 'primary',
+                              badgeText: null,
+                            })
+                            if (!ok) return
+                            const selected = picked.filter((r) => r.selected).map((r) => r.fullName)
+                            for (const fullName of selected) {
+                              await setGitHubPackagesRepoSelected({ fullName, selected: true })
+                            }
+                            setGitHubPackagesNewRepo('')
+                            await refresh()
+                            await refreshTrackedRepos()
+                            return
+                          }
+                          throw new Error(`unsupported resolve kind: ${resolved.kind}`)
                         } catch (e: unknown) {
                           setError(errorMessage(e))
                         } finally {
@@ -631,289 +683,116 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               </div>
             </div>
 
-            {githubPackages.targets.length ? (
-              <div className="kv" style={{ marginTop: 10 }}>
-                {githubPackages.targets.map((t) => (
-                  <div className="kvRow" key={t.input}>
-                    <div className="label">Target</div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                      <div className="mono">
-                        {t.input} <span className="muted">({t.kind}:{t.owner})</span>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        disabled={busy}
-                        onClick={() => {
-                          void (async () => {
-                            const ok = window.confirm(
-                              `移除 target: ${t.input}\n\n注意：当前版本不会自动删除 repos 记录（仅移除 target）。`,
-                            )
-                            if (!ok) return
-                            setBusy(true)
-                            setError(null)
-                            try {
-                              await removeGitHubPackagesTarget({ input: t.input })
-                              await refresh()
-                              setGitHubPackagesReposPage(1)
-                              await refreshRepos({ page: 1 })
-                            } catch (e: unknown) {
-                              setError(errorMessage(e))
-                            } finally {
-                              setBusy(false)
-                            }
-                          })()
-                        }}
-                      >
-                        移除
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="muted" style={{ marginTop: 10 }}>
-                尚未添加 target（可直接粘贴 repo URL / profile URL / username）
-              </div>
-            )}
-          </div>
-
-          <div className="settingsSection">
-            <div className="settingHead">
-              <div className="sectionTitle">Repos</div>
-              <div className="muted">
-                {githubPackagesRepos ? (
-                  <>
-                    {githubPackagesRepos.filteredTotal} / {githubPackagesRepos.total} 个，已选 {githubPackagesRepos.selectedTotal} 个
-                  </>
-                ) : (
-                  '加载中…'
-                )}
-              </div>
-            </div>
-
-            <div className="kv" style={{ marginTop: 10 }}>
-              <div className="kvRow" style={{ gridTemplateColumns: '120px 1fr' }}>
-                <div className="label">筛选</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, rowGap: 8, width: '100%', minWidth: 0 }}>
-                  <input
-                    className="input"
-                    style={{ flex: '1 1 240px', minWidth: 160 }}
-                    value={githubPackagesReposQ}
-                    disabled={busy}
-                    onChange={(e) => {
-                      setGitHubPackagesReposQ(e.target.value)
-                      setGitHubPackagesReposPage(1)
-                    }}
-                    placeholder="搜索 owner/repo"
-                  />
-                  <select
-                    className="input"
-                    style={{ flex: '0 0 120px' }}
-                    value={githubPackagesReposSelectedFilter}
-                    disabled={busy}
-                    onChange={(e) => {
-                      const v = e.target.value as 'all' | 'selected' | 'unselected'
-                      setGitHubPackagesReposSelectedFilter(v)
-                      setGitHubPackagesReposPage(1)
-                    }}
-                  >
-                    <option value="all">全部</option>
-                    <option value="selected">已选</option>
-                    <option value="unselected">未选</option>
-                  </select>
-                  <select
-                    className="input"
-                    style={{ flex: '0 0 120px' }}
-                    value={String(githubPackagesReposPerPage)}
-                    disabled={busy}
-                    onChange={(e) => {
-                      setGitHubPackagesReposPerPage(Number(e.target.value) || 20)
-                      setGitHubPackagesReposPage(1)
-                    }}
-                  >
-                    <option value="20">20/页</option>
-                    <option value="50">50/页</option>
-                    <option value="100">100/页</option>
-                  </select>
-                </div>
-              </div>
-              <div className="kvRow" style={{ gridTemplateColumns: '120px 1fr', alignItems: 'start' }}>
-                <div className="label">批量</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, rowGap: 8, width: '100%', minWidth: 0 }}>
-                  <div className="muted" style={{ flex: '1 1 280px', minWidth: 200 }}>
-                    对“当前筛选结果”批量设置（支持几百条/上千条，不会一次性渲染全部）
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 'auto' }}>
-                    <Button
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() => {
-                        void (async () => {
-                          setBusy(true)
-                          setError(null)
-                          try {
-                            await bulkSetGitHubPackagesReposSelected({
-                              q: githubPackagesReposQ.trim() || null,
-                              selectedFilter: githubPackagesReposSelectedFilter,
-                              selected: true,
-                            })
-                            await refreshRepos()
-                            await refresh()
-                          } catch (e: unknown) {
-                            setError(errorMessage(e))
-                          } finally {
-                            setBusy(false)
-                          }
-                        })()
-                      }}
-                    >
-                      全选
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() => {
-                        void (async () => {
-                          setBusy(true)
-                          setError(null)
-                          try {
-                            await bulkSetGitHubPackagesReposSelected({
-                              q: githubPackagesReposQ.trim() || null,
-                              selectedFilter: githubPackagesReposSelectedFilter,
-                              selected: false,
-                            })
-                            await refreshRepos()
-                            await refresh()
-                          } catch (e: unknown) {
-                            setError(errorMessage(e))
-                          } finally {
-                            setBusy(false)
-                          }
-                        })()
-                      }}
-                    >
-                      全不选
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {githubPackagesRepos?.repos?.length ? (
-              <div
-                style={{ marginTop: 10, maxHeight: 420, overflowY: 'auto', paddingRight: 6, overscrollBehavior: 'contain' }}
-              >
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-                    gap: 10,
-                    alignItems: 'start',
-                  }}
-                >
-                  {githubPackagesRepos.repos.map((r) => (
+            {githubPackagesTrackedRepos?.repos?.length ? (
+              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {githubPackagesTrackedRepos.repos.map((r) => {
+                  const dotClass = r.lastError
+                    ? 'statusDot statusDotBad'
+                    : r.hookId
+                      ? 'statusDot statusDotOk'
+                      : 'statusDot statusDotWarn'
+                  const lastSync = r.lastSyncAt ? r.lastSyncAt : '-'
+                  const hookId = r.hookId ? String(r.hookId) : '-'
+                  return (
                     <div
                       key={r.fullName}
                       style={{
                         display: 'flex',
                         gap: 10,
-                        alignItems: 'flex-start',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
                         minWidth: 0,
                       }}
                     >
-                      <input
-                        type="checkbox"
-                        checked={r.selected}
-                        disabled={busy}
-                        onChange={(e) => {
-                          void (async () => {
-                            const selected = e.target.checked
-                            setBusy(true)
-                            setError(null)
-                            try {
-                              await setGitHubPackagesRepoSelected({ fullName: r.fullName, selected })
-                              await refreshRepos()
-                              await refresh()
-                            } catch (e: unknown) {
-                              setError(errorMessage(e))
-                            } finally {
-                              setBusy(false)
-                            }
-                          })()
-                        }}
-                      />
-                      <div style={{ minWidth: 0 }}>
-                        <div className="mono" style={{ overflowWrap: 'anywhere' }}>
-                          {r.fullName}
-                        </div>
-                        {r.hookId ? <div className="muted">hookId: {r.hookId}</div> : null}
-                        {r.lastError ? (
-                          <div className="muted" style={{ overflowWrap: 'anywhere' }}>
-                            lastError: {r.lastError}
+                      <div style={{ minWidth: 0, flex: '1 1 auto' }}>
+                        <div style={{ display: 'flex', gap: 10, alignItems: 'center', minWidth: 0 }}>
+                          <span className={dotClass} />
+                          <div className="mono" style={{ overflowWrap: 'anywhere' }}>
+                            {r.fullName}
                           </div>
-                        ) : null}
+                        </div>
+                        <div className="muted" style={{ marginTop: 4, overflowWrap: 'anywhere' }}>
+                          hookId: {hookId} · lastSyncAt: {lastSync}
+                          {r.lastError ? ` · lastError: ${r.lastError}` : null}
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flex: '0 0 auto' }}>
+                        <Button
+                          variant="ghost"
+                          disabled={busy || !githubPackages.enabled}
+                          onClick={() => {
+                            void (async () => {
+                              setBusy(true)
+                              setError(null)
+                              try {
+                                const resp = await syncGitHubPackagesWebhooks({ dryRun: false, repos: [r.fullName] })
+                                setGitHubPackagesSyncResults(resp.results)
+                                await refreshTrackedRepos()
+                              } catch (e: unknown) {
+                                setError(errorMessage(e))
+                              } finally {
+                                setBusy(false)
+                              }
+                            })()
+                          }}
+                        >
+                          同步状态
+                        </Button>
+
+                        <Button
+                          variant="ghost"
+                          disabled={busy}
+                          onClick={() => {
+                            void (async () => {
+                              const ok = await confirm({
+                                title: '删除跟踪仓库',
+                                body: (
+                                  <div>
+                                    <div className="modalLead">将反注册 webhook，并从列表中移除该仓库：</div>
+                                    <div className="modalKvGrid">
+                                      <div className="modalKvLabel">Repo</div>
+                                      <div className="modalKvValue">
+                                        <Mono>{r.fullName}</Mono>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ),
+                                confirmText: '删除',
+                                cancelText: '取消',
+                                confirmVariant: 'danger',
+                                badgeText: '将删除 webhook',
+                                badgeTone: 'bad',
+                              })
+                              if (!ok) return
+                              setBusy(true)
+                              setError(null)
+                              try {
+                                await deleteGitHubPackagesRepo({ fullName: r.fullName })
+                                setGitHubPackagesSyncResults(null)
+                                await refresh()
+                                await refreshTrackedRepos()
+                              } catch (e: unknown) {
+                                setError(errorMessage(e))
+                              } finally {
+                                setBusy(false)
+                              }
+                            })()
+                          }}
+                        >
+                          删除
+                        </Button>
                       </div>
                     </div>
-                  ))}
-                </div>
+                  )
+                })}
               </div>
             ) : (
               <div className="muted" style={{ marginTop: 10 }}>
-                repo 列表为空：先添加 target，然后在这里分页浏览与勾选
+                暂无已跟踪仓库：添加 org/repo，或粘贴 profile/org URL 批量选择
               </div>
             )}
-
-            {githubPackagesRepos ? (
-              <div className="formActions" style={{ marginTop: 10, justifyContent: 'space-between' }}>
-                <div className="muted">
-                  第 {githubPackagesRepos.page} 页（每页 {githubPackagesRepos.perPage}）
-                </div>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <Button
-                    variant="ghost"
-                    disabled={busy || githubPackagesRepos.page <= 1}
-                    onClick={() => setGitHubPackagesReposPage((p) => Math.max(1, p - 1))}
-                  >
-                    上一页
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    disabled={
-                      busy ||
-                      githubPackagesRepos.page >= Math.max(1, Math.ceil(githubPackagesRepos.filteredTotal / githubPackagesRepos.perPage))
-                    }
-                    onClick={() => setGitHubPackagesReposPage((p) => p + 1)}
-                  >
-                    下一页
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-
-            <div className="formActions" style={{ marginTop: 10 }}>
-              <Button
-                variant="ghost"
-                disabled={busy || !(githubPackagesRepos?.selectedTotal ?? 0)}
-                onClick={() => {
-                  void (async () => {
-                    setBusy(true)
-                    setError(null)
-                    try {
-                      const resp = await syncGitHubPackagesWebhooks({ dryRun: false })
-                      setGitHubPackagesSyncResults(resp.results)
-                      await refreshRepos()
-                      await refresh()
-                    } catch (e: unknown) {
-                      setError(errorMessage(e))
-                    } finally {
-                      setBusy(false)
-                    }
-                  })()
-                }}
-              >
-                同步 webhook
-              </Button>
-            </div>
+          </div>
 
             {githubPackagesSyncResults ? (
               <div className="kv" style={{ marginTop: 10 }}>
@@ -942,13 +821,38 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                                 if (hooks.length < 2) return
                                 const keep = hooks[0]!
                                 const del = hooks.slice(1).map((h) => h.id)
-                                const ok = window.confirm(`检测到重复 webhook：保留 ${keep.id}，删除其余 ${del.length} 个？`)
+                                const ok = await confirm({
+                                  title: '处理重复 webhook',
+                                  body: (
+                                    <div>
+                                      <div className="modalLead">检测到重复 webhook：保留一个，删除其余并重试。</div>
+                                      <div className="modalKvGrid">
+                                        <div className="modalKvLabel">Repo</div>
+                                        <div className="modalKvValue">
+                                          <Mono>{r.repo}</Mono>
+                                        </div>
+                                        <div className="modalKvLabel">Keep</div>
+                                        <div className="modalKvValue">
+                                          <Mono>{String(keep.id)}</Mono>
+                                        </div>
+                                        <div className="modalKvLabel">Delete</div>
+                                        <div className="modalKvValue">{del.map(String).join(', ')}</div>
+                                      </div>
+                                    </div>
+                                  ),
+                                  confirmText: '删除并重试',
+                                  cancelText: '取消',
+                                  confirmVariant: 'danger',
+                                  badgeText: '会删除 webhook',
+                                  badgeTone: 'bad',
+                                })
                                 if (!ok) return
                                 setBusy(true)
                                 setError(null)
                                 try {
                                   const resp = await syncGitHubPackagesWebhooks({
                                     resolveConflicts: [{ repo: r.repo, keepHookId: keep.id, deleteHookIds: del }],
+                                    repos: [r.repo],
                                   })
                                   setGitHubPackagesSyncResults(resp.results)
                                   await refresh()
@@ -969,7 +873,6 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                 ))}
               </div>
             ) : null}
-          </div>
 
           {error ? <div className="error">{error}</div> : null}
         </div>

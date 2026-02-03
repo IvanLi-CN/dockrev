@@ -960,6 +960,10 @@ pub struct SyncGitHubPackagesWebhooksRequest {
     pub dry_run: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolve_conflicts: Option<Vec<ResolveGitHubPackagesConflicts>>,
+    /// If provided, only sync these repos (fullName: "owner/repo").
+    /// Otherwise, sync all selected repos.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repos: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -989,6 +993,19 @@ pub struct SyncGitHubPackagesWebhookResult {
 pub struct SyncGitHubPackagesWebhooksResponse {
     pub ok: bool,
     pub results: Vec<SyncGitHubPackagesWebhookResult>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteGitHubPackagesRepoRequest {
+    pub full_name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteGitHubPackagesRepoResponse {
+    pub ok: bool,
+    pub deleted_hook_ids: Vec<i64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
