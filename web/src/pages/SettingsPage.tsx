@@ -659,9 +659,12 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                               badgeText: null,
                             })
                             if (!ok) return
-                            const selected = picked.filter((r) => r.selected).map((r) => r.fullName)
-                            for (const fullName of selected) {
-                              await setGitHubPackagesRepoSelected({ fullName, selected: true })
+                            // Apply both selections and deselections, but only for repos whose
+                            // selection state changed in the picker to reduce API calls.
+                            const before = new Map(resolved.repos.map((r) => [r.fullName, r.selected] as const))
+                            const changed = picked.filter((r) => before.get(r.fullName) !== r.selected)
+                            for (const r of changed) {
+                              await setGitHubPackagesRepoSelected({ fullName: r.fullName, selected: r.selected })
                             }
                             setGitHubPackagesNewRepo('')
                             await refresh()

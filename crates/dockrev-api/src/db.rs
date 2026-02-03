@@ -1701,6 +1701,25 @@ ORDER BY owner ASC, repo ASC
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let mut inserted: u32 = 0;
             for (owner, repo) in repos {
+                // The DB treats repo keys case-insensitively in several read paths (via `lower()`),
+                // but the primary key is case-sensitive. Avoid creating case-variant duplicates by
+                // skipping inserts when a case-insensitive match already exists.
+                let exists: Option<i64> = tx
+                    .query_row(
+                        r#"
+SELECT 1
+FROM github_packages_repos
+WHERE lower(owner) = lower(?1) AND lower(repo) = lower(?2)
+LIMIT 1
+"#,
+                        params![&owner, &repo],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if exists.is_some() {
+                    continue;
+                }
+
                 let n = tx.execute(
                     r#"
 INSERT INTO github_packages_repos (owner, repo, selected, updated_at)
@@ -1877,20 +1896,63 @@ WHERE owner = ?1 AND repo = ?2
         selected: bool,
         now: &str,
     ) -> anyhow::Result<()> {
-        let owner = owner.to_string();
-        let repo = repo.to_string();
+        let owner = owner.trim().to_string();
+        let repo = repo.trim().to_string();
         let now = now.to_string();
         self.call(move |conn| {
-            conn.execute(
-                r#"
+            // Reads treat owner/repo case-insensitively (via `lower()`), but the primary key is
+            // case-sensitive. Prefer updating an existing row that matches case-insensitively to
+            // avoid creating case-variant duplicates. If duplicates already exist, keep the "best"
+            // row (favoring ones with sync state) and delete the rest.
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+            let canonical: Option<(String, String)> = tx
+                .query_row(
+                    r#"
+SELECT owner, repo
+FROM github_packages_repos
+WHERE lower(owner) = lower(?1) AND lower(repo) = lower(?2)
+ORDER BY
+  (hook_id IS NOT NULL) DESC,
+  (last_sync_at IS NOT NULL) DESC,
+  updated_at DESC
+LIMIT 1
+"#,
+                    params![&owner, &repo],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+
+            if let Some((canon_owner, canon_repo)) = canonical {
+                tx.execute(
+                    r#"
+UPDATE github_packages_repos
+SET selected = ?3, updated_at = ?4
+WHERE owner = ?1 AND repo = ?2
+"#,
+                    params![&canon_owner, &canon_repo, selected as i64, &now],
+                )?;
+
+                // Remove case-variant duplicates (keep the canonical row above).
+                tx.execute(
+                    r#"
+DELETE FROM github_packages_repos
+WHERE lower(owner) = lower(?1) AND lower(repo) = lower(?2)
+  AND NOT (owner = ?3 AND repo = ?4)
+"#,
+                    params![&owner, &repo, &canon_owner, &canon_repo],
+                )?;
+            } else {
+                tx.execute(
+                    r#"
 INSERT INTO github_packages_repos (owner, repo, selected, updated_at)
 VALUES (?1, ?2, ?3, ?4)
-ON CONFLICT(owner, repo) DO UPDATE SET
-  selected = excluded.selected,
-  updated_at = excluded.updated_at
 "#,
-                params![owner, repo, selected as i64, now],
-            )?;
+                    params![&owner, &repo, selected as i64, &now],
+                )?;
+            }
+
+            tx.commit()?;
             Ok(())
         })
         .await
@@ -2024,7 +2086,37 @@ WHERE lower(owner) = lower(?1) AND lower(repo) = lower(?2)
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
+            // See `upsert_github_packages_repo_selected`: avoid creating case-variant duplicates by
+            // reusing the canonical casing of any existing row that matches case-insensitively.
+            let mut canonical: Vec<(String, String, bool)> = Vec::with_capacity(repos.len());
             for (owner, repo, selected) in &repos {
+                let owner = owner.trim();
+                let repo = repo.trim();
+                if owner.is_empty() || repo.is_empty() {
+                    continue;
+                }
+
+                let existing: Option<(String, String)> = tx
+                    .query_row(
+                        r#"
+SELECT owner, repo
+FROM github_packages_repos
+WHERE lower(owner) = lower(?1) AND lower(repo) = lower(?2)
+ORDER BY
+  (hook_id IS NOT NULL) DESC,
+  (last_sync_at IS NOT NULL) DESC,
+  updated_at DESC
+LIMIT 1
+"#,
+                        params![owner, repo],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?;
+                let (owner, repo) = existing.unwrap_or((owner.to_string(), repo.to_string()));
+                canonical.push((owner, repo, *selected));
+            }
+
+            for (owner, repo, selected) in &canonical {
                 tx.execute(
                     r#"
 INSERT INTO github_packages_repos (owner, repo, selected, updated_at)
@@ -2037,11 +2129,11 @@ ON CONFLICT(owner, repo) DO UPDATE SET
                 )?;
             }
 
-            if repos.is_empty() {
+            if canonical.is_empty() {
                 tx.execute("DELETE FROM github_packages_repos", [])?;
             } else {
-                let mut full_names: Vec<String> = Vec::with_capacity(repos.len());
-                for (owner, repo, _) in &repos {
+                let mut full_names: Vec<String> = Vec::with_capacity(canonical.len());
+                for (owner, repo, _) in &canonical {
                     full_names.push(format!("{owner}/{repo}"));
                 }
                 let placeholders = vec!["?"; full_names.len()].join(",");
