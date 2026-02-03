@@ -74,5 +74,6 @@
 | a2zdt | Dockrev: /supervisor 路由防呆（兜底页 + API 不可吞） | 已完成 | `a2zdt:supervisor-route-failsafe/PLAN.md` | 2026-01-31 | - |
 | 9wyaj | Dockrev: /supervisor 日志区域换行修复 | 已完成 | `9wyaj:supervisor-log-newlines/PLAN.md` | 2026-02-01 | PR #44 |
 | 8fjbt | Dockrev Web: 版本候选 tags 气泡 | 已完成 | `8fjbt:version-tags-popover/PLAN.md` | 2026-02-01 | PR #45 |
+| 9m2ra | Dockrev Web: 表格左侧引导线对齐修复 | 待实现 | `9m2ra:table-guide-line-alignment/PLAN.md` | 2026-02-03 | - |
 | qsfyj | Dockrev API: 解析带后缀的数字 tag（15-alpine 等） | 待实现 | `qsfyj:version-tag-prefix-parsing/PLAN.md` | 2026-02-02 | - |
 | yh457 | Dockrev API: candidates 接口稳定性（超时/并发/降级） | 待实现 | `yh457:candidates-endpoint-stability/PLAN.md` | 2026-02-02 | - |
