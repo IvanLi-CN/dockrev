@@ -13,6 +13,7 @@ import type {
 export type DockrevApiScenario =
   | 'default'
   | 'dashboard-demo'
+  | 'guide-line-long-names'
   | 'resolved-tag-demo'
   | 'version-tags-popover-demo'
   | 'multi-stack-mixed'
@@ -275,6 +276,36 @@ function buildDashboardDemo(): Fixture {
         { ts: nowIso(-12_000), level: 'info', msg: 'Waiting for healthcheck...' },
       ],
     } satisfies JobDetail,
+  }
+
+  return f
+}
+
+function buildGuideLineLongNames(): Fixture {
+  const f = buildDashboardDemo()
+
+  const prod = f.stackById['stack-prod']
+  if (prod) {
+    prod.services = prod.services.map((svc) =>
+      svc.id === 'svc-prod-api'
+        ? {
+            ...svc,
+            name: 'api-gateway-edge-proxy-with-a-very-very-long-service-name-that-should-wrap-to-two-lines',
+          }
+        : svc
+    )
+  }
+
+  const infra = f.stackById['stack-infra']
+  if (infra) {
+    infra.services = infra.services.map((svc) =>
+      svc.id === 'svc-infra-prom'
+        ? {
+            ...svc,
+            name: 'prometheus-metrics-exporter-for-kubernetes-cluster-with-a-super-long-service-name',
+          }
+        : svc
+    )
   }
 
   return f
@@ -574,6 +605,7 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'empty') return baseEmpty()
   if (scenario === 'no-candidates') return buildNoCandidates()
   if (scenario === 'dashboard-demo') return buildDashboardDemo()
+  if (scenario === 'guide-line-long-names') return buildGuideLineLongNames()
   if (scenario === 'resolved-tag-demo') return buildResolvedTagDemo()
   if (scenario === 'version-tags-popover-demo') return buildVersionTagsPopoverDemo()
   if (scenario === 'queue-mixed') return buildQueueMixed()

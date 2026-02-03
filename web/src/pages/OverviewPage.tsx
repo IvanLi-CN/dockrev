@@ -154,31 +154,8 @@ function formatGroupSummary(services: number, counts: Record<Exclude<RowStatus, 
   return parts.join(' · ')
 }
 
-function GroupGuide(props: { rows: number }) {
-  if (props.rows <= 0) return null
-  const rowHeight = 52
-  const gap = 4
-  const bulletGap = 10
-  const topSeg = rowHeight / 2 - bulletGap / 2
-  const midSeg = rowHeight + gap - bulletGap
-
-  const segments: Array<{ top: number; height: number }> = []
-  let y = 36 + gap // group head + gap == first row top
-  segments.push({ top: y, height: topSeg })
-  y += topSeg + bulletGap
-  for (let i = 0; i < props.rows - 1; i += 1) {
-    segments.push({ top: y, height: midSeg })
-    y += midSeg + bulletGap
-  }
-  segments.push({ top: y, height: topSeg })
-
-  return (
-    <div className="groupGuide" aria-hidden="true">
-      {segments.map((s, idx) => (
-        <span key={idx} className="groupGuideSeg" style={{ top: s.top, height: s.height }} />
-      ))}
-    </div>
-  )
+function GroupGuide() {
+  return <div className="groupGuide" aria-hidden="true" />
 }
 
 export function OverviewPage(props: {
@@ -726,7 +703,7 @@ export function OverviewPage(props: {
 
             return (
               <div key={st.id} className={isCollapsed ? 'tableGroup' : 'tableGroup tableGroupExpanded'}>
-                {!isCollapsed ? <GroupGuide rows={rows.length} /> : null}
+                {!isCollapsed ? <GroupGuide /> : null}
                 <div
                   className="groupHead"
                   role="button"

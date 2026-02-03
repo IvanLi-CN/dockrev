@@ -271,7 +271,7 @@
 }
 
 .versionTagsTrigger {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 6px;
   width: 100%;
@@ -279,6 +279,8 @@
   border: none;
   padding: 0;
   margin: 0;
+  line-height: 1.5;
+  min-height: 1.5em;
   cursor: pointer;
   text-align: left;
   overflow: hidden;
@@ -566,10 +568,25 @@ html[data-theme='light'] .versionTagsPopover {
 }
 
 .tableGroup {
+  /* Table layout tokens (keep guide + row heights in sync without JS measuring). */
+  --dockrev-table-font-size: 12px;
+  --dockrev-table-line-height: 1.5;
+  --dockrev-table-group-gap: 4px;
+  --dockrev-table-group-head-height: 2lh;
+  --dockrev-table-row-pad-y: 0.6667em; /* 8px @ 12px */
+  --dockrev-table-row-line-gap: 0.1667em; /* 2px @ 12px */
+  --dockrev-table-row-height: calc(2lh + var(--dockrev-table-row-line-gap) + (2 * var(--dockrev-table-row-pad-y)));
+  --dockrev-table-guide-bullet-gap: 10px;
+  --dockrev-table-guide-center-x: 28px;
+  --dockrev-table-guide-dot-size: 6px;
+  --dockrev-table-guide-line-width: 2px;
+
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--dockrev-table-group-gap);
   position: relative;
+  font-size: var(--dockrev-table-font-size);
+  line-height: var(--dockrev-table-line-height);
 }
 
 .groupHead {
@@ -581,7 +598,7 @@ html[data-theme='light'] .versionTagsPopover {
     minmax(0, 1.4fr)
     minmax(0, 0.9fr);
   align-items: center;
-  height: 36px;
+  height: var(--dockrev-table-group-head-height);
   cursor: pointer;
   text-align: left;
   background: var(--dockrev-surface);
@@ -618,6 +635,7 @@ html[data-theme='light'] .versionTagsPopover {
   background: var(--dockrev-surface);
   border-radius: 12px;
   padding: 0;
+  height: var(--dockrev-table-row-height);
 }
 
 .rowLine > * {
@@ -638,11 +656,11 @@ html[data-theme='light'] .versionTagsPopover {
   justify-content: flex-end;
   gap: 8px;
   padding-right: 12px;
-  min-height: 52px;
+  min-height: var(--dockrev-table-row-height);
 }
 
 .groupHead .actionCell {
-  min-height: 36px;
+  min-height: var(--dockrev-table-group-head-height);
 }
 
 .actionStack {
@@ -656,6 +674,14 @@ html[data-theme='light'] .versionTagsPopover {
   font-size: 12px;
   font-weight: 650;
   color: var(--text);
+  min-width: 0;
+  line-height: var(--dockrev-table-line-height, 1.5);
+  max-height: 2lh;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
 }
 
 .cellService {
@@ -663,25 +689,27 @@ html[data-theme='light'] .versionTagsPopover {
   align-items: center;
   gap: 10px;
   padding: 0 0 0 56px;
-  min-height: 52px;
+  min-height: var(--dockrev-table-row-height);
   position: relative;
   overflow: hidden;
 }
 
 .cellServiceGroup {
-  min-height: 36px;
+  min-height: var(--dockrev-table-group-head-height);
   padding-left: 16px;
   gap: 10px;
 }
 
 .svcBullet {
-  width: 6px;
-  height: 6px;
+  width: var(--dockrev-table-guide-dot-size, 6px);
+  height: var(--dockrev-table-guide-dot-size, 6px);
   border-radius: 999px;
   background: var(--dockrev-accent-dot);
   flex: 0 0 auto;
   position: absolute;
-  left: 25px;
+  left: calc(
+    var(--dockrev-table-guide-center-x, 28px) - (var(--dockrev-table-guide-dot-size, 6px) / 2)
+  );
   top: 50%;
   transform: translateY(-50%);
 }
@@ -708,7 +736,11 @@ html[data-theme='light'] .versionTagsPopover {
 }
 
 .cellTwoLine {
-  padding: 8px 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--dockrev-table-row-line-gap, 2px);
+  padding: var(--dockrev-table-row-pad-y, 8px) 0;
   overflow: hidden;
 }
 
@@ -719,10 +751,10 @@ html[data-theme='light'] .versionTagsPopover {
 }
 
 .statusCol {
-  padding: 8px 0;
+  padding: var(--dockrev-table-row-pad-y, 8px) 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--dockrev-table-row-line-gap, 2px);
   align-items: flex-start;
   overflow: hidden;
 }
@@ -769,19 +801,26 @@ html[data-theme='light'] .statusDot {
 
 .groupGuide {
   position: absolute;
-  left: 24px;
-  top: 0;
+  left: calc(
+    var(--dockrev-table-guide-center-x, 28px) - (var(--dockrev-table-guide-line-width, 2px) / 2)
+  );
+  top: calc(var(--dockrev-table-group-head-height) + var(--dockrev-table-group-gap));
   bottom: 0;
-  width: 2px;
+  width: var(--dockrev-table-guide-line-width, 2px);
   pointer-events: none;
-}
 
-.groupGuideSeg {
-  position: absolute;
-  left: 0;
-  width: 2px;
-  border-radius: 1px;
-  background: var(--dockrev-guide);
+  /* A repeating pattern: draw the guide line, but leave a "hole" around each bullet. */
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--dockrev-guide) 0
+      calc((var(--dockrev-table-row-height) - var(--dockrev-table-guide-bullet-gap)) / 2),
+    transparent
+      calc((var(--dockrev-table-row-height) - var(--dockrev-table-guide-bullet-gap)) / 2)
+      calc((var(--dockrev-table-row-height) + var(--dockrev-table-guide-bullet-gap)) / 2),
+    var(--dockrev-guide)
+      calc((var(--dockrev-table-row-height) + var(--dockrev-table-guide-bullet-gap)) / 2)
+      calc(var(--dockrev-table-row-height) + var(--dockrev-table-group-gap))
+  );
 }
 
 /* Legacy: pill tags (used outside dashboard table) */

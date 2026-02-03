@@ -23,6 +23,17 @@ export const Default: Story = {
   },
 }
 
+export const GuideLineLongNames: Story = {
+  parameters: { dockrevApiScenario: 'guide-line-long-names' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="对齐回归：长 service name（最多两行）">
+        {({ onComposeHint, onTopActions }) => <OverviewPage onComposeHint={onComposeHint} onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}
+
 export const ResolvedTag: Story = {
   parameters: { dockrevApiScenario: 'resolved-tag-demo' },
   render: () => {
