@@ -2,9 +2,10 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-03
 - Last: 2026-02-03
+- Notes: PR #49
 
 ## 背景 / 问题陈述
 
@@ -60,11 +61,10 @@
 
 ## 里程碑（Milestones）
 
-- [ ] 以 CSS token 驱动引导线渲染，移除 JS 分段计算
-- [ ] service name 最多两行展示（clamp），避免行高突破
-- [ ] 最小 Playwright 验证（Storybook）
+- [x] 以 CSS token 驱动引导线渲染，移除 JS 分段计算
+- [x] service name 最多两行展示（clamp），避免行高突破
+- [x] 最小 Playwright 验证（Storybook）
 
 ## 风险与开放问题（Risks & Open Questions）
 
 - 需要明确表格行高 token（当前实现依赖多个子组件的 padding/line-height 组合）；应以单点 token 固定并被多个 CSS 规则复用。
-
