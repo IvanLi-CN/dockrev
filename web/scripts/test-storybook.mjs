@@ -206,12 +206,21 @@ async function assertGroupGuideAligned(page, label) {
       const bullet = rows.nth(ri).locator('.svcBullet')
       const bulletBox = await requireBoundingBox(bullet, `svcBullet[${gi}][${ri}]`)
       const bulletCenterY = bulletBox.y + bulletBox.height / 2
+      const bulletCenterX = bulletBox.x + bulletBox.width / 2
 
       // Bullet is centered in the row by CSS (`top: 50%`).
       const bulletCenterInRow = bulletCenterY - rowBox.y
       if (!approxEqual(bulletCenterInRow, rowHeight / 2, 1)) {
         throw new Error(
           `Bullet not vertically centered (group=${gi}, row=${ri}${label ? `, ${label}` : ''}): centerInRow=${bulletCenterInRow}, expected~${rowHeight / 2}`
+        )
+      }
+
+      // Bullet should also be horizontally centered on the guide line.
+      const guideCenterX = guideBox.x + guideBox.width / 2
+      if (!approxEqual(bulletCenterX, guideCenterX, 1)) {
+        throw new Error(
+          `Bullet-guide X misaligned (group=${gi}, row=${ri}${label ? `, ${label}` : ''}): bullet.centerX=${bulletCenterX}, guide.centerX=${guideCenterX}`
         )
       }
 

@@ -577,6 +577,9 @@ html[data-theme='light'] .versionTagsPopover {
   --dockrev-table-row-line-gap: 0.1667em; /* 2px @ 12px */
   --dockrev-table-row-height: calc(2lh + var(--dockrev-table-row-line-gap) + (2 * var(--dockrev-table-row-pad-y)));
   --dockrev-table-guide-bullet-gap: 10px;
+  --dockrev-table-guide-center-x: 28px;
+  --dockrev-table-guide-dot-size: 6px;
+  --dockrev-table-guide-line-width: 2px;
 
   display: flex;
   flex-direction: column;
@@ -698,13 +701,15 @@ html[data-theme='light'] .versionTagsPopover {
 }
 
 .svcBullet {
-  width: 6px;
-  height: 6px;
+  width: var(--dockrev-table-guide-dot-size, 6px);
+  height: var(--dockrev-table-guide-dot-size, 6px);
   border-radius: 999px;
   background: var(--dockrev-accent-dot);
   flex: 0 0 auto;
   position: absolute;
-  left: 25px;
+  left: calc(
+    var(--dockrev-table-guide-center-x, 28px) - (var(--dockrev-table-guide-dot-size, 6px) / 2)
+  );
   top: 50%;
   transform: translateY(-50%);
 }
@@ -796,10 +801,12 @@ html[data-theme='light'] .statusDot {
 
 .groupGuide {
   position: absolute;
-  left: 24px;
+  left: calc(
+    var(--dockrev-table-guide-center-x, 28px) - (var(--dockrev-table-guide-line-width, 2px) / 2)
+  );
   top: calc(var(--dockrev-table-group-head-height) + var(--dockrev-table-group-gap));
   bottom: 0;
-  width: 2px;
+  width: var(--dockrev-table-guide-line-width, 2px);
   pointer-events: none;
 
   /* A repeating pattern: draw the guide line, but leave a "hole" around each bullet. */
