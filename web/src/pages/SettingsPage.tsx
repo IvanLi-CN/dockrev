@@ -742,7 +742,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                         </IconButton>
 
                         <IconButton
-                          variant="ghost"
+                          variant="danger"
                           title="删除"
                           disabled={busy}
                           onClick={() => {

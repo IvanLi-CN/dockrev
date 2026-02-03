@@ -741,7 +741,7 @@ html[data-theme='light'] .versionTagsPopover {
 
 .uiIcon path {
   fill: none;
-  stroke: var(--dockrev-icon-stroke);
+  stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 2;
