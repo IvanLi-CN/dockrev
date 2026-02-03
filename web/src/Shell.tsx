@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { getDockrevVersion } from './api'
-import { Chip, Mono } from './ui'
+import { Chip, GitHubIcon, Mono } from './ui'
 import { ConfirmProvider } from './ConfirmProvider'
 import type { Route } from './routes'
 import { currentHref, navigate } from './routes'
@@ -10,6 +10,12 @@ function formatShort(ts: string) {
   if (Number.isNaN(d.valueOf())) return ts
   const pad2 = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+}
+
+function formatVersionLabel(version: string | null): string {
+  const v = (version ?? '').trim()
+  if (!v) return '-'
+  return v.startsWith('v') ? v : `v${v}`
 }
 
 export function AppShell(props: {
@@ -113,22 +119,22 @@ export function AppShell(props: {
 
           <div className="sidebarMeta">
             <div className="sidebarMetaDivider" aria-hidden="true" />
-            <div className="sidebarMetaRow">
-              <span className="sidebarMetaLabel">版本</span>
-              <Mono>{appVersion ?? '-'}</Mono>
-            </div>
-            <div className="sidebarMetaRow">
-              <span className="sidebarMetaLabel">开源</span>
-              <a href="https://github.com/IvanLi-CN/dockrev" target="_blank" rel="noreferrer">
-                <Mono>IvanLi-CN/dockrev</Mono>
+            <div className="sidebarMetaTop">
+              <Mono>{formatVersionLabel(appVersion)}</Mono>
+              <a
+                className="sidebarMetaIcon"
+                href="https://github.com/IvanLi-CN/dockrev"
+                target="_blank"
+                rel="noreferrer"
+                aria-label="GitHub repository"
+                title="GitHub: IvanLi-CN/dockrev"
+              >
+                <GitHubIcon className="sidebarMetaGitHub" />
               </a>
             </div>
-            <div className="sidebarMetaRow">
-              <span className="sidebarMetaLabel">开发者</span>
-              <a href="https://github.com/IvanLi-CN" target="_blank" rel="noreferrer">
-                <Mono>Ivan Li</Mono>
-              </a>
-            </div>
+            <a className="sidebarMetaPowered" href="https://github.com/IvanLi-CN" target="_blank" rel="noreferrer">
+              Powered by <span className="mono">Ivan Li</span>
+            </a>
           </div>
         </aside>
 
