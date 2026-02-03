@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     path::Path,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use anyhow::Context as _;
@@ -91,7 +92,10 @@ pub struct HttpRegistryClient {
 
 impl HttpRegistryClient {
     pub fn new(docker_config_path: Option<&Path>) -> anyhow::Result<Self> {
-        let http = reqwest::Client::builder().build()?;
+        let http = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(3))
+            .timeout(Duration::from_secs(8))
+            .build()?;
         let docker = docker_config_path.and_then(|p| DockerConfig::load(p).ok());
         Ok(Self {
             http,
