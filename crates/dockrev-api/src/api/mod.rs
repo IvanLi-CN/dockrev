@@ -385,7 +385,7 @@ async fn trigger_check(
     let run_host_platform = host_platform.clone();
     let run_started_at = now.clone();
     tokio::spawn(async move {
-        let _ = run_state
+        if let Err(e) = run_state
             .db
             .insert_job_log(
                 &run_check_id,
@@ -395,7 +395,10 @@ async fn trigger_check(
                     msg: "check started".to_string(),
                 },
             )
-            .await;
+            .await
+        {
+            tracing::warn!(job_id = %run_check_id, error = %e, "failed to insert check started log");
+        }
 
         let outcome = run_check_for_job(
             &run_state,
@@ -412,13 +415,16 @@ async fn trigger_check(
             now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
         match outcome {
             Ok(summary) => {
-                let _ = run_state
+                if let Err(e) = run_state
                     .db
                     .finish_job(&run_check_id, "success", &finished_at, &summary)
-                    .await;
+                    .await
+                {
+                    tracing::error!(job_id = %run_check_id, error = %e, "failed to finish check job");
+                }
             }
             Err(e) => {
-                let _ = run_state
+                if let Err(err) = run_state
                     .db
                     .insert_job_log(
                         &run_check_id,
@@ -428,12 +434,18 @@ async fn trigger_check(
                             msg: format!("check failed: {e:?}"),
                         },
                     )
-                    .await;
+                    .await
+                {
+                    tracing::warn!(job_id = %run_check_id, error = %err, "failed to insert check failure log");
+                }
                 let summary = json!({"error": format!("{e:?}")});
-                let _ = run_state
+                if let Err(err) = run_state
                     .db
                     .finish_job(&run_check_id, "failed", &finished_at, &summary)
-                    .await;
+                    .await
+                {
+                    tracing::error!(job_id = %run_check_id, error = %err, "failed to finish failed check job");
+                }
             }
         }
     });
@@ -1989,7 +2001,7 @@ async fn webhook_trigger(
             let run_host_platform = host_platform.clone();
             let run_started_at = now.clone();
             tokio::spawn(async move {
-                let _ = run_state
+                if let Err(e) = run_state
                     .db
                     .insert_job_log(
                         &run_job_id,
@@ -1999,7 +2011,14 @@ async fn webhook_trigger(
                             msg: "webhook check started".to_string(),
                         },
                     )
-                    .await;
+                    .await
+                {
+                    tracing::warn!(
+                        job_id = %run_job_id,
+                        error = %e,
+                        "failed to insert webhook check started log"
+                    );
+                }
 
                 let outcome = run_check_for_job(
                     &run_state,
@@ -2016,13 +2035,20 @@ async fn webhook_trigger(
                     now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
                 match outcome {
                     Ok(summary) => {
-                        let _ = run_state
+                        if let Err(e) = run_state
                             .db
                             .finish_job(&run_job_id, "success", &finished_at, &summary)
-                            .await;
+                            .await
+                        {
+                            tracing::error!(
+                                job_id = %run_job_id,
+                                error = %e,
+                                "failed to finish webhook check job"
+                            );
+                        }
                     }
                     Err(e) => {
-                        let _ = run_state
+                        if let Err(err) = run_state
                             .db
                             .insert_job_log(
                                 &run_job_id,
@@ -2032,12 +2058,26 @@ async fn webhook_trigger(
                                     msg: format!("webhook check failed: {e:?}"),
                                 },
                             )
-                            .await;
+                            .await
+                        {
+                            tracing::warn!(
+                                job_id = %run_job_id,
+                                error = %err,
+                                "failed to insert webhook check failure log"
+                            );
+                        }
                         let summary = json!({"error": format!("{e:?}")});
-                        let _ = run_state
+                        if let Err(err) = run_state
                             .db
                             .finish_job(&run_job_id, "failed", &finished_at, &summary)
-                            .await;
+                            .await
+                        {
+                            tracing::error!(
+                                job_id = %run_job_id,
+                                error = %err,
+                                "failed to finish failed webhook check job"
+                            );
+                        }
                     }
                 }
             });
