@@ -2,10 +2,13 @@ import type { Meta, StoryObj } from '@storybook/react'
 import { AppShell } from '../../Shell'
 import type { Route } from '../../routes'
 import { Button } from '../../ui'
+import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 
 const meta: Meta<typeof AppShell> = {
   title: 'Layouts/AppShell',
   component: AppShell,
+  decorators: [withDockrevMockApi],
+  parameters: { dockrevApiScenario: 'default' },
 }
 
 export default meta

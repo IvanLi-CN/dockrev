@@ -15,7 +15,8 @@ function formatShort(ts: string) {
 function formatVersionLabel(version: string | null): string {
   const v = (version ?? '').trim()
   if (!v) return '-'
-  return v.startsWith('v') ? v : `v${v}`
+  // Show server-reported version verbatim to avoid misleading operators.
+  return v
 }
 
 export function AppShell(props: {
@@ -125,14 +126,19 @@ export function AppShell(props: {
                 className="sidebarMetaIcon"
                 href="https://github.com/IvanLi-CN/dockrev"
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
                 aria-label="GitHub repository"
                 title="GitHub: IvanLi-CN/dockrev"
               >
                 <GitHubIcon className="sidebarMetaGitHub" />
               </a>
             </div>
-            <a className="sidebarMetaPowered" href="https://github.com/IvanLi-CN" target="_blank" rel="noreferrer">
+            <a
+              className="sidebarMetaPowered"
+              href="https://github.com/IvanLi-CN"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
               Powered by <span className="mono">Ivan Li</span>
             </a>
           </div>
