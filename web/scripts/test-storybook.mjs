@@ -138,6 +138,95 @@ function normalizeBaseUrl(input) {
   return url.toString()
 }
 
+function approxEqual(a, b, tolerancePx = 1) {
+  return Math.abs(a - b) <= tolerancePx
+}
+
+async function requireBoundingBox(locator, label) {
+  const box = await locator.boundingBox()
+  if (!box) throw new Error(`Missing bounding box: ${label}`)
+  return box
+}
+
+async function assertGroupGuideAligned(page, label) {
+  const allGroups = page.locator('.tableGroup')
+  await allGroups.first().waitFor({ timeout: 10_000 })
+
+  const groups = page.locator('.tableGroupExpanded')
+  let groupCount = await groups.count()
+  if (groupCount === 0) {
+    // Story state may render groups collapsed (or render delay); try expanding the first group.
+    const head = allGroups.first().locator('.groupHead')
+    await head.click({ timeout: 10_000 })
+    await groups.first().waitFor({ timeout: 10_000 })
+    groupCount = await groups.count()
+  }
+  if (groupCount === 0) throw new Error(`No expanded table groups found${label ? ` (${label})` : ''}.`)
+
+  for (let gi = 0; gi < groupCount; gi += 1) {
+    const group = groups.nth(gi)
+    const guide = group.locator('.groupGuide')
+    const rows = group.locator('.rowLine')
+
+    await guide.waitFor({ timeout: 10_000 })
+    const rowCount = await rows.count()
+    if (rowCount === 0) continue
+
+    const guideBox = await requireBoundingBox(guide, `groupGuide[${gi}]`)
+    const row0Box = await requireBoundingBox(rows.nth(0), `rowLine[${gi}][0]`)
+
+    // The guide's top should start exactly at the first row top.
+    if (!approxEqual(guideBox.y, row0Box.y, 1)) {
+      throw new Error(
+        `Guide top misaligned (group=${gi}${label ? `, ${label}` : ''}): guide.y=${guideBox.y}, row0.y=${row0Box.y}`
+      )
+    }
+
+    const rowHeight = row0Box.height
+    let rowGap = 0
+    if (rowCount > 1) {
+      const row1Box = await requireBoundingBox(rows.nth(1), `rowLine[${gi}][1]`)
+      rowGap = row1Box.y - (row0Box.y + row0Box.height)
+      // Flex `gap` should never be negative; tolerate minor rounding.
+      if (rowGap < -0.5) {
+        throw new Error(
+          `Row gap is negative (group=${gi}${label ? `, ${label}` : ''}): gap=${rowGap}, row0.height=${row0Box.height}`
+        )
+      }
+    }
+
+    for (let ri = 0; ri < rowCount; ri += 1) {
+      const rowBox = await requireBoundingBox(rows.nth(ri), `rowLine[${gi}][${ri}]`)
+      if (!approxEqual(rowBox.height, rowHeight, 1)) {
+        throw new Error(
+          `Row height drift (group=${gi}, row=${ri}${label ? `, ${label}` : ''}): row.height=${rowBox.height}, expected~${rowHeight}`
+        )
+      }
+
+      const bullet = rows.nth(ri).locator('.svcBullet')
+      const bulletBox = await requireBoundingBox(bullet, `svcBullet[${gi}][${ri}]`)
+      const bulletCenterY = bulletBox.y + bulletBox.height / 2
+
+      // Bullet is centered in the row by CSS (`top: 50%`).
+      const bulletCenterInRow = bulletCenterY - rowBox.y
+      if (!approxEqual(bulletCenterInRow, rowHeight / 2, 1)) {
+        throw new Error(
+          `Bullet not vertically centered (group=${gi}, row=${ri}${label ? `, ${label}` : ''}): centerInRow=${bulletCenterInRow}, expected~${rowHeight / 2}`
+        )
+      }
+
+      // Bullet center should land at the midpoint of each row segment when measured from guide top.
+      const bulletCenterInGuide = bulletCenterY - guideBox.y
+      const expected = rowHeight / 2 + ri * (rowHeight + rowGap)
+      if (!approxEqual(bulletCenterInGuide, expected, 1)) {
+        throw new Error(
+          `Bullet-guide alignment drift (group=${gi}, row=${ri}${label ? `, ${label}` : ''}): actual=${bulletCenterInGuide}, expected~${expected}`
+        )
+      }
+    }
+  }
+}
+
 async function runSmoke({ baseUrl, storyIds, browser }) {
   if (storyIds.length === 0) {
     throw new Error(
@@ -199,6 +288,34 @@ async function runInteractive({ baseUrl, browser }) {
     await page.goto(url.toString(), { waitUntil: 'domcontentloaded' })
     await page.waitForFunction(() => document.body.classList.contains('sb-show-main'), null, { timeout: 60_000 })
     return page
+  }
+
+  // 0) Group guide line alignment must remain stable (no JS measuring).
+  {
+    const storyIds = ['pages-overviewpage--guide-line-long-names', 'pages-servicespage--guide-line-long-names']
+    for (const id of storyIds) {
+      const page = await openStory(id)
+      try {
+        await assertGroupGuideAligned(page, id)
+
+        const row0Before = await requireBoundingBox(page.locator('.tableGroupExpanded .rowLine').first(), `${id}:row0`)
+        await page.addStyleTag({
+          content: `.tableGroup { --dockrev-table-font-size: 14px; --dockrev-table-line-height: 1.7; }`,
+        })
+        await page.waitForTimeout(100)
+        const row0After = await requireBoundingBox(page.locator('.tableGroupExpanded .rowLine').first(), `${id}:row0`)
+
+        if (!(row0After.height > row0Before.height + 0.5)) {
+          throw new Error(
+            `Expected row height to scale with font changes (${id}): before=${row0Before.height}, after=${row0After.height}`
+          )
+        }
+
+        await assertGroupGuideAligned(page, `${id} (scaled)`)
+      } finally {
+        await page.close().catch(() => {})
+      }
+    }
   }
 
   // 1) Disabled state (no candidates): "更新全部" must be disabled.

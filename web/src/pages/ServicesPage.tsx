@@ -144,31 +144,8 @@ function StackIcon(props: { variant: 'collapsed' | 'expanded' }) {
   )
 }
 
-function GroupGuide(props: { rows: number }) {
-  if (props.rows <= 0) return null
-  const rowHeight = 52
-  const gap = 4
-  const bulletGap = 10
-  const topSeg = rowHeight / 2 - bulletGap / 2
-  const midSeg = rowHeight + gap - bulletGap
-
-  const segments: Array<{ top: number; height: number }> = []
-  let y = 36 + gap
-  segments.push({ top: y, height: topSeg })
-  y += topSeg + bulletGap
-  for (let i = 0; i < props.rows - 1; i += 1) {
-    segments.push({ top: y, height: midSeg })
-    y += midSeg + bulletGap
-  }
-  segments.push({ top: y, height: topSeg })
-
-  return (
-    <div className="groupGuide" aria-hidden="true">
-      {segments.map((s, idx) => (
-        <span key={idx} className="groupGuideSeg" style={{ top: s.top, height: s.height }} />
-      ))}
-    </div>
-  )
+function GroupGuide() {
+  return <div className="groupGuide" aria-hidden="true" />
 }
 
 export function ServicesPage(props: {
@@ -553,7 +530,7 @@ export function ServicesPage(props: {
 	                  : { enabled: false, title: '无可更新服务' }
 	            return (
 	              <div key={g.stackId} className={isCollapsed ? 'tableGroup' : 'tableGroup tableGroupExpanded'}>
-	                {!isCollapsed ? <GroupGuide rows={g.services.length} /> : null}
+	                {!isCollapsed ? <GroupGuide /> : null}
                 <div
                   className="groupHead"
                   onClick={() => setCollapsed((prev) => ({ ...prev, [g.stackId]: !isCollapsed }))}
