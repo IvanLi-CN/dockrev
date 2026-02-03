@@ -411,8 +411,17 @@ async fn trigger_check(
         )
         .await;
 
-        let finished_at =
-            now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+        let finished_at = match now_rfc3339() {
+            Ok(ts) => ts,
+            Err(err) => {
+                tracing::warn!(
+                    job_id = %run_check_id,
+                    error = %err,
+                    "failed to format finished_at as RFC3339; falling back to started_at"
+                );
+                run_started_at.clone()
+            }
+        };
         match outcome {
             Ok(summary) => {
                 if let Err(e) = run_state
@@ -2031,8 +2040,17 @@ async fn webhook_trigger(
                 )
                 .await;
 
-                let finished_at =
-                    now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+                let finished_at = match now_rfc3339() {
+                    Ok(ts) => ts,
+                    Err(err) => {
+                        tracing::warn!(
+                            job_id = %run_job_id,
+                            error = %err,
+                            "failed to format finished_at as RFC3339; falling back to started_at"
+                        );
+                        run_started_at.clone()
+                    }
+                };
                 match outcome {
                     Ok(summary) => {
                         if let Err(e) = run_state
