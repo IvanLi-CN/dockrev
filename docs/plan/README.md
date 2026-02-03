@@ -76,4 +76,4 @@
 | 8fjbt | Dockrev Web: 版本候选 tags 气泡 | 已完成 | `8fjbt:version-tags-popover/PLAN.md` | 2026-02-01 | PR #45 |
 | qsfyj | Dockrev API: 解析带后缀的数字 tag（15-alpine 等） | 待实现 | `qsfyj:version-tag-prefix-parsing/PLAN.md` | 2026-02-02 | - |
 | yh457 | Dockrev API: candidates 接口稳定性（超时/并发/降级） | 待实现 | `yh457:candidates-endpoint-stability/PLAN.md` | 2026-02-02 | - |
-| fay4j | Dockrev API: 修复 check jobs 长时间卡在 running | 待实现 | `fay4j:check-jobs-stuck-running/PLAN.md` | 2026-02-02 | - |
+| fay4j | Dockrev API: 修复 check jobs 长时间卡在 running | 已完成 | `fay4j:check-jobs-stuck-running/PLAN.md` | 2026-02-03 | PR #48 |
