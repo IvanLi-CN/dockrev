@@ -2,10 +2,10 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-03
 - Last: 2026-02-03
-- Notes: -
+- Notes: PR #52
 
 ## 背景 / 问题陈述
 
@@ -66,11 +66,10 @@
 
 ## 里程碑（Milestones）
 
-- [ ] UI：新增 app meta 展示区（版本/仓库/开发者）
-- [ ] API：新增 `/api/version` 调用并接入 UI
-- [ ] Storybook：mock `/api/version`，保证 stories 可运行
+- [x] UI：新增 app meta 展示区（版本/仓库/开发者）
+- [x] API：新增 `/api/version` 调用并接入 UI
+- [x] Storybook：mock `/api/version`，保证 stories 可运行
 
 ## 风险与开放问题（Risks & Open Questions）
 
 - UI 展示位置需要确保在不同分辨率与滚动场景下仍可发现（建议放在 sidebar 底部并保持克制）。
-
