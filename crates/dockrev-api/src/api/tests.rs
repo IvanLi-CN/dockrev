@@ -2097,6 +2097,45 @@ async fn github_packages_webhook_matches_selected_repos_case_insensitively() {
 }
 
 #[tokio::test]
+async fn github_packages_repo_selected_upsert_is_case_insensitive_and_preserves_sync_state() {
+    let state = test_state(":memory:").await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    // Seed a selected repo with mixed casing + a sync state.
+    state
+        .db
+        .put_github_packages_repos(
+            &[(String::from("Acme"), String::from("Widgets"), true)],
+            &now,
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .set_github_packages_repo_sync_result("Acme", "Widgets", Some(42), Some(&now), None, &now)
+        .await
+        .unwrap();
+
+    // Toggle selection using different casing. This should update the existing row, not insert a
+    // second case-variant duplicate, and should preserve sync state.
+    state
+        .db
+        .upsert_github_packages_repo_selected("acme", "widgets", false, &now)
+        .await
+        .unwrap();
+
+    let repos = state.db.list_github_packages_repos().await.unwrap();
+    assert_eq!(repos.len(), 1);
+    assert_eq!(repos[0].owner, "Acme");
+    assert_eq!(repos[0].repo, "Widgets");
+    assert_eq!(repos[0].selected, false);
+    assert_eq!(repos[0].hook_id, Some(42));
+}
+
+#[tokio::test]
 async fn github_packages_webhook_does_not_persist_delivery_for_unselected_repo() {
     use ring::hmac;
 
