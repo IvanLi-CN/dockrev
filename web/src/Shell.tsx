@@ -1,5 +1,6 @@
-import { useMemo, type ReactNode } from 'react'
-import { Chip, Mono } from './ui'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { getDockrevVersion } from './api'
+import { Chip, GitHubIcon, Mono } from './ui'
 import { ConfirmProvider } from './ConfirmProvider'
 import type { Route } from './routes'
 import { currentHref, navigate } from './routes'
@@ -9,6 +10,27 @@ function formatShort(ts: string) {
   if (Number.isNaN(d.valueOf())) return ts
   const pad2 = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+}
+
+function formatVersionLabel(version: string | null): string {
+  const v = (version ?? '').trim()
+  if (!v) return '-'
+  // Show server-reported version verbatim to avoid misleading operators.
+  return v
+}
+
+function formatVersionDisplay(version: string | null): string {
+  const v = formatVersionLabel(version)
+  if (v === '-') return v
+  // Make it obvious this is a version without altering the underlying ref used for links.
+  if (/^v/i.test(v)) return v
+  if (/^\d+\.\d+\.\d+([+-].+)?$/.test(v)) return `v${v}`
+  return v
+}
+
+function encodeGitRefForPath(ref: string): string {
+  // Keep slashes so branch names like "feat/x" can still be used as a ref segment.
+  return encodeURIComponent(ref).replaceAll('%2F', '/')
 }
 
 export function AppShell(props: {
@@ -21,6 +43,7 @@ export function AppShell(props: {
   children: ReactNode
 }) {
   const active = props.route.name === 'service' ? 'services' : props.route.name
+  const [appVersion, setAppVersion] = useState<string | null>(null)
 
   const composePath = props.composeHint?.path
   const profile = props.composeHint?.profile
@@ -35,6 +58,30 @@ export function AppShell(props: {
     ],
     [],
   )
+
+  useEffect(() => {
+    let cancelled = false
+    void getDockrevVersion()
+      .then((v) => {
+        if (cancelled) return
+        setAppVersion(v)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setAppVersion(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const versionLabel = formatVersionLabel(appVersion)
+  const versionRef = (appVersion ?? '').trim()
+  const versionDisplay = formatVersionDisplay(appVersion)
+  const versionHref =
+    versionLabel !== '-' && versionRef
+      ? `https://github.com/IvanLi-CN/dockrev/tree/${encodeGitRefForPath(versionRef)}`
+      : null
 
   return (
     <ConfirmProvider>
@@ -92,6 +139,44 @@ export function AppShell(props: {
           ) : (
             <div className="sidebarMuted">-</div>
           )}
+
+          <div className="sidebarMeta">
+            <div className="sidebarMetaDivider" aria-hidden="true" />
+            <div className="sidebarMetaTop">
+              {versionHref ? (
+                <a
+                  className="sidebarMetaVersion"
+                  href={versionHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Version on GitHub: ${versionDisplay}`}
+                  title={`Version: ${versionDisplay}`}
+                >
+                  <Mono>{versionDisplay}</Mono>
+                </a>
+              ) : (
+                <Mono>{versionDisplay}</Mono>
+              )}
+              <a
+                className="sidebarMetaIcon"
+                href="https://github.com/IvanLi-CN/dockrev"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="GitHub repository"
+                title="GitHub: IvanLi-CN/dockrev"
+              >
+                <GitHubIcon className="sidebarMetaGitHub" />
+              </a>
+            </div>
+            <a
+              className="sidebarMetaPowered"
+              href="https://github.com/IvanLi-CN"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Powered by <span className="mono">Ivan Li</span>
+            </a>
+          </div>
         </aside>
 
         <main className="content">

@@ -79,3 +79,4 @@
 | qsfyj | Dockrev API: 解析带后缀的数字 tag（15-alpine 等） | 已完成 | `qsfyj:version-tag-prefix-parsing/PLAN.md` | 2026-02-02 | PR #47 |
 | yh457 | Dockrev API: candidates 接口稳定性（超时/并发/降级） | 已完成 | `yh457:candidates-endpoint-stability/PLAN.md` | 2026-02-02 | PR #46 |
 | fay4j | Dockrev API: 修复 check jobs 长时间卡在 running | 已完成 | `fay4j:check-jobs-stuck-running/PLAN.md` | 2026-02-03 | PR #48 |
+| 838ry | Dockrev Web: 增加版本 / 开源仓库 / 开发者信息 | 已完成 | `838ry:app-meta-footer/PLAN.md` | 2026-02-03 | PR #52 |
