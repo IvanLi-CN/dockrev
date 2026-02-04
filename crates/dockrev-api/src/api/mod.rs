@@ -2596,7 +2596,40 @@ async fn sync_github_packages_webhooks(
         std::collections::BTreeMap::<String, ResolveGitHubPackagesConflicts>::new();
     if let Some(items) = req.resolve_conflicts {
         for i in items {
-            conflict_instructions.insert(i.repo.clone(), i);
+            let repo = i.repo.trim().to_string();
+            if repo.is_empty() {
+                return Err(ApiError::invalid_argument("invalid resolveConflicts")
+                    .with_details(json!({"error": "repo is empty"})));
+            }
+
+            if i.delete_hook_ids.iter().any(|id| *id == i.keep_hook_id) {
+                return Err(ApiError::invalid_argument("invalid resolveConflicts").with_details(
+                    json!({"repo": repo, "error": "keepHookId must not appear in deleteHookIds"}),
+                ));
+            }
+
+            // Be tolerant of duplicate IDs while still enforcing the key safety invariant above.
+            let mut seen = std::collections::HashSet::<i64>::new();
+            let mut delete_hook_ids = Vec::with_capacity(i.delete_hook_ids.len());
+            for id in i.delete_hook_ids {
+                if seen.insert(id) {
+                    delete_hook_ids.push(id);
+                }
+            }
+
+            if conflict_instructions.contains_key(&repo) {
+                return Err(ApiError::invalid_argument("invalid resolveConflicts")
+                    .with_details(json!({"repo": repo, "error": "duplicate repo entry"})));
+            }
+
+            conflict_instructions.insert(
+                repo.clone(),
+                ResolveGitHubPackagesConflicts {
+                    repo,
+                    keep_hook_id: i.keep_hook_id,
+                    delete_hook_ids,
+                },
+            );
         }
     }
 

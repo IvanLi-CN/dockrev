@@ -1864,31 +1864,6 @@ FROM github_packages_repos
         .context("list github packages repos page")
     }
 
-    pub async fn set_github_packages_repo_selected(
-        &self,
-        owner: &str,
-        repo: &str,
-        selected: bool,
-        now: &str,
-    ) -> anyhow::Result<bool> {
-        let owner = owner.to_string();
-        let repo = repo.to_string();
-        let now = now.to_string();
-        self.call(move |conn| {
-            let n = conn.execute(
-                r#"
-UPDATE github_packages_repos
-SET selected = ?3, updated_at = ?4
-WHERE owner = ?1 AND repo = ?2
-"#,
-                params![owner, repo, selected as i64, now],
-            )?;
-            Ok(n > 0)
-        })
-        .await
-        .context("set github packages repo selected")
-    }
-
     pub async fn upsert_github_packages_repo_selected(
         &self,
         owner: &str,
