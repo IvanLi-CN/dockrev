@@ -2107,17 +2107,24 @@ ON CONFLICT(owner, repo) DO UPDATE SET
             if canonical.is_empty() {
                 tx.execute("DELETE FROM github_packages_repos", [])?;
             } else {
-                let mut full_names: Vec<String> = Vec::with_capacity(canonical.len());
+                // Avoid hitting SQLite's SQL-variable limit (commonly 999) by using a temp table
+                // instead of `NOT IN (?, ?, ...)` with one placeholder per repo.
+                tx.execute(
+                    "CREATE TEMP TABLE IF NOT EXISTS tmp_github_packages_keep (full_name TEXT PRIMARY KEY)",
+                    [],
+                )?;
+                tx.execute("DELETE FROM tmp_github_packages_keep", [])?;
                 for (owner, repo, _) in &canonical {
-                    full_names.push(format!("{owner}/{repo}"));
+                    let full_name = format!("{owner}/{repo}");
+                    tx.execute(
+                        "INSERT OR IGNORE INTO tmp_github_packages_keep (full_name) VALUES (?1)",
+                        params![full_name],
+                    )?;
                 }
-                let placeholders = vec!["?"; full_names.len()].join(",");
-                let sql = format!(
-                    "DELETE FROM github_packages_repos WHERE (owner || '/' || repo) NOT IN ({placeholders})"
-                );
-                let params: Vec<&dyn rusqlite::ToSql> =
-                    full_names.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
-                tx.execute(&sql, params.as_slice())?;
+                tx.execute(
+                    "DELETE FROM github_packages_repos WHERE (owner || '/' || repo) NOT IN (SELECT full_name FROM tmp_github_packages_keep)",
+                    [],
+                )?;
             }
 
             tx.commit()?;
