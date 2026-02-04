@@ -1,16 +1,29 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   createWebPushSubscription,
+  deleteGitHubPackagesRepo,
   deleteWebPushSubscription,
+  getGitHubPackagesSettings,
   getNotifications,
   getSettings,
+  listGitHubPackagesRepos,
+  putGitHubPackagesSettings,
   putNotifications,
   putSettings,
+  resolveGitHubPackagesTarget,
+  setGitHubPackagesRepoSelected,
+  syncGitHubPackagesWebhooks,
   testNotifications,
+  apiBaseUrl,
+  type GitHubPackagesSettingsResponse,
+  type ListGitHubPackagesReposResponse,
+  type ResolveGitHubPackagesTargetResponse,
+  type SyncGitHubPackagesWebhookResult,
   type NotificationConfig,
   type SettingsResponse,
 } from '../api'
-import { Button, Mono, Switch } from '../ui'
+import { Button, IconButton, Mono, RefreshIcon, Switch, TrashIcon } from '../ui'
+import { useConfirm } from '../confirm'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 
@@ -40,39 +53,142 @@ function formatBytes(n: number) {
   return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
 }
 
+function GitHubPackagesRepoPicker({
+  initial,
+  onChange,
+}: {
+  initial: ResolveGitHubPackagesTargetResponse
+  onChange: (repos: Array<{ fullName: string; selected: boolean }>) => void
+}) {
+  const [repos, setRepos] = useState(() => initial.repos.map((r) => ({ ...r })))
+
+  useEffect(() => {
+    onChange(repos)
+  }, [repos, onChange])
+
+  return (
+    <div>
+      <div className="modalLead">
+        profile <Mono>{initial.owner}</Mono> · 选择要跟踪的仓库
+      </div>
+      <div className="modalList" style={{ maxHeight: 420, overflowY: 'auto' }}>
+        {repos.map((r) => (
+          <div key={r.fullName} className="modalListItem">
+            <div className="modalListLeft" style={{ minWidth: 0 }}>
+              <div className="modalListTitle">
+                <span className="mono" style={{ overflowWrap: 'anywhere' }}>
+                  {r.fullName}
+                </span>
+              </div>
+            </div>
+            <div className="modalListRight">
+              <Switch
+                checked={r.selected}
+                onChange={(v) => {
+                  setRepos((prev) => prev.map((x) => (x.fullName === r.fullName ? { ...x, selected: v } : x)))
+                }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => void }) {
   const { onTopActions } = props
+  const confirm = useConfirm()
   const [settings, setSettings] = useState<SettingsResponse | null>(null)
   const [notifications, setNotifications] = useState<NotificationConfig | null>(null)
+  const [githubPackages, setGitHubPackages] = useState<GitHubPackagesSettingsResponse | null>(null)
+  const [githubPackagesPat, setGitHubPackagesPat] = useState('')
+  const [githubPackagesNewRepo, setGitHubPackagesNewRepo] = useState('')
+  const [githubPackagesSyncResults, setGitHubPackagesSyncResults] = useState<SyncGitHubPackagesWebhookResult[] | null>(null)
+  const [githubPackagesTrackedRepos, setGitHubPackagesTrackedRepos] = useState<ListGitHubPackagesReposResponse | null>(null)
+  const [githubPackagesTrackedReposPage, setGitHubPackagesTrackedReposPage] = useState(1)
+  const [githubPackagesTrackedReposPerPage, setGitHubPackagesTrackedReposPerPage] = useState(50)
+  const [githubPackagesTrackedReposQInput, setGitHubPackagesTrackedReposQInput] = useState('')
+  const [githubPackagesTrackedReposQ, setGitHubPackagesTrackedReposQ] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [webPushEndpoint, setWebPushEndpoint] = useState<string | null>(null)
   const supervisor = useSupervisorHealth()
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
 
+  useEffect(() => {
+    // Debounce to avoid firing requests on every keystroke in the filter.
+    const handle = window.setTimeout(() => {
+      setGitHubPackagesTrackedReposPage(1)
+      setGitHubPackagesTrackedReposQ(githubPackagesTrackedReposQInput)
+    }, 250)
+    return () => window.clearTimeout(handle)
+  }, [githubPackagesTrackedReposQInput])
+
+  const refreshTrackedRepos = useCallback(
+    async (opts?: { page?: number; perPage?: number; q?: string }) => {
+      const page = opts?.page ?? githubPackagesTrackedReposPage
+      const perPage = opts?.perPage ?? githubPackagesTrackedReposPerPage
+      const q = (opts?.q ?? githubPackagesTrackedReposQ).trim()
+      const resp = await listGitHubPackagesRepos({
+        page,
+        perPage,
+        q: q ? q : null,
+        selectedFilter: 'selected',
+      })
+      setGitHubPackagesTrackedRepos(resp)
+
+      // If a deletion makes the current page out-of-range, clamp to the last page.
+      const maxPage = Math.max(1, Math.ceil(resp.filteredTotal / resp.perPage))
+      if (resp.page > maxPage) setGitHubPackagesTrackedReposPage(maxPage)
+    },
+    [githubPackagesTrackedReposPage, githubPackagesTrackedReposPerPage, githubPackagesTrackedReposQ],
+  )
+
   const refresh = useCallback(async () => {
     setError(null)
     setSettings(await getSettings())
     setNotifications(await getNotifications())
+    const gh = await getGitHubPackagesSettings()
+    const defaultCallbackUrl = (() => {
+      if (typeof window === 'undefined') return ''
+      const base = apiBaseUrl()
+      const resolvedBase = new URL(base || window.location.origin, window.location.origin).toString().replace(/\/$/, '')
+      return `${resolvedBase}/api/webhooks/github-packages`
+    })()
+    const callbackUrl = gh.callbackUrl || defaultCallbackUrl
+    setGitHubPackages({ ...gh, callbackUrl })
+    setGitHubPackagesPat(gh.patMasked ?? '')
   }, [])
 
   useEffect(() => {
-    void refresh().catch((e: unknown) => setError(errorMessage(e)))
+    void (async () => {
+      await refresh()
+    })().catch((e: unknown) => setError(errorMessage(e)))
   }, [refresh])
+
+  useEffect(() => {
+    void refreshTrackedRepos().catch((e: unknown) => setError(errorMessage(e)))
+  }, [refreshTrackedRepos])
 
   useEffect(() => {
     onTopActions(
       <Button
         variant="primary"
-        disabled={busy || !settings || !notifications}
+        disabled={busy || !settings || !notifications || !githubPackages}
         onClick={() => {
           void (async () => {
-            if (!settings || !notifications) return
+            if (!settings || !notifications || !githubPackages) return
             setBusy(true)
             setError(null)
             try {
               await putSettings(settings.backup)
               await putNotifications(notifications)
+              await putGitHubPackagesSettings({
+                enabled: githubPackages.enabled,
+                callbackUrl: githubPackages.callbackUrl,
+                pat: githubPackagesPat || null,
+              })
               await refresh()
             } catch (e: unknown) {
               setError(errorMessage(e))
@@ -85,7 +201,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
         保存设置
       </Button>,
     )
-  }, [busy, notifications, onTopActions, refresh, settings])
+  }, [busy, githubPackages, githubPackagesPat, notifications, onTopActions, refresh, settings])
 
   const canWebPush = useMemo(() => {
     return typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window
@@ -125,9 +241,13 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     setWebPushEndpoint(null)
   }
 
-  if (!settings || !notifications) {
+  if (!settings || !notifications || !githubPackages) {
     return <div className="muted">加载中…</div>
   }
+
+  const githubPackagesTrackedMaxPage = githubPackagesTrackedRepos
+    ? Math.max(1, Math.ceil(githubPackagesTrackedRepos.filteredTotal / githubPackagesTrackedRepos.perPage))
+    : 1
 
   return (
     <div className="page">
@@ -272,30 +392,242 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             </div>
           </div>
 
+          <div className="card">
+            <div className="title">通知</div>
+            <div className="muted">事件：发现更新 / 版本提示 / 更新成功 / 更新失败 / 备份失败</div>
+
+            <div className="settingsSection">
+              <div className="settingHead">
+                <div className="sectionTitle">Email</div>
+                <Switch
+                  checked={notifications.email.enabled}
+                  disabled={busy}
+                  onChange={(v) => setNotifications({ ...notifications, email: { ...notifications.email, enabled: v } })}
+                />
+              </div>
+              <div className="kv">
+                <div className="kvRow">
+                  <div className="label">SMTP URL</div>
+                  <input
+                    className="input"
+                    value={notifications.email.smtpUrl ?? ''}
+                    onChange={(e) => setNotifications({ ...notifications, email: { ...notifications.email, smtpUrl: e.target.value } })}
+                    placeholder="smtp://user:pass@smtp.example.com:587"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="settingsSection">
+              <div className="settingHead">
+                <div className="sectionTitle">Webhook</div>
+                <Switch
+                  checked={notifications.webhook.enabled}
+                  disabled={busy}
+                  onChange={(v) => setNotifications({ ...notifications, webhook: { ...notifications.webhook, enabled: v } })}
+                />
+              </div>
+              <div className="kv">
+                <div className="kvRow">
+                  <div className="label">URL</div>
+                  <input
+                    className="input"
+                    value={notifications.webhook.url ?? ''}
+                    onChange={(e) =>
+                      setNotifications({ ...notifications, webhook: { ...notifications.webhook, url: e.target.value } })
+                    }
+                    placeholder="https://hooks.example.com/dockrev"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="settingsSection">
+              <div className="settingHead">
+                <div className="sectionTitle">Telegram</div>
+                <Switch
+                  checked={notifications.telegram.enabled}
+                  disabled={busy}
+                  onChange={(v) => setNotifications({ ...notifications, telegram: { ...notifications.telegram, enabled: v } })}
+                />
+              </div>
+              <div className="kv">
+                <div className="kvRow">
+                  <div className="label">Bot token</div>
+                  <input
+                    className="input"
+                    value={notifications.telegram.botToken ?? ''}
+                    onChange={(e) =>
+                      setNotifications({ ...notifications, telegram: { ...notifications.telegram, botToken: e.target.value } })
+                    }
+                  />
+                </div>
+                <div className="kvRow">
+                  <div className="label">Chat id</div>
+                  <input
+                    className="input"
+                    value={notifications.telegram.chatId ?? ''}
+                    onChange={(e) =>
+                      setNotifications({ ...notifications, telegram: { ...notifications.telegram, chatId: e.target.value } })
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="settingsSection">
+              <div className="settingHead">
+                <div className="sectionTitle">Web Push（Chrome / VAPID）</div>
+                <Switch
+                  checked={notifications.webPush.enabled}
+                  disabled={busy}
+                  onChange={(v) => setNotifications({ ...notifications, webPush: { ...notifications.webPush, enabled: v } })}
+                />
+              </div>
+
+              <div className="kv">
+                <div className="kvRow">
+                  <div className="label">Public Key</div>
+                  <input
+                    className="input"
+                    value={notifications.webPush.vapidPublicKey ?? ''}
+                    onChange={(e) =>
+                      setNotifications({ ...notifications, webPush: { ...notifications.webPush, vapidPublicKey: e.target.value } })
+                    }
+                  />
+                </div>
+                <div className="kvRow">
+                  <div className="label">Private Key（留空=保持原值）</div>
+                  <input
+                    className="input"
+                    value={notifications.webPush.vapidPrivateKey ?? ''}
+                    onChange={(e) =>
+                      setNotifications({ ...notifications, webPush: { ...notifications.webPush, vapidPrivateKey: e.target.value } })
+                    }
+                  />
+                </div>
+                <div className="kvRow">
+                  <div className="label">Subject</div>
+                  <input
+                    className="input"
+                    value={notifications.webPush.vapidSubject ?? ''}
+                    onChange={(e) =>
+                      setNotifications({ ...notifications, webPush: { ...notifications.webPush, vapidSubject: e.target.value } })
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="formActions" style={{ marginTop: 10 }}>
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => {
+                    void (async () => {
+                      setBusy(true)
+                      setError(null)
+                      try {
+                        await testNotifications('dockrev: test notification')
+                      } catch (e: unknown) {
+                        setError(errorMessage(e))
+                      } finally {
+                        setBusy(false)
+                      }
+                    })()
+                  }}
+                >
+                  发送测试通知
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={busy || !canWebPush}
+                  onClick={() => {
+                    void (async () => {
+                      setBusy(true)
+                      setError(null)
+                      try {
+                        await ensureSubscription()
+                      } catch (e: unknown) {
+                        setError(errorMessage(e))
+                      } finally {
+                        setBusy(false)
+                      }
+                    })()
+                  }}
+                  title={canWebPush ? '当前浏览器订阅 Web Push' : '当前环境不支持'}
+                >
+                  订阅本浏览器
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={busy || !canWebPush}
+                  onClick={() => {
+                    void (async () => {
+                      setBusy(true)
+                      setError(null)
+                      try {
+                        await removeSubscription()
+                      } catch (e: unknown) {
+                        setError(errorMessage(e))
+                      } finally {
+                        setBusy(false)
+                      }
+                    })()
+                  }}
+                >
+                  取消订阅
+                </Button>
+              </div>
+
+              {webPushEndpoint ? (
+                <div className="muted" style={{ marginTop: 10 }}>
+                  endpoint <Mono>{webPushEndpoint.slice(0, 40)}…</Mono>
+                </div>
+              ) : null}
+            </div>
+
+            {error ? <div className="error">{error}</div> : null}
+          </div>
+
           {error ? <div className="error">{error}</div> : null}
         </div>
 
-        <div className="card">
-          <div className="title">通知</div>
-          <div className="muted">事件：发现更新 / 版本提示 / 更新成功 / 更新失败 / 备份失败</div>
+        <div className="settingsCol">
+          <div className="card">
+          <div className="title">GitHub Packages（GHCR）Webhook</div>
+          <div className="muted">在 GHCR 发布新版本时自动触发 Dockrev 扫描（事件：package.published）</div>
 
           <div className="settingsSection">
             <div className="settingHead">
-              <div className="sectionTitle">Email</div>
+              <div className="sectionTitle">启用</div>
               <Switch
-                checked={notifications.email.enabled}
+                checked={githubPackages.enabled}
                 disabled={busy}
-                onChange={(v) => setNotifications({ ...notifications, email: { ...notifications.email, enabled: v } })}
+                onChange={(v) => setGitHubPackages({ ...githubPackages, enabled: v })}
               />
             </div>
+
             <div className="kv">
               <div className="kvRow">
-                <div className="label">SMTP URL</div>
+                <div className="label">GitHub PAT（留空=保持原值）</div>
                 <input
                   className="input"
-                  value={notifications.email.smtpUrl ?? ''}
-                  onChange={(e) => setNotifications({ ...notifications, email: { ...notifications.email, smtpUrl: e.target.value } })}
-                  placeholder="smtp://user:pass@smtp.example.com:587"
+                  value={githubPackagesPat}
+                  onChange={(e) => setGitHubPackagesPat(e.target.value)}
+                  placeholder="ghp_..."
+                />
+                <div className="muted" style={{ marginTop: 6 }}>
+                  提示：解析 profile/username 与同步 webhook 需要先“保存设置”把 PAT 写入后端。
+                </div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">Callback URL</div>
+                <input
+                  className="input"
+                  value={githubPackages.callbackUrl}
+                  onChange={(e) => setGitHubPackages({ ...githubPackages, callbackUrl: e.target.value })}
+                  placeholder="https://dockrev.example.com/api/webhooks/github-packages"
                 />
               </div>
             </div>
@@ -303,167 +635,353 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
           <div className="settingsSection">
             <div className="settingHead">
-              <div className="sectionTitle">Webhook</div>
-              <Switch
-                checked={notifications.webhook.enabled}
-                disabled={busy}
-                onChange={(v) => setNotifications({ ...notifications, webhook: { ...notifications.webhook, enabled: v } })}
-              />
-            </div>
-            <div className="kv">
-              <div className="kvRow">
-                <div className="label">URL</div>
-                <input
-                  className="input"
-                  value={notifications.webhook.url ?? ''}
-                  onChange={(e) => setNotifications({ ...notifications, webhook: { ...notifications.webhook, url: e.target.value } })}
-                  placeholder="https://hooks.example.com/dockrev"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="settingsSection">
-            <div className="settingHead">
-              <div className="sectionTitle">Telegram</div>
-              <Switch
-                checked={notifications.telegram.enabled}
-                disabled={busy}
-                onChange={(v) => setNotifications({ ...notifications, telegram: { ...notifications.telegram, enabled: v } })}
-              />
-            </div>
-            <div className="kv">
-              <div className="kvRow">
-                <div className="label">Bot token</div>
-                <input
-                  className="input"
-                  value={notifications.telegram.botToken ?? ''}
-                  onChange={(e) => setNotifications({ ...notifications, telegram: { ...notifications.telegram, botToken: e.target.value } })}
-                />
-              </div>
-              <div className="kvRow">
-                <div className="label">Chat id</div>
-                <input
-                  className="input"
-                  value={notifications.telegram.chatId ?? ''}
-                  onChange={(e) => setNotifications({ ...notifications, telegram: { ...notifications.telegram, chatId: e.target.value } })}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="settingsSection">
-            <div className="settingHead">
-              <div className="sectionTitle">Web Push（Chrome / VAPID）</div>
-              <Switch
-                checked={notifications.webPush.enabled}
-                disabled={busy}
-                onChange={(v) => setNotifications({ ...notifications, webPush: { ...notifications.webPush, enabled: v } })}
-              />
+              <div className="sectionTitle">Repos</div>
+              <div className="muted">{githubPackages.reposSelectedTotal} 个</div>
             </div>
 
             <div className="kv">
               <div className="kvRow">
-                <div className="label">Public Key</div>
-                <input
-                  className="input"
-                  value={notifications.webPush.vapidPublicKey ?? ''}
-                  onChange={(e) =>
-                    setNotifications({ ...notifications, webPush: { ...notifications.webPush, vapidPublicKey: e.target.value } })
-                  }
-                />
-              </div>
-              <div className="kvRow">
-                <div className="label">Private Key（留空=保持原值）</div>
-                <input
-                  className="input"
-                  value={notifications.webPush.vapidPrivateKey ?? ''}
-                  onChange={(e) =>
-                    setNotifications({ ...notifications, webPush: { ...notifications.webPush, vapidPrivateKey: e.target.value } })
-                  }
-                />
-              </div>
-              <div className="kvRow">
-                <div className="label">Subject</div>
-                <input
-                  className="input"
-                  value={notifications.webPush.vapidSubject ?? ''}
-                  onChange={(e) =>
-                    setNotifications({ ...notifications, webPush: { ...notifications.webPush, vapidSubject: e.target.value } })
-                  }
-                />
+                <div className="label">添加 Repo</div>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                  <input
+                    className="input"
+                    value={githubPackagesNewRepo}
+                    onChange={(e) => setGitHubPackagesNewRepo(e.target.value)}
+                    placeholder="https://github.com/org/repo 或 org/repo；也可粘贴 profile/org URL 批量选择"
+                    style={{ flex: 1 }}
+                  />
+                  <Button
+                    variant="ghost"
+                    disabled={busy || !githubPackagesNewRepo.trim()}
+                    onClick={() => {
+                      void (async () => {
+                        setBusy(true)
+                        setError(null)
+                        setGitHubPackagesSyncResults(null)
+                        try {
+                          const input = githubPackagesNewRepo.trim()
+                          const resolved = await resolveGitHubPackagesTarget(input)
+                          if (resolved.kind === 'repo') {
+                            const fullName = resolved.repos[0]?.fullName?.trim() ?? ''
+                            if (!fullName) throw new Error('resolve returned empty repo')
+                            await setGitHubPackagesRepoSelected({ fullName, selected: true })
+                            setGitHubPackagesNewRepo('')
+                            await refresh()
+                            await refreshTrackedRepos()
+                            return
+                          }
+                          if (resolved.kind === 'owner') {
+                            let picked = resolved.repos.map((r) => ({ ...r }))
+                            const ok = await confirm({
+                              title: '选择要跟踪的仓库',
+                              body: (
+                                <GitHubPackagesRepoPicker
+                                  initial={resolved}
+                                  onChange={(next) => {
+                                    picked = next
+                                  }}
+                                />
+                              ),
+                              confirmText: '确认',
+                              cancelText: '取消',
+                              confirmVariant: 'primary',
+                              badgeText: null,
+                            })
+                            if (!ok) return
+                            // Apply both selections and deselections, but only for repos whose
+                            // selection state changed in the picker to reduce API calls.
+                            const before = new Map(resolved.repos.map((r) => [r.fullName, r.selected] as const))
+                            const changed = picked.filter((r) => before.get(r.fullName) !== r.selected)
+                            for (const r of changed) {
+                              await setGitHubPackagesRepoSelected({ fullName: r.fullName, selected: r.selected })
+                            }
+                            setGitHubPackagesNewRepo('')
+                            await refresh()
+                            await refreshTrackedRepos()
+                            return
+                          }
+                          throw new Error(`unsupported resolve kind: ${resolved.kind}`)
+                        } catch (e: unknown) {
+                          setError(errorMessage(e))
+                        } finally {
+                          setBusy(false)
+                        }
+                      })()
+                    }}
+                  >
+                    解析并添加
+                  </Button>
+                </div>
               </div>
             </div>
 
-            <div className="formActions" style={{ marginTop: 10 }}>
-              <Button
-                variant="ghost"
-                disabled={busy}
-                onClick={() => {
-                  void (async () => {
-                    setBusy(true)
-                    setError(null)
-                    try {
-                      await testNotifications('dockrev: test notification')
-                    } catch (e: unknown) {
-                      setError(errorMessage(e))
-                    } finally {
-                      setBusy(false)
-                    }
-                  })()
-                }}
-              >
-                发送测试通知
-              </Button>
-              <Button
-                variant="ghost"
-                disabled={busy || !canWebPush}
-                onClick={() => {
-                  void (async () => {
-                    setBusy(true)
-                    setError(null)
-                    try {
-                      await ensureSubscription()
-                    } catch (e: unknown) {
-                      setError(errorMessage(e))
-                    } finally {
-                      setBusy(false)
-                    }
-                  })()
-                }}
-                title={canWebPush ? '当前浏览器订阅 Web Push' : '当前环境不支持'}
-              >
-                订阅本浏览器
-              </Button>
-              <Button
-                variant="ghost"
-                disabled={busy || !canWebPush}
-                onClick={() => {
-                  void (async () => {
-                    setBusy(true)
-                    setError(null)
-                    try {
-                      await removeSubscription()
-                    } catch (e: unknown) {
-                      setError(errorMessage(e))
-                    } finally {
-                      setBusy(false)
-                    }
-                  })()
-                }}
-              >
-                取消订阅
-              </Button>
-            </div>
+            {githubPackagesTrackedRepos ? (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+                  <input
+                    className="input"
+                    value={githubPackagesTrackedReposQInput}
+                    onChange={(e) => setGitHubPackagesTrackedReposQInput(e.target.value)}
+                    placeholder="搜索 owner/repo"
+                    disabled={busy}
+                    style={{ flex: '1 1 260px', minWidth: 220 }}
+                  />
+                  <select
+                    className="select"
+                    value={githubPackagesTrackedReposPerPage}
+                    disabled={busy}
+                    onChange={(e) => {
+                      const next = Math.max(1, Number(e.target.value) || 50)
+                      setGitHubPackagesTrackedReposPerPage(next)
+                      setGitHubPackagesTrackedReposPage(1)
+                    }}
+                  >
+                    <option value={20}>20/页</option>
+                    <option value={50}>50/页</option>
+                    <option value={100}>100/页</option>
+                    <option value={200}>200/页</option>
+                  </select>
+                  <div className="muted" style={{ marginLeft: 'auto' }}>
+                    匹配 {githubPackagesTrackedRepos.filteredTotal} / 已跟踪 {githubPackagesTrackedRepos.selectedTotal}
+                  </div>
+                </div>
 
-            {webPushEndpoint ? (
+                {githubPackagesTrackedRepos.repos.length ? (
+                  <div
+                    style={{
+                      marginTop: 10,
+                      maxHeight: 420,
+                      overflowY: 'auto',
+                      paddingRight: 6,
+                      overscrollBehavior: 'contain',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 10,
+                    }}
+                  >
+                    {githubPackagesTrackedRepos.repos.map((r) => {
+                      const dotClass = r.lastError
+                        ? 'statusDot statusDotBad'
+                        : r.hookId
+                          ? 'statusDot statusDotOk'
+                          : 'statusDot statusDotWarn'
+                      const lastSync = r.lastSyncAt ? r.lastSyncAt : '-'
+                      const hookId = r.hookId ? String(r.hookId) : '-'
+                      return (
+                        <div
+                          key={r.fullName}
+                          style={{
+                            display: 'flex',
+                            gap: 10,
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            minWidth: 0,
+                          }}
+                        >
+                          <div style={{ minWidth: 0, flex: '1 1 auto' }}>
+                            <div style={{ display: 'flex', gap: 10, alignItems: 'center', minWidth: 0 }}>
+                              <span className={dotClass} />
+                              <div className="mono" style={{ overflowWrap: 'anywhere' }}>
+                                {r.fullName}
+                              </div>
+                            </div>
+                            <div className="muted" style={{ marginTop: 4, overflowWrap: 'anywhere' }}>
+                              hookId: {hookId} · lastSyncAt: {lastSync}
+                              {r.lastError ? ` · lastError: ${r.lastError}` : null}
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flex: '0 0 auto' }}>
+                            <IconButton
+                              variant="ghost"
+                              title="同步状态"
+                              disabled={busy || !githubPackages.enabled}
+                              onClick={() => {
+                                void (async () => {
+                                  setBusy(true)
+                                  setError(null)
+                                  try {
+                                    const resp = await syncGitHubPackagesWebhooks({ dryRun: false, repos: [r.fullName] })
+                                    setGitHubPackagesSyncResults(resp.results)
+                                    await refreshTrackedRepos()
+                                  } catch (e: unknown) {
+                                    setError(errorMessage(e))
+                                  } finally {
+                                    setBusy(false)
+                                  }
+                                })()
+                              }}
+                            >
+                              <RefreshIcon className="uiIcon" />
+                            </IconButton>
+
+                            <IconButton
+                              variant="danger"
+                              title="删除"
+                              disabled={busy}
+                              onClick={() => {
+                                void (async () => {
+                                  const ok = await confirm({
+                                    title: '删除跟踪仓库',
+                                    body: (
+                                      <div>
+                                        <div className="modalLead">将反注册 webhook，并从列表中移除该仓库：</div>
+                                        <div className="modalKvGrid">
+                                          <div className="modalKvLabel">Repo</div>
+                                          <div className="modalKvValue">
+                                            <Mono>{r.fullName}</Mono>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ),
+                                    confirmText: '删除',
+                                    cancelText: '取消',
+                                    confirmVariant: 'danger',
+                                    badgeText: '将删除 webhook',
+                                    badgeTone: 'bad',
+                                  })
+                                  if (!ok) return
+                                  setBusy(true)
+                                  setError(null)
+                                  try {
+                                    await deleteGitHubPackagesRepo({ fullName: r.fullName })
+                                    setGitHubPackagesSyncResults(null)
+                                    await refresh()
+                                    await refreshTrackedRepos()
+                                  } catch (e: unknown) {
+                                    setError(errorMessage(e))
+                                  } finally {
+                                    setBusy(false)
+                                  }
+                                })()
+                              }}
+                            >
+                              <TrashIcon className="uiIcon" />
+                            </IconButton>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <div className="muted" style={{ marginTop: 10 }}>
+                    暂无已跟踪仓库
+                  </div>
+                )}
+
+                <div className="formActions" style={{ marginTop: 10, justifyContent: 'space-between' }}>
+                  <div className="muted">
+                    第 {githubPackagesTrackedRepos.page} 页（每页 {githubPackagesTrackedRepos.perPage}）
+                  </div>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <Button
+                      variant="ghost"
+                      disabled={busy || githubPackagesTrackedRepos.page <= 1}
+                      onClick={() => setGitHubPackagesTrackedReposPage((p) => Math.max(1, p - 1))}
+                    >
+                      上一页
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      disabled={busy || githubPackagesTrackedRepos.page >= githubPackagesTrackedMaxPage}
+                      onClick={() =>
+                        setGitHubPackagesTrackedReposPage((p) => Math.min(githubPackagesTrackedMaxPage, p + 1))
+                      }
+                    >
+                      下一页
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : (
               <div className="muted" style={{ marginTop: 10 }}>
-                endpoint <Mono>{webPushEndpoint.slice(0, 40)}…</Mono>
+                加载中…
+              </div>
+            )}
+          </div>
+
+            {githubPackagesSyncResults ? (
+              <div className="kv" style={{ marginTop: 10 }}>
+                {githubPackagesSyncResults.map((r) => (
+                  <div className="kvRow" key={`${r.repo}:${r.action}:${r.hookId ?? ''}`}>
+                    <div className="label">{r.action}</div>
+                    <div style={{ width: '100%' }}>
+                      <div className="mono">{r.repo}</div>
+                      {r.message ? <div className="muted">{r.message}</div> : null}
+                      {r.action === 'conflict' && r.conflictHooks?.length ? (
+                        <div style={{ marginTop: 6 }}>
+                          <div className="muted">发现重复 webhook（同 callback URL + package 事件）：</div>
+                          <div className="muted" style={{ marginTop: 6 }}>
+                            {r.conflictHooks.map((h) => (
+                              <div key={h.id}>
+                                hook {h.id} active={String(h.active)} events=[{h.events.join(', ')}]
+                              </div>
+                            ))}
+                          </div>
+                          <Button
+                            variant="ghost"
+                            disabled={busy}
+                            onClick={() => {
+                              void (async () => {
+                                const hooks = r.conflictHooks ?? []
+                                if (hooks.length < 2) return
+                                const keep = hooks[0]!
+                                const del = hooks.slice(1).map((h) => h.id)
+                                const ok = await confirm({
+                                  title: '处理重复 webhook',
+                                  body: (
+                                    <div>
+                                      <div className="modalLead">检测到重复 webhook：保留一个，删除其余并重试。</div>
+                                      <div className="modalKvGrid">
+                                        <div className="modalKvLabel">Repo</div>
+                                        <div className="modalKvValue">
+                                          <Mono>{r.repo}</Mono>
+                                        </div>
+                                        <div className="modalKvLabel">Keep</div>
+                                        <div className="modalKvValue">
+                                          <Mono>{String(keep.id)}</Mono>
+                                        </div>
+                                        <div className="modalKvLabel">Delete</div>
+                                        <div className="modalKvValue">{del.map(String).join(', ')}</div>
+                                      </div>
+                                    </div>
+                                  ),
+                                  confirmText: '删除并重试',
+                                  cancelText: '取消',
+                                  confirmVariant: 'danger',
+                                  badgeText: '会删除 webhook',
+                                  badgeTone: 'bad',
+                                })
+                                if (!ok) return
+                                setBusy(true)
+                                setError(null)
+                                try {
+                                  const resp = await syncGitHubPackagesWebhooks({
+                                    resolveConflicts: [{ repo: r.repo, keepHookId: keep.id, deleteHookIds: del }],
+                                    repos: [r.repo],
+                                  })
+                                  setGitHubPackagesSyncResults(resp.results)
+                                  await refresh()
+                                } catch (e: unknown) {
+                                  setError(errorMessage(e))
+                                } finally {
+                                  setBusy(false)
+                                }
+                              })()
+                            }}
+                          >
+                            删除旧的并重试
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : null}
-          </div>
 
           {error ? <div className="error">{error}</div> : null}
+        </div>
         </div>
       </div>
     </div>

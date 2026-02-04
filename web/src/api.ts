@@ -173,7 +173,127 @@ export type NotificationConfig = {
   }
 }
 
+export type GitHubPackagesTarget = {
+  input: string
+  kind: 'repo' | 'owner' | string
+  owner: string
+  warnings: string[]
+}
+
+export type GitHubPackagesRepo = {
+  fullName: string
+  selected: boolean
+  hookId?: number | null
+  lastSyncAt?: string | null
+  lastError?: string | null
+}
+
+export type GitHubPackagesSettingsResponse = {
+  enabled: boolean
+  callbackUrl: string
+  targets: GitHubPackagesTarget[]
+  reposTotal: number
+  reposSelectedTotal: number
+  patMasked?: string | null
+  secretMasked?: string | null
+}
+
+export type PutGitHubPackagesSettingsRequest = {
+  enabled: boolean
+  callbackUrl: string
+  targets?: Array<{ input: string }> | null
+  repos?: Array<{ fullName: string; selected: boolean }> | null
+  pat?: string | null
+}
+
+export type ResolveGitHubPackagesTargetResponse = {
+  kind: 'repo' | 'owner' | string
+  owner: string
+  repos: Array<{ fullName: string; selected: boolean }>
+  warnings: string[]
+}
+
+export type SyncGitHubPackagesWebhookResult = {
+  repo: string
+  action: 'noop' | 'created' | 'updated' | 'conflict' | 'error' | string
+  hookId?: number | null
+  conflictHooks?: Array<{ id: number; url: string; events: string[]; active: boolean }> | null
+  message?: string | null
+}
+
+export type SyncGitHubPackagesWebhooksRequest = {
+  dryRun?: boolean
+  resolveConflicts?: Array<{ repo: string; keepHookId: number; deleteHookIds: number[] }>
+  repos?: string[] | null
+}
+
+export type SyncGitHubPackagesWebhooksResponse = {
+  ok: boolean
+  results: SyncGitHubPackagesWebhookResult[]
+}
+
+export type ListGitHubPackagesReposResponse = {
+  page: number
+  perPage: number
+  total: number
+  filteredTotal: number
+  selectedTotal: number
+  repos: GitHubPackagesRepo[]
+}
+
+export type SetGitHubPackagesRepoSelectedRequest = {
+  fullName: string
+  selected: boolean
+}
+
+export type SetGitHubPackagesRepoSelectedResponse = {
+  ok: boolean
+}
+
+export type BulkSetGitHubPackagesReposSelectedRequest = {
+  q?: string | null
+  selectedFilter?: 'all' | 'selected' | 'unselected' | string | null
+  selected: boolean
+}
+
+export type BulkSetGitHubPackagesReposSelectedResponse = {
+  ok: boolean
+  affected: number
+}
+
+export type DeleteGitHubPackagesRepoRequest = {
+  fullName: string
+}
+
+export type DeleteGitHubPackagesRepoResponse = {
+  ok: boolean
+  deletedHookIds: number[]
+}
+
+export type AddGitHubPackagesTargetRequest = {
+  input: string
+}
+
+export type AddGitHubPackagesTargetResponse = {
+  ok: boolean
+  kind: 'repo' | 'owner' | string
+  owner: string
+  reposAdded: number
+}
+
+export type RemoveGitHubPackagesTargetRequest = {
+  input: string
+}
+
+export type RemoveGitHubPackagesTargetResponse = {
+  ok: boolean
+}
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
+
+export function apiBaseUrl(): string {
+  return API_BASE
+}
 
 export class ApiError extends Error {
   readonly status: number
@@ -387,6 +507,92 @@ export async function putNotifications(input: NotificationConfig) {
     body: JSON.stringify(input),
   })
   return (await resp.json()) as { ok: boolean }
+}
+
+export async function getGitHubPackagesSettings(): Promise<GitHubPackagesSettingsResponse> {
+  const resp = await apiFetch('/api/github-packages/settings')
+  return (await resp.json()) as GitHubPackagesSettingsResponse
+}
+
+export async function putGitHubPackagesSettings(input: PutGitHubPackagesSettingsRequest) {
+  const resp = await apiFetch('/api/github-packages/settings', {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  })
+  return (await resp.json()) as { ok: boolean }
+}
+
+export async function resolveGitHubPackagesTarget(input: string): Promise<ResolveGitHubPackagesTargetResponse> {
+  const resp = await apiFetch('/api/github-packages/resolve', {
+    method: 'POST',
+    body: JSON.stringify({ input }),
+  })
+  return (await resp.json()) as ResolveGitHubPackagesTargetResponse
+}
+
+export async function syncGitHubPackagesWebhooks(
+  input: SyncGitHubPackagesWebhooksRequest,
+): Promise<SyncGitHubPackagesWebhooksResponse> {
+  const resp = await apiFetch('/api/github-packages/sync', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+  return (await resp.json()) as SyncGitHubPackagesWebhooksResponse
+}
+
+export async function listGitHubPackagesRepos(input: {
+  page: number
+  perPage: number
+  q?: string | null
+  selectedFilter?: 'all' | 'selected' | 'unselected' | string | null
+}): Promise<ListGitHubPackagesReposResponse> {
+  const sp = new URLSearchParams()
+  sp.set('page', String(input.page))
+  sp.set('perPage', String(input.perPage))
+  if (input.q) sp.set('q', input.q)
+  if (input.selectedFilter && input.selectedFilter !== 'all') sp.set('selectedFilter', input.selectedFilter)
+  const resp = await apiFetch(`/api/github-packages/repos?${sp.toString()}`)
+  return (await resp.json()) as ListGitHubPackagesReposResponse
+}
+
+export async function setGitHubPackagesRepoSelected(input: SetGitHubPackagesRepoSelectedRequest) {
+  const resp = await apiFetch('/api/github-packages/repos/selected', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+  return (await resp.json()) as SetGitHubPackagesRepoSelectedResponse
+}
+
+export async function deleteGitHubPackagesRepo(input: DeleteGitHubPackagesRepoRequest) {
+  const resp = await apiFetch('/api/github-packages/repos/delete', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+  return (await resp.json()) as DeleteGitHubPackagesRepoResponse
+}
+
+export async function bulkSetGitHubPackagesReposSelected(input: BulkSetGitHubPackagesReposSelectedRequest) {
+  const resp = await apiFetch('/api/github-packages/repos/bulk-selected', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+  return (await resp.json()) as BulkSetGitHubPackagesReposSelectedResponse
+}
+
+export async function addGitHubPackagesTarget(input: AddGitHubPackagesTargetRequest) {
+  const resp = await apiFetch('/api/github-packages/targets/add', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+  return (await resp.json()) as AddGitHubPackagesTargetResponse
+}
+
+export async function removeGitHubPackagesTarget(input: RemoveGitHubPackagesTargetRequest) {
+  const resp = await apiFetch('/api/github-packages/targets/remove', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+  return (await resp.json()) as RemoveGitHubPackagesTargetResponse
 }
 
 export async function testNotifications(message?: string) {

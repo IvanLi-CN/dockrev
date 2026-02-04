@@ -391,6 +391,11 @@ html[data-theme='light'] .versionTagsPopover {
   justify-content: center;
 }
 
+.btnIcon {
+  width: 32px;
+  padding: 0;
+}
+
 .btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
@@ -720,9 +725,23 @@ html[data-theme='light'] .versionTagsPopover {
   flex: 0 0 auto;
 }
 
+.uiIcon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
 .stackIcon path {
   fill: none;
   stroke: var(--dockrev-icon-stroke);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.uiIcon path {
+  fill: none;
+  stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 2;

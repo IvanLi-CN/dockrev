@@ -9,8 +9,9 @@ export type ConfirmOptions = {
   confirmText?: string
   cancelText?: string
   confirmVariant?: ConfirmVariant
-  badgeText?: string
-  badgeTone?: ConfirmBadgeTone
+  // Use `null` to explicitly hide the badge (otherwise a default badge is shown).
+  badgeText?: string | null
+  badgeTone?: ConfirmBadgeTone | null
 }
 
 export type ConfirmApi = {

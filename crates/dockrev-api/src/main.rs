@@ -10,6 +10,7 @@ mod db;
 mod discovery;
 mod docker_runner;
 mod error;
+mod github;
 mod ids;
 mod ignore;
 mod notify;

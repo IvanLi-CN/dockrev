@@ -1768,3 +1768,437 @@ async fn settings_and_notifications_roundtrip() {
     assert!(conf["webhook"]["enabled"].as_bool().unwrap());
     assert_eq!(conf["webhook"]["url"].as_str().unwrap(), "******");
 }
+
+#[tokio::test]
+async fn github_packages_settings_masks_pat() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let put = serde_json::json!({
+      "enabled": true,
+      "callbackUrl": "https://dockrev.example.com/api/webhooks/github-packages",
+      "targets": [],
+      "repos": [],
+      "pat": "ghp_example"
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/github-packages/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(put.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/github-packages/settings")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["enabled"], true);
+    assert_eq!(
+        body["callbackUrl"],
+        "https://dockrev.example.com/api/webhooks/github-packages"
+    );
+    assert_eq!(body["patMasked"], "******");
+}
+
+#[tokio::test]
+async fn github_packages_resolve_owner_requires_pat_saved() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/resolve")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"input":"acme"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+}
+
+#[test]
+fn urls_match_is_tolerant_of_trailing_slash_and_default_ports() {
+    assert!(super::urls_match(
+        "https://dockrev.example.com/api/webhooks/github-packages",
+        "https://dockrev.example.com/api/webhooks/github-packages/",
+    ));
+    assert!(super::urls_match(
+        "https://dockrev.example.com:443/api/webhooks/github-packages",
+        "https://dockrev.example.com/api/webhooks/github-packages",
+    ));
+    assert!(super::urls_match(
+        "http://dockrev.example.com:80/api/webhooks/github-packages",
+        "http://dockrev.example.com/api/webhooks/github-packages/",
+    ));
+    assert!(!super::urls_match(
+        "https://dockrev.example.com/api/webhooks/github-packages",
+        "https://dockrev.example.com/api/webhooks/github-packages?x=1",
+    ));
+}
+
+#[tokio::test]
+async fn github_packages_webhook_validates_signature_and_dedupes_delivery() {
+    use ring::hmac;
+
+    let state = test_state(":memory:").await;
+
+    // Seed settings + selected repo.
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .put_github_packages_settings(
+            &crate::api::types::GitHubPackagesSettingsDb {
+                enabled: true,
+                callback_url: "https://dockrev.example.com/api/webhooks/github-packages"
+                    .to_string(),
+                pat: Some("ghp_example".to_string()),
+                webhook_secret: Some("secret123".to_string()),
+                updated_at: Some(now.clone()),
+            },
+            &now,
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .put_github_packages_repos(
+            &[(String::from("acme"), String::from("widgets"), true)],
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let app = api::router(state.clone());
+
+    let payload = serde_json::json!({
+      "action": "published",
+      "repository": { "full_name": "acme/widgets", "owner": { "login": "acme" } }
+    });
+    let payload_bytes = payload.to_string().into_bytes();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "d1")
+                .header("X-Hub-Signature-256", "sha256=deadbeef")
+                .body(Body::from(payload_bytes.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    let key = hmac::Key::new(hmac::HMAC_SHA256, b"secret123");
+    let tag = hmac::sign(&key, &payload_bytes);
+    let sig = format!("sha256={}", hex::encode(tag.as_ref()));
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "d2")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["ok"], true);
+    assert!(
+        body["jobId"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("dsc_")
+    );
+
+    // Same delivery id should be ignored.
+    let key = hmac::Key::new(hmac::HMAC_SHA256, b"secret123");
+    let tag = hmac::sign(&key, &payload_bytes);
+    let sig = format!("sha256={}", hex::encode(tag.as_ref()));
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "d2")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["ignored"], true);
+    assert_eq!(body["reason"], "duplicate_delivery");
+}
+
+#[tokio::test]
+async fn github_packages_webhook_respects_disabled_setting() {
+    use ring::hmac;
+
+    let state = test_state(":memory:").await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .put_github_packages_settings(
+            &crate::api::types::GitHubPackagesSettingsDb {
+                enabled: false,
+                callback_url: "https://dockrev.example.com/api/webhooks/github-packages"
+                    .to_string(),
+                pat: Some("ghp_example".to_string()),
+                webhook_secret: Some("secret123".to_string()),
+                updated_at: Some(now.clone()),
+            },
+            &now,
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .put_github_packages_repos(
+            &[(String::from("acme"), String::from("widgets"), true)],
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let app = api::router(state);
+    let payload = serde_json::json!({
+      "action": "published",
+      "repository": { "full_name": "acme/widgets", "owner": { "login": "acme" } }
+    });
+    let payload_bytes = payload.to_string().into_bytes();
+    let key = hmac::Key::new(hmac::HMAC_SHA256, b"secret123");
+    let tag = hmac::sign(&key, &payload_bytes);
+    let sig = format!("sha256={}", hex::encode(tag.as_ref()));
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "disabled-1")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["ignored"], true);
+    assert_eq!(body["reason"], "disabled");
+}
+
+#[tokio::test]
+async fn github_packages_webhook_matches_selected_repos_case_insensitively() {
+    use ring::hmac;
+
+    let state = test_state(":memory:").await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .put_github_packages_settings(
+            &crate::api::types::GitHubPackagesSettingsDb {
+                enabled: true,
+                callback_url: "https://dockrev.example.com/api/webhooks/github-packages"
+                    .to_string(),
+                pat: Some("ghp_example".to_string()),
+                webhook_secret: Some("secret123".to_string()),
+                updated_at: Some(now.clone()),
+            },
+            &now,
+        )
+        .await
+        .unwrap();
+    // Store with mixed casing.
+    state
+        .db
+        .put_github_packages_repos(
+            &[(String::from("Acme"), String::from("Widgets"), true)],
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let app = api::router(state);
+
+    // Payload uses different casing than stored.
+    let payload = serde_json::json!({
+      "action": "published",
+      "repository": { "full_name": "acme/widgets", "owner": { "login": "acme" } }
+    });
+    let payload_bytes = payload.to_string().into_bytes();
+    let key = hmac::Key::new(hmac::HMAC_SHA256, b"secret123");
+    let tag = hmac::sign(&key, &payload_bytes);
+    let sig = format!("sha256={}", hex::encode(tag.as_ref()));
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "case-1")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["ok"], true);
+    assert!(
+        body["jobId"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("dsc_")
+    );
+}
+
+#[tokio::test]
+async fn github_packages_repo_selected_upsert_is_case_insensitive_and_preserves_sync_state() {
+    let state = test_state(":memory:").await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    // Seed a selected repo with mixed casing + a sync state.
+    state
+        .db
+        .put_github_packages_repos(
+            &[(String::from("Acme"), String::from("Widgets"), true)],
+            &now,
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .set_github_packages_repo_sync_result("Acme", "Widgets", Some(42), Some(&now), None, &now)
+        .await
+        .unwrap();
+
+    // Toggle selection using different casing. This should update the existing row, not insert a
+    // second case-variant duplicate, and should preserve sync state.
+    state
+        .db
+        .upsert_github_packages_repo_selected("acme", "widgets", false, &now)
+        .await
+        .unwrap();
+
+    let repos = state.db.list_github_packages_repos().await.unwrap();
+    assert_eq!(repos.len(), 1);
+    assert_eq!(repos[0].owner, "Acme");
+    assert_eq!(repos[0].repo, "Widgets");
+    assert!(!repos[0].selected);
+    assert_eq!(repos[0].hook_id, Some(42));
+}
+
+#[tokio::test]
+async fn github_packages_webhook_does_not_persist_delivery_for_unselected_repo() {
+    use ring::hmac;
+
+    let state = test_state(":memory:").await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .put_github_packages_settings(
+            &crate::api::types::GitHubPackagesSettingsDb {
+                enabled: true,
+                callback_url: "https://dockrev.example.com/api/webhooks/github-packages"
+                    .to_string(),
+                pat: Some("ghp_example".to_string()),
+                webhook_secret: Some("secret123".to_string()),
+                updated_at: Some(now.clone()),
+            },
+            &now,
+        )
+        .await
+        .unwrap();
+    // Seed a different repo as selected so the incoming event is not eligible.
+    state
+        .db
+        .put_github_packages_repos(&[(String::from("acme"), String::from("other"), true)], &now)
+        .await
+        .unwrap();
+
+    let app = api::router(state.clone());
+
+    let payload = serde_json::json!({
+      "action": "published",
+      "repository": { "full_name": "acme/widgets", "owner": { "login": "acme" } }
+    });
+    let payload_bytes = payload.to_string().into_bytes();
+    let key = hmac::Key::new(hmac::HMAC_SHA256, b"secret123");
+    let tag = hmac::sign(&key, &payload_bytes);
+    let sig = format!("sha256={}", hex::encode(tag.as_ref()));
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "unselected-1")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["ignored"], true);
+    assert_eq!(body["reason"], "repo_not_selected");
+    assert!(
+        !state
+            .db
+            .github_packages_delivery_exists("unselected-1")
+            .await
+            .unwrap()
+    );
+}
