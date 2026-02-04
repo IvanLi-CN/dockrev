@@ -106,22 +106,44 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   const [githubPackagesNewRepo, setGitHubPackagesNewRepo] = useState('')
   const [githubPackagesSyncResults, setGitHubPackagesSyncResults] = useState<SyncGitHubPackagesWebhookResult[] | null>(null)
   const [githubPackagesTrackedRepos, setGitHubPackagesTrackedRepos] = useState<ListGitHubPackagesReposResponse | null>(null)
+  const [githubPackagesTrackedReposPage, setGitHubPackagesTrackedReposPage] = useState(1)
+  const [githubPackagesTrackedReposPerPage, setGitHubPackagesTrackedReposPerPage] = useState(50)
+  const [githubPackagesTrackedReposQInput, setGitHubPackagesTrackedReposQInput] = useState('')
+  const [githubPackagesTrackedReposQ, setGitHubPackagesTrackedReposQ] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [webPushEndpoint, setWebPushEndpoint] = useState<string | null>(null)
   const supervisor = useSupervisorHealth()
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
 
-  const refreshTrackedRepos = useCallback(async () => {
-    setGitHubPackagesTrackedRepos(
-      await listGitHubPackagesRepos({
-        page: 1,
-        perPage: 200,
-        q: null,
+  useEffect(() => {
+    // Debounce to avoid firing requests on every keystroke in the filter.
+    const handle = window.setTimeout(() => {
+      setGitHubPackagesTrackedReposPage(1)
+      setGitHubPackagesTrackedReposQ(githubPackagesTrackedReposQInput)
+    }, 250)
+    return () => window.clearTimeout(handle)
+  }, [githubPackagesTrackedReposQInput])
+
+  const refreshTrackedRepos = useCallback(
+    async (opts?: { page?: number; perPage?: number; q?: string }) => {
+      const page = opts?.page ?? githubPackagesTrackedReposPage
+      const perPage = opts?.perPage ?? githubPackagesTrackedReposPerPage
+      const q = (opts?.q ?? githubPackagesTrackedReposQ).trim()
+      const resp = await listGitHubPackagesRepos({
+        page,
+        perPage,
+        q: q ? q : null,
         selectedFilter: 'selected',
-      }),
-    )
-  }, [])
+      })
+      setGitHubPackagesTrackedRepos(resp)
+
+      // If a deletion makes the current page out-of-range, clamp to the last page.
+      const maxPage = Math.max(1, Math.ceil(resp.filteredTotal / resp.perPage))
+      if (resp.page > maxPage) setGitHubPackagesTrackedReposPage(maxPage)
+    },
+    [githubPackagesTrackedReposPage, githubPackagesTrackedReposPerPage, githubPackagesTrackedReposQ],
+  )
 
   const refresh = useCallback(async () => {
     setError(null)
@@ -142,9 +164,12 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   useEffect(() => {
     void (async () => {
       await refresh()
-      await refreshTrackedRepos()
     })().catch((e: unknown) => setError(errorMessage(e)))
-  }, [refresh, refreshTrackedRepos])
+  }, [refresh])
+
+  useEffect(() => {
+    void refreshTrackedRepos().catch((e: unknown) => setError(errorMessage(e)))
+  }, [refreshTrackedRepos])
 
   useEffect(() => {
     onTopActions(
@@ -219,6 +244,10 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   if (!settings || !notifications || !githubPackages) {
     return <div className="muted">加载中…</div>
   }
+
+  const githubPackagesTrackedMaxPage = githubPackagesTrackedRepos
+    ? Math.max(1, Math.ceil(githubPackagesTrackedRepos.filteredTotal / githubPackagesTrackedRepos.perPage))
+    : 1
 
   return (
     <div className="page">
@@ -686,115 +715,187 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               </div>
             </div>
 
-            {githubPackagesTrackedRepos?.repos?.length ? (
-              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {githubPackagesTrackedRepos.repos.map((r) => {
-                  const dotClass = r.lastError
-                    ? 'statusDot statusDotBad'
-                    : r.hookId
-                      ? 'statusDot statusDotOk'
-                      : 'statusDot statusDotWarn'
-                  const lastSync = r.lastSyncAt ? r.lastSyncAt : '-'
-                  const hookId = r.hookId ? String(r.hookId) : '-'
-                  return (
-                    <div
-                      key={r.fullName}
-                      style={{
-                        display: 'flex',
-                        gap: 10,
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        minWidth: 0,
-                      }}
-                    >
-                      <div style={{ minWidth: 0, flex: '1 1 auto' }}>
-                        <div style={{ display: 'flex', gap: 10, alignItems: 'center', minWidth: 0 }}>
-                          <span className={dotClass} />
-                          <div className="mono" style={{ overflowWrap: 'anywhere' }}>
-                            {r.fullName}
+            {githubPackagesTrackedRepos ? (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+                  <input
+                    className="input"
+                    value={githubPackagesTrackedReposQInput}
+                    onChange={(e) => setGitHubPackagesTrackedReposQInput(e.target.value)}
+                    placeholder="搜索 owner/repo"
+                    disabled={busy}
+                    style={{ flex: '1 1 260px', minWidth: 220 }}
+                  />
+                  <select
+                    className="select"
+                    value={githubPackagesTrackedReposPerPage}
+                    disabled={busy}
+                    onChange={(e) => {
+                      const next = Math.max(1, Number(e.target.value) || 50)
+                      setGitHubPackagesTrackedReposPerPage(next)
+                      setGitHubPackagesTrackedReposPage(1)
+                    }}
+                  >
+                    <option value={20}>20/页</option>
+                    <option value={50}>50/页</option>
+                    <option value={100}>100/页</option>
+                    <option value={200}>200/页</option>
+                  </select>
+                  <div className="muted" style={{ marginLeft: 'auto' }}>
+                    匹配 {githubPackagesTrackedRepos.filteredTotal} / 已跟踪 {githubPackagesTrackedRepos.selectedTotal}
+                  </div>
+                </div>
+
+                {githubPackagesTrackedRepos.repos.length ? (
+                  <div
+                    style={{
+                      marginTop: 10,
+                      maxHeight: 420,
+                      overflowY: 'auto',
+                      paddingRight: 6,
+                      overscrollBehavior: 'contain',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 10,
+                    }}
+                  >
+                    {githubPackagesTrackedRepos.repos.map((r) => {
+                      const dotClass = r.lastError
+                        ? 'statusDot statusDotBad'
+                        : r.hookId
+                          ? 'statusDot statusDotOk'
+                          : 'statusDot statusDotWarn'
+                      const lastSync = r.lastSyncAt ? r.lastSyncAt : '-'
+                      const hookId = r.hookId ? String(r.hookId) : '-'
+                      return (
+                        <div
+                          key={r.fullName}
+                          style={{
+                            display: 'flex',
+                            gap: 10,
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            minWidth: 0,
+                          }}
+                        >
+                          <div style={{ minWidth: 0, flex: '1 1 auto' }}>
+                            <div style={{ display: 'flex', gap: 10, alignItems: 'center', minWidth: 0 }}>
+                              <span className={dotClass} />
+                              <div className="mono" style={{ overflowWrap: 'anywhere' }}>
+                                {r.fullName}
+                              </div>
+                            </div>
+                            <div className="muted" style={{ marginTop: 4, overflowWrap: 'anywhere' }}>
+                              hookId: {hookId} · lastSyncAt: {lastSync}
+                              {r.lastError ? ` · lastError: ${r.lastError}` : null}
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flex: '0 0 auto' }}>
+                            <IconButton
+                              variant="ghost"
+                              title="同步状态"
+                              disabled={busy || !githubPackages.enabled}
+                              onClick={() => {
+                                void (async () => {
+                                  setBusy(true)
+                                  setError(null)
+                                  try {
+                                    const resp = await syncGitHubPackagesWebhooks({ dryRun: false, repos: [r.fullName] })
+                                    setGitHubPackagesSyncResults(resp.results)
+                                    await refreshTrackedRepos()
+                                  } catch (e: unknown) {
+                                    setError(errorMessage(e))
+                                  } finally {
+                                    setBusy(false)
+                                  }
+                                })()
+                              }}
+                            >
+                              <RefreshIcon className="uiIcon" />
+                            </IconButton>
+
+                            <IconButton
+                              variant="danger"
+                              title="删除"
+                              disabled={busy}
+                              onClick={() => {
+                                void (async () => {
+                                  const ok = await confirm({
+                                    title: '删除跟踪仓库',
+                                    body: (
+                                      <div>
+                                        <div className="modalLead">将反注册 webhook，并从列表中移除该仓库：</div>
+                                        <div className="modalKvGrid">
+                                          <div className="modalKvLabel">Repo</div>
+                                          <div className="modalKvValue">
+                                            <Mono>{r.fullName}</Mono>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ),
+                                    confirmText: '删除',
+                                    cancelText: '取消',
+                                    confirmVariant: 'danger',
+                                    badgeText: '将删除 webhook',
+                                    badgeTone: 'bad',
+                                  })
+                                  if (!ok) return
+                                  setBusy(true)
+                                  setError(null)
+                                  try {
+                                    await deleteGitHubPackagesRepo({ fullName: r.fullName })
+                                    setGitHubPackagesSyncResults(null)
+                                    await refresh()
+                                    await refreshTrackedRepos()
+                                  } catch (e: unknown) {
+                                    setError(errorMessage(e))
+                                  } finally {
+                                    setBusy(false)
+                                  }
+                                })()
+                              }}
+                            >
+                              <TrashIcon className="uiIcon" />
+                            </IconButton>
                           </div>
                         </div>
-                        <div className="muted" style={{ marginTop: 4, overflowWrap: 'anywhere' }}>
-                          hookId: {hookId} · lastSyncAt: {lastSync}
-                          {r.lastError ? ` · lastError: ${r.lastError}` : null}
-                        </div>
-                      </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <div className="muted" style={{ marginTop: 10 }}>
+                    暂无已跟踪仓库
+                  </div>
+                )}
 
-                      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flex: '0 0 auto' }}>
-                        <IconButton
-                          variant="ghost"
-                          title="同步状态"
-                          disabled={busy || !githubPackages.enabled}
-                          onClick={() => {
-                            void (async () => {
-                              setBusy(true)
-                              setError(null)
-                              try {
-                                const resp = await syncGitHubPackagesWebhooks({ dryRun: false, repos: [r.fullName] })
-                                setGitHubPackagesSyncResults(resp.results)
-                                await refreshTrackedRepos()
-                              } catch (e: unknown) {
-                                setError(errorMessage(e))
-                              } finally {
-                                setBusy(false)
-                              }
-                            })()
-                          }}
-                        >
-                          <RefreshIcon className="uiIcon" />
-                        </IconButton>
-
-                        <IconButton
-                          variant="danger"
-                          title="删除"
-                          disabled={busy}
-                          onClick={() => {
-                            void (async () => {
-                              const ok = await confirm({
-                                title: '删除跟踪仓库',
-                                body: (
-                                  <div>
-                                    <div className="modalLead">将反注册 webhook，并从列表中移除该仓库：</div>
-                                    <div className="modalKvGrid">
-                                      <div className="modalKvLabel">Repo</div>
-                                      <div className="modalKvValue">
-                                        <Mono>{r.fullName}</Mono>
-                                      </div>
-                                    </div>
-                                  </div>
-                                ),
-                                confirmText: '删除',
-                                cancelText: '取消',
-                                confirmVariant: 'danger',
-                                badgeText: '将删除 webhook',
-                                badgeTone: 'bad',
-                              })
-                              if (!ok) return
-                              setBusy(true)
-                              setError(null)
-                              try {
-                                await deleteGitHubPackagesRepo({ fullName: r.fullName })
-                                setGitHubPackagesSyncResults(null)
-                                await refresh()
-                                await refreshTrackedRepos()
-                              } catch (e: unknown) {
-                                setError(errorMessage(e))
-                              } finally {
-                                setBusy(false)
-                              }
-                            })()
-                          }}
-                        >
-                          <TrashIcon className="uiIcon" />
-                        </IconButton>
-                      </div>
-                    </div>
-                  )
-                })}
+                <div className="formActions" style={{ marginTop: 10, justifyContent: 'space-between' }}>
+                  <div className="muted">
+                    第 {githubPackagesTrackedRepos.page} 页（每页 {githubPackagesTrackedRepos.perPage}）
+                  </div>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <Button
+                      variant="ghost"
+                      disabled={busy || githubPackagesTrackedRepos.page <= 1}
+                      onClick={() => setGitHubPackagesTrackedReposPage((p) => Math.max(1, p - 1))}
+                    >
+                      上一页
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      disabled={busy || githubPackagesTrackedRepos.page >= githubPackagesTrackedMaxPage}
+                      onClick={() =>
+                        setGitHubPackagesTrackedReposPage((p) => Math.min(githubPackagesTrackedMaxPage, p + 1))
+                      }
+                    >
+                      下一页
+                    </Button>
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="muted" style={{ marginTop: 10 }}>
-                暂无已跟踪仓库：添加 org/repo，或粘贴 profile/org URL 批量选择
+                加载中…
               </div>
             )}
           </div>
