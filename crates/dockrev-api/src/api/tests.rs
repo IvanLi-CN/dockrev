@@ -2131,7 +2131,7 @@ async fn github_packages_repo_selected_upsert_is_case_insensitive_and_preserves_
     assert_eq!(repos.len(), 1);
     assert_eq!(repos[0].owner, "Acme");
     assert_eq!(repos[0].repo, "Widgets");
-    assert_eq!(repos[0].selected, false);
+    assert!(!repos[0].selected);
     assert_eq!(repos[0].hook_id, Some(42));
 }
 
