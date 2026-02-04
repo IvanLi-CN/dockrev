@@ -204,15 +204,45 @@ impl HttpRegistryClient {
             return Err(anyhow::anyhow!("unauthorized"));
         };
 
-        let token = self.get_bearer_token(registry_host, &bearer, scope).await?;
+        let token = self
+            .get_bearer_token(registry_host, &bearer, scope, false)
+            .await?;
 
-        let mut builder2 = self.http.get(url);
+        let mut builder2 = self.http.get(url.clone());
         if let Some(accept) = accept {
             builder2 = builder2.header(ACCEPT, accept);
         }
         builder2 = builder2.header(AUTHORIZATION, format!("Bearer {token}"));
 
         let resp2 = builder2.send().await?;
+        if resp2.status() == reqwest::StatusCode::UNAUTHORIZED {
+            // Registries frequently return short-lived bearer tokens. We cache them for performance,
+            // but if a cached token is expired (or otherwise invalid), a retry with a refreshed
+            // token restores correctness while keeping the common path fast.
+            tracing::debug!(
+                registry_host,
+                scope,
+                "registry bearer token rejected, refreshing and retrying"
+            );
+
+            let token = self
+                .get_bearer_token(registry_host, &bearer, scope, true)
+                .await?;
+            let mut builder3 = self.http.get(url);
+            if let Some(accept) = accept {
+                builder3 = builder3.header(ACCEPT, accept);
+            }
+            builder3 = builder3.header(AUTHORIZATION, format!("Bearer {token}"));
+
+            let resp3 = builder3.send().await?;
+            if !resp3.status().is_success() {
+                return Err(anyhow::anyhow!(
+                    "registry request failed: {}",
+                    resp3.status()
+                ));
+            }
+            return Ok(resp3);
+        }
         if !resp2.status().is_success() {
             return Err(anyhow::anyhow!(
                 "registry request failed: {}",
@@ -227,6 +257,7 @@ impl HttpRegistryClient {
         registry_host: &str,
         bearer: &BearerAuth,
         scope: &str,
+        force_refresh: bool,
     ) -> anyhow::Result<String> {
         let cache_key = format!(
             "{}|{}|{}",
@@ -234,10 +265,12 @@ impl HttpRegistryClient {
             bearer.service.as_deref().unwrap_or_default(),
             scope
         );
-        if let Ok(m) = self.token_cache.lock()
-            && let Some(t) = m.get(&cache_key)
-        {
-            return Ok(t.clone());
+        if let Ok(mut m) = self.token_cache.lock() {
+            if force_refresh {
+                m.remove(&cache_key);
+            } else if let Some(t) = m.get(&cache_key) {
+                return Ok(t.clone());
+            }
         }
 
         let mut url = reqwest::Url::parse(&bearer.realm)?;
@@ -474,6 +507,117 @@ pub fn parse_manifest_json(
     }
     .or(digest);
     Ok(ManifestInfo { digest, arch })
+}
+
+#[cfg(test)]
+mod http_registry_tests {
+    use super::*;
+    use axum::{
+        Json, Router,
+        extract::{Query, State},
+        http::{HeaderMap, HeaderValue, StatusCode},
+        response::IntoResponse,
+        routing::get,
+    };
+    use serde_json::json;
+    use std::collections::HashMap as StdHashMap;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Debug, Default)]
+    struct TestState {
+        base: String,
+        token_calls: usize,
+    }
+
+    #[tokio::test]
+    async fn refresh_bearer_token_on_unauthorized() {
+        async fn token(
+            State(state): State<Arc<Mutex<TestState>>>,
+            Query(_q): Query<StdHashMap<String, String>>,
+        ) -> impl IntoResponse {
+            let mut state = state.lock().unwrap();
+            state.token_calls += 1;
+            let token = if state.token_calls == 1 {
+                // First token is intentionally invalid to exercise the refresh path.
+                "bad"
+            } else {
+                "good"
+            };
+            (StatusCode::OK, Json(json!({ "token": token })))
+        }
+
+        async fn manifest(
+            State(state): State<Arc<Mutex<TestState>>>,
+            headers: HeaderMap,
+        ) -> impl IntoResponse {
+            // Only accept the refreshed token.
+            let ok = headers
+                .get(AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v == "Bearer good");
+            if ok {
+                return (StatusCode::OK, "ok").into_response();
+            }
+
+            let base = state.lock().unwrap().base.clone();
+            let www = format!("Bearer realm=\"{base}/token\",service=\"test\"");
+            let mut h = HeaderMap::new();
+            h.insert(WWW_AUTHENTICATE, HeaderValue::from_str(&www).unwrap());
+            (StatusCode::UNAUTHORIZED, h, "").into_response()
+        }
+
+        // Some sandboxed test environments disallow binding sockets. In that case, skip this test
+        // rather than failing the suite.
+        let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+            Ok(l) => l,
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                eprintln!("skipping network-bound test: {e}");
+                return;
+            }
+            Err(e) => panic!("failed to bind test listener: {e}"),
+        };
+        let addr = listener.local_addr().unwrap();
+        let base = format!("http://{addr}");
+
+        let state = Arc::new(Mutex::new(TestState {
+            base: base.clone(),
+            token_calls: 0,
+        }));
+
+        let app = Router::new()
+            .route("/token", get(token))
+            .route("/v2/testrepo/manifests/latest", get(manifest))
+            .with_state(state.clone());
+
+        // Run the server in background.
+        let server_handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = HttpRegistryClient::new(None).unwrap();
+        let scope = "repository:testrepo:pull";
+        let url = format!("{base}/v2/testrepo/manifests/latest");
+
+        // First attempt: token endpoint returns a bad token, registry rejects it with 401,
+        // client should refresh and succeed.
+        let resp = client
+            .get_with_auth("example.com", scope, url.clone(), None)
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::OK);
+
+        // Second attempt: token should be cached (good) and should not hit token endpoint again.
+        let resp = client
+            .get_with_auth("example.com", scope, url, None)
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::OK);
+
+        assert_eq!(state.lock().unwrap().token_calls, 2);
+
+        // Stop the server task to avoid it outliving the test runtime.
+        server_handle.abort();
+    }
 }
 
 fn platform_matches(

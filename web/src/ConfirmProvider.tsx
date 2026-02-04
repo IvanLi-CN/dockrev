@@ -43,8 +43,8 @@ function ConfirmDialog(props: {
   confirmText?: string
   cancelText?: string
   confirmVariant?: ConfirmVariant
-  badgeText?: string
-  badgeTone?: ConfirmBadgeTone
+  badgeText?: string | null
+  badgeTone?: ConfirmBadgeTone | null
   onClose: (ok: boolean) => void
 }) {
   const cancelRef = useRef<HTMLButtonElement | null>(null)
@@ -54,10 +54,12 @@ function ConfirmDialog(props: {
 
   const defaultBadgeTone: ConfirmBadgeTone =
     confirmVariant === 'danger' ? 'bad' : confirmVariant === 'primary' ? 'warn' : 'muted'
-  const badgeTone = props.badgeTone ?? defaultBadgeTone
 
   const defaultBadgeText = confirmVariant === 'danger' ? '高影响' : confirmVariant === 'primary' ? '将触发任务' : '确认'
-  const badgeText = props.badgeText ?? defaultBadgeText
+  const badgeTextCandidate = props.badgeText === undefined ? defaultBadgeText : props.badgeText
+  const badgeText =
+    typeof badgeTextCandidate === 'string' && badgeTextCandidate.trim() === '' ? null : badgeTextCandidate
+  const badgeTone = badgeText ? (props.badgeTone ?? defaultBadgeTone) : null
 
   useEffect(() => {
     cancelRef.current?.focus()
@@ -91,7 +93,7 @@ function ConfirmDialog(props: {
       >
         <div className="modalHeader">
           <div className="modalTitle">{props.title}</div>
-          <Pill tone={badgeTone}>{badgeText}</Pill>
+          {badgeText && badgeTone ? <Pill tone={badgeTone}>{badgeText}</Pill> : null}
         </div>
         <div className="modalBody">{props.body}</div>
         <div className="modalActions">

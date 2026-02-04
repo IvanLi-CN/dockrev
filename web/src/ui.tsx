@@ -16,6 +16,29 @@ export function ArrowRightIcon(props: { className?: string }) {
   )
 }
 
+export function RefreshIcon(props: { className?: string }) {
+  return (
+    <svg className={props.className} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M21 2v6h-6" />
+      <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
+      <path d="M3 22v-6h6" />
+      <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
+    </svg>
+  )
+}
+
+export function TrashIcon(props: { className?: string }) {
+  return (
+    <svg className={props.className} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M19 6l-1 14H6L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </svg>
+  )
+}
+
 export function GitHubIcon(props: { className?: string }) {
   // GitHub mark (octicon style) as an inline SVG to avoid extra deps.
   return (
@@ -46,6 +69,33 @@ export function Button(props: {
     variant === 'primary' ? 'btn btnPrimary' : variant === 'danger' ? 'btn btnDanger' : 'btn btnGhost'
   return (
     <button className={className} disabled={props.disabled} onClick={props.onClick} title={props.title}>
+      {props.children}
+    </button>
+  )
+}
+
+export function IconButton(props: {
+  variant?: 'primary' | 'danger' | 'ghost'
+  disabled?: boolean
+  onClick?: () => void
+  title: string
+  children: ReactNode
+}) {
+  const variant = props.variant ?? 'ghost'
+  const className =
+    variant === 'primary'
+      ? 'btn btnIcon btnPrimary'
+      : variant === 'danger'
+        ? 'btn btnIcon btnDanger'
+        : 'btn btnIcon btnGhost'
+  return (
+    <button
+      className={className}
+      disabled={props.disabled}
+      onClick={props.onClick}
+      title={props.title}
+      aria-label={props.title}
+    >
       {props.children}
     </button>
   )

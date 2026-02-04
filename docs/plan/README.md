@@ -72,6 +72,7 @@
 | kcxtp | CI/CD: 修复 GHCR 镜像 `dockrev` 主程序不可执行（exec bit 丢失） | 已完成 | `kcxtp:fix-image-exec-permission/PLAN.md` | 2026-01-31 | PR #37 |
 | zdg25 | Dockrev: floating tag 当前版本推测（latest≈semver）+ UI/交互对齐 | 已完成 | `zdg25:auto-version-inference-ui/PLAN.md` | 2026-01-31 | local: `feat/zdg25-auto-version-inference-ui-sync` |
 | a2zdt | Dockrev: /supervisor 路由防呆（兜底页 + API 不可吞） | 已完成 | `a2zdt:supervisor-route-failsafe/PLAN.md` | 2026-01-31 | - |
+| hkr8b | GitHub/GHCR: 自动注册 `package` webhook（新镜像发布通知） | 已完成 | `hkr8b:github-package-webhook-registration/PLAN.md` | 2026-01-31 | local: `feat/hkr8b-github-package-webhook-registration` |
 | 9wyaj | Dockrev: /supervisor 日志区域换行修复 | 已完成 | `9wyaj:supervisor-log-newlines/PLAN.md` | 2026-02-01 | PR #44 |
 | 8fjbt | Dockrev Web: 版本候选 tags 气泡 | 已完成 | `8fjbt:version-tags-popover/PLAN.md` | 2026-02-01 | PR #45 |
 | 9m2ra | Dockrev Web: 表格左侧引导线对齐修复 | 已完成 | `9m2ra:table-guide-line-alignment/PLAN.md` | 2026-02-03 | PR #49 |
