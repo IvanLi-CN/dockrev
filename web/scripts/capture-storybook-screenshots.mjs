@@ -84,7 +84,39 @@ async function main() {
     return page
   }
 
+  const scrollSidebarToBottom = async (page) => {
+    await page.evaluate(() => {
+      const el = document.querySelector('.sidebar')
+      if (!el) return
+      el.scrollTop = el.scrollHeight
+    })
+  }
+
   const shots = [
+    {
+      id: 'layouts-appshell--overview',
+      file: 'app-shell-sidebar.png',
+      setup: async (page) => {
+        await scrollSidebarToBottom(page)
+      },
+      screenshot: async (page, filePath) => {
+        const el = page.locator('.sidebar')
+        await el.waitFor({ timeout: 10_000 })
+        await el.screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'layouts-appshell--overview',
+      file: 'app-meta-footer.png',
+      setup: async (page) => {
+        await scrollSidebarToBottom(page)
+      },
+      screenshot: async (page, filePath) => {
+        const el = page.locator('.sidebarMeta')
+        await el.waitFor({ timeout: 10_000 })
+        await el.screenshot({ path: filePath })
+      },
+    },
     {
       id: 'components-statusremark--all-statuses',
       file: 'status-remark-all-statuses.png',
@@ -131,8 +163,13 @@ async function main() {
       try {
         await s.setup(page)
         await page.waitForTimeout(250)
-        await page.screenshot({ path: path.join(outDir, s.file), fullPage: true })
-        console.log(`Saved: ${path.relative(repoRoot, path.join(outDir, s.file))}`)
+        const filePath = path.join(outDir, s.file)
+        if (typeof s.screenshot === 'function') {
+          await s.screenshot(page, filePath)
+        } else {
+          await page.screenshot({ path: filePath, fullPage: true })
+        }
+        console.log(`Saved: ${path.relative(repoRoot, filePath)}`)
       } finally {
         await page.close().catch(() => {})
       }

@@ -648,7 +648,8 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       return json({ ok: true })
     }
     if (urlPath === '/supervisor/version' && method === 'GET') {
-      return json({ version: '0.0.0-mock' })
+      // Use an existing repo tag so the version link in UI can be exercised in Storybook.
+      return json({ version: '0.4.8' })
     }
     if (urlPath === '/supervisor/self-upgrade' && method === 'GET') {
       return json({
@@ -673,7 +674,8 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
     const f = state
 
     if (urlPath === '/api/version' && method === 'GET') {
-      return json({ version: '0.0.0-mock' })
+      // Use an existing repo tag so the version link in UI can be exercised in Storybook.
+      return json({ version: '0.4.8' })
     }
 
     // stacks

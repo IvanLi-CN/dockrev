@@ -103,6 +103,15 @@
   line-height: 1.6;
 }
 
+.sidebarMetaVersion {
+  color: inherit;
+  text-decoration: none;
+}
+
+.sidebarMetaVersion:hover {
+  text-decoration: underline;
+}
+
 .sidebarMetaBottom {
   display: flex;
   align-items: center;
