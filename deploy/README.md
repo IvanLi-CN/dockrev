@@ -55,6 +55,9 @@ Replace the `build:` section with:
 services:
   dockrev:
     image: ghcr.io/ivanli-cn/dockrev:<semver>
+  supervisor:
+    # Supervisor is intentionally deployed as `latest` (executor/tooling image).
+    image: ghcr.io/ivanli-cn/dockrev-supervisor:latest
 ```
 
 Notes:

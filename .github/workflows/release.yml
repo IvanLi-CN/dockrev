@@ -15,6 +15,7 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: dockrev
+  SUPERVISOR_IMAGE_NAME: dockrev-supervisor
   PLATFORMS: linux/amd64,linux/arm64
   RUST_TOOLCHAIN: "1.91.0"
 
@@ -442,12 +443,18 @@ jobs:
         run: |
           set -euo pipefail
           owner="${GITHUB_REPOSITORY_OWNER,,}"
-          image="${REGISTRY}/${owner}/${IMAGE_NAME}"
-          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          dockrev_image="${REGISTRY}/${owner}/${IMAGE_NAME}"
+          supervisor_image="${REGISTRY}/${owner}/${SUPERVISOR_IMAGE_NAME}"
+          echo "dockrev_image=${dockrev_image}" >> "$GITHUB_OUTPUT"
+          echo "supervisor_image=${supervisor_image}" >> "$GITHUB_OUTPUT"
           {
-            echo "tags<<EOF"
-            echo "${image}:${APP_EFFECTIVE_VERSION}"
-            echo "${image}:latest"
+            echo "dockrev_tags<<EOF"
+            echo "${dockrev_image}:${APP_EFFECTIVE_VERSION}"
+            echo "${dockrev_image}:latest"
+            echo "EOF"
+            echo "supervisor_tags<<EOF"
+            echo "${supervisor_image}:${APP_EFFECTIVE_VERSION}"
+            echo "${supervisor_image}:latest"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -532,7 +539,80 @@ jobs:
 
           echo "[smoke] passed"
 
-      - name: Build and push Docker image (artifact-first)
+      - name: Build linux/amd64 supervisor image (smoke test; runtime-supervisor-prebuilt)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: runtime-supervisor-prebuilt
+          platforms: linux/amd64
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max,ignore-error=true
+          tags: dockrev-supervisor-smoke:${{ github.run_id }}-${{ github.run_attempt }}
+          build-args: |
+            APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
+
+      - name: Smoke test supervisor Docker image (linux/amd64; blocking)
+        shell: bash
+        env:
+          SMOKE_IMAGE: dockrev-supervisor-smoke:${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+
+          name="dockrev-supervisor-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          cleanup() {
+            local exit_code="$?"
+            trap - EXIT
+            docker rm -f "${name}" >/dev/null 2>&1 || true
+            docker image rm -f "${SMOKE_IMAGE}" >/dev/null 2>&1 || true
+            exit "${exit_code}"
+          }
+          trap cleanup EXIT
+
+          docker run -d \
+            --name "${name}" \
+            -p "127.0.0.1::50884" \
+            "${SMOKE_IMAGE}" >/dev/null
+
+          host_port="$(docker port "${name}" 50884/tcp | sed -E 's/.*:([0-9]+)$/\1/' | head -n1)"
+          if [[ -z "${host_port}" ]]; then
+            echo "[smoke] failed to detect mapped host port" >&2
+            docker port "${name}" >&2 || true
+            exit 1
+          fi
+          base_url="http://127.0.0.1:${host_port}"
+
+          deadline="$((SECONDS + 30))"
+          while true; do
+            if body="$(curl -fsS "${base_url}/supervisor/health" 2>/dev/null)"; then
+              SUP_SMOKE_JSON="${body}" python3 - <<'PY'
+          import json
+          import os
+          import sys
+          data = json.loads(os.environ["SUP_SMOKE_JSON"])
+          if data.get("ok") is True:
+            print("[smoke] health ok")
+            sys.exit(0)
+          print(f"[smoke] unexpected health payload: {data}", file=sys.stderr)
+          sys.exit(1)
+          PY
+              break
+            fi
+
+            if (( SECONDS >= deadline )); then
+              echo "[smoke] timeout waiting for ${base_url}/supervisor/health" >&2
+              docker logs --tail 200 "${name}" >&2 || true
+              exit 1
+            fi
+
+            sleep 0.5
+          done
+
+          echo "[smoke] passed"
+
+      - name: Build and push Dockrev Docker image (artifact-first)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -542,7 +622,25 @@ jobs:
           push: true
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
-          tags: ${{ steps.docker-tags.outputs.tags }}
+          tags: ${{ steps.docker-tags.outputs.dockrev_tags }}
+          labels: |
+            org.opencontainers.image.version=${{ env.APP_EFFECTIVE_VERSION }}
+            org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          build-args: |
+            APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
+
+      - name: Build and push Supervisor Docker image (artifact-first)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: runtime-supervisor-prebuilt
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max,ignore-error=true
+          tags: ${{ steps.docker-tags.outputs.supervisor_tags }}
           labels: |
             org.opencontainers.image.version=${{ env.APP_EFFECTIVE_VERSION }}
             org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
