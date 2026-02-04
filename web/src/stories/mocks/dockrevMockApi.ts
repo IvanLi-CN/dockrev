@@ -561,9 +561,9 @@ function buildSettingsConfigured(): Fixture {
   for (let i = 1; i <= 240; i++) {
     repos.push({
       fullName: `IvanLi-CN/repo-${String(i).padStart(3, '0')}`,
-      selected: false,
-      hookId: null,
-      lastSyncAt: null,
+      selected: i <= 200,
+      hookId: i % 9 === 0 ? 7000000 + i : null,
+      lastSyncAt: i % 9 === 0 ? nowIso(-30_000) : null,
       lastError: null,
     })
   }
