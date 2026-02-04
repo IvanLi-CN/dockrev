@@ -64,12 +64,12 @@ RUN chmod 0755 /usr/local/bin/dockrev-supervisor
 EXPOSE 50884
 CMD ["/usr/local/bin/dockrev-supervisor"]
 
-FROM runtime-base AS runtime
-COPY --from=builder /src/dockrev /usr/local/bin/dockrev
-COPY --from=builder /src/dockrev-supervisor /usr/local/bin/dockrev-supervisor
-
 FROM runtime-base AS runtime-supervisor
 COPY --from=builder /src/dockrev-supervisor /usr/local/bin/dockrev-supervisor
 RUN chmod 0755 /usr/local/bin/dockrev-supervisor
 EXPOSE 50884
 CMD ["/usr/local/bin/dockrev-supervisor"]
+
+FROM runtime-base AS runtime
+COPY --from=builder /src/dockrev /usr/local/bin/dockrev
+COPY --from=builder /src/dockrev-supervisor /usr/local/bin/dockrev-supervisor
