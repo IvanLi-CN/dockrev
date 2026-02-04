@@ -103,6 +103,25 @@
   line-height: 1.6;
 }
 
+.sidebarMetaBottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted2);
+}
+
+.sidebarMetaRepo {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+}
+
 .sidebarMetaIcon {
   display: inline-flex;
   align-items: center;
@@ -125,10 +144,9 @@
 }
 
 .sidebarMetaPowered {
-  display: block;
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--muted2);
+  flex: 0 0 auto;
+  color: inherit;
+  white-space: nowrap;
 }
 
 .sidebarMetaPowered .mono {

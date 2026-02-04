@@ -133,14 +133,24 @@ export function AppShell(props: {
                 <GitHubIcon className="sidebarMetaGitHub" />
               </a>
             </div>
-            <a
-              className="sidebarMetaPowered"
-              href="https://github.com/IvanLi-CN"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Powered by <span className="mono">Ivan Li</span>
-            </a>
+            <div className="sidebarMetaBottom">
+              <a
+                className="sidebarMetaRepo"
+                href="https://github.com/IvanLi-CN/dockrev"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                github.com/IvanLi-CN/dockrev
+              </a>
+              <a
+                className="sidebarMetaPowered"
+                href="https://github.com/IvanLi-CN"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Powered by <span className="mono">Ivan Li</span>
+              </a>
+            </div>
           </div>
         </aside>
 
