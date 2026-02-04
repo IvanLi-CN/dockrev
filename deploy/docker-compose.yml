@@ -38,8 +38,13 @@ services:
       # - /srv/compose:/srv/compose:ro
 
   supervisor:
-    image: dockrev:local
-    command: ["/usr/local/bin/dockrev-supervisor"]
+    image: dockrev-supervisor:local
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: runtime-supervisor
+      args:
+        APP_EFFECTIVE_VERSION: "0.0.0-local"
     expose:
       - "50884"
     environment:

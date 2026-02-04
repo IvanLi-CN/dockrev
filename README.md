@@ -121,8 +121,9 @@ See `deploy/README.md` for a minimal Docker Compose deployment.
 
 ## Releases / Images
 
-- GHCR: `ghcr.io/ivanli-cn/dockrev:<semver>` (single image)
-- Since `0.3.5`, the image ensures `/usr/local/bin/dockrev` and `/usr/local/bin/dockrev-supervisor` are executable (0755); the release workflow validates this before pushing to GHCR.
+- GHCR (Dockrev): `ghcr.io/ivanli-cn/dockrev:<semver>`
+- GHCR (Supervisor): `ghcr.io/ivanli-cn/dockrev-supervisor:<semver>` (also publishes `:latest`)
+- Since `0.3.5`, images ensure shipped binaries are executable (0755); the release workflow validates this before pushing to GHCR.
 - The `Release` workflow runs only via `workflow_run` after `CI (main)` succeeds on `main`
 - The `Release` workflow cleans up Actions artifacts after a successful run; on non-success, it keeps key artifacts with `retention-days: 1` and deletes `*.dockerbuild` build records to avoid long-tail storage usage
 - Automatic releases are gated by PR intent labels (exactly one required on PRs targeting `main`):

@@ -57,6 +57,19 @@ COPY dist/ci/docker/${TARGETARCH}/dockrev /usr/local/bin/dockrev
 COPY dist/ci/docker/${TARGETARCH}/dockrev-supervisor /usr/local/bin/dockrev-supervisor
 RUN chmod 0755 /usr/local/bin/dockrev /usr/local/bin/dockrev-supervisor
 
+FROM runtime-base AS runtime-supervisor-prebuilt
+ARG TARGETARCH
+COPY dist/ci/docker/${TARGETARCH}/dockrev-supervisor /usr/local/bin/dockrev-supervisor
+RUN chmod 0755 /usr/local/bin/dockrev-supervisor
+EXPOSE 50884
+CMD ["/usr/local/bin/dockrev-supervisor"]
+
 FROM runtime-base AS runtime
 COPY --from=builder /src/dockrev /usr/local/bin/dockrev
 COPY --from=builder /src/dockrev-supervisor /usr/local/bin/dockrev-supervisor
+
+FROM runtime-base AS runtime-supervisor
+COPY --from=builder /src/dockrev-supervisor /usr/local/bin/dockrev-supervisor
+RUN chmod 0755 /usr/local/bin/dockrev-supervisor
+EXPOSE 50884
+CMD ["/usr/local/bin/dockrev-supervisor"]
