@@ -2602,7 +2602,7 @@ async fn sync_github_packages_webhooks(
                     .with_details(json!({"error": "repo is empty"})));
             }
 
-            if i.delete_hook_ids.iter().any(|id| *id == i.keep_hook_id) {
+            if i.delete_hook_ids.contains(&i.keep_hook_id) {
                 return Err(ApiError::invalid_argument("invalid resolveConflicts").with_details(
                     json!({"repo": repo, "error": "keepHookId must not appear in deleteHookIds"}),
                 ));
