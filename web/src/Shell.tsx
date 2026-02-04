@@ -19,6 +19,15 @@ function formatVersionLabel(version: string | null): string {
   return v
 }
 
+function formatVersionDisplay(version: string | null): string {
+  const v = formatVersionLabel(version)
+  if (v === '-') return v
+  // Make it obvious this is a version without altering the underlying ref used for links.
+  if (/^v/i.test(v)) return v
+  if (/^\d+\.\d+\.\d+([+-].+)?$/.test(v)) return `v${v}`
+  return v
+}
+
 function encodeGitRefForPath(ref: string): string {
   // Keep slashes so branch names like "feat/x" can still be used as a ref segment.
   return encodeURIComponent(ref).replaceAll('%2F', '/')
@@ -68,6 +77,7 @@ export function AppShell(props: {
 
   const versionLabel = formatVersionLabel(appVersion)
   const versionRef = (appVersion ?? '').trim()
+  const versionDisplay = formatVersionDisplay(appVersion)
   const versionHref =
     versionLabel !== '-' && versionRef
       ? `https://github.com/IvanLi-CN/dockrev/tree/${encodeGitRefForPath(versionRef)}`
@@ -139,13 +149,13 @@ export function AppShell(props: {
                   href={versionHref}
                   target="_blank"
                   rel="noopener noreferrer"
-                  aria-label={`Version on GitHub: ${versionLabel}`}
-                  title={`Version: ${versionLabel}`}
+                  aria-label={`Version on GitHub: ${versionDisplay}`}
+                  title={`Version: ${versionDisplay}`}
                 >
-                  <Mono>{versionLabel}</Mono>
+                  <Mono>{versionDisplay}</Mono>
                 </a>
               ) : (
-                <Mono>{versionLabel}</Mono>
+                <Mono>{versionDisplay}</Mono>
               )}
               <a
                 className="sidebarMetaIcon"
