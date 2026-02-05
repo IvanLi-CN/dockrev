@@ -81,3 +81,4 @@
 | fay4j | Dockrev API: 修复 check jobs 长时间卡在 running | 已完成 | `fay4j:check-jobs-stuck-running/PLAN.md` | 2026-02-03 | PR #48 |
 | h6dwy | CI/CD: 拆分 Dockrev / dockrev-supervisor 镜像 | 待实现 | `h6dwy:split-images/PLAN.md` | 2026-02-04 | - |
 | 838ry | Dockrev Web: 增加版本 / 开源仓库 / 开发者信息 | 已完成 | `838ry:app-meta-footer/PLAN.md` | 2026-02-03 | PR #52 |
+| mzqkx | CI/CD: Release prerelease channel（label-driven） | 待实现 | `mzqkx:prerelease-channel/PLAN.md` | 2026-02-05 | - |
