@@ -494,7 +494,11 @@ pub fn parse_manifest_json(
     arch.sort();
     arch.dedup();
 
-    let digest = if host_platform_digest_exact.is_some() {
+    // Prefer the digest returned by the registry for the requested reference (tag or digest).
+    //
+    // For multi-arch images, Docker commonly reports the *index/manifest-list* digest in
+    // `.RepoDigests`, so aligning on the header digest makes runtime comparisons work.
+    let platform_digest = if host_platform_digest_exact.is_some() {
         host_platform_digest_exact
     } else {
         host_platform_digest_base_matches.sort();
@@ -504,8 +508,8 @@ pub fn parse_manifest_json(
         } else {
             None
         }
-    }
-    .or(digest);
+    };
+    let digest = digest.or(platform_digest);
     Ok(ManifestInfo { digest, arch })
 }
 
@@ -705,7 +709,7 @@ mod tests {
 }"#;
         let info =
             parse_manifest_json(json, Some("sha256:deadbeef".to_string()), "linux/amd64").unwrap();
-        assert_eq!(info.digest.as_deref(), Some("sha256:amd64"));
+        assert_eq!(info.digest.as_deref(), Some("sha256:deadbeef"));
         assert_eq!(info.arch, vec!["linux/amd64", "linux/arm64"]);
     }
 
