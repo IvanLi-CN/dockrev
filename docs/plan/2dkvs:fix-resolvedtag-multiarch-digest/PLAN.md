@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-05
 - Last: 2026-02-05
 
@@ -43,3 +43,6 @@
 
 - 风险：candidate/current 的 digest 展示值会从 “子 manifest digest” 变为 “index digest”。这是口径变化，但 index digest 可用于 `repo@sha256:<digest>` 拉取且跨平台一致，预期更符合实际。
 
+## 交付物（Deliverables）
+
+- PR #57

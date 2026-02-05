@@ -82,4 +82,4 @@
 | h6dwy | CI/CD: 拆分 Dockrev / dockrev-supervisor 镜像 | 待实现 | `h6dwy:split-images/PLAN.md` | 2026-02-04 | - |
 | 838ry | Dockrev Web: 增加版本 / 开源仓库 / 开发者信息 | 已完成 | `838ry:app-meta-footer/PLAN.md` | 2026-02-03 | PR #52 |
 | mzqkx | CI/CD: Release prerelease channel（label-driven） | 待实现 | `mzqkx:prerelease-channel/PLAN.md` | 2026-02-05 | - |
-| 2dkvs | Dockrev API: 修复 multi-arch 镜像当前版本推测（resolvedTag / digest 对齐） | 待实现 | `2dkvs:fix-resolvedtag-multiarch-digest/PLAN.md` | 2026-02-05 | - |
+| 2dkvs | Dockrev API: 修复 multi-arch 镜像当前版本推测（resolvedTag / digest 对齐） | 已完成 | `2dkvs:fix-resolvedtag-multiarch-digest/PLAN.md` | 2026-02-05 | PR #57 |
