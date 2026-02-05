@@ -36,6 +36,7 @@ jobs:
       pr_number: ${{ steps.meta.outputs.pr_number }}
       pr_url: ${{ steps.meta.outputs.pr_url }}
       release_intent_label: ${{ steps.meta.outputs.release_intent_label }}
+      release_channel: ${{ steps.meta.outputs.release_channel }}
       reason: ${{ steps.meta.outputs.reason }}
     steps:
       - name: Checkout (workflow_run)
@@ -59,6 +60,15 @@ jobs:
           BUMP_LEVEL: ${{ steps.intent.outputs.bump_level }}
         run: bash ./.github/scripts/compute-version.sh
 
+      - name: Apply prerelease suffix (rc)
+        if: ${{ steps.intent.outputs.should_release == 'true' && steps.intent.outputs.release_channel == 'prerelease' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          short_sha="$(git rev-parse --short HEAD)"
+          echo "APP_EFFECTIVE_VERSION=${APP_EFFECTIVE_VERSION}-rc.${short_sha}" >> "$GITHUB_ENV"
+          echo "Computed prerelease APP_EFFECTIVE_VERSION=${APP_EFFECTIVE_VERSION}-rc.${short_sha}"
+
       - name: Export release metadata
         id: meta
         shell: bash
@@ -69,6 +79,7 @@ jobs:
           echo "pr_number=${{ steps.intent.outputs.pr_number }}" >> "$GITHUB_OUTPUT"
           echo "pr_url=${{ steps.intent.outputs.pr_url }}" >> "$GITHUB_OUTPUT"
           echo "release_intent_label=${{ steps.intent.outputs.release_intent_label }}" >> "$GITHUB_OUTPUT"
+          echo "release_channel=${{ steps.intent.outputs.release_channel }}" >> "$GITHUB_OUTPUT"
           echo "reason=${{ steps.intent.outputs.reason }}" >> "$GITHUB_OUTPUT"
 
           if [[ "${{ steps.intent.outputs.should_release }}" == "true" ]]; then
@@ -302,6 +313,7 @@ jobs:
     env:
       APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
       RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+      RELEASE_CHANNEL: ${{ needs.prepare.outputs.release_channel }}
     steps:
       - name: Checkout (workflow_run)
         uses: actions/checkout@v4
@@ -450,11 +462,15 @@ jobs:
           {
             echo "dockrev_tags<<EOF"
             echo "${dockrev_image}:${APP_EFFECTIVE_VERSION}"
-            echo "${dockrev_image}:latest"
+            if [[ "${RELEASE_CHANNEL}" != "prerelease" ]]; then
+              echo "${dockrev_image}:latest"
+            fi
             echo "EOF"
             echo "supervisor_tags<<EOF"
             echo "${supervisor_image}:${APP_EFFECTIVE_VERSION}"
-            echo "${supervisor_image}:latest"
+            if [[ "${RELEASE_CHANNEL}" != "prerelease" ]]; then
+              echo "${supervisor_image}:latest"
+            fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -656,6 +672,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TAG }}
+          prerelease: ${{ env.RELEASE_CHANNEL == 'prerelease' }}
           generateReleaseNotes: true
           allowUpdates: true
           replacesArtifacts: true

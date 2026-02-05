@@ -32,6 +32,10 @@ jobs:
               "type:major",
             ]);
 
+            const allowedChannels = new Set([
+              "channel:prerelease",
+            ]);
+
             const labels = (context.payload.pull_request?.labels ?? [])
               .map((l) => l?.name)
               .filter((n) => typeof n === "string" && n.length > 0);
@@ -39,11 +43,26 @@ jobs:
             const present = labels.filter((n) => allowed.has(n));
             const unknownType = labels.filter((n) => n.startsWith("type:") && !allowed.has(n));
 
+            const channelLike = labels.filter((n) => n.startsWith("channel:"));
+            const unknownChannel = channelLike.filter((n) => !allowedChannels.has(n));
+
             core.info(`Allowed intent labels: ${Array.from(allowed).sort().join(", ")}`);
+            core.info(`Allowed channel labels: ${Array.from(allowedChannels).sort().join(", ")}`);
             core.info(`Found labels: ${Array.from(new Set(labels)).sort().join(", ")}`);
 
             if (unknownType.length > 0) {
               core.setFailed(`Unknown intent label(s): ${Array.from(new Set(unknownType)).sort().join(", ")}`);
+              return;
+            }
+
+            if (unknownChannel.length > 0) {
+              core.setFailed(`Unknown channel label(s): ${Array.from(new Set(unknownChannel)).sort().join(", ")}`);
+              return;
+            }
+
+            const channelUnique = Array.from(new Set(channelLike));
+            if (channelUnique.length > 1) {
+              core.setFailed(`Conflicting channel labels: ${channelUnique.sort().join(", ")} (must be at most one)`);
               return;
             }
 

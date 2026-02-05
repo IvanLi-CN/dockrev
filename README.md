@@ -129,8 +129,10 @@ See `deploy/README.md` for a minimal Docker Compose deployment.
 - Automatic releases are gated by PR intent labels (exactly one required on PRs targeting `main`):
   - `type:docs` / `type:skip` → skip release
   - `type:patch` / `type:minor` / `type:major` → publish with the corresponding semver bump
+- Optional release channel label:
+  - `channel:prerelease` → publish an RC prerelease (tag: `<semver>-rc.<shortsha>`, GitHub Release marked as prerelease, and does **not** update `latest`)
 - Direct `push` to `main` without an associated PR conservatively skips release
-- `latest` is updated only by the automatic release path above
+- `latest` is updated only by stable releases (i.e. without `channel:prerelease`)
 - GitHub Releases include Linux binaries for `dockrev` and `dockrev-supervisor` (amd64/arm64 × gnu/musl) as `.tar.gz` + `.sha256`
 - Release assets are validated as executable binaries (the workflow enforces `chmod +x` before packaging to avoid artifacts losing exec bits)
 
