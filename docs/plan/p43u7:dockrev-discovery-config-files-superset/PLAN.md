@@ -1,5 +1,11 @@
 # Dockrev: Self-upgrade 后不应触发 `config_files_conflict`（归一 + warning）
 
+## 状态
+
+- Status: 已完成
+- Created: 2026-02-06
+- Last: 2026-02-06
+
 ## 背景 / 问题陈述
 
 Dockrev 的 auto-discovery 依赖 Docker Compose 自动写入的 label：
@@ -83,9 +89,16 @@ Dockrev 的 auto-discovery 依赖 Docker Compose 自动写入的 label：
 - Minimal integration（Rust）：
   - 用 fake runner 模拟 docker inspect 两个 service 的 labels（base vs base+override）
   - 断言 scan 结果为 active + warning，并产生稳定 canonical
+- 验证命令：
+  - `cargo test --workspace --all-features`
+  - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+  - `cd web && bun run lint`
 
 ## 风险
 
 - 风险：canonical 选择错误会导致更新时使用错误的 compose files，引入覆盖/回滚问题。
   - 缓解：仅对 “image-only override” 的 extra files 自动消解；否则保持 invalid 并输出诊断。
 
+## 交付物（Deliverables）
+
+- PR #60
