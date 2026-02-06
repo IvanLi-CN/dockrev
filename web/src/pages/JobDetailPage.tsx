@@ -129,7 +129,10 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
 
         <div className="logs">
           {logs.map((l, idx) => (
-            <div key={`${l.ts}-${idx}`} className="logLine">
+            <div
+              key={`${l.ts}-${idx}`}
+              className={`logLine logLine-${(l.level ?? '').trim().toLowerCase() || 'unknown'}`}
+            >
               <span className="mono logTs" title={l.ts}>
                 {formatLogTs(l.ts)}
               </span>

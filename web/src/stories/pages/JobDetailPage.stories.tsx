@@ -20,11 +20,10 @@ export const LongLogs: Story = {
         route={{ name: 'job', jobId: 'job-long' }}
         title="任务详情"
         topbarHint="更新队列"
-        pageSubtitle="代表性：长 URL / digest 日志应断行或限制在容器内滚动"
+        pageSubtitle="代表性：长 URL / digest / 多行日志（堆栈/命令输出）应在容器内滚动，且可读可复制"
       >
         {({ onTopActions }) => <JobDetailPage jobId="job-long" onTopActions={onTopActions} />}
       </PageHarness>
     )
   },
 }
-

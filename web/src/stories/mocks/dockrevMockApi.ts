@@ -623,7 +623,17 @@ function buildQueueLongLogs(): Fixture {
           level: 'warn',
           msg: `retrying request: ${longToken}`,
         },
-        ...Array.from({ length: 32 }, (_, i) => ({
+        {
+          ts: nowIso(-10_120),
+          level: 'info',
+          msg: `running: docker compose pull\n  - service: api\n  - service: worker\n  - service: ui\nprogress: 3/3`,
+        },
+        {
+          ts: nowIso(-10_110),
+          level: 'error',
+          msg: `panic: unexpected response (429 Too Many Requests)\nstack:\n  at registry_client.rs:123:9\n  at jobs/check.rs:88:17`,
+        },
+        ...Array.from({ length: 96 }, (_, i) => ({
           ts: nowIso(-10_000 + i * 20),
           level: i % 11 === 0 ? 'error' : i % 7 === 0 ? 'warn' : 'info',
           msg:
@@ -631,6 +641,8 @@ function buildQueueLongLogs(): Fixture {
               ? `http error: GET ${longUrl}`
               : i % 5 === 0
                 ? `digest mismatch: expected=${digest} got=sha256:${'f'.repeat(64)}`
+                : i % 13 === 0
+                  ? `json: {"event":"registry_request","status":429,"retry_in_ms":500,"url":"${longUrl}"}`
                 : `line ${String(i + 1).padStart(2, '0')}: ${'x'.repeat(180)}`,
         })),
         { ts: nowIso(-10_000), level: 'info', msg: 'check finished' },
