@@ -98,14 +98,14 @@ pub fn normalize_config_files(raw: &str) -> Result<Vec<String>, NormalizeConfigF
 }
 
 #[derive(Clone, Debug)]
-struct ProjectLabels {
+struct ObservedComposeContainer {
+    service: String,
     config_files_raw: Option<String>,
-    working_dir_raw: Option<String>,
 }
 
 async fn list_compose_projects_from_docker(
     state: &AppState,
-) -> anyhow::Result<BTreeMap<String, ProjectLabels>> {
+) -> anyhow::Result<BTreeMap<String, Vec<ObservedComposeContainer>>> {
     let ps = state
         .runner
         .run(
@@ -143,7 +143,7 @@ async fn list_compose_projects_from_docker(
         return Ok(BTreeMap::new());
     }
 
-    let mut by_project = BTreeMap::<String, ProjectLabels>::new();
+    let mut by_project = BTreeMap::<String, Vec<ObservedComposeContainer>>::new();
 
     for chunk in ids.chunks(64) {
         let mut args = vec![
@@ -185,40 +185,311 @@ async fn list_compose_projects_from_docker(
                 continue;
             };
 
+            let service = labels
+                .get("com.docker.compose.service")
+                .cloned()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "unknown".to_string());
+
             let config_files_raw = labels
                 .get("com.docker.compose.project.config_files")
                 .map(|s| s.to_string())
                 .filter(|s| !s.trim().is_empty());
-            let working_dir_raw = labels
-                .get("com.docker.compose.project.working_dir")
-                .map(|s| s.to_string())
-                .filter(|s| !s.trim().is_empty());
 
-            let entry = by_project.entry(project).or_insert(ProjectLabels {
-                config_files_raw: None,
-                working_dir_raw: None,
-            });
-
-            if let Some(v) = config_files_raw {
-                match &entry.config_files_raw {
-                    None => entry.config_files_raw = Some(v),
-                    Some(prev) if prev == &v => {}
-                    Some(_) => {
-                        // conflict marker: keep a sentinel distinct value to signal conflict later
-                        entry.config_files_raw = Some("__CONFLICT__".to_string());
-                    }
-                }
-            }
-
-            if let Some(v) = working_dir_raw
-                && entry.working_dir_raw.is_none()
-            {
-                entry.working_dir_raw = Some(v);
-            }
+            by_project
+                .entry(project)
+                .or_default()
+                .push(ObservedComposeContainer {
+                    service,
+                    config_files_raw,
+                });
         }
     }
 
     Ok(by_project)
+}
+
+#[derive(Clone, Debug)]
+struct ResolvedProjectComposeFiles {
+    compose_files: Vec<String>,
+    warning: Option<String>,
+    details: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Debug)]
+struct InvalidProjectComposeFiles {
+    reason: String,
+    details: Option<serde_json::Value>,
+}
+
+fn is_subsequence(sub: &[String], sup: &[String]) -> bool {
+    let mut i = 0usize;
+    for item in sup {
+        if i < sub.len() && sub[i] == *item {
+            i += 1;
+        }
+    }
+    i == sub.len()
+}
+
+fn variants_details_json(
+    variants: &BTreeMap<Vec<String>, BTreeSet<String>>,
+    selected: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let mut entries: Vec<(&Vec<String>, &BTreeSet<String>)> = variants.iter().collect();
+    // Keep output deterministic and compact: shortest-first, then lexicographic.
+    entries.sort_by(|(a, _), (b, _)| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+
+    let variants_json = entries
+        .into_iter()
+        .map(|(files, services)| {
+            serde_json::json!({
+                "configFiles": files,
+                "services": services.iter().cloned().collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    serde_json::json!({
+        "kind": "config_files_variants",
+        "variants": variants_json,
+        "selected": selected,
+    })
+}
+
+fn validate_image_only_override(
+    path: &str,
+    yaml: &str,
+    allowed_services: &BTreeSet<String>,
+) -> Result<(), String> {
+    use serde_yaml_ng::Value;
+
+    let root: Value = serde_yaml_ng::from_str(yaml).map_err(|e| format!("invalid yaml: {e}"))?;
+    let Some(map) = root.as_mapping() else {
+        return Err("root must be a mapping".to_string());
+    };
+
+    for (k, _v) in map {
+        let Some(key) = k.as_str() else {
+            return Err("root keys must be strings".to_string());
+        };
+        if key != "services" {
+            return Err(format!("unsupported root key: {key}"));
+        }
+    }
+
+    let services_key = Value::String("services".to_string());
+    let Some(services_val) = map.get(&services_key) else {
+        // No services section: treat as a no-op override.
+        return Ok(());
+    };
+    let Some(services_map) = services_val.as_mapping() else {
+        return Err("'services' must be a mapping".to_string());
+    };
+
+    for (svc_name_key, svc_val) in services_map {
+        let Some(svc_name) = svc_name_key.as_str() else {
+            return Err("service names must be strings".to_string());
+        };
+        if !allowed_services.contains(svc_name) {
+            return Err(format!(
+                "service '{svc_name}' not in allowed services for this variant"
+            ));
+        }
+
+        let Some(svc_map) = svc_val.as_mapping() else {
+            return Err(format!("service '{svc_name}' must be a mapping"));
+        };
+
+        for (k, _v) in svc_map {
+            let Some(key) = k.as_str() else {
+                return Err(format!("service '{svc_name}' keys must be strings"));
+            };
+            if key != "image" {
+                return Err(format!("service '{svc_name}' has unsupported key: {key}"));
+            }
+        }
+
+        let image_key = Value::String("image".to_string());
+        let Some(image_val) = svc_map.get(&image_key) else {
+            return Err(format!("service '{svc_name}' missing required key: image"));
+        };
+        let Some(image_str) = image_val.as_str() else {
+            return Err(format!("service '{svc_name}'.image must be a string"));
+        };
+        if image_str.trim().is_empty() {
+            return Err(format!("service '{svc_name}'.image must be non-empty"));
+        }
+    }
+
+    let _ = path;
+    Ok(())
+}
+
+async fn resolve_project_compose_files(
+    project: &str,
+    observed: &[ObservedComposeContainer],
+) -> Result<ResolvedProjectComposeFiles, InvalidProjectComposeFiles> {
+    // Group by the normalized config_files (paths + order) and collect services that reported it.
+    let mut variants = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
+
+    for c in observed {
+        let Some(raw) = c.config_files_raw.as_deref() else {
+            continue;
+        };
+        let files = match normalize_config_files(raw) {
+            Ok(v) => v,
+            Err(NormalizeConfigFilesError::RelativePathRejected) => {
+                return Err(InvalidProjectComposeFiles {
+                    reason: "config_files_relative_path_rejected".to_string(),
+                    details: Some(serde_json::json!({
+                        "kind": "config_files_invalid",
+                        "service": c.service,
+                        "raw": raw,
+                    })),
+                });
+            }
+            Err(NormalizeConfigFilesError::Empty) => {
+                return Err(InvalidProjectComposeFiles {
+                    reason: "config_files_empty".to_string(),
+                    details: Some(serde_json::json!({
+                        "kind": "config_files_invalid",
+                        "service": c.service,
+                        "raw": raw,
+                    })),
+                });
+            }
+        };
+
+        variants.entry(files).or_default().insert(c.service.clone());
+    }
+
+    if variants.is_empty() {
+        return Err(InvalidProjectComposeFiles {
+            reason: "config_files_missing".to_string(),
+            details: None,
+        });
+    }
+
+    if variants.len() == 1 {
+        let (compose_files, _) = variants.iter().next().expect("len=1");
+        return Ok(ResolvedProjectComposeFiles {
+            compose_files: compose_files.clone(),
+            warning: None,
+            details: None,
+        });
+    }
+
+    let keys = variants.keys().cloned().collect::<Vec<_>>();
+    let mut candidates = Vec::<Vec<String>>::new();
+    for k in &keys {
+        if keys.iter().all(|other| is_subsequence(other, k)) {
+            candidates.push(k.clone());
+        }
+    }
+
+    if candidates.is_empty() {
+        let details = variants_details_json(&variants, None);
+        return Err(InvalidProjectComposeFiles {
+            reason: format!(
+                "config_files_conflict: multiple distinct config_files variants and no canonical superset found (project={project})"
+            ),
+            details: Some(details),
+        });
+    }
+
+    candidates.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    let superset = candidates[0].clone();
+
+    let common_files = superset
+        .iter()
+        .filter(|p| variants.keys().all(|v| v.contains(*p)))
+        .cloned()
+        .collect::<Vec<_>>();
+    if common_files.is_empty() {
+        let details = variants_details_json(&variants, None);
+        return Err(InvalidProjectComposeFiles {
+            reason: format!(
+                "config_files_conflict: failed to compute common compose files across variants (project={project})"
+            ),
+            details: Some(details),
+        });
+    }
+
+    let extra_files = superset
+        .iter()
+        .filter(|p| !common_files.contains(*p))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let superset_services = variants
+        .get(&superset)
+        .cloned()
+        .unwrap_or_else(BTreeSet::new);
+
+    // Validate all extra files before accepting the superset canonical list.
+    for path in &extra_files {
+        let contents = match tokio::fs::read_to_string(path).await {
+            Ok(v) => v,
+            Err(e) => {
+                let selected = serde_json::json!({
+                    "mode": "common_fallback",
+                    "configFiles": common_files.clone(),
+                    "extraFiles": extra_files.clone(),
+                    "services": superset_services.iter().cloned().collect::<Vec<_>>(),
+                    "unreadableExtra": { "path": path, "error": e.to_string() },
+                });
+                let details = variants_details_json(&variants, Some(selected));
+                return Ok(ResolvedProjectComposeFiles {
+                    compose_files: common_files.clone(),
+                    warning: Some(format!(
+                        "warning:config_files_extra_unreadable_fallback_common: extra compose file unreadable: {path} ({e}); using common compose files. Hint: mount the override path into dockrev (same absolute path, read-only), or set DOCKREV_SUPERVISOR_STATE_PATH to a mounted directory"
+                    )),
+                    details: Some(details),
+                });
+            }
+        };
+
+        if let Err(err) = validate_image_only_override(path, &contents, &superset_services) {
+            let err_msg = err.clone();
+            let selected = serde_json::json!({
+                "mode": "superset_rejected",
+                "configFiles": superset.clone(),
+                "extraFiles": extra_files.clone(),
+                "services": superset_services.iter().cloned().collect::<Vec<_>>(),
+                "unsafeExtra": { "path": path, "error": err_msg },
+            });
+            let details = variants_details_json(&variants, Some(selected));
+            return Err(InvalidProjectComposeFiles {
+                reason: format!(
+                    "config_files_conflict: superset includes an unsafe override file: {path} ({err})"
+                ),
+                details: Some(details),
+            });
+        }
+    }
+
+    let selected = serde_json::json!({
+        "mode": "superset",
+        "configFiles": superset.clone(),
+        "extraFiles": extra_files.clone(),
+        "services": superset_services.iter().cloned().collect::<Vec<_>>(),
+    });
+    let details = variants_details_json(&variants, Some(selected));
+
+    Ok(ResolvedProjectComposeFiles {
+        compose_files: superset.clone(),
+        warning: Some(format!(
+            "warning:config_files_superset_selected: selected superset config_files; extra_files=[{}]; services=[{}]",
+            extra_files.join(","),
+            superset_services
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(",")
+        )),
+        details: Some(details),
+    })
 }
 
 pub fn spawn_task(state: std::sync::Arc<AppState>) {
@@ -254,12 +525,13 @@ pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanRe
         stacks_marked_missing: 0,
     };
 
-    for (project, labels) in &projects {
+    for (project, observed) in &projects {
         seen_projects.push(project.clone());
         summary.projects_seen += 1;
 
-        let config_files_raw = match labels.config_files_raw.as_deref() {
-            None => {
+        let resolved = match resolve_project_compose_files(project, observed).await {
+            Ok(v) => v,
+            Err(e) => {
                 summary.stacks_failed += 1;
                 state
                     .db
@@ -269,7 +541,7 @@ pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanRe
                         status: "invalid".to_string(),
                         last_seen_at: Some(now.clone()),
                         last_scan_at: now.clone(),
-                        last_error: Some("config_files_missing".to_string()),
+                        last_error: Some(e.reason.clone()),
                         last_config_files: None,
                         unarchive_if_active: false,
                     })
@@ -278,89 +550,16 @@ pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanRe
                     project: project.clone(),
                     action: DiscoveryActionKind::Failed,
                     stack_id: None,
-                    reason: Some("config_files_missing".to_string()),
-                    details: None,
+                    reason: Some(e.reason),
+                    details: e.details,
                 });
                 continue;
             }
-            Some("__CONFLICT__") => {
-                summary.stacks_failed += 1;
-                state
-                    .db
-                    .upsert_discovered_compose_project(DiscoveredComposeProjectUpsert {
-                        project: project.clone(),
-                        stack_id: None,
-                        status: "invalid".to_string(),
-                        last_seen_at: Some(now.clone()),
-                        last_scan_at: now.clone(),
-                        last_error: Some("config_files_conflict".to_string()),
-                        last_config_files: None,
-                        unarchive_if_active: false,
-                    })
-                    .await?;
-                actions.push(DiscoveryAction {
-                    project: project.clone(),
-                    action: DiscoveryActionKind::Failed,
-                    stack_id: None,
-                    reason: Some("config_files_conflict".to_string()),
-                    details: None,
-                });
-                continue;
-            }
-            Some(v) => v,
         };
 
-        let config_files = match normalize_config_files(config_files_raw) {
-            Ok(v) => v,
-            Err(NormalizeConfigFilesError::RelativePathRejected) => {
-                summary.stacks_failed += 1;
-                state
-                    .db
-                    .upsert_discovered_compose_project(DiscoveredComposeProjectUpsert {
-                        project: project.clone(),
-                        stack_id: None,
-                        status: "invalid".to_string(),
-                        last_seen_at: Some(now.clone()),
-                        last_scan_at: now.clone(),
-                        last_error: Some("config_files_relative_path_rejected".to_string()),
-                        last_config_files: None,
-                        unarchive_if_active: false,
-                    })
-                    .await?;
-                actions.push(DiscoveryAction {
-                    project: project.clone(),
-                    action: DiscoveryActionKind::Failed,
-                    stack_id: None,
-                    reason: Some("config_files_relative_path_rejected".to_string()),
-                    details: None,
-                });
-                continue;
-            }
-            Err(NormalizeConfigFilesError::Empty) => {
-                summary.stacks_failed += 1;
-                state
-                    .db
-                    .upsert_discovered_compose_project(DiscoveredComposeProjectUpsert {
-                        project: project.clone(),
-                        stack_id: None,
-                        status: "invalid".to_string(),
-                        last_seen_at: Some(now.clone()),
-                        last_scan_at: now.clone(),
-                        last_error: Some("config_files_empty".to_string()),
-                        last_config_files: None,
-                        unarchive_if_active: false,
-                    })
-                    .await?;
-                actions.push(DiscoveryAction {
-                    project: project.clone(),
-                    action: DiscoveryActionKind::Failed,
-                    stack_id: None,
-                    reason: Some("config_files_empty".to_string()),
-                    details: None,
-                });
-                continue;
-            }
-        };
+        let warning = resolved.warning.clone();
+        let action_details = resolved.details.clone();
+        let config_files = resolved.compose_files;
 
         let mut merged: BTreeMap<String, compose::ServiceFromCompose> = BTreeMap::new();
         let mut failure_reason: Option<String> = None;
@@ -411,7 +610,7 @@ pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanRe
                 action: DiscoveryActionKind::Failed,
                 stack_id: None,
                 reason: Some(msg),
-                details: None,
+                details: action_details,
             });
             continue;
         }
@@ -472,7 +671,7 @@ pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanRe
                     status: "active".to_string(),
                     last_seen_at: Some(now.clone()),
                     last_scan_at: now.clone(),
-                    last_error: None,
+                    last_error: warning.clone(),
                     last_config_files: Some(config_files.clone()),
                     unarchive_if_active: true,
                 })
@@ -481,8 +680,8 @@ pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanRe
                 project: project.clone(),
                 action: DiscoveryActionKind::Created,
                 stack_id: stack_id.clone(),
-                reason: None,
-                details: None,
+                reason: warning.clone(),
+                details: action_details,
             });
             continue;
         }
@@ -507,8 +706,8 @@ pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanRe
                 project: project.clone(),
                 action: DiscoveryActionKind::Updated,
                 stack_id: Some(stack_id.clone()),
-                reason: None,
-                details: None,
+                reason: warning.clone(),
+                details: action_details.clone(),
             });
         } else {
             summary.stacks_skipped += 1;
@@ -516,8 +715,8 @@ pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanRe
                 project: project.clone(),
                 action: DiscoveryActionKind::Skipped,
                 stack_id: Some(stack_id.clone()),
-                reason: None,
-                details: None,
+                reason: warning.clone(),
+                details: action_details.clone(),
             });
         }
 
@@ -529,7 +728,7 @@ pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanRe
                 status: "active".to_string(),
                 last_seen_at: Some(now.clone()),
                 last_scan_at: now.clone(),
-                last_error: None,
+                last_error: warning,
                 last_config_files: Some(config_files),
                 unarchive_if_active: true,
             })
@@ -568,6 +767,13 @@ pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanRe
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn make_temp_dir() -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("dockrev-discovery-test-{}", ulid::Ulid::new()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
 
     #[test]
     fn parse_labels_json_line_null_is_empty() {
@@ -652,5 +858,194 @@ mod tests {
             normalize_config_files(raw),
             Err(NormalizeConfigFilesError::RelativePathRejected)
         ));
+    }
+
+    #[test]
+    fn is_subsequence_preserves_order_semantics() {
+        assert!(is_subsequence(&[] as &[String], &[] as &[String]));
+        assert!(is_subsequence(&["/a".to_string()], &["/a".to_string()]));
+        assert!(is_subsequence(
+            &["/a".to_string(), "/c".to_string()],
+            &["/a".to_string(), "/b".to_string(), "/c".to_string()]
+        ));
+        assert!(!is_subsequence(
+            &["/b".to_string(), "/a".to_string()],
+            &["/a".to_string(), "/b".to_string()]
+        ));
+    }
+
+    #[tokio::test]
+    async fn resolve_project_compose_files_superset_is_warning_and_selects_superset() {
+        let dir = make_temp_dir();
+        let base = dir.join("docker-compose.yml");
+        let override_yml = dir.join("self-upgrade.override.yml");
+
+        // The override file must be readable and "image-only" for the superset to be accepted.
+        std::fs::write(
+            &override_yml,
+            "services:\n  dockrev:\n    image: ghcr.io/ivanli-cn/dockrev:latest\n",
+        )
+        .unwrap();
+
+        let base_s = base.display().to_string();
+        let override_s = override_yml.display().to_string();
+
+        let observed = vec![
+            ObservedComposeContainer {
+                service: "dockrev".to_string(),
+                config_files_raw: Some(format!("{base_s},{override_s}")),
+            },
+            ObservedComposeContainer {
+                service: "dockrev-supervisor".to_string(),
+                config_files_raw: Some(base_s.clone()),
+            },
+        ];
+
+        let resolved = resolve_project_compose_files("dockrev", &observed)
+            .await
+            .unwrap();
+        assert_eq!(resolved.compose_files, vec![base_s, override_s]);
+        assert!(
+            resolved
+                .warning
+                .as_deref()
+                .is_some_and(|w| w.contains("warning:config_files_superset_selected"))
+        );
+        assert!(resolved.details.is_some());
+    }
+
+    #[tokio::test]
+    async fn resolve_project_compose_files_dedupes_duplicate_paths_in_labels() {
+        let dir = make_temp_dir();
+        let base = dir.join("docker-compose.yml");
+        let override_yml = dir.join("self-upgrade.override.yml");
+
+        std::fs::write(
+            &override_yml,
+            "services:\n  dockrev:\n    image: ghcr.io/ivanli-cn/dockrev:latest\n",
+        )
+        .unwrap();
+
+        let base_s = base.display().to_string();
+        let override_s = override_yml.display().to_string();
+
+        let observed = vec![
+            ObservedComposeContainer {
+                service: "dockrev".to_string(),
+                config_files_raw: Some(format!("{base_s},{override_s},{override_s}")),
+            },
+            ObservedComposeContainer {
+                service: "dockrev-supervisor".to_string(),
+                config_files_raw: Some(format!("{base_s},{override_s}")),
+            },
+        ];
+
+        let resolved = resolve_project_compose_files("dockrev", &observed)
+            .await
+            .unwrap();
+        assert_eq!(resolved.compose_files, vec![base_s, override_s]);
+        assert!(resolved.warning.is_none());
+    }
+
+    #[tokio::test]
+    async fn resolve_project_compose_files_non_subset_conflict_is_invalid_with_details() {
+        let dir = make_temp_dir();
+        let base = dir.join("docker-compose.yml");
+        let a = dir.join("a.yml");
+        let b = dir.join("b.yml");
+
+        let base_s = base.display().to_string();
+        let a_s = a.display().to_string();
+        let b_s = b.display().to_string();
+
+        let observed = vec![
+            ObservedComposeContainer {
+                service: "svc-a".to_string(),
+                config_files_raw: Some(format!("{base_s},{a_s}")),
+            },
+            ObservedComposeContainer {
+                service: "svc-b".to_string(),
+                config_files_raw: Some(format!("{base_s},{b_s}")),
+            },
+        ];
+
+        let err = resolve_project_compose_files("dockrev", &observed)
+            .await
+            .unwrap_err();
+        assert!(err.reason.contains("config_files_conflict"));
+        assert!(err.details.is_some());
+        assert_eq!(
+            err.details
+                .as_ref()
+                .and_then(|d| d.get("variants"))
+                .and_then(|v| v.as_array())
+                .map(|v| v.len()),
+            Some(2)
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_project_compose_files_unreadable_extra_falls_back_to_common() {
+        let dir = make_temp_dir();
+        let base = dir.join("docker-compose.yml");
+        let override_yml = dir.join("missing.override.yml");
+
+        let base_s = base.display().to_string();
+        let override_s = override_yml.display().to_string();
+
+        let observed = vec![
+            ObservedComposeContainer {
+                service: "dockrev".to_string(),
+                config_files_raw: Some(format!("{base_s},{override_s}")),
+            },
+            ObservedComposeContainer {
+                service: "dockrev-supervisor".to_string(),
+                config_files_raw: Some(base_s.clone()),
+            },
+        ];
+
+        let resolved = resolve_project_compose_files("dockrev", &observed)
+            .await
+            .unwrap();
+        assert_eq!(resolved.compose_files, vec![base_s]);
+        assert!(
+            resolved.warning.as_deref().is_some_and(
+                |w| w.contains("warning:config_files_extra_unreadable_fallback_common")
+            )
+        );
+        assert!(resolved.details.is_some());
+    }
+
+    #[tokio::test]
+    async fn resolve_project_compose_files_unsafe_override_is_invalid() {
+        let dir = make_temp_dir();
+        let base = dir.join("docker-compose.yml");
+        let override_yml = dir.join("unsafe.override.yml");
+
+        std::fs::write(
+            &override_yml,
+            "services:\n  dockrev:\n    image: ghcr.io/ivanli-cn/dockrev:latest\n    environment:\n      A: B\n",
+        )
+        .unwrap();
+
+        let base_s = base.display().to_string();
+        let override_s = override_yml.display().to_string();
+
+        let observed = vec![
+            ObservedComposeContainer {
+                service: "dockrev".to_string(),
+                config_files_raw: Some(format!("{base_s},{override_s}")),
+            },
+            ObservedComposeContainer {
+                service: "dockrev-supervisor".to_string(),
+                config_files_raw: Some(base_s.clone()),
+            },
+        ];
+
+        let err = resolve_project_compose_files("dockrev", &observed)
+            .await
+            .unwrap_err();
+        assert!(err.reason.contains("unsafe override"));
+        assert!(err.details.is_some());
     }
 }

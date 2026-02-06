@@ -114,6 +114,9 @@ Notes:
 - Auto-discovery is always enabled (no enable/disable switch).
 - Manual stack registration (`POST /api/stacks`) is disabled.
 - The `config_files` paths are **container-visible absolute paths**. If Dockrev runs in a container, you must bind-mount the host directories into Dockrev **read-only at the same absolute path**, otherwise discovery will surface an actionable error (mount missing/unreadable).
+- If the same Compose project reports multiple distinct `config_files` variants (common after self-upgrade or when a one-off compose override file was used):
+  - Dockrev will try to pick a deterministic canonical list (prefer a safe superset that only adds an image-only override file).
+  - If an extra override file path is not readable in the Dockrev container, Dockrev falls back to the common compose files and surfaces a warning with a mounting hint.
 
 ## Deploy (minimal)
 
