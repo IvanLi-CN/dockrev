@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
-import { getJob, listJobs, type JobDetail, type JobListItem, type JobLogLine } from '../api'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { listJobs, type JobListItem } from '../api'
+import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
 
 type Filter = 'all' | 'running' | 'success' | 'failed' | 'rolled_back'
@@ -22,21 +23,18 @@ function formatShort(ts?: string | null) {
 export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void }) {
   const { onTopActions } = props
   const [jobs, setJobs] = useState<JobListItem[]>([])
-  const [selected, setSelected] = useState<string | null>(null)
-  const [selectedJob, setSelectedJob] = useState<JobDetail | null>(null)
   const [filter, setFilter] = useState<Filter>('all')
-  const [logs, setLogs] = useState<JobLogLine[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     setError(null)
     setJobs(await listJobs())
-  }
+  }, [])
 
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-  }, [])
+  }, [refresh])
 
   useEffect(() => {
     onTopActions(
@@ -59,27 +57,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
         刷新
       </Button>,
     )
-  }, [busy, onTopActions])
-
-  useEffect(() => {
-    if (!selected) {
-      setLogs([])
-      setSelectedJob(null)
-      return
-    }
-    setBusy(true)
-    void (async () => {
-      try {
-        const job = await getJob(selected)
-        setSelectedJob(job)
-        setLogs(job.logs)
-      } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : String(e))
-      } finally {
-        setBusy(false)
-      }
-    })()
-  }, [selected])
+  }, [busy, onTopActions, refresh])
 
   const filtered = useMemo(() => {
     if (filter === 'all') return jobs
@@ -87,7 +65,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   }, [jobs, filter])
 
   return (
-    <div className="page twoCol">
+    <div className="page">
       <div className="card">
         <div className="sectionRow">
           <div className="title">任务队列</div>
@@ -104,13 +82,16 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
             ))}
           </div>
         </div>
+        <div className="muted" style={{ marginTop: 8 }}>
+          点击任务查看详情与日志
+        </div>
 
         <div className="queueList">
           {filtered.map((j) => (
             <button
               key={j.id}
-              className={selected === j.id ? 'queueItem queueItemActive' : 'queueItem'}
-              onClick={() => setSelected(j.id)}
+              className="queueItem"
+              onClick={() => navigate({ name: 'job', jobId: j.id })}
             >
               <div className="queueMain">
                 <div className="queueTitle">
@@ -138,45 +119,6 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
           ))}
           {filtered.length === 0 ? <div className="muted">暂无任务</div> : null}
         </div>
-      </div>
-
-      <div className="card">
-        <div className="sectionRow">
-          <div className="title">日志</div>
-          {selected ? (
-            <div className="muted" style={{ marginLeft: 'auto' }}>
-              job: <Mono>{selected}</Mono>
-            </div>
-          ) : null}
-        </div>
-
-        {selected ? (
-          <>
-            {selectedJob ? (
-              <div className="muted" style={{ marginTop: 8 }}>
-                <span>
-                  type <Mono>{selectedJob.type}</Mono> · scope <Mono>{selectedJob.scope}</Mono>
-                </span>
-                {' · '}
-                <span>
-                  by <Mono>{selectedJob.createdBy}</Mono> · reason <Mono>{selectedJob.reason}</Mono>
-                </span>
-              </div>
-            ) : null}
-          <div className="logs">
-            {logs.map((l, idx) => (
-              <div key={`${l.ts}-${idx}`} className="logLine">
-                <span className="mono logTs">{l.ts}</span>
-                <span className="mono logLvl">{l.level}</span>
-                <span className="logMsg">{l.msg}</span>
-              </div>
-            ))}
-            {logs.length === 0 ? <div className="muted">无日志</div> : null}
-          </div>
-          </>
-        ) : (
-          <div className="muted">选择一条任务查看日志</div>
-        )}
 
         {error ? <div className="error">{error}</div> : null}
       </div>

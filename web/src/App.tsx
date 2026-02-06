@@ -4,6 +4,7 @@ import { AppShell } from './Shell'
 import type { Route } from './routes'
 import { OverviewPage } from './pages/OverviewPage'
 import { QueuePage } from './pages/QueuePage'
+import { JobDetailPage } from './pages/JobDetailPage'
 import { ServicesPage } from './pages/ServicesPage'
 import { ServiceDetailPage } from './pages/ServiceDetailPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -20,6 +21,8 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
       }
     case 'queue':
       return { title: '更新队列', topbarHint: '更新队列' }
+    case 'job':
+      return { title: '任务详情', topbarHint: '更新队列' }
     case 'services':
       return { title: '服务', topbarHint: '服务' }
     case 'settings':
@@ -73,6 +76,7 @@ export default function App() {
     >
       {route.name === 'overview' ? <OverviewPage onComposeHint={setComposeHint} onTopActions={setPageActions} /> : null}
       {route.name === 'queue' ? <QueuePage onTopActions={setPageActions} /> : null}
+      {route.name === 'job' ? <JobDetailPage jobId={route.jobId} onTopActions={setPageActions} /> : null}
       {route.name === 'services' ? <ServicesPage onComposeHint={setComposeHint} onTopActions={setPageActions} /> : null}
       {route.name === 'settings' ? <SettingsPage onTopActions={setPageActions} /> : null}
       {route.name === 'service' ? (

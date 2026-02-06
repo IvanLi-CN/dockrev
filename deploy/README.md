@@ -41,6 +41,8 @@ Notes:
 
 - The Dockrev UI probes `GET /supervisor/self-upgrade` (same origin) before enabling the “升级 Dockrev” entry (401 means auth/forward header is missing).
 - Self-upgrade uses Docker + Compose on the host via the mounted Docker socket. The target compose files must be readable inside the supervisor container too (same absolute path requirement).
+- Self-upgrade applies an extra Compose override file (image-only) and may cause containers in the same project to report different `com.docker.compose.project.config_files` label values. Dockrev will surface this as a warning (not invalid) and pick a stable canonical compose file list.
+  - To let Dockrev read the override file (so discovery can reflect the self-upgraded image), store supervisor state in a mounted absolute path (e.g. set `DOCKREV_SUPERVISOR_STATE_PATH=/data/self-upgrade.json`) and mount that same `/data` path into the Dockrev container read-only.
 
 ## Auth / reverse proxy
 

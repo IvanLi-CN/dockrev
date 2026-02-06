@@ -452,12 +452,13 @@ export function OverviewPage(props: {
 
   const discoverySummary = useMemo(() => {
     const active = discoveredProjects.filter((p) => p.status === 'active' && !p.archived)
+    const warning = discoveredProjects.filter((p) => p.status === 'active' && !p.archived && !!p.lastError)
     const missing = discoveredProjects.filter((p) => p.status === 'missing' && !p.archived)
     const invalid = discoveredProjects.filter((p) => p.status === 'invalid' && !p.archived)
-    const issues = [...missing, ...invalid]
+    const issues = [...warning, ...missing, ...invalid]
       .sort((a, b) => String(b.lastSeenAt ?? '').localeCompare(String(a.lastSeenAt ?? '')))
       .slice(0, 4)
-    return { active, missing, invalid, issues }
+    return { active, warning, missing, invalid, issues }
   }, [discoveredProjects])
 
   const runDiscoveryScan = useCallback(async () => {
@@ -742,7 +743,7 @@ export function OverviewPage(props: {
           <div className="sectionRow">
             <div>
               <div className="title">扫描与发现异常</div>
-              <div className="muted">discovery projects（missing/invalid）</div>
+              <div className="muted">discovery projects（warning/missing/invalid）</div>
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
               <Button variant="ghost" disabled={busy} onClick={runDiscoveryScan}>
@@ -755,6 +756,7 @@ export function OverviewPage(props: {
           </div>
           <div className="chipRow" style={{ marginTop: 14 }}>
             <div className="chipStatic">{`active: ${discoverySummary.active.length}`}</div>
+            <div className="chipStatic">{`warning: ${discoverySummary.warning.length}`}</div>
             <div className="chipStatic">{`missing: ${discoverySummary.missing.length}`}</div>
             <div className="chipStatic">{`invalid: ${discoverySummary.invalid.length}`}</div>
             {lastDiscoveryScanAt ? <div className="chipStatic">{`last scan: ${formatShort(lastDiscoveryScanAt)}`}</div> : null}
@@ -767,7 +769,7 @@ export function OverviewPage(props: {
               {discoverySummary.issues.map((p) => (
                 <div key={p.project} className="muted" title={p.lastError ?? undefined}>
                   <Mono>{p.project}</Mono>
-                  {p.status === 'missing' ? ' · missing' : ' · invalid'}
+                  {p.status === 'missing' ? ' · missing' : p.status === 'invalid' ? ' · invalid' : ' · warning'}
                   {p.lastError ? ` · ${p.lastError}` : ''}
                 </div>
               ))}

@@ -3,6 +3,7 @@ import { selfUpgradeBaseUrl } from './runtimeConfig'
 export type Route =
   | { name: 'overview' }
   | { name: 'queue' }
+  | { name: 'job'; jobId: string }
   | { name: 'services' }
   | { name: 'settings' }
   | { name: 'service'; stackId: string; serviceId: string }
@@ -15,6 +16,7 @@ export function parseRoute(pathname: string): Route {
   const parts = pathname.split('/').filter(Boolean).map(decodeURIComponent)
   if (parts.length === 0) return { name: 'overview' }
   if (parts.length === 1 && parts[0] === 'queue') return { name: 'queue' }
+  if (parts.length === 2 && parts[0] === 'queue') return { name: 'job', jobId: parts[1] }
   if (parts.length === 1 && parts[0] === 'services') return { name: 'services' }
   if (parts.length === 1 && parts[0] === 'settings') return { name: 'settings' }
   if (parts.length === 3 && parts[0] === 'services') {
@@ -29,6 +31,8 @@ export function href(route: Route): string {
       return '/'
     case 'queue':
       return '/queue'
+    case 'job':
+      return `/queue/${encodeURIComponent(route.jobId)}`
     case 'services':
       return '/services'
     case 'settings':

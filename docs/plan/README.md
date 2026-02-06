@@ -83,5 +83,6 @@
 | 838ry | Dockrev Web: 增加版本 / 开源仓库 / 开发者信息 | 已完成 | `838ry:app-meta-footer/PLAN.md` | 2026-02-03 | PR #52 |
 | mzqkx | CI/CD: Release prerelease channel（label-driven） | 待实现 | `mzqkx:prerelease-channel/PLAN.md` | 2026-02-05 | - |
 | 2dkvs | Dockrev API: 修复 multi-arch 镜像当前版本推测（resolvedTag / digest 对齐） | 已完成 | `2dkvs:fix-resolvedtag-multiarch-digest/PLAN.md` | 2026-02-05 | PR #57 |
+| bgwkw | Dockrev Web: Queue 日志迁移到任务详情页（避免布局错位） | 已完成 | `bgwkw:fix-queue-logs-layout-shift/PLAN.md` | 2026-02-06 | PR #58 |
+| p43u7 | Dockrev: Self-upgrade 后不应触发 config_files_conflict（归一 + warning） | 已完成 | `p43u7:dockrev-discovery-config-files-superset/PLAN.md` | 2026-02-06 | PR #60 |
 | 43fyu | Dockrev Web: 更新候选页视图状态持久化（tag in URL + stack 折叠） | 已完成 | `43fyu:persist-candidates-view-state/PLAN.md` | 2026-02-06 | PR #59 |
-| 9gaan | Dockrev Web: Job 详情页（日志独立页面） | 待实现 | `9gaan:jobs-detail-logs-page/PLAN.md` | 2026-02-06 | - |
