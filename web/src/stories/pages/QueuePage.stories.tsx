@@ -27,23 +27,7 @@ export const DashboardDemo: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
   render: () => {
     return (
-      <PageHarness route={{ name: 'queue' }} title="任务队列" topbarHint="任务队列" pageSubtitle="代表性：单 job + 可点选看日志">
-        {({ onTopActions }) => <QueuePage onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-}
-
-export const LongLogs: Story = {
-  parameters: { dockrevApiScenario: 'queue-long-logs' },
-  render: () => {
-    return (
-      <PageHarness
-        route={{ name: 'queue' }}
-        title="任务队列"
-        topbarHint="任务队列"
-        pageSubtitle="复现：先点 job-short（短日志）再点 job-long（长 URL/digest 日志），布局不应挤压左栏"
-      >
+      <PageHarness route={{ name: 'queue' }} title="任务队列" topbarHint="任务队列" pageSubtitle="代表性：任务列表（点击进入任务详情页查看日志）">
         {({ onTopActions }) => <QueuePage onTopActions={onTopActions} />}
       </PageHarness>
     )

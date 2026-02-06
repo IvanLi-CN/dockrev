@@ -394,26 +394,32 @@ async function runInteractive({ baseUrl, browser }) {
     }
   }
 
-  // 3) Queue layout stability: switching to a job with long log lines must not squeeze the left column.
+  // 3) Queue job detail: logs should be shown on a dedicated page, and navigation must work.
   {
-    const page = await openStory('pages-queuepage--long-logs')
+    const page = await openStory('pages-interactiveapp--queue-long-logs')
     try {
       const items = page.locator('.queueItem')
       await items.nth(1).waitFor({ timeout: 10_000 })
 
-      // Select the short-log job first, then the long-log job (repro sequence from production).
+      // Open short-log job, go back, then open long-log job.
       await items.nth(0).click()
+      await page.getByText('job:').waitFor({ timeout: 10_000 })
+      await page.getByText('job-short').waitFor({ timeout: 10_000 })
+
+      const back = page.getByRole('button', { name: '返回列表' })
+      await back.waitFor({ timeout: 10_000 })
+      await back.click()
+      await page.locator('.queueList').waitFor({ timeout: 10_000 })
+
       await items.nth(1).click()
+      await page.getByText('job:').waitFor({ timeout: 10_000 })
+      await page.getByText('job-long').waitFor({ timeout: 10_000 })
       await page.getByText('sha256:9999999999').waitFor({ timeout: 10_000 })
 
-      const cards = page.locator('.page.twoCol > .card')
-      const left = await requireBoundingBox(cards.nth(0), 'queue:leftCard')
-      const right = await requireBoundingBox(cards.nth(1), 'queue:rightCard')
-
-      const ratio = left.width / (left.width + right.width)
-      if (!(ratio > 0.4 && ratio < 0.6)) {
-        throw new Error(`Queue columns are imbalanced after long logs: ratio=${ratio} (left=${left.width}, right=${right.width})`)
-      }
+      const back2 = page.getByRole('button', { name: '返回列表' })
+      await back2.waitFor({ timeout: 10_000 })
+      await back2.click()
+      await page.locator('.queueList').waitFor({ timeout: 10_000 })
     } finally {
       await page.close().catch(() => {})
     }
