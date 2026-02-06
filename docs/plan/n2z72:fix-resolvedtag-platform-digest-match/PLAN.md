@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-06
 - Last: 2026-02-06
 
@@ -49,3 +49,6 @@
   - resolvedTag 推测可用 platform digest 命中；
   - no update fast-path 可用 platform digest 清除候选。
 
+## 变更记录（Change log）
+
+- 2026-02-06: 完成实现与验证；PR #61
