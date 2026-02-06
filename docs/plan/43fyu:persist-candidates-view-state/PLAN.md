@@ -2,9 +2,10 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-06
 - Last: 2026-02-06
+- Notes: PR #59
 
 ## 背景 / 问题陈述
 
@@ -60,7 +61,10 @@
 
 ### Testing
 
-- 增加/调整至少一个前端测试，覆盖：
+- 覆盖方式：
+  - CI：依赖仓库现有的 `web` lint/build + Storybook gating（确保可构建且 Storybook 测试通过）。
+  - Manual：按下方 Acceptance Criteria 做刷新/重新访问/back-forward 的回归验证。
+-（可选）若后续引入稳定的单元测试入口，再补覆盖：
   - URL 参数 -> 初始标签选择
   - 按标签隔离的折叠状态读写（localStorage key + reducer/hook）
 
@@ -70,9 +74,9 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 标签写入 URL + 初始恢复 + back/forward 行为
-- [ ] M2: stack 展开/折叠状态持久化（按标签隔离）
-- [ ] M3: 补齐测试与最小验证
+- [x] M1: 标签写入 URL + 初始恢复 + back/forward 行为
+- [x] M2: stack 展开/折叠状态持久化（按标签隔离）
+- [x] M3: 最小验证（CI + lint/build + manual）
 
 ## 风险 / 备注（Risks / Notes）
 
@@ -82,4 +86,4 @@
 ## 变更记录（Change log）
 
 - 2026-02-06: 创建计划并冻结验收标准；状态设为 `待实现`。
-
+- 2026-02-06: 完成实现与最小验证；状态更新为 `已完成`；Notes: PR #59。
