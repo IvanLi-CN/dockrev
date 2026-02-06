@@ -191,6 +191,18 @@
   gap: 16px;
 }
 
+.jobDetailPage {
+  height: 100%;
+  min-height: 0;
+}
+
+.jobDetailLogsCard {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .standaloneShell {
   min-height: 100%;
   padding: 40px 28px;
@@ -1295,30 +1307,62 @@ html[data-theme='light'] .modalOverlay {
   border-radius: 12px;
   background: rgba(0, 0, 0, 0.12);
   padding: 10px 12px;
-  max-height: 520px;
+  /* Fill available space on the Job detail page; keep its own scroll. */
+  flex: 1;
+  min-height: 0;
   overflow: auto;
 }
 
 .logLine {
   display: grid;
-  /* Allow long tokens (URLs/digests) to shrink without forcing the outer 2-col layout to reflow. */
-  grid-template-columns: 170px 80px minmax(0, 1fr);
-  gap: 10px;
+  /* Make meta columns compact so the message can use most of the width. */
+  grid-template-columns: 128px 52px minmax(0, 1fr);
+  gap: 12px;
   padding: 4px 0;
   font-size: 12px;
+  align-items: baseline;
 }
 
 .logTs {
   opacity: 0.9;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .logLvl {
-  opacity: 0.8;
+  opacity: 0.95;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.logLvl-info {
+  color: var(--color-info);
+}
+
+.logLvl-warn,
+.logLvl-warning {
+  color: var(--color-warning);
+}
+
+.logLvl-error,
+.logLvl-err {
+  color: var(--color-error);
+}
+
+.logLvl-debug,
+.logLvl-trace {
+  color: var(--muted2);
 }
 
 .logMsg {
   color: var(--text);
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 /* Services */

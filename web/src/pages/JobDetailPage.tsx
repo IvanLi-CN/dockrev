@@ -23,6 +23,32 @@ function errorMessage(e: unknown): string {
   return String(e)
 }
 
+function formatLogTs(ts: string): string {
+  const s = (ts ?? '').trim()
+  if (!s) return '-'
+
+  // ISO 8601 like "2026-02-06T06:21:05.311Z" -> show time part to save horizontal space.
+  const t = s.indexOf('T')
+  if (t >= 0 && t + 1 < s.length) return s.slice(t + 1)
+
+  // Common "YYYY-MM-DD HH:mm:ss" -> show time part.
+  const m = s.match(/^\d{4}-\d{2}-\d{2}[ T](.+)$/)
+  if (m) return m[1]
+
+  return s
+}
+
+function formatLogLevel(level: string): string {
+  const s = (level ?? '').trim().toLowerCase()
+  if (!s) return '-'
+  if (s === 'info') return 'INFO'
+  if (s === 'warn' || s === 'warning') return 'WARN'
+  if (s === 'error' || s === 'err') return 'ERR'
+  if (s === 'debug') return 'DBG'
+  if (s === 'trace') return 'TRC'
+  return s.slice(0, 4).toUpperCase()
+}
+
 export function JobDetailPage(props: { jobId: string; onTopActions: (node: React.ReactNode) => void }) {
   const { jobId, onTopActions } = props
   const [job, setJob] = useState<JobDetail | null>(null)
@@ -70,7 +96,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   }, [busy, onTopActions, refresh])
 
   return (
-    <div className="page">
+    <div className="page jobDetailPage">
       <div className="card">
         <div className="sectionRow">
           <div className="title">任务详情</div>
@@ -96,7 +122,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
         {error ? <div className="error">{error}</div> : null}
       </div>
 
-      <div className="card">
+      <div className="card jobDetailLogsCard">
         <div className="sectionRow">
           <div className="title">日志</div>
         </div>
@@ -104,8 +130,10 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
         <div className="logs">
           {logs.map((l, idx) => (
             <div key={`${l.ts}-${idx}`} className="logLine">
-              <span className="mono logTs">{l.ts}</span>
-              <span className="mono logLvl">{l.level}</span>
+              <span className="mono logTs" title={l.ts}>
+                {formatLogTs(l.ts)}
+              </span>
+              <span className={`mono logLvl logLvl-${(l.level ?? '').trim().toLowerCase()}`}>{formatLogLevel(l.level)}</span>
               <span className="logMsg">{l.msg}</span>
             </div>
           ))}
