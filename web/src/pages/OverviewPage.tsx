@@ -158,16 +158,101 @@ function GroupGuide() {
   return <div className="groupGuide" aria-hidden="true" />
 }
 
+const UPDATE_CANDIDATE_FILTER_QUERY_KEY = 'updates'
+const UPDATE_CANDIDATE_COLLAPSED_STORAGE_PREFIX = 'dockrev:overview:updateCandidates:collapsed:v1:'
+const UPDATE_CANDIDATE_FILTERS: UpdateCandidateFilter[] = [
+  'all',
+  'updatable',
+  'hint',
+  'crossTag',
+  'archMismatch',
+  'blocked',
+]
+
+function normalizeUpdateCandidateFilter(value: string | null): UpdateCandidateFilter | null {
+  const v = (value ?? '').trim()
+  if (!v) return null
+  // `UpdateCandidateFilter` is a string union; keep this explicit to avoid accidental acceptance.
+  if ((UPDATE_CANDIDATE_FILTERS as readonly string[]).includes(v)) return v as UpdateCandidateFilter
+  return null
+}
+
+function readUpdateCandidateFilterFromUrl(): UpdateCandidateFilter | null {
+  try {
+    const params = new URLSearchParams(window.location.search)
+    return normalizeUpdateCandidateFilter(params.get(UPDATE_CANDIDATE_FILTER_QUERY_KEY))
+  } catch {
+    return null
+  }
+}
+
+function writeUpdateCandidateFilterToUrl(filter: UpdateCandidateFilter, mode: 'push' | 'replace') {
+  const key = UPDATE_CANDIDATE_FILTER_QUERY_KEY
+  try {
+    const url = new URL(window.location.href)
+    if (filter === 'all') url.searchParams.delete(key)
+    else url.searchParams.set(key, filter)
+
+    const next = `${url.pathname}${url.search}${url.hash}`
+    if (mode === 'push') window.history.pushState({}, '', next)
+    else window.history.replaceState({}, '', next)
+  } catch {
+    // ignore URL update errors (e.g. locked-down environments)
+  }
+}
+
+function readCollapsedFromStorage(filter: UpdateCandidateFilter): Record<string, boolean> {
+  const key = `${UPDATE_CANDIDATE_COLLAPSED_STORAGE_PREFIX}${filter}`
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (!raw) return {}
+    const json = JSON.parse(raw)
+    if (!json || typeof json !== 'object') return {}
+    const out: Record<string, boolean> = {}
+    for (const [k, v] of Object.entries(json as Record<string, unknown>)) {
+      if (typeof k !== 'string' || !k) continue
+      if (typeof v !== 'boolean') continue
+      out[k] = v
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+function writeCollapsedToStorage(filter: UpdateCandidateFilter, value: Record<string, boolean>) {
+  const key = `${UPDATE_CANDIDATE_COLLAPSED_STORAGE_PREFIX}${filter}`
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // ignore quota/serialization errors
+  }
+}
+
+function withCollapseDefaults(
+  collapsed: Record<string, boolean>,
+  stacks: StackListItem[],
+): Record<string, boolean> {
+  const next = { ...collapsed }
+  for (const st of stacks) {
+    if (next[st.id] == null) next[st.id] = st.updates === 0
+  }
+  return next
+}
+
 export function OverviewPage(props: {
   onComposeHint: (hint: { path?: string; profile?: string; lastScan?: string }) => void
   onTopActions: (node: React.ReactNode) => void
 }) {
   const { onComposeHint, onTopActions } = props
   const confirm = useConfirm()
-  const [filter, setFilter] = useState<UpdateCandidateFilter>('all')
+  const [filter, setFilter] = useState<UpdateCandidateFilter>(() => readUpdateCandidateFilterFromUrl() ?? 'all')
   const [stacks, setStacks] = useState<StackListItem[]>([])
   const [details, setDetails] = useState<Record<string, StackDetail | undefined>>({})
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
+    const initialFilter = readUpdateCandidateFilterFromUrl() ?? 'all'
+    return readCollapsedFromStorage(initialFilter)
+  })
   const [jobs, setJobs] = useState<JobListItem[]>([])
   const [discoveredProjects, setDiscoveredProjects] = useState<DiscoveredProject[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -247,6 +332,51 @@ export function OverviewPage(props: {
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
   }, [refresh])
+
+  const applyFilter = useCallback(
+    (next: UpdateCandidateFilter, mode: 'push' | 'replace') => {
+      setFilter(next)
+      writeUpdateCandidateFilterToUrl(next, mode)
+      setCollapsed(withCollapseDefaults(readCollapsedFromStorage(next), stacks))
+    },
+    [stacks],
+  )
+
+  const onChangeFilter = useCallback(
+    (next: UpdateCandidateFilter) => {
+      if (next === filter) return
+      applyFilter(next, 'push')
+    },
+    [applyFilter, filter],
+  )
+
+  const toggleStackCollapsed = useCallback(
+    (stackId: string) => {
+      setCollapsed((prev) => {
+        const next = { ...prev, [stackId]: !(prev[stackId] ?? false) }
+        writeCollapsedToStorage(filter, next)
+        return next
+      })
+    },
+    [filter],
+  )
+
+  // Sync state from URL for back/forward or manual edits.
+  useEffect(() => {
+    const onNav = () => {
+      const next = readUpdateCandidateFilterFromUrl() ?? 'all'
+      // Only update when necessary to avoid resetting local UI state.
+      if (next === filter) return
+      setFilter(next)
+      setCollapsed(withCollapseDefaults(readCollapsedFromStorage(next), stacks))
+    }
+    window.addEventListener('popstate', onNav)
+    window.addEventListener('hashchange', onNav)
+    return () => {
+      window.removeEventListener('popstate', onNav)
+      window.removeEventListener('hashchange', onNav)
+    }
+  }, [filter, stacks])
 
   const countsAll = useMemo(() => {
     const c: Record<Exclude<RowStatus, 'ok'>, number> = {
@@ -652,11 +782,11 @@ export function OverviewPage(props: {
         </div>
       </div>
 
-      <div className="overviewIndent">
+        <div className="overviewIndent">
         <div className="title">更新候选</div>
 
         <div style={{ marginTop: 14 }}>
-          <UpdateCandidateFilters value={filter} onChange={setFilter} total={totalServicesAll} counts={countsAll} />
+          <UpdateCandidateFilters value={filter} onChange={onChangeFilter} total={totalServicesAll} counts={countsAll} />
         </div>
 
         <div className="table" style={{ marginTop: 14 }}>
@@ -710,11 +840,11 @@ export function OverviewPage(props: {
                   className="groupHead"
                   role="button"
                   tabIndex={0}
-                  onClick={() => setCollapsed((prev) => ({ ...prev, [st.id]: !isCollapsed }))}
+                  onClick={() => toggleStackCollapsed(st.id)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault()
-                      setCollapsed((prev) => ({ ...prev, [st.id]: !isCollapsed }))
+                      toggleStackCollapsed(st.id)
                     }
                   }}
                 >
