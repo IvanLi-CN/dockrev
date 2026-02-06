@@ -1675,12 +1675,7 @@ services:
 #[tokio::test]
 async fn resolved_tag_inference_matches_platform_digest_and_clears_noop_candidate() {
     let runner: Arc<PlatformDigestRunner> = Arc::new(PlatformDigestRunner::default());
-    let state = test_state_with(
-        ":memory:",
-        Arc::new(DualDigestRegistry::default()),
-        runner.clone(),
-    )
-    .await;
+    let state = test_state_with(":memory:", Arc::new(DualDigestRegistry), runner.clone()).await;
     let app = api::router(state.clone());
 
     let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
