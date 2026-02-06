@@ -86,3 +86,4 @@
 | bgwkw | Dockrev Web: Queue 日志迁移到任务详情页（避免布局错位） | 已完成 | `bgwkw:fix-queue-logs-layout-shift/PLAN.md` | 2026-02-06 | PR #58 |
 | p43u7 | Dockrev: Self-upgrade 后不应触发 config_files_conflict（归一 + warning） | 已完成 | `p43u7:dockrev-discovery-config-files-superset/PLAN.md` | 2026-02-06 | PR #60 |
 | 43fyu | Dockrev Web: 更新候选页视图状态持久化（tag in URL + stack 折叠） | 已完成 | `43fyu:persist-candidates-view-state/PLAN.md` | 2026-02-06 | PR #59 |
+| n2z72 | Dockrev API: resolvedTag 推测兼容 runtime platform digest | 待实现 | `n2z72:fix-resolvedtag-platform-digest-match/PLAN.md` | 2026-02-06 | - |
