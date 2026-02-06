@@ -68,7 +68,15 @@ fn normalize_dockerhub_name(registry: &str, name: &str) -> String {
 
 #[derive(Clone, Debug)]
 pub struct ManifestInfo {
+    // Best-effort digest for the requested reference (tag or digest). Prefer the registry header
+    // digest when available (index/manifest-list digest for multi-arch), otherwise fall back to the
+    // host platform digest when it can be selected unambiguously.
     pub digest: Option<String>,
+    // For multi-arch images, the selected host platform's child manifest digest (when available).
+    //
+    // Note: Docker runtime `.RepoDigests` may report either the index digest or the platform digest
+    // depending on environment; callers that compare against runtime digests should consider both.
+    pub platform_digest: Option<String>,
     pub arch: Vec<String>,
 }
 
@@ -509,8 +517,12 @@ pub fn parse_manifest_json(
             None
         }
     };
-    let digest = digest.or(platform_digest);
-    Ok(ManifestInfo { digest, arch })
+    let digest = digest.or(platform_digest.clone());
+    Ok(ManifestInfo {
+        digest,
+        platform_digest,
+        arch,
+    })
 }
 
 #[cfg(test)]

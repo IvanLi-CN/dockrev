@@ -533,8 +533,10 @@ async fn run_check_for_job(
 
     let mut services_checked = 0u32;
     let mut services_with_candidate = 0u32;
-    let mut manifest_digest_cache: std::collections::HashMap<String, Option<String>> =
-        std::collections::HashMap::new();
+    let mut manifest_digest_cache: std::collections::HashMap<
+        String,
+        (Option<String>, Option<String>),
+    > = std::collections::HashMap::new();
 
     for stack_id in &stack_ids {
         let compose_project = state
@@ -642,6 +644,7 @@ async fn run_check_for_job(
 
             let (
                 candidate_digest_for_infer,
+                candidate_platform_digest_for_infer,
                 candidate_arch_match_for_infer,
                 candidate_arch_json_for_infer,
             ) = if let Some(tag) = candidate_tag.as_deref() {
@@ -650,17 +653,19 @@ async fn run_check_for_job(
                         let arch_match = registry::compute_arch_match(host_platform, &m.arch);
                         (
                             m.digest,
+                            m.platform_digest,
                             Some(arch_match.as_str().to_string()),
                             Some(serde_json::to_string(&m.arch).unwrap_or_default()),
                         )
                     }
-                    Err(_) => (None, None, None),
+                    Err(_) => (None, None, None, None),
                 }
             } else {
-                (None, None, None)
+                (None, None, None, None)
             };
 
             let mut candidate_digest = candidate_digest_for_infer;
+            let mut candidate_platform_digest = candidate_platform_digest_for_infer;
             let mut candidate_arch_match = candidate_arch_match_for_infer;
             let mut candidate_arch_json = candidate_arch_json_for_infer;
 
@@ -671,15 +676,23 @@ async fn run_check_for_job(
             // "no update" fast-path when runtime digest is known OR the current tag is semver/pinned.
             let can_compare_current =
                 runtime_digest.is_some() || ignore::is_strict_semver(&svc.image_tag);
-            if can_compare_current
-                && let (Some(cur), Some(cand)) = (
+            let current_matches_candidate = matches!(
+                (
                     effective_current_digest.as_deref(),
-                    candidate_digest.as_deref(),
-                )
-                && cur == cand
-            {
+                    candidate_digest.as_deref()
+                ),
+                (Some(cur), Some(cand)) if cur == cand
+            ) || matches!(
+                (
+                    effective_current_digest.as_deref(),
+                    candidate_platform_digest.as_deref()
+                ),
+                (Some(cur), Some(cand)) if cur == cand
+            );
+            if can_compare_current && current_matches_candidate {
                 candidate_tag = None;
                 candidate_digest = None;
+                candidate_platform_digest = None;
                 candidate_arch_match = None;
                 candidate_arch_json = None;
             }
@@ -710,27 +723,34 @@ async fn run_check_for_job(
 
                 let mut resolved_tags: Vec<String> = Vec::new();
                 for (_v, tag) in semver_tags.into_iter().take(60) {
-                    let digest = if candidate_tag.as_deref().is_some_and(|c| c == tag.as_str())
-                        && candidate_digest.is_some()
-                    {
-                        candidate_digest.clone()
-                    } else {
-                        let cache_key = format!("{}/{}:{}", img.registry, img.name, tag);
-                        if let Some(v) = manifest_digest_cache.get(&cache_key) {
-                            v.clone()
+                    let (digest, platform_digest) =
+                        if candidate_tag.as_deref().is_some_and(|c| c == tag.as_str())
+                            && candidate_digest.is_some()
+                        {
+                            (candidate_digest.clone(), candidate_platform_digest.clone())
                         } else {
-                            let v = state
-                                .registry
-                                .get_manifest(&img, &tag, host_platform)
-                                .await
-                                .ok()
-                                .and_then(|m| m.digest);
-                            manifest_digest_cache.insert(cache_key, v.clone());
-                            v
-                        }
-                    };
+                            let cache_key = format!("{}/{}:{}", img.registry, img.name, tag);
+                            if let Some(v) = manifest_digest_cache.get(&cache_key) {
+                                v.clone()
+                            } else {
+                                let (d, pd) = state
+                                    .registry
+                                    .get_manifest(&img, &tag, host_platform)
+                                    .await
+                                    .ok()
+                                    .map(|m| (m.digest, m.platform_digest))
+                                    .unwrap_or((None, None));
+                                manifest_digest_cache.insert(cache_key, (d.clone(), pd.clone()));
+                                (d, pd)
+                            }
+                        };
 
-                    if digest.as_deref().is_some_and(|d| d == runtime_digest) {
+                    let digest_matches_runtime =
+                        digest.as_deref().is_some_and(|d| d == runtime_digest)
+                            || platform_digest
+                                .as_deref()
+                                .is_some_and(|d| d == runtime_digest);
+                    if digest_matches_runtime {
                         resolved_tags.push(tag);
                     }
                 }
