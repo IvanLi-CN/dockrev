@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getJob, type JobDetail, type JobLogLine } from '../api'
 import { navigate } from '../routes'
-import { Button, Mono, Pill } from '../ui'
+import { Button, Chip, Mono, Pill } from '../ui'
 
 function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' {
   if (status === 'success') return 'ok'
@@ -23,19 +23,51 @@ function errorMessage(e: unknown): string {
   return String(e)
 }
 
-function formatLogTs(ts: string): string {
+type LogTimeZone = 'local' | 'utc'
+
+const LOCAL_TZ = (() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'local'
+  } catch {
+    return 'local'
+  }
+})()
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
+function pad3(n: number): string {
+  return String(n).padStart(3, '0')
+}
+
+function formatLogTs(ts: string, tz: LogTimeZone): string {
   const s = (ts ?? '').trim()
   if (!s) return '-'
 
-  // ISO 8601 like "2026-02-06T06:21:05.311Z" -> show time part to save horizontal space.
-  const t = s.indexOf('T')
-  if (t >= 0 && t + 1 < s.length) return s.slice(t + 1)
+  const d = new Date(s)
+  if (!Number.isNaN(d.valueOf())) {
+    const h = tz === 'utc' ? d.getUTCHours() : d.getHours()
+    const min = tz === 'utc' ? d.getUTCMinutes() : d.getMinutes()
+    const sec = tz === 'utc' ? d.getUTCSeconds() : d.getSeconds()
+    const ms = tz === 'utc' ? d.getUTCMilliseconds() : d.getMilliseconds()
+    // Monospace-friendly, stable width (works well with the 14ch grid column).
+    return `${pad2(h)}:${pad2(min)}:${pad2(sec)}.${pad3(ms)}`
+  }
 
   // Common "YYYY-MM-DD HH:mm:ss" -> show time part.
   const m = s.match(/^\d{4}-\d{2}-\d{2}[ T](.+)$/)
   if (m) return m[1]
 
   return s
+}
+
+function formatLogTitle(ts: string): string {
+  const s = (ts ?? '').trim()
+  if (!s) return '-'
+  const d = new Date(s)
+  if (Number.isNaN(d.valueOf())) return s
+  return `${LOCAL_TZ}: ${d.toLocaleString()} · UTC: ${d.toISOString()}`
 }
 
 function formatLogLevel(level: string): string {
@@ -55,6 +87,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
   const [logs, setLogs] = useState<JobLogLine[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [logTz, setLogTz] = useState<LogTimeZone>('local')
 
   const refresh = useCallback(async () => {
     setError(null)
@@ -125,6 +158,15 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
       <div className="card jobDetailLogsCard">
         <div className="sectionRow">
           <div className="title">日志</div>
+          <div style={{ marginLeft: 'auto' }} className="chipRow">
+            <span className="muted">时区</span>
+            <Chip active={logTz === 'local'} onClick={() => setLogTz('local')} title={`浏览器时区：${LOCAL_TZ}`}>
+              本地
+            </Chip>
+            <Chip active={logTz === 'utc'} onClick={() => setLogTz('utc')} title="后端存储的 job log ts 为 RFC3339（UTC）">
+              UTC
+            </Chip>
+          </div>
         </div>
 
         <div className="logs">
@@ -133,8 +175,8 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
               key={`${l.ts}-${idx}`}
               className={`logLine logLine-${(l.level ?? '').trim().toLowerCase() || 'unknown'}`}
             >
-              <span className="mono logTs" title={l.ts}>
-                {formatLogTs(l.ts)}
+              <span className="mono logTs" title={formatLogTitle(l.ts)}>
+                {formatLogTs(l.ts, logTz)}
               </span>
               <span className={`mono logLvl logLvl-${(l.level ?? '').trim().toLowerCase()}`}>{formatLogLevel(l.level)}</span>
               <span className="logMsg">{l.msg}</span>
