@@ -586,6 +586,10 @@ function buildQueueLongLogs(): Fixture {
   })
 
   const digest = `sha256:${'9'.repeat(64)}`
+  const longToken = `tok_${'a'.repeat(220)}`
+  const longImageRef = `ghcr.io/ivanli-cn/example/super/long/repo/name/that/should/wrap@${digest}`
+  const longUrl =
+    'https://registry.example.com/v2/ivanli-cn/example/manifests/sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef?ns=docker.io&service=registry&scope=repository%3Aivanli-cn%2Fexample%3Apull&offline_token=true&client_id=dockrev-ui&foo=bar&bar=baz&bar2=quux'
 
   f.jobs = [jobShort, jobLong]
   f.jobById = {
@@ -600,14 +604,35 @@ function buildQueueLongLogs(): Fixture {
         {
           ts: nowIso(-11_500),
           level: 'warn',
-          msg: 'list tags failed for library/postgres: error sending request for url (https://auth.docker.io/token?service=registry.docker.io&scope=repository%3Alibrary%2Fpostgres%3Apull)',
+          msg: `list tags failed for library/postgres: error sending request for url (${longUrl})`,
         },
+        // Keep a long digest line near the top so automated storybook tests can assert it is visible without scrolling.
         { ts: nowIso(-11_000), level: 'warn', msg: digest },
         {
           ts: nowIso(-10_500),
           level: 'warn',
           msg: 'list tags failed for ivanli-cn/catnap: error sending request for url (https://ghcr.io/v2/ivanli-cn/catnap/tags/list)',
         },
+        {
+          ts: nowIso(-10_200),
+          level: 'info',
+          msg: `pulling image ${longImageRef}`,
+        },
+        {
+          ts: nowIso(-10_150),
+          level: 'warn',
+          msg: `retrying request: ${longToken}`,
+        },
+        ...Array.from({ length: 32 }, (_, i) => ({
+          ts: nowIso(-10_000 + i * 20),
+          level: i % 11 === 0 ? 'error' : i % 7 === 0 ? 'warn' : 'info',
+          msg:
+            i % 9 === 0
+              ? `http error: GET ${longUrl}`
+              : i % 5 === 0
+                ? `digest mismatch: expected=${digest} got=sha256:${'f'.repeat(64)}`
+                : `line ${String(i + 1).padStart(2, '0')}: ${'x'.repeat(180)}`,
+        })),
         { ts: nowIso(-10_000), level: 'info', msg: 'check finished' },
       ],
     } satisfies JobDetail,
