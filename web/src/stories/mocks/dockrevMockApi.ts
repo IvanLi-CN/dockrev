@@ -28,6 +28,7 @@ export type DockrevApiScenario =
   | 'version-tags-popover-demo'
   | 'multi-stack-mixed'
   | 'queue-mixed'
+  | 'queue-long-logs'
   | 'settings-configured'
   | 'no-candidates'
   | 'empty'
@@ -545,6 +546,76 @@ function buildQueueMixed(): Fixture {
   return f
 }
 
+function buildQueueLongLogs(): Fixture {
+  const f = buildDashboardDemo()
+
+  const makeJob = (input: Partial<JobListItem> & Pick<JobListItem, 'id' | 'status'>): JobListItem => {
+    const base: JobListItem = {
+      id: input.id,
+      type: input.type ?? 'check',
+      scope: input.scope ?? 'all',
+      stackId: input.stackId !== undefined ? input.stackId : null,
+      serviceId: input.serviceId !== undefined ? input.serviceId : null,
+      status: input.status,
+      createdBy: input.createdBy ?? 'ivan',
+      reason: input.reason ?? 'ui',
+      createdAt: input.createdAt ?? nowIso(-120_000),
+      startedAt: input.startedAt ?? nowIso(-110_000),
+      finishedAt: input.finishedAt ?? nowIso(-10_000),
+      allowArchMismatch: input.allowArchMismatch ?? false,
+      backupMode: input.backupMode ?? 'inherit',
+      summary: input.summary ?? {},
+    }
+    return base
+  }
+
+  const jobShort = makeJob({
+    id: 'job-short',
+    status: 'running',
+    finishedAt: null,
+    createdAt: nowIso(-40_000),
+    startedAt: nowIso(-20_000),
+  })
+
+  const jobLong = makeJob({
+    id: 'job-long',
+    status: 'success',
+    createdAt: nowIso(-90_000),
+    startedAt: nowIso(-89_000),
+    finishedAt: nowIso(-88_000),
+  })
+
+  const digest = `sha256:${'9'.repeat(64)}`
+
+  f.jobs = [jobShort, jobLong]
+  f.jobById = {
+    [jobShort.id]: {
+      ...jobShort,
+      logs: [{ ts: nowIso(-12_000), level: 'info', msg: 'check started' }],
+    } satisfies JobDetail,
+    [jobLong.id]: {
+      ...jobLong,
+      logs: [
+        { ts: nowIso(-12_000), level: 'info', msg: 'check started' },
+        {
+          ts: nowIso(-11_500),
+          level: 'warn',
+          msg: 'list tags failed for library/postgres: error sending request for url (https://auth.docker.io/token?service=registry.docker.io&scope=repository%3Alibrary%2Fpostgres%3Apull)',
+        },
+        { ts: nowIso(-11_000), level: 'warn', msg: digest },
+        {
+          ts: nowIso(-10_500),
+          level: 'warn',
+          msg: 'list tags failed for ivanli-cn/catnap: error sending request for url (https://ghcr.io/v2/ivanli-cn/catnap/tags/list)',
+        },
+        { ts: nowIso(-10_000), level: 'info', msg: 'check finished' },
+      ],
+    } satisfies JobDetail,
+  }
+
+  return f
+}
+
 function buildSettingsConfigured(): Fixture {
   const f = buildDashboardDemo()
   f.notifications = {
@@ -662,6 +733,7 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'resolved-tag-demo') return buildResolvedTagDemo()
   if (scenario === 'version-tags-popover-demo') return buildVersionTagsPopoverDemo()
   if (scenario === 'queue-mixed') return buildQueueMixed()
+  if (scenario === 'queue-long-logs') return buildQueueLongLogs()
   if (scenario === 'settings-configured') return buildSettingsConfigured()
   if (scenario === 'multi-stack-mixed') return buildMultiStackMixed()
   return buildDashboardDemo()

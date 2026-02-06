@@ -34,6 +34,22 @@ export const DashboardDemo: Story = {
   },
 }
 
+export const LongLogs: Story = {
+  parameters: { dockrevApiScenario: 'queue-long-logs' },
+  render: () => {
+    return (
+      <PageHarness
+        route={{ name: 'queue' }}
+        title="任务队列"
+        topbarHint="任务队列"
+        pageSubtitle="复现：先点 job-short（短日志）再点 job-long（长 URL/digest 日志），布局不应挤压左栏"
+      >
+        {({ onTopActions }) => <QueuePage onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}
+
 export const Empty: Story = {
   parameters: { dockrevApiScenario: 'empty' },
   render: () => {

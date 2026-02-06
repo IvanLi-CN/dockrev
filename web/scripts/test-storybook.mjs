@@ -393,6 +393,31 @@ async function runInteractive({ baseUrl, browser }) {
       await page.close().catch(() => {})
     }
   }
+
+  // 3) Queue layout stability: switching to a job with long log lines must not squeeze the left column.
+  {
+    const page = await openStory('pages-queuepage--long-logs')
+    try {
+      const items = page.locator('.queueItem')
+      await items.nth(1).waitFor({ timeout: 10_000 })
+
+      // Select the short-log job first, then the long-log job (repro sequence from production).
+      await items.nth(0).click()
+      await items.nth(1).click()
+      await page.getByText('sha256:9999999999').waitFor({ timeout: 10_000 })
+
+      const cards = page.locator('.page.twoCol > .card')
+      const left = await requireBoundingBox(cards.nth(0), 'queue:leftCard')
+      const right = await requireBoundingBox(cards.nth(1), 'queue:rightCard')
+
+      const ratio = left.width / (left.width + right.width)
+      if (!(ratio > 0.4 && ratio < 0.6)) {
+        throw new Error(`Queue columns are imbalanced after long logs: ratio=${ratio} (left=${left.width}, right=${right.width})`)
+      }
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
 }
 
 async function main() {

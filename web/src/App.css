@@ -1301,7 +1301,8 @@ html[data-theme='light'] .modalOverlay {
 
 .logLine {
   display: grid;
-  grid-template-columns: 170px 80px 1fr;
+  /* Allow long tokens (URLs/digests) to shrink without forcing the outer 2-col layout to reflow. */
+  grid-template-columns: 170px 80px minmax(0, 1fr);
   gap: 10px;
   padding: 4px 0;
   font-size: 12px;
@@ -1317,6 +1318,7 @@ html[data-theme='light'] .modalOverlay {
 
 .logMsg {
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 /* Services */
