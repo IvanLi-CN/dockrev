@@ -191,6 +191,18 @@
   gap: 16px;
 }
 
+.jobDetailPage {
+  height: 100%;
+  min-height: 0;
+}
+
+.jobDetailLogsCard {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .standaloneShell {
   min-height: 100%;
   padding: 40px 28px;
@@ -1294,29 +1306,98 @@ html[data-theme='light'] .modalOverlay {
   border: 1px solid rgba(229, 231, 235, 0.08);
   border-radius: 12px;
   background: rgba(0, 0, 0, 0.12);
-  padding: 10px 12px;
-  max-height: 520px;
+  padding: 8px 10px;
+  /* Fill available space on the Job detail page; keep its own scroll. */
+  flex: 1;
+  min-height: 0;
   overflow: auto;
+  /* Avoid layout "jiggle" when a scrollbar appears/disappears. */
+  scrollbar-gutter: stable both-edges;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .logLine {
   display: grid;
-  grid-template-columns: 170px 80px 1fr;
+  /* Keep meta columns compact so the message can use most of the width. */
+  grid-template-columns: 14ch 4ch minmax(0, 1fr);
   gap: 10px;
-  padding: 4px 0;
-  font-size: 12px;
+  padding: 3px 6px;
+  border-radius: 10px;
+  align-items: start;
+}
+
+.logLine:hover {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.logLine-warn,
+.logLine-warning {
+  background: rgba(245, 158, 11, 0.06);
+}
+
+.logLine-error,
+.logLine-err {
+  background: rgba(251, 113, 133, 0.07);
 }
 
 .logTs {
   opacity: 0.9;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .logLvl {
-  opacity: 0.8;
+  opacity: 0.95;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.logLvl-info {
+  color: var(--color-info);
+}
+
+.logLvl-warn,
+.logLvl-warning {
+  color: var(--color-warning);
+}
+
+.logLvl-error,
+.logLvl-err {
+  color: var(--color-error);
+}
+
+.logLvl-debug,
+.logLvl-trace {
+  color: var(--muted2);
 }
 
 .logMsg {
   color: var(--text);
+  /* Logs are easier to read/copy when we preserve formatting and allow horizontal scroll. */
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+@media (max-width: 700px) {
+  .logLine {
+    grid-template-columns: 1fr 4ch;
+    gap: 8px;
+  }
+
+  .logMsg {
+    grid-column: 1 / -1;
+    /* On narrow screens, allow wrapping at whitespace. */
+    white-space: pre-wrap;
+  }
 }
 
 /* Services */

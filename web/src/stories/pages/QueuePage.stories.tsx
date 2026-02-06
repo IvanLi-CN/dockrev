@@ -27,7 +27,7 @@ export const DashboardDemo: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
   render: () => {
     return (
-      <PageHarness route={{ name: 'queue' }} title="任务队列" topbarHint="任务队列" pageSubtitle="代表性：单 job + 可点选看日志">
+      <PageHarness route={{ name: 'queue' }} title="任务队列" topbarHint="任务队列" pageSubtitle="代表性：任务列表（点击进入任务详情页查看日志）">
         {({ onTopActions }) => <QueuePage onTopActions={onTopActions} />}
       </PageHarness>
     )

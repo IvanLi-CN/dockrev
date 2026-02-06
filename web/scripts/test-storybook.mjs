@@ -393,6 +393,39 @@ async function runInteractive({ baseUrl, browser }) {
       await page.close().catch(() => {})
     }
   }
+
+  // 3) Queue job detail: logs should be shown on a dedicated page, and navigation must work.
+  {
+    const page = await openStory('pages-interactiveapp--queue-long-logs')
+    try {
+      const items = page.locator('.queueItem')
+      await items.nth(1).waitFor({ timeout: 10_000 })
+
+      // Open short-log job, go back, then open long-log job.
+      await items.nth(0).click()
+      await page.getByText('job:').waitFor({ timeout: 10_000 })
+      await page.getByText('job-short').waitFor({ timeout: 10_000 })
+
+      const back = page.getByRole('button', { name: '返回列表' })
+      await back.waitFor({ timeout: 10_000 })
+      await back.click()
+      await page.locator('.queueList').waitFor({ timeout: 10_000 })
+
+      await items.nth(1).click()
+      await page.getByText('job:').waitFor({ timeout: 10_000 })
+      await page.getByText('job-long').waitFor({ timeout: 10_000 })
+      // Use an exact match so fixture expansions (more lines mentioning the digest) won't break strict mode.
+      const digest = `sha256:${'9'.repeat(64)}`
+      await page.getByText(digest, { exact: true }).waitFor({ timeout: 10_000 })
+
+      const back2 = page.getByRole('button', { name: '返回列表' })
+      await back2.waitFor({ timeout: 10_000 })
+      await back2.click()
+      await page.locator('.queueList').waitFor({ timeout: 10_000 })
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
 }
 
 async function main() {

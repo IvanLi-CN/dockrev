@@ -44,6 +44,18 @@ export const Queue: Story = {
   },
 }
 
+export const QueueLongLogs: Story = {
+  parameters: { dockrevApiScenario: 'queue-long-logs' },
+  render: () => {
+    return (
+      <>
+        <LocationReset pathname="/queue" />
+        <App />
+      </>
+    )
+  },
+}
+
 export const Services: Story = {
   parameters: { dockrevApiScenario: 'multi-stack-mixed' },
   render: () => {

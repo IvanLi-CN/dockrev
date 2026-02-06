@@ -42,7 +42,7 @@ export function AppShell(props: {
   composeHint?: { path?: string; profile?: string; lastScan?: string }
   children: ReactNode
 }) {
-  const active = props.route.name === 'service' ? 'services' : props.route.name
+  const active = props.route.name === 'service' ? 'services' : props.route.name === 'job' ? 'queue' : props.route.name
   const [appVersion, setAppVersion] = useState<string | null>(null)
 
   const composePath = props.composeHint?.path
