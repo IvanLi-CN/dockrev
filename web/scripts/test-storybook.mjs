@@ -414,7 +414,9 @@ async function runInteractive({ baseUrl, browser }) {
       await items.nth(1).click()
       await page.getByText('job:').waitFor({ timeout: 10_000 })
       await page.getByText('job-long').waitFor({ timeout: 10_000 })
-      await page.getByText('sha256:9999999999').waitFor({ timeout: 10_000 })
+      // Use an exact match so fixture expansions (more lines mentioning the digest) won't break strict mode.
+      const digest = `sha256:${'9'.repeat(64)}`
+      await page.getByText(digest, { exact: true }).waitFor({ timeout: 10_000 })
 
       const back2 = page.getByRole('button', { name: '返回列表' })
       await back2.waitFor({ timeout: 10_000 })
