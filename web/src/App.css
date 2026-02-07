@@ -346,10 +346,12 @@
 }
 
 .versionTagsTrigger {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
+  /* Don't stretch to the full cell width; only the text area should be hoverable/clickable. */
+  align-self: flex-start;
+  max-width: 100%;
   background: transparent;
   border: none;
   padding: 0;
