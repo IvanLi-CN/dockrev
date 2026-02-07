@@ -41,6 +41,7 @@ impl RegistryClient for FakeRegistry {
         };
         Ok(ManifestInfo {
             digest: Some(digest.to_string()),
+            platform_digest: None,
             arch: vec!["linux/amd64".to_string()],
         })
     }
@@ -71,6 +72,7 @@ impl RegistryClient for SlowRegistry {
         tokio::time::sleep(self.delay).await;
         Ok(ManifestInfo {
             digest: Some(format!("sha256:{reference}")),
+            platform_digest: None,
             arch: vec!["linux/amd64".to_string()],
         })
     }
@@ -132,6 +134,7 @@ impl RegistryClient for StatefulRegistry {
         };
         Ok(ManifestInfo {
             digest: Some(digest.to_string()),
+            platform_digest: None,
             arch: vec!["linux/amd64".to_string()],
         })
     }
@@ -180,6 +183,89 @@ impl CommandRunner for ScriptedRunner {
             status,
             stdout,
             stderr: String::new(),
+        })
+    }
+}
+
+#[derive(Clone)]
+struct PlatformDigestRunner {
+    calls: Arc<std::sync::Mutex<Vec<Vec<String>>>>,
+}
+
+impl Default for PlatformDigestRunner {
+    fn default() -> Self {
+        Self {
+            calls: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl CommandRunner for PlatformDigestRunner {
+    async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        self.calls.lock().unwrap().push(spec.args.clone());
+        let args = spec.args;
+        let (status, stdout) = if args.first().map(|s| s.as_str()) == Some("ps")
+            && args.get(1).map(|s| s.as_str()) == Some("-q")
+        {
+            (0, "cid1\n".to_string())
+        } else if args.first().map(|s| s.as_str()) == Some("inspect")
+            && args.get(1).map(|s| s.as_str()) == Some("--format")
+            && args.get(2).map(|s| s.as_str()) == Some("{{.Image}}")
+        {
+            (0, "img1\n".to_string())
+        } else if args.first().map(|s| s.as_str()) == Some("image")
+            && args.get(1).map(|s| s.as_str()) == Some("inspect")
+            && args.get(3).map(|s| s.as_str()) == Some("--format")
+            && args
+                .get(4)
+                .map(|s| s.as_str())
+                .is_some_and(|s| s.contains("RepoDigests"))
+        {
+            (0, "[\"ghcr.io/acme/web@sha256:plat\"]".to_string())
+        } else {
+            (0, String::new())
+        };
+        Ok(CommandOutput {
+            status,
+            stdout,
+            stderr: String::new(),
+        })
+    }
+}
+
+#[derive(Clone, Default)]
+struct DualDigestRegistry;
+
+#[async_trait::async_trait]
+impl RegistryClient for DualDigestRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        Ok(vec!["5.2.0".to_string(), "5.3.0".to_string()])
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        let (digest, platform_digest) = match reference {
+            // Simulate multi-arch: registry header digest != platform child digest.
+            "5.3.0" | "latest" => (
+                Some("sha256:index".to_string()),
+                Some("sha256:plat".to_string()),
+            ),
+            "5.2.0" => (
+                Some("sha256:oldindex".to_string()),
+                Some("sha256:oldplat".to_string()),
+            ),
+            _ => (None, None),
+        };
+
+        Ok(ManifestInfo {
+            digest,
+            platform_digest,
+            arch: vec!["linux/amd64".to_string(), "linux/arm64".to_string()],
         })
     }
 }
@@ -1583,6 +1669,110 @@ services:
     assert_ne!(
         resolved, "<none>",
         "expected resolvedTag for 5.2 tag: {detail}"
+    );
+}
+
+#[tokio::test]
+async fn resolved_tag_inference_matches_platform_digest_and_clears_noop_candidate() {
+    let runner: Arc<PlatformDigestRunner> = Arc::new(PlatformDigestRunner::default());
+    let state = test_state_with(":memory:", Arc::new(DualDigestRegistry), runner.clone()).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "demo".to_string(),
+            stack_id: Some(stack_id.clone()),
+            status: "active".to_string(),
+            last_seen_at: Some(now.clone()),
+            last_scan_at: now,
+            last_error: None,
+            last_config_files: Some(vec![compose_path.clone()]),
+            unarchive_if_active: true,
+        })
+        .await
+        .unwrap();
+
+    let check = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(check.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let check_id = triggered["checkId"].as_str().unwrap().to_string();
+
+    let mut finished = false;
+    for _ in 0..80 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{check_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(finished, "check job did not finish in time");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let svc = &detail["stack"]["services"][0];
+    let image = &svc["image"];
+
+    let digest = image["digest"].as_str().unwrap_or("<none>");
+    let resolved = image["resolvedTag"].as_str().unwrap_or("<none>");
+    assert_eq!(digest, "sha256:plat", "unexpected stack detail: {detail}");
+    assert_eq!(resolved, "5.3.0", "unexpected stack detail: {detail}");
+    assert!(
+        svc["candidate"].is_null(),
+        "expected candidate to be cleared when digest matches: {detail}"
     );
 }
 
