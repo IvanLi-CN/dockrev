@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-07
 - Last: 2026-02-07
 
@@ -51,8 +51,8 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 调整 trigger 命中区域（仅文本生效）
-- [ ] M2: 最小验证（lint/build）+ 手工检查
+- [x] M1: 调整 trigger 命中区域（仅文本生效）
+- [x] M2: 最小验证（lint/build）+ 手工检查
 
 ## 风险 / 开放问题（Risks & Open Questions）
 
@@ -61,4 +61,4 @@
 ## 变更记录（Change log）
 
 - 2026-02-07: 创建计划并冻结范围与验收标准（Status=待实现）。
-
+- 2026-02-07: 完成实现与最小验证；PR #62；Status=已完成。
