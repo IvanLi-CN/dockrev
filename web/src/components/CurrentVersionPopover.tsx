@@ -486,28 +486,112 @@ export function CurrentVersionPopover(props: {
     }
   }, [close, pinned])
 
-  const inferenceSummary = useMemo(() => {
-    if (resolvedTagTrim) return '显示来源: resolvedTag'
-    if (isStrictSemverTag(imageTag)) return '显示来源: raw tag（semver）'
+  const semverDigestTags = useMemo(() => {
+    if (!digestNorm) return null
+    if (digestTags == null) return null
+    return allDigestTags.filter(isStrictSemverTag)
+  }, [allDigestTags, digestNorm, digestTags])
 
-    const parts: string[] = ['无法推测: resolvedTag 缺失', 'raw tag 非 semver']
-    if (!digestNorm) {
-      parts.push('digest 未知')
-      return parts.join(' · ')
+  const semverDigestPreview = useMemo(() => {
+    if (!semverDigestTags) return null
+    const max = 8
+    const head = semverDigestTags.slice(0, max)
+    const more = semverDigestTags.length > max ? semverDigestTags.length - max : 0
+    return { head, more, total: semverDigestTags.length }
+  }, [semverDigestTags])
+
+  const inferenceBlock = useMemo<ReactNode>(() => {
+    const rawTrim = (imageTag ?? '').trim()
+    const resolved = resolvedTagTrim
+
+    const canUseResolvedSemver = Boolean(resolved && isStrictSemverTag(resolved))
+    const canUseRawSemver = Boolean(rawTrim && isStrictSemverTag(rawTrim))
+
+    if (canUseResolvedSemver) {
+      return (
+        <div className="muted" style={{ display: 'grid', gap: 4 }}>
+          <div>
+            推测 semver: <span className="mono">{resolved}</span>
+            {' · '}来源: <span className="mono">resolvedTag</span>
+          </div>
+        </div>
+      )
+    }
+
+    if (canUseRawSemver) {
+      return (
+        <div className="muted" style={{ display: 'grid', gap: 4 }}>
+          <div>
+            推测 semver: <span className="mono">{rawTrim}</span>
+            {' · '}来源: <span className="mono">raw tag</span>
+          </div>
+        </div>
+      )
+    }
+
+    const reasons: string[] = []
+    if (!resolved) reasons.push('resolvedTag 缺失')
+    else if (!isStrictSemverTag(resolved)) reasons.push(`resolvedTag 非 semver（${resolved}）`)
+
+    if (!rawTrim) reasons.push('raw tag 为空')
+    else if (!isStrictSemverTag(rawTrim)) reasons.push(`raw tag 非 semver（${rawTrim}）`)
+
+    if (!digestNorm) reasons.push('digest 未知')
+
+    const lines: ReactNode[] = []
+    lines.push(
+      <div key="l1">
+        推测 semver: <span className="mono">无法确定</span>
+      </div>,
+    )
+    if (reasons.length > 0) {
+      lines.push(
+        <div key="l2">
+          原因: {reasons.join(' · ')}
+        </div>,
+      )
     }
 
     if (rawSeries && rawSeries.precision === 2 && rawSeries.minor != null && seriesPatchStats) {
       if (seriesPatchStats.count > 1) {
-        parts.push(
-          `序列 ${rawSeries.major}.${rawSeries.minor} 对应 ${seriesPatchStats.count} 个 patch tags（${seriesPatchStats.minTag}…${seriesPatchStats.maxTag}）`,
+        lines.push(
+          <div key="series">
+            raw tag 序列 <span className="mono">{`${rawSeries.major}.${rawSeries.minor}`}</span> 命中 {seriesPatchStats.count}{' '}
+            个 patch tags（<span className="mono">{seriesPatchStats.minTag}</span>…<span className="mono">{seriesPatchStats.maxTag}</span>）
+          </div>,
         )
       } else if (seriesPatchStats.count === 1) {
-        parts.push(`序列 ${rawSeries.major}.${rawSeries.minor} 仅命中 1 个 patch tag（${seriesPatchStats.maxTag}）`)
+        lines.push(
+          <div key="series">
+            raw tag 序列 <span className="mono">{`${rawSeries.major}.${rawSeries.minor}`}</span> 仅命中 1 个 patch tag（
+            <span className="mono">{seriesPatchStats.maxTag}</span>）
+          </div>,
+        )
       }
     }
 
-    return parts.join(' · ')
-  }, [digestNorm, imageTag, rawSeries, resolvedTagTrim, seriesPatchStats])
+    if (semverDigestPreview) {
+      if (semverDigestPreview.total === 0) {
+        lines.push(<div key="semver">同 digest 未找到 semver tags</div>)
+      } else {
+        const shown = semverDigestPreview.head.join(', ')
+        lines.push(
+          <div key="semver">
+            同 digest semver tags: <span className="mono">{shown}</span>
+            {semverDigestPreview.more > 0 ? ` …（+${semverDigestPreview.more}）` : ''}
+          </div>,
+        )
+      }
+    } else if (digestNorm && digestTags == null) {
+      lines.push(<div key="semver">同 digest semver tags: 加载中…</div>)
+    }
+
+    return (
+      <div className="muted" style={{ display: 'grid', gap: 4 }}>
+        {lines}
+      </div>
+    )
+  }, [digestNorm, digestTags, imageTag, rawSeries, resolvedTagTrim, semverDigestPreview, seriesPatchStats])
 
   const copyText = useCallback((text: string) => {
     const t = text.trim()
@@ -548,11 +632,16 @@ export function CurrentVersionPopover(props: {
       <div className="versionTagsPopoverSection">
         <div className="label">当前镜像</div>
         <div className="muted">
-          raw tag <span className="mono">{imageTag || '-'}</span>
+          raw tag <span className="mono">{imageTag.trim() ? imageTag : '（空）'}</span>
         </div>
         <div className="muted">
-          resolvedTag <span className="mono">{resolvedTagTrim || '-'}</span>
+          resolvedTag <span className="mono">{resolvedTagTrim || '（缺失）'}</span>
         </div>
+      </div>
+
+      <div className="versionTagsPopoverSection">
+        <div className="label">推测</div>
+        {inferenceBlock}
       </div>
 
       <div className="versionTagsPopoverSection">
@@ -571,18 +660,11 @@ export function CurrentVersionPopover(props: {
           <>
             {digestTagStats ? (
               <div className="muted">
-                共 {digestTagStats.total} 个标签（semver {digestTagStats.semverTotal} · other {digestTagStats.otherTotal}）
-              </div>
-            ) : null}
-            {scan ? (
-              <div className="muted">
-                扫描 {scan.repoTagsTotal} tags（timeout {scan.manifestsTimeout} · error {scan.manifestsError}）· match{' '}
-                {digestTags?.length ?? 0}
-                {scan.manifestsTimeout + scan.manifestsError > 0 ? ' · 可能不完整' : ''}
+                共 {digestTagStats.total} 个标签（semver {digestTagStats.semverTotal} · 其他 {digestTagStats.otherTotal}）
               </div>
             ) : null}
             {currentTagInDigestTags === false ? (
-              <div className="muted">注意：当前 tag 未出现在 digest-tags 列表中（digest mismatch 或扫描不完整）</div>
+              <div className="muted">注意：当前标签未出现在 digest-tags 列表中（digest mismatch 或扫描不完整）</div>
             ) : null}
 
             {showFilter ? (
@@ -590,7 +672,7 @@ export function CurrentVersionPopover(props: {
                 className="versionTagsPopoverInput"
                 value={tagFilter}
                 onChange={(e) => setFilterState({ key: digestKey, value: e.target.value })}
-                placeholder="filter tags…"
+                placeholder="过滤标签…"
               />
             ) : null}
             {tagFilter.trim().length > 0 ? (
@@ -624,60 +706,64 @@ export function CurrentVersionPopover(props: {
       </div>
 
       <div className="versionTagsPopoverSection">
-        <details>
-          <summary className="label">镜像所有 tags{repoTagStats ? `（${repoTagStats.total}）` : ''}</summary>
-          {!digestNorm ? (
-            <div className="muted">digest 未知，无法加载镜像 tags</div>
-          ) : repoTags == null ? (
-            <div className="muted">加载中…</div>
-          ) : loadError ? (
-            <div className="muted">加载失败：{loadError}</div>
-          ) : allRepoTags.length === 0 ? (
-            <div className="muted">未找到镜像 tags</div>
-          ) : (
-            <>
-              {repoTagStats ? (
-                <div className="muted">
-                  共 {repoTagStats.total} 个标签（semver {repoTagStats.semverTotal} · other {repoTagStats.otherTotal}）
-                </div>
-              ) : null}
-              {currentTagInRepoTags === false ? (
-                <div className="muted">注意：当前 tag 未出现在 registry tag 列表中（list_tags 不完整或 tag 已删除）</div>
-              ) : null}
+        <div className="label">镜像所有标签{repoTagStats ? `（${repoTagStats.total}）` : ''}</div>
+        {!digestNorm ? (
+          <div className="muted">digest 未知，无法加载镜像标签</div>
+        ) : repoTags == null ? (
+          <div className="muted">加载中…</div>
+        ) : loadError ? (
+          <div className="muted">加载失败：{loadError}</div>
+        ) : allRepoTags.length === 0 ? (
+          <div className="muted">未找到镜像标签</div>
+        ) : (
+          <>
+            {repoTagStats ? (
+              <div className="muted">
+                共 {repoTagStats.total} 个标签（semver {repoTagStats.semverTotal} · 其他 {repoTagStats.otherTotal}）
+              </div>
+            ) : null}
+            {scan ? (
+              <div className="muted">
+                扫描 {scan.repoTagsTotal} 个标签（成功 {scan.manifestsOk} · 超时 {scan.manifestsTimeout} · 错误 {scan.manifestsError}）
+                {scan.manifestsTimeout + scan.manifestsError > 0 ? ' · 可能不完整' : ''}
+              </div>
+            ) : null}
+            {currentTagInRepoTags === false ? (
+              <div className="muted">注意：当前标签未出现在 registry 标签列表中（list_tags 不完整或标签已删除）</div>
+            ) : null}
+            {tagFilter.trim().length > 0 ? (
+              <div className="muted">
+                匹配 {filteredRepoTags.length} / {allRepoTags.length}
+              </div>
+            ) : null}
+            <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
+            <div className="versionTagsPopoverActions">
               {tagFilter.trim().length > 0 ? (
-                <div className="muted">
-                  匹配 {filteredRepoTags.length} / {allRepoTags.length}
-                </div>
-              ) : null}
-              <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
-              <div className="versionTagsPopoverActions">
-                {tagFilter.trim().length > 0 ? (
-                  <button
-                    type="button"
-                    className="versionTagsPopoverAction"
-                    onClick={() => copyText(filteredRepoTags.join('\n'))}
-                    disabled={filteredRepoTags.length === 0}
-                  >
-                    复制（匹配）
-                  </button>
-                ) : null}
                 <button
                   type="button"
                   className="versionTagsPopoverAction"
-                  onClick={() => copyText(allRepoTags.join('\n'))}
-                  disabled={allRepoTags.length === 0}
+                  onClick={() => copyText(filteredRepoTags.join('\n'))}
+                  disabled={filteredRepoTags.length === 0}
                 >
-                  复制（全部）
+                  复制（匹配）
                 </button>
-              </div>
-            </>
-          )}
-        </details>
+              ) : null}
+              <button
+                type="button"
+                className="versionTagsPopoverAction"
+                onClick={() => copyText(allRepoTags.join('\n'))}
+                disabled={allRepoTags.length === 0}
+              >
+                复制（全部）
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       {resolvedTagsList.length > 0 ? (
         <div className="versionTagsPopoverSection">
-          <div className="label">resolvedTags</div>
+          <div className="label">resolvedTags（服务端）</div>
           <div className="versionTagsPopoverChips">
             {resolvedTagsList.map((t) => (
               <span key={t} className="versionTagsChip" title={t}>
@@ -687,11 +773,6 @@ export function CurrentVersionPopover(props: {
           </div>
         </div>
       ) : null}
-
-      <div className="versionTagsPopoverSection">
-        <div className="label">推测</div>
-        <div className="muted">{inferenceSummary}</div>
-      </div>
     </div>
   ) : null
 

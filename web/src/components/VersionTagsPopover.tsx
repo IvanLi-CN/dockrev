@@ -469,18 +469,11 @@ export function VersionTagsPopover(props: {
           <>
             {tagStats ? (
               <div className="muted">
-                共 {tagStats.total} 个标签（semver {tagStats.semverTotal} · other {tagStats.otherTotal}）
-              </div>
-            ) : null}
-            {scan ? (
-              <div className="muted">
-                扫描 {scan.repoTagsTotal} tags（timeout {scan.manifestsTimeout} · error {scan.manifestsError}）· match{' '}
-                {allTags.length}
-                {scan.manifestsTimeout + scan.manifestsError > 0 ? ' · 可能不完整' : ''}
+                共 {tagStats.total} 个标签（semver {tagStats.semverTotal} · 其他 {tagStats.otherTotal}）
               </div>
             ) : null}
             {candidateInDigestTags === false ? (
-              <div className="muted">注意：候选 tag 未出现在 digest-tags 列表中（digest mismatch 或扫描不完整）</div>
+              <div className="muted">注意：候选标签未出现在 digest-tags 列表中（digest mismatch 或扫描不完整）</div>
             ) : null}
 
             {showFilter ? (
@@ -488,7 +481,7 @@ export function VersionTagsPopover(props: {
                 className="versionTagsPopoverInput"
                 value={tagFilter}
                 onChange={(e) => setFilterState({ key: digestKey, value: e.target.value })}
-                placeholder="filter tags…"
+                placeholder="过滤标签…"
               />
             ) : null}
             {tagFilter.trim().length > 0 ? (
@@ -522,57 +515,61 @@ export function VersionTagsPopover(props: {
       </div>
 
       <div className="versionTagsPopoverSection">
-        <details>
-          <summary className="label">镜像所有 tags{repoTagStats ? `（${repoTagStats.total}）` : ''}</summary>
-          {!candidateTag ? (
-            <div className="muted">无候选版本</div>
-          ) : !candidateDigestNorm ? (
-            <div className="muted">digest 缺失，无法加载镜像 tags</div>
-          ) : repoTags == null ? (
-            <div className="muted">加载中…</div>
-          ) : loadError ? (
-            <div className="muted">加载失败：{loadError}</div>
-          ) : allRepoTags.length === 0 ? (
-            <div className="muted">未找到镜像 tags</div>
-          ) : (
-            <>
-              {repoTagStats ? (
-                <div className="muted">
-                  共 {repoTagStats.total} 个标签（semver {repoTagStats.semverTotal} · other {repoTagStats.otherTotal}）
-                </div>
-              ) : null}
-              {candidateInRepoTags === false ? (
-                <div className="muted">注意：候选 tag 未出现在 registry tag 列表中（list_tags 不完整或 tag 已删除）</div>
-              ) : null}
+        <div className="label">镜像所有标签{repoTagStats ? `（${repoTagStats.total}）` : ''}</div>
+        {!candidateTag ? (
+          <div className="muted">无候选版本</div>
+        ) : !candidateDigestNorm ? (
+          <div className="muted">digest 缺失，无法加载镜像标签</div>
+        ) : repoTags == null ? (
+          <div className="muted">加载中…</div>
+        ) : loadError ? (
+          <div className="muted">加载失败：{loadError}</div>
+        ) : allRepoTags.length === 0 ? (
+          <div className="muted">未找到镜像标签</div>
+        ) : (
+          <>
+            {repoTagStats ? (
+              <div className="muted">
+                共 {repoTagStats.total} 个标签（semver {repoTagStats.semverTotal} · 其他 {repoTagStats.otherTotal}）
+              </div>
+            ) : null}
+            {scan ? (
+              <div className="muted">
+                扫描 {scan.repoTagsTotal} 个标签（成功 {scan.manifestsOk} · 超时 {scan.manifestsTimeout} · 错误 {scan.manifestsError}）
+                {scan.manifestsTimeout + scan.manifestsError > 0 ? ' · 可能不完整' : ''}
+              </div>
+            ) : null}
+            {candidateInRepoTags === false ? (
+              <div className="muted">注意：候选标签未出现在 registry 标签列表中（list_tags 不完整或标签已删除）</div>
+            ) : null}
+            {tagFilter.trim().length > 0 ? (
+              <div className="muted">
+                匹配 {filteredRepoTags.length} / {allRepoTags.length}
+              </div>
+            ) : null}
+            <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
+            <div className="versionTagsPopoverActions">
               {tagFilter.trim().length > 0 ? (
-                <div className="muted">
-                  匹配 {filteredRepoTags.length} / {allRepoTags.length}
-                </div>
-              ) : null}
-              <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
-              <div className="versionTagsPopoverActions">
-                {tagFilter.trim().length > 0 ? (
-                  <button
-                    type="button"
-                    className="versionTagsPopoverAction"
-                    onClick={() => copyText(filteredRepoTags.join('\n'))}
-                    disabled={filteredRepoTags.length === 0}
-                  >
-                    复制（匹配）
-                  </button>
-                ) : null}
                 <button
                   type="button"
                   className="versionTagsPopoverAction"
-                  onClick={() => copyText(allRepoTags.join('\n'))}
-                  disabled={allRepoTags.length === 0}
+                  onClick={() => copyText(filteredRepoTags.join('\n'))}
+                  disabled={filteredRepoTags.length === 0}
                 >
-                  复制（全部）
+                  复制（匹配）
                 </button>
-              </div>
-            </>
-          )}
-        </details>
+              ) : null}
+              <button
+                type="button"
+                className="versionTagsPopoverAction"
+                onClick={() => copyText(allRepoTags.join('\n'))}
+                disabled={allRepoTags.length === 0}
+              >
+                复制（全部）
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
     </div>

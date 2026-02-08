@@ -29,7 +29,21 @@ function Demo(props: {
             <ArrowRightIcon className="inlineIcon" />
             <span className="mono monoPrimary">v0.1.9</span>
           </div>
-          {showRawTag ? <div className="mono monoSecondary">{props.imageTag}</div> : null}
+          {showRawTag ? (
+            <div>
+              <CurrentVersionPopover
+                serviceId="svc-prod-web"
+                displayTag={props.displayTag}
+                imageTag={props.imageTag}
+                imageDigest={props.imageDigest}
+                resolvedTag={props.resolvedTag}
+                resolvedTags={props.resolvedTags}
+                triggerClassName="versionTagsTrigger mono monoSecondary"
+              >
+                {props.imageTag}
+              </CurrentVersionPopover>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

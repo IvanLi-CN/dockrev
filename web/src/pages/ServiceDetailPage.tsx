@@ -492,11 +492,32 @@ export function ServiceDetailPage(props: {
       />
     )
 
+    const resolvedTagTrim = (service.image.resolvedTag ?? '').trim()
+    const rawTagTrim = (service.image.tag ?? '').trim()
+    const showRawTag = Boolean(resolvedTagTrim && rawTagTrim && resolvedTagTrim !== rawTagTrim)
+    const rawTagNode = showRawTag ? (
+      <>
+        {' · '}raw:{' '}
+        <CurrentVersionPopover
+          serviceId={service.id}
+          displayTag={currentTag}
+          imageTag={service.image.tag}
+          imageDigest={service.image.digest ?? null}
+          resolvedTag={service.image.resolvedTag}
+          resolvedTags={service.image.resolvedTags}
+          triggerClassName="versionTagsTrigger mono monoSecondary"
+        >
+          {service.image.tag}
+        </CurrentVersionPopover>
+      </>
+    ) : null
+
     if (service.ignore?.matched) {
       return (
         <>
           当前: {currentNode}
           {currentDigestNode}
+          {rawTagNode}
           {' · '}rule: <Mono>{service.ignore.ruleId}</Mono>
           {service.ignore.reason ? (
             <>
@@ -512,6 +533,7 @@ export function ServiceDetailPage(props: {
         <>
           当前: {currentNode}
           {currentDigestNode}
+          {rawTagNode}
         </>
       )
     }
@@ -534,6 +556,7 @@ export function ServiceDetailPage(props: {
       <>
         当前: {currentNode}
         {currentDigestNode}
+        {rawTagNode}
         {' \u2192 '}候选:{' '}
         <VersionTagsPopover
           serviceId={service.id}
@@ -604,7 +627,6 @@ export function ServiceDetailPage(props: {
       <div className="twoCol">
         <div className="card">
           <div className="title">更新策略</div>
-          <div className="muted">忽略后不计入“可更新”，但保留可追溯记录</div>
 
           <div className="ruleList">
             {rules.map((r) => (
