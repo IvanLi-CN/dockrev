@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-08
 - Last: 2026-02-08
 
@@ -51,9 +51,9 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: ServiceDetail banner 改为可交互的 current/candidate popovers
-- [ ] M2: digest-tags 增加 scan summary；UI 展示摘要与“可能不完整”提示
-- [ ] M3: 最小验证（cargo test + web lint）+ Storybook 手工检查
+- [x] M1: ServiceDetail banner 改为可交互的 current/candidate popovers
+- [x] M2: digest-tags 增加 scan summary；UI 展示摘要与“可能不完整”提示
+- [x] M3: 最小验证（cargo test + web lint/build）+ Storybook 手工检查
 
 ## 风险 / 开放问题（Risks & Open Questions）
 
@@ -62,4 +62,4 @@
 ## 变更记录（Change log）
 
 - 2026-02-08: 创建计划并冻结范围与验收标准（Status=待实现）。
-
+- 2026-02-08: 完成实现与最小验证；PR #63；Status=已完成。
