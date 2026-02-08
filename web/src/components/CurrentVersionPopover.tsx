@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { normalizeDigest, shortenDigest } from './digest'
 
@@ -30,6 +30,8 @@ export function CurrentVersionPopover(props: {
   imageDigest?: string | null
   resolvedTag?: string | null
   resolvedTags?: string[] | null
+  triggerClassName?: string
+  children?: ReactNode
 }) {
   const { imageTag, imageDigest, resolvedTag, resolvedTags } = props
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -269,7 +271,7 @@ export function CurrentVersionPopover(props: {
       <button
         ref={triggerRef}
         type="button"
-        className="versionTagsTrigger mono monoPrimary"
+        className={props.triggerClassName ?? 'versionTagsTrigger mono monoPrimary'}
         aria-haspopup="dialog"
         aria-expanded={open}
         onPointerEnter={() => {
@@ -291,10 +293,9 @@ export function CurrentVersionPopover(props: {
           showPopover()
         }}
       >
-        {displayTag}
+        {props.children ?? displayTag}
       </button>
       {renderPopover ? createPortal(popoverBody, document.body) : null}
     </>
   )
 }
-

@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react'
+import { CurrentVersionPopover } from '../../components/CurrentVersionPopover'
 import { VersionTagsPopover } from '../../components/VersionTagsPopover'
 import { ArrowRightIcon } from '../../ui'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
@@ -8,13 +9,19 @@ function d(fill: string, last2: string) {
 }
 
 function Demo(props: { serviceId: string; candidateTag: string; candidateDigest: string | null }) {
+  const imageTag = 'latest'
   return (
     <div style={{ padding: 16, maxWidth: 560, display: 'grid', gap: 12 }}>
-      <div className="muted">Hover or click the candidate tag to open the popover.</div>
       <div style={{ maxWidth: 360 }}>
         <div className="cellTwoLine">
           <div className="versionLine">
-            <span className="mono monoPrimary">?</span>
+            <CurrentVersionPopover
+              displayTag=""
+              imageTag={imageTag}
+              imageDigest={null}
+              resolvedTag={null}
+              resolvedTags={null}
+            />
             <ArrowRightIcon className="inlineIcon" />
             <VersionTagsPopover
               serviceId={props.serviceId}
@@ -24,10 +31,20 @@ function Demo(props: { serviceId: string; candidateTag: string; candidateDigest:
               {props.candidateTag}
             </VersionTagsPopover>
           </div>
-          <div className="mono monoSecondary">latest</div>
+          <div>
+            <CurrentVersionPopover
+              displayTag=""
+              imageTag={imageTag}
+              imageDigest={null}
+              resolvedTag={null}
+              resolvedTags={null}
+              triggerClassName="versionTagsTrigger mono monoSecondary"
+            >
+              {imageTag}
+            </CurrentVersionPopover>
+          </div>
         </div>
       </div>
-      <div className="muted">Tip: click to pin; press ESC or click outside to close.</div>
     </div>
   )
 }

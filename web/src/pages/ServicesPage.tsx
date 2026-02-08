@@ -93,31 +93,6 @@ function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefin
   return '?'
 }
 
-function formatTagTooltip(
-  tag: string,
-  digest: string | null | undefined,
-  resolvedTag: string | null | undefined,
-  resolvedTags: string[] | null | undefined,
-): string | undefined {
-  const inferred = (resolvedTag ?? '').trim()
-  const lines: string[] = []
-
-  const digestSuffix = digest ? (digest.includes(':') ? digest : `sha256:${digest}`) : null
-
-  if (inferred && inferred !== tag) {
-    lines.push(digestSuffix ? `${inferred}@${digestSuffix}` : inferred)
-    lines.push(`原始标签: ${tag}`)
-  } else {
-    lines.push(digestSuffix ? `${tag}@${digestSuffix}` : tag)
-  }
-
-  if (resolvedTags && resolvedTags.length > 1) {
-    lines.push(`resolvedTags: ${resolvedTags.join(', ')}`)
-  }
-
-  return lines.join('\n')
-}
-
 function isDockrevService(svc: Service): boolean {
   return isDockrevImageRef(svc.image.ref)
 }
@@ -585,13 +560,9 @@ export function ServicesPage(props: {
 		                            <div className="modalLead">将更新的服务（预览）</div>
 		                            <div className="modalList">
 		                              {candidateServices.map((item) => {
-		                                const current = formatTagDisplay(item.svc.image.tag, item.svc.image.resolvedTag)
-		                                const candidate = item.svc.candidate ? formatTagDisplay(item.svc.candidate.tag, undefined) : '-'
-		                                const title = `${formatTagTooltip(item.svc.image.tag, item.svc.image.digest, item.svc.image.resolvedTag, item.svc.image.resolvedTags) ?? current} → ${
-		                                  item.svc.candidate
-		                                    ? formatTagTooltip(item.svc.candidate.tag, item.svc.candidate.digest, undefined, undefined) ?? item.svc.candidate.tag
-		                                    : '-'
-		                                }`
+		                                const currentDisplayTag = inferredTagForDisplay(item.svc.image.tag, item.svc.image.resolvedTag)
+		                                const candidateTag =
+		                                  item.svc.candidate?.tag && item.svc.candidate.tag !== '-' ? item.svc.candidate.tag : null
 		                                return (
 		                                  <div key={item.svc.id} className="modalListItem">
 		                                    <div className="modalListLeft">
@@ -613,9 +584,27 @@ export function ServicesPage(props: {
 		                                      })()}
 		                                    </div>
 		                                    <div className="modalListRight">
-		                                      <span className="mono" title={title}>
-		                                        <span>{current}</span> <ArrowRightIcon className="inlineIcon" /> <span>{candidate}</span>
-		                                      </span>
+		                                      <div className="versionLine">
+		                                        <CurrentVersionPopover
+		                                          displayTag={currentDisplayTag}
+		                                          imageTag={item.svc.image.tag}
+		                                          imageDigest={item.svc.image.digest ?? null}
+		                                          resolvedTag={item.svc.image.resolvedTag}
+		                                          resolvedTags={item.svc.image.resolvedTags}
+		                                        />
+		                                        <ArrowRightIcon className="inlineIcon" />
+		                                        {candidateTag ? (
+		                                          <VersionTagsPopover
+		                                            serviceId={item.svc.id}
+		                                            candidateTag={candidateTag}
+		                                            candidateDigest={item.svc.candidate?.digest ?? null}
+		                                          >
+		                                            {candidateTag}
+		                                          </VersionTagsPopover>
+		                                        ) : (
+		                                          <span className="mono monoPrimary">-</span>
+		                                        )}
+		                                      </div>
 		                                    </div>
 		                                  </div>
 		                                )

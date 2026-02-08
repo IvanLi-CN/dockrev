@@ -11,7 +11,6 @@ function Demo(props: {
 }) {
   return (
     <div style={{ padding: 16, maxWidth: 560, display: 'grid', gap: 12 }}>
-      <div className="muted">Hover or click the current tag to open the popover.</div>
       <div style={{ maxWidth: 360 }}>
         <div className="cellTwoLine">
           <div className="versionLine">
@@ -28,7 +27,6 @@ function Demo(props: {
           <div className="mono monoSecondary">{props.imageTag}</div>
         </div>
       </div>
-      <div className="muted">Tip: click to pin; press ESC or click outside to close.</div>
     </div>
   )
 }
@@ -70,4 +68,3 @@ export const SemverTag: Story = {
     resolvedTags: null,
   },
 }
-
