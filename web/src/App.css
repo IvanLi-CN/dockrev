@@ -397,6 +397,8 @@
   padding: 12px 12px 10px;
   min-width: 260px;
   max-width: min(520px, calc(100vw - 20px));
+  max-height: min(520px, calc(100vh - 20px));
+  overflow: auto;
   opacity: 1;
   transform: translateY(0) scale(1);
   transform-origin: top left;
@@ -445,6 +447,47 @@ html[data-theme='light'] .versionTagsPopover {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.versionTagsPopoverActions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.versionTagsPopoverAction {
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.versionTagsPopoverAction:hover {
+  text-decoration: underline;
+}
+
+.versionTagsPopoverInput {
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--borderColor);
+  background: var(--dockrev-surface);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.versionTagsPopoverCode {
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--borderColor);
+  background: var(--dockrev-surface);
+  color: var(--text);
+  overflow: auto;
+  white-space: pre;
 }
 
 .versionTagsPopoverChips {

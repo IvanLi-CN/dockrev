@@ -250,7 +250,6 @@ export function ServicesPage(props: {
         body:
           input.confirmBody ?? (
             <>
-              <div className="modalLead">将拉取镜像并重启容器；失败可能触发回滚。</div>
               <div className="modalKvGrid">
                 <div className="modalKvLabel">模式</div>
                 <div className="modalKvValue">
@@ -612,7 +611,6 @@ export function ServicesPage(props: {
 		                              })}
 		                            </div>
 		                            <div className="modalDivider" />
-		                            <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>
 		                          </>
 		                        )
 	                        void triggerApply({
@@ -809,10 +807,19 @@ export function ServicesPage(props: {
 		                                        </div>
 		                                        <div className="modalKvLabel">目标版本</div>
 		                                        <div className="modalKvValue">
-                                            <span className="mono">{formatTagDisplay(svc.image.tag, svc.image.resolvedTag)}</span>
-                                            <span style={{ opacity: 0.8, margin: '0 6px' }}>
-                                              <ArrowRightIcon className="inlineIcon" />
-                                            </span>
+                                            <div className="cellTwoLine">
+                                              <div className="versionLine">
+                                                <CurrentVersionPopover
+                                                  serviceId={svc.id}
+                                                  displayTag={currentDisplayTag}
+                                                  imageTag={svc.image.tag}
+                                                  imageDigest={svc.image.digest ?? null}
+                                                  resolvedTag={svc.image.resolvedTag}
+                                                  resolvedTags={svc.image.resolvedTags}
+                                                />
+                                                <span style={{ opacity: 0.8, margin: '0 6px' }}>
+                                                  <ArrowRightIcon className="inlineIcon" />
+                                                </span>
                                               <UpdateTargetSelect
                                                 serviceId={svc.id}
                                                 currentTag={svc.image.resolvedTag ?? svc.image.tag}
@@ -826,6 +833,21 @@ export function ServicesPage(props: {
                                                   selected.digest = next.digest ?? null
                                                 }}
                                               />
+                                              </div>
+                                              <div>
+                                                <CurrentVersionPopover
+                                                  serviceId={svc.id}
+                                                  displayTag={currentDisplayTag}
+                                                  imageTag={svc.image.tag}
+                                                  imageDigest={svc.image.digest ?? null}
+                                                  resolvedTag={svc.image.resolvedTag}
+                                                  resolvedTags={svc.image.resolvedTags}
+                                                  triggerClassName="versionTagsTrigger mono monoSecondary"
+                                                >
+                                                  {svc.image.tag}
+                                                </CurrentVersionPopover>
+                                              </div>
+                                            </div>
 	                                        </div>
 		                                        <div className="modalKvLabel">状态</div>
 		                                        <div className="modalKvValue">
@@ -833,7 +855,6 @@ export function ServicesPage(props: {
 		                                        </div>
 		                                      </div>
 		                                      <div className="modalDivider" />
-		                                      <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>
 		                                    </>
 	                                  )
 	                                  void triggerApply({

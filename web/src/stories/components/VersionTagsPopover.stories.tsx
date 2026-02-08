@@ -10,6 +10,7 @@ function d(fill: string, last2: string) {
 
 function Demo(props: { serviceId: string; candidateTag: string; candidateDigest: string | null }) {
   const imageTag = 'latest'
+  const imageDigest = props.candidateDigest
   return (
     <div style={{ padding: 16, maxWidth: 560, display: 'grid', gap: 12 }}>
       <div style={{ maxWidth: 360 }}>
@@ -19,7 +20,7 @@ function Demo(props: { serviceId: string; candidateTag: string; candidateDigest:
               serviceId={props.serviceId}
               displayTag=""
               imageTag={imageTag}
-              imageDigest={null}
+              imageDigest={imageDigest}
               resolvedTag={null}
               resolvedTags={null}
             />
@@ -37,7 +38,7 @@ function Demo(props: { serviceId: string; candidateTag: string; candidateDigest:
               serviceId={props.serviceId}
               displayTag=""
               imageTag={imageTag}
-              imageDigest={null}
+              imageDigest={imageDigest}
               resolvedTag={null}
               resolvedTags={null}
               triggerClassName="versionTagsTrigger mono monoSecondary"

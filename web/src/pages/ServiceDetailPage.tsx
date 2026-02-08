@@ -20,6 +20,7 @@ import { ArrowRightIcon, Button, Mono, Pill, Switch } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { serviceRowStatus, tagSeriesMatches } from '../updateStatus'
+import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
 import { UpdateTargetSelect } from '../components/UpdateTargetSelect'
 import { useConfirm } from '../confirm'
 
@@ -272,10 +273,19 @@ export function ServiceDetailPage(props: {
 		                          </div>
 		                          <div className="modalKvLabel">目标版本</div>
 		                          <div className="modalKvValue">
-                              <span className="mono">{formatTagDisplay(service.image.tag, service.image.resolvedTag)}</span>
-                              <span style={{ opacity: 0.8, margin: '0 6px' }}>
-                                <ArrowRightIcon className="inlineIcon" />
-                              </span>
+                              <div className="cellTwoLine">
+                                <div className="versionLine">
+                                  <CurrentVersionPopover
+                                    serviceId={service.id}
+                                    displayTag=""
+                                    imageTag={service.image.tag}
+                                    imageDigest={service.image.digest ?? null}
+                                    resolvedTag={service.image.resolvedTag}
+                                    resolvedTags={service.image.resolvedTags}
+                                  />
+                                  <span style={{ opacity: 0.8, margin: '0 6px' }}>
+                                    <ArrowRightIcon className="inlineIcon" />
+                                  </span>
                               <UpdateTargetSelect
                                 serviceId={service.id}
                                 currentTag={service.image.resolvedTag ?? service.image.tag}
@@ -289,7 +299,22 @@ export function ServiceDetailPage(props: {
                                   selected.digest = next.digest ?? null
                                 }}
                               />
-	                          </div>
+                                </div>
+                                <div>
+                                  <CurrentVersionPopover
+                                    serviceId={service.id}
+                                    displayTag=""
+                                    imageTag={service.image.tag}
+                                    imageDigest={service.image.digest ?? null}
+                                    resolvedTag={service.image.resolvedTag}
+                                    resolvedTags={service.image.resolvedTags}
+                                    triggerClassName="versionTagsTrigger mono monoSecondary"
+                                  >
+                                    {service.image.tag}
+                                  </CurrentVersionPopover>
+                                </div>
+                              </div>
+		                          </div>
 	                          <div className="modalKvLabel">状态</div>
 	                          <div className="modalKvValue">
 	                            <Mono>{serviceRowStatus(service)}</Mono>
@@ -304,7 +329,6 @@ export function ServiceDetailPage(props: {
 	                          </div>
 	                        </div>
 	                        <div className="modalDivider" />
-	                        <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>
 	                      </>
 	                    ),
 	                    confirmText: '执行更新',

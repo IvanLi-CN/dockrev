@@ -58,7 +58,6 @@ function ConfirmSandbox() {
                 title: '确认更新服务 svc-api？',
                 body: (
                   <>
-                    <div className="modalLead">将拉取镜像并重启容器；失败可能触发回滚。</div>
                     <div className="modalKvGrid">
                       <div className="modalKvLabel">范围</div>
                       <div className="modalKvValue">
@@ -183,7 +182,6 @@ function ConfirmSandbox() {
                       </div>
                     </div>
                     <div className="modalDivider" />
-                    <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>
                   </>
                 ),
                 confirmText: '执行更新',
@@ -253,7 +251,6 @@ function ConfirmSandbox() {
                       ))}
                     </div>
                     <div className="modalDivider" />
-                    <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>
                   </>
                 ),
                 confirmText: '执行更新',

@@ -16,6 +16,96 @@ function uniquePreserveOrder(values: Array<string | null | undefined>): string[]
   return out
 }
 
+function isStrictSemverTag(tag: string): boolean {
+  const t = tag.trim()
+  if (!t) return false
+  return /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(t)
+}
+
+type Semver = {
+  major: number
+  minor: number
+  patch: number
+  prerelease: Array<string | number>
+  hasPrerelease: boolean
+}
+
+function parseSemverTag(tag: string): Semver | null {
+  let t = tag.trim()
+  if (!t) return null
+  if (t.startsWith('v')) t = t.slice(1)
+  if (!t) return null
+
+  const [main, build] = t.split('+', 2)
+  void build
+  const [core, pre] = main.split('-', 2)
+  const parts = core.split('.')
+  if (parts.length !== 3) return null
+  if (!parts.every((p) => /^\d+$/.test(p))) return null
+
+  const nums = parts.map((p) => Number(p))
+  if (!nums.every((n) => Number.isFinite(n) && n >= 0)) return null
+
+  const prerelease = (pre ?? '')
+    .split('.')
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => (/^\d+$/.test(p) ? Number(p) : p))
+
+  return {
+    major: nums[0],
+    minor: nums[1],
+    patch: nums[2],
+    prerelease,
+    hasPrerelease: prerelease.length > 0,
+  }
+}
+
+function cmpSemver(a: Semver, b: Semver): number {
+  if (a.major !== b.major) return a.major < b.major ? -1 : 1
+  if (a.minor !== b.minor) return a.minor < b.minor ? -1 : 1
+  if (a.patch !== b.patch) return a.patch < b.patch ? -1 : 1
+
+  // No prerelease is higher than prerelease.
+  if (a.hasPrerelease !== b.hasPrerelease) return a.hasPrerelease ? -1 : 1
+  if (!a.hasPrerelease) return 0
+
+  const len = Math.max(a.prerelease.length, b.prerelease.length)
+  for (let i = 0; i < len; i++) {
+    const ai = a.prerelease[i]
+    const bi = b.prerelease[i]
+    if (ai == null) return -1
+    if (bi == null) return 1
+    if (ai === bi) continue
+
+    const an = typeof ai === 'number'
+    const bn = typeof bi === 'number'
+    if (an && bn) return ai < bi ? -1 : 1
+    if (an !== bn) return an ? -1 : 1
+
+    const as = String(ai)
+    const bs = String(bi)
+    if (as === bs) continue
+    return as < bs ? -1 : 1
+  }
+
+  return 0
+}
+
+function sortTagsForDisplay(tags: string[]): string[] {
+  const uniq = uniquePreserveOrder(tags)
+  const semver: Array<{ t: string; v: Semver }> = []
+  const other: string[] = []
+  for (const t of uniq) {
+    const v = parseSemverTag(t)
+    if (v) semver.push({ t, v })
+    else other.push(t)
+  }
+  semver.sort((a, b) => cmpSemver(b.v, a.v))
+  other.sort((a, b) => a.localeCompare(b))
+  return [...semver.map((x) => x.t), ...other]
+}
+
 const HOVER_CLOSE_DELAY_MS = 300
 const POPOVER_ANIM_MS = 160
 const FETCH_DEBOUNCE_MS = 220
@@ -24,6 +114,11 @@ type DigestTagsState = {
   key: string
   tags: string[] | null
   error: string | null
+}
+
+type FilterState = {
+  key: string
+  value: string
 }
 
 export function VersionTagsPopover(props: {
@@ -51,6 +146,9 @@ export function VersionTagsPopover(props: {
 
   const candidateDigestNorm = useMemo(() => normalizeDigest(candidateDigest), [candidateDigest])
   const digestKey = useMemo(() => `${serviceId}:${candidateDigestNorm ?? ''}`, [candidateDigestNorm, serviceId])
+  const [filterState, setFilterState] = useState<FilterState>(() => ({ key: digestKey, value: '' }))
+  const tagFilter = filterState.key === digestKey ? filterState.value : ''
+
   const [digestState, setDigestState] = useState<DigestTagsState>(() => ({
     key: digestKey,
     tags: null,
@@ -180,6 +278,29 @@ export function VersionTagsPopover(props: {
     return uniquePreserveOrder([candidateTag, ...(digestTags ?? [])])
   }, [candidateDigestNorm, candidateTag, digestTags])
 
+  const allTags = useMemo(() => {
+    if (!candidateTag) return []
+    if (!candidateDigestNorm) return [candidateTag]
+    if (digestTags == null) return [candidateTag]
+    const restSorted = sortTagsForDisplay(tagsForCandidate.filter((t) => t !== candidateTag))
+    return [candidateTag, ...restSorted]
+  }, [candidateDigestNorm, candidateTag, digestTags, tagsForCandidate])
+
+  const tagStats = useMemo(() => {
+    if (!candidateTag) return null
+    const total = allTags.length
+    const semverTotal = allTags.filter(isStrictSemverTag).length
+    return { total, semverTotal, otherTotal: total - semverTotal }
+  }, [allTags, candidateTag])
+
+  const filteredTags = useMemo(() => {
+    if (!candidateTag) return []
+    const q = tagFilter.trim().toLowerCase()
+    if (!q) return allTags
+    return allTags.filter((t) => t.toLowerCase().includes(q))
+  }, [allTags, candidateTag, tagFilter])
+  const showFilter = allTags.length > 20 || tagFilter.trim().length > 0
+
   useLayoutEffect(() => {
     if (!open) return
     const trigger = triggerRef.current
@@ -244,6 +365,12 @@ export function VersionTagsPopover(props: {
     }
   }, [close, pinned])
 
+  const copyText = useCallback((text: string) => {
+    const t = text.trim()
+    if (!t) return
+    void navigator.clipboard?.writeText(t)
+  }, [])
+
   const popoverBody = renderPopover ? (
     <div
       ref={popoverRef}
@@ -263,7 +390,7 @@ export function VersionTagsPopover(props: {
     >
       <div className="versionTagsPopoverHeader">
         <div className="versionTagsPopoverTitle">
-          <span className="mono monoPrimary">{candidateTag ?? '-'}</span>
+          <span className="mono monoPrimary">{candidateTag ?? '无候选版本'}</span>
           {candidateDigestNorm ? (
             <span className="mono muted" title={candidateDigestNorm}>
               {shortenDigest(candidateDigestNorm)}
@@ -275,7 +402,7 @@ export function VersionTagsPopover(props: {
       </div>
 
       <div className="versionTagsPopoverSection">
-        <div className="label">该版本所有标签</div>
+        <div className="label">该 digest 标签</div>
         {!candidateTag ? (
           <div className="muted">无候选版本</div>
         ) : !candidateDigestNorm ? (
@@ -291,29 +418,53 @@ export function VersionTagsPopover(props: {
           <div className="muted">加载中…</div>
         ) : loadError ? (
           <>
-            {tagsForCandidate.length > 0 ? (
-              <div className="versionTagsPopoverChips">
-                {tagsForCandidate.map((t) => (
-                  <span key={t} className="versionTagsChip" title={t}>
-                    <span className="mono">{t}</span>
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <div className="muted">未找到同 digest 的标签</div>
-            )}
-            <div className="muted">加载失败</div>
+            <div className="muted">加载失败：{loadError}</div>
           </>
-        ) : tagsForCandidate.length === 0 ? (
+        ) : allTags.length === 0 ? (
           <div className="muted">未找到同 digest 的标签</div>
         ) : (
-          <div className="versionTagsPopoverChips">
-            {tagsForCandidate.map((t) => (
-              <span key={t} className="versionTagsChip" title={t}>
-                <span className="mono">{t}</span>
-              </span>
-            ))}
-          </div>
+          <>
+            {tagStats ? (
+              <div className="muted">
+                共 {tagStats.total} 个标签（semver {tagStats.semverTotal} · other {tagStats.otherTotal}）
+              </div>
+            ) : null}
+
+            {showFilter ? (
+              <input
+                className="versionTagsPopoverInput"
+                value={tagFilter}
+                onChange={(e) => setFilterState({ key: digestKey, value: e.target.value })}
+                placeholder="filter tags…"
+              />
+            ) : null}
+            {tagFilter.trim().length > 0 ? (
+              <div className="muted">
+                匹配 {filteredTags.length} / {allTags.length}
+              </div>
+            ) : null}
+            <pre className="versionTagsPopoverCode mono">{filteredTags.join('\n')}</pre>
+            <div className="versionTagsPopoverActions">
+              {tagFilter.trim().length > 0 ? (
+                <button
+                  type="button"
+                  className="versionTagsPopoverAction"
+                  onClick={() => copyText(filteredTags.join('\n'))}
+                  disabled={filteredTags.length === 0}
+                >
+                  复制（匹配）
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="versionTagsPopoverAction"
+                onClick={() => copyText(allTags.join('\n'))}
+                disabled={allTags.length === 0}
+              >
+                复制（全部）
+              </button>
+            </div>
+          </>
         )}
       </div>
 
