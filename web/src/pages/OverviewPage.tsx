@@ -664,14 +664,15 @@ export function OverviewPage(props: {
                           })()}
                         </div>
                         <div className="modalListRight">
-                          <div className="versionLine">
-                            <CurrentVersionPopover
-                              displayTag={currentDisplayTag}
-                              imageTag={item.svc.image.tag}
-                              imageDigest={item.svc.image.digest ?? null}
-                              resolvedTag={item.svc.image.resolvedTag}
-                              resolvedTags={item.svc.image.resolvedTags}
-                            />
+                            <div className="versionLine">
+                              <CurrentVersionPopover
+                                serviceId={item.svc.id}
+                                displayTag={currentDisplayTag}
+                                imageTag={item.svc.image.tag}
+                                imageDigest={item.svc.image.digest ?? null}
+                                resolvedTag={item.svc.image.resolvedTag}
+                                resolvedTags={item.svc.image.resolvedTags}
+                              />
                             <ArrowRightIcon className="inlineIcon" />
                             {candidateTag ? (
                               <VersionTagsPopover
@@ -930,6 +931,7 @@ export function OverviewPage(props: {
 		                                    <div className="modalListRight">
 		                                      <div className="versionLine">
 		                                        <CurrentVersionPopover
+		                                          serviceId={item.svc.id}
 		                                          displayTag={currentDisplayTag}
 		                                          imageTag={item.svc.image.tag}
 		                                          imageDigest={item.svc.image.digest ?? null}
@@ -1044,6 +1046,7 @@ export function OverviewPage(props: {
 	                          <div className="cellTwoLine">
                               <div className="versionLine">
                                 <CurrentVersionPopover
+                                  serviceId={svc.id}
                                   displayTag={currentDisplayTag}
                                   imageTag={svc.image.tag}
                                   imageDigest={svc.image.digest ?? null}
@@ -1065,6 +1068,7 @@ export function OverviewPage(props: {
                               </div>
 	                            <div>
                                 <CurrentVersionPopover
+                                  serviceId={svc.id}
                                   displayTag={currentDisplayTag}
                                   imageTag={svc.image.tag}
                                   imageDigest={svc.image.digest ?? null}

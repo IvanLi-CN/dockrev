@@ -586,6 +586,7 @@ export function ServicesPage(props: {
 		                                    <div className="modalListRight">
 		                                      <div className="versionLine">
 		                                        <CurrentVersionPopover
+		                                          serviceId={item.svc.id}
 		                                          displayTag={currentDisplayTag}
 		                                          imageTag={item.svc.image.tag}
 		                                          imageDigest={item.svc.image.digest ?? null}
@@ -697,6 +698,7 @@ export function ServicesPage(props: {
 	                          <div className="cellTwoLine">
                               <div className="versionLine">
                                 <CurrentVersionPopover
+                                  serviceId={svc.id}
                                   displayTag={currentDisplayTag}
                                   imageTag={svc.image.tag}
                                   imageDigest={svc.image.digest ?? null}
@@ -718,6 +720,7 @@ export function ServicesPage(props: {
                               </div>
 	                            <div>
                                 <CurrentVersionPopover
+                                  serviceId={svc.id}
                                   displayTag={currentDisplayTag}
                                   imageTag={svc.image.tag}
                                   imageDigest={svc.image.digest ?? null}

@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { CurrentVersionPopover } from '../../components/CurrentVersionPopover'
 import { ArrowRightIcon } from '../../ui'
+import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 
 function Demo(props: {
   displayTag: string
@@ -15,6 +16,7 @@ function Demo(props: {
         <div className="cellTwoLine">
           <div className="versionLine">
             <CurrentVersionPopover
+              serviceId="svc-prod-web"
               displayTag={props.displayTag}
               imageTag={props.imageTag}
               imageDigest={props.imageDigest}
@@ -34,6 +36,8 @@ function Demo(props: {
 const meta: Meta<typeof Demo> = {
   title: 'Components/CurrentVersionPopover',
   component: Demo,
+  decorators: [withDockrevMockApi],
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
 }
 
 export default meta

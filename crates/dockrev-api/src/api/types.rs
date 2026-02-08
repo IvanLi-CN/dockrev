@@ -1197,3 +1197,10 @@ pub struct ServiceCandidateOption {
     pub arch: Vec<String>,
     pub ignored: bool,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceDigestTagsResponse {
+    pub digest: String,
+    pub tags: Vec<String>,
+}

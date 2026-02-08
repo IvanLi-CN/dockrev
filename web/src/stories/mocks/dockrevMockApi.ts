@@ -1338,6 +1338,36 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       return json({ candidates })
     }
 
+    // service digest tags (used by CurrentVersionPopover)
+    if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/digest-tags')) {
+      const parts = urlPath.split('/').filter(Boolean)
+      const serviceId = decodeURIComponent(parts[2])
+      const found = findService(serviceId)
+      if (!found) return json({ error: 'not found' }, { status: 404 })
+
+      const digest = (url?.searchParams.get('digest') ?? '').trim()
+      if (!digest) return json({ error: 'digest is required' }, { status: 400 })
+      const digestNorm = digest.includes(':') ? digest : `sha256:${digest}`
+
+      const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
+
+      // Keep it deterministic: map known digests to many tags so Storybook can exercise long lists.
+      const tags =
+        digestNorm === d('c', 'c2')
+          ? (() => {
+              const out: string[] = ['5.2', 'v5.2.1', 'stable', 'latest']
+              for (let i = 0; i < 40; i++) out.push(`5.2.${i}`)
+              return out
+            })()
+          : digestNorm === d('a', 'b1')
+            ? ['5.2.1', 'v5.2.1']
+            : digestNorm === `sha256:${'a'.repeat(64)}`
+              ? ['v0.1.8', '0.1.8']
+              : [found.svc.image.tag]
+
+      return json({ digest: digestNorm, tags })
+    }
+
     // service settings
     if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/settings')) {
       const parts = urlPath.split('/').filter(Boolean)

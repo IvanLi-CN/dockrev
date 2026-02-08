@@ -42,6 +42,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/services/{service_id}/candidates",
             get(list_service_candidates),
         )
+        .route(
+            "/api/services/{service_id}/digest-tags",
+            get(list_service_digest_tags),
+        )
         .route("/api/discovery/scan", post(trigger_discovery_scan))
         .route("/api/discovery/projects", get(list_discovery_projects))
         .route(
@@ -1890,6 +1894,189 @@ async fn list_service_candidates(
     let out = slots.into_iter().flatten().collect::<Vec<_>>();
 
     Ok(Json(ServiceCandidatesResponse { candidates: out }))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListServiceDigestTagsQuery {
+    digest: Option<String>,
+}
+
+async fn list_service_digest_tags(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(service_id): Path<String>,
+    Query(q): Query<ListServiceDigestTagsQuery>,
+) -> Result<Json<ServiceDigestTagsResponse>, ApiError> {
+    use std::time::Duration;
+
+    use tokio::{
+        task::JoinSet,
+        time::{Instant, timeout, timeout_at},
+    };
+
+    let _user = require_user(&state, &headers)?;
+
+    let digest_input = q.digest.unwrap_or_default();
+    let digest_trimmed = digest_input.trim();
+    if digest_trimmed.is_empty() {
+        return Err(ApiError::invalid_argument("digest is required"));
+    }
+    let digest = if digest_trimmed.contains(':') {
+        digest_trimmed.to_string()
+    } else {
+        format!("sha256:{digest_trimmed}")
+    };
+
+    let stack_id = state
+        .db
+        .get_service_stack_id(&service_id)
+        .await
+        .map_err(map_internal)?;
+    let Some(stack_id) = stack_id else {
+        return Err(ApiError::not_found("service not found"));
+    };
+
+    let stack = state.db.get_stack(&stack_id).await.map_err(map_internal)?;
+    let Some(stack) = stack else {
+        return Err(ApiError::not_found("stack not found"));
+    };
+
+    let svc = stack
+        .services
+        .iter()
+        .find(|s| s.id == service_id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found("service not found"))?;
+
+    let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
+        .unwrap_or_else(|| "linux/amd64".to_string());
+
+    let img = registry::ImageRef::parse(&svc.image.reference)
+        .map_err(|_| ApiError::invalid_argument("invalid image ref (expected repo/name:tag)"))?;
+
+    // Digest tag listing is used for UI debugging / observability, not as part of the "update
+    // candidates" hot path. Still, we bound latency to avoid hanging requests forever.
+    const LIST_TAGS_TIMEOUT: Duration = Duration::from_secs(8);
+    const MANIFEST_TIMEOUT: Duration = Duration::from_secs(6);
+    const MANIFEST_BUDGET: Duration = Duration::from_secs(40);
+    const MANIFEST_CONCURRENCY: usize = 10;
+
+    let tags = match timeout(LIST_TAGS_TIMEOUT, state.registry.list_tags(&img)).await {
+        Ok(Ok(tags)) => tags,
+        Ok(Err(e)) => return Err(map_internal(e)),
+        Err(_) => {
+            return Err(ApiError::internal("registry timeout").with_details(json!({
+                "op": "list_tags"
+            })));
+        }
+    };
+
+    let wanted = digest.clone();
+
+    let registry = state.registry.clone();
+    let img = img.clone();
+    let host_platform = host_platform.clone();
+
+    let mut out: Vec<String> = Vec::new();
+    let mut join_set: JoinSet<Option<String>> = JoinSet::new();
+    let mut queue = tags.into_iter();
+
+    let spawn_one = |join_set: &mut JoinSet<Option<String>>,
+                     tag: String,
+                     registry: Arc<dyn registry::RegistryClient>,
+                     img: registry::ImageRef,
+                     host_platform: String,
+                     wanted: String| {
+        join_set.spawn(async move {
+            match timeout(
+                MANIFEST_TIMEOUT,
+                registry.get_manifest(&img, &tag, &host_platform),
+            )
+            .await
+            {
+                Ok(Ok(m)) => {
+                    let ok = m
+                        .digest
+                        .as_deref()
+                        .is_some_and(|v| v.trim().eq_ignore_ascii_case(&wanted))
+                        || m.platform_digest
+                            .as_deref()
+                            .is_some_and(|v| v.trim().eq_ignore_ascii_case(&wanted));
+                    if ok { Some(tag) } else { None }
+                }
+                _ => None,
+            }
+        });
+    };
+
+    for _ in 0..MANIFEST_CONCURRENCY {
+        let Some(tag) = queue.next() else { break };
+        spawn_one(
+            &mut join_set,
+            tag,
+            registry.clone(),
+            img.clone(),
+            host_platform.clone(),
+            wanted.clone(),
+        );
+    }
+
+    let deadline = Instant::now() + MANIFEST_BUDGET;
+    while !join_set.is_empty() {
+        let next = match timeout_at(deadline, join_set.join_next()).await {
+            Ok(next) => next,
+            Err(_) => {
+                join_set.abort_all();
+                return Err(ApiError::internal("registry timeout").with_details(json!({
+                    "op": "get_manifest"
+                })));
+            }
+        };
+
+        let Some(joined) = next else { break };
+        if let Ok(Some(tag)) = joined {
+            out.push(tag);
+        }
+
+        let Some(tag) = queue.next() else {
+            continue;
+        };
+        spawn_one(
+            &mut join_set,
+            tag,
+            registry.clone(),
+            img.clone(),
+            host_platform.clone(),
+            wanted.clone(),
+        );
+    }
+
+    let mut semver_tags: Vec<(semver::Version, String)> = Vec::new();
+    let mut other_tags: Vec<String> = Vec::new();
+    for tag in out {
+        if let Some(v) = ignore::parse_version(&tag) {
+            semver_tags.push((v, tag));
+        } else {
+            other_tags.push(tag);
+        }
+    }
+
+    semver_tags.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    other_tags.sort_by(|a, b| b.cmp(a));
+
+    let mut sorted: Vec<String> = Vec::new();
+    for (_, tag) in semver_tags {
+        sorted.push(tag);
+    }
+    for tag in other_tags {
+        sorted.push(tag);
+    }
+
+    Ok(Json(ServiceDigestTagsResponse {
+        digest,
+        tags: sorted,
+    }))
 }
 
 async fn put_service_settings(

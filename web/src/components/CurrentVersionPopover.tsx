@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { listServiceDigestTags } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 
 function isStrictSemverTag(tag: string): boolean {
@@ -23,8 +24,16 @@ function uniqueSorted(values: string[] | null | undefined): string[] {
 
 const HOVER_CLOSE_DELAY_MS = 300
 const POPOVER_ANIM_MS = 160
+const FETCH_DEBOUNCE_MS = 220
+
+type DigestTagsState = {
+  key: string
+  tags: string[] | null
+  error: string | null
+}
 
 export function CurrentVersionPopover(props: {
+  serviceId: string
   displayTag: string
   imageTag: string
   imageDigest?: string | null
@@ -33,12 +42,13 @@ export function CurrentVersionPopover(props: {
   triggerClassName?: string
   children?: ReactNode
 }) {
-  const { imageTag, imageDigest, resolvedTag, resolvedTags } = props
+  const { serviceId, imageTag, imageDigest, resolvedTag, resolvedTags } = props
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const hoverCloseTimer = useRef<number | null>(null)
   const popoverUnmountTimer = useRef<number | null>(null)
   const popoverShowRaf = useRef<number | null>(null)
+  const fetchTimer = useRef<number | null>(null)
   const pinnedRef = useRef(false)
 
   const [pinned, setPinned] = useState(false)
@@ -51,6 +61,15 @@ export function CurrentVersionPopover(props: {
 
   const digestNorm = useMemo(() => normalizeDigest(imageDigest), [imageDigest])
 
+  const digestKey = useMemo(() => `${serviceId}:${digestNorm ?? ''}`, [digestNorm, serviceId])
+  const [digestState, setDigestState] = useState<DigestTagsState>(() => ({
+    key: digestKey,
+    tags: null,
+    error: null,
+  }))
+  const digestTags = digestState.key === digestKey ? digestState.tags : null
+  const loadError = digestState.key === digestKey ? digestState.error : null
+
   const displayTag = useMemo(() => {
     const explicit = props.displayTag.trim()
     if (explicit) return explicit
@@ -59,6 +78,43 @@ export function CurrentVersionPopover(props: {
 
   const resolvedTagTrim = useMemo(() => (resolvedTag ?? '').trim(), [resolvedTag])
   const resolvedTagsList = useMemo(() => uniqueSorted(resolvedTags), [resolvedTags])
+
+  useEffect(() => {
+    if (!open) return
+    if (!digestNorm) return
+    if (digestTags != null) return
+
+    let alive = true
+    const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
+    if (fetchTimer.current != null) window.clearTimeout(fetchTimer.current)
+    fetchTimer.current = window.setTimeout(() => {
+      setDigestState({ key: digestKey, tags: null, error: null })
+      listServiceDigestTags(serviceId, digestNorm)
+        .then((data) => {
+          if (!alive) return
+          setDigestState({ key: digestKey, tags: data.tags, error: null })
+        })
+        .catch((e: unknown) => {
+          if (!alive) return
+          setDigestState({
+            key: digestKey,
+            tags: [],
+            error: e instanceof Error ? e.message : String(e),
+          })
+        })
+        .finally(() => {
+          fetchTimer.current = null
+        })
+    }, delay)
+
+    return () => {
+      alive = false
+      if (fetchTimer.current != null) {
+        window.clearTimeout(fetchTimer.current)
+        fetchTimer.current = null
+      }
+    }
+  }, [digestKey, digestNorm, digestTags, open, pinned, serviceId])
 
   const clearHoverCloseTimer = useCallback(() => {
     if (hoverCloseTimer.current == null) return
@@ -131,6 +187,10 @@ export function CurrentVersionPopover(props: {
       clearHoverCloseTimer()
       clearPopoverShowRaf()
       clearPopoverUnmountTimer()
+      if (fetchTimer.current != null) {
+        window.clearTimeout(fetchTimer.current)
+        fetchTimer.current = null
+      }
     }
   }, [clearHoverCloseTimer, clearPopoverShowRaf, clearPopoverUnmountTimer])
 
@@ -244,6 +304,40 @@ export function CurrentVersionPopover(props: {
         <div className="muted">
           resolvedTag <span className="mono">{resolvedTagTrim || '-'}</span>
         </div>
+      </div>
+
+      <div className="versionTagsPopoverSection">
+        <div className="label">该 digest 所有标签</div>
+        {!digestNorm ? (
+          <div className="muted">digest 未知，无法聚合标签</div>
+        ) : digestTags == null ? (
+          <div className="muted">加载中…</div>
+        ) : loadError ? (
+          <>
+            {digestTags.length > 0 ? (
+              <div className="versionTagsPopoverChips">
+                {digestTags.map((t) => (
+                  <span key={t} className="versionTagsChip" title={t}>
+                    <span className="mono">{t}</span>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <div className="muted">未找到同 digest 的标签</div>
+            )}
+            <div className="muted">加载失败</div>
+          </>
+        ) : digestTags.length === 0 ? (
+          <div className="muted">未找到同 digest 的标签</div>
+        ) : (
+          <div className="versionTagsPopoverChips">
+            {digestTags.map((t) => (
+              <span key={t} className="versionTagsChip" title={t}>
+                <span className="mono">{t}</span>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {resolvedTagsList.length > 0 ? (

@@ -16,6 +16,7 @@ function Demo(props: { serviceId: string; candidateTag: string; candidateDigest:
         <div className="cellTwoLine">
           <div className="versionLine">
             <CurrentVersionPopover
+              serviceId={props.serviceId}
               displayTag=""
               imageTag={imageTag}
               imageDigest={null}
@@ -33,6 +34,7 @@ function Demo(props: { serviceId: string; candidateTag: string; candidateDigest:
           </div>
           <div>
             <CurrentVersionPopover
+              serviceId={props.serviceId}
               displayTag=""
               imageTag={imageTag}
               imageDigest={null}

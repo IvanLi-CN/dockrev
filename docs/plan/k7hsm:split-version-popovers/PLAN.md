@@ -20,6 +20,7 @@
 - 移除 Versions 行的浏览器原生 tooltip（不再使用 `title`）。
 - 将 Versions 行拆分为两个独立气泡：
   - 当前版本（左侧，可能是 `?`）：展示 raw tag / resolvedTag / digest / resolvedTags，并解释为什么是 `?`。
+    - 当 digest 已知时：额外展示“该 digest 所有标签”（完整列表，用于排查推测版本是否正确）。
   - 候选版本（右侧 tag）：继续展示该候选 digest 对应的所有 tags。
 - 保持交互：hover 打开、click 固定、ESC/点外部关闭；行点击进入 Service 详情不受影响。
 
@@ -50,6 +51,10 @@
   When hover/click 在左侧当前版本（`?` 或 resolved tag）上，
   Then 打开“当前版本”气泡，能看到 raw tag/resolvedTag/digest，并明确说明为什么显示 `?`（若为 `?`）。
 
+- Given 当前版本气泡存在 digest，
+  When 打开气泡，
+  Then 能看到“该 digest 所有标签”，用于排查当前 digest 对应的真实版本（不依赖候选列表截断/过滤）。
+
 - Given 同一版本行，
   When hover/click 在右侧候选 tag 上，
   Then 打开“候选版本 tags”气泡，内容与候选 digest 相关。
@@ -65,6 +70,7 @@
 - [x] M1: 拆分 Versions 行为当前/候选两个 popover（Services/Overview）
 - [x] M2: 移除原生 tooltip + Storybook 回归/新增用例
 - [x] M3: 最小验证（lint/build）+ 手工检查
+- [x] M4: 当前版本 digest 反查 tags（完整列表）
 
 ## 风险 / 开放问题（Risks & Open Questions）
 
@@ -74,3 +80,4 @@
 
 - 2026-02-08: 创建计划并冻结范围与验收标准（Status=待实现）。
 - 2026-02-08: 完成实现与最小验证；PR #63；Status=已完成。
+- 2026-02-08: 当前版本气泡补齐 digest→tags（完整列表），便于排查推测版本是否正确；PR #63。

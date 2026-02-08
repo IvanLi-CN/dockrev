@@ -79,6 +79,34 @@ impl RegistryClient for SlowRegistry {
 }
 
 #[derive(Clone, Default)]
+struct DigestTagsRegistry;
+
+#[async_trait::async_trait]
+impl RegistryClient for DigestTagsRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        let mut out = Vec::new();
+        // Intentionally > 30 so we can assert the digest-tags endpoint does not truncate.
+        for i in 0..50 {
+            out.push(format!("1.0.{i}"));
+        }
+        Ok(out)
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        _reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        Ok(ManifestInfo {
+            digest: Some("sha256:match".to_string()),
+            platform_digest: None,
+            arch: vec!["linux/amd64".to_string()],
+        })
+    }
+}
+
+#[derive(Clone, Default)]
 struct FakeRunner;
 
 #[async_trait::async_trait]
@@ -508,6 +536,66 @@ services:
     // Tags <= current (5.2.0) are intentionally skipped by the endpoint.
     assert_eq!(candidates.len(), 27);
     assert!(candidates.iter().all(|c| !c["digest"].is_null()));
+}
+
+#[tokio::test]
+async fn service_digest_tags_lists_all_matches_without_truncation() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(DigestTagsRegistry),
+        Arc::new(FakeRunner),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let detail = response_json(resp).await;
+    let service_id = detail["stack"]["services"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Use a bare hash to assert normalization (sha256: prefix added server-side).
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{service_id}/digest-tags?digest=match"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body = response_json(resp).await;
+    let tags = body["tags"].as_array().unwrap();
+    assert_eq!(tags.len(), 50);
+    assert_eq!(tags[0].as_str().unwrap(), "1.0.49");
+    assert_eq!(tags[49].as_str().unwrap(), "1.0.0");
 }
 
 #[tokio::test]

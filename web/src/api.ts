@@ -70,6 +70,11 @@ export type ServiceCandidatesResponse = {
   candidates: ServiceCandidateOption[]
 }
 
+export type ServiceDigestTagsResponse = {
+  digest: string
+  tags: string[]
+}
+
 export type StackDetail = {
   id: string
   name: string
@@ -420,6 +425,13 @@ export async function listServiceCandidates(serviceId: string): Promise<ServiceC
   const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/candidates`)
   const data = (await resp.json()) as ServiceCandidatesResponse
   return data.candidates
+}
+
+export async function listServiceDigestTags(serviceId: string, digest: string): Promise<ServiceDigestTagsResponse> {
+  const resp = await apiFetch(
+    `/api/services/${encodeURIComponent(serviceId)}/digest-tags?digest=${encodeURIComponent(digest)}`,
+  )
+  return (await resp.json()) as ServiceDigestTagsResponse
 }
 
 export async function triggerCheck(scope: string, stackId?: string, serviceId?: string) {
