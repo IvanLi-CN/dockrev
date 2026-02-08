@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-08
 - Last: 2026-02-08
 
@@ -62,9 +62,9 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 拆分 Versions 行为当前/候选两个 popover（Services/Overview）
-- [ ] M2: 移除原生 tooltip + Storybook 回归/新增用例
-- [ ] M3: 最小验证（lint/build）+ 手工检查
+- [x] M1: 拆分 Versions 行为当前/候选两个 popover（Services/Overview）
+- [x] M2: 移除原生 tooltip + Storybook 回归/新增用例
+- [x] M3: 最小验证（lint/build）+ 手工检查
 
 ## 风险 / 开放问题（Risks & Open Questions）
 
@@ -73,4 +73,4 @@
 ## 变更记录（Change log）
 
 - 2026-02-08: 创建计划并冻结范围与验收标准（Status=待实现）。
-
+- 2026-02-08: 完成实现与最小验证；PR #63；Status=已完成。
