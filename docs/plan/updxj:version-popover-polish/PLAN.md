@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-08
 - Last: 2026-02-08
 
@@ -52,9 +52,9 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 移除冗余提示文案 + 更新确认 modal 的版本展示为 popovers
-- [ ] M2: popovers 改为完整列表 + 过滤/复制 + 文案精简
-- [ ] M3: 最小验证（lint/build）+ 手工检查（Storybook）
+- [x] M1: 移除冗余提示文案 + 更新确认 modal 的版本展示为 popovers
+- [x] M2: popovers 改为完整列表 + 过滤/复制 + 文案精简
+- [x] M3: 最小验证（lint/build）+ 手工检查（Storybook）
 
 ## 风险 / 开放问题（Risks & Open Questions）
 
@@ -63,3 +63,4 @@
 ## 变更记录（Change log）
 
 - 2026-02-08: 创建计划并冻结范围与验收标准（Status=待实现）。
+- 2026-02-08: 完成实现与最小验证；PR #63；Status=已完成。
