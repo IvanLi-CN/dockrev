@@ -1338,7 +1338,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       return json({ candidates })
     }
 
-    // service digest tags (used by CurrentVersionPopover)
+    // service digest tags (used by version popovers)
     if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/digest-tags')) {
       const parts = urlPath.split('/').filter(Boolean)
       const serviceId = decodeURIComponent(parts[2])
@@ -1361,6 +1361,8 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
             })()
           : digestNorm === d('a', 'b1')
             ? ['5.2.1', 'v5.2.1']
+            : digestNorm === d('b', '9f') && scenario === 'version-tags-popover-demo' && serviceId === 'svc-version-tags'
+              ? ['v0.8.8-arm64', 'v0.8.8', '0.8.8', 'stable', 'latest']
             : digestNorm === `sha256:${'a'.repeat(64)}`
               ? ['v0.1.8', '0.1.8']
               : [found.svc.image.tag]

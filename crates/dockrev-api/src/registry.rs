@@ -8,7 +8,7 @@ use std::{
 use anyhow::Context as _;
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use reqwest::header::{ACCEPT, AUTHORIZATION, WWW_AUTHENTICATE};
+use reqwest::header::{ACCEPT, AUTHORIZATION, LINK, WWW_AUTHENTICATE};
 use serde::Deserialize;
 
 use crate::api::types::ArchMatch;
@@ -116,23 +116,98 @@ impl HttpRegistryClient {
 #[async_trait]
 impl RegistryClient for HttpRegistryClient {
     async fn list_tags(&self, image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        use std::collections::HashSet;
+
+        fn parse_next_link(link_header: &str, base_host: &str) -> Option<String> {
+            // Example:
+            //   Link: </v2/library/alpine/tags/list?last=20190508&n=5>; rel="next"
+            //
+            // We only care about rel="next". Some registries include multiple links in one header.
+            for part in link_header.split(',') {
+                let part = part.trim();
+                if !part.contains("rel=\"next\"") && !part.contains("rel=next") {
+                    continue;
+                }
+
+                let start = part.find('<')?;
+                let end = part[start + 1..].find('>')? + start + 1;
+                let raw = part[start + 1..end].trim();
+                if raw.is_empty() {
+                    continue;
+                }
+
+                if raw.starts_with("http://") || raw.starts_with("https://") {
+                    return Some(raw.to_string());
+                }
+                if raw.starts_with('/') {
+                    return Some(format!("https://{base_host}{raw}"));
+                }
+                // Best-effort fallback for weird relative URLs.
+                return Some(format!("https://{base_host}/{raw}"));
+            }
+
+            None
+        }
+
         let scope = format!("repository:{}:pull", image.name);
-        let url = format!(
-            "https://{}/v2/{}/tags/list",
-            registry_api_host(&image.registry),
-            image.name
-        );
-        let resp = self
-            .get_with_auth(&image.registry, &scope, url, None)
-            .await?;
+        let base_host = registry_api_host(&image.registry);
+        let base_url = format!("https://{base_host}/v2/{}/tags/list", image.name);
+        // Large page size to reduce round-trips. We'll still follow `Link: rel="next"` if the
+        // registry paginates.
+        let mut url = format!("{base_url}?n=1000");
 
         #[derive(Deserialize)]
         struct TagsResponse {
             tags: Option<Vec<String>>,
         }
 
-        let body: TagsResponse = resp.json().await?;
-        Ok(body.tags.unwrap_or_default())
+        let mut out: Vec<String> = Vec::new();
+        let mut visited: HashSet<String> = HashSet::new();
+
+        // Some registries don't support `n` pagination params; in that case, retry once with the
+        // bare endpoint.
+        let mut pagination_params_ok = true;
+
+        loop {
+            if !visited.insert(url.clone()) {
+                break;
+            }
+
+            let resp = match self
+                .get_with_auth(&image.registry, &scope, url.clone(), None)
+                .await
+            {
+                Ok(resp) => resp,
+                Err(_e) if pagination_params_ok => {
+                    pagination_params_ok = false;
+                    url = base_url.clone();
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
+            pagination_params_ok = false;
+
+            let link_header = resp
+                .headers()
+                .get(LINK)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+
+            let body: TagsResponse = resp.json().await?;
+            out.extend(body.tags.unwrap_or_default());
+
+            let Some(link_header) = link_header else {
+                break;
+            };
+            let Some(next) = parse_next_link(&link_header, base_host) else {
+                break;
+            };
+            url = next;
+        }
+
+        out.sort();
+        out.dedup();
+        Ok(out)
     }
 
     async fn get_manifest(
