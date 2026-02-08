@@ -1200,7 +1200,17 @@ pub struct ServiceCandidateOption {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ServiceDigestTagsScanSummary {
+    pub repo_tags_total: usize,
+    pub manifests_ok: usize,
+    pub manifests_timeout: usize,
+    pub manifests_error: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ServiceDigestTagsResponse {
     pub digest: String,
     pub tags: Vec<String>,
+    pub scan: ServiceDigestTagsScanSummary,
 }

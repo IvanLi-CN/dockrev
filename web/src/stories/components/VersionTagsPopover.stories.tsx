@@ -33,19 +33,6 @@ function Demo(props: { serviceId: string; candidateTag: string; candidateDigest:
               {props.candidateTag}
             </VersionTagsPopover>
           </div>
-          <div>
-            <CurrentVersionPopover
-              serviceId={props.serviceId}
-              displayTag=""
-              imageTag={imageTag}
-              imageDigest={imageDigest}
-              resolvedTag={null}
-              resolvedTags={null}
-              triggerClassName="versionTagsTrigger mono monoSecondary"
-            >
-              {imageTag}
-            </CurrentVersionPopover>
-          </div>
         </div>
       </div>
     </div>

@@ -1367,7 +1367,16 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
               ? ['v0.1.8', '0.1.8']
               : [found.svc.image.tag]
 
-      return json({ digest: digestNorm, tags })
+      return json({
+        digest: digestNorm,
+        tags,
+        scan: {
+          repoTagsTotal: tags.length,
+          manifestsOk: tags.length,
+          manifestsTimeout: 0,
+          manifestsError: 0,
+        },
+      })
     }
 
     // service settings

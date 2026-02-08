@@ -70,9 +70,17 @@ export type ServiceCandidatesResponse = {
   candidates: ServiceCandidateOption[]
 }
 
+export type ServiceDigestTagsScanSummary = {
+  repoTagsTotal: number
+  manifestsOk: number
+  manifestsTimeout: number
+  manifestsError: number
+}
+
 export type ServiceDigestTagsResponse = {
   digest: string
   tags: string[]
+  scan: ServiceDigestTagsScanSummary
 }
 
 export type StackDetail = {

@@ -1972,6 +1972,7 @@ async fn list_service_digest_tags(
         }
     };
 
+    let repo_tags_total = tags.len();
     let wanted = digest.clone();
 
     let registry = state.registry.clone();
@@ -1979,10 +1980,21 @@ async fn list_service_digest_tags(
     let host_platform = host_platform.clone();
 
     let mut out: Vec<String> = Vec::new();
-    let mut join_set: JoinSet<Option<String>> = JoinSet::new();
+    let mut manifests_ok: usize = 0;
+    let mut manifests_timeout: usize = 0;
+    let mut manifests_error: usize = 0;
+
+    enum ScanOutcome {
+        OkMatch(String),
+        OkNoMatch,
+        Timeout,
+        Error,
+    }
+
+    let mut join_set: JoinSet<ScanOutcome> = JoinSet::new();
     let mut queue = tags.into_iter();
 
-    let spawn_one = |join_set: &mut JoinSet<Option<String>>,
+    let spawn_one = |join_set: &mut JoinSet<ScanOutcome>,
                      tag: String,
                      registry: Arc<dyn registry::RegistryClient>,
                      img: registry::ImageRef,
@@ -2003,9 +2015,14 @@ async fn list_service_digest_tags(
                         || m.platform_digest
                             .as_deref()
                             .is_some_and(|v| v.trim().eq_ignore_ascii_case(&wanted));
-                    if ok { Some(tag) } else { None }
+                    if ok {
+                        ScanOutcome::OkMatch(tag)
+                    } else {
+                        ScanOutcome::OkNoMatch
+                    }
                 }
-                _ => None,
+                Ok(Err(_)) => ScanOutcome::Error,
+                Err(_) => ScanOutcome::Timeout,
             }
         });
     };
@@ -2035,9 +2052,24 @@ async fn list_service_digest_tags(
         };
 
         let Some(joined) = next else { break };
-        if let Ok(Some(tag)) = joined {
-            out.push(tag);
-        }
+        match joined {
+            Ok(ScanOutcome::OkMatch(tag)) => {
+                manifests_ok += 1;
+                out.push(tag);
+            }
+            Ok(ScanOutcome::OkNoMatch) => {
+                manifests_ok += 1;
+            }
+            Ok(ScanOutcome::Timeout) => {
+                manifests_timeout += 1;
+            }
+            Ok(ScanOutcome::Error) => {
+                manifests_error += 1;
+            }
+            Err(_) => {
+                manifests_error += 1;
+            }
+        };
 
         let Some(tag) = queue.next() else {
             continue;
@@ -2076,6 +2108,12 @@ async fn list_service_digest_tags(
     Ok(Json(ServiceDigestTagsResponse {
         digest,
         tags: sorted,
+        scan: ServiceDigestTagsScanSummary {
+            repo_tags_total,
+            manifests_ok,
+            manifests_timeout,
+            manifests_error,
+        },
     }))
 }
 

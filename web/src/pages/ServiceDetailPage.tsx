@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   archiveService,
   ApiError,
@@ -21,6 +21,7 @@ import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { serviceRowStatus, tagSeriesMatches } from '../updateStatus'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
+import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { UpdateTargetSelect } from '../components/UpdateTargetSelect'
 import { useConfirm } from '../confirm'
 
@@ -239,6 +240,10 @@ export function ServiceDetailPage(props: {
                 void (async () => {
 	                  if (!service) return
                     const selected = { tag: service.candidate?.tag ?? '-', digest: service.candidate?.digest ?? null }
+                    const currentDisplayTag = formatTagDisplay(service.image.tag, service.image.resolvedTag)
+                    const resolvedTagTrim = (service.image.resolvedTag ?? '').trim()
+                    const rawTagTrim = (service.image.tag ?? '').trim()
+                    const showRawTag = Boolean(resolvedTagTrim && rawTagTrim && resolvedTagTrim !== rawTagTrim)
 	                  const ok = await confirm({
 	                    title: `确认更新服务 ${service.name}？`,
 	                    body: (
@@ -273,11 +278,11 @@ export function ServiceDetailPage(props: {
 		                          </div>
 		                          <div className="modalKvLabel">目标版本</div>
 		                          <div className="modalKvValue">
-                              <div className="cellTwoLine">
+                                <div className="cellTwoLine">
                                 <div className="versionLine">
                                   <CurrentVersionPopover
                                     serviceId={service.id}
-                                    displayTag=""
+                                    displayTag={currentDisplayTag}
                                     imageTag={service.image.tag}
                                     imageDigest={service.image.digest ?? null}
                                     resolvedTag={service.image.resolvedTag}
@@ -300,19 +305,21 @@ export function ServiceDetailPage(props: {
                                 }}
                               />
                                 </div>
-                                <div>
-                                  <CurrentVersionPopover
-                                    serviceId={service.id}
-                                    displayTag=""
-                                    imageTag={service.image.tag}
-                                    imageDigest={service.image.digest ?? null}
-                                    resolvedTag={service.image.resolvedTag}
-                                    resolvedTags={service.image.resolvedTags}
-                                    triggerClassName="versionTagsTrigger mono monoSecondary"
-                                  >
-                                    {service.image.tag}
-                                  </CurrentVersionPopover>
-                                </div>
+                                {showRawTag ? (
+                                  <div>
+                                    <CurrentVersionPopover
+                                      serviceId={service.id}
+                                      displayTag={currentDisplayTag}
+                                      imageTag={service.image.tag}
+                                      imageDigest={service.image.digest ?? null}
+                                      resolvedTag={service.image.resolvedTag}
+                                      resolvedTags={service.image.resolvedTags}
+                                      triggerClassName="versionTagsTrigger mono monoSecondary"
+                                    >
+                                      {service.image.tag}
+                                    </CurrentVersionPopover>
+                                  </div>
+                                ) : null}
                               </div>
 		                          </div>
 	                          <div className="modalKvLabel">状态</div>
@@ -463,24 +470,83 @@ export function ServiceDetailPage(props: {
     if (st === 'archMismatch') return '架构不匹配（仅提示，不允许更新）'
     if (st === 'crossTag') return '跨标签版本更新（建议确认）'
     if (st === 'hint') return '需确认（arch 未知 / tag 关系不确定）'
-    return '可更新（匹配当前标签序列）'
+    return '可更新'
   }, [service])
 
-  const bannerDetail = useMemo(() => {
-    if (!service) return ''
+  const bannerDetail = useMemo<ReactNode>(() => {
+    if (!service) return null
+
     const currentTag = formatTagDisplay(service.image.tag, service.image.resolvedTag)
-    const current = `${currentTag}${service.image.digest ? `@${shortDigest(service.image.digest)}` : ''}`
+    const currentDigestNode = service.image.digest ? (
+      <span className="mono">{`@${shortDigest(service.image.digest)}`}</span>
+    ) : null
+
+    const currentNode = (
+      <CurrentVersionPopover
+        serviceId={service.id}
+        displayTag={currentTag}
+        imageTag={service.image.tag}
+        imageDigest={service.image.digest ?? null}
+        resolvedTag={service.image.resolvedTag}
+        resolvedTags={service.image.resolvedTags}
+      />
+    )
+
     if (service.ignore?.matched) {
-      const why = service.ignore.reason ? ` · reason: ${service.ignore.reason}` : ''
-      return `当前: ${current} · rule: ${service.ignore.ruleId}${why}`
+      return (
+        <>
+          当前: {currentNode}
+          {currentDigestNode}
+          {' · '}rule: <Mono>{service.ignore.ruleId}</Mono>
+          {service.ignore.reason ? (
+            <>
+              {' · '}reason: <Mono>{service.ignore.reason}</Mono>
+            </>
+          ) : null}
+        </>
+      )
     }
-    if (!service.candidate) return `当前: ${current}`
-    const cand = `${service.candidate.tag}@${shortDigest(service.candidate.digest)}`
-    const arch = service.candidate.arch.length ? ` · arch=${service.candidate.arch.join(',')}` : ''
+
+    if (!service.candidate) {
+      return (
+        <>
+          当前: {currentNode}
+          {currentDigestNode}
+        </>
+      )
+    }
+
+    const archNode = service.candidate.arch.length ? (
+      <>
+        {' · '}arch=<Mono>{service.candidate.arch.join(',')}</Mono>
+      </>
+    ) : null
+
     const effectiveCurrentTag = service.image.resolvedTag ?? service.image.tag
     const series = tagSeriesMatches(effectiveCurrentTag, service.candidate.tag)
-    const seriesHint = series === false ? ' · 跨标签' : series == null ? ' · 标签=?' : ''
-    return `当前: ${current} → 候选: ${cand}${arch}${seriesHint}`
+    const seriesHintNode = series === false ? (
+      <>
+        {' · '}跨标签
+      </>
+    ) : null
+
+    return (
+      <>
+        当前: {currentNode}
+        {currentDigestNode}
+        {' \u2192 '}候选:{' '}
+        <VersionTagsPopover
+          serviceId={service.id}
+          candidateTag={service.candidate.tag}
+          candidateDigest={service.candidate.digest ?? null}
+        >
+          {service.candidate.tag}
+        </VersionTagsPopover>
+        <span className="mono">{`@${shortDigest(service.candidate.digest)}`}</span>
+        {archNode}
+        {seriesHintNode}
+      </>
+    )
   }, [service])
 
   if (!stack || !service || !settings) {

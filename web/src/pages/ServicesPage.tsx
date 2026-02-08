@@ -80,19 +80,6 @@ function formatTagDisplay(tag: string, resolvedTag: string | null | undefined): 
   return r && r !== tag ? r : tag
 }
 
-function isStrictSemverTag(tag: string): boolean {
-  const t = tag.trim()
-  if (!t) return false
-  return /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(t)
-}
-
-function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefined): string {
-  const r = (resolvedTag ?? '').trim()
-  if (r) return r
-  if (isStrictSemverTag(tag)) return tag
-  return '?'
-}
-
 function isDockrevService(svc: Service): boolean {
   return isDockrevImageRef(svc.image.ref)
 }
@@ -559,7 +546,7 @@ export function ServicesPage(props: {
 		                            <div className="modalLead">将更新的服务（预览）</div>
 		                            <div className="modalList">
 		                              {candidateServices.map((item) => {
-		                                const currentDisplayTag = inferredTagForDisplay(item.svc.image.tag, item.svc.image.resolvedTag)
+		                                const currentDisplayTag = formatTagDisplay(item.svc.image.tag, item.svc.image.resolvedTag)
 		                                const candidateTag =
 		                                  item.svc.candidate?.tag && item.svc.candidate.tag !== '-' ? item.svc.candidate.tag : null
 		                                return (
@@ -630,7 +617,10 @@ export function ServicesPage(props: {
                 {!isCollapsed
                   ? g.services.map(({ svc, status }) => {
                       const isDockrev = isDockrevService(svc)
-                      const currentDisplayTag = inferredTagForDisplay(svc.image.tag, svc.image.resolvedTag)
+                      const currentDisplayTag = formatTagDisplay(svc.image.tag, svc.image.resolvedTag)
+                      const resolvedTagTrim = (svc.image.resolvedTag ?? '').trim()
+                      const rawTagTrim = (svc.image.tag ?? '').trim()
+                      const showRawTag = Boolean(resolvedTagTrim && rawTagTrim && resolvedTagTrim !== rawTagTrim)
                       const candidateTag = svc.candidate?.tag && svc.candidate.tag !== '-' ? svc.candidate.tag : null
                       const showCandidate = Boolean(candidateTag && candidateTag !== currentDisplayTag)
                       const svcApply =
@@ -716,19 +706,21 @@ export function ServicesPage(props: {
                                   </>
                                 ) : null}
                               </div>
-	                            <div>
-                                <CurrentVersionPopover
-                                  serviceId={svc.id}
-                                  displayTag={currentDisplayTag}
-                                  imageTag={svc.image.tag}
-                                  imageDigest={svc.image.digest ?? null}
-                                  resolvedTag={svc.image.resolvedTag}
-                                  resolvedTags={svc.image.resolvedTags}
-                                  triggerClassName="versionTagsTrigger mono monoSecondary"
-                                >
-                                  {svc.image.tag}
-                                </CurrentVersionPopover>
-	                            </div>
+	                            {showRawTag ? (
+                                <div>
+                                  <CurrentVersionPopover
+                                    serviceId={svc.id}
+                                    displayTag={currentDisplayTag}
+                                    imageTag={svc.image.tag}
+                                    imageDigest={svc.image.digest ?? null}
+                                    resolvedTag={svc.image.resolvedTag}
+                                    resolvedTags={svc.image.resolvedTags}
+                                    triggerClassName="versionTagsTrigger mono monoSecondary"
+                                  >
+                                    {svc.image.tag}
+                                  </CurrentVersionPopover>
+                                </div>
+	                            ) : null}
 	                          </div>
                           <StatusRemark service={svc} status={status} />
 	                          <div
@@ -834,19 +826,21 @@ export function ServicesPage(props: {
                                                 }}
                                               />
                                               </div>
-                                              <div>
-                                                <CurrentVersionPopover
-                                                  serviceId={svc.id}
-                                                  displayTag={currentDisplayTag}
-                                                  imageTag={svc.image.tag}
-                                                  imageDigest={svc.image.digest ?? null}
-                                                  resolvedTag={svc.image.resolvedTag}
-                                                  resolvedTags={svc.image.resolvedTags}
-                                                  triggerClassName="versionTagsTrigger mono monoSecondary"
-                                                >
-                                                  {svc.image.tag}
-                                                </CurrentVersionPopover>
-                                              </div>
+                                              {showRawTag ? (
+                                                <div>
+                                                  <CurrentVersionPopover
+                                                    serviceId={svc.id}
+                                                    displayTag={currentDisplayTag}
+                                                    imageTag={svc.image.tag}
+                                                    imageDigest={svc.image.digest ?? null}
+                                                    resolvedTag={svc.image.resolvedTag}
+                                                    resolvedTags={svc.image.resolvedTags}
+                                                    triggerClassName="versionTagsTrigger mono monoSecondary"
+                                                  >
+                                                    {svc.image.tag}
+                                                  </CurrentVersionPopover>
+                                                </div>
+                                              ) : null}
                                             </div>
 	                                        </div>
 		                                        <div className="modalKvLabel">状态</div>

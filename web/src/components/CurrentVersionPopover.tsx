@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { listServiceDigestTags } from '../api'
+import { listServiceDigestTags, type ServiceDigestTagsResponse } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 
 type TagSeries = {
@@ -42,8 +42,9 @@ function parseTagSeries(tag: string): TagSeries | null {
 function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefined): string {
   const r = (resolvedTag ?? '').trim()
   if (r) return r
-  if (isStrictSemverTag(tag)) return tag
-  return '?'
+  const t = tag.trim()
+  if (t) return t
+  return '-'
 }
 
 function uniquePreserveOrder(values: string[] | null | undefined): string[] {
@@ -157,6 +158,7 @@ type DigestTagsState = {
   key: string
   tags: string[] | null
   error: string | null
+  scan: ServiceDigestTagsResponse['scan'] | null
 }
 
 type FilterState = {
@@ -201,9 +203,11 @@ export function CurrentVersionPopover(props: {
     key: digestKey,
     tags: null,
     error: null,
+    scan: null,
   }))
   const digestTags = digestState.key === digestKey ? digestState.tags : null
   const loadError = digestState.key === digestKey ? digestState.error : null
+  const scan = digestState.key === digestKey ? digestState.scan : null
 
   const displayTag = useMemo(() => {
     const explicit = props.displayTag.trim()
@@ -267,11 +271,11 @@ export function CurrentVersionPopover(props: {
     const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
     if (fetchTimer.current != null) window.clearTimeout(fetchTimer.current)
     fetchTimer.current = window.setTimeout(() => {
-      setDigestState({ key: digestKey, tags: null, error: null })
+      setDigestState({ key: digestKey, tags: null, error: null, scan: null })
       listServiceDigestTags(serviceId, digestNorm)
         .then((data) => {
           if (!alive) return
-          setDigestState({ key: digestKey, tags: data.tags, error: null })
+          setDigestState({ key: digestKey, tags: data.tags, error: null, scan: data.scan })
         })
         .catch((e: unknown) => {
           if (!alive) return
@@ -279,6 +283,7 @@ export function CurrentVersionPopover(props: {
             key: digestKey,
             tags: [],
             error: e instanceof Error ? e.message : String(e),
+            scan: null,
           })
         })
         .finally(() => {
@@ -523,6 +528,13 @@ export function CurrentVersionPopover(props: {
             {digestTagStats ? (
               <div className="muted">
                 共 {digestTagStats.total} 个标签（semver {digestTagStats.semverTotal} · other {digestTagStats.otherTotal}）
+              </div>
+            ) : null}
+            {scan ? (
+              <div className="muted">
+                扫描 {scan.repoTagsTotal} tags（timeout {scan.manifestsTimeout} · error {scan.manifestsError}）· match{' '}
+                {digestTags?.length ?? 0}
+                {scan.manifestsTimeout + scan.manifestsError > 0 ? ' · 可能不完整' : ''}
               </div>
             ) : null}
 

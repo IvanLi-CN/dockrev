@@ -10,6 +10,9 @@ function Demo(props: {
   resolvedTag?: string | null
   resolvedTags?: string[] | null
 }) {
+  const resolvedTrim = (props.resolvedTag ?? '').trim()
+  const rawTrim = (props.imageTag ?? '').trim()
+  const showRawTag = Boolean(resolvedTrim && rawTrim && resolvedTrim !== rawTrim)
   return (
     <div style={{ padding: 16, maxWidth: 560, display: 'grid', gap: 12 }}>
       <div style={{ maxWidth: 360 }}>
@@ -26,7 +29,7 @@ function Demo(props: {
             <ArrowRightIcon className="inlineIcon" />
             <span className="mono monoPrimary">v0.1.9</span>
           </div>
-          <div className="mono monoSecondary">{props.imageTag}</div>
+          {showRawTag ? <div className="mono monoSecondary">{props.imageTag}</div> : null}
         </div>
       </div>
     </div>
@@ -45,7 +48,7 @@ type Story = StoryObj<typeof Demo>
 
 export const Unknown: Story = {
   args: {
-    displayTag: '?',
+    displayTag: '',
     imageTag: 'latest',
     imageDigest: null,
     resolvedTag: null,
