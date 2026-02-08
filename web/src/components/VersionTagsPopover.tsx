@@ -276,19 +276,21 @@ export function VersionTagsPopover(props: {
     }
   }, [candidateDigestNorm, digestKey, digestTags, open, pinned, serviceId])
 
-  const tagsForCandidate = useMemo(() => {
-    if (!candidateTag) return []
-    if (!candidateDigestNorm) return [candidateTag]
-    return uniquePreserveOrder([candidateTag, ...(digestTags ?? [])])
-  }, [candidateDigestNorm, candidateTag, digestTags])
-
   const allTags = useMemo(() => {
     if (!candidateTag) return []
     if (!candidateDigestNorm) return [candidateTag]
-    if (digestTags == null) return [candidateTag]
-    const restSorted = sortTagsForDisplay(tagsForCandidate.filter((t) => t !== candidateTag))
-    return [candidateTag, ...restSorted]
-  }, [candidateDigestNorm, candidateTag, digestTags, tagsForCandidate])
+    if (digestTags == null) return []
+    const sorted = sortTagsForDisplay(digestTags)
+    return sorted.includes(candidateTag) ? [candidateTag, ...sorted.filter((t) => t !== candidateTag)] : sorted
+  }, [candidateDigestNorm, candidateTag, digestTags])
+
+  const candidateInDigestTags = useMemo(() => {
+    const ct = (candidateTag ?? '').trim()
+    if (!ct) return null
+    if (!candidateDigestNorm) return null
+    if (digestTags == null) return null
+    return digestTags.includes(ct)
+  }, [candidateDigestNorm, candidateTag, digestTags])
 
   const tagStats = useMemo(() => {
     if (!candidateTag) return null
@@ -436,9 +438,12 @@ export function VersionTagsPopover(props: {
             {scan ? (
               <div className="muted">
                 扫描 {scan.repoTagsTotal} tags（timeout {scan.manifestsTimeout} · error {scan.manifestsError}）· match{' '}
-                {digestTags?.length ?? 0}
+                {allTags.length}
                 {scan.manifestsTimeout + scan.manifestsError > 0 ? ' · 可能不完整' : ''}
               </div>
+            ) : null}
+            {candidateInDigestTags === false ? (
+              <div className="muted">注意：候选 tag 未出现在 digest-tags 列表中（digest mismatch 或扫描不完整）</div>
             ) : null}
 
             {showFilter ? (

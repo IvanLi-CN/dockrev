@@ -231,6 +231,15 @@ export function CurrentVersionPopover(props: {
     return { total, semverTotal, otherTotal: total - semverTotal }
   }, [allDigestTags, digestTags])
 
+  const currentTagInDigestTags = useMemo(() => {
+    if (!digestNorm) return null
+    if (digestTags == null) return null
+    const t = (resolvedTagTrim || imageTag).trim()
+    if (!t) return null
+    if (t === '-' || t.startsWith('sha256:')) return null
+    return digestTags.includes(t)
+  }, [digestNorm, digestTags, imageTag, resolvedTagTrim])
+
   const seriesPatchStats = useMemo(() => {
     if (digestTags == null) return null
     if (!rawSeries || rawSeries.precision !== 2 || rawSeries.minor == null) return null
@@ -536,6 +545,9 @@ export function CurrentVersionPopover(props: {
                 {digestTags?.length ?? 0}
                 {scan.manifestsTimeout + scan.manifestsError > 0 ? ' · 可能不完整' : ''}
               </div>
+            ) : null}
+            {currentTagInDigestTags === false ? (
+              <div className="muted">注意：当前 tag 未出现在 digest-tags 列表中（digest mismatch 或扫描不完整）</div>
             ) : null}
 
             {showFilter ? (
