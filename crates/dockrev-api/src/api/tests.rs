@@ -593,9 +593,13 @@ services:
 
     let body = response_json(resp).await;
     let tags = body["tags"].as_array().unwrap();
+    let repo_tags = body["repoTags"].as_array().unwrap();
     assert_eq!(tags.len(), 50);
+    assert_eq!(repo_tags.len(), 50);
     assert_eq!(tags[0].as_str().unwrap(), "1.0.49");
     assert_eq!(tags[49].as_str().unwrap(), "1.0.0");
+    assert_eq!(repo_tags[0].as_str().unwrap(), "1.0.0");
+    assert_eq!(repo_tags[49].as_str().unwrap(), "1.0.49");
 }
 
 #[tokio::test]

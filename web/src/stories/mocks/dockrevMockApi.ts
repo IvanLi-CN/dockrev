@@ -1351,16 +1351,31 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
 
       const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
 
-      // Keep it deterministic: map known digests to many tags so Storybook can exercise long lists.
+      // Keep it deterministic:
+      // - `repoTags`: all registry tags for the image (superset).
+      // - `tags`: tags that match the requested digest (subset).
+      const repoTags =
+        serviceId === 'svc-prod-api'
+          ? ['5.2.1', '5.2.3', '5.2.4', '5.3.0', 'v5.2.1', 'v5.2.3', 'stable', 'latest']
+          : serviceId === 'svc-prod-web'
+            ? (() => {
+                const out: string[] = ['5.1', '5.1.10', '5.1.11', '5.1.12', '5.2', 'v5.2.1', 'stable', 'latest']
+                for (let i = 0; i < 40; i++) out.push(`5.2.${i}`)
+                return out
+              })()
+            : scenario === 'version-tags-popover-demo' && serviceId === 'svc-version-tags'
+              ? ['v0.8.9-arm64', 'v0.8.8-arm64', 'v0.8.8', '0.8.8', 'stable', 'latest']
+              : digestNorm === `sha256:${'a'.repeat(64)}`
+                ? ['v0.1.8', '0.1.8']
+                : [found.svc.image.tag]
+
       const tags =
         digestNorm === d('c', 'c2')
-          ? (() => {
-              const out: string[] = ['5.2', 'v5.2.1', 'stable', 'latest']
-              for (let i = 0; i < 40; i++) out.push(`5.2.${i}`)
-              return out
-            })()
+          ? repoTags.filter((t) => t.startsWith('5.2') || t === 'v5.2.1' || t === 'stable' || t === 'latest')
           : digestNorm === d('a', 'b1')
             ? ['5.2.1', 'v5.2.1']
+            : digestNorm === d('b', '9f') && serviceId === 'svc-prod-api'
+              ? ['5.2.3', 'v5.2.3', 'stable', 'latest']
             : digestNorm === d('b', '9f') && scenario === 'version-tags-popover-demo' && serviceId === 'svc-version-tags'
               ? ['v0.8.8-arm64', 'v0.8.8', '0.8.8', 'stable', 'latest']
             : digestNorm === `sha256:${'a'.repeat(64)}`
@@ -1370,9 +1385,10 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       return json({
         digest: digestNorm,
         tags,
+        repoTags,
         scan: {
-          repoTagsTotal: tags.length,
-          manifestsOk: tags.length,
+          repoTagsTotal: repoTags.length,
+          manifestsOk: repoTags.length,
           manifestsTimeout: 0,
           manifestsError: 0,
         },

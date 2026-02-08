@@ -113,6 +113,7 @@ const FETCH_DEBOUNCE_MS = 220
 type DigestTagsState = {
   key: string
   tags: string[] | null
+  repoTags: string[] | null
   error: string | null
   scan: ServiceDigestTagsResponse['scan'] | null
 }
@@ -153,10 +154,12 @@ export function VersionTagsPopover(props: {
   const [digestState, setDigestState] = useState<DigestTagsState>(() => ({
     key: digestKey,
     tags: null,
+    repoTags: null,
     error: null,
     scan: null,
   }))
   const digestTags = digestState.key === digestKey ? digestState.tags : null
+  const repoTags = digestState.key === digestKey ? digestState.repoTags : null
   const loadError = digestState.key === digestKey ? digestState.error : null
   const scan = digestState.key === digestKey ? digestState.scan : null
 
@@ -247,17 +250,18 @@ export function VersionTagsPopover(props: {
     const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
     if (fetchTimer.current != null) window.clearTimeout(fetchTimer.current)
     fetchTimer.current = window.setTimeout(() => {
-      setDigestState({ key: digestKey, tags: null, error: null, scan: null })
+      setDigestState({ key: digestKey, tags: null, repoTags: null, error: null, scan: null })
       listServiceDigestTags(serviceId, candidateDigestNorm)
         .then((data) => {
           if (!alive) return
-          setDigestState({ key: digestKey, tags: data.tags, error: null, scan: data.scan })
+          setDigestState({ key: digestKey, tags: data.tags, repoTags: data.repoTags ?? null, error: null, scan: data.scan })
         })
         .catch((e: unknown) => {
           if (!alive) return
           setDigestState({
             key: digestKey,
             tags: [],
+            repoTags: null,
             error: e instanceof Error ? e.message : String(e),
             scan: null,
           })
@@ -284,6 +288,14 @@ export function VersionTagsPopover(props: {
     return sorted.includes(candidateTag) ? [candidateTag, ...sorted.filter((t) => t !== candidateTag)] : sorted
   }, [candidateDigestNorm, candidateTag, digestTags])
 
+  const allRepoTags = useMemo(() => {
+    if (!candidateTag) return []
+    if (!candidateDigestNorm) return []
+    if (repoTags == null) return []
+    const sorted = sortTagsForDisplay(repoTags)
+    return sorted.includes(candidateTag) ? [candidateTag, ...sorted.filter((t) => t !== candidateTag)] : sorted
+  }, [candidateDigestNorm, candidateTag, repoTags])
+
   const candidateInDigestTags = useMemo(() => {
     const ct = (candidateTag ?? '').trim()
     if (!ct) return null
@@ -292,6 +304,14 @@ export function VersionTagsPopover(props: {
     return digestTags.includes(ct)
   }, [candidateDigestNorm, candidateTag, digestTags])
 
+  const candidateInRepoTags = useMemo(() => {
+    const ct = (candidateTag ?? '').trim()
+    if (!ct) return null
+    if (!candidateDigestNorm) return null
+    if (repoTags == null) return null
+    return repoTags.includes(ct)
+  }, [candidateDigestNorm, candidateTag, repoTags])
+
   const tagStats = useMemo(() => {
     if (!candidateTag) return null
     const total = allTags.length
@@ -299,13 +319,30 @@ export function VersionTagsPopover(props: {
     return { total, semverTotal, otherTotal: total - semverTotal }
   }, [allTags, candidateTag])
 
+  const repoTagStats = useMemo(() => {
+    if (!candidateTag) return null
+    if (!candidateDigestNorm) return null
+    if (repoTags == null) return null
+    const total = allRepoTags.length
+    const semverTotal = allRepoTags.filter(isStrictSemverTag).length
+    return { total, semverTotal, otherTotal: total - semverTotal }
+  }, [allRepoTags, candidateDigestNorm, candidateTag, repoTags])
+
   const filteredTags = useMemo(() => {
     if (!candidateTag) return []
     const q = tagFilter.trim().toLowerCase()
     if (!q) return allTags
     return allTags.filter((t) => t.toLowerCase().includes(q))
   }, [allTags, candidateTag, tagFilter])
-  const showFilter = allTags.length > 20 || tagFilter.trim().length > 0
+
+  const filteredRepoTags = useMemo(() => {
+    if (!candidateTag) return []
+    const q = tagFilter.trim().toLowerCase()
+    if (!q) return allRepoTags
+    return allRepoTags.filter((t) => t.toLowerCase().includes(q))
+  }, [allRepoTags, candidateTag, tagFilter])
+
+  const showFilter = Math.max(allTags.length, allRepoTags.length) > 20 || tagFilter.trim().length > 0
 
   useLayoutEffect(() => {
     if (!open) return
@@ -408,7 +445,7 @@ export function VersionTagsPopover(props: {
       </div>
 
       <div className="versionTagsPopoverSection">
-        <div className="label">该 digest 标签</div>
+        <div className="label">同 digest 的 tags</div>
         {!candidateTag ? (
           <div className="muted">无候选版本</div>
         ) : !candidateDigestNorm ? (
@@ -482,6 +519,60 @@ export function VersionTagsPopover(props: {
             </div>
           </>
         )}
+      </div>
+
+      <div className="versionTagsPopoverSection">
+        <details>
+          <summary className="label">镜像所有 tags{repoTagStats ? `（${repoTagStats.total}）` : ''}</summary>
+          {!candidateTag ? (
+            <div className="muted">无候选版本</div>
+          ) : !candidateDigestNorm ? (
+            <div className="muted">digest 缺失，无法加载镜像 tags</div>
+          ) : repoTags == null ? (
+            <div className="muted">加载中…</div>
+          ) : loadError ? (
+            <div className="muted">加载失败：{loadError}</div>
+          ) : allRepoTags.length === 0 ? (
+            <div className="muted">未找到镜像 tags</div>
+          ) : (
+            <>
+              {repoTagStats ? (
+                <div className="muted">
+                  共 {repoTagStats.total} 个标签（semver {repoTagStats.semverTotal} · other {repoTagStats.otherTotal}）
+                </div>
+              ) : null}
+              {candidateInRepoTags === false ? (
+                <div className="muted">注意：候选 tag 未出现在 registry tag 列表中（list_tags 不完整或 tag 已删除）</div>
+              ) : null}
+              {tagFilter.trim().length > 0 ? (
+                <div className="muted">
+                  匹配 {filteredRepoTags.length} / {allRepoTags.length}
+                </div>
+              ) : null}
+              <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
+              <div className="versionTagsPopoverActions">
+                {tagFilter.trim().length > 0 ? (
+                  <button
+                    type="button"
+                    className="versionTagsPopoverAction"
+                    onClick={() => copyText(filteredRepoTags.join('\n'))}
+                    disabled={filteredRepoTags.length === 0}
+                  >
+                    复制（匹配）
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="versionTagsPopoverAction"
+                  onClick={() => copyText(allRepoTags.join('\n'))}
+                  disabled={allRepoTags.length === 0}
+                >
+                  复制（全部）
+                </button>
+              </div>
+            </>
+          )}
+        </details>
       </div>
 
     </div>

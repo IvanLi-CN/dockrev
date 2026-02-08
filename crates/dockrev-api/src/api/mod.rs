@@ -1962,7 +1962,7 @@ async fn list_service_digest_tags(
     const MANIFEST_BUDGET: Duration = Duration::from_secs(40);
     const MANIFEST_CONCURRENCY: usize = 10;
 
-    let tags = match timeout(LIST_TAGS_TIMEOUT, state.registry.list_tags(&img)).await {
+    let repo_tags = match timeout(LIST_TAGS_TIMEOUT, state.registry.list_tags(&img)).await {
         Ok(Ok(tags)) => tags,
         Ok(Err(e)) => return Err(map_internal(e)),
         Err(_) => {
@@ -1972,7 +1972,7 @@ async fn list_service_digest_tags(
         }
     };
 
-    let repo_tags_total = tags.len();
+    let repo_tags_total = repo_tags.len();
     let wanted = digest.clone();
 
     let registry = state.registry.clone();
@@ -1992,7 +1992,7 @@ async fn list_service_digest_tags(
     }
 
     let mut join_set: JoinSet<ScanOutcome> = JoinSet::new();
-    let mut queue = tags.into_iter();
+    let mut queue = repo_tags.iter().cloned();
 
     let spawn_one = |join_set: &mut JoinSet<ScanOutcome>,
                      tag: String,
@@ -2108,6 +2108,7 @@ async fn list_service_digest_tags(
     Ok(Json(ServiceDigestTagsResponse {
         digest,
         tags: sorted,
+        repo_tags,
         scan: ServiceDigestTagsScanSummary {
             repo_tags_total,
             manifests_ok,

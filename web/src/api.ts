@@ -80,6 +80,7 @@ export type ServiceDigestTagsScanSummary = {
 export type ServiceDigestTagsResponse = {
   digest: string
   tags: string[]
+  repoTags?: string[]
   scan: ServiceDigestTagsScanSummary
 }
 

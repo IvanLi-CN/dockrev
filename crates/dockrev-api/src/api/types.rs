@@ -1212,5 +1212,6 @@ pub struct ServiceDigestTagsScanSummary {
 pub struct ServiceDigestTagsResponse {
     pub digest: String,
     pub tags: Vec<String>,
+    pub repo_tags: Vec<String>,
     pub scan: ServiceDigestTagsScanSummary,
 }
