@@ -6,6 +6,10 @@ const config: StorybookConfig = {
     options: {},
   },
   stories: ['../src/**/*.mdx', '../src/**/*.stories.@(js|jsx|mjs|ts|tsx)'],
+  core: {
+    // Storybook's "What's new" banner is noise for our review workflow.
+    disableWhatsNewNotifications: true,
+  },
 }
 
 export default config

@@ -243,15 +243,22 @@ export function VersionTagsPopover(props: {
 
   useEffect(() => {
     if (!open) return
-    if (!candidateDigestNorm) return
-    if (digestTags != null) return
+    if (!(candidateTag ?? '').trim()) return
+
+    // Always fetch the repo tag list (debug value) even when digest is missing.
+    // Digest-matching tags are only available when digest is known.
+    if (candidateDigestNorm) {
+      if (digestTags != null && repoTags != null) return
+    } else {
+      if (repoTags != null) return
+    }
 
     let alive = true
     const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
     if (fetchTimer.current != null) window.clearTimeout(fetchTimer.current)
     fetchTimer.current = window.setTimeout(() => {
       setDigestState({ key: digestKey, tags: null, repoTags: null, error: null, scan: null })
-      listServiceDigestTags(serviceId, candidateDigestNorm)
+      listServiceDigestTags(serviceId, candidateDigestNorm ?? '')
         .then((data) => {
           if (!alive) return
           setDigestState({ key: digestKey, tags: data.tags, repoTags: data.repoTags ?? null, error: null, scan: data.scan })
@@ -278,7 +285,7 @@ export function VersionTagsPopover(props: {
         fetchTimer.current = null
       }
     }
-  }, [candidateDigestNorm, digestKey, digestTags, open, pinned, serviceId])
+  }, [candidateDigestNorm, candidateTag, digestKey, digestTags, open, pinned, repoTags, serviceId])
 
   const allTags = useMemo(() => {
     if (!candidateTag) return []
@@ -290,11 +297,10 @@ export function VersionTagsPopover(props: {
 
   const allRepoTags = useMemo(() => {
     if (!candidateTag) return []
-    if (!candidateDigestNorm) return []
     if (repoTags == null) return []
     const sorted = sortTagsForDisplay(repoTags)
     return sorted.includes(candidateTag) ? [candidateTag, ...sorted.filter((t) => t !== candidateTag)] : sorted
-  }, [candidateDigestNorm, candidateTag, repoTags])
+  }, [candidateTag, repoTags])
 
   const candidateInDigestTags = useMemo(() => {
     const ct = (candidateTag ?? '').trim()
@@ -307,10 +313,9 @@ export function VersionTagsPopover(props: {
   const candidateInRepoTags = useMemo(() => {
     const ct = (candidateTag ?? '').trim()
     if (!ct) return null
-    if (!candidateDigestNorm) return null
     if (repoTags == null) return null
     return repoTags.includes(ct)
-  }, [candidateDigestNorm, candidateTag, repoTags])
+  }, [candidateTag, repoTags])
 
   const tagStats = useMemo(() => {
     if (!candidateTag) return null
@@ -321,12 +326,11 @@ export function VersionTagsPopover(props: {
 
   const repoTagStats = useMemo(() => {
     if (!candidateTag) return null
-    if (!candidateDigestNorm) return null
     if (repoTags == null) return null
     const total = allRepoTags.length
     const semverTotal = allRepoTags.filter(isStrictSemverTag).length
     return { total, semverTotal, otherTotal: total - semverTotal }
-  }, [allRepoTags, candidateDigestNorm, candidateTag, repoTags])
+  }, [allRepoTags, candidateTag, repoTags])
 
   const filteredTags = useMemo(() => {
     if (!candidateTag) return []
@@ -518,8 +522,6 @@ export function VersionTagsPopover(props: {
         <div className="label">镜像所有标签{repoTagStats ? `（${repoTagStats.total}）` : ''}</div>
         {!candidateTag ? (
           <div className="muted">无候选版本</div>
-        ) : !candidateDigestNorm ? (
-          <div className="muted">digest 缺失，无法加载镜像标签</div>
         ) : repoTags == null ? (
           <div className="muted">加载中…</div>
         ) : loadError ? (
@@ -533,7 +535,7 @@ export function VersionTagsPopover(props: {
                 共 {repoTagStats.total} 个标签（semver {repoTagStats.semverTotal} · 其他 {repoTagStats.otherTotal}）
               </div>
             ) : null}
-            {scan ? (
+            {scan && candidateDigestNorm ? (
               <div className="muted">
                 扫描 {scan.repoTagsTotal} 个标签（成功 {scan.manifestsOk} · 超时 {scan.manifestsTimeout} · 错误 {scan.manifestsError}）
                 {scan.manifestsTimeout + scan.manifestsError > 0 ? ' · 可能不完整' : ''}

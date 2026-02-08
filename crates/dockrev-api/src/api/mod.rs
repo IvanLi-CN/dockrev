@@ -1919,13 +1919,16 @@ async fn list_service_digest_tags(
 
     let digest_input = q.digest.unwrap_or_default();
     let digest_trimmed = digest_input.trim();
-    if digest_trimmed.is_empty() {
-        return Err(ApiError::invalid_argument("digest is required"));
-    }
-    let digest = if digest_trimmed.contains(':') {
-        digest_trimmed.to_string()
+    // This endpoint is primarily used for UI observability. When digest is missing, we still want
+    // to return the full `repo_tags` list so the UI can show something actionable (and avoid
+    // "empty bubbles").
+    let (digest, wanted) = if digest_trimmed.is_empty() {
+        (String::new(), None)
+    } else if digest_trimmed.contains(':') {
+        (digest_trimmed.to_string(), Some(digest_trimmed.to_string()))
     } else {
-        format!("sha256:{digest_trimmed}")
+        let normalized = format!("sha256:{digest_trimmed}");
+        (normalized.clone(), Some(normalized))
     };
 
     let stack_id = state
@@ -1973,7 +1976,19 @@ async fn list_service_digest_tags(
     };
 
     let repo_tags_total = repo_tags.len();
-    let wanted = digest.clone();
+    let Some(wanted) = wanted else {
+        return Ok(Json(ServiceDigestTagsResponse {
+            digest,
+            tags: Vec::new(),
+            repo_tags,
+            scan: ServiceDigestTagsScanSummary {
+                repo_tags_total,
+                manifests_ok: 0,
+                manifests_timeout: 0,
+                manifests_error: 0,
+            },
+        }));
+    };
 
     let registry = state.registry.clone();
     let img = img.clone();

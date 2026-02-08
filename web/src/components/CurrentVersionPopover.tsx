@@ -288,13 +288,12 @@ export function CurrentVersionPopover(props: {
   }, [allRepoTags, repoTags])
 
   const currentTagInRepoTags = useMemo(() => {
-    if (!digestNorm) return null
     if (repoTags == null) return null
     const t = (resolvedTagTrim || imageTag).trim()
     if (!t) return null
     if (t === '-' || t.startsWith('sha256:')) return null
     return repoTags.includes(t)
-  }, [digestNorm, imageTag, repoTags, resolvedTagTrim])
+  }, [imageTag, repoTags, resolvedTagTrim])
 
   const filteredRepoTags = useMemo(() => {
     if (repoTags == null) return []
@@ -307,15 +306,21 @@ export function CurrentVersionPopover(props: {
 
   useEffect(() => {
     if (!open) return
-    if (!digestNorm) return
-    if (digestTags != null) return
+
+    // Always fetch the repo tag list (debug value) even when digest is missing.
+    // Digest-matching tags are only available when digest is known.
+    if (digestNorm) {
+      if (digestTags != null && repoTags != null) return
+    } else {
+      if (repoTags != null) return
+    }
 
     let alive = true
     const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
     if (fetchTimer.current != null) window.clearTimeout(fetchTimer.current)
     fetchTimer.current = window.setTimeout(() => {
       setDigestState({ key: digestKey, tags: null, repoTags: null, error: null, scan: null })
-      listServiceDigestTags(serviceId, digestNorm)
+      listServiceDigestTags(serviceId, digestNorm ?? '')
         .then((data) => {
           if (!alive) return
           setDigestState({ key: digestKey, tags: data.tags, repoTags: data.repoTags ?? null, error: null, scan: data.scan })
@@ -342,7 +347,7 @@ export function CurrentVersionPopover(props: {
         fetchTimer.current = null
       }
     }
-  }, [digestKey, digestNorm, digestTags, open, pinned, serviceId])
+  }, [digestKey, digestNorm, digestTags, open, pinned, repoTags, serviceId])
 
   const clearHoverCloseTimer = useCallback(() => {
     if (hoverCloseTimer.current == null) return
@@ -707,9 +712,7 @@ export function CurrentVersionPopover(props: {
 
       <div className="versionTagsPopoverSection">
         <div className="label">镜像所有标签{repoTagStats ? `（${repoTagStats.total}）` : ''}</div>
-        {!digestNorm ? (
-          <div className="muted">digest 未知，无法加载镜像标签</div>
-        ) : repoTags == null ? (
+        {repoTags == null ? (
           <div className="muted">加载中…</div>
         ) : loadError ? (
           <div className="muted">加载失败：{loadError}</div>
@@ -722,7 +725,7 @@ export function CurrentVersionPopover(props: {
                 共 {repoTagStats.total} 个标签（semver {repoTagStats.semverTotal} · 其他 {repoTagStats.otherTotal}）
               </div>
             ) : null}
-            {scan ? (
+            {scan && digestNorm ? (
               <div className="muted">
                 扫描 {scan.repoTagsTotal} 个标签（成功 {scan.manifestsOk} · 超时 {scan.manifestsTimeout} · 错误 {scan.manifestsError}）
                 {scan.manifestsTimeout + scan.manifestsError > 0 ? ' · 可能不完整' : ''}
