@@ -88,3 +88,4 @@
 | 43fyu | Dockrev Web: 更新候选页视图状态持久化（tag in URL + stack 折叠） | 已完成 | `43fyu:persist-candidates-view-state/PLAN.md` | 2026-02-06 | PR #59 |
 | n2z72 | Dockrev API: resolvedTag 推测兼容 runtime platform digest | 已完成 | `n2z72:fix-resolvedtag-platform-digest-match/PLAN.md` | 2026-02-06 | PR #61 |
 | 9as6k | Dockrev Web: 版本 tags 气泡触发区域仅文本生效 | 已完成 | `9as6k:tag-popover-trigger-text-only/PLAN.md` | 2026-02-07 | PR #62 |
+| k7hsm | Dockrev Web: 当前/候选版本气泡拆分 + 移除原生 tooltip | 待实现 | `k7hsm:split-version-popovers/PLAN.md` | 2026-02-08 | - |
