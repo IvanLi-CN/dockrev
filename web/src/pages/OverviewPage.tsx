@@ -24,6 +24,7 @@ import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../component
 import { UpdateTargetSelect } from '../components/UpdateTargetSelect'
 import { useConfirm } from '../confirm'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
+import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
 
 function formatShort(ts?: string | null) {
   if (!ts) return '-'
@@ -82,17 +83,6 @@ function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefin
   if (r) return r
   if (isStrictSemverTag(tag)) return tag
   return '?'
-}
-
-function formatCurrentCandidateTagLine(currentTag: string, candidateTag: string | null): ReactNode {
-  const cur = currentTag.trim()
-  const cand = (candidateTag ?? '').trim()
-  if (!cand || cand === '-' || cand === cur) return cur
-  return (
-    <>
-      <span>{cur}</span> <ArrowRightIcon className="inlineIcon" /> <span>{cand}</span>
-    </>
-  )
 }
 
 function formatTagTooltip(
@@ -242,7 +232,7 @@ function withCollapseDefaults(
 
 export function OverviewPage(props: {
   onComposeHint: (hint: { path?: string; profile?: string; lastScan?: string }) => void
-  onTopActions: (node: React.ReactNode) => void
+  onTopActions: (node: ReactNode) => void
 }) {
   const { onComposeHint, onTopActions } = props
   const confirm = useConfirm()
@@ -516,7 +506,7 @@ export function OverviewPage(props: {
       targetTag?: string
       targetDigest?: string | null
       getTarget?: () => { targetTag?: string; targetDigest?: string | null }
-      confirmBody?: React.ReactNode
+      confirmBody?: ReactNode
       confirmTitle?: string
     }) => {
       const scopeLabel = input.scope === 'all' ? 'all' : input.scope === 'stack' ? 'stack' : 'service'
@@ -956,9 +946,10 @@ export function OverviewPage(props: {
 
                 {!isCollapsed
                   ? rows.map(({ svc, stt }) => {
-	                      const currentTitle = formatTagTooltip(svc.image.tag, svc.image.digest, svc.image.resolvedTag, svc.image.resolvedTags)
-	                      const candidateTitle = svc.candidate ? formatTagTooltip(svc.candidate.tag, svc.candidate.digest, undefined, undefined) : undefined
                       const isDockrev = isDockrevService(svc)
+                      const currentDisplayTag = inferredTagForDisplay(svc.image.tag, svc.image.resolvedTag)
+                      const candidateTag = svc.candidate?.tag && svc.candidate.tag !== '-' ? svc.candidate.tag : null
+                      const showCandidate = Boolean(candidateTag && candidateTag !== currentDisplayTag)
                       const svcApply =
                         stt === 'updatable'
                           ? { enabled: true, title: null as string | null, note: null as string | null }
@@ -1023,43 +1014,27 @@ export function OverviewPage(props: {
 	                            )
 	                          })()}
 	                          <div className="cellTwoLine">
-	                            {svc.candidate?.tag && svc.candidate.tag !== '-' ? (
-	                              <VersionTagsPopover
-	                                serviceId={svc.id}
-	                                candidateTag={svc.candidate.tag}
-	                                candidateDigest={svc.candidate.digest ?? null}
-	                                triggerTitle={
-	                                  [
-	                                    currentTitle,
-	                                    candidateTitle ? `candidate: ${candidateTitle}` : null,
-	                                  ]
-	                                    .filter(Boolean)
-	                                    .join('\n') || undefined
-	                                }
-	                              >
-	                                {formatCurrentCandidateTagLine(
-	                                  inferredTagForDisplay(svc.image.tag, svc.image.resolvedTag),
-	                                  svc.candidate?.tag ?? null,
-	                                )}
-	                              </VersionTagsPopover>
-	                            ) : (
-	                              <div
-	                                className="mono monoPrimary"
-	                                title={
-	                                  [
-	                                    currentTitle,
-	                                    candidateTitle ? `candidate: ${candidateTitle}` : null,
-	                                  ]
-	                                    .filter(Boolean)
-	                                    .join('\n')
-	                                }
-	                              >
-	                                {formatCurrentCandidateTagLine(
-	                                  inferredTagForDisplay(svc.image.tag, svc.image.resolvedTag),
-	                                  svc.candidate?.tag ?? null,
-	                                )}
-	                              </div>
-	                            )}
+                              <div className="versionLine">
+                                <CurrentVersionPopover
+                                  displayTag={currentDisplayTag}
+                                  imageTag={svc.image.tag}
+                                  imageDigest={svc.image.digest ?? null}
+                                  resolvedTag={svc.image.resolvedTag}
+                                  resolvedTags={svc.image.resolvedTags}
+                                />
+                                {showCandidate ? (
+                                  <>
+                                    <ArrowRightIcon className="inlineIcon" />
+                                    <VersionTagsPopover
+                                      serviceId={svc.id}
+                                      candidateTag={candidateTag}
+                                      candidateDigest={svc.candidate?.digest ?? null}
+                                    >
+                                      {candidateTag}
+                                    </VersionTagsPopover>
+                                  </>
+                                ) : null}
+                              </div>
 	                            <div className="mono monoSecondary">{svc.image.tag}</div>
 	                          </div>
 	                          <StatusRemark service={svc} status={stt} />

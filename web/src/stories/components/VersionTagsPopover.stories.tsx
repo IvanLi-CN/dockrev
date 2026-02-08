@@ -10,19 +10,20 @@ function d(fill: string, last2: string) {
 function Demo(props: { serviceId: string; candidateTag: string; candidateDigest: string | null }) {
   return (
     <div style={{ padding: 16, maxWidth: 560, display: 'grid', gap: 12 }}>
-      <div className="muted">Hover or click the version line to open the popover.</div>
+      <div className="muted">Hover or click the candidate tag to open the popover.</div>
       <div style={{ maxWidth: 360 }}>
         <div className="cellTwoLine">
-          <VersionTagsPopover
-            serviceId={props.serviceId}
-            candidateTag={props.candidateTag}
-            candidateDigest={props.candidateDigest}
-            triggerTitle={`${props.candidateTag}${props.candidateDigest ? `@${props.candidateDigest}` : ''}`}
-          >
-            <>
-              <span>?</span> <ArrowRightIcon className="inlineIcon" /> <span>{props.candidateTag}</span>
-            </>
-          </VersionTagsPopover>
+          <div className="versionLine">
+            <span className="mono monoPrimary">?</span>
+            <ArrowRightIcon className="inlineIcon" />
+            <VersionTagsPopover
+              serviceId={props.serviceId}
+              candidateTag={props.candidateTag}
+              candidateDigest={props.candidateDigest}
+            >
+              {props.candidateTag}
+            </VersionTagsPopover>
+          </div>
           <div className="mono monoSecondary">latest</div>
         </div>
       </div>
@@ -66,4 +67,3 @@ export const ApiError: Story = {
     candidateDigest: d('b', '9f'),
   },
 }
-

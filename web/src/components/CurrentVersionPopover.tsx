@@ -1,30 +1,37 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { listServiceCandidates, type ServiceCandidateOption } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 
-function uniqueSorted(values: Array<string | null | undefined>): string[] {
-  const out = Array.from(new Set(values.map((v) => (v ?? '').trim()).filter(Boolean)))
-  out.sort((a, b) => a.localeCompare(b))
-  return out
+function isStrictSemverTag(tag: string): boolean {
+  const t = tag.trim()
+  if (!t) return false
+  return /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(t)
 }
 
-function digestMatches(a: string | null, b: string | null): boolean {
-  const aa = normalizeDigest(a)
-  const bb = normalizeDigest(b)
-  return Boolean(aa && bb && aa === bb)
+function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefined): string {
+  const r = (resolvedTag ?? '').trim()
+  if (r) return r
+  if (isStrictSemverTag(tag)) return tag
+  return '?'
+}
+
+function uniqueSorted(values: string[] | null | undefined): string[] {
+  const out = Array.from(new Set((values ?? []).map((v) => v.trim()).filter(Boolean)))
+  out.sort((a, b) => a.localeCompare(b))
+  return out
 }
 
 const HOVER_CLOSE_DELAY_MS = 300
 const POPOVER_ANIM_MS = 160
 
-export function VersionTagsPopover(props: {
-  serviceId: string
-  candidateTag: string | null
-  candidateDigest: string | null
-  children: ReactNode
+export function CurrentVersionPopover(props: {
+  displayTag: string
+  imageTag: string
+  imageDigest?: string | null
+  resolvedTag?: string | null
+  resolvedTags?: string[] | null
 }) {
-  const { serviceId, candidateTag, candidateDigest, children } = props
+  const { imageTag, imageDigest, resolvedTag, resolvedTags } = props
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const hoverCloseTimer = useRef<number | null>(null)
@@ -39,10 +46,17 @@ export function VersionTagsPopover(props: {
   const [popoverVisible, setPopoverVisible] = useState(false)
 
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
-  const [opts, setOpts] = useState<ServiceCandidateOption[] | null>(null)
-  const [loadError, setLoadError] = useState<string | null>(null)
 
-  const candidateDigestNorm = useMemo(() => normalizeDigest(candidateDigest), [candidateDigest])
+  const digestNorm = useMemo(() => normalizeDigest(imageDigest), [imageDigest])
+
+  const displayTag = useMemo(() => {
+    const explicit = props.displayTag.trim()
+    if (explicit) return explicit
+    return inferredTagForDisplay(imageTag, resolvedTag)
+  }, [imageTag, props.displayTag, resolvedTag])
+
+  const resolvedTagTrim = useMemo(() => (resolvedTag ?? '').trim(), [resolvedTag])
+  const resolvedTagsList = useMemo(() => uniqueSorted(resolvedTags), [resolvedTags])
 
   const clearHoverCloseTimer = useCallback(() => {
     if (hoverCloseTimer.current == null) return
@@ -118,39 +132,6 @@ export function VersionTagsPopover(props: {
     }
   }, [clearHoverCloseTimer, clearPopoverShowRaf, clearPopoverUnmountTimer])
 
-  useEffect(() => {
-    if (!open) return
-    if (!candidateDigestNorm) return
-    if (opts) return
-
-    let alive = true
-    void (async () => {
-      setLoadError(null)
-      try {
-        const data = await listServiceCandidates(serviceId)
-        if (!alive) return
-        setOpts(data)
-      } catch (e: unknown) {
-        if (!alive) return
-        setLoadError(e instanceof Error ? e.message : String(e))
-        setOpts([])
-      }
-    })()
-
-    return () => {
-      alive = false
-    }
-  }, [candidateDigestNorm, open, opts, serviceId])
-
-  const tagsForCandidate = useMemo(() => {
-    if (!candidateTag) return []
-    if (!candidateDigestNorm) return [candidateTag]
-    const fromCandidates = (opts ?? [])
-      .filter((o) => digestMatches(o.digest ?? null, candidateDigestNorm))
-      .map((o) => o.tag)
-    return uniqueSorted([candidateTag, ...fromCandidates])
-  }, [candidateDigestNorm, candidateTag, opts])
-
   useLayoutEffect(() => {
     if (!open) return
     const trigger = triggerRef.current
@@ -215,13 +196,21 @@ export function VersionTagsPopover(props: {
     }
   }, [close, pinned])
 
+  const why = useMemo(() => {
+    if (resolvedTagTrim) return 'resolvedTag 存在，UI 优先显示推测结果。'
+    if (isStrictSemverTag(imageTag)) return 'raw tag 本身是 semver，UI 直接显示。'
+    const parts: string[] = ['resolvedTag 缺失，且 raw tag 不是 semver；因此 UI 无法推测，显示 `?`。']
+    if (!digestNorm) parts.push('同时 digest 未知，无法基于 digest 反查标签。')
+    return parts.join(' ')
+  }, [digestNorm, imageTag, resolvedTagTrim])
+
   const popoverBody = renderPopover ? (
     <div
       ref={popoverRef}
       className="versionTagsPopover"
       style={pos ? { left: pos.left, top: pos.top } : undefined}
       role="dialog"
-      aria-label="Version tags"
+      aria-label="Current version"
       data-state={popoverVisible ? 'open' : 'closed'}
       onPointerEnter={() => {
         clearHoverCloseTimer()
@@ -234,10 +223,10 @@ export function VersionTagsPopover(props: {
     >
       <div className="versionTagsPopoverHeader">
         <div className="versionTagsPopoverTitle">
-          <span className="mono monoPrimary">{candidateTag ?? '-'}</span>
-          {candidateDigestNorm ? (
-            <span className="mono muted" title={candidateDigestNorm}>
-              {shortenDigest(candidateDigestNorm)}
+          <span className="mono monoPrimary">{displayTag}</span>
+          {digestNorm ? (
+            <span className="mono muted" title={digestNorm}>
+              {shortenDigest(digestNorm)}
             </span>
           ) : (
             <span className="mono muted">digest 未知</span>
@@ -246,42 +235,32 @@ export function VersionTagsPopover(props: {
       </div>
 
       <div className="versionTagsPopoverSection">
-        <div className="label">该版本所有标签</div>
-        {!candidateTag ? (
-          <div className="muted">无候选版本</div>
-        ) : !candidateDigestNorm ? (
-          <>
-            <div className="versionTagsPopoverChips">
-              <span className="versionTagsChip" title={candidateTag}>
-                <span className="mono">{candidateTag}</span>
-              </span>
-            </div>
-            <div className="muted">digest 缺失，无法聚合更多标签</div>
-          </>
-        ) : opts == null ? (
-          <div className="muted">加载中…</div>
-        ) : loadError ? (
-          <>
-            <div className="versionTagsPopoverChips">
-              <span className="versionTagsChip" title={candidateTag}>
-                <span className="mono">{candidateTag}</span>
-              </span>
-            </div>
-            <div className="muted">候选列表不可用</div>
-          </>
-        ) : tagsForCandidate.length === 0 ? (
-          <div className="muted">未找到同 digest 的标签</div>
-        ) : (
+        <div className="label">字段</div>
+        <div className="muted">
+          raw tag <span className="mono">{imageTag || '-'}</span>
+        </div>
+        <div className="muted">
+          resolvedTag <span className="mono">{resolvedTagTrim || '-'}</span>
+        </div>
+      </div>
+
+      {resolvedTagsList.length > 0 ? (
+        <div className="versionTagsPopoverSection">
+          <div className="label">resolvedTags</div>
           <div className="versionTagsPopoverChips">
-            {tagsForCandidate.map((t) => (
+            {resolvedTagsList.map((t) => (
               <span key={t} className="versionTagsChip" title={t}>
                 <span className="mono">{t}</span>
               </span>
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      ) : null}
 
+      <div className="versionTagsPopoverSection">
+        <div className="label">说明</div>
+        <div className="muted">{why}</div>
+      </div>
     </div>
   ) : null
 
@@ -312,9 +291,10 @@ export function VersionTagsPopover(props: {
           showPopover()
         }}
       >
-        {children}
+        {displayTag}
       </button>
       {renderPopover ? createPortal(popoverBody, document.body) : null}
     </>
   )
 }
+

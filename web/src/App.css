@@ -365,6 +365,18 @@
   white-space: nowrap;
 }
 
+.versionLine {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.versionLine > * {
+  min-width: 0;
+}
+
 .versionTagsTrigger:hover {
   text-decoration: underline;
 }
