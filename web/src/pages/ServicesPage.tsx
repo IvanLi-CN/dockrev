@@ -716,7 +716,18 @@ export function ServicesPage(props: {
                                   </>
                                 ) : null}
                               </div>
-	                            <div className="mono monoSecondary">{svc.image.tag}</div>
+	                            <div>
+                                <CurrentVersionPopover
+                                  displayTag={currentDisplayTag}
+                                  imageTag={svc.image.tag}
+                                  imageDigest={svc.image.digest ?? null}
+                                  resolvedTag={svc.image.resolvedTag}
+                                  resolvedTags={svc.image.resolvedTags}
+                                  triggerClassName="versionTagsTrigger mono monoSecondary"
+                                >
+                                  {svc.image.tag}
+                                </CurrentVersionPopover>
+	                            </div>
 	                          </div>
                           <StatusRemark service={svc} status={status} />
 	                          <div
