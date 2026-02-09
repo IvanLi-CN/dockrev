@@ -136,9 +136,7 @@ export function UpdateTargetSelect(props: {
       {showComparison ? (
         <div className="muted">
           <span className="mono">{currentTag}</span> →{' '}
-          <span className="mono" title={effectiveDigest ? `${effectiveTag}@${effectiveDigest}` : effectiveTag}>
-            {effectiveTag}
-          </span>
+          <span className="mono">{effectiveTag}</span>
         </div>
       ) : null}
     </div>

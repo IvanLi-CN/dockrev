@@ -245,9 +245,8 @@ export function ServiceDetailPage(props: {
 	                  if (!service) return
                     const selected = { tag: service.candidate?.tag ?? '-', digest: service.candidate?.digest ?? null }
                     const currentDisplayTag = formatTagDisplay(service.image.tag, service.image.resolvedTag)
-                    const resolvedTagTrim = (service.image.resolvedTag ?? '').trim()
                     const rawTagTrim = (service.image.tag ?? '').trim()
-                    const showRawTag = Boolean(resolvedTagTrim && rawTagTrim && resolvedTagTrim !== rawTagTrim)
+                    const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
 	                  const ok = await confirm({
 	                    title: `确认更新服务 ${service.name}？`,
 	                    body: (
@@ -497,9 +496,8 @@ export function ServiceDetailPage(props: {
       />
     )
 
-    const resolvedTagTrim = (service.image.resolvedTag ?? '').trim()
     const rawTagTrim = (service.image.tag ?? '').trim()
-    const showRawTag = Boolean(resolvedTagTrim && rawTagTrim && resolvedTagTrim !== rawTagTrim)
+    const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentTag)
     const rawTagNode = showRawTag ? (
       <>
         {' · '}raw:{' '}

@@ -622,9 +622,8 @@ export function ServicesPage(props: {
                   ? g.services.map(({ svc, status }) => {
                       const isDockrev = isDockrevService(svc)
                       const currentDisplayTag = formatTagDisplay(svc.image.tag, svc.image.resolvedTag)
-                      const resolvedTagTrim = (svc.image.resolvedTag ?? '').trim()
                       const rawTagTrim = (svc.image.tag ?? '').trim()
-                      const showRawTag = Boolean(resolvedTagTrim && rawTagTrim && resolvedTagTrim !== rawTagTrim)
+                      const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
                       const candidateTag = svc.candidate?.tag && svc.candidate.tag !== '-' ? svc.candidate.tag : null
                       const showCandidate = Boolean(candidateTag && candidateTag !== currentDisplayTag)
                       const svcApply =

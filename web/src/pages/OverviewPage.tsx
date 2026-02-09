@@ -941,9 +941,8 @@ export function OverviewPage(props: {
                   ? rows.map(({ svc, stt }) => {
                       const isDockrev = isDockrevService(svc)
                       const currentDisplayTag = formatTagDisplay(svc.image.tag, svc.image.resolvedTag)
-                      const resolvedTagTrim = (svc.image.resolvedTag ?? '').trim()
                       const rawTagTrim = (svc.image.tag ?? '').trim()
-                      const showRawTag = Boolean(resolvedTagTrim && rawTagTrim && resolvedTagTrim !== rawTagTrim)
+                      const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
                       const candidateTag = svc.candidate?.tag && svc.candidate.tag !== '-' ? svc.candidate.tag : null
                       const showCandidate = Boolean(candidateTag && candidateTag !== currentDisplayTag)
                       const svcApply =
@@ -1156,20 +1155,27 @@ export function OverviewPage(props: {
                                             }}
                                           />
                                             </div>
-                                            <div>
-                                              <CurrentVersionPopover
-                                                serviceId={svc.id}
-                                                displayTag={svc.image.tag}
-                                                imageTag={svc.image.tag}
-                                                imageDigest={svc.image.digest ?? null}
-                                                resolvedTag={svc.image.resolvedTag}
-                                                resolvedTags={svc.image.resolvedTags}
-                                                preferSource="rawTag"
-                                                triggerClassName="versionTagsTrigger mono monoSecondary"
-                                              >
-                                                {svc.image.tag}
-                                              </CurrentVersionPopover>
-                                            </div>
+                                            {(() => {
+                                              const currentTag = formatTagDisplay(svc.image.tag, svc.image.resolvedTag)
+                                              const rawTrim = (svc.image.tag ?? '').trim()
+                                              const showRaw = Boolean(rawTrim && rawTrim !== currentTag)
+                                              return showRaw ? (
+                                                <div>
+                                                  <CurrentVersionPopover
+                                                    serviceId={svc.id}
+                                                    displayTag={svc.image.tag}
+                                                    imageTag={svc.image.tag}
+                                                    imageDigest={svc.image.digest ?? null}
+                                                    resolvedTag={svc.image.resolvedTag}
+                                                    resolvedTags={svc.image.resolvedTags}
+                                                    preferSource="rawTag"
+                                                    triggerClassName="versionTagsTrigger mono monoSecondary"
+                                                  >
+                                                    {svc.image.tag}
+                                                  </CurrentVersionPopover>
+                                                </div>
+                                              ) : null
+                                            })()}
                                           </div>
 	                                        </div>
                                         <div className="modalKvLabel">状态</div>

@@ -85,5 +85,5 @@ export function noteFor(svc: Service, st: RowStatus): string {
       Object.values(svc.settings.backupTargets.volumeNames).some((v) => v === 'force')
     return hasForceBackup ? '备份通过后执行' : '按当前标签序列'
   }
-  return '-'
+  return ''
 }

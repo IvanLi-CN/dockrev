@@ -3,6 +3,24 @@ import { CurrentVersionPopover } from '../../components/CurrentVersionPopover'
 import { ArrowRightIcon } from '../../ui'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 
+function d(fill: string, last2: string) {
+  return `sha256:${fill.repeat(62)}${last2}`
+}
+
+function isStrictSemverTag(tag: string): boolean {
+  const t = tag.trim()
+  if (!t) return false
+  return /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(t)
+}
+
+function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefined): string {
+  const r = (resolvedTag ?? '').trim()
+  if (r) return r
+  const t = (tag ?? '').trim()
+  if (t && isStrictSemverTag(t)) return t
+  return '-'
+}
+
 function Demo(props: {
   displayTag: string
   imageTag: string
@@ -10,9 +28,10 @@ function Demo(props: {
   resolvedTag?: string | null
   resolvedTags?: string[] | null
 }) {
-  const resolvedTrim = (props.resolvedTag ?? '').trim()
+  const explicitDisplay = props.displayTag.trim()
+  const effectiveDisplayTag = explicitDisplay || inferredTagForDisplay(props.imageTag, props.resolvedTag)
   const rawTrim = (props.imageTag ?? '').trim()
-  const showRawTag = Boolean(resolvedTrim && rawTrim && resolvedTrim !== rawTrim)
+  const showRawTag = Boolean(rawTrim && rawTrim !== effectiveDisplayTag)
   return (
     <div style={{ padding: 16, maxWidth: 560, display: 'grid', gap: 12 }}>
       <div style={{ maxWidth: 360 }}>
@@ -64,6 +83,16 @@ type Story = StoryObj<typeof Demo>
 export const Unknown: Story = {
   args: {
     displayTag: '',
+    imageTag: '5.2',
+    imageDigest: null,
+    resolvedTag: null,
+    resolvedTags: null,
+  },
+}
+
+export const FloatingLatest: Story = {
+  args: {
+    displayTag: '',
     imageTag: 'latest',
     imageDigest: null,
     resolvedTag: null,
@@ -73,11 +102,11 @@ export const Unknown: Story = {
 
 export const Resolved: Story = {
   args: {
-    displayTag: 'v0.1.8',
+    displayTag: 'v5.2.1',
     imageTag: 'latest',
-    imageDigest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-    resolvedTag: 'v0.1.8',
-    resolvedTags: ['v0.1.8', '0.1.8'],
+    imageDigest: d('c', 'c2'),
+    resolvedTag: 'v5.2.1',
+    resolvedTags: ['v5.2.1', '5.2.1'],
   },
 }
 

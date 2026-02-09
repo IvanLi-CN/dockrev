@@ -408,7 +408,7 @@ function buildResolvedTagDemo(): Fixture {
     name: 'web',
     image: {
       ref: 'ghcr.io/acme/web',
-      tag: 'latest',
+      tag: '5.2',
       digest: d('a', 'b1'),
       resolvedTag: 'v5.2.1',
       resolvedTags: ['v5.2.1', '5.2.1'],
@@ -453,7 +453,7 @@ function buildVersionTagsPopoverDemo(): Fixture {
     name: 'axonhub',
     image: {
       ref: 'docker.io/looplj/axonhub',
-      tag: 'latest',
+      tag: '0.8',
       digest: d('a', 'b1'),
     },
     candidate: { tag: 'v0.8.8-arm64', digest: d('b', '9f'), archMatch: 'match', arch: ['linux/arm64'] },
@@ -817,7 +817,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       return json({
         state: 'idle',
         opId: 'sup_mock',
-        target: { image: 'ghcr.io/ivanli-cn/dockrev', tag: 'latest', digest: null },
+        target: { image: 'ghcr.io/ivanli-cn/dockrev', tag: '0.5.0', digest: null },
         previous: { tag: '0.0.0', digest: null },
         startedAt: nowIso(-60_000),
         updatedAt: nowIso(-30_000),
