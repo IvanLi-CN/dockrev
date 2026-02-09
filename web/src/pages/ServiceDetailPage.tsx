@@ -345,8 +345,8 @@ export function ServiceDetailPage(props: {
 	                    confirmText: '执行更新',
 	                    cancelText: '取消',
 	                    confirmVariant: 'primary',
-                      badgeText: '将更新并重启',
-                      badgeTone: 'warn',
+                      // Hide the pill badge; the intent is already visible in the modal body.
+                      badgeText: null,
 	                  })
                   if (!ok) return
                   setBusy(true)

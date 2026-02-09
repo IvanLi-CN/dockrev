@@ -234,8 +234,6 @@ export function ServicesPage(props: {
     }) => {
       const scopeLabel = input.scope === 'stack' ? 'stack' : 'service'
       const confirmVariant = input.scope === 'service' ? 'primary' : 'danger'
-      const badgeText = input.scope === 'stack' ? '批量更新' : '将更新并重启'
-      const badgeTone = input.scope === 'service' ? 'warn' : 'bad'
       const ok = await confirm({
         title: input.confirmTitle ?? '确认执行更新？',
         body:
@@ -268,8 +266,8 @@ export function ServicesPage(props: {
         confirmText: '执行更新',
         cancelText: '取消',
         confirmVariant,
-        badgeText,
-        badgeTone,
+        // Hide the pill badge; it doesn't add value for operators (scope/kv already shows intent).
+        badgeText: null,
       })
       if (!ok) return
 
@@ -525,7 +523,6 @@ export function ServicesPage(props: {
 		                        const totalCandidates = g.countsAll.updatable + g.countsAll.hint + g.countsAll.crossTag
 		                        const body = (
 		                          <>
-		                            <div className="modalLead">将为该 stack 内服务创建更新任务（服务端会计算是否实际变更）。</div>
 		                            <div className="modalKvGrid">
 	                              <div className="modalKvLabel">范围</div>
 	                              <div className="modalKvValue">
@@ -551,6 +548,8 @@ export function ServicesPage(props: {
 		                            <div className="modalList">
 		                              {candidateServices.map((item) => {
 		                                const currentDisplayTag = formatTagDisplay(item.svc.image.tag, item.svc.image.resolvedTag)
+		                                const rawTagTrim = (item.svc.image.tag ?? '').trim()
+		                                const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
 		                                const candidateTag =
 		                                  item.svc.candidate?.tag && item.svc.candidate.tag !== '-' ? item.svc.candidate.tag : null
 		                                return (
@@ -574,27 +573,45 @@ export function ServicesPage(props: {
 		                                      })()}
 		                                    </div>
 		                                    <div className="modalListRight">
-		                                      <div className="versionLine">
-		                                        <CurrentVersionPopover
-		                                          serviceId={item.svc.id}
-		                                          displayTag={currentDisplayTag}
-		                                          imageTag={item.svc.image.tag}
-		                                          imageDigest={item.svc.image.digest ?? null}
-		                                          resolvedTag={item.svc.image.resolvedTag}
-		                                          resolvedTags={item.svc.image.resolvedTags}
-		                                        />
-		                                        <ArrowRightIcon className="inlineIcon" />
-		                                        {candidateTag ? (
-		                                          <VersionTagsPopover
+		                                      <div className="cellTwoLine">
+		                                        <div className="versionLine">
+		                                          <CurrentVersionPopover
 		                                            serviceId={item.svc.id}
-		                                            candidateTag={candidateTag}
-		                                            candidateDigest={item.svc.candidate?.digest ?? null}
-		                                          >
-		                                            {candidateTag}
-		                                          </VersionTagsPopover>
-		                                        ) : (
-		                                          <span className="mono monoPrimary">-</span>
-		                                        )}
+		                                            displayTag={currentDisplayTag}
+		                                            imageTag={item.svc.image.tag}
+		                                            imageDigest={item.svc.image.digest ?? null}
+		                                            resolvedTag={item.svc.image.resolvedTag}
+		                                            resolvedTags={item.svc.image.resolvedTags}
+		                                          />
+		                                          <ArrowRightIcon className="inlineIcon" />
+		                                          {candidateTag ? (
+		                                            <VersionTagsPopover
+		                                              serviceId={item.svc.id}
+		                                              candidateTag={candidateTag}
+		                                              candidateDigest={item.svc.candidate?.digest ?? null}
+		                                            >
+		                                              {candidateTag}
+		                                            </VersionTagsPopover>
+		                                          ) : (
+		                                            <span className="mono monoPrimary">-</span>
+		                                          )}
+		                                        </div>
+		                                        {showRawTag ? (
+		                                          <div>
+		                                            <CurrentVersionPopover
+		                                              serviceId={item.svc.id}
+		                                              displayTag={item.svc.image.tag}
+		                                              imageTag={item.svc.image.tag}
+		                                              imageDigest={item.svc.image.digest ?? null}
+		                                              resolvedTag={item.svc.image.resolvedTag}
+		                                              resolvedTags={item.svc.image.resolvedTags}
+		                                              preferSource="rawTag"
+		                                              triggerClassName="versionTagsTrigger mono monoSecondary"
+		                                            >
+		                                              {item.svc.image.tag}
+		                                            </CurrentVersionPopover>
+		                                          </div>
+		                                        ) : null}
 		                                      </div>
 		                                    </div>
 		                                  </div>
