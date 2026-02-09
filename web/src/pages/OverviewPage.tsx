@@ -1032,11 +1032,12 @@ export function OverviewPage(props: {
                                 <div>
                                   <CurrentVersionPopover
                                     serviceId={svc.id}
-                                    displayTag={currentDisplayTag}
+                                    displayTag={svc.image.tag}
                                     imageTag={svc.image.tag}
                                     imageDigest={svc.image.digest ?? null}
                                     resolvedTag={svc.image.resolvedTag}
                                     resolvedTags={svc.image.resolvedTags}
+                                    preferSource="rawTag"
                                     triggerClassName="versionTagsTrigger mono monoSecondary"
                                   >
                                     {svc.image.tag}
@@ -1154,11 +1155,12 @@ export function OverviewPage(props: {
                                             <div>
                                               <CurrentVersionPopover
                                                 serviceId={svc.id}
-                                                displayTag=""
+                                                displayTag={svc.image.tag}
                                                 imageTag={svc.image.tag}
                                                 imageDigest={svc.image.digest ?? null}
                                                 resolvedTag={svc.image.resolvedTag}
                                                 resolvedTags={svc.image.resolvedTags}
+                                                preferSource="rawTag"
                                                 triggerClassName="versionTagsTrigger mono monoSecondary"
                                               >
                                                 {svc.image.tag}

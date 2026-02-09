@@ -33,11 +33,12 @@ function Demo(props: {
             <div>
               <CurrentVersionPopover
                 serviceId="svc-prod-web"
-                displayTag={props.displayTag}
+                displayTag={props.imageTag}
                 imageTag={props.imageTag}
                 imageDigest={props.imageDigest}
                 resolvedTag={props.resolvedTag}
                 resolvedTags={props.resolvedTags}
+                preferSource="rawTag"
                 triggerClassName="versionTagsTrigger mono monoSecondary"
               >
                 {props.imageTag}

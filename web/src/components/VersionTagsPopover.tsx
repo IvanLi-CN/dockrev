@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { listServiceDigestTags, type ServiceDigestTagsResponse } from '../api'
+import { listServiceDigestTags } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 
 function uniquePreserveOrder(values: Array<string | null | undefined>): string[] {
@@ -115,17 +115,11 @@ type DigestTagsState = {
   tags: string[] | null
   repoTags: string[] | null
   error: string | null
-  scan: ServiceDigestTagsResponse['scan'] | null
 }
 
 type FilterState = {
   key: string
   value: string
-}
-
-type ExpandState = {
-  key: string
-  expanded: boolean | null
 }
 
 export function VersionTagsPopover(props: {
@@ -156,20 +150,15 @@ export function VersionTagsPopover(props: {
   const [filterState, setFilterState] = useState<FilterState>(() => ({ key: digestKey, value: '' }))
   const tagFilter = filterState.key === digestKey ? filterState.value : ''
 
-  const [repoListState, setRepoListState] = useState<ExpandState>(() => ({ key: digestKey, expanded: null }))
-  const repoListExpanded = repoListState.key === digestKey ? repoListState.expanded : null
-
   const [digestState, setDigestState] = useState<DigestTagsState>(() => ({
     key: digestKey,
     tags: null,
     repoTags: null,
     error: null,
-    scan: null,
   }))
   const digestTags = digestState.key === digestKey ? digestState.tags : null
   const repoTags = digestState.key === digestKey ? digestState.repoTags : null
   const loadError = digestState.key === digestKey ? digestState.error : null
-  const scan = digestState.key === digestKey ? digestState.scan : null
 
   const clearHoverCloseTimer = useCallback(() => {
     if (hoverCloseTimer.current == null) return
@@ -265,11 +254,11 @@ export function VersionTagsPopover(props: {
     const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
     if (fetchTimer.current != null) window.clearTimeout(fetchTimer.current)
     fetchTimer.current = window.setTimeout(() => {
-      setDigestState({ key: digestKey, tags: null, repoTags: null, error: null, scan: null })
+      setDigestState({ key: digestKey, tags: null, repoTags: null, error: null })
       listServiceDigestTags(serviceId, candidateDigestNorm ?? '')
         .then((data) => {
           if (!alive) return
-          setDigestState({ key: digestKey, tags: data.tags, repoTags: data.repoTags ?? null, error: null, scan: data.scan })
+          setDigestState({ key: digestKey, tags: data.tags, repoTags: data.repoTags ?? null, error: null })
         })
         .catch((e: unknown) => {
           if (!alive) return
@@ -278,7 +267,6 @@ export function VersionTagsPopover(props: {
             tags: [],
             repoTags: null,
             error: e instanceof Error ? e.message : String(e),
-            scan: null,
           })
         })
         .finally(() => {
@@ -310,21 +298,6 @@ export function VersionTagsPopover(props: {
     return sorted.includes(candidateTag) ? [candidateTag, ...sorted.filter((t) => t !== candidateTag)] : sorted
   }, [candidateTag, repoTags])
 
-  const candidateInDigestTags = useMemo(() => {
-    const ct = (candidateTag ?? '').trim()
-    if (!ct) return null
-    if (!candidateDigestNorm) return null
-    if (digestTags == null) return null
-    return digestTags.includes(ct)
-  }, [candidateDigestNorm, candidateTag, digestTags])
-
-  const candidateInRepoTags = useMemo(() => {
-    const ct = (candidateTag ?? '').trim()
-    if (!ct) return null
-    if (repoTags == null) return null
-    return repoTags.includes(ct)
-  }, [candidateTag, repoTags])
-
   const tagStats = useMemo(() => {
     if (!candidateTag) return null
     const total = allTags.length
@@ -339,12 +312,6 @@ export function VersionTagsPopover(props: {
     const semverTotal = allRepoTags.filter(isStrictSemverTag).length
     return { total, semverTotal, otherTotal: total - semverTotal }
   }, [allRepoTags, candidateTag, repoTags])
-
-  const repoListExpandedEffective = useMemo(() => {
-    if (tagFilter.trim().length > 0) return true
-    if (repoListExpanded != null) return repoListExpanded
-    return false
-  }, [repoListExpanded, tagFilter])
 
   const filteredTags = useMemo(() => {
     if (!candidateTag) return []
@@ -462,6 +429,17 @@ export function VersionTagsPopover(props: {
         </div>
       </div>
 
+      {showFilter ? (
+        <div className="versionTagsPopoverSection">
+          <input
+            className="versionTagsPopoverInput"
+            value={tagFilter}
+            onChange={(e) => setFilterState({ key: digestKey, value: e.target.value })}
+            placeholder="过滤标签…"
+          />
+        </div>
+      ) : null}
+
       <div className="versionTagsPopoverSection">
         <div className="label">同 digest 的 tags</div>
         {!candidateTag ? (
@@ -490,18 +468,7 @@ export function VersionTagsPopover(props: {
                 共 {tagStats.total} 个标签（semver {tagStats.semverTotal} · 其他 {tagStats.otherTotal}）
               </div>
             ) : null}
-            {candidateInDigestTags === false ? (
-              <div className="muted">注意：候选标签未出现在 digest-tags 列表中（digest mismatch 或扫描不完整）</div>
-            ) : null}
 
-            {showFilter ? (
-              <input
-                className="versionTagsPopoverInput"
-                value={tagFilter}
-                onChange={(e) => setFilterState({ key: digestKey, value: e.target.value })}
-                placeholder="过滤标签…"
-              />
-            ) : null}
             {tagFilter.trim().length > 0 ? (
               <div className="muted">
                 匹配 {filteredTags.length} / {allTags.length}
@@ -544,24 +511,23 @@ export function VersionTagsPopover(props: {
           <div className="muted">未找到镜像标签</div>
         ) : (
           <>
-            {scan && candidateDigestNorm ? (
+            {tagFilter.trim().length > 0 ? (
               <div className="muted">
-                扫描 {scan.repoTagsTotal} 个标签（成功 {scan.manifestsOk} · 超时 {scan.manifestsTimeout} · 错误 {scan.manifestsError}）
-                {scan.manifestsTimeout + scan.manifestsError > 0 ? ' · 可能不完整' : ''}
+                匹配 {filteredRepoTags.length} / {allRepoTags.length}
               </div>
             ) : null}
-            {candidateInRepoTags === false ? (
-              <div className="muted">注意：候选标签未出现在 registry 标签列表中（list_tags 不完整或标签已删除）</div>
-            ) : null}
-
+            <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
             <div className="versionTagsPopoverActions">
-              <button
-                type="button"
-                className="versionTagsPopoverAction"
-                onClick={() => setRepoListState({ key: digestKey, expanded: !repoListExpandedEffective })}
-              >
-                {repoListExpandedEffective ? '收起列表' : `展开列表（${allRepoTags.length}）`}
-              </button>
+              {tagFilter.trim().length > 0 ? (
+                <button
+                  type="button"
+                  className="versionTagsPopoverAction"
+                  onClick={() => copyText(filteredRepoTags.join('\n'))}
+                  disabled={filteredRepoTags.length === 0}
+                >
+                  复制（匹配）
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="versionTagsPopoverAction"
@@ -571,37 +537,6 @@ export function VersionTagsPopover(props: {
                 复制（全部）
               </button>
             </div>
-
-            {repoListExpandedEffective ? (
-              <>
-                {showFilter ? (
-                  <input
-                    className="versionTagsPopoverInput"
-                    value={tagFilter}
-                    onChange={(e) => setFilterState({ key: digestKey, value: e.target.value })}
-                    placeholder="过滤标签…"
-                  />
-                ) : null}
-                {tagFilter.trim().length > 0 ? (
-                  <div className="muted">
-                    匹配 {filteredRepoTags.length} / {allRepoTags.length}
-                  </div>
-                ) : null}
-                <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
-                <div className="versionTagsPopoverActions">
-                  {tagFilter.trim().length > 0 ? (
-                    <button
-                      type="button"
-                      className="versionTagsPopoverAction"
-                      onClick={() => copyText(filteredRepoTags.join('\n'))}
-                      disabled={filteredRepoTags.length === 0}
-                    >
-                      复制（匹配）
-                    </button>
-                  ) : null}
-                </div>
-              </>
-            ) : null}
           </>
         )}
       </div>

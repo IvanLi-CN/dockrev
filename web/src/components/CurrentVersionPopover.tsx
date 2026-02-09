@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { listServiceDigestTags, type ServiceDigestTagsResponse } from '../api'
+import { listServiceDigestTags } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 
 type TagSeries = {
@@ -144,12 +144,6 @@ function sortTagsForDisplay(tags: string[]): string[] {
   return [...semver.map((x) => x.t), ...other]
 }
 
-function uniqueSorted(values: string[] | null | undefined): string[] {
-  const out = Array.from(new Set((values ?? []).map((v) => v.trim()).filter(Boolean)))
-  out.sort((a, b) => a.localeCompare(b))
-  return out
-}
-
 const HOVER_CLOSE_DELAY_MS = 300
 const POPOVER_ANIM_MS = 160
 const FETCH_DEBOUNCE_MS = 220
@@ -159,17 +153,11 @@ type DigestTagsState = {
   tags: string[] | null
   repoTags: string[] | null
   error: string | null
-  scan: ServiceDigestTagsResponse['scan'] | null
 }
 
 type FilterState = {
   key: string
   value: string
-}
-
-type ExpandState = {
-  key: string
-  expanded: boolean | null
 }
 
 export function CurrentVersionPopover(props: {
@@ -179,10 +167,12 @@ export function CurrentVersionPopover(props: {
   imageDigest?: string | null
   resolvedTag?: string | null
   resolvedTags?: string[] | null
+  preferSource?: 'resolvedTag' | 'rawTag'
   triggerClassName?: string
   children?: ReactNode
 }) {
-  const { serviceId, imageTag, imageDigest, resolvedTag, resolvedTags } = props
+  const { serviceId, imageTag, imageDigest, resolvedTag } = props
+  const preferSource = props.preferSource ?? 'resolvedTag'
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const hoverCloseTimer = useRef<number | null>(null)
@@ -205,20 +195,15 @@ export function CurrentVersionPopover(props: {
   const [filterState, setFilterState] = useState<FilterState>(() => ({ key: digestKey, value: '' }))
   const tagFilter = filterState.key === digestKey ? filterState.value : ''
 
-  const [repoListState, setRepoListState] = useState<ExpandState>(() => ({ key: digestKey, expanded: null }))
-  const repoListExpanded = repoListState.key === digestKey ? repoListState.expanded : null
-
   const [digestState, setDigestState] = useState<DigestTagsState>(() => ({
     key: digestKey,
     tags: null,
     repoTags: null,
     error: null,
-    scan: null,
   }))
   const digestTags = digestState.key === digestKey ? digestState.tags : null
   const repoTags = digestState.key === digestKey ? digestState.repoTags : null
   const loadError = digestState.key === digestKey ? digestState.error : null
-  const scan = digestState.key === digestKey ? digestState.scan : null
 
   const displayTag = useMemo(() => {
     const explicit = props.displayTag.trim()
@@ -227,7 +212,6 @@ export function CurrentVersionPopover(props: {
   }, [imageTag, props.displayTag, resolvedTag])
 
   const resolvedTagTrim = useMemo(() => (resolvedTag ?? '').trim(), [resolvedTag])
-  const resolvedTagsList = useMemo(() => uniqueSorted(resolvedTags), [resolvedTags])
 
   const rawSeries = useMemo(() => parseTagSeries(imageTag), [imageTag])
 
@@ -241,15 +225,6 @@ export function CurrentVersionPopover(props: {
     const semverTotal = allDigestTags.filter(isStrictSemverTag).length
     return { total, semverTotal, otherTotal: total - semverTotal }
   }, [allDigestTags, digestTags])
-
-  const currentTagInDigestTags = useMemo(() => {
-    if (!digestNorm) return null
-    if (digestTags == null) return null
-    const t = (resolvedTagTrim || imageTag).trim()
-    if (!t) return null
-    if (t === '-' || t.startsWith('sha256:')) return null
-    return digestTags.includes(t)
-  }, [digestNorm, digestTags, imageTag, resolvedTagTrim])
 
   const seriesPatchStats = useMemo(() => {
     if (digestTags == null) return null
@@ -295,20 +270,6 @@ export function CurrentVersionPopover(props: {
     return { total, semverTotal, otherTotal: total - semverTotal }
   }, [allRepoTags, repoTags])
 
-  const repoListExpandedEffective = useMemo(() => {
-    if (tagFilter.trim().length > 0) return true
-    if (repoListExpanded != null) return repoListExpanded
-    return false
-  }, [repoListExpanded, tagFilter])
-
-  const currentTagInRepoTags = useMemo(() => {
-    if (repoTags == null) return null
-    const t = (resolvedTagTrim || imageTag).trim()
-    if (!t) return null
-    if (t === '-' || t.startsWith('sha256:')) return null
-    return repoTags.includes(t)
-  }, [imageTag, repoTags, resolvedTagTrim])
-
   const filteredRepoTags = useMemo(() => {
     if (repoTags == null) return []
     const q = tagFilter.trim().toLowerCase()
@@ -333,11 +294,11 @@ export function CurrentVersionPopover(props: {
     const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
     if (fetchTimer.current != null) window.clearTimeout(fetchTimer.current)
     fetchTimer.current = window.setTimeout(() => {
-      setDigestState({ key: digestKey, tags: null, repoTags: null, error: null, scan: null })
+      setDigestState({ key: digestKey, tags: null, repoTags: null, error: null })
       listServiceDigestTags(serviceId, digestNorm ?? '')
         .then((data) => {
           if (!alive) return
-          setDigestState({ key: digestKey, tags: data.tags, repoTags: data.repoTags ?? null, error: null, scan: data.scan })
+          setDigestState({ key: digestKey, tags: data.tags, repoTags: data.repoTags ?? null, error: null })
         })
         .catch((e: unknown) => {
           if (!alive) return
@@ -346,7 +307,6 @@ export function CurrentVersionPopover(props: {
             tags: [],
             repoTags: null,
             error: e instanceof Error ? e.message : String(e),
-            scan: null,
           })
         })
         .finally(() => {
@@ -526,26 +486,50 @@ export function CurrentVersionPopover(props: {
     const canUseResolvedSemver = Boolean(resolved && isStrictSemverTag(resolved))
     const canUseRawSemver = Boolean(rawTrim && isStrictSemverTag(rawTrim))
 
-    if (canUseResolvedSemver) {
-      return (
-        <div className="muted" style={{ display: 'grid', gap: 4 }}>
-          <div>
-            推测 semver: <span className="mono">{resolved}</span>
-            {' · '}来源: <span className="mono">resolvedTag</span>
+    if (preferSource === 'rawTag') {
+      if (canUseRawSemver) {
+        return (
+          <div className="muted" style={{ display: 'grid', gap: 4 }}>
+            <div>
+              推测 semver: <span className="mono">{rawTrim}</span>
+              {' · '}来源: <span className="mono">raw tag</span>
+            </div>
           </div>
-        </div>
-      )
-    }
-
-    if (canUseRawSemver) {
-      return (
-        <div className="muted" style={{ display: 'grid', gap: 4 }}>
-          <div>
-            推测 semver: <span className="mono">{rawTrim}</span>
-            {' · '}来源: <span className="mono">raw tag</span>
+        )
+      }
+      if (canUseResolvedSemver) {
+        return (
+          <div className="muted" style={{ display: 'grid', gap: 4 }}>
+            <div>
+              推测 semver: <span className="mono">{resolved}</span>
+              {' · '}来源: <span className="mono">resolvedTag</span>
+              {rawTrim ? `（raw tag 非 semver：${rawTrim}）` : '（raw tag 为空）'}
+            </div>
           </div>
-        </div>
-      )
+        )
+      }
+    } else {
+      if (canUseResolvedSemver) {
+        return (
+          <div className="muted" style={{ display: 'grid', gap: 4 }}>
+            <div>
+              推测 semver: <span className="mono">{resolved}</span>
+              {' · '}来源: <span className="mono">resolvedTag</span>
+            </div>
+          </div>
+        )
+      }
+      if (canUseRawSemver) {
+        return (
+          <div className="muted" style={{ display: 'grid', gap: 4 }}>
+            <div>
+              推测 semver: <span className="mono">{rawTrim}</span>
+              {' · '}来源: <span className="mono">raw tag</span>
+              {resolved ? `（resolvedTag 非 semver：${resolved}）` : '（resolvedTag 缺失）'}
+            </div>
+          </div>
+        )
+      }
     }
 
     const reasons: string[] = []
@@ -610,7 +594,7 @@ export function CurrentVersionPopover(props: {
         {lines}
       </div>
     )
-  }, [digestNorm, digestTags, imageTag, rawSeries, resolvedTagTrim, semverDigestPreview, seriesPatchStats])
+  }, [digestNorm, digestTags, imageTag, preferSource, rawSeries, resolvedTagTrim, semverDigestPreview, seriesPatchStats])
 
   const copyText = useCallback((text: string) => {
     const t = text.trim()
@@ -663,6 +647,17 @@ export function CurrentVersionPopover(props: {
         {inferenceBlock}
       </div>
 
+      {showFilter ? (
+        <div className="versionTagsPopoverSection">
+          <input
+            className="versionTagsPopoverInput"
+            value={tagFilter}
+            onChange={(e) => setFilterState({ key: digestKey, value: e.target.value })}
+            placeholder="过滤标签…"
+          />
+        </div>
+      ) : null}
+
       <div className="versionTagsPopoverSection">
         <div className="label">同 digest 的 tags</div>
         {!digestNorm ? (
@@ -682,18 +677,7 @@ export function CurrentVersionPopover(props: {
                 共 {digestTagStats.total} 个标签（semver {digestTagStats.semverTotal} · 其他 {digestTagStats.otherTotal}）
               </div>
             ) : null}
-            {currentTagInDigestTags === false ? (
-              <div className="muted">注意：当前标签未出现在 digest-tags 列表中（digest mismatch 或扫描不完整）</div>
-            ) : null}
 
-            {showFilter ? (
-              <input
-                className="versionTagsPopoverInput"
-                value={tagFilter}
-                onChange={(e) => setFilterState({ key: digestKey, value: e.target.value })}
-                placeholder="过滤标签…"
-              />
-            ) : null}
             {tagFilter.trim().length > 0 ? (
               <div className="muted">
                 匹配 {filteredDigestTags.length} / {allDigestTags.length}
@@ -734,24 +718,23 @@ export function CurrentVersionPopover(props: {
           <div className="muted">未找到镜像标签</div>
         ) : (
           <>
-            {scan && digestNorm ? (
+            {tagFilter.trim().length > 0 ? (
               <div className="muted">
-                扫描 {scan.repoTagsTotal} 个标签（成功 {scan.manifestsOk} · 超时 {scan.manifestsTimeout} · 错误 {scan.manifestsError}）
-                {scan.manifestsTimeout + scan.manifestsError > 0 ? ' · 可能不完整' : ''}
+                匹配 {filteredRepoTags.length} / {allRepoTags.length}
               </div>
             ) : null}
-            {currentTagInRepoTags === false ? (
-              <div className="muted">注意：当前标签未出现在 registry 标签列表中（list_tags 不完整或标签已删除）</div>
-            ) : null}
-
+            <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
             <div className="versionTagsPopoverActions">
-              <button
-                type="button"
-                className="versionTagsPopoverAction"
-                onClick={() => setRepoListState({ key: digestKey, expanded: !repoListExpandedEffective })}
-              >
-                {repoListExpandedEffective ? '收起列表' : `展开列表（${allRepoTags.length}）`}
-              </button>
+              {tagFilter.trim().length > 0 ? (
+                <button
+                  type="button"
+                  className="versionTagsPopoverAction"
+                  onClick={() => copyText(filteredRepoTags.join('\n'))}
+                  disabled={filteredRepoTags.length === 0}
+                >
+                  复制（匹配）
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="versionTagsPopoverAction"
@@ -761,53 +744,9 @@ export function CurrentVersionPopover(props: {
                 复制（全部）
               </button>
             </div>
-
-            {repoListExpandedEffective ? (
-              <>
-                {showFilter ? (
-                  <input
-                    className="versionTagsPopoverInput"
-                    value={tagFilter}
-                    onChange={(e) => setFilterState({ key: digestKey, value: e.target.value })}
-                    placeholder="过滤标签…"
-                  />
-                ) : null}
-                {tagFilter.trim().length > 0 ? (
-                  <div className="muted">
-                    匹配 {filteredRepoTags.length} / {allRepoTags.length}
-                  </div>
-                ) : null}
-                <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
-                <div className="versionTagsPopoverActions">
-                  {tagFilter.trim().length > 0 ? (
-                    <button
-                      type="button"
-                      className="versionTagsPopoverAction"
-                      onClick={() => copyText(filteredRepoTags.join('\n'))}
-                      disabled={filteredRepoTags.length === 0}
-                    >
-                      复制（匹配）
-                    </button>
-                  ) : null}
-                </div>
-              </>
-            ) : null}
           </>
         )}
       </div>
-
-      {resolvedTagsList.length > 0 ? (
-        <div className="versionTagsPopoverSection">
-          <div className="label">resolvedTags（服务端）</div>
-          <div className="versionTagsPopoverChips">
-            {resolvedTagsList.map((t) => (
-              <span key={t} className="versionTagsChip" title={t}>
-                <span className="mono">{t}</span>
-              </span>
-            ))}
-          </div>
-        </div>
-      ) : null}
     </div>
   ) : null
 

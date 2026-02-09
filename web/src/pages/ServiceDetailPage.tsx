@@ -309,11 +309,12 @@ export function ServiceDetailPage(props: {
                                   <div>
                                     <CurrentVersionPopover
                                       serviceId={service.id}
-                                      displayTag={currentDisplayTag}
+                                      displayTag={service.image.tag}
                                       imageTag={service.image.tag}
                                       imageDigest={service.image.digest ?? null}
                                       resolvedTag={service.image.resolvedTag}
                                       resolvedTags={service.image.resolvedTags}
+                                      preferSource="rawTag"
                                       triggerClassName="versionTagsTrigger mono monoSecondary"
                                     >
                                       {service.image.tag}
@@ -500,11 +501,12 @@ export function ServiceDetailPage(props: {
         {' · '}raw:{' '}
         <CurrentVersionPopover
           serviceId={service.id}
-          displayTag={currentTag}
+          displayTag={service.image.tag}
           imageTag={service.image.tag}
           imageDigest={service.image.digest ?? null}
           resolvedTag={service.image.resolvedTag}
           resolvedTags={service.image.resolvedTags}
+          preferSource="rawTag"
           triggerClassName="versionTagsTrigger mono monoSecondary"
         >
           {service.image.tag}

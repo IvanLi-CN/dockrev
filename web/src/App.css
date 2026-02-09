@@ -487,6 +487,7 @@ html[data-theme='light'] .versionTagsPopover {
   background: var(--dockrev-surface);
   color: var(--text);
   overflow: auto;
+  max-height: 220px;
   white-space: pre;
 }
 
