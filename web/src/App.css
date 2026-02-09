@@ -486,8 +486,8 @@ html[data-theme='light'] .versionTagsPopover {
   border: 1px solid var(--borderColor);
   background: var(--dockrev-surface);
   color: var(--text);
-  overflow: auto;
-  max-height: 220px;
+  /* Avoid nested vertical scroll: the popover itself already scrolls. */
+  overflow-x: auto;
   white-space: pre;
 }
 

@@ -499,8 +499,6 @@ export function VersionTagsPopover(props: {
               </div>
             ) : null}
 
-            <pre className="versionTagsPopoverCode mono">{filteredTags.join('\n')}</pre>
-
             <div className="versionTagsPopoverActions">
               {tagFilter.trim().length > 0 ? (
                 <button
@@ -521,6 +519,8 @@ export function VersionTagsPopover(props: {
                 复制（全部）
               </button>
             </div>
+
+            <pre className="versionTagsPopoverCode mono">{filteredTags.join('\n')}</pre>
           </>
         )}
       </div>
@@ -549,8 +549,6 @@ export function VersionTagsPopover(props: {
               </div>
             ) : null}
 
-            <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
-
             <div className="versionTagsPopoverActions">
               {tagFilter.trim().length > 0 ? (
                 <button
@@ -571,6 +569,8 @@ export function VersionTagsPopover(props: {
                 复制（全部）
               </button>
             </div>
+
+            <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
           </>
         )}
       </div>

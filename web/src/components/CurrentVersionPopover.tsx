@@ -215,6 +215,7 @@ export function CurrentVersionPopover(props: {
   }, [imageTag, props.displayTag, resolvedTag])
 
   const resolvedTagTrim = useMemo(() => (resolvedTag ?? '').trim(), [resolvedTag])
+  const resolvedTagsList = useMemo(() => uniquePreserveOrder(props.resolvedTags), [props.resolvedTags])
 
   const rawSeries = useMemo(() => parseTagSeries(imageTag), [imageTag])
 
@@ -551,34 +552,12 @@ export function CurrentVersionPopover(props: {
       )
     }
 
-    const semverDigestTags = digestNorm && digestTags != null ? allDigestTags.filter(isStrictSemverTag) : null
-    if (semverDigestTags && semverDigestTags.length > 0) {
-      const max = 8
-      const head = semverDigestTags.slice(0, max)
-      const more = semverDigestTags.length > max ? semverDigestTags.length - max : 0
-      lines.push(<div key="semverLabel">同 digest 的 semver tags:</div>)
-      lines.push(
-        <div key="semverChips" className="versionTagsPopoverChips">
-          {head.map((t) => (
-            <span key={t} className="versionTagsChip" title={t}>
-              <span className="mono">{t}</span>
-            </span>
-          ))}
-          {more > 0 ? (
-            <span key="more" className="versionTagsChip" title={`+${more}`}>
-              <span className="mono">+{more}</span>
-            </span>
-          ) : null}
-        </div>,
-      )
-    }
-
     return (
       <div className="muted" style={{ display: 'grid', gap: 4 }}>
         {lines}
       </div>
     )
-  }, [allDigestTags, digestNorm, digestTags, imageTag, preferSource, rawSeries, resolvedTagTrim])
+  }, [digestNorm, imageTag, preferSource, rawSeries, resolvedTagTrim])
 
   const copyText = useCallback((text: string) => {
     const t = text.trim()
@@ -624,6 +603,27 @@ export function CurrentVersionPopover(props: {
         <div className="muted">
           resolvedTag <span className="mono">{resolvedTagTrim || '（缺失）'}</span>
         </div>
+        {resolvedTagsList.length > 0 ? (
+          <>
+            <div className="muted">resolvedTags（{resolvedTagsList.length}）</div>
+            <div className="versionTagsPopoverChips">
+              {resolvedTagsList.slice(0, 10).map((t) => (
+                <span key={t} className="versionTagsChip" title={t}>
+                  <span className="mono">{t}</span>
+                </span>
+              ))}
+              {resolvedTagsList.length > 10 ? (
+                <span
+                  key="resolvedTagsMore"
+                  className="versionTagsChip"
+                  title={`+${resolvedTagsList.length - 10}`}
+                >
+                  <span className="mono">+{resolvedTagsList.length - 10}</span>
+                </span>
+              ) : null}
+            </div>
+          </>
+        ) : null}
       </div>
 
       <div className="versionTagsPopoverSection">
@@ -675,8 +675,6 @@ export function CurrentVersionPopover(props: {
               </div>
             ) : null}
 
-            <pre className="versionTagsPopoverCode mono">{filteredDigestTags.join('\n')}</pre>
-
             <div className="versionTagsPopoverActions">
               {tagFilter.trim().length > 0 ? (
                 <button
@@ -697,6 +695,8 @@ export function CurrentVersionPopover(props: {
                 复制（全部）
               </button>
             </div>
+
+            <pre className="versionTagsPopoverCode mono">{filteredDigestTags.join('\n')}</pre>
           </>
         )}
       </div>
@@ -723,8 +723,6 @@ export function CurrentVersionPopover(props: {
               </div>
             ) : null}
 
-            <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
-
             <div className="versionTagsPopoverActions">
               {tagFilter.trim().length > 0 ? (
                 <button
@@ -745,6 +743,8 @@ export function CurrentVersionPopover(props: {
                 复制（全部）
               </button>
             </div>
+
+            <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
           </>
         )}
       </div>
