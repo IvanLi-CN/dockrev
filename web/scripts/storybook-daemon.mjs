@@ -70,6 +70,10 @@ function parseArgs(argv) {
   return out
 }
 
+function hasFlagPrefix(argv, ...prefixes) {
+  return argv.some((arg) => prefixes.some((p) => arg === p || arg.startsWith(`${p}=`)))
+}
+
 async function getListenerPids(port) {
   return await new Promise((resolve) => {
     let settled = false
@@ -304,6 +308,7 @@ async function cmdStart({ port, passthrough }) {
     throw new Error(`Port ${port} is already in use.`)
   }
 
+  const hasVersionUpdatesFlag = hasFlagPrefix(passthrough, '--no-version-updates', '--version-updates')
   const logFd = openLogFd(port)
   const args = [
     '--bun',
@@ -313,6 +318,7 @@ async function cmdStart({ port, passthrough }) {
     String(port),
     '--exact-port',
     '--no-open',
+    ...(hasVersionUpdatesFlag ? [] : ['--no-version-updates']),
     '--debug',
     ...passthrough,
   ]
