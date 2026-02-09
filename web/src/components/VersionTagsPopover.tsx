@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { listServiceDigestTags } from '../api'
+import { listServiceDigestTags, type ServiceDigestTagsScanSummary } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 
 function uniquePreserveOrder(values: Array<string | null | undefined>): string[] {
@@ -114,6 +114,7 @@ type DigestTagsState = {
   key: string
   tags: string[] | null
   repoTags: string[] | null
+  scan: ServiceDigestTagsScanSummary | null
   error: string | null
 }
 
@@ -144,6 +145,8 @@ export function VersionTagsPopover(props: {
   const [popoverVisible, setPopoverVisible] = useState(false)
 
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
+  const [showDigestList, setShowDigestList] = useState(false)
+  const [showRepoList, setShowRepoList] = useState(false)
 
   const candidateDigestNorm = useMemo(() => normalizeDigest(candidateDigest), [candidateDigest])
   const digestKey = useMemo(() => `${serviceId}:${candidateDigestNorm ?? ''}`, [candidateDigestNorm, serviceId])
@@ -154,11 +157,19 @@ export function VersionTagsPopover(props: {
     key: digestKey,
     tags: null,
     repoTags: null,
+    scan: null,
     error: null,
   }))
   const digestTags = digestState.key === digestKey ? digestState.tags : null
   const repoTags = digestState.key === digestKey ? digestState.repoTags : null
+  const scan = digestState.key === digestKey ? digestState.scan : null
   const loadError = digestState.key === digestKey ? digestState.error : null
+
+  const resetViewState = useCallback(() => {
+    setShowDigestList(false)
+    setShowRepoList(false)
+    setFilterState({ key: digestKey, value: '' })
+  }, [digestKey])
 
   const clearHoverCloseTimer = useCallback(() => {
     if (hoverCloseTimer.current == null) return
@@ -213,6 +224,7 @@ export function VersionTagsPopover(props: {
     hoverCloseTimer.current = window.setTimeout(() => {
       hoverCloseTimer.current = null
       if (pinnedRef.current) return
+      resetViewState()
       setHoverOpen(false)
       hidePopover()
     }, HOVER_CLOSE_DELAY_MS)
@@ -222,9 +234,10 @@ export function VersionTagsPopover(props: {
     clearHoverCloseTimer()
     setPinned(false)
     pinnedRef.current = false
+    resetViewState()
     setHoverOpen(false)
     hidePopover()
-  }, [clearHoverCloseTimer, hidePopover])
+  }, [clearHoverCloseTimer, hidePopover, resetViewState])
 
   useEffect(() => {
     return () => {
@@ -254,11 +267,17 @@ export function VersionTagsPopover(props: {
     const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
     if (fetchTimer.current != null) window.clearTimeout(fetchTimer.current)
     fetchTimer.current = window.setTimeout(() => {
-      setDigestState({ key: digestKey, tags: null, repoTags: null, error: null })
+      setDigestState({ key: digestKey, tags: null, repoTags: null, scan: null, error: null })
       listServiceDigestTags(serviceId, candidateDigestNorm ?? '')
         .then((data) => {
           if (!alive) return
-          setDigestState({ key: digestKey, tags: data.tags, repoTags: data.repoTags ?? null, error: null })
+          setDigestState({
+            key: digestKey,
+            tags: data.tags,
+            repoTags: data.repoTags ?? null,
+            scan: data.scan ?? null,
+            error: null,
+          })
         })
         .catch((e: unknown) => {
           if (!alive) return
@@ -266,6 +285,7 @@ export function VersionTagsPopover(props: {
             key: digestKey,
             tags: [],
             repoTags: null,
+            scan: null,
             error: e instanceof Error ? e.message : String(e),
           })
         })
@@ -327,7 +347,37 @@ export function VersionTagsPopover(props: {
     return allRepoTags.filter((t) => t.toLowerCase().includes(q))
   }, [allRepoTags, candidateTag, tagFilter])
 
-  const showFilter = Math.max(allTags.length, allRepoTags.length) > 20 || tagFilter.trim().length > 0
+  const showAnyList = showDigestList || showRepoList
+  const showFilter = showAnyList && (Math.max(allTags.length, allRepoTags.length) > 20 || tagFilter.trim().length > 0)
+
+  const semverDigestTags = useMemo(() => {
+    if (!candidateTag) return null
+    if (!candidateDigestNorm) return null
+    if (digestTags == null) return null
+    return allTags.filter(isStrictSemverTag)
+  }, [allTags, candidateDigestNorm, candidateTag, digestTags])
+
+  const semverDigestPreview = useMemo(() => {
+    if (!semverDigestTags) return null
+    const max = 8
+    const head = semverDigestTags.slice(0, max)
+    const more = semverDigestTags.length > max ? semverDigestTags.length - max : 0
+    return { head, more, total: semverDigestTags.length }
+  }, [semverDigestTags])
+
+  const semverRepoTags = useMemo(() => {
+    if (!candidateTag) return null
+    if (repoTags == null) return null
+    return allRepoTags.filter(isStrictSemverTag)
+  }, [allRepoTags, candidateTag, repoTags])
+
+  const semverRepoPreview = useMemo(() => {
+    if (!semverRepoTags) return null
+    const max = 8
+    const head = semverRepoTags.slice(0, max)
+    const more = semverRepoTags.length > max ? semverRepoTags.length - max : 0
+    return { head, more, total: semverRepoTags.length }
+  }, [semverRepoTags])
 
   useLayoutEffect(() => {
     if (!open) return
@@ -469,32 +519,90 @@ export function VersionTagsPopover(props: {
               </div>
             ) : null}
 
-            {tagFilter.trim().length > 0 ? (
+            {scan && candidateDigestNorm && (scan.manifestsTimeout > 0 || scan.manifestsError > 0) ? (
               <div className="muted">
-                匹配 {filteredTags.length} / {allTags.length}
+                注意：digest tags 可能不完整（ok {scan.manifestsOk} / {scan.repoTagsTotal}
+                {scan.manifestsTimeout > 0 ? ` · timeout ${scan.manifestsTimeout}` : ''}
+                {scan.manifestsError > 0 ? ` · error ${scan.manifestsError}` : ''}
+                ）
               </div>
             ) : null}
-            <pre className="versionTagsPopoverCode mono">{filteredTags.join('\n')}</pre>
-            <div className="versionTagsPopoverActions">
-              {tagFilter.trim().length > 0 ? (
-                <button
-                  type="button"
-                  className="versionTagsPopoverAction"
-                  onClick={() => copyText(filteredTags.join('\n'))}
-                  disabled={filteredTags.length === 0}
-                >
-                  复制（匹配）
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="versionTagsPopoverAction"
-                onClick={() => copyText(allTags.join('\n'))}
-                disabled={allTags.length === 0}
-              >
-                复制（全部）
-              </button>
-            </div>
+
+            {!showDigestList ? (
+              <>
+                {semverDigestPreview ? (
+                  semverDigestPreview.total === 0 ? (
+                    <div className="muted">无 semver tags</div>
+                  ) : (
+                    <div className="versionTagsPopoverChips">
+                      {semverDigestPreview.head.map((t) => (
+                        <span key={t} className="versionTagsChip" title={t}>
+                          <span className="mono">{t}</span>
+                        </span>
+                      ))}
+                      {semverDigestPreview.more > 0 ? (
+                        <span className="versionTagsChip" title={`+${semverDigestPreview.more}`}>
+                          <span className="mono">+{semverDigestPreview.more}</span>
+                        </span>
+                      ) : null}
+                    </div>
+                  )
+                ) : null}
+
+                <div className="versionTagsPopoverActions">
+                  <button type="button" className="versionTagsPopoverAction" onClick={() => setShowDigestList(true)}>
+                    展开列表
+                  </button>
+                  <button
+                    type="button"
+                    className="versionTagsPopoverAction"
+                    onClick={() => copyText(allTags.join('\n'))}
+                    disabled={allTags.length === 0}
+                  >
+                    复制（全部）
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                {tagFilter.trim().length > 0 ? (
+                  <div className="muted">
+                    匹配 {filteredTags.length} / {allTags.length}
+                  </div>
+                ) : null}
+                <pre className="versionTagsPopoverCode mono">{filteredTags.join('\n')}</pre>
+                <div className="versionTagsPopoverActions">
+                  {tagFilter.trim().length > 0 ? (
+                    <button
+                      type="button"
+                      className="versionTagsPopoverAction"
+                      onClick={() => copyText(filteredTags.join('\n'))}
+                      disabled={filteredTags.length === 0}
+                    >
+                      复制（匹配）
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="versionTagsPopoverAction"
+                    onClick={() => copyText(allTags.join('\n'))}
+                    disabled={allTags.length === 0}
+                  >
+                    复制（全部）
+                  </button>
+                  <button
+                    type="button"
+                    className="versionTagsPopoverAction"
+                    onClick={() => {
+                      setShowDigestList(false)
+                      if (!showRepoList) setFilterState({ key: digestKey, value: '' })
+                    }}
+                  >
+                    收起列表
+                  </button>
+                </div>
+              </>
+            )}
           </>
         )}
       </div>
@@ -511,32 +619,87 @@ export function VersionTagsPopover(props: {
           <div className="muted">未找到镜像标签</div>
         ) : (
           <>
-            {tagFilter.trim().length > 0 ? (
+            {repoTagStats ? (
               <div className="muted">
-                匹配 {filteredRepoTags.length} / {allRepoTags.length}
+                共 {repoTagStats.total} 个标签（semver {repoTagStats.semverTotal} · 其他 {repoTagStats.otherTotal}）
               </div>
             ) : null}
-            <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
-            <div className="versionTagsPopoverActions">
-              {tagFilter.trim().length > 0 ? (
-                <button
-                  type="button"
-                  className="versionTagsPopoverAction"
-                  onClick={() => copyText(filteredRepoTags.join('\n'))}
-                  disabled={filteredRepoTags.length === 0}
-                >
-                  复制（匹配）
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="versionTagsPopoverAction"
-                onClick={() => copyText(allRepoTags.join('\n'))}
-                disabled={allRepoTags.length === 0}
-              >
-                复制（全部）
-              </button>
-            </div>
+
+            {!showRepoList ? (
+              <>
+                {semverRepoPreview ? (
+                  semverRepoPreview.total === 0 ? (
+                    <div className="muted">无 semver tags</div>
+                  ) : (
+                    <div className="versionTagsPopoverChips">
+                      {semverRepoPreview.head.map((t) => (
+                        <span key={t} className="versionTagsChip" title={t}>
+                          <span className="mono">{t}</span>
+                        </span>
+                      ))}
+                      {semverRepoPreview.more > 0 ? (
+                        <span className="versionTagsChip" title={`+${semverRepoPreview.more}`}>
+                          <span className="mono">+{semverRepoPreview.more}</span>
+                        </span>
+                      ) : null}
+                    </div>
+                  )
+                ) : null}
+
+                <div className="versionTagsPopoverActions">
+                  <button type="button" className="versionTagsPopoverAction" onClick={() => setShowRepoList(true)}>
+                    展开列表
+                  </button>
+                  <button
+                    type="button"
+                    className="versionTagsPopoverAction"
+                    onClick={() => copyText(allRepoTags.join('\n'))}
+                    disabled={allRepoTags.length === 0}
+                  >
+                    复制（全部）
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                {tagFilter.trim().length > 0 ? (
+                  <div className="muted">
+                    匹配 {filteredRepoTags.length} / {allRepoTags.length}
+                  </div>
+                ) : null}
+                <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
+                <div className="versionTagsPopoverActions">
+                  {tagFilter.trim().length > 0 ? (
+                    <button
+                      type="button"
+                      className="versionTagsPopoverAction"
+                      onClick={() => copyText(filteredRepoTags.join('\n'))}
+                      disabled={filteredRepoTags.length === 0}
+                    >
+                      复制（匹配）
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="versionTagsPopoverAction"
+                    onClick={() => copyText(allRepoTags.join('\n'))}
+                    disabled={allRepoTags.length === 0}
+                  >
+                    复制（全部）
+                  </button>
+                  <button
+                    type="button"
+                    className="versionTagsPopoverAction"
+                    onClick={() => {
+                      setShowRepoList(false)
+                      if (!showDigestList) setFilterState({ key: digestKey, value: '' })
+                    }}
+                  >
+                    收起列表
+                  </button>
+                </div>
+              </>
+            )}
           </>
         )}
       </div>
