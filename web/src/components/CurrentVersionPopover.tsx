@@ -167,6 +167,11 @@ type FilterState = {
   value: string
 }
 
+type ExpandState = {
+  key: string
+  expanded: boolean | null
+}
+
 export function CurrentVersionPopover(props: {
   serviceId: string
   displayTag: string
@@ -199,6 +204,9 @@ export function CurrentVersionPopover(props: {
   const digestKey = useMemo(() => `${serviceId}:${digestNorm ?? ''}`, [digestNorm, serviceId])
   const [filterState, setFilterState] = useState<FilterState>(() => ({ key: digestKey, value: '' }))
   const tagFilter = filterState.key === digestKey ? filterState.value : ''
+
+  const [repoListState, setRepoListState] = useState<ExpandState>(() => ({ key: digestKey, expanded: null }))
+  const repoListExpanded = repoListState.key === digestKey ? repoListState.expanded : null
 
   const [digestState, setDigestState] = useState<DigestTagsState>(() => ({
     key: digestKey,
@@ -286,6 +294,12 @@ export function CurrentVersionPopover(props: {
     const semverTotal = allRepoTags.filter(isStrictSemverTag).length
     return { total, semverTotal, otherTotal: total - semverTotal }
   }, [allRepoTags, repoTags])
+
+  const repoListExpandedEffective = useMemo(() => {
+    if (tagFilter.trim().length > 0) return true
+    if (repoListExpanded != null) return repoListExpanded
+    return false
+  }, [repoListExpanded, tagFilter])
 
   const currentTagInRepoTags = useMemo(() => {
     if (repoTags == null) return null
@@ -720,11 +734,6 @@ export function CurrentVersionPopover(props: {
           <div className="muted">未找到镜像标签</div>
         ) : (
           <>
-            {repoTagStats ? (
-              <div className="muted">
-                共 {repoTagStats.total} 个标签（semver {repoTagStats.semverTotal} · 其他 {repoTagStats.otherTotal}）
-              </div>
-            ) : null}
             {scan && digestNorm ? (
               <div className="muted">
                 扫描 {scan.repoTagsTotal} 个标签（成功 {scan.manifestsOk} · 超时 {scan.manifestsTimeout} · 错误 {scan.manifestsError}）
@@ -734,23 +743,15 @@ export function CurrentVersionPopover(props: {
             {currentTagInRepoTags === false ? (
               <div className="muted">注意：当前标签未出现在 registry 标签列表中（list_tags 不完整或标签已删除）</div>
             ) : null}
-            {tagFilter.trim().length > 0 ? (
-              <div className="muted">
-                匹配 {filteredRepoTags.length} / {allRepoTags.length}
-              </div>
-            ) : null}
-            <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
+
             <div className="versionTagsPopoverActions">
-              {tagFilter.trim().length > 0 ? (
-                <button
-                  type="button"
-                  className="versionTagsPopoverAction"
-                  onClick={() => copyText(filteredRepoTags.join('\n'))}
-                  disabled={filteredRepoTags.length === 0}
-                >
-                  复制（匹配）
-                </button>
-              ) : null}
+              <button
+                type="button"
+                className="versionTagsPopoverAction"
+                onClick={() => setRepoListState({ key: digestKey, expanded: !repoListExpandedEffective })}
+              >
+                {repoListExpandedEffective ? '收起列表' : `展开列表（${allRepoTags.length}）`}
+              </button>
               <button
                 type="button"
                 className="versionTagsPopoverAction"
@@ -760,6 +761,37 @@ export function CurrentVersionPopover(props: {
                 复制（全部）
               </button>
             </div>
+
+            {repoListExpandedEffective ? (
+              <>
+                {showFilter ? (
+                  <input
+                    className="versionTagsPopoverInput"
+                    value={tagFilter}
+                    onChange={(e) => setFilterState({ key: digestKey, value: e.target.value })}
+                    placeholder="过滤标签…"
+                  />
+                ) : null}
+                {tagFilter.trim().length > 0 ? (
+                  <div className="muted">
+                    匹配 {filteredRepoTags.length} / {allRepoTags.length}
+                  </div>
+                ) : null}
+                <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
+                <div className="versionTagsPopoverActions">
+                  {tagFilter.trim().length > 0 ? (
+                    <button
+                      type="button"
+                      className="versionTagsPopoverAction"
+                      onClick={() => copyText(filteredRepoTags.join('\n'))}
+                      disabled={filteredRepoTags.length === 0}
+                    >
+                      复制（匹配）
+                    </button>
+                  ) : null}
+                </div>
+              </>
+            ) : null}
           </>
         )}
       </div>
