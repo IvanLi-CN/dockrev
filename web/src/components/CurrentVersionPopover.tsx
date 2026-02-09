@@ -43,7 +43,7 @@ function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefin
   const r = (resolvedTag ?? '').trim()
   if (r) return r
   const t = tag.trim()
-  if (t) return t
+  if (t && isStrictSemverTag(t)) return t
   return '-'
 }
 
