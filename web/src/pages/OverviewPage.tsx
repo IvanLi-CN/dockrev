@@ -1247,10 +1247,6 @@ export function OverviewPage(props: {
             )
           })}
         </div>
-
-        <div className="muted" style={{ marginTop: 24 }}>
-          按 compose 分组显示（可折叠）；点击 service 行进入详情。
-        </div>
       </div>
 
       {error ? <div className="error">{error}</div> : null}
