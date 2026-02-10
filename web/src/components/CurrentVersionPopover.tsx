@@ -151,7 +151,6 @@ const FETCH_DEBOUNCE_MS = 220
 type DigestTagsState = {
   key: string
   tags: string[] | null
-  repoTags: string[] | null
   scan: ServiceDigestTagsScanSummary | null
   error: string | null
 }
@@ -199,12 +198,10 @@ export function CurrentVersionPopover(props: {
   const [digestState, setDigestState] = useState<DigestTagsState>(() => ({
     key: digestKey,
     tags: null,
-    repoTags: null,
     scan: null,
     error: null,
   }))
   const digestTags = digestState.key === digestKey ? digestState.tags : null
-  const repoTags = digestState.key === digestKey ? digestState.repoTags : null
   const scan = digestState.key === digestKey ? digestState.scan : null
   const loadError = digestState.key === digestKey ? digestState.error : null
 
@@ -237,28 +234,7 @@ export function CurrentVersionPopover(props: {
     return allDigestTags.filter((t) => t.toLowerCase().includes(q))
   }, [allDigestTags, digestTags, tagFilter])
 
-  const allRepoTags = useMemo(() => {
-    if (repoTags == null) return []
-    const sorted = sortTagsForDisplay(repoTags)
-    const current = (resolvedTagTrim || imageTag).trim()
-    return current && sorted.includes(current) ? [current, ...sorted.filter((t) => t !== current)] : sorted
-  }, [imageTag, repoTags, resolvedTagTrim])
-
-  const repoTagStats = useMemo(() => {
-    if (repoTags == null) return null
-    const total = allRepoTags.length
-    const semverTotal = allRepoTags.filter(isStrictSemverTag).length
-    return { total, semverTotal, otherTotal: total - semverTotal }
-  }, [allRepoTags, repoTags])
-
-  const filteredRepoTags = useMemo(() => {
-    if (repoTags == null) return []
-    const q = tagFilter.trim().toLowerCase()
-    if (!q) return allRepoTags
-    return allRepoTags.filter((t) => t.toLowerCase().includes(q))
-  }, [allRepoTags, repoTags, tagFilter])
-
-  const showFilter = Math.max(allDigestTags.length, allRepoTags.length) > 20 || tagFilter.trim().length > 0
+  const showFilter = allDigestTags.length > 20 || tagFilter.trim().length > 0
 
   const resetViewState = useCallback(() => {
     setFilterState({ key: digestKey, value: '' })
@@ -266,27 +242,21 @@ export function CurrentVersionPopover(props: {
 
   useEffect(() => {
     if (!open) return
+    if (!digestNorm) return
 
-    // Always fetch the repo tag list (debug value) even when digest is missing.
-    // Digest-matching tags are only available when digest is known.
-    if (digestNorm) {
-      if (digestTags != null && repoTags != null) return
-    } else {
-      if (repoTags != null) return
-    }
+    if (digestTags != null) return
 
     let alive = true
     const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
     if (fetchTimer.current != null) window.clearTimeout(fetchTimer.current)
     fetchTimer.current = window.setTimeout(() => {
-      setDigestState({ key: digestKey, tags: null, repoTags: null, scan: null, error: null })
+      setDigestState({ key: digestKey, tags: null, scan: null, error: null })
       listServiceDigestTags(serviceId, digestNorm ?? '')
         .then((data) => {
           if (!alive) return
           setDigestState({
             key: digestKey,
             tags: data.tags,
-            repoTags: data.repoTags ?? null,
             scan: data.scan ?? null,
             error: null,
           })
@@ -296,7 +266,6 @@ export function CurrentVersionPopover(props: {
           setDigestState({
             key: digestKey,
             tags: [],
-            repoTags: null,
             scan: null,
             error: e instanceof Error ? e.message : String(e),
           })
@@ -313,7 +282,7 @@ export function CurrentVersionPopover(props: {
         fetchTimer.current = null
       }
     }
-  }, [digestKey, digestNorm, digestTags, open, pinned, repoTags, serviceId])
+  }, [digestKey, digestNorm, digestTags, open, pinned, serviceId])
 
   const clearHoverCloseTimer = useCallback(() => {
     if (hoverCloseTimer.current == null) return
@@ -697,54 +666,6 @@ export function CurrentVersionPopover(props: {
             </div>
 
             <pre className="versionTagsPopoverCode mono">{filteredDigestTags.join('\n')}</pre>
-          </>
-        )}
-      </div>
-
-      <div className="versionTagsPopoverSection">
-        <div className="label">镜像所有标签{repoTagStats ? `（${repoTagStats.total}）` : ''}</div>
-        {repoTags == null ? (
-          <div className="muted">加载中…</div>
-        ) : loadError ? (
-          <div className="muted">加载失败：{loadError}</div>
-        ) : allRepoTags.length === 0 ? (
-          <div className="muted">未找到镜像标签</div>
-        ) : (
-          <>
-            {repoTagStats ? (
-              <div className="muted">
-                共 {repoTagStats.total} 个标签（semver {repoTagStats.semverTotal} · 其他 {repoTagStats.otherTotal}）
-              </div>
-            ) : null}
-
-            {tagFilter.trim().length > 0 ? (
-              <div className="muted">
-                匹配 {filteredRepoTags.length} / {allRepoTags.length}
-              </div>
-            ) : null}
-
-            <div className="versionTagsPopoverActions">
-              {tagFilter.trim().length > 0 ? (
-                <button
-                  type="button"
-                  className="versionTagsPopoverAction"
-                  onClick={() => copyText(filteredRepoTags.join('\n'))}
-                  disabled={filteredRepoTags.length === 0}
-                >
-                  复制（匹配）
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="versionTagsPopoverAction"
-                onClick={() => copyText(allRepoTags.join('\n'))}
-                disabled={allRepoTags.length === 0}
-              >
-                复制（全部）
-              </button>
-            </div>
-
-            <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
           </>
         )}
       </div>
