@@ -8,7 +8,7 @@ pub fn select_candidate_tag(
     is_ignored: impl Fn(&str) -> bool,
 ) -> Option<String> {
     let current_semver = parse_version(current_tag);
-    if let Some(current) = current_semver {
+    if let Some(current) = current_semver.as_ref() {
         let mut best: Option<Version> = None;
         let mut best_tag: Option<String> = None;
         for tag in tags {
@@ -18,7 +18,7 @@ pub fn select_candidate_tag(
             let Some(v) = parse_version(tag) else {
                 continue;
             };
-            if v <= current {
+            if &v <= current {
                 continue;
             }
             if best.as_ref().is_none_or(|b| &v > b) {
@@ -28,6 +28,32 @@ pub fn select_candidate_tag(
         }
         if best_tag.is_some() {
             return best_tag;
+        }
+    }
+
+    // If the current tag is unparseable (e.g. floating tags like `latest`), prefer the maximum
+    // *parseable* version tag from the registry to avoid lexicographic pitfalls like
+    // `v0.2.9` being considered greater than `v0.2.11`.
+    if current_semver.is_none() {
+        let mut best: Option<(Version, String)> = None;
+        for tag in tags {
+            if tag == current_tag || is_ignored(tag) {
+                continue;
+            }
+            let Some(v) = parse_version(tag) else {
+                continue;
+            };
+
+            if best
+                .as_ref()
+                .is_none_or(|(bv, bt)| &v > bv || (&v == bv && tag.as_str() > bt.as_str()))
+            {
+                best = Some((v, tag.clone()));
+            }
+        }
+
+        if let Some((_v, tag)) = best {
+            return Some(tag);
         }
     }
 
@@ -67,6 +93,13 @@ mod tests {
         let tags = vec!["alpha".to_string(), "beta".to_string()];
         let picked = select_candidate_tag("alpha", &tags, |_| false).unwrap();
         assert_eq!(picked, "beta");
+    }
+
+    #[test]
+    fn floating_tag_picks_max_semver_instead_of_lexicographic() {
+        let tags = vec!["v0.2.9".to_string(), "v0.2.11".to_string()];
+        let picked = select_candidate_tag("latest", &tags, |_| false).unwrap();
+        assert_eq!(picked, "v0.2.11");
     }
 
     #[test]
