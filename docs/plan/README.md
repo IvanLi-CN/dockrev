@@ -91,3 +91,4 @@
 | k7hsm | Dockrev Web: 当前/候选版本气泡拆分 + 移除原生 tooltip | 已完成 | `k7hsm:split-version-popovers/PLAN.md` | 2026-02-08 | PR #63 |
 | updxj | Dockrev Web: 版本气泡可用性修复 | 已完成 | `updxj:version-popover-polish/PLAN.md` | 2026-02-08 | PR #63 |
 | dxdvu | Dockrev Web: 版本气泡 debug 信息补齐（移除 ? + 扫描摘要） | 已完成 | `dxdvu:version-popover-debug-bubbles/PLAN.md` | 2026-02-08 | PR #63 |
+| zwsh7 | Dockrev Web: 版本气泡 tags 列表默认折叠（减少噪音） | 待实现 | `zwsh7:version-popover-list-toggle/PLAN.md` | 2026-02-11 | - |
