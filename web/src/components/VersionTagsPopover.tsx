@@ -307,16 +307,18 @@ export function VersionTagsPopover(props: {
   const allTags = useMemo(() => {
     if (!candidateTag) return []
     if (!candidateDigestNorm) return [candidateTag]
-    if (digestTags == null) return []
+    // Always include the trigger tag so the popover never feels "empty" and remains debuggable,
+    // even when the backend scan is incomplete or still loading.
+    if (digestTags == null) return [candidateTag]
     const sorted = sortTagsForDisplay(digestTags)
-    return sorted.includes(candidateTag) ? [candidateTag, ...sorted.filter((t) => t !== candidateTag)] : sorted
+    return sorted.includes(candidateTag) ? [candidateTag, ...sorted.filter((t) => t !== candidateTag)] : [candidateTag, ...sorted]
   }, [candidateDigestNorm, candidateTag, digestTags])
 
   const allRepoTags = useMemo(() => {
     if (!candidateTag) return []
     if (repoTags == null) return []
     const sorted = sortTagsForDisplay(repoTags)
-    return sorted.includes(candidateTag) ? [candidateTag, ...sorted.filter((t) => t !== candidateTag)] : sorted
+    return sorted.includes(candidateTag) ? [candidateTag, ...sorted.filter((t) => t !== candidateTag)] : [candidateTag, ...sorted]
   }, [candidateTag, repoTags])
 
   const tagStats = useMemo(() => {
