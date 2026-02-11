@@ -46,31 +46,8 @@ function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefin
   return '-'
 }
 
-function uniquePreserveOrder(values: string[] | null | undefined): string[] {
-  const out: string[] = []
-  const seen = new Set<string>()
-  for (const v of values ?? []) {
-    const t = v.trim()
-    if (!t) continue
-    if (seen.has(t)) continue
-    seen.add(t)
-    out.push(t)
-  }
-  return out
-}
-
 const HOVER_CLOSE_DELAY_MS = 300
 const POPOVER_ANIM_MS = 160
-
-type FilterState = {
-  key: string
-  value: string
-}
-
-type ToggleState = {
-  key: string
-  value: boolean
-}
 
 export function CurrentVersionPopover(props: {
   serviceId: string
@@ -101,11 +78,6 @@ export function CurrentVersionPopover(props: {
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
 
   const digestNorm = useMemo(() => normalizeDigest(imageDigest), [imageDigest])
-  const digestKey = useMemo(() => `${props.serviceId}:${digestNorm ?? ''}`, [digestNorm, props.serviceId])
-  const [resolvedListState, setResolvedListState] = useState<ToggleState>(() => ({ key: digestKey, value: false }))
-  const showResolvedList = resolvedListState.key === digestKey ? resolvedListState.value : false
-  const [filterState, setFilterState] = useState<FilterState>(() => ({ key: digestKey, value: '' }))
-  const tagFilter = filterState.key === digestKey ? filterState.value : ''
 
   const displayTag = useMemo(() => {
     const explicit = props.displayTag.trim()
@@ -114,7 +86,6 @@ export function CurrentVersionPopover(props: {
   }, [imageTag, props.displayTag, resolvedTag])
 
   const resolvedTagTrim = useMemo(() => (resolvedTag ?? '').trim(), [resolvedTag])
-  const resolvedTagsList = useMemo(() => uniquePreserveOrder(props.resolvedTags), [props.resolvedTags])
 
   const rawSeries = useMemo(() => parseTagSeries(imageTag), [imageTag])
 
@@ -171,8 +142,6 @@ export function CurrentVersionPopover(props: {
     hoverCloseTimer.current = window.setTimeout(() => {
       hoverCloseTimer.current = null
       if (pinnedRef.current) return
-      setResolvedListState({ key: digestKey, value: false })
-      setFilterState({ key: digestKey, value: '' })
       setHoverOpen(false)
       hidePopover()
     }, HOVER_CLOSE_DELAY_MS)
@@ -183,10 +152,8 @@ export function CurrentVersionPopover(props: {
     setPinned(false)
     pinnedRef.current = false
     setHoverOpen(false)
-    setResolvedListState({ key: digestKey, value: false })
-    setFilterState({ key: digestKey, value: '' })
     hidePopover()
-  }, [clearHoverCloseTimer, digestKey, hidePopover])
+  }, [clearHoverCloseTimer, hidePopover])
 
   useEffect(() => {
     return () => {
@@ -259,27 +226,6 @@ export function CurrentVersionPopover(props: {
       document.removeEventListener('pointerdown', onPointerDown)
     }
   }, [close, pinned])
-
-  const copyText = useCallback((text: string) => {
-    const t = text.trim()
-    if (!t) return
-    void navigator.clipboard?.writeText(t)
-  }, [])
-
-  const resolvedTagStats = useMemo(() => {
-    const total = resolvedTagsList.length
-    if (total === 0) return null
-    const semverTotal = resolvedTagsList.filter(isStrictSemverTag).length
-    return { total, semverTotal, otherTotal: total - semverTotal }
-  }, [resolvedTagsList])
-
-  const filteredResolvedTags = useMemo(() => {
-    const q = tagFilter.trim().toLowerCase()
-    if (!q) return resolvedTagsList
-    return resolvedTagsList.filter((t) => t.toLowerCase().includes(q))
-  }, [resolvedTagsList, tagFilter])
-
-  const showFilter = tagFilter.trim().length > 0 || (showResolvedList && resolvedTagsList.length > 20)
 
   const inferenceBlock = useMemo<ReactNode>(() => {
     const rawTrim = (imageTag ?? '').trim()
@@ -425,60 +371,6 @@ export function CurrentVersionPopover(props: {
           resolvedTag <span className="mono">{resolvedTagTrim || '（缺失）'}</span>
         </div>
       </div>
-
-      {resolvedTagsList.length > 0 ? (
-        <div className="versionTagsPopoverSection">
-          <div className="label">同 digest 的 tags</div>
-          {resolvedTagStats ? (
-            <div className="muted">
-              共 {resolvedTagStats.total} 个标签（semver {resolvedTagStats.semverTotal} · 其他 {resolvedTagStats.otherTotal}）
-            </div>
-          ) : null}
-          {showFilter ? (
-            <input
-              className="versionTagsPopoverInput"
-              value={tagFilter}
-              onChange={(e) => setFilterState({ key: digestKey, value: e.target.value })}
-              placeholder="过滤标签…"
-            />
-          ) : null}
-          {tagFilter.trim().length > 0 ? (
-            <div className="muted">
-              匹配 {filteredResolvedTags.length} / {resolvedTagsList.length}
-            </div>
-          ) : null}
-          <div className="versionTagsPopoverActions">
-            <button
-              type="button"
-              className="versionTagsPopoverAction"
-              onClick={() => setResolvedListState({ key: digestKey, value: !showResolvedList })}
-            >
-              {showResolvedList ? '隐藏列表' : '显示列表'}
-            </button>
-            {tagFilter.trim().length > 0 ? (
-              <button
-                type="button"
-                className="versionTagsPopoverAction"
-                onClick={() => copyText(filteredResolvedTags.join('\n'))}
-                disabled={filteredResolvedTags.length === 0}
-              >
-                复制（匹配）
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className="versionTagsPopoverAction"
-              onClick={() => copyText(resolvedTagsList.join('\n'))}
-              disabled={resolvedTagsList.length === 0}
-            >
-              复制（全部）
-            </button>
-          </div>
-          {showResolvedList ? (
-            <pre className="versionTagsPopoverCode mono">{filteredResolvedTags.join('\n')}</pre>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   ) : null
 
