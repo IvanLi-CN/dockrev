@@ -624,7 +624,6 @@ export function VersionTagsPopover(props: {
           setPinned((prev) => {
             const next = !prev
             pinnedRef.current = next
-            if (next) setShowRepoList(true)
             return next
           })
           setHoverOpen(true)
