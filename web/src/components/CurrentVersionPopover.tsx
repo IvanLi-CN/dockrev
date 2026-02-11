@@ -46,6 +46,19 @@ function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefin
   return '-'
 }
 
+function uniquePreserveOrder(values: string[] | null | undefined): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const v of values ?? []) {
+    const t = v.trim()
+    if (!t) continue
+    if (seen.has(t)) continue
+    seen.add(t)
+    out.push(t)
+  }
+  return out
+}
+
 const HOVER_CLOSE_DELAY_MS = 300
 const POPOVER_ANIM_MS = 160
 
@@ -86,8 +99,26 @@ export function CurrentVersionPopover(props: {
   }, [imageTag, props.displayTag, resolvedTag])
 
   const resolvedTagTrim = useMemo(() => (resolvedTag ?? '').trim(), [resolvedTag])
+  const resolvedTagsList = useMemo(() => uniquePreserveOrder(props.resolvedTags), [props.resolvedTags])
 
   const rawSeries = useMemo(() => parseTagSeries(imageTag), [imageTag])
+
+  const resolvedTagStats = useMemo(() => {
+    const total = resolvedTagsList.length
+    if (total === 0) return null
+    const semverTotal = resolvedTagsList.filter(isStrictSemverTag).length
+    return { total, semverTotal, otherTotal: total - semverTotal }
+  }, [resolvedTagsList])
+
+  const resolvedSemverPreview = useMemo(() => {
+    const semver = resolvedTagsList.filter(isStrictSemverTag)
+    return semver.slice(0, 6)
+  }, [resolvedTagsList])
+
+  const resolvedSemverMore = useMemo(() => {
+    const semverTotal = resolvedTagStats?.semverTotal ?? 0
+    return Math.max(0, semverTotal - resolvedSemverPreview.length)
+  }, [resolvedSemverPreview.length, resolvedTagStats?.semverTotal])
 
   const clearHoverCloseTimer = useCallback(() => {
     if (hoverCloseTimer.current == null) return
@@ -371,6 +402,31 @@ export function CurrentVersionPopover(props: {
           resolvedTag <span className="mono">{resolvedTagTrim || '（缺失）'}</span>
         </div>
       </div>
+
+      {resolvedTagStats ? (
+        <div className="versionTagsPopoverSection">
+          <div className="label">同 digest 的 tags</div>
+          <div className="muted">
+            共 {resolvedTagStats.total} 个 tags（semver {resolvedTagStats.semverTotal} · 其他 {resolvedTagStats.otherTotal}）
+          </div>
+          {resolvedTagStats.semverTotal === 0 ? (
+            <div className="muted">未找到可用于对比的 semver tags</div>
+          ) : (
+            <>
+              <div className="muted">
+                semver 预览：{resolvedSemverMore > 0 ? `显示 ${resolvedSemverPreview.length}，另有 ${resolvedSemverMore} 个` : '全部'}
+              </div>
+              <div className="versionTagsPopoverChips">
+                {resolvedSemverPreview.map((t) => (
+                  <span key={t} className="versionTagsChip">
+                    <span className={`mono${t === resolvedTagTrim ? ' monoPrimary' : ''}`}>{t}</span>
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      ) : null}
     </div>
   ) : null
 
