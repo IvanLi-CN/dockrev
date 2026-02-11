@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { listServiceDigestTags, type ServiceDigestTagsScanSummary } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 
 type TagSeries = {
@@ -60,105 +59,8 @@ function uniquePreserveOrder(values: string[] | null | undefined): string[] {
   return out
 }
 
-type Semver = {
-  major: number
-  minor: number
-  patch: number
-  prerelease: Array<string | number>
-  hasPrerelease: boolean
-}
-
-function parseSemverTag(tag: string): Semver | null {
-  let t = tag.trim()
-  if (!t) return null
-  if (t.startsWith('v')) t = t.slice(1)
-  if (!t) return null
-
-  const [main, build] = t.split('+', 2)
-  void build
-  const [core, pre] = main.split('-', 2)
-  const parts = core.split('.')
-  if (parts.length !== 3) return null
-  if (!parts.every((p) => /^\d+$/.test(p))) return null
-
-  const nums = parts.map((p) => Number(p))
-  if (!nums.every((n) => Number.isFinite(n) && n >= 0)) return null
-
-  const prerelease = (pre ?? '')
-    .split('.')
-    .map((p) => p.trim())
-    .filter(Boolean)
-    .map((p) => (/^\d+$/.test(p) ? Number(p) : p))
-
-  return {
-    major: nums[0],
-    minor: nums[1],
-    patch: nums[2],
-    prerelease,
-    hasPrerelease: prerelease.length > 0,
-  }
-}
-
-function cmpSemver(a: Semver, b: Semver): number {
-  if (a.major !== b.major) return a.major < b.major ? -1 : 1
-  if (a.minor !== b.minor) return a.minor < b.minor ? -1 : 1
-  if (a.patch !== b.patch) return a.patch < b.patch ? -1 : 1
-
-  // No prerelease is higher than prerelease.
-  if (a.hasPrerelease !== b.hasPrerelease) return a.hasPrerelease ? -1 : 1
-  if (!a.hasPrerelease) return 0
-
-  const len = Math.max(a.prerelease.length, b.prerelease.length)
-  for (let i = 0; i < len; i++) {
-    const ai = a.prerelease[i]
-    const bi = b.prerelease[i]
-    if (ai == null) return -1
-    if (bi == null) return 1
-    if (ai === bi) continue
-
-    const an = typeof ai === 'number'
-    const bn = typeof bi === 'number'
-    if (an && bn) return ai < bi ? -1 : 1
-    if (an !== bn) return an ? -1 : 1
-
-    const as = String(ai)
-    const bs = String(bi)
-    if (as === bs) continue
-    return as < bs ? -1 : 1
-  }
-
-  return 0
-}
-
-function sortTagsForDisplay(tags: string[]): string[] {
-  const uniq = uniquePreserveOrder(tags)
-  const semver: Array<{ t: string; v: Semver }> = []
-  const other: string[] = []
-  for (const t of uniq) {
-    const v = parseSemverTag(t)
-    if (v) semver.push({ t, v })
-    else other.push(t)
-  }
-  semver.sort((a, b) => cmpSemver(b.v, a.v))
-  other.sort((a, b) => a.localeCompare(b))
-  return [...semver.map((x) => x.t), ...other]
-}
-
 const HOVER_CLOSE_DELAY_MS = 300
 const POPOVER_ANIM_MS = 160
-const FETCH_DEBOUNCE_MS = 220
-
-type DigestTagsState = {
-  key: string
-  tags: string[] | null
-  scan: ServiceDigestTagsScanSummary | null
-  error: string | null
-}
-
-type FilterState = {
-  key: string
-  value: string
-}
 
 export function CurrentVersionPopover(props: {
   serviceId: string
@@ -171,14 +73,13 @@ export function CurrentVersionPopover(props: {
   triggerClassName?: string
   children?: ReactNode
 }) {
-  const { serviceId, imageTag, imageDigest, resolvedTag } = props
+  const { imageTag, imageDigest, resolvedTag } = props
   const preferSource = props.preferSource ?? 'resolvedTag'
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const hoverCloseTimer = useRef<number | null>(null)
   const popoverUnmountTimer = useRef<number | null>(null)
   const popoverShowRaf = useRef<number | null>(null)
-  const fetchTimer = useRef<number | null>(null)
   const pinnedRef = useRef(false)
 
   const [pinned, setPinned] = useState(false)
@@ -191,22 +92,6 @@ export function CurrentVersionPopover(props: {
 
   const digestNorm = useMemo(() => normalizeDigest(imageDigest), [imageDigest])
 
-  const digestKey = useMemo(() => `${serviceId}:${digestNorm ?? ''}`, [digestNorm, serviceId])
-  const [filterState, setFilterState] = useState<FilterState>(() => ({ key: digestKey, value: '' }))
-  const tagFilter = filterState.key === digestKey ? filterState.value : ''
-
-  const [showDigestList, setShowDigestList] = useState(false)
-
-  const [digestState, setDigestState] = useState<DigestTagsState>(() => ({
-    key: digestKey,
-    tags: null,
-    scan: null,
-    error: null,
-  }))
-  const digestTags = digestState.key === digestKey ? digestState.tags : null
-  const scan = digestState.key === digestKey ? digestState.scan : null
-  const loadError = digestState.key === digestKey ? digestState.error : null
-
   const displayTag = useMemo(() => {
     const explicit = props.displayTag.trim()
     if (explicit) return explicit
@@ -217,75 +102,6 @@ export function CurrentVersionPopover(props: {
   const resolvedTagsList = useMemo(() => uniquePreserveOrder(props.resolvedTags), [props.resolvedTags])
 
   const rawSeries = useMemo(() => parseTagSeries(imageTag), [imageTag])
-
-  const allDigestTags = useMemo(() => {
-    return digestTags == null ? [] : sortTagsForDisplay(digestTags)
-  }, [digestTags])
-
-  const digestTagStats = useMemo(() => {
-    if (digestTags == null) return null
-    const total = allDigestTags.length
-    const semverTotal = allDigestTags.filter(isStrictSemverTag).length
-    return { total, semverTotal, otherTotal: total - semverTotal }
-  }, [allDigestTags, digestTags])
-
-  const filteredDigestTags = useMemo(() => {
-    if (digestTags == null) return []
-    const q = tagFilter.trim().toLowerCase()
-    if (!q) return allDigestTags
-    return allDigestTags.filter((t) => t.toLowerCase().includes(q))
-  }, [allDigestTags, digestTags, tagFilter])
-
-  const showFilter = tagFilter.trim().length > 0 || (showDigestList && allDigestTags.length > 20)
-
-  const resetViewState = useCallback(() => {
-    setFilterState({ key: digestKey, value: '' })
-    setShowDigestList(false)
-  }, [digestKey])
-
-  useEffect(() => {
-    if (!open) return
-    if (!digestNorm) return
-
-    if (digestTags != null) return
-
-    let alive = true
-    const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
-    if (fetchTimer.current != null) window.clearTimeout(fetchTimer.current)
-    fetchTimer.current = window.setTimeout(() => {
-      setDigestState({ key: digestKey, tags: null, scan: null, error: null })
-      listServiceDigestTags(serviceId, digestNorm ?? '')
-        .then((data) => {
-          if (!alive) return
-          setDigestState({
-            key: digestKey,
-            tags: data.tags,
-            scan: data.scan ?? null,
-            error: null,
-          })
-        })
-        .catch((e: unknown) => {
-          if (!alive) return
-          setDigestState({
-            key: digestKey,
-            tags: [],
-            scan: null,
-            error: e instanceof Error ? e.message : String(e),
-          })
-        })
-        .finally(() => {
-          fetchTimer.current = null
-        })
-    }, delay)
-
-    return () => {
-      alive = false
-      if (fetchTimer.current != null) {
-        window.clearTimeout(fetchTimer.current)
-        fetchTimer.current = null
-      }
-    }
-  }, [digestKey, digestNorm, digestTags, open, pinned, serviceId])
 
   const clearHoverCloseTimer = useCallback(() => {
     if (hoverCloseTimer.current == null) return
@@ -340,7 +156,6 @@ export function CurrentVersionPopover(props: {
     hoverCloseTimer.current = window.setTimeout(() => {
       hoverCloseTimer.current = null
       if (pinnedRef.current) return
-      resetViewState()
       setHoverOpen(false)
       hidePopover()
     }, HOVER_CLOSE_DELAY_MS)
@@ -350,20 +165,15 @@ export function CurrentVersionPopover(props: {
     clearHoverCloseTimer()
     setPinned(false)
     pinnedRef.current = false
-    resetViewState()
     setHoverOpen(false)
     hidePopover()
-  }, [clearHoverCloseTimer, hidePopover, resetViewState])
+  }, [clearHoverCloseTimer, hidePopover])
 
   useEffect(() => {
     return () => {
       clearHoverCloseTimer()
       clearPopoverShowRaf()
       clearPopoverUnmountTimer()
-      if (fetchTimer.current != null) {
-        window.clearTimeout(fetchTimer.current)
-        fetchTimer.current = null
-      }
     }
   }, [clearHoverCloseTimer, clearPopoverShowRaf, clearPopoverUnmountTimer])
 
@@ -531,12 +341,6 @@ export function CurrentVersionPopover(props: {
     )
   }, [digestNorm, imageTag, preferSource, rawSeries, resolvedTagTrim])
 
-  const copyText = useCallback((text: string) => {
-    const t = text.trim()
-    if (!t) return
-    void navigator.clipboard?.writeText(t)
-  }, [])
-
   const popoverBody = renderPopover ? (
     <div
       ref={popoverRef}
@@ -601,85 +405,6 @@ export function CurrentVersionPopover(props: {
       <div className="versionTagsPopoverSection">
         <div className="label">推测</div>
         {inferenceBlock}
-      </div>
-
-      {showFilter ? (
-        <div className="versionTagsPopoverSection">
-          <input
-            className="versionTagsPopoverInput"
-            value={tagFilter}
-            onChange={(e) => setFilterState({ key: digestKey, value: e.target.value })}
-            placeholder="过滤标签…"
-          />
-        </div>
-      ) : null}
-
-      <div className="versionTagsPopoverSection">
-        <div className="label">同 digest 的 tags</div>
-        {!digestNorm ? (
-          <div className="muted">digest 未知，无法聚合标签</div>
-        ) : digestTags == null ? (
-          <div className="muted">加载中…</div>
-        ) : loadError ? (
-          <div className="muted">加载失败：{loadError}</div>
-        ) : allDigestTags.length === 0 ? (
-          <div className="muted">未找到同 digest 的标签</div>
-        ) : (
-          <>
-            {digestTagStats ? (
-              <div className="muted">
-                共 {digestTagStats.total} 个标签（semver {digestTagStats.semverTotal} · 其他 {digestTagStats.otherTotal}）
-              </div>
-            ) : null}
-
-            {scan && digestNorm && (scan.manifestsTimeout > 0 || scan.manifestsError > 0) ? (
-              <div className="muted">
-                注意：digest tags 可能不完整（ok {scan.manifestsOk} / {scan.repoTagsTotal}
-                {scan.manifestsTimeout > 0 ? ` · timeout ${scan.manifestsTimeout}` : ''}
-                {scan.manifestsError > 0 ? ` · error ${scan.manifestsError}` : ''}
-                ）
-              </div>
-            ) : null}
-
-            {tagFilter.trim().length > 0 ? (
-              <div className="muted">
-                匹配 {filteredDigestTags.length} / {allDigestTags.length}
-              </div>
-            ) : null}
-
-            <div className="versionTagsPopoverActions">
-              <button
-                type="button"
-                className="versionTagsPopoverAction"
-                onClick={() => setShowDigestList((prev) => !prev)}
-              >
-                {showDigestList ? '隐藏列表' : '显示列表'}
-              </button>
-              {tagFilter.trim().length > 0 ? (
-                <button
-                  type="button"
-                  className="versionTagsPopoverAction"
-                  onClick={() => copyText(filteredDigestTags.join('\n'))}
-                  disabled={filteredDigestTags.length === 0}
-                >
-                  复制（匹配）
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="versionTagsPopoverAction"
-                onClick={() => copyText(allDigestTags.join('\n'))}
-                disabled={allDigestTags.length === 0}
-              >
-                复制（全部）
-              </button>
-            </div>
-
-            {showDigestList ? (
-              <pre className="versionTagsPopoverCode mono">{filteredDigestTags.join('\n')}</pre>
-            ) : null}
-          </>
-        )}
       </div>
     </div>
   ) : null
