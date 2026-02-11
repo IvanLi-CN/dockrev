@@ -151,6 +151,9 @@ export function VersionTagsPopover(props: {
   const [filterState, setFilterState] = useState<FilterState>(() => ({ key: digestKey, value: '' }))
   const tagFilter = filterState.key === digestKey ? filterState.value : ''
 
+  const [showDigestList, setShowDigestList] = useState(false)
+  const [showRepoList, setShowRepoList] = useState(false)
+
   const [digestState, setDigestState] = useState<DigestTagsState>(() => ({
     key: digestKey,
     tags: null,
@@ -165,6 +168,8 @@ export function VersionTagsPopover(props: {
 
   const resetViewState = useCallback(() => {
     setFilterState({ key: digestKey, value: '' })
+    setShowDigestList(false)
+    setShowRepoList(false)
   }, [digestKey])
 
   const clearHoverCloseTimer = useCallback(() => {
@@ -343,7 +348,8 @@ export function VersionTagsPopover(props: {
     return allRepoTags.filter((t) => t.toLowerCase().includes(q))
   }, [allRepoTags, candidateTag, tagFilter])
 
-  const showFilter = Math.max(allTags.length, allRepoTags.length) > 20 || tagFilter.trim().length > 0
+  const showFilter =
+    tagFilter.trim().length > 0 || ((showDigestList || showRepoList) && Math.max(allTags.length, allRepoTags.length) > 20)
 
   useLayoutEffect(() => {
     if (!open) return
@@ -463,7 +469,6 @@ export function VersionTagsPopover(props: {
         ) : !candidateDigestNorm ? (
           <>
             <div className="muted">digest 缺失，无法聚合更多标签</div>
-            <pre className="versionTagsPopoverCode mono">{candidateTag}</pre>
             <div className="versionTagsPopoverActions">
               <button type="button" className="versionTagsPopoverAction" onClick={() => copyText(candidateTag)}>
                 复制
@@ -500,6 +505,13 @@ export function VersionTagsPopover(props: {
             ) : null}
 
             <div className="versionTagsPopoverActions">
+              <button
+                type="button"
+                className="versionTagsPopoverAction"
+                onClick={() => setShowDigestList((prev) => !prev)}
+              >
+                {showDigestList ? '隐藏列表' : '显示列表'}
+              </button>
               {tagFilter.trim().length > 0 ? (
                 <button
                   type="button"
@@ -520,7 +532,9 @@ export function VersionTagsPopover(props: {
               </button>
             </div>
 
-            <pre className="versionTagsPopoverCode mono">{filteredTags.join('\n')}</pre>
+            {showDigestList ? (
+              <pre className="versionTagsPopoverCode mono">{filteredTags.join('\n')}</pre>
+            ) : null}
           </>
         )}
       </div>
@@ -550,6 +564,13 @@ export function VersionTagsPopover(props: {
             ) : null}
 
             <div className="versionTagsPopoverActions">
+              <button
+                type="button"
+                className="versionTagsPopoverAction"
+                onClick={() => setShowRepoList((prev) => !prev)}
+              >
+                {showRepoList ? '隐藏列表' : '显示列表'}
+              </button>
               {tagFilter.trim().length > 0 ? (
                 <button
                   type="button"
@@ -570,7 +591,9 @@ export function VersionTagsPopover(props: {
               </button>
             </div>
 
-            <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
+            {showRepoList ? (
+              <pre className="versionTagsPopoverCode mono">{filteredRepoTags.join('\n')}</pre>
+            ) : null}
           </>
         )}
       </div>

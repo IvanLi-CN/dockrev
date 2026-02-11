@@ -41,7 +41,7 @@ function parseTagSeries(tag: string): TagSeries | null {
 
 function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefined): string {
   const r = (resolvedTag ?? '').trim()
-  if (r) return r
+  if (r && isStrictSemverTag(r)) return r
   const t = tag.trim()
   if (t && isStrictSemverTag(t)) return t
   return '-'
@@ -195,6 +195,8 @@ export function CurrentVersionPopover(props: {
   const [filterState, setFilterState] = useState<FilterState>(() => ({ key: digestKey, value: '' }))
   const tagFilter = filterState.key === digestKey ? filterState.value : ''
 
+  const [showDigestList, setShowDigestList] = useState(false)
+
   const [digestState, setDigestState] = useState<DigestTagsState>(() => ({
     key: digestKey,
     tags: null,
@@ -234,10 +236,11 @@ export function CurrentVersionPopover(props: {
     return allDigestTags.filter((t) => t.toLowerCase().includes(q))
   }, [allDigestTags, digestTags, tagFilter])
 
-  const showFilter = allDigestTags.length > 20 || tagFilter.trim().length > 0
+  const showFilter = tagFilter.trim().length > 0 || (showDigestList && allDigestTags.length > 20)
 
   const resetViewState = useCallback(() => {
     setFilterState({ key: digestKey, value: '' })
+    setShowDigestList(false)
   }, [digestKey])
 
   useEffect(() => {
@@ -645,6 +648,13 @@ export function CurrentVersionPopover(props: {
             ) : null}
 
             <div className="versionTagsPopoverActions">
+              <button
+                type="button"
+                className="versionTagsPopoverAction"
+                onClick={() => setShowDigestList((prev) => !prev)}
+              >
+                {showDigestList ? '隐藏列表' : '显示列表'}
+              </button>
               {tagFilter.trim().length > 0 ? (
                 <button
                   type="button"
@@ -665,7 +675,9 @@ export function CurrentVersionPopover(props: {
               </button>
             </div>
 
-            <pre className="versionTagsPopoverCode mono">{filteredDigestTags.join('\n')}</pre>
+            {showDigestList ? (
+              <pre className="versionTagsPopoverCode mono">{filteredDigestTags.join('\n')}</pre>
+            ) : null}
           </>
         )}
       </div>

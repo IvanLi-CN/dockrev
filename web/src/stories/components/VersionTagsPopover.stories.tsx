@@ -16,7 +16,7 @@ function isStrictSemverTag(tag: string): boolean {
 
 function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefined): string {
   const r = (resolvedTag ?? '').trim()
-  if (r) return r
+  if (r && isStrictSemverTag(r)) return r
   const t = (tag ?? '').trim()
   if (t && isStrictSemverTag(t)) return t
   return '-'
