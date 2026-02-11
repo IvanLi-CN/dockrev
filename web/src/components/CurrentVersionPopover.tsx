@@ -312,7 +312,7 @@ export function CurrentVersionPopover(props: {
       lines.push(
         <div key="reasons" className="versionTagsPopoverChips">
           {reasons.map((r) => (
-            <span key={r} className="versionTagsChip" title={r}>
+            <span key={r} className="versionTagsChip">
               <span className="mono">{r}</span>
             </span>
           ))}
@@ -348,7 +348,7 @@ export function CurrentVersionPopover(props: {
         <div className="versionTagsPopoverTitle">
           <span className="mono monoPrimary">{displayTag}</span>
           {digestNorm ? (
-            <span className="mono muted" title={digestNorm}>
+            <span className="mono muted">
               {shortenDigest(digestNorm)}
             </span>
           ) : (
