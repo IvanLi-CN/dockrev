@@ -491,7 +491,7 @@ export function VersionTagsPopover(props: {
               </div>
             ) : null}
 
-            {scan && candidateDigestNorm && (scan.manifestsTimeout > 0 || scan.manifestsError > 0) ? (
+            {showDigestList && scan && candidateDigestNorm && (scan.manifestsTimeout > 0 || scan.manifestsError > 0) ? (
               <div className="muted">
                 注意：digest tags 可能不完整（ok {scan.manifestsOk} / {scan.repoTagsTotal}
                 {scan.manifestsTimeout > 0 ? ` · timeout ${scan.manifestsTimeout}` : ''}
@@ -624,6 +624,7 @@ export function VersionTagsPopover(props: {
           setPinned((prev) => {
             const next = !prev
             pinnedRef.current = next
+            if (next) setShowRepoList(true)
             return next
           })
           setHoverOpen(true)
