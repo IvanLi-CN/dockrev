@@ -366,7 +366,12 @@ export function VersionTagsPopover(props: {
   const copyText = useCallback((text: string) => {
     const t = text.trim()
     if (!t) return
-    void navigator.clipboard?.writeText(t)
+    try {
+      const p = navigator.clipboard?.writeText(t)
+      if (p) void p.catch(() => {})
+    } catch {
+      // Ignore clipboard failures; copying is a best-effort convenience.
+    }
   }, [])
 
   const popoverBody = renderPopover ? (
