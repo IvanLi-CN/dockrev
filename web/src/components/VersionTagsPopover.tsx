@@ -241,10 +241,17 @@ export function VersionTagsPopover(props: {
 
     let alive = true
     const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
-    if (fetchTimer.current != null) window.clearTimeout(fetchTimer.current)
-    fetchTimer.current = window.setTimeout(() => {
-      setDigestState({ key: digestKey, tags: null, scan: null, error: null })
-      listServiceDigestTags(serviceId, candidateDigestNorm ?? '')
+    if (fetchTimer.current != null) {
+      window.clearTimeout(fetchTimer.current)
+      fetchTimer.current = null
+    }
+
+    const timerId = window.setTimeout(() => {
+      if (!alive) return
+      // Avoid stale request finalizers / callbacks clobbering newer debounce timers.
+      if (fetchTimer.current === timerId) fetchTimer.current = null
+
+      listServiceDigestTags(serviceId, candidateDigestNorm)
         .then((data) => {
           if (!alive) return
           setDigestState({
@@ -263,15 +270,13 @@ export function VersionTagsPopover(props: {
             error: e instanceof Error ? e.message : String(e),
           })
         })
-        .finally(() => {
-          fetchTimer.current = null
-        })
     }, delay)
+    fetchTimer.current = timerId
 
     return () => {
       alive = false
-      if (fetchTimer.current != null) {
-        window.clearTimeout(fetchTimer.current)
+      if (fetchTimer.current === timerId) {
+        window.clearTimeout(timerId)
         fetchTimer.current = null
       }
     }
