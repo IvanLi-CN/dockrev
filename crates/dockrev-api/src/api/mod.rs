@@ -2059,10 +2059,10 @@ async fn list_service_digest_tags(
         let next = match timeout_at(deadline, join_set.join_next()).await {
             Ok(next) => next,
             Err(_) => {
+                // Degrade gracefully: keep best-effort matches and surface incompleteness via the
+                // scan summary instead of failing the whole request.
                 join_set.abort_all();
-                return Err(ApiError::internal("registry timeout").with_details(json!({
-                    "op": "get_manifest"
-                })));
+                break;
             }
         };
 
@@ -2097,6 +2097,13 @@ async fn list_service_digest_tags(
             host_platform.clone(),
             wanted.clone(),
         );
+    }
+
+    // If the budget was exhausted (or tasks were aborted), treat the remaining tags as timeouts so
+    // the UI can warn that the result may be incomplete.
+    let processed = manifests_ok + manifests_timeout + manifests_error;
+    if processed < repo_tags_total {
+        manifests_timeout += repo_tags_total - processed;
     }
 
     let mut semver_tags: Vec<(semver::Version, String)> = Vec::new();
