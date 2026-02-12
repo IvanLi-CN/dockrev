@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { listServiceDigestTags, type ServiceDigestTagsScanSummary } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 
 type TagSeries = {
@@ -61,6 +62,23 @@ function uniquePreserveOrder(values: string[] | null | undefined): string[] {
 
 const HOVER_CLOSE_DELAY_MS = 300
 const POPOVER_ANIM_MS = 160
+const FETCH_DEBOUNCE_MS = 220
+const TAGS_PREVIEW_MAX = 12
+
+type DigestTagsState = {
+  key: string
+  tags: string[] | null
+  scan: ServiceDigestTagsScanSummary | null
+  error: string | null
+}
+
+function moveToFront(tags: string[], tag: string): string[] {
+  const t = tag.trim()
+  if (!t) return tags
+  const idx = tags.indexOf(t)
+  if (idx <= 0) return tags
+  return [tags[idx], ...tags.slice(0, idx), ...tags.slice(idx + 1)]
+}
 
 export function CurrentVersionPopover(props: {
   serviceId: string
@@ -80,6 +98,7 @@ export function CurrentVersionPopover(props: {
   const hoverCloseTimer = useRef<number | null>(null)
   const popoverUnmountTimer = useRef<number | null>(null)
   const popoverShowRaf = useRef<number | null>(null)
+  const fetchTimer = useRef<number | null>(null)
   const pinnedRef = useRef(false)
 
   const [pinned, setPinned] = useState(false)
@@ -103,22 +122,29 @@ export function CurrentVersionPopover(props: {
 
   const rawSeries = useMemo(() => parseTagSeries(imageTag), [imageTag])
 
-  const resolvedTagStats = useMemo(() => {
-    const total = resolvedTagsList.length
-    if (total === 0) return null
-    const semverTotal = resolvedTagsList.filter(isStrictSemverTag).length
-    return { total, semverTotal, otherTotal: total - semverTotal }
-  }, [resolvedTagsList])
+  const digestKey = useMemo(() => `${props.serviceId}:${digestNorm ?? ''}`, [digestNorm, props.serviceId])
+  const [digestState, setDigestState] = useState<DigestTagsState>(() => ({
+    key: digestKey,
+    tags: null,
+    scan: null,
+    error: null,
+  }))
+  const digestTags = digestState.key === digestKey ? digestState.tags : null
+  const scan = digestState.key === digestKey ? digestState.scan : null
+  const loadError = digestState.key === digestKey ? digestState.error : null
 
-  const resolvedSemverPreview = useMemo(() => {
-    const semver = resolvedTagsList.filter(isStrictSemverTag)
-    return semver.slice(0, 6)
-  }, [resolvedTagsList])
+  const digestTagsList = useMemo(() => uniquePreserveOrder(digestTags), [digestTags])
 
-  const resolvedSemverMore = useMemo(() => {
-    const semverTotal = resolvedTagStats?.semverTotal ?? 0
-    return Math.max(0, semverTotal - resolvedSemverPreview.length)
-  }, [resolvedSemverPreview.length, resolvedTagStats?.semverTotal])
+  const effectiveTags = useMemo(() => {
+    // When digest is available, prefer the API's digest-tags result; fall back to resolvedTags
+    // (if present) while loading / on errors.
+    const base = digestNorm ? (digestTags != null ? digestTagsList : resolvedTagsList) : resolvedTagsList
+    const uniq = uniquePreserveOrder(base)
+    return resolvedTagTrim ? moveToFront(uniq, resolvedTagTrim) : uniq
+  }, [digestNorm, digestTags, digestTagsList, resolvedTagTrim, resolvedTagsList])
+
+  const tagsPreview = useMemo(() => effectiveTags.slice(0, TAGS_PREVIEW_MAX), [effectiveTags])
+  const tagsMore = useMemo(() => Math.max(0, effectiveTags.length - tagsPreview.length), [effectiveTags.length, tagsPreview.length])
 
   const clearHoverCloseTimer = useCallback(() => {
     if (hoverCloseTimer.current == null) return
@@ -191,8 +217,60 @@ export function CurrentVersionPopover(props: {
       clearHoverCloseTimer()
       clearPopoverShowRaf()
       clearPopoverUnmountTimer()
+      if (fetchTimer.current != null) {
+        window.clearTimeout(fetchTimer.current)
+        fetchTimer.current = null
+      }
     }
   }, [clearHoverCloseTimer, clearPopoverShowRaf, clearPopoverUnmountTimer])
+
+  useEffect(() => {
+    if (!open) return
+    if (!digestNorm) return
+    if (digestTags != null) return
+
+    let alive = true
+    const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
+    if (fetchTimer.current != null) {
+      window.clearTimeout(fetchTimer.current)
+      fetchTimer.current = null
+    }
+
+    const timerId = window.setTimeout(() => {
+      if (!alive) return
+      // Avoid stale request finalizers / callbacks clobbering newer debounce timers.
+      if (fetchTimer.current === timerId) fetchTimer.current = null
+
+      listServiceDigestTags(props.serviceId, digestNorm)
+        .then((data) => {
+          if (!alive) return
+          setDigestState({
+            key: digestKey,
+            tags: data.tags,
+            scan: data.scan ?? null,
+            error: null,
+          })
+        })
+        .catch((e: unknown) => {
+          if (!alive) return
+          setDigestState({
+            key: digestKey,
+            tags: [],
+            scan: null,
+            error: e instanceof Error ? e.message : String(e),
+          })
+        })
+    }, delay)
+    fetchTimer.current = timerId
+
+    return () => {
+      alive = false
+      if (fetchTimer.current === timerId) {
+        window.clearTimeout(timerId)
+        fetchTimer.current = null
+      }
+    }
+  }, [digestKey, digestNorm, digestTags, open, pinned, props.serviceId])
 
   useLayoutEffect(() => {
     if (!open) return
@@ -403,30 +481,42 @@ export function CurrentVersionPopover(props: {
         </div>
       </div>
 
-      {resolvedTagStats ? (
-        <div className="versionTagsPopoverSection">
-          <div className="label">同 digest 的 tags</div>
-          <div className="muted">
-            共 {resolvedTagStats.total} 个 tags（semver {resolvedTagStats.semverTotal} · 其他 {resolvedTagStats.otherTotal}）
-          </div>
-          {resolvedTagStats.semverTotal === 0 ? (
-            <div className="muted">未找到可用于对比的 semver tags</div>
-          ) : (
-            <>
+      <div className="versionTagsPopoverSection">
+        <div className="label">同 digest 的 tags</div>
+        {!digestNorm && effectiveTags.length === 0 ? (
+          <div className="muted">digest 未知，暂无 tags 信息</div>
+        ) : digestNorm && digestTags == null && effectiveTags.length === 0 ? (
+          <div className="muted">加载中…</div>
+        ) : loadError && effectiveTags.length === 0 ? (
+          <div className="muted">加载失败：{loadError}</div>
+        ) : effectiveTags.length === 0 ? (
+          <div className="muted">未找到同 digest 的标签</div>
+        ) : (
+          <>
+            <div className="muted">共 {effectiveTags.length} 个 tags</div>
+
+            {scan && digestNorm && (scan.manifestsTimeout > 0 || scan.manifestsError > 0) ? (
               <div className="muted">
-                semver 预览：{resolvedSemverMore > 0 ? `显示 ${resolvedSemverPreview.length}，另有 ${resolvedSemverMore} 个` : '全部'}
+                注意：digest tags 可能不完整（ok {scan.manifestsOk} / {scan.repoTagsTotal}
+                {scan.manifestsTimeout > 0 ? ` · timeout ${scan.manifestsTimeout}` : ''}
+                {scan.manifestsError > 0 ? ` · error ${scan.manifestsError}` : ''}
+                ）
               </div>
-              <div className="versionTagsPopoverChips">
-                {resolvedSemverPreview.map((t) => (
-                  <span key={t} className="versionTagsChip">
-                    <span className={`mono${t === resolvedTagTrim ? ' monoPrimary' : ''}`}>{t}</span>
-                  </span>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      ) : null}
+            ) : null}
+
+            <div className="muted">
+              tags 预览：{tagsMore > 0 ? `显示 ${tagsPreview.length}，另有 ${tagsMore} 个` : '全部'}
+            </div>
+            <div className="versionTagsPopoverChips">
+              {tagsPreview.map((t) => (
+                <span key={t} className="versionTagsChip">
+                  <span className={`mono${t === resolvedTagTrim ? ' monoPrimary' : ''}`}>{t}</span>
+                </span>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   ) : null
 

@@ -3,10 +3,10 @@ import { createPortal } from 'react-dom'
 import { listServiceDigestTags, type ServiceDigestTagsScanSummary } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 
-function uniquePreserveOrder(values: Array<string | null | undefined>): string[] {
+function uniquePreserveOrder(values: Array<string | null | undefined> | null | undefined): string[] {
   const out: string[] = []
   const seen = new Set<string>()
-  for (const v of values) {
+  for (const v of values ?? []) {
     const t = (v ?? '').trim()
     if (!t) continue
     if (seen.has(t)) continue
@@ -16,99 +16,18 @@ function uniquePreserveOrder(values: Array<string | null | undefined>): string[]
   return out
 }
 
-function isStrictSemverTag(tag: string): boolean {
+function moveToFront(tags: string[], tag: string): string[] {
   const t = tag.trim()
-  if (!t) return false
-  return /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(t)
-}
-
-type Semver = {
-  major: number
-  minor: number
-  patch: number
-  prerelease: Array<string | number>
-  hasPrerelease: boolean
-}
-
-function parseSemverTag(tag: string): Semver | null {
-  let t = tag.trim()
-  if (!t) return null
-  if (t.startsWith('v')) t = t.slice(1)
-  if (!t) return null
-
-  const [main, build] = t.split('+', 2)
-  void build
-  const [core, pre] = main.split('-', 2)
-  const parts = core.split('.')
-  if (parts.length !== 3) return null
-  if (!parts.every((p) => /^\d+$/.test(p))) return null
-
-  const nums = parts.map((p) => Number(p))
-  if (!nums.every((n) => Number.isFinite(n) && n >= 0)) return null
-
-  const prerelease = (pre ?? '')
-    .split('.')
-    .map((p) => p.trim())
-    .filter(Boolean)
-    .map((p) => (/^\d+$/.test(p) ? Number(p) : p))
-
-  return {
-    major: nums[0],
-    minor: nums[1],
-    patch: nums[2],
-    prerelease,
-    hasPrerelease: prerelease.length > 0,
-  }
-}
-
-function cmpSemver(a: Semver, b: Semver): number {
-  if (a.major !== b.major) return a.major < b.major ? -1 : 1
-  if (a.minor !== b.minor) return a.minor < b.minor ? -1 : 1
-  if (a.patch !== b.patch) return a.patch < b.patch ? -1 : 1
-
-  // No prerelease is higher than prerelease.
-  if (a.hasPrerelease !== b.hasPrerelease) return a.hasPrerelease ? -1 : 1
-  if (!a.hasPrerelease) return 0
-
-  const len = Math.max(a.prerelease.length, b.prerelease.length)
-  for (let i = 0; i < len; i++) {
-    const ai = a.prerelease[i]
-    const bi = b.prerelease[i]
-    if (ai == null) return -1
-    if (bi == null) return 1
-    if (ai === bi) continue
-
-    const an = typeof ai === 'number'
-    const bn = typeof bi === 'number'
-    if (an && bn) return ai < bi ? -1 : 1
-    if (an !== bn) return an ? -1 : 1
-
-    const as = String(ai)
-    const bs = String(bi)
-    if (as === bs) continue
-    return as < bs ? -1 : 1
-  }
-
-  return 0
-}
-
-function sortTagsForDisplay(tags: string[]): string[] {
-  const uniq = uniquePreserveOrder(tags)
-  const semver: Array<{ t: string; v: Semver }> = []
-  const other: string[] = []
-  for (const t of uniq) {
-    const v = parseSemverTag(t)
-    if (v) semver.push({ t, v })
-    else other.push(t)
-  }
-  semver.sort((a, b) => cmpSemver(b.v, a.v))
-  other.sort((a, b) => a.localeCompare(b))
-  return [...semver.map((x) => x.t), ...other]
+  if (!t) return tags
+  const idx = tags.indexOf(t)
+  if (idx <= 0) return tags
+  return [tags[idx], ...tags.slice(0, idx), ...tags.slice(idx + 1)]
 }
 
 const HOVER_CLOSE_DELAY_MS = 300
 const POPOVER_ANIM_MS = 160
 const FETCH_DEBOUNCE_MS = 220
+const TAGS_PREVIEW_MAX = 12
 
 type DigestTagsState = {
   key: string
@@ -283,21 +202,14 @@ export function VersionTagsPopover(props: {
   }, [candidateDigestNorm, candidateTag, digestKey, digestTags, open, pinned, serviceId])
 
   const candidateTagTrim = useMemo(() => (candidateTag ?? '').trim(), [candidateTag])
-  const candidateIsSemver = useMemo(() => Boolean(candidateTagTrim && isStrictSemverTag(candidateTagTrim)), [candidateTagTrim])
 
-  const digestTagsTotal = useMemo(() => (digestTags ? digestTags.length : 0), [digestTags])
-  const digestSemverTags = useMemo(() => {
-    if (!digestTags) return []
-    return sortTagsForDisplay(digestTags.filter(isStrictSemverTag))
-  }, [digestTags])
-
-  const digestOtherTagsTotal = useMemo(() => {
-    if (!digestTags) return 0
-    return digestTags.length - digestSemverTags.length
-  }, [digestSemverTags.length, digestTags])
-
-  const semverPreview = useMemo(() => digestSemverTags.slice(0, 6), [digestSemverTags])
-  const semverMore = useMemo(() => Math.max(0, digestSemverTags.length - semverPreview.length), [digestSemverTags.length, semverPreview.length])
+  const digestTagsUnique = useMemo(() => uniquePreserveOrder(digestTags), [digestTags])
+  const tagsPreview = useMemo(() => {
+    const base = digestTagsUnique
+    const pinnedCandidate = candidateTagTrim ? moveToFront(base, candidateTagTrim) : base
+    return pinnedCandidate.slice(0, TAGS_PREVIEW_MAX)
+  }, [candidateTagTrim, digestTagsUnique])
+  const tagsMore = useMemo(() => Math.max(0, digestTagsUnique.length - tagsPreview.length), [digestTagsUnique.length, tagsPreview.length])
 
   useLayoutEffect(() => {
     if (!open) return
@@ -426,7 +338,7 @@ export function VersionTagsPopover(props: {
         ) : (
           <>
             <div className="muted">
-              共 {digestTagsTotal} 个 tags（semver {digestSemverTags.length} · 其他 {digestOtherTagsTotal}）
+              共 {digestTagsUnique.length} 个 tags
             </div>
 
             {scan && candidateDigestNorm && (scan.manifestsTimeout > 0 || scan.manifestsError > 0) ? (
@@ -438,26 +350,20 @@ export function VersionTagsPopover(props: {
               </div>
             ) : null}
 
-            {candidateIsSemver && digestSemverTags.length > 0 && !digestSemverTags.includes(candidateTagTrim) ? (
+            {candidateTagTrim && !digestTagsUnique.includes(candidateTagTrim) ? (
               <div className="muted">注意：候选 tag 不在本次 digest tags 结果中（可能是扫描不完整或 digest/tag 不匹配）</div>
             ) : null}
 
-            {digestSemverTags.length === 0 ? (
-              <div className="muted">未找到可用于对比的 semver tags</div>
-            ) : (
-              <>
-                <div className="muted">
-                  semver 预览（按 semver 排序）：{semverMore > 0 ? `显示 ${semverPreview.length}，另有 ${semverMore} 个` : '全部'}
-                </div>
-                <div className="versionTagsPopoverChips">
-                  {semverPreview.map((t) => (
-                    <span key={t} className="versionTagsChip">
-                      <span className={`mono${t === candidateTagTrim ? ' monoPrimary' : ''}`}>{t}</span>
-                    </span>
-                  ))}
-                </div>
-              </>
-            )}
+            <div className="muted">
+              tags 预览：{tagsMore > 0 ? `显示 ${tagsPreview.length}，另有 ${tagsMore} 个` : '全部'}
+            </div>
+            <div className="versionTagsPopoverChips">
+              {tagsPreview.map((t) => (
+                <span key={t} className="versionTagsChip">
+                  <span className={`mono${t === candidateTagTrim ? ' monoPrimary' : ''}`}>{t}</span>
+                </span>
+              ))}
+            </div>
           </>
         )}
       </div>
