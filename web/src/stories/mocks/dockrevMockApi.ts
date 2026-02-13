@@ -1378,7 +1378,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       const tags = !digestNorm
         ? []
         : digestNorm === d('c', 'c2')
-          ? repoTags.filter((t) => t.startsWith('5.2') || t === 'v5.2.1' || t === 'stable' || t === 'latest')
+          ? ['v5.2.1', '5.2.1', '5.2', 'stable', 'latest']
           : digestNorm === d('a', 'b1') && serviceId === 'svc-resolved-web'
             ? ['5.2.1', 'v5.2.1', 'stable', 'latest']
           : digestNorm === d('b', '9f') && serviceId === 'svc-resolved-web'
