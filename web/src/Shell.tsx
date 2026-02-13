@@ -89,7 +89,6 @@ export function AppShell(props: {
         <header className="topbar">
           <div className="topbarLeft">
             <div className="brand">Dockrev</div>
-            <div className="topbarHint">{props.topbarHint ?? 'Compose 镜像更新 / 版本提示'}</div>
           </div>
           <div className="topbarRight">
             {props.topActions ? <div className="topActions">{props.topActions}</div> : null}

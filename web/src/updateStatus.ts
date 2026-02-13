@@ -83,7 +83,9 @@ export function noteFor(svc: Service, st: RowStatus): string {
     const hasForceBackup =
       Object.values(svc.settings.backupTargets.bindPaths).some((v) => v === 'force') ||
       Object.values(svc.settings.backupTargets.volumeNames).some((v) => v === 'force')
-    return hasForceBackup ? '备份通过后执行' : '按当前标签序列'
+    // The "按当前标签序列" hint became low-value after version popovers were introduced; keep notes
+    // only when there's an operator-relevant extra step.
+    return hasForceBackup ? '备份通过后执行' : ''
   }
-  return '-'
+  return ''
 }

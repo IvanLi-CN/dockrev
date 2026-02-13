@@ -145,13 +145,14 @@ export function SectionTitle(props: { children: ReactNode }) {
 }
 
 export function StatusRemark(props: { service: Service; status: RowStatus }) {
+  const note = noteFor(props.service, props.status).trim()
   return (
     <div className="statusCol">
       <div className="statusLine">
         <span className={statusDotClass(props.status)} aria-hidden="true" />
         <span className="label">{statusLabel(props.status)}</span>
       </div>
-      <div className="muted statusNote">{noteFor(props.service, props.status)}</div>
+      {note ? <div className="muted statusNote">{note}</div> : null}
     </div>
   )
 }

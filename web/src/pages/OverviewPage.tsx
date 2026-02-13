@@ -24,6 +24,7 @@ import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../component
 import { UpdateTargetSelect } from '../components/UpdateTargetSelect'
 import { useConfirm } from '../confirm'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
+import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
 
 function formatShort(ts?: string | null) {
   if (!ts) return '-'
@@ -68,56 +69,11 @@ function splitImageNameForDisplay(
 
 function formatTagDisplay(tag: string, resolvedTag: string | null | undefined): string {
   const r = (resolvedTag ?? '').trim()
-  return r && r !== tag ? r : tag
-}
-
-function isStrictSemverTag(tag: string): boolean {
-  const t = tag.trim()
-  if (!t) return false
-  return /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(t)
-}
-
-function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefined): string {
-  const r = (resolvedTag ?? '').trim()
-  if (r) return r
-  if (isStrictSemverTag(tag)) return tag
-  return '?'
-}
-
-function formatCurrentCandidateTagLine(currentTag: string, candidateTag: string | null): ReactNode {
-  const cur = currentTag.trim()
-  const cand = (candidateTag ?? '').trim()
-  if (!cand || cand === '-' || cand === cur) return cur
-  return (
-    <>
-      <span>{cur}</span> <ArrowRightIcon className="inlineIcon" /> <span>{cand}</span>
-    </>
-  )
-}
-
-function formatTagTooltip(
-  tag: string,
-  digest: string | null | undefined,
-  resolvedTag: string | null | undefined,
-  resolvedTags: string[] | null | undefined,
-): string | undefined {
-  const inferred = (resolvedTag ?? '').trim()
-  const lines: string[] = []
-
-  const digestSuffix = digest ? (digest.includes(':') ? digest : `sha256:${digest}`) : null
-
-  if (inferred && inferred !== tag) {
-    lines.push(digestSuffix ? `${inferred}@${digestSuffix}` : inferred)
-    lines.push(`原始标签: ${tag}`)
-  } else {
-    lines.push(digestSuffix ? `${tag}@${digestSuffix}` : tag)
-  }
-
-  if (resolvedTags && resolvedTags.length > 1) {
-    lines.push(`resolvedTags: ${resolvedTags.join(', ')}`)
-  }
-
-  return lines.join('\n')
+  if (r && /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(r)) return r
+  const t = (tag ?? '').trim()
+  if (!t) return '-'
+  if (/^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(t)) return t
+  return '-'
 }
 
 function getDiscoveryScanStartedAt(summary: unknown): string | null {
@@ -242,7 +198,7 @@ function withCollapseDefaults(
 
 export function OverviewPage(props: {
   onComposeHint: (hint: { path?: string; profile?: string; lastScan?: string }) => void
-  onTopActions: (node: React.ReactNode) => void
+  onTopActions: (node: ReactNode) => void
 }) {
   const { onComposeHint, onTopActions } = props
   const confirm = useConfirm()
@@ -516,20 +472,16 @@ export function OverviewPage(props: {
       targetTag?: string
       targetDigest?: string | null
       getTarget?: () => { targetTag?: string; targetDigest?: string | null }
-      confirmBody?: React.ReactNode
+      confirmBody?: ReactNode
       confirmTitle?: string
     }) => {
       const scopeLabel = input.scope === 'all' ? 'all' : input.scope === 'stack' ? 'stack' : 'service'
       const confirmVariant = input.scope === 'service' ? 'primary' : 'danger'
-      const badgeText =
-        input.scope === 'all' ? '全量更新' : input.scope === 'stack' ? '批量更新' : '将更新并重启'
-      const badgeTone = input.scope === 'service' ? 'warn' : 'bad'
       const ok = await confirm({
         title: input.confirmTitle ?? '确认执行更新？',
         body:
           input.confirmBody ?? (
             <>
-              <div className="modalLead">将拉取镜像并重启容器；失败可能触发回滚。</div>
               <div className="modalKvGrid">
                 <div className="modalKvLabel">模式</div>
                 <div className="modalKvValue">
@@ -557,8 +509,8 @@ export function OverviewPage(props: {
         confirmText: '执行更新',
         cancelText: '取消',
         confirmVariant,
-        badgeText,
-        badgeTone,
+        // Hide the pill badge; it doesn't add value for operators (scope/kv already shows intent).
+        badgeText: null,
       })
       if (!ok) return
 
@@ -626,7 +578,6 @@ export function OverviewPage(props: {
             const totalCandidates = countsAll.updatable + countsAll.hint + countsAll.crossTag
             const body = (
               <>
-                <div className="modalLead">将为所有服务创建更新任务（服务端会计算是否实际变更）。</div>
                 <div className="modalKvGrid">
                   <div className="modalKvLabel">范围</div>
                   <div className="modalKvValue">
@@ -647,13 +598,11 @@ export function OverviewPage(props: {
                 <div className="modalLead">将更新的服务（预览）</div>
                 <div className="modalList">
                   {allCandidates.map((item) => {
-                    const current = formatTagDisplay(item.svc.image.tag, item.svc.image.resolvedTag)
-                    const candidate = item.svc.candidate ? formatTagDisplay(item.svc.candidate.tag, undefined) : '-'
-                    const title = `${formatTagTooltip(item.svc.image.tag, item.svc.image.digest, item.svc.image.resolvedTag, item.svc.image.resolvedTags) ?? current} → ${
-                      item.svc.candidate
-                        ? formatTagTooltip(item.svc.candidate.tag, item.svc.candidate.digest, undefined, undefined) ?? item.svc.candidate.tag
-                        : '-'
-                    }`
+                    const currentDisplayTag = formatTagDisplay(item.svc.image.tag, item.svc.image.resolvedTag)
+                    const rawTagTrim = (item.svc.image.tag ?? '').trim()
+                    const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
+                    const candidateTag =
+                      item.svc.candidate?.tag && item.svc.candidate.tag !== '-' ? item.svc.candidate.tag : null
                     return (
                       <div key={`${item.stackName}/${item.svc.id}`} className="modalListItem">
                         <div className="modalListLeft">
@@ -678,16 +627,52 @@ export function OverviewPage(props: {
                           })()}
                         </div>
                         <div className="modalListRight">
-                          <span className="mono" title={title}>
-                            <span>{current}</span> <ArrowRightIcon className="inlineIcon" /> <span>{candidate}</span>
-                          </span>
+                          <div className="cellTwoLine">
+                            <div className="versionLine">
+                              <CurrentVersionPopover
+                                serviceId={item.svc.id}
+                                displayTag={currentDisplayTag}
+                                imageTag={item.svc.image.tag}
+                                imageDigest={item.svc.image.digest ?? null}
+                                resolvedTag={item.svc.image.resolvedTag}
+                                resolvedTags={item.svc.image.resolvedTags}
+                              />
+                              <ArrowRightIcon className="inlineIcon" />
+                              {candidateTag ? (
+                                <VersionTagsPopover
+                                  serviceId={item.svc.id}
+                                  candidateTag={candidateTag}
+                                  candidateDigest={item.svc.candidate?.digest ?? null}
+                                >
+                                  {candidateTag}
+                                </VersionTagsPopover>
+                              ) : (
+                                <span className="mono monoPrimary">-</span>
+                              )}
+                            </div>
+                            {showRawTag ? (
+                              <div>
+                                <CurrentVersionPopover
+                                  serviceId={item.svc.id}
+                                  displayTag={item.svc.image.tag}
+                                  imageTag={item.svc.image.tag}
+                                  imageDigest={item.svc.image.digest ?? null}
+                                  resolvedTag={item.svc.image.resolvedTag}
+                                  resolvedTags={item.svc.image.resolvedTags}
+                                  preferSource="rawTag"
+                                  triggerClassName="versionTagsTrigger mono monoSecondary"
+                                >
+                                  {item.svc.image.tag}
+                                </CurrentVersionPopover>
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
                       </div>
                     )
                   })}
                 </div>
                 <div className="modalDivider" />
-                <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>
               </>
             )
             void triggerApply({ scope: 'all', targetLabel: '全部服务', confirmBody: body, confirmTitle: '确认更新全部服务？' })
@@ -872,7 +857,6 @@ export function OverviewPage(props: {
 		                          .filter((x) => x.status === 'updatable' || x.status === 'hint' || x.status === 'crossTag')
 		                        const body = (
 		                          <>
-		                            <div className="modalLead">将为该 stack 内服务创建更新任务（服务端会计算是否实际变更）。</div>
 		                            <div className="modalKvGrid">
 	                              <div className="modalKvLabel">范围</div>
 	                              <div className="modalKvValue">
@@ -897,13 +881,11 @@ export function OverviewPage(props: {
 		                            <div className="modalLead">将更新的服务（预览）</div>
 		                            <div className="modalList">
 		                              {candidateServices.map((item) => {
-		                                const current = formatTagDisplay(item.svc.image.tag, item.svc.image.resolvedTag)
-		                                const candidate = item.svc.candidate ? formatTagDisplay(item.svc.candidate.tag, undefined) : '-'
-		                                const title = `${formatTagTooltip(item.svc.image.tag, item.svc.image.digest, item.svc.image.resolvedTag, item.svc.image.resolvedTags) ?? current} → ${
-		                                    item.svc.candidate
-		                                    ? formatTagTooltip(item.svc.candidate.tag, item.svc.candidate.digest, undefined, undefined) ?? item.svc.candidate.tag
-		                                    : '-'
-		                                }`
+		                                const currentDisplayTag = formatTagDisplay(item.svc.image.tag, item.svc.image.resolvedTag)
+		                                const rawTagTrim = (item.svc.image.tag ?? '').trim()
+		                                const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
+		                                const candidateTag =
+		                                  item.svc.candidate?.tag && item.svc.candidate.tag !== '-' ? item.svc.candidate.tag : null
 		                                return (
 		                                  <div key={item.svc.id} className="modalListItem">
 		                                    <div className="modalListLeft">
@@ -928,16 +910,52 @@ export function OverviewPage(props: {
 		                                      })()}
 		                                    </div>
 		                                    <div className="modalListRight">
-		                                      <span className="mono" title={title}>
-		                                        <span>{current}</span> <ArrowRightIcon className="inlineIcon" /> <span>{candidate}</span>
-		                                      </span>
+		                                      <div className="cellTwoLine">
+		                                        <div className="versionLine">
+		                                          <CurrentVersionPopover
+		                                            serviceId={item.svc.id}
+		                                            displayTag={currentDisplayTag}
+		                                            imageTag={item.svc.image.tag}
+		                                            imageDigest={item.svc.image.digest ?? null}
+		                                            resolvedTag={item.svc.image.resolvedTag}
+		                                            resolvedTags={item.svc.image.resolvedTags}
+		                                          />
+		                                          <ArrowRightIcon className="inlineIcon" />
+		                                          {candidateTag ? (
+		                                            <VersionTagsPopover
+		                                              serviceId={item.svc.id}
+		                                              candidateTag={candidateTag}
+		                                              candidateDigest={item.svc.candidate?.digest ?? null}
+		                                            >
+		                                              {candidateTag}
+		                                            </VersionTagsPopover>
+		                                          ) : (
+		                                            <span className="mono monoPrimary">-</span>
+		                                          )}
+		                                        </div>
+		                                        {showRawTag ? (
+		                                          <div>
+		                                            <CurrentVersionPopover
+		                                              serviceId={item.svc.id}
+		                                              displayTag={item.svc.image.tag}
+		                                              imageTag={item.svc.image.tag}
+		                                              imageDigest={item.svc.image.digest ?? null}
+		                                              resolvedTag={item.svc.image.resolvedTag}
+		                                              resolvedTags={item.svc.image.resolvedTags}
+		                                              preferSource="rawTag"
+		                                              triggerClassName="versionTagsTrigger mono monoSecondary"
+		                                            >
+		                                              {item.svc.image.tag}
+		                                            </CurrentVersionPopover>
+		                                          </div>
+		                                        ) : null}
+		                                      </div>
 		                                    </div>
 		                                  </div>
 		                                )
 		                              })}
 		                            </div>
 		                            <div className="modalDivider" />
-		                            <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>
 		                          </>
 		                        )
 	                        void triggerApply({
@@ -956,9 +974,12 @@ export function OverviewPage(props: {
 
                 {!isCollapsed
                   ? rows.map(({ svc, stt }) => {
-	                      const currentTitle = formatTagTooltip(svc.image.tag, svc.image.digest, svc.image.resolvedTag, svc.image.resolvedTags)
-	                      const candidateTitle = svc.candidate ? formatTagTooltip(svc.candidate.tag, svc.candidate.digest, undefined, undefined) : undefined
                       const isDockrev = isDockrevService(svc)
+                      const currentDisplayTag = formatTagDisplay(svc.image.tag, svc.image.resolvedTag)
+                      const rawTagTrim = (svc.image.tag ?? '').trim()
+                      const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
+                      const candidateTag = svc.candidate?.tag && svc.candidate.tag !== '-' ? svc.candidate.tag : null
+                      const showCandidate = Boolean(candidateTag && candidateTag !== currentDisplayTag)
                       const svcApply =
                         stt === 'updatable'
                           ? { enabled: true, title: null as string | null, note: null as string | null }
@@ -1023,44 +1044,44 @@ export function OverviewPage(props: {
 	                            )
 	                          })()}
 	                          <div className="cellTwoLine">
-	                            {svc.candidate?.tag && svc.candidate.tag !== '-' ? (
-	                              <VersionTagsPopover
-	                                serviceId={svc.id}
-	                                candidateTag={svc.candidate.tag}
-	                                candidateDigest={svc.candidate.digest ?? null}
-	                                triggerTitle={
-	                                  [
-	                                    currentTitle,
-	                                    candidateTitle ? `candidate: ${candidateTitle}` : null,
-	                                  ]
-	                                    .filter(Boolean)
-	                                    .join('\n') || undefined
-	                                }
-	                              >
-	                                {formatCurrentCandidateTagLine(
-	                                  inferredTagForDisplay(svc.image.tag, svc.image.resolvedTag),
-	                                  svc.candidate?.tag ?? null,
-	                                )}
-	                              </VersionTagsPopover>
-	                            ) : (
-	                              <div
-	                                className="mono monoPrimary"
-	                                title={
-	                                  [
-	                                    currentTitle,
-	                                    candidateTitle ? `candidate: ${candidateTitle}` : null,
-	                                  ]
-	                                    .filter(Boolean)
-	                                    .join('\n')
-	                                }
-	                              >
-	                                {formatCurrentCandidateTagLine(
-	                                  inferredTagForDisplay(svc.image.tag, svc.image.resolvedTag),
-	                                  svc.candidate?.tag ?? null,
-	                                )}
-	                              </div>
-	                            )}
-	                            <div className="mono monoSecondary">{svc.image.tag}</div>
+                              <div className="versionLine">
+                                <CurrentVersionPopover
+                                  serviceId={svc.id}
+                                  displayTag={currentDisplayTag}
+                                  imageTag={svc.image.tag}
+                                  imageDigest={svc.image.digest ?? null}
+                                  resolvedTag={svc.image.resolvedTag}
+                                  resolvedTags={svc.image.resolvedTags}
+                                />
+                                {showCandidate ? (
+                                  <>
+                                    <ArrowRightIcon className="inlineIcon" />
+                                    <VersionTagsPopover
+                                      serviceId={svc.id}
+                                      candidateTag={candidateTag}
+                                      candidateDigest={svc.candidate?.digest ?? null}
+                                    >
+                                      {candidateTag}
+                                    </VersionTagsPopover>
+                                  </>
+                                ) : null}
+                              </div>
+	                            {showRawTag ? (
+                                <div>
+                                  <CurrentVersionPopover
+                                    serviceId={svc.id}
+                                    displayTag={svc.image.tag}
+                                    imageTag={svc.image.tag}
+                                    imageDigest={svc.image.digest ?? null}
+                                    resolvedTag={svc.image.resolvedTag}
+                                    resolvedTags={svc.image.resolvedTags}
+                                    preferSource="rawTag"
+                                    triggerClassName="versionTagsTrigger mono monoSecondary"
+                                  >
+                                    {svc.image.tag}
+                                  </CurrentVersionPopover>
+                                </div>
+	                            ) : null}
 	                          </div>
 	                          <StatusRemark service={svc} status={stt} />
                           <div
@@ -1139,22 +1160,22 @@ export function OverviewPage(props: {
 	                                              </div>
 	                                            )
 	                                          })()}
-	                                        </div>
+		                                        </div>
 		                                        <div className="modalKvLabel">目标版本</div>
 		                                        <div className="modalKvValue">
-                                          <span
-                                            className="mono"
-                                            title={
-                                              `${formatTagTooltip(svc.image.tag, svc.image.digest, svc.image.resolvedTag, svc.image.resolvedTags) ?? formatTagDisplay(svc.image.tag, svc.image.resolvedTag)} → ${
-                                                svc.candidate ? formatTagTooltip(svc.candidate.tag, svc.candidate.digest, undefined, undefined) ?? svc.candidate.tag : '-'
-                                              }`
-                                            }
-                                          >
-                                            {formatTagDisplay(svc.image.tag, svc.image.resolvedTag)}
-                                          </span>
-                                          <span style={{ opacity: 0.8, margin: '0 6px' }}>
-                                            <ArrowRightIcon className="inlineIcon" />
-                                          </span>
+                                          <div className="cellTwoLine">
+                                            <div className="versionLine">
+                                              <CurrentVersionPopover
+                                                serviceId={svc.id}
+                                                displayTag=""
+                                                imageTag={svc.image.tag}
+                                                imageDigest={svc.image.digest ?? null}
+                                                resolvedTag={svc.image.resolvedTag}
+                                                resolvedTags={svc.image.resolvedTags}
+                                              />
+                                              <span style={{ opacity: 0.8, margin: '0 6px' }}>
+                                                <ArrowRightIcon className="inlineIcon" />
+                                              </span>
                                           <UpdateTargetSelect
                                             serviceId={svc.id}
                                             currentTag={svc.image.resolvedTag ?? svc.image.tag}
@@ -1168,14 +1189,36 @@ export function OverviewPage(props: {
                                               selected.digest = next.digest ?? null
                                             }}
                                           />
-		                                        </div>
+                                            </div>
+                                            {(() => {
+                                              const currentTag = formatTagDisplay(svc.image.tag, svc.image.resolvedTag)
+                                              const rawTrim = (svc.image.tag ?? '').trim()
+                                              const showRaw = Boolean(rawTrim && rawTrim !== currentTag)
+                                              return showRaw ? (
+                                                <div>
+                                                  <CurrentVersionPopover
+                                                    serviceId={svc.id}
+                                                    displayTag={svc.image.tag}
+                                                    imageTag={svc.image.tag}
+                                                    imageDigest={svc.image.digest ?? null}
+                                                    resolvedTag={svc.image.resolvedTag}
+                                                    resolvedTags={svc.image.resolvedTags}
+                                                    preferSource="rawTag"
+                                                    triggerClassName="versionTagsTrigger mono monoSecondary"
+                                                  >
+                                                    {svc.image.tag}
+                                                  </CurrentVersionPopover>
+                                                </div>
+                                              ) : null
+                                            })()}
+                                          </div>
+	                                        </div>
                                         <div className="modalKvLabel">状态</div>
                                         <div className="modalKvValue">
                                           <Mono>{stt}</Mono>
                                         </div>
                                       </div>
                                       <div className="modalDivider" />
-                                      <div className="muted">提示：将拉取镜像并重启容器；失败可能触发回滚。</div>
                                     </>
                                   )
                                   void triggerApply({
@@ -1203,10 +1246,6 @@ export function OverviewPage(props: {
               </div>
             )
           })}
-        </div>
-
-        <div className="muted" style={{ marginTop: 24 }}>
-          按 compose 分组显示（可折叠）；点击 service 行进入详情。
         </div>
       </div>
 

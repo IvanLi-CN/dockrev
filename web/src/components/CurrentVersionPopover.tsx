@@ -3,25 +3,61 @@ import { createPortal } from 'react-dom'
 import { listServiceDigestTags, type ServiceDigestTagsScanSummary } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 
-function uniquePreserveOrder(values: Array<string | null | undefined> | null | undefined): string[] {
+type TagSeries = {
+  major: number
+  minor: number | null
+  patch: number | null
+  precision: 1 | 2 | 3
+}
+
+function isStrictSemverTag(tag: string): boolean {
+  const t = tag.trim()
+  if (!t) return false
+  return /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(t)
+}
+
+function parseTagSeries(tag: string): TagSeries | null {
+  let t = tag.trim()
+  if (!t) return null
+  if (t.startsWith('v')) t = t.slice(1)
+  if (!t) return null
+
+  // Best-effort: accept semver-like core with optional prerelease/build.
+  const core = t.split(/[+-]/, 1)[0]
+  const parts = core.split('.')
+  if (parts.length < 1 || parts.length > 3) return null
+  if (!parts.every((p) => /^\d+$/.test(p))) return null
+
+  const nums = parts.map((p) => Number(p))
+  if (!nums.every((n) => Number.isFinite(n) && n >= 0)) return null
+
+  return {
+    major: nums[0],
+    minor: parts.length >= 2 ? nums[1] : null,
+    patch: parts.length >= 3 ? nums[2] : null,
+    precision: parts.length as 1 | 2 | 3,
+  }
+}
+
+function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefined): string {
+  const r = (resolvedTag ?? '').trim()
+  if (r && isStrictSemverTag(r)) return r
+  const t = tag.trim()
+  if (t && isStrictSemverTag(t)) return t
+  return '-'
+}
+
+function uniquePreserveOrder(values: string[] | null | undefined): string[] {
   const out: string[] = []
   const seen = new Set<string>()
   for (const v of values ?? []) {
-    const t = (v ?? '').trim()
+    const t = v.trim()
     if (!t) continue
     if (seen.has(t)) continue
     seen.add(t)
     out.push(t)
   }
   return out
-}
-
-function moveToFront(tags: string[], tag: string): string[] {
-  const t = tag.trim()
-  if (!t) return tags
-  const idx = tags.indexOf(t)
-  if (idx <= 0) return tags
-  return [tags[idx], ...tags.slice(0, idx), ...tags.slice(idx + 1)]
 }
 
 const HOVER_CLOSE_DELAY_MS = 300
@@ -36,13 +72,27 @@ type DigestTagsState = {
   error: string | null
 }
 
-export function VersionTagsPopover(props: {
+function moveToFront(tags: string[], tag: string): string[] {
+  const t = tag.trim()
+  if (!t) return tags
+  const idx = tags.indexOf(t)
+  if (idx <= 0) return tags
+  return [tags[idx], ...tags.slice(0, idx), ...tags.slice(idx + 1)]
+}
+
+export function CurrentVersionPopover(props: {
   serviceId: string
-  candidateTag: string | null
-  candidateDigest: string | null
-  children: ReactNode
+  displayTag: string
+  imageTag: string
+  imageDigest?: string | null
+  resolvedTag?: string | null
+  resolvedTags?: string[] | null
+  preferSource?: 'resolvedTag' | 'rawTag'
+  triggerClassName?: string
+  children?: ReactNode
 }) {
-  const { serviceId, candidateTag, candidateDigest, children } = props
+  const { imageTag, imageDigest, resolvedTag } = props
+  const preferSource = props.preferSource ?? 'resolvedTag'
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const hoverCloseTimer = useRef<number | null>(null)
@@ -59,9 +109,20 @@ export function VersionTagsPopover(props: {
 
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
 
-  const candidateDigestNorm = useMemo(() => normalizeDigest(candidateDigest), [candidateDigest])
-  const digestKey = useMemo(() => `${serviceId}:${candidateDigestNorm ?? ''}`, [candidateDigestNorm, serviceId])
+  const digestNorm = useMemo(() => normalizeDigest(imageDigest), [imageDigest])
 
+  const displayTag = useMemo(() => {
+    const explicit = props.displayTag.trim()
+    if (explicit) return explicit
+    return inferredTagForDisplay(imageTag, resolvedTag)
+  }, [imageTag, props.displayTag, resolvedTag])
+
+  const resolvedTagTrim = useMemo(() => (resolvedTag ?? '').trim(), [resolvedTag])
+  const resolvedTagsList = useMemo(() => uniquePreserveOrder(props.resolvedTags), [props.resolvedTags])
+
+  const rawSeries = useMemo(() => parseTagSeries(imageTag), [imageTag])
+
+  const digestKey = useMemo(() => `${props.serviceId}:${digestNorm ?? ''}`, [digestNorm, props.serviceId])
   const [digestState, setDigestState] = useState<DigestTagsState>(() => ({
     key: digestKey,
     tags: null,
@@ -71,6 +132,19 @@ export function VersionTagsPopover(props: {
   const digestTags = digestState.key === digestKey ? digestState.tags : null
   const scan = digestState.key === digestKey ? digestState.scan : null
   const loadError = digestState.key === digestKey ? digestState.error : null
+
+  const digestTagsList = useMemo(() => uniquePreserveOrder(digestTags), [digestTags])
+
+  const effectiveTags = useMemo(() => {
+    // When digest is available, prefer the API's digest-tags result; fall back to resolvedTags
+    // (if present) while loading / on errors.
+    const base = digestNorm ? (digestTags != null ? digestTagsList : resolvedTagsList) : resolvedTagsList
+    const uniq = uniquePreserveOrder(base)
+    return resolvedTagTrim ? moveToFront(uniq, resolvedTagTrim) : uniq
+  }, [digestNorm, digestTags, digestTagsList, resolvedTagTrim, resolvedTagsList])
+
+  const tagsPreview = useMemo(() => effectiveTags.slice(0, TAGS_PREVIEW_MAX), [effectiveTags])
+  const tagsMore = useMemo(() => Math.max(0, effectiveTags.length - tagsPreview.length), [effectiveTags.length, tagsPreview.length])
 
   const clearHoverCloseTimer = useCallback(() => {
     if (hoverCloseTimer.current == null) return
@@ -152,10 +226,7 @@ export function VersionTagsPopover(props: {
 
   useEffect(() => {
     if (!open) return
-    if (!(candidateTag ?? '').trim()) return
-
-    // Digest tag listing is only meaningful when digest is known.
-    if (!candidateDigestNorm) return
+    if (!digestNorm) return
     if (digestTags != null) return
 
     let alive = true
@@ -170,7 +241,7 @@ export function VersionTagsPopover(props: {
       // Avoid stale request finalizers / callbacks clobbering newer debounce timers.
       if (fetchTimer.current === timerId) fetchTimer.current = null
 
-      listServiceDigestTags(serviceId, candidateDigestNorm)
+      listServiceDigestTags(props.serviceId, digestNorm)
         .then((data) => {
           if (!alive) return
           setDigestState({
@@ -199,17 +270,7 @@ export function VersionTagsPopover(props: {
         fetchTimer.current = null
       }
     }
-  }, [candidateDigestNorm, candidateTag, digestKey, digestTags, open, pinned, serviceId])
-
-  const candidateTagTrim = useMemo(() => (candidateTag ?? '').trim(), [candidateTag])
-
-  const digestTagsUnique = useMemo(() => uniquePreserveOrder(digestTags), [digestTags])
-  const tagsPreview = useMemo(() => {
-    const base = digestTagsUnique
-    const pinnedCandidate = candidateTagTrim ? moveToFront(base, candidateTagTrim) : base
-    return pinnedCandidate.slice(0, TAGS_PREVIEW_MAX)
-  }, [candidateTagTrim, digestTagsUnique])
-  const tagsMore = useMemo(() => Math.max(0, digestTagsUnique.length - tagsPreview.length), [digestTagsUnique.length, tagsPreview.length])
+  }, [digestKey, digestNorm, digestTags, open, pinned, props.serviceId])
 
   useLayoutEffect(() => {
     if (!open) return
@@ -275,16 +336,105 @@ export function VersionTagsPopover(props: {
     }
   }, [close, pinned])
 
-  const copyText = useCallback((text: string) => {
-    const t = text.trim()
-    if (!t) return
-    try {
-      const p = navigator.clipboard?.writeText(t)
-      if (p) void p.catch(() => {})
-    } catch {
-      // Ignore clipboard failures; copying is a best-effort convenience.
+  const inferenceBlock = useMemo<ReactNode>(() => {
+    const rawTrim = (imageTag ?? '').trim()
+    const resolved = resolvedTagTrim
+
+    const canUseResolvedSemver = Boolean(resolved && isStrictSemverTag(resolved))
+    const canUseRawSemver = Boolean(rawTrim && isStrictSemverTag(rawTrim))
+
+    if (preferSource === 'rawTag') {
+      if (canUseRawSemver) {
+        return (
+          <div className="muted" style={{ display: 'grid', gap: 4 }}>
+            <div>
+              推测 semver: <span className="mono">{rawTrim}</span>
+              {' · '}来源: <span className="mono">raw tag</span>
+            </div>
+          </div>
+        )
+      }
+      if (canUseResolvedSemver) {
+        return (
+          <div className="muted" style={{ display: 'grid', gap: 4 }}>
+            <div>
+              推测 semver: <span className="mono">{resolved}</span>
+              {' · '}来源: <span className="mono">resolvedTag</span>
+              {rawTrim ? `（raw tag 非 semver：${rawTrim}）` : '（raw tag 为空）'}
+            </div>
+          </div>
+        )
+      }
+    } else {
+      if (canUseResolvedSemver) {
+        return (
+          <div className="muted" style={{ display: 'grid', gap: 4 }}>
+            <div>
+              推测 semver: <span className="mono">{resolved}</span>
+              {' · '}来源: <span className="mono">resolvedTag</span>
+            </div>
+          </div>
+        )
+      }
+      if (canUseRawSemver) {
+        return (
+          <div className="muted" style={{ display: 'grid', gap: 4 }}>
+            <div>
+              推测 semver: <span className="mono">{rawTrim}</span>
+              {' · '}来源: <span className="mono">raw tag</span>
+              {resolved ? `（resolvedTag 非 semver：${resolved}）` : '（resolvedTag 缺失）'}
+            </div>
+          </div>
+        )
+      }
     }
-  }, [])
+
+    const reasons: string[] = []
+    if (!resolved) reasons.push('resolvedTag 缺失')
+    else if (!isStrictSemverTag(resolved)) reasons.push(`resolvedTag 非严格 semver（${resolved}）`)
+
+    if (!rawTrim) reasons.push('raw tag 为空')
+    else if (!isStrictSemverTag(rawTrim)) {
+      if (rawSeries && rawSeries.precision !== 3) {
+        const series =
+          rawSeries.precision === 1 || rawSeries.minor == null ? `${rawSeries.major}` : `${rawSeries.major}.${rawSeries.minor}`
+        reasons.push(`raw tag 缺少 patch（${rawTrim} -> ${series}.*）`)
+      } else {
+        reasons.push(`raw tag 非严格 semver（${rawTrim}）`)
+      }
+    }
+
+    if (!digestNorm) reasons.push('digest 未知（无法反查 tags）')
+
+    const lines: ReactNode[] = []
+    lines.push(
+      <div key="l1">
+        推测 semver: <span className="mono">无法确定</span>
+      </div>,
+    )
+    if (reasons.length > 0) {
+      lines.push(
+        <div key="l2">
+          原因:
+        </div>,
+      )
+      lines.push(
+        <div key="reasons" className="versionTagsPopoverChips">
+          {reasons.map((r) => (
+            <span key={r} className="versionTagsChip">
+              <span className="mono">{r}</span>
+            </span>
+          ))}
+        </div>,
+      )
+    }
+
+    return (
+      <div className="muted" style={{ display: 'grid', gap: 4 }}>
+        {lines}
+      </div>
+    )
+  }, [digestNorm, imageTag, preferSource, rawSeries, resolvedTagTrim])
 
   const popoverBody = renderPopover ? (
     <div
@@ -292,7 +442,7 @@ export function VersionTagsPopover(props: {
       className="versionTagsPopover"
       style={pos ? { left: pos.left, top: pos.top } : undefined}
       role="dialog"
-      aria-label="Version tags"
+      aria-label="Current version"
       data-state={popoverVisible ? 'open' : 'closed'}
       onPointerEnter={() => {
         clearHoverCloseTimer()
@@ -305,10 +455,10 @@ export function VersionTagsPopover(props: {
     >
       <div className="versionTagsPopoverHeader">
         <div className="versionTagsPopoverTitle">
-          <span className="mono monoPrimary">{candidateTag ?? '无候选版本'}</span>
-          {candidateDigestNorm ? (
+          <span className="mono monoPrimary">{displayTag}</span>
+          {digestNorm ? (
             <span className="mono muted">
-              {shortenDigest(candidateDigestNorm)}
+              {shortenDigest(digestNorm)}
             </span>
           ) : (
             <span className="mono muted">digest 未知</span>
@@ -317,31 +467,35 @@ export function VersionTagsPopover(props: {
       </div>
 
       <div className="versionTagsPopoverSection">
-        <div className="label">参考信息</div>
-        {!candidateTag ? (
-          <div className="muted">无候选版本</div>
-        ) : !candidateDigestNorm ? (
-          <>
-            <div className="muted">digest 缺失，无法列出同 digest 的 tags</div>
-            <div className="versionTagsPopoverActions">
-              <button type="button" className="versionTagsPopoverAction" onClick={() => copyText(candidateTag)}>
-                复制
-              </button>
-            </div>
-          </>
-        ) : digestTags == null ? (
+        <div className="label">推测</div>
+        {inferenceBlock}
+      </div>
+
+      <div className="versionTagsPopoverSection">
+        <div className="label">当前镜像</div>
+        <div className="muted">
+          raw tag <span className="mono">{imageTag.trim() ? imageTag : '（空）'}</span>
+        </div>
+        <div className="muted">
+          resolvedTag <span className="mono">{resolvedTagTrim || '（缺失）'}</span>
+        </div>
+      </div>
+
+      <div className="versionTagsPopoverSection">
+        <div className="label">同 digest 的 tags</div>
+        {!digestNorm && effectiveTags.length === 0 ? (
+          <div className="muted">digest 未知，暂无 tags 信息</div>
+        ) : digestNorm && digestTags == null && effectiveTags.length === 0 ? (
           <div className="muted">加载中…</div>
-        ) : loadError ? (
+        ) : loadError && effectiveTags.length === 0 ? (
           <div className="muted">加载失败：{loadError}</div>
-        ) : digestTags.length === 0 ? (
+        ) : effectiveTags.length === 0 ? (
           <div className="muted">未找到同 digest 的标签</div>
         ) : (
           <>
-            <div className="muted">
-              共 {digestTagsUnique.length} 个 tags
-            </div>
+            <div className="muted">共 {effectiveTags.length} 个 tags</div>
 
-            {scan && candidateDigestNorm && (scan.manifestsTimeout > 0 || scan.manifestsError > 0) ? (
+            {scan && digestNorm && (scan.manifestsTimeout > 0 || scan.manifestsError > 0) ? (
               <div className="muted">
                 注意：digest tags 可能不完整（ok {scan.manifestsOk} / {scan.repoTagsTotal}
                 {scan.manifestsTimeout > 0 ? ` · timeout ${scan.manifestsTimeout}` : ''}
@@ -350,24 +504,19 @@ export function VersionTagsPopover(props: {
               </div>
             ) : null}
 
-            {candidateTagTrim && !digestTagsUnique.includes(candidateTagTrim) ? (
-              <div className="muted">注意：候选 tag 不在本次 digest tags 结果中（可能是扫描不完整或 digest/tag 不匹配）</div>
-            ) : null}
-
             <div className="muted">
               tags 预览：{tagsMore > 0 ? `显示 ${tagsPreview.length}，另有 ${tagsMore} 个` : '全部'}
             </div>
             <div className="versionTagsPopoverChips">
               {tagsPreview.map((t) => (
                 <span key={t} className="versionTagsChip">
-                  <span className={`mono${t === candidateTagTrim ? ' monoPrimary' : ''}`}>{t}</span>
+                  <span className={`mono${t === resolvedTagTrim ? ' monoPrimary' : ''}`}>{t}</span>
                 </span>
               ))}
             </div>
           </>
         )}
       </div>
-
     </div>
   ) : null
 
@@ -376,7 +525,7 @@ export function VersionTagsPopover(props: {
       <button
         ref={triggerRef}
         type="button"
-        className="versionTagsTrigger mono monoPrimary"
+        className={props.triggerClassName ?? 'versionTagsTrigger mono monoPrimary'}
         aria-haspopup="dialog"
         aria-expanded={open}
         onPointerEnter={() => {
@@ -398,7 +547,7 @@ export function VersionTagsPopover(props: {
           showPopover()
         }}
       >
-        {children}
+        {props.children ?? displayTag}
       </button>
       {renderPopover ? createPortal(popoverBody, document.body) : null}
     </>

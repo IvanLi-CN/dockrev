@@ -11,6 +11,10 @@ function hasFlag(argv, ...flags) {
   return argv.some((arg) => flags.includes(arg))
 }
 
+function hasFlagPrefix(argv, ...prefixes) {
+  return argv.some((arg) => prefixes.some((p) => arg === p || arg.startsWith(`${p}=`)))
+}
+
 function hasPortFlag(argv) {
   return argv.some(
     (arg) =>
@@ -35,6 +39,7 @@ async function main() {
   const passthrough = process.argv.slice(2)
   const hasPort = hasPortFlag(passthrough)
   const hasExactPort = hasFlag(passthrough, '--exact-port')
+  const hasVersionUpdatesFlag = hasFlagPrefix(passthrough, '--no-version-updates', '--version-updates')
   const port = parsePort(process.env.DOCKREV_STORYBOOK_PORT, DEFAULT_PORT)
 
   const args = ['dev']
@@ -43,6 +48,10 @@ async function main() {
   }
   if (!hasExactPort) {
     args.push('--exact-port')
+  }
+  // Reduce noise in dev logs; can be overridden via passthrough flags.
+  if (!hasVersionUpdatesFlag) {
+    args.push('--no-version-updates')
   }
   args.push(...passthrough)
 
