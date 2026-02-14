@@ -105,20 +105,20 @@ pub async fn run_update_job(
     let compose_for_update = override_stack.as_ref().unwrap_or(&compose_stack);
 
     for svc in services {
-        let container_id = run_to_string(
+        let pre_update_container_id = run_to_string(
             runner,
             compose_for_update.ps_q_service(&compose_cfg, &svc.name),
             Duration::from_secs(30),
         )
         .await?;
-        let container_id = container_id.trim().to_string();
-        if container_id.is_empty() {
+        let pre_update_container_id = pre_update_container_id.trim().to_string();
+        if pre_update_container_id.is_empty() {
             continue;
         }
 
         let old_image_id = run_to_string(
             runner,
-            docker_runner::inspect_image_id(&docker_cfg, &container_id),
+            docker_runner::inspect_image_id(&docker_cfg, &pre_update_container_id),
             Duration::from_secs(10),
         )
         .await?;
@@ -138,18 +138,39 @@ pub async fn run_update_job(
         )
         .await?;
 
+        // `up -d` may recreate the container, so refresh the container id before any inspect/health checks.
+        let post_update_container_id = run_to_string(
+            runner,
+            compose_for_update.ps_q_service(&compose_cfg, &svc.name),
+            Duration::from_secs(30),
+        )
+        .await?;
+        let post_update_container_id = post_update_container_id.trim().to_string();
+        if post_update_container_id.is_empty() {
+            return Ok(UpdateOutcome {
+                status: "failed".to_string(),
+                summary_json: json!({"reason":"container_missing_after_update"}),
+            });
+        }
+
         let has_health = run_to_string(
             runner,
-            docker_runner::inspect_has_healthcheck(&docker_cfg, &container_id),
+            docker_runner::inspect_has_healthcheck(&docker_cfg, &post_update_container_id),
             Duration::from_secs(10),
         )
         .await?;
 
         let has_health = has_health.trim() == "1";
         let mut rolled_back = false;
+        let mut active_container_id = post_update_container_id;
         if has_health {
-            let ok =
-                wait_healthy(runner, &docker_cfg, &container_id, Duration::from_secs(90)).await?;
+            let ok = wait_healthy(
+                runner,
+                &docker_cfg,
+                &active_container_id,
+                Duration::from_secs(90),
+            )
+            .await?;
             if !ok {
                 run_checked(
                     runner,
@@ -163,8 +184,30 @@ pub async fn run_update_job(
                     Duration::from_secs(300),
                 )
                 .await?;
-                let ok2 = wait_healthy(runner, &docker_cfg, &container_id, Duration::from_secs(90))
-                    .await?;
+
+                // Rollback `up -d` can also recreate the container.
+                let rollback_container_id = run_to_string(
+                    runner,
+                    compose_stack.ps_q_service(&compose_cfg, &svc.name),
+                    Duration::from_secs(30),
+                )
+                .await?;
+                let rollback_container_id = rollback_container_id.trim().to_string();
+                if rollback_container_id.is_empty() {
+                    return Ok(UpdateOutcome {
+                        status: "failed".to_string(),
+                        summary_json: json!({"reason":"container_missing_after_rollback"}),
+                    });
+                }
+                active_container_id = rollback_container_id;
+
+                let ok2 = wait_healthy(
+                    runner,
+                    &docker_cfg,
+                    &active_container_id,
+                    Duration::from_secs(90),
+                )
+                .await?;
                 if !ok2 {
                     return Ok(UpdateOutcome {
                         status: "failed".to_string(),
@@ -177,7 +220,7 @@ pub async fn run_update_job(
 
         let new_image_id = run_to_string(
             runner,
-            docker_runner::inspect_image_id(&docker_cfg, &container_id),
+            docker_runner::inspect_image_id(&docker_cfg, &active_container_id),
             Duration::from_secs(10),
         )
         .await?;
@@ -406,6 +449,135 @@ mod tests {
         }
     }
 
+    fn args_end_with(args: &[String], suffix: &[&str]) -> bool {
+        if args.len() < suffix.len() {
+            return false;
+        }
+        let start = args.len() - suffix.len();
+        suffix
+            .iter()
+            .enumerate()
+            .all(|(i, s)| args[start + i] == *s)
+    }
+
+    #[derive(Default)]
+    struct RefreshContainerIdRunner {
+        step: Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for RefreshContainerIdRunner {
+        async fn run(
+            &self,
+            spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            let mut step = self.step.lock().unwrap();
+            let out = match *step {
+                // ps -q (pre-update)
+                0 => {
+                    assert_eq!(spec.program, "docker-compose");
+                    assert!(args_end_with(&spec.args, &["ps", "-q", "web"]));
+                    CommandOutput {
+                        status: 0,
+                        stdout: "old_container\n".to_string(),
+                        stderr: String::new(),
+                    }
+                }
+                // docker inspect image id (pre-update)
+                1 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec!["inspect", "--format", "{{.Image}}", "old_container"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: "sha256:old\n".to_string(),
+                        stderr: String::new(),
+                    }
+                }
+                // docker-compose pull
+                2 => {
+                    assert_eq!(spec.program, "docker-compose");
+                    assert!(args_end_with(&spec.args, &["pull", "web"]));
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                }
+                // docker-compose up -d
+                3 => {
+                    assert_eq!(spec.program, "docker-compose");
+                    assert!(args_end_with(&spec.args, &["up", "-d", "web"]));
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                }
+                // ps -q (post-update; container recreated)
+                4 => {
+                    assert_eq!(spec.program, "docker-compose");
+                    assert!(args_end_with(&spec.args, &["ps", "-q", "web"]));
+                    CommandOutput {
+                        status: 0,
+                        stdout: "new_container\n".to_string(),
+                        stderr: String::new(),
+                    }
+                }
+                // docker inspect has healthcheck (MUST use post-update id)
+                5 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec![
+                            "inspect",
+                            "--format",
+                            "{{if .State.Health}}1{{else}}0{{end}}",
+                            "new_container"
+                        ]
+                        .into_iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: "0\n".to_string(),
+                        stderr: String::new(),
+                    }
+                }
+                // docker inspect image id (post-update; MUST use post-update id)
+                6 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec!["inspect", "--format", "{{.Image}}", "new_container"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: "sha256:new\n".to_string(),
+                        stderr: String::new(),
+                    }
+                }
+                _ => panic!(
+                    "unexpected extra command: program={} args={:?}",
+                    spec.program, spec.args
+                ),
+            };
+
+            *step += 1;
+            Ok(out)
+        }
+    }
+
     #[tokio::test]
     async fn dry_run_does_not_execute() {
         let stack = StackRecord {
@@ -457,6 +629,61 @@ mod tests {
         .unwrap();
         assert_eq!(outcome.status, "success");
         assert_eq!(runner.calls.lock().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn update_job_refreshes_container_id_after_up() {
+        let stack = StackRecord {
+            id: "stk_1".to_string(),
+            name: "App".to_string(),
+            archived: false,
+            compose: crate::api::types::ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec!["/srv/docker-compose.yml".to_string()],
+                env_file: None,
+            },
+            backup: crate::api::types::StackBackupConfig::default(),
+            services: vec![Service {
+                id: "svc_1".to_string(),
+                name: "web".to_string(),
+                image: ComposeRef {
+                    reference: "ghcr.io/org/web:1.0".to_string(),
+                    tag: "1.0".to_string(),
+                    digest: None,
+                    resolved_tag: None,
+                    resolved_tags: None,
+                },
+                candidate: None,
+                ignore: None,
+                settings: ServiceSettings {
+                    auto_rollback: true,
+                    backup_targets: BackupTargetOverrides {
+                        bind_paths: BTreeMap::<String, TernaryChoice>::new(),
+                        volume_names: BTreeMap::<String, TernaryChoice>::new(),
+                    },
+                },
+                archived: None,
+            }],
+        };
+
+        let runner = RefreshContainerIdRunner::default();
+        let outcome = run_update_job(
+            &runner,
+            "docker-compose",
+            &stack,
+            &JobScope::Service,
+            Some("svc_1"),
+            "live",
+            None,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.status, "success");
+        assert_eq!(outcome.summary_json["changedServices"].as_u64().unwrap(), 1);
+        assert_eq!(*runner.step.lock().unwrap(), 7);
     }
 
     #[test]
