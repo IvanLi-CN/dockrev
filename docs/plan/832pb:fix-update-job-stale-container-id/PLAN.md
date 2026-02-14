@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-14
 - Last: 2026-02-14
 
@@ -99,9 +99,9 @@ None
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 修复 update job（up/rollback 后刷新 container id）
-- [ ] M2: 新增/调整单元测试覆盖 container id 变化场景
-- [ ] M3: 本地与 `codex-testbox` 模拟测试通过；PR checks 通过
+- [x] M1: 修复 update job（up/rollback 后刷新 container id）
+- [x] M2: 新增/调整单元测试覆盖 container id 变化场景
+- [x] M3: 本地与 `codex-testbox` 模拟测试通过；PR checks 通过
 
 ## 方案概述（Approach, high-level）
 
@@ -119,8 +119,8 @@ None
 ## 变更记录（Change log）
 
 - 2026-02-14: 初版冻结
+- 2026-02-14: 实现修复与回归测试；PR #65
 
 ## 参考（References）
 
 - 线上队列日志：`update` job 在 `up -d` 成功后仍因 `docker inspect` 失败而标记 `failed`
-
