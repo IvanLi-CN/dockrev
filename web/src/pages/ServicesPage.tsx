@@ -117,6 +117,7 @@ export function ServicesPage(props: {
   const [filter, setFilter] = useState<UpdateCandidateFilter>('all')
   const [error, setError] = useState<string | null>(null)
   const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
+  const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const supervisor = useSupervisorHealth()
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
@@ -203,11 +204,31 @@ export function ServicesPage(props: {
           onClick={() => {
             void (async () => {
               setBusy(true)
+              setError(null)
+              setNoticeCheckJobId(null)
               try {
-                await triggerCheck('all')
+                const resp = await triggerCheck('all')
+                setNoticeCheckJobId(resp.checkId)
                 await refresh()
               } catch (e: unknown) {
-                setError(e instanceof Error ? e.message : String(e))
+                if (e instanceof ApiError) {
+                  if (e.status === 401) setError('需要登录/鉴权（forward header）')
+                  else if (e.status === 409) {
+                    const d = e.details
+                    const existingJobId =
+                      d &&
+                      typeof d === 'object' &&
+                      d !== null &&
+                      'existingJobId' in d &&
+                      typeof (d as Record<string, unknown>).existingJobId === 'string'
+                        ? ((d as Record<string, unknown>).existingJobId as string)
+                        : null
+                    if (existingJobId) setNoticeCheckJobId(existingJobId)
+                    else setError(e.message)
+                  } else setError(e.message)
+                } else {
+                  setError(e instanceof Error ? e.message : String(e))
+                }
               } finally {
                 setBusy(false)
               }
@@ -1038,6 +1059,18 @@ export function ServicesPage(props: {
           已创建更新任务 <Mono>{noticeJobId}</Mono> ·{' '}
           <Button variant="ghost" disabled={busy} onClick={() => navigate({ name: 'queue' })}>
             查看队列
+          </Button>
+        </div>
+      ) : null}
+      {noticeCheckJobId ? (
+        <div className="success">
+          扫描任务 <Mono>{noticeCheckJobId}</Mono> ·{' '}
+          <Button
+            variant="ghost"
+            disabled={busy}
+            onClick={() => navigate({ name: 'job', jobId: noticeCheckJobId })}
+          >
+            查看任务
           </Button>
         </div>
       ) : null}

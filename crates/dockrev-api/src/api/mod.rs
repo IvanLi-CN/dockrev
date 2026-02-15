@@ -406,6 +406,49 @@ async fn trigger_check(
         req.service_id.as_deref(),
     )?;
 
+    // Prevent accidental parallel checks from UI double-clicks / multiple tabs.
+    // If we detect a stale running check (likely orphaned by a restart), we terminate it and proceed.
+    let stale_threshold = time::Duration::hours(2);
+    if let Ok(Some(existing)) = state
+        .db
+        .find_latest_running_check_job(
+            &req.scope,
+            req.stack_id.as_deref(),
+            req.service_id.as_deref(),
+        )
+        .await
+    {
+        let started_at = existing
+            .started_at
+            .as_deref()
+            .unwrap_or(existing.created_at.as_str());
+        let existing_stale =
+            time::OffsetDateTime::parse(started_at, &time::format_description::well_known::Rfc3339)
+                .ok()
+                .and_then(|started| {
+                    time::OffsetDateTime::parse(
+                        &now,
+                        &time::format_description::well_known::Rfc3339,
+                    )
+                    .ok()
+                    .map(|cur| cur - started)
+                })
+                .is_some_and(|age| age > stale_threshold);
+
+        if existing_stale {
+            let _ = state
+                .db
+                .terminate_job_as_failed(&existing.id, &now, "stale_check")
+                .await;
+        } else {
+            return Err(
+                ApiError::conflict("check already running").with_details(json!({
+                    "existingJobId": existing.id,
+                })),
+            );
+        }
+    }
+
     let check_id = ids::new_check_id();
     let job = JobRecord::new_running(
         check_id.clone(),

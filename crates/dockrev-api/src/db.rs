@@ -2450,6 +2450,259 @@ LIMIT 200
         .context("list jobs")
     }
 
+    pub async fn find_latest_running_check_job(
+        &self,
+        scope: &JobScope,
+        stack_id: Option<&str>,
+        service_id: Option<&str>,
+    ) -> anyhow::Result<Option<JobListItem>> {
+        let scope = scope.as_str().to_string();
+        let stack_id = stack_id.map(|s| s.to_string());
+        let service_id = service_id.map(|s| s.to_string());
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT
+  id,
+  type,
+  scope,
+  stack_id,
+  service_id,
+  status,
+  created_by,
+  reason,
+  created_at,
+  started_at,
+  finished_at,
+  allow_arch_mismatch,
+  backup_mode,
+  summary_json
+FROM jobs
+WHERE type = 'check'
+  AND status = 'running'
+  AND scope = ?1
+  AND (?2 IS NULL OR stack_id = ?2)
+  AND (?3 IS NULL OR service_id = ?3)
+ORDER BY created_at DESC
+LIMIT 1
+"#,
+            )?;
+
+            let row = stmt
+                .query_row(params![scope, stack_id, service_id], |row| {
+                    let summary_json: String = row.get(13)?;
+                    let summary: serde_json::Value =
+                        serde_json::from_str(&summary_json).map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                0,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?;
+                    Ok(JobListItem {
+                        id: row.get(0)?,
+                        r#type: JobType::from_str(&row.get::<_, String>(1)?),
+                        scope: JobScope::from_str(&row.get::<_, String>(2)?),
+                        stack_id: row.get(3)?,
+                        service_id: row.get(4)?,
+                        status: row.get(5)?,
+                        created_by: row.get(6)?,
+                        reason: row.get(7)?,
+                        created_at: row.get(8)?,
+                        started_at: row.get(9)?,
+                        finished_at: row.get(10)?,
+                        allow_arch_mismatch: row.get::<_, i64>(11)? != 0,
+                        backup_mode: row.get(12)?,
+                        summary_json: summary,
+                    })
+                })
+                .optional()?;
+
+            Ok(row)
+        })
+        .await
+        .context("find latest running check job")
+    }
+
+    pub async fn recover_incomplete_jobs(
+        &self,
+        now: &str,
+        reason: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        let now = now.to_string();
+        let reason = reason.to_string();
+        self.call(move |conn| {
+            let items: Vec<(String, String, String)> = {
+                let mut stmt = conn.prepare(
+                    r#"
+SELECT id, status, summary_json
+FROM jobs
+WHERE finished_at IS NULL
+ORDER BY created_at DESC
+LIMIT 2000
+"#,
+                )?;
+
+                let mut rows = stmt.query([])?;
+                let mut items: Vec<(String, String, String)> = Vec::new();
+                while let Some(row) = rows.next()? {
+                    items.push((row.get(0)?, row.get(1)?, row.get(2)?));
+                }
+                items
+            };
+
+            if items.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            let tx = conn.transaction()?;
+            let mut recovered: Vec<String> = Vec::new();
+
+            for (job_id, status, summary_raw) in items {
+                // Always leave an audit trail so operators can tell why the job ended.
+                tx.execute(
+                    r#"
+INSERT INTO job_logs (job_id, ts, level, msg)
+VALUES (?1, ?2, 'warn', ?3)
+"#,
+                    params![
+                        job_id,
+                        now,
+                        format!("job recovered as terminated: reason={reason}")
+                    ],
+                )?;
+
+                let is_terminal = matches!(status.as_str(), "success" | "failed" | "rolled_back");
+                if is_terminal {
+                    tx.execute(
+                        r#"
+UPDATE jobs
+SET finished_at = ?2
+WHERE id = ?1
+"#,
+                        params![job_id, now],
+                    )?;
+                    recovered.push(job_id);
+                    continue;
+                }
+
+                let mut summary: serde_json::Value =
+                    serde_json::from_str(&summary_raw).unwrap_or(serde_json::json!({}));
+                if !summary.is_object() {
+                    summary = serde_json::json!({});
+                }
+                if let Some(obj) = summary.as_object_mut() {
+                    obj.insert(
+                        "terminated".to_string(),
+                        serde_json::json!({
+                            "reason": reason,
+                            "at": now,
+                        }),
+                    );
+                }
+
+                tx.execute(
+                    r#"
+UPDATE jobs
+SET status = 'failed', finished_at = ?2, summary_json = ?3
+WHERE id = ?1
+"#,
+                    params![job_id, now, serde_json::to_string(&summary)?],
+                )?;
+                recovered.push(job_id);
+            }
+
+            tx.commit()?;
+            Ok(recovered)
+        })
+        .await
+        .context("recover incomplete jobs")
+    }
+
+    pub async fn terminate_job_as_failed(
+        &self,
+        job_id: &str,
+        now: &str,
+        reason: &str,
+    ) -> anyhow::Result<bool> {
+        let job_id = job_id.to_string();
+        let now = now.to_string();
+        let reason = reason.to_string();
+        self.call(move |conn| {
+            let row: Option<(String, Option<String>, Option<String>)> = conn
+                .query_row(
+                    r#"
+SELECT status, finished_at, summary_json
+FROM jobs
+WHERE id = ?1
+"#,
+                    params![job_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()?;
+            let Some((status, finished_at, summary_raw)) = row else {
+                return Ok(false);
+            };
+            if finished_at.is_some() {
+                return Ok(false);
+            }
+
+            // Always leave an audit trail so operators can tell why the job ended.
+            conn.execute(
+                r#"
+INSERT INTO job_logs (job_id, ts, level, msg)
+VALUES (?1, ?2, 'warn', ?3)
+"#,
+                params![
+                    job_id,
+                    now,
+                    format!("job terminated: reason={reason} (previous_status={status})")
+                ],
+            )?;
+
+            let mut summary: serde_json::Value =
+                serde_json::from_str(&summary_raw.unwrap_or_else(|| "{}".to_string()))
+                    .unwrap_or(serde_json::json!({}));
+            if !summary.is_object() {
+                summary = serde_json::json!({});
+            }
+            if let Some(obj) = summary.as_object_mut() {
+                obj.insert(
+                    "terminated".to_string(),
+                    serde_json::json!({
+                        "reason": reason,
+                        "at": now,
+                    }),
+                );
+            }
+
+            let is_terminal = matches!(status.as_str(), "success" | "failed" | "rolled_back");
+            if is_terminal {
+                conn.execute(
+                    r#"
+UPDATE jobs
+SET finished_at = ?2, summary_json = ?3
+WHERE id = ?1
+"#,
+                    params![job_id, now, serde_json::to_string(&summary)?],
+                )?;
+            } else {
+                conn.execute(
+                    r#"
+UPDATE jobs
+SET status = 'failed', finished_at = ?2, summary_json = ?3
+WHERE id = ?1
+"#,
+                    params![job_id, now, serde_json::to_string(&summary)?],
+                )?;
+            }
+
+            Ok(true)
+        })
+        .await
+        .context("terminate job as failed")
+    }
+
     pub async fn get_job(&self, job_id: &str) -> anyhow::Result<Option<JobListItem>> {
         let job_id = job_id.to_string();
         self.call(move |conn| {

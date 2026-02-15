@@ -22,6 +22,46 @@ mod updater;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+fn now_rfc3339() -> anyhow::Result<String> {
+    Ok(time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
+}
+
+async fn shutdown_signal(state: std::sync::Arc<state::AppState>) {
+    #[cfg(unix)]
+    async fn wait_signal() {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut term = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+                return;
+            }
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term.recv() => {}
+        }
+    }
+
+    #[cfg(not(unix))]
+    async fn wait_signal() {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+
+    wait_signal().await;
+
+    // Best-effort: on container shutdown we may not have much time, but we still want to try
+    // to avoid leaving orphaned running jobs behind. Startup recovery is the hard guarantee.
+    let now = now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        let _ = state
+            .db
+            .recover_incomplete_jobs(&now, "server_shutdown")
+            .await;
+    })
+    .await;
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -40,6 +80,21 @@ async fn main() -> anyhow::Result<()> {
     )?);
     let runner = std::sync::Arc::new(runner::TokioCommandRunner);
     let state = state::AppState::new(config, db, registry, runner);
+
+    // Recover orphaned/incomplete jobs created by a previous process instance.
+    // This covers cases where the container was killed or the process panicked mid-job.
+    let now = now_rfc3339()?;
+    let recovered = state
+        .db
+        .recover_incomplete_jobs(&now, "server_restart")
+        .await?;
+    if !recovered.is_empty() {
+        tracing::warn!(
+            count = recovered.len(),
+            "recovered incomplete jobs on startup"
+        );
+    }
+
     backup::spawn_cleanup_task(state.clone());
     discovery::spawn_task(state.clone());
     let app = api::router(state.clone());
@@ -47,6 +102,8 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(bind = %bind, "dockrev api listening");
 
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal(state.clone()))
+        .await?;
     Ok(())
 }
