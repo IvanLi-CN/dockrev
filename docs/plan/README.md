@@ -94,4 +94,4 @@
 | 6kvn2 | Dockrev API: floating tag 候选选择避免版本倒挂（latest/sha → semver） | 已完成 | `6kvn2:fix-floating-tag-candidate-selection/PLAN.md` | 2026-02-10 | PR #64 |
 | zwsh7 | Dockrev Web: 版本气泡 tags 列表默认折叠（减少噪音） | 待实现 | `zwsh7:version-popover-list-toggle/PLAN.md` | 2026-02-11 | - |
 | 832pb | Dockrev API: 更新任务使用 stale container id 导致误报失败 | 已完成 | `832pb:fix-update-job-stale-container-id/PLAN.md` | 2026-02-14 | PR #65 |
-| wtb4a | Dockrev API/Web: 修复 check jobs 并发与退出未收尾 | 待实现 | `wtb4a:check-running-job-recovery/PLAN.md` | 2026-02-14 | - |
+| wtb4a | Dockrev API/Web: 修复 check jobs 并发与退出未收尾 | 已完成 | `wtb4a:check-running-job-recovery/PLAN.md` | 2026-02-15 | PR #66 |
