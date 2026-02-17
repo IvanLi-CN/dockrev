@@ -7,7 +7,9 @@ import {
   getStack,
   listStacks,
   triggerCheck,
+  triggerRuntimeScan,
   triggerUpdate,
+  newJobEventsSource,
   ApiError,
   type DiscoveredProject,
   type JobListItem,
@@ -288,6 +290,91 @@ export function OverviewPage(props: {
 
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+  }, [refresh])
+
+  useEffect(() => {
+    let closed = false
+    let es: EventSource | null = null
+    let timer: number | null = null
+    const pending = new Set<string>()
+
+    const flush = async () => {
+      timer = null
+      const ids = Array.from(pending)
+      pending.clear()
+      if (ids.length === 0) return
+
+      const results = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            return [id, await getStack(id)] as const
+          } catch {
+            return [id, undefined] as const
+          }
+        }),
+      )
+
+      if (closed) return
+      setDetails((prev) => ({ ...prev, ...Object.fromEntries(results) }))
+    }
+
+    const scheduleFlush = (stackId: string) => {
+      if (!stackId) return
+      pending.add(stackId)
+      if (timer != null) return
+      timer = window.setTimeout(() => {
+        void flush()
+      }, 200)
+    }
+
+    const start = async () => {
+      let jobId: string | null = null
+      try {
+        const resp = await triggerRuntimeScan('all')
+        jobId = resp.jobId
+      } catch (e: unknown) {
+        if (e instanceof ApiError && e.status === 409) {
+          const d = e.details
+          const existingJobId =
+            d && typeof d === 'object' && d !== null && 'existingJobId' in d && typeof (d as Record<string, unknown>).existingJobId === 'string'
+              ? ((d as Record<string, unknown>).existingJobId as string)
+              : null
+          jobId = existingJobId
+        }
+      }
+
+      if (closed || !jobId) return
+      es = newJobEventsSource(jobId)
+
+      es.addEventListener('runtime_scan_service', (evt: Event) => {
+        const data = (evt as MessageEvent).data
+        if (typeof data !== 'string' || !data) return
+        try {
+          const parsed = JSON.parse(data) as unknown
+          if (!parsed || typeof parsed !== 'object') return
+          const p = parsed as Record<string, unknown>
+          if (p.type !== 'runtime_scan_service') return
+          if (p.changed !== true) return
+          const stackId = typeof p.stackId === 'string' ? p.stackId : ''
+          if (stackId) scheduleFlush(stackId)
+        } catch {
+          // ignore invalid events
+        }
+      })
+
+      es.addEventListener('runtime_scan_finished', () => {
+        es?.close()
+        void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      })
+    }
+
+    void start()
+
+    return () => {
+      closed = true
+      if (timer != null) window.clearTimeout(timer)
+      es?.close()
+    }
   }, [refresh])
 
   const applyFilter = useCallback(

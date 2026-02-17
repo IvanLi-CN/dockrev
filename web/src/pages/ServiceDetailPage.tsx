@@ -7,8 +7,10 @@ import {
   getServiceSettings,
   getStack,
   listIgnores,
+  newJobEventsSource,
   putServiceSettings,
   restoreService,
+  triggerRuntimeScan,
   triggerUpdate,
   type IgnoreRule,
   type Service,
@@ -146,9 +148,79 @@ export function ServiceDetailPage(props: {
     setRules(allRules.filter((r) => r.scope.serviceId === serviceId))
   }, [onComposeHint, serviceId, stackId])
 
+  const refreshStackOnly = useCallback(async () => {
+    const st = await getStack(stackId)
+    setStack(st)
+    const svc = st.services.find((s) => s.id === serviceId) ?? null
+    setService(svc)
+  }, [serviceId, stackId])
+
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(errorMessage(e)))
   }, [refresh])
+
+  useEffect(() => {
+    let closed = false
+    let es: EventSource | null = null
+    let timer: number | null = null
+
+    const scheduleRefresh = () => {
+      if (timer != null) return
+      timer = window.setTimeout(() => {
+        timer = null
+        void refreshStackOnly().catch(() => {})
+      }, 200)
+    }
+
+    const start = async () => {
+      let jobId: string | null = null
+      try {
+        const resp = await triggerRuntimeScan('all')
+        jobId = resp.jobId
+      } catch (e: unknown) {
+        if (e instanceof ApiError && e.status === 409) {
+          const d = e.details
+          const existingJobId =
+            d && typeof d === 'object' && d !== null && 'existingJobId' in d && typeof (d as Record<string, unknown>).existingJobId === 'string'
+              ? ((d as Record<string, unknown>).existingJobId as string)
+              : null
+          jobId = existingJobId
+        }
+      }
+
+      if (closed || !jobId) return
+      es = newJobEventsSource(jobId)
+
+      es.addEventListener('runtime_scan_service', (evt: Event) => {
+        const data = (evt as MessageEvent).data
+        if (typeof data !== 'string' || !data) return
+        try {
+          const parsed = JSON.parse(data) as unknown
+          if (!parsed || typeof parsed !== 'object') return
+          const p = parsed as Record<string, unknown>
+          if (p.type !== 'runtime_scan_service') return
+          if (p.changed !== true) return
+          const eventStackId = typeof p.stackId === 'string' ? p.stackId : ''
+          if (eventStackId && eventStackId === stackId) scheduleRefresh()
+        } catch {
+          // ignore invalid events
+        }
+      })
+
+      es.addEventListener('runtime_scan_finished', () => {
+        es?.close()
+        void refreshStackOnly().catch(() => {})
+      })
+    }
+
+    void start()
+
+    return () => {
+      closed = true
+      if (timer != null) window.clearTimeout(timer)
+      es?.close()
+    }
+  }, [refreshStackOnly, stackId])
 
   useEffect(() => {
     onTopActions(
