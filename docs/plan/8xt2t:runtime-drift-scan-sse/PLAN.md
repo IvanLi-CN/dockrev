@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-17
 - Last: 2026-02-17
 
@@ -67,14 +67,17 @@
 
 ## 里程碑（Milestones）
 
-- [ ] M1: 后端 runtime scan job（定时 + API 触发 + drift 对账 + DB 回写）
-- [ ] M2: 抽取并复用既有 registry 推测逻辑（check 与 runtime scan 共用）
-- [ ] M3: SSE events（job_logs 事件队列 + `/api/jobs/{id}/events`）
-- [ ] M4: Web 页面 mount 触发 + SSE 订阅 + 最小刷新（Overview/Services/ServiceDetail）
-- [ ] M5: 测试补齐 + 最小验证通过
+- [x] M1: 后端 runtime scan job（定时 + API 触发 + drift 对账 + DB 回写）
+- [x] M2: 抽取并复用既有 registry 推测逻辑（check 与 runtime scan 共用）
+- [x] M3: SSE events（job_logs 事件队列 + `/api/jobs/{id}/events`）
+- [x] M4: Web 页面 mount 触发 + SSE 订阅 + 最小刷新（Overview/Services/ServiceDetail）
+- [x] M5: 测试补齐 + 最小验证通过
 
 ## 风险与开放问题（Risks / Open Questions）
 
 - SSE 可能被反向代理缓冲：需要在部署侧确保禁用 buffering（本仓库的 deploy nginx 可作为参考）。
 - runtime scan 触发频率：默认 10 分钟，且页面访问会主动触发；需要确保无 drift 时的路径足够轻量。
 
+## 变更记录 / Change log
+
+- 2026-02-17: 实现完成，待随 PR #67 合入。
