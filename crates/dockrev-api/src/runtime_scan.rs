@@ -14,6 +14,17 @@ use crate::{
     state::AppState,
 };
 
+#[derive(Clone, Debug)]
+pub struct RuntimeScanJobArgs {
+    pub job_id: String,
+    pub scope: JobScope,
+    pub stack_id: Option<String>,
+    pub service_id: Option<String>,
+    pub host_platform: String,
+    pub started_at: String,
+    pub reason: String,
+}
+
 pub fn spawn_task(state: Arc<AppState>) {
     let interval = state.config.runtime_scan_interval_seconds;
     tokio::spawn(async move {
@@ -59,28 +70,31 @@ async fn enqueue_scheduled_scan(state: Arc<AppState>) -> anyhow::Result<()> {
 
     tokio::spawn(run_job(
         state.clone(),
-        job_id.clone(),
-        JobScope::All,
-        None,
-        None,
-        host_platform,
-        now,
-        RuntimeScanReason::Schedule.as_str().to_string(),
+        RuntimeScanJobArgs {
+            job_id: job_id.clone(),
+            scope: JobScope::All,
+            stack_id: None,
+            service_id: None,
+            host_platform,
+            started_at: now,
+            reason: RuntimeScanReason::Schedule.as_str().to_string(),
+        },
     ));
 
     Ok(())
 }
 
-pub async fn run_job(
-    state: Arc<AppState>,
-    job_id: String,
-    scope: JobScope,
-    stack_id: Option<String>,
-    service_id: Option<String>,
-    host_platform: String,
-    started_at: String,
-    reason: String,
-) {
+pub async fn run_job(state: Arc<AppState>, args: RuntimeScanJobArgs) {
+    let RuntimeScanJobArgs {
+        job_id,
+        scope,
+        stack_id,
+        service_id,
+        host_platform,
+        started_at,
+        reason,
+    } = args;
+
     let started = json!({
         "type": "runtime_scan_started",
         "jobId": job_id,

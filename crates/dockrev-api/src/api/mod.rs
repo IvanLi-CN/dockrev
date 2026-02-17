@@ -618,13 +618,15 @@ async fn trigger_runtime_scan(
     tokio::spawn(async move {
         runtime_scan::run_job(
             run_state,
-            run_job_id,
-            run_scope,
-            run_stack_id,
-            run_service_id,
-            run_host_platform,
-            run_started_at,
-            run_reason,
+            runtime_scan::RuntimeScanJobArgs {
+                job_id: run_job_id,
+                scope: run_scope,
+                stack_id: run_stack_id,
+                service_id: run_service_id,
+                host_platform: run_host_platform,
+                started_at: run_started_at,
+                reason: run_reason,
+            },
         )
         .await;
     });
