@@ -753,6 +753,173 @@ services:
 }
 
 #[tokio::test]
+async fn checks_conflict_when_check_is_already_running() {
+    let registry = Arc::new(SlowRegistry {
+        delay: Duration::from_millis(250),
+    });
+    let runner = Arc::new(FakeRunner);
+    let state = test_state_with(":memory:", registry, runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2.0
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let check = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui"
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(check.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let check_id = triggered["checkId"].as_str().unwrap().to_string();
+
+    let resp2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(check.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), 409);
+    let body = response_json(resp2).await;
+    assert_eq!(body["error"]["code"].as_str().unwrap(), "conflict");
+    assert_eq!(
+        body["error"]["details"]["existingJobId"].as_str().unwrap(),
+        check_id.as_str()
+    );
+}
+
+#[tokio::test]
+async fn checks_terminate_stale_running_job_then_start_new_one() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let old_dt = time::OffsetDateTime::now_utc() - time::Duration::hours(3);
+    let old_now = old_dt
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let stale_id = ids::new_check_id();
+    let mut job = crate::api::types::JobRecord::new_running(
+        stale_id.clone(),
+        crate::api::types::JobType::Check,
+        crate::api::types::JobScope::Stack,
+        Some(stack_id.clone()),
+        None,
+        &old_now,
+    )
+    .to_db();
+    job.created_by = "ivan".to_string();
+    job.reason = "ui".to_string();
+    state.db.insert_job(job).await.unwrap();
+
+    let check = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(check.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let new_id = triggered["checkId"].as_str().unwrap().to_string();
+    assert_ne!(new_id, stale_id);
+
+    let stale = state.db.get_job(&stale_id).await.unwrap().unwrap();
+    assert_eq!(stale.status, "failed");
+    assert!(stale.finished_at.is_some());
+    assert_eq!(
+        stale.summary_json["terminated"]["reason"].as_str().unwrap(),
+        "stale_check"
+    );
+}
+
+#[tokio::test]
+async fn recover_incomplete_jobs_marks_running_as_failed() {
+    let state = test_state(":memory:").await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let job_id = ids::new_job_id();
+    let mut job = crate::api::types::JobRecord::new_running(
+        job_id.clone(),
+        crate::api::types::JobType::Update,
+        crate::api::types::JobScope::All,
+        None,
+        None,
+        &now,
+    )
+    .to_db();
+    job.created_by = "ivan".to_string();
+    job.reason = "ui".to_string();
+    state.db.insert_job(job).await.unwrap();
+
+    let recovered = state
+        .db
+        .recover_incomplete_jobs(&now, "server_restart")
+        .await
+        .unwrap();
+    assert!(recovered.iter().any(|id| id == &job_id));
+
+    let got = state.db.get_job(&job_id).await.unwrap().unwrap();
+    assert_eq!(got.status, "failed");
+    assert!(got.finished_at.is_some());
+    assert_eq!(
+        got.summary_json["terminated"]["reason"].as_str().unwrap(),
+        "server_restart"
+    );
+}
+
+#[tokio::test]
 async fn create_ignore_then_delete() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
