@@ -262,6 +262,105 @@ impl CommandRunner for PlatformDigestRunner {
     }
 }
 
+#[derive(Clone)]
+struct CheckAndRuntimeScanRunner {
+    runtime_digest: String,
+    calls: Arc<std::sync::Mutex<Vec<Vec<String>>>>,
+}
+
+impl CheckAndRuntimeScanRunner {
+    fn new(runtime_digest: &str) -> Self {
+        Self {
+            runtime_digest: runtime_digest.to_string(),
+            calls: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl CommandRunner for CheckAndRuntimeScanRunner {
+    async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        self.calls.lock().unwrap().push(spec.args.clone());
+        let args = spec.args;
+
+        let (status, stdout) = if args.first().map(|s| s.as_str()) == Some("ps")
+            && args.get(1).map(|s| s.as_str()) == Some("-q")
+        {
+            (0, "cid1\n".to_string())
+        } else if args.first().map(|s| s.as_str()) == Some("inspect")
+            && args.get(1).map(|s| s.as_str()) == Some("--format")
+            && args.get(2).map(|s| s.as_str()) == Some("{{.Image}}")
+        {
+            (0, "img1\n".to_string())
+        } else if args.first().map(|s| s.as_str()) == Some("inspect")
+            && args.get(1).map(|s| s.as_str()) == Some("--format")
+            && args
+                .get(2)
+                .map(|s| s.as_str())
+                .is_some_and(|s| s.contains("com.docker.compose.service"))
+        {
+            (0, "web\timg1\n".to_string())
+        } else if args.first().map(|s| s.as_str()) == Some("image")
+            && args.get(1).map(|s| s.as_str()) == Some("inspect")
+            && args.iter().any(|s| s.contains("RepoDigests"))
+        {
+            let digest = self.runtime_digest.clone();
+            if args.iter().any(|s| s.contains("{{.Id}}")) {
+                // runtime scan bulk path: id + repodigests
+                (0, format!("img1\t[\"ghcr.io/acme/web@{digest}\"]\n"))
+            } else {
+                // check path: repodigests only
+                (0, format!("[\"ghcr.io/acme/web@{digest}\"]"))
+            }
+        } else {
+            (0, String::new())
+        };
+
+        Ok(CommandOutput {
+            status,
+            stdout,
+            stderr: String::new(),
+        })
+    }
+}
+
+#[derive(Clone, Default)]
+struct CountingRegistry {
+    calls: Arc<std::sync::Mutex<std::collections::BTreeMap<String, u32>>>,
+}
+
+impl CountingRegistry {
+    fn total_calls(&self) -> u32 {
+        self.calls.lock().unwrap().values().copied().sum()
+    }
+}
+
+#[async_trait::async_trait]
+impl RegistryClient for CountingRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        let mut calls = self.calls.lock().unwrap();
+        *calls.entry("list_tags".to_string()).or_insert(0) += 1;
+        Ok(vec!["5.2".to_string(), "5.3".to_string()])
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        let mut calls = self.calls.lock().unwrap();
+        *calls
+            .entry(format!("get_manifest:{reference}"))
+            .or_insert(0) += 1;
+        Ok(ManifestInfo {
+            digest: Some(format!("sha256:{reference}")),
+            platform_digest: None,
+            arch: vec!["linux/amd64".to_string()],
+        })
+    }
+}
+
 #[derive(Clone, Default)]
 struct DualDigestRegistry;
 
@@ -317,6 +416,7 @@ async fn test_state_with(
         host_platform: Some("linux/amd64".to_string()),
         discovery_interval_seconds: 60,
         discovery_max_actions: 200,
+        runtime_scan_interval_seconds: 600,
     };
 
     let db = Db::open(&config.db_path).await.unwrap();
@@ -338,6 +438,7 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
         host_platform: Some("linux/amd64".to_string()),
         discovery_interval_seconds: 60,
         discovery_max_actions: 200,
+        runtime_scan_interval_seconds: 600,
     };
 
     let db = Db::open(&config.db_path).await.unwrap();
@@ -2649,5 +2750,430 @@ async fn github_packages_webhook_does_not_persist_delivery_for_unselected_repo()
             .github_packages_delivery_exists("unselected-1")
             .await
             .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn runtime_scan_updates_drifted_services() {
+    let runner: Arc<CheckAndRuntimeScanRunner> =
+        Arc::new(CheckAndRuntimeScanRunner::new("sha256:new"));
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "demo".to_string(),
+            stack_id: Some(stack_id.clone()),
+            status: "active".to_string(),
+            last_seen_at: Some(now.clone()),
+            last_scan_at: now.clone(),
+            last_error: None,
+            last_config_files: Some(vec![compose_path.clone()]),
+            unarchive_if_active: true,
+        })
+        .await
+        .unwrap();
+
+    let service_id = state
+        .db
+        .list_services_for_runtime_scan(&stack_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name == "web")
+        .unwrap()
+        .id;
+    state
+        .db
+        .update_service_check_result(
+            &service_id,
+            Some("sha256:old".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let payload = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui",
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/runtime-scans")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let job_id = triggered["jobId"].as_str().unwrap().to_string();
+
+    let mut finished = false;
+    for _ in 0..120 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{job_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(finished, "runtime scan job did not finish in time");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let image = &detail["stack"]["services"][0]["image"];
+    assert_eq!(image["digest"].as_str().unwrap(), "sha256:new");
+    assert_eq!(image["resolvedTag"].as_str().unwrap(), "5.3");
+}
+
+#[tokio::test]
+async fn runtime_scan_resolved_tag_inference_matches_check() {
+    let compose = r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#;
+
+    let compose_path_a = format!("/tmp/dockrev-test-check-{}.yml", ulid::Ulid::new());
+    std::fs::write(&compose_path_a, compose).unwrap();
+    let compose_path_b = format!("/tmp/dockrev-test-runtime-scan-{}.yml", ulid::Ulid::new());
+    std::fs::write(&compose_path_b, compose).unwrap();
+
+    // Check path
+    let runner_a: Arc<CheckAndRuntimeScanRunner> =
+        Arc::new(CheckAndRuntimeScanRunner::new("sha256:new"));
+    let state_a = test_state_with(":memory:", Arc::new(FakeRegistry), runner_a).await;
+    let app_a = api::router(state_a.clone());
+    let stack_id_a = seed_stack_from_compose(&state_a, "demo", &compose_path_a).await;
+    let now_a = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state_a
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "demo".to_string(),
+            stack_id: Some(stack_id_a.clone()),
+            status: "active".to_string(),
+            last_seen_at: Some(now_a.clone()),
+            last_scan_at: now_a.clone(),
+            last_error: None,
+            last_config_files: Some(vec![compose_path_a.clone()]),
+            unarchive_if_active: true,
+        })
+        .await
+        .unwrap();
+
+    let check_payload = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id_a,
+        "reason": "ui",
+    });
+    let resp = app_a
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(check_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let check_id = triggered["checkId"].as_str().unwrap().to_string();
+    let mut finished = false;
+    for _ in 0..120 {
+        let resp = app_a
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{check_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(finished, "check job did not finish in time");
+
+    let resp = app_a
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id_a}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail_a = response_json(resp).await;
+    let image_a = &detail_a["stack"]["services"][0]["image"];
+    let digest_a = image_a["digest"].as_str().unwrap().to_string();
+    let resolved_a = image_a["resolvedTag"].as_str().unwrap().to_string();
+    let resolved_tags_a = image_a["resolvedTags"].clone();
+
+    // Runtime scan path
+    let runner_b: Arc<CheckAndRuntimeScanRunner> =
+        Arc::new(CheckAndRuntimeScanRunner::new("sha256:new"));
+    let state_b = test_state_with(":memory:", Arc::new(FakeRegistry), runner_b).await;
+    let app_b = api::router(state_b.clone());
+    let stack_id_b = seed_stack_from_compose(&state_b, "demo", &compose_path_b).await;
+    let now_b = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state_b
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "demo".to_string(),
+            stack_id: Some(stack_id_b.clone()),
+            status: "active".to_string(),
+            last_seen_at: Some(now_b.clone()),
+            last_scan_at: now_b.clone(),
+            last_error: None,
+            last_config_files: Some(vec![compose_path_b.clone()]),
+            unarchive_if_active: true,
+        })
+        .await
+        .unwrap();
+
+    let scan_payload = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id_b,
+        "reason": "ui",
+    });
+    let resp = app_b
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/runtime-scans")
+                .header("content-type", "application/json")
+                .body(Body::from(scan_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let job_id = triggered["jobId"].as_str().unwrap().to_string();
+    let mut finished = false;
+    for _ in 0..120 {
+        let resp = app_b
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{job_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(finished, "runtime scan job did not finish in time");
+
+    let resp = app_b
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id_b}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail_b = response_json(resp).await;
+    let image_b = &detail_b["stack"]["services"][0]["image"];
+    let digest_b = image_b["digest"].as_str().unwrap().to_string();
+    let resolved_b = image_b["resolvedTag"].as_str().unwrap().to_string();
+    let resolved_tags_b = image_b["resolvedTags"].clone();
+
+    assert_eq!(digest_a, digest_b);
+    assert_eq!(resolved_a, resolved_b);
+    assert_eq!(resolved_tags_a, resolved_tags_b);
+}
+
+#[tokio::test]
+async fn runtime_scan_no_drift_does_not_hit_registry() {
+    let registry = Arc::new(CountingRegistry::default());
+    let runner: Arc<CheckAndRuntimeScanRunner> =
+        Arc::new(CheckAndRuntimeScanRunner::new("sha256:match"));
+    let state = test_state_with(":memory:", registry.clone(), runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "demo".to_string(),
+            stack_id: Some(stack_id.clone()),
+            status: "active".to_string(),
+            last_seen_at: Some(now.clone()),
+            last_scan_at: now.clone(),
+            last_error: None,
+            last_config_files: Some(vec![compose_path.clone()]),
+            unarchive_if_active: true,
+        })
+        .await
+        .unwrap();
+
+    let service_id = state
+        .db
+        .list_services_for_runtime_scan(&stack_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name == "web")
+        .unwrap()
+        .id;
+    state
+        .db
+        .update_service_check_result(
+            &service_id,
+            Some("sha256:match".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let payload = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui",
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/runtime-scans")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let job_id = triggered["jobId"].as_str().unwrap().to_string();
+
+    let mut finished = false;
+    for _ in 0..120 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{job_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(finished, "runtime scan job did not finish in time");
+
+    assert_eq!(
+        registry.total_calls(),
+        0,
+        "runtime scan should not hit registry when there is no drift"
     );
 }

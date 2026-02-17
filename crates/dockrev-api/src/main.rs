@@ -16,6 +16,8 @@ mod ignore;
 mod notify;
 mod registry;
 mod runner;
+mod runtime_scan;
+mod service_check;
 mod state;
 mod ui;
 mod updater;
@@ -97,6 +99,7 @@ async fn main() -> anyhow::Result<()> {
 
     backup::spawn_cleanup_task(state.clone());
     discovery::spawn_task(state.clone());
+    runtime_scan::spawn_task(state.clone());
     let app = api::router(state.clone());
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;

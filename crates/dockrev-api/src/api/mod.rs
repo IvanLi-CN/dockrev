@@ -3,14 +3,15 @@ pub mod types;
 #[cfg(test)]
 mod tests;
 
-use std::sync::Arc;
+use std::{convert::Infallible, sync::Arc, time::Duration};
 
 use anyhow::Context as _;
 use axum::{
     Json, Router,
     body::Bytes,
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
+    response::sse::{Event, KeepAlive, Sse},
     routing::{get, post},
 };
 use base64::Engine as _;
@@ -20,8 +21,8 @@ use url::Url;
 
 use crate::github;
 use crate::{
-    backup, candidates, discovery, error::ApiError, ids, ignore, notify, registry, state::AppState,
-    ui, updater,
+    backup, discovery, error::ApiError, ids, ignore, notify, registry, runtime_scan,
+    state::AppState, ui, updater,
 };
 use types::*;
 
@@ -57,9 +58,11 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(restore_discovery_project),
         )
         .route("/api/checks", post(trigger_check))
+        .route("/api/runtime-scans", post(trigger_runtime_scan))
         .route("/api/updates", post(trigger_update))
         .route("/api/jobs", get(list_jobs))
         .route("/api/jobs/{job_id}", get(get_job))
+        .route("/api/jobs/{job_id}/events", get(job_events))
         .route(
             "/api/ignores",
             get(list_ignores).post(create_ignore).delete(delete_ignore),
@@ -554,6 +557,81 @@ async fn trigger_check(
     Ok(Json(TriggerCheckResponse { check_id }))
 }
 
+async fn trigger_runtime_scan(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<TriggerRuntimeScanRequest>,
+) -> Result<Json<TriggerRuntimeScanResponse>, ApiError> {
+    let user = require_user(&state, &headers)?;
+    let now = now_rfc3339().map_err(map_internal)?;
+
+    validate_scope(
+        &req.scope,
+        req.stack_id.as_deref(),
+        req.service_id.as_deref(),
+    )?;
+
+    // Prevent accidental parallel scans from UI double-clicks / multiple tabs.
+    if let Ok(Some(existing)) = state
+        .db
+        .find_latest_running_runtime_scan_job(
+            &req.scope,
+            req.stack_id.as_deref(),
+            req.service_id.as_deref(),
+        )
+        .await
+    {
+        return Err(
+            ApiError::conflict("runtime scan already running").with_details(json!({
+                "existingJobId": existing.id,
+            })),
+        );
+    }
+
+    let job_id = ids::new_job_id();
+    let job = JobRecord::new_running(
+        job_id.clone(),
+        JobType::RuntimeScan,
+        req.scope.clone(),
+        req.stack_id.clone(),
+        req.service_id.clone(),
+        &now,
+    );
+
+    let mut job_db = job.to_db();
+    job_db.created_by = user.clone();
+    job_db.reason = req.reason.as_str().to_string();
+    state.db.insert_job(job_db).await.map_err(map_internal)?;
+
+    let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
+        .unwrap_or_else(|| "linux/amd64".to_string());
+
+    // Run the scan job in the background so it is not tied to the HTTP request lifecycle.
+    let run_state = state.clone();
+    let run_job_id = job_id.clone();
+    let run_scope = req.scope.clone();
+    let run_stack_id = req.stack_id.clone();
+    let run_service_id = req.service_id.clone();
+    let run_host_platform = host_platform.clone();
+    let run_started_at = now.clone();
+    let run_reason = req.reason.as_str().to_string();
+    tokio::spawn(async move {
+        runtime_scan::run_job(
+            run_state,
+            run_job_id,
+            run_scope,
+            run_stack_id,
+            run_service_id,
+            run_host_platform,
+            run_started_at,
+            run_reason,
+        )
+        .await;
+    });
+
+    Ok(Json(TriggerRuntimeScanResponse { job_id }))
+}
+
 async fn run_check_for_job(
     state: &Arc<AppState>,
     job_id: &str,
@@ -619,44 +697,6 @@ async fn run_check_for_job(
                 }
             };
 
-            let ignore_rules = state
-                .db
-                .list_ignore_rules_for_service(&svc.id)
-                .await
-                .map_err(map_internal)?;
-            let matchers = ignore_rules
-                .iter()
-                .map(|r| {
-                    let kind = ignore::IgnoreKind::parse(&r.matcher.kind);
-                    (
-                        r.id.clone(),
-                        ignore::IgnoreRuleMatcher {
-                            kind,
-                            value: r.matcher.value.clone(),
-                        },
-                    )
-                })
-                .collect::<Vec<_>>();
-
-            let tags = match state.registry.list_tags(&img).await {
-                Ok(t) => t,
-                Err(e) => {
-                    state
-                        .db
-                        .insert_job_log(
-                            job_id,
-                            &JobLogLine {
-                                ts: now.to_string(),
-                                level: "warn".to_string(),
-                                msg: format!("list tags failed for {}: {}", img.name, e),
-                            },
-                        )
-                        .await
-                        .map_err(map_internal)?;
-                    continue;
-                }
-            };
-
             let runtime_digest = if let Some(project) = compose_project.as_deref() {
                 docker_compose_service_runtime_digest(
                     state.as_ref(),
@@ -670,169 +710,20 @@ async fn run_check_for_job(
             } else {
                 None
             };
-
-            let is_ignored = |tag: &str| matchers.iter().any(|(_, m)| m.matches(tag));
-            let candidate_non_ignored =
-                candidates::select_candidate_tag(&svc.image_tag, &tags, is_ignored);
-            let candidate_any = candidates::select_candidate_tag(&svc.image_tag, &tags, |_| false);
-            let mut candidate_tag = candidate_non_ignored.or(candidate_any);
-
-            let current_digest_registry = state
-                .registry
-                .get_manifest(&img, &svc.image_tag, host_platform)
-                .await
-                .ok()
-                .and_then(|m| m.digest);
-            let effective_current_digest =
-                runtime_digest.clone().or(current_digest_registry.clone());
-            // Persist the best-known digest so that pinned tags and offline/missing compose projects
-            // don't lose observability just because the runtime digest is unavailable.
-            let current_digest = effective_current_digest.clone();
-
-            let (
-                candidate_digest_for_infer,
-                candidate_platform_digest_for_infer,
-                candidate_arch_match_for_infer,
-                candidate_arch_json_for_infer,
-            ) = if let Some(tag) = candidate_tag.as_deref() {
-                match state.registry.get_manifest(&img, tag, host_platform).await {
-                    Ok(m) => {
-                        let arch_match = registry::compute_arch_match(host_platform, &m.arch);
-                        (
-                            m.digest,
-                            m.platform_digest,
-                            Some(arch_match.as_str().to_string()),
-                            Some(serde_json::to_string(&m.arch).unwrap_or_default()),
-                        )
-                    }
-                    Err(_) => (None, None, None, None),
-                }
-            } else {
-                (None, None, None, None)
-            };
-
-            let mut candidate_digest = candidate_digest_for_infer;
-            let mut candidate_platform_digest = candidate_platform_digest_for_infer;
-            let mut candidate_arch_match = candidate_arch_match_for_infer;
-            let mut candidate_arch_json = candidate_arch_json_for_infer;
-
-            // If the candidate resolves to the same digest as current, there's no actionable update.
-            //
-            // Note: for floating tags (e.g. `latest`) and missing runtime digest, comparing against the
-            // registry digest could be misleading (the tag may have already moved), so we only do the
-            // "no update" fast-path when runtime digest is known OR the current tag is semver/pinned.
-            let can_compare_current =
-                runtime_digest.is_some() || ignore::is_strict_semver(&svc.image_tag);
-            let current_matches_candidate = matches!(
-                (
-                    effective_current_digest.as_deref(),
-                    candidate_digest.as_deref()
-                ),
-                (Some(cur), Some(cand)) if cur == cand
-            ) || matches!(
-                (
-                    effective_current_digest.as_deref(),
-                    candidate_platform_digest.as_deref()
-                ),
-                (Some(cur), Some(cand)) if cur == cand
-            );
-            if can_compare_current && current_matches_candidate {
-                candidate_tag = None;
-                candidate_digest = None;
-                candidate_platform_digest = None;
-                candidate_arch_match = None;
-                candidate_arch_json = None;
-            }
-
-            if candidate_tag.is_some() {
+            let outcome = crate::service_check::check_service_and_persist(
+                state,
+                job_id,
+                &svc,
+                runtime_digest,
+                host_platform,
+                now,
+                &mut manifest_digest_cache,
+            )
+            .await
+            .map_err(map_internal)?;
+            if outcome.candidate_present {
                 services_with_candidate += 1;
             }
-
-            let mut ignore_match: Option<(String, String)> = None;
-            if let Some(ref tag) = candidate_tag
-                && let Some((rule_id, _)) = matchers.iter().find(|(_, m)| m.matches(tag))
-            {
-                ignore_match = Some((
-                    rule_id.clone(),
-                    format!("matched ignore rule for tag {tag}"),
-                ));
-            }
-
-            let (current_resolved_tag, current_resolved_tags_json) = if let Some(runtime_digest) =
-                runtime_digest.as_deref()
-                && !ignore::is_strict_semver(&svc.image_tag)
-            {
-                let mut semver_tags: Vec<(semver::Version, String)> = tags
-                    .iter()
-                    .filter_map(|t| ignore::parse_version(t).map(|v| (v, t.clone())))
-                    .collect();
-                semver_tags.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
-
-                let mut resolved_tags: Vec<String> = Vec::new();
-                for (_v, tag) in semver_tags.into_iter().take(60) {
-                    let (digest, platform_digest) =
-                        if candidate_tag.as_deref().is_some_and(|c| c == tag.as_str())
-                            && candidate_digest.is_some()
-                        {
-                            (candidate_digest.clone(), candidate_platform_digest.clone())
-                        } else {
-                            let cache_key = format!("{}/{}:{}", img.registry, img.name, tag);
-                            if let Some(v) = manifest_digest_cache.get(&cache_key) {
-                                v.clone()
-                            } else {
-                                let (d, pd) = state
-                                    .registry
-                                    .get_manifest(&img, &tag, host_platform)
-                                    .await
-                                    .ok()
-                                    .map(|m| (m.digest, m.platform_digest))
-                                    .unwrap_or((None, None));
-                                manifest_digest_cache.insert(cache_key, (d.clone(), pd.clone()));
-                                (d, pd)
-                            }
-                        };
-
-                    let digest_matches_runtime =
-                        digest.as_deref().is_some_and(|d| d == runtime_digest)
-                            || platform_digest
-                                .as_deref()
-                                .is_some_and(|d| d == runtime_digest);
-                    if digest_matches_runtime {
-                        resolved_tags.push(tag);
-                    }
-                }
-
-                resolved_tags.retain(|t| t != &svc.image_tag);
-                let resolved_tag = resolved_tags.first().cloned();
-                let resolved_tags_json = if resolved_tags.len() > 1 {
-                    serde_json::to_string(&resolved_tags).ok()
-                } else {
-                    None
-                };
-
-                (resolved_tag, resolved_tags_json)
-            } else {
-                (None, None)
-            };
-
-            state
-                .db
-                .update_service_check_result(
-                    &svc.id,
-                    current_digest,
-                    current_resolved_tag,
-                    current_resolved_tags_json,
-                    candidate_tag.clone(),
-                    candidate_digest,
-                    candidate_arch_match,
-                    candidate_arch_json,
-                    ignore_match.as_ref().map(|(id, _)| id.clone()),
-                    ignore_match.as_ref().map(|(_, r)| r.clone()),
-                    now,
-                    now,
-                )
-                .await
-                .map_err(map_internal)?;
         }
 
         state
@@ -1630,6 +1521,115 @@ async fn get_job(
             logs,
         },
     }))
+}
+
+async fn job_events(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(job_id): Path<String>,
+) -> Result<impl axum::response::IntoResponse, ApiError> {
+    let _user = require_user(&state, &headers)?;
+
+    // Fail fast on invalid job ids to avoid leaving open SSE connections forever.
+    let job = state.db.get_job(&job_id).await.map_err(map_internal)?;
+    if job.is_none() {
+        return Err(ApiError::not_found("job not found"));
+    }
+
+    let last_event_id = headers
+        .get("last-event-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let mut after_id: i64 = last_event_id.parse::<i64>().unwrap_or(0);
+
+    let sse_state = state.clone();
+    let sse_job_id = job_id.clone();
+    let stream = async_stream::stream! {
+        // If the job is already finished and no new logs arrive for a while, close the stream.
+        let mut finished_idle_ticks: u32 = 0;
+
+        loop {
+            let rows = match sse_state
+                .db
+                .list_job_logs_since(&sse_job_id, after_id, 200)
+                .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    let evt = json!({
+                        "type": "job_events_error",
+                        "jobId": sse_job_id,
+                        "error": e.to_string(),
+                    });
+                    yield Ok::<Event, Infallible>(Event::default().event("job_events_error").data(evt.to_string()));
+                    break;
+                }
+            };
+
+            if rows.is_empty() {
+                let finished = sse_state
+                    .db
+                    .get_job(&sse_job_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|j| j.finished_at)
+                    .is_some();
+
+                if finished {
+                    finished_idle_ticks += 1;
+                    if finished_idle_ticks >= 20 {
+                        break;
+                    }
+                }
+
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                continue;
+            }
+
+            finished_idle_ticks = 0;
+
+            for row in rows {
+                after_id = row.id;
+                if row.level != "event" {
+                    continue;
+                }
+
+                let event_name = serde_json::from_str::<serde_json::Value>(&row.msg)
+                    .ok()
+                    .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(|s| s.to_string()))
+                    .unwrap_or_else(|| "event".to_string());
+
+                let ev = Event::default()
+                    .id(row.id.to_string())
+                    .event(event_name.clone())
+                    .data(row.msg);
+                let should_close = event_name.as_str() == "runtime_scan_finished";
+                yield Ok::<Event, Infallible>(ev);
+
+                if should_close {
+                    break;
+                }
+            }
+        }
+    };
+
+    let sse = Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    );
+
+    let mut resp_headers = HeaderMap::new();
+    resp_headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    resp_headers.insert(
+        HeaderName::from_static("x-accel-buffering"),
+        HeaderValue::from_static("no"),
+    );
+
+    Ok((resp_headers, sse))
 }
 
 async fn list_ignores(

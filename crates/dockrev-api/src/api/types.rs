@@ -243,6 +243,39 @@ pub struct TriggerCheckResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TriggerRuntimeScanRequest {
+    pub scope: JobScope,
+    #[serde(default)]
+    pub stack_id: Option<String>,
+    #[serde(default)]
+    pub service_id: Option<String>,
+    pub reason: RuntimeScanReason,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeScanReason {
+    Ui,
+    Schedule,
+}
+
+impl RuntimeScanReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Ui => "ui",
+            Self::Schedule => "schedule",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerRuntimeScanResponse {
+    pub job_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TriggerUpdateRequest {
     pub scope: JobScope,
     #[serde(default)]
@@ -347,6 +380,7 @@ impl JobScope {
 pub enum JobType {
     Check,
     Discovery,
+    RuntimeScan,
     Update,
     Rollback,
 }
@@ -356,6 +390,7 @@ impl JobType {
         match self {
             Self::Check => "check",
             Self::Discovery => "discovery",
+            Self::RuntimeScan => "runtime_scan",
             Self::Update => "update",
             Self::Rollback => "rollback",
         }
@@ -365,6 +400,7 @@ impl JobType {
         match input {
             "check" => Self::Check,
             "discovery" => Self::Discovery,
+            "runtime_scan" => Self::RuntimeScan,
             "rollback" => Self::Rollback,
             _ => Self::Update,
         }
