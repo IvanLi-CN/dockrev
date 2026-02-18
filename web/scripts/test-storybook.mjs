@@ -426,6 +426,73 @@ async function runInteractive({ baseUrl, browser }) {
       await page.close().catch(() => {})
     }
   }
+
+  // 4) Update confirm modal: version popover must be above the modal overlay (not occluded).
+  {
+    const page = await openStory('pages-servicespage--dashboard-demo')
+    try {
+      const row = page.locator('.rowLine', { hasText: 'api' }).first()
+      const btn = row.getByRole('button', { name: '执行更新' })
+      await btn.waitFor({ timeout: 10_000 })
+      await btn.click()
+
+      const modal = page.getByRole('dialog')
+      await modal.waitFor({ timeout: 10_000 })
+
+      const trigger = modal.locator('.versionTagsTrigger').first()
+      await trigger.waitFor({ timeout: 10_000 })
+      await trigger.hover()
+
+      const popover = page.locator(".versionTagsPopover[data-state='open']")
+      await popover.waitFor({ timeout: 10_000 })
+
+      const box = await requireBoundingBox(popover, 'versionTagsPopover')
+      const x = box.x + box.width / 2
+      const y = box.y + box.height / 2
+      const hit = await page.evaluate(
+        ({ x, y }) => {
+          const el = document.elementFromPoint(x, y)
+          return Boolean(el && el.closest('.versionTagsPopover'))
+        },
+        { x, y }
+      )
+      if (!hit) throw new Error('Expected versionTagsPopover to be on top (not occluded by modal overlay).')
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
+  // 5) Update confirm modal: default targetTag must stay on initialTag and update request must use it.
+  {
+    const page = await openStory('pages-servicespage--dashboard-demo')
+    try {
+      const row = page.locator('.rowLine', { hasText: 'api' }).first()
+      const btn = row.getByRole('button', { name: '执行更新' })
+      await btn.waitFor({ timeout: 10_000 })
+      await btn.click()
+
+      const modal = page.getByRole('dialog')
+      await modal.waitFor({ timeout: 10_000 })
+
+      const select = modal.locator('select.select')
+      await select.waitFor({ timeout: 10_000 })
+      const value = await select.inputValue()
+      if (value !== '5.2.3') throw new Error(`Expected default targetTag to be initialTag (5.2.3), got ${value}`)
+
+      await modal.getByRole('button', { name: '执行更新' }).click()
+
+      await page.waitForFunction(() => Boolean(globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest), null, {
+        timeout: 10_000,
+      })
+      const req = await page.evaluate(() => globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest ?? null)
+      const targetTag = req && typeof req === 'object' ? req.targetTag : null
+      if (targetTag !== '5.2.3') {
+        throw new Error(`Expected update request targetTag=5.2.3, got ${String(targetTag)} (req=${JSON.stringify(req)})`)
+      }
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
 }
 
 async function main() {

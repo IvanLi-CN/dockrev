@@ -47,6 +47,34 @@ impl RegistryClient for FakeRegistry {
     }
 }
 
+#[derive(Clone, Default)]
+struct FloatingTagRegistry;
+
+#[async_trait::async_trait]
+impl RegistryClient for FloatingTagRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        Ok(vec![
+            "latest".to_string(),
+            "v0.2.9".to_string(),
+            "v0.2.11".to_string(),
+            "v0.2.10".to_string(),
+        ])
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        Ok(ManifestInfo {
+            digest: Some(format!("sha256:{reference}")),
+            platform_digest: None,
+            arch: vec!["linux/amd64".to_string()],
+        })
+    }
+}
+
 #[derive(Clone)]
 struct SlowRegistry {
     delay: Duration,
@@ -671,6 +699,65 @@ services:
     // Tags <= current (5.2.0) are intentionally skipped by the endpoint.
     assert_eq!(candidates.len(), 27);
     assert!(candidates.iter().all(|c| !c["digest"].is_null()));
+}
+
+#[tokio::test]
+async fn service_candidates_orders_semver_first_for_floating_tags() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(FloatingTagRegistry),
+        Arc::new(FakeRunner),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let detail = response_json(resp).await;
+    let service_id = detail["stack"]["services"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/candidates"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body = response_json(resp).await;
+    let candidates = body["candidates"].as_array().unwrap();
+    let tags = candidates
+        .iter()
+        .filter_map(|c| c["tag"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(tags, vec!["v0.2.11", "v0.2.10", "v0.2.9"]);
 }
 
 #[tokio::test]

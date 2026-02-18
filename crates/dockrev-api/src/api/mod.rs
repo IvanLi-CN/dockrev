@@ -1821,10 +1821,17 @@ async fn list_service_candidates(
             }
             continue;
         }
-        other_tags.push(tag);
+
+        // For floating tags (e.g. `latest`), prioritize parseable version tags over lexicographic
+        // ordering to avoid pitfalls like `v0.2.9` being considered greater than `v0.2.11`.
+        if let Some(v) = ignore::parse_version(&tag) {
+            semver_tags.push((v, tag));
+        } else {
+            other_tags.push(tag);
+        }
     }
 
-    semver_tags.sort_by(|a, b| b.0.cmp(&a.0));
+    semver_tags.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
     other_tags.sort_by(|a, b| b.cmp(a));
 
     let mut picked: Vec<String> = Vec::new();
