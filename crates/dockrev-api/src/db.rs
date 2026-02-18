@@ -1265,6 +1265,111 @@ WHERE id = ?1
         .context("update service check result")
     }
 
+    pub async fn upsert_service_digest_tags_snapshot(
+        &self,
+        service_id: &str,
+        digest: &str,
+        snapshot_json: &str,
+        checked_at: &str,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let service_id = service_id.to_string();
+        let digest = digest.to_string();
+        let snapshot_json = snapshot_json.to_string();
+        let checked_at = checked_at.to_string();
+        let now = now.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                r#"
+INSERT INTO service_digest_tags_snapshots (
+  service_id,
+  digest,
+  snapshot_json,
+  checked_at,
+  updated_at
+) VALUES (?1, ?2, ?3, ?4, ?5)
+ON CONFLICT(service_id, digest) DO UPDATE SET
+  snapshot_json = excluded.snapshot_json,
+  checked_at = excluded.checked_at,
+  updated_at = excluded.updated_at
+"#,
+                params![service_id, digest, snapshot_json, checked_at, now],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("upsert service digest tags snapshot")
+    }
+
+    pub async fn get_service_digest_tags_snapshot(
+        &self,
+        service_id: &str,
+        digest: &str,
+    ) -> anyhow::Result<Option<(String, String, String)>> {
+        let service_id = service_id.to_string();
+        let digest = digest.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    r#"
+SELECT snapshot_json, checked_at, updated_at
+FROM service_digest_tags_snapshots
+WHERE service_id = ?1 AND digest = ?2
+"#,
+                    params![service_id, digest],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()?)
+        })
+        .await
+        .context("get service digest tags snapshot")
+    }
+
+    pub async fn delete_service_digest_tags_snapshots_except(
+        &self,
+        service_id: &str,
+        allowed_digests: &[String],
+    ) -> anyhow::Result<usize> {
+        let service_id = service_id.to_string();
+        let mut allowed = allowed_digests.to_vec();
+        allowed.retain(|d| !d.trim().is_empty());
+        allowed.sort();
+        allowed.dedup();
+        if allowed.len() > 2 {
+            // Defensive: the caller is expected to pass at most {current, candidate}.
+            allowed.truncate(2);
+        }
+
+        self.call(move |conn| {
+            let deleted = match allowed.len() {
+                0 => conn.execute(
+                    r#"
+DELETE FROM service_digest_tags_snapshots
+WHERE service_id = ?1
+"#,
+                    params![service_id],
+                )?,
+                1 => conn.execute(
+                    r#"
+DELETE FROM service_digest_tags_snapshots
+WHERE service_id = ?1 AND digest != ?2
+"#,
+                    params![service_id, allowed[0]],
+                )?,
+                _ => conn.execute(
+                    r#"
+DELETE FROM service_digest_tags_snapshots
+WHERE service_id = ?1 AND digest NOT IN (?2, ?3)
+"#,
+                    params![service_id, allowed[0], allowed[1]],
+                )?,
+            };
+            Ok(deleted)
+        })
+        .await
+        .context("delete service digest tags snapshots except")
+    }
+
     pub async fn get_service_settings(
         &self,
         service_id: &str,
@@ -3569,4 +3674,13 @@ CREATE TABLE IF NOT EXISTS backups (
 );
 CREATE INDEX IF NOT EXISTS idx_backups_stack_id ON backups(stack_id);
 CREATE INDEX IF NOT EXISTS idx_backups_cleanup_after ON backups(cleanup_after);
+
+CREATE TABLE IF NOT EXISTS service_digest_tags_snapshots (
+  service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  digest TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  checked_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (service_id, digest)
+);
 "#;

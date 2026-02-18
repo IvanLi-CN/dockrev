@@ -1,6 +1,10 @@
 use std::{collections::HashMap, sync::Arc};
 
-use crate::{api::types::JobLogLine, candidates, ignore, registry, state::AppState};
+use crate::{
+    api::types::{JobLogLine, ServiceDigestTagsScanSummary, ServiceDigestTagsSnapshotResponse},
+    candidates, ignore, registry,
+    state::AppState,
+};
 
 #[derive(Clone, Debug)]
 pub(crate) struct ServiceCheckOutcome {
@@ -108,12 +112,12 @@ pub(crate) async fn check_service_and_persist(
     let candidate_any = candidates::select_candidate_tag(&svc.image_tag, &tags, |_| false);
     let mut candidate_tag = candidate_non_ignored.or(candidate_any);
 
-    let current_digest_registry = state
+    let current_manifest = state
         .registry
         .get_manifest(&img, &svc.image_tag, host_platform)
         .await
-        .ok()
-        .and_then(|m| m.digest);
+        .ok();
+    let current_digest_registry = current_manifest.as_ref().and_then(|m| m.digest.clone());
     let effective_current_digest = runtime_digest.clone().or(current_digest_registry.clone());
     // Persist the best-known digest so that pinned tags and offline/missing compose projects
     // don't lose observability just because the runtime digest is unavailable.
@@ -262,6 +266,29 @@ pub(crate) async fn check_service_and_persist(
         )
         .await?;
 
+    // Persist best-effort digest->tags snapshot at scan-time so UI can remain deterministic and
+    // avoid live registry fan-out (which may drift away from the last scan).
+    if let Err(e) = persist_digest_tags_snapshots_best_effort(
+        state,
+        &svc.id,
+        &img,
+        &tags,
+        host_platform,
+        &svc.image_tag,
+        current_digest.as_deref(),
+        candidate_tag.as_deref(),
+        candidate_digest.as_deref(),
+        now,
+    )
+    .await
+    {
+        tracing::debug!(
+            service_id = %svc.id,
+            error = %e,
+            "digest tags snapshot persistence failed (ignored)"
+        );
+    }
+
     Ok(ServiceCheckOutcome {
         current_digest,
         current_resolved_tag,
@@ -275,4 +302,317 @@ pub(crate) async fn check_service_and_persist(
         ignore_reason: ignore_match.as_ref().map(|(_, r)| r.clone()),
         candidate_present,
     })
+}
+
+fn normalize_digest(input: &str) -> Option<String> {
+    let t = input.trim();
+    if t.is_empty() {
+        return None;
+    }
+    if t.contains(':') {
+        return Some(t.to_string());
+    }
+    Some(format!("sha256:{t}"))
+}
+
+fn sort_tags_semver_then_lex_desc(tags: Vec<String>) -> Vec<String> {
+    let mut semver_tags: Vec<(semver::Version, String)> = Vec::new();
+    let mut other_tags: Vec<String> = Vec::new();
+
+    for tag in tags {
+        if let Some(v) = ignore::parse_version(&tag) {
+            semver_tags.push((v, tag));
+        } else {
+            other_tags.push(tag);
+        }
+    }
+
+    semver_tags.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    other_tags.sort_by(|a, b| b.cmp(a));
+
+    let mut out: Vec<String> = Vec::new();
+    out.extend(semver_tags.into_iter().map(|(_, t)| t));
+    out.extend(other_tags);
+    out
+}
+
+fn pick_considered_tags_for_snapshot(
+    repo_tags: &[String],
+    anchors: &[String],
+    depth: usize,
+) -> Vec<String> {
+    use std::collections::HashSet;
+
+    let repo_tags_total = repo_tags.len();
+    if repo_tags_total == 0 || depth == 0 {
+        return Vec::new();
+    }
+
+    let repo_set: HashSet<&str> = repo_tags.iter().map(|t| t.as_str()).collect();
+
+    let sorted = sort_tags_semver_then_lex_desc(repo_tags.to_vec());
+
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    // Always try to include anchors if they exist in the repo tag set.
+    for a in anchors {
+        if out.len() >= depth {
+            break;
+        }
+        let t = a.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if !repo_set.contains(t) {
+            continue;
+        }
+        if seen.insert(t.to_string()) {
+            out.push(t.to_string());
+        }
+    }
+
+    for t in sorted {
+        if out.len() >= depth {
+            break;
+        }
+        if seen.insert(t.clone()) {
+            out.push(t);
+        }
+    }
+
+    out
+}
+
+async fn scan_digest_tags_snapshot_best_effort(
+    registry: Arc<dyn registry::RegistryClient>,
+    img: registry::ImageRef,
+    host_platform: &str,
+    repo_tags: &[String],
+    wanted_digest: &str,
+    anchors: &[String],
+) -> (Vec<String>, ServiceDigestTagsScanSummary) {
+    use std::time::Duration;
+
+    use tokio::{
+        task::JoinSet,
+        time::{Instant, timeout, timeout_at},
+    };
+
+    const SNAPSHOT_DEPTH: usize = 100;
+    const MANIFEST_TIMEOUT: Duration = Duration::from_secs(4);
+    const MANIFEST_BUDGET: Duration = Duration::from_secs(12);
+    const MANIFEST_CONCURRENCY: usize = 10;
+
+    let wanted = wanted_digest.trim().to_string();
+    let repo_tags_total = repo_tags.len();
+
+    let considered = pick_considered_tags_for_snapshot(repo_tags, anchors, SNAPSHOT_DEPTH);
+    let repo_tags_considered = considered.len();
+
+    if wanted.is_empty() || repo_tags_considered == 0 {
+        return (
+            Vec::new(),
+            ServiceDigestTagsScanSummary {
+                repo_tags_total,
+                repo_tags_considered,
+                manifests_ok: 0,
+                manifests_timeout: 0,
+                manifests_error: 0,
+            },
+        );
+    }
+
+    enum ScanOutcome {
+        OkMatch(String),
+        OkNoMatch,
+        Timeout,
+        Error,
+    }
+
+    let mut out: Vec<String> = Vec::new();
+    let mut manifests_ok: usize = 0;
+    let mut manifests_timeout: usize = 0;
+    let mut manifests_error: usize = 0;
+
+    let host_platform = host_platform.to_string();
+
+    let mut join_set: JoinSet<ScanOutcome> = JoinSet::new();
+    let mut queue = considered.into_iter();
+
+    let spawn_one = |join_set: &mut JoinSet<ScanOutcome>,
+                     tag: String,
+                     registry: Arc<dyn registry::RegistryClient>,
+                     img: registry::ImageRef,
+                     host_platform: String,
+                     wanted: String| {
+        join_set.spawn(async move {
+            match timeout(
+                MANIFEST_TIMEOUT,
+                registry.get_manifest(&img, &tag, &host_platform),
+            )
+            .await
+            {
+                Ok(Ok(m)) => {
+                    let ok = m
+                        .digest
+                        .as_deref()
+                        .is_some_and(|v| v.trim().eq_ignore_ascii_case(&wanted))
+                        || m.platform_digest
+                            .as_deref()
+                            .is_some_and(|v| v.trim().eq_ignore_ascii_case(&wanted));
+                    if ok {
+                        ScanOutcome::OkMatch(tag)
+                    } else {
+                        ScanOutcome::OkNoMatch
+                    }
+                }
+                Ok(Err(_)) => ScanOutcome::Error,
+                Err(_) => ScanOutcome::Timeout,
+            }
+        });
+    };
+
+    for _ in 0..MANIFEST_CONCURRENCY {
+        let Some(tag) = queue.next() else { break };
+        spawn_one(
+            &mut join_set,
+            tag,
+            registry.clone(),
+            img.clone(),
+            host_platform.clone(),
+            wanted.clone(),
+        );
+    }
+
+    let deadline = Instant::now() + MANIFEST_BUDGET;
+    while !join_set.is_empty() {
+        let next = match timeout_at(deadline, join_set.join_next()).await {
+            Ok(next) => next,
+            Err(_) => {
+                join_set.abort_all();
+                break;
+            }
+        };
+
+        let Some(joined) = next else { break };
+        match joined {
+            Ok(ScanOutcome::OkMatch(tag)) => {
+                manifests_ok += 1;
+                out.push(tag);
+            }
+            Ok(ScanOutcome::OkNoMatch) => {
+                manifests_ok += 1;
+            }
+            Ok(ScanOutcome::Timeout) => {
+                manifests_timeout += 1;
+            }
+            Ok(ScanOutcome::Error) => {
+                manifests_error += 1;
+            }
+            Err(_) => {
+                manifests_error += 1;
+            }
+        };
+
+        let Some(tag) = queue.next() else {
+            continue;
+        };
+        spawn_one(
+            &mut join_set,
+            tag,
+            registry.clone(),
+            img.clone(),
+            host_platform.clone(),
+            wanted.clone(),
+        );
+    }
+
+    // If the budget was exhausted (or tasks were aborted), treat remaining *considered* tags as
+    // timeouts so the UI can warn that the result may be incomplete.
+    let processed = manifests_ok + manifests_timeout + manifests_error;
+    if processed < repo_tags_considered {
+        manifests_timeout += repo_tags_considered - processed;
+    }
+
+    let sorted = sort_tags_semver_then_lex_desc(out);
+    (
+        sorted,
+        ServiceDigestTagsScanSummary {
+            repo_tags_total,
+            repo_tags_considered,
+            manifests_ok,
+            manifests_timeout,
+            manifests_error,
+        },
+    )
+}
+
+async fn persist_digest_tags_snapshots_best_effort(
+    state: &Arc<AppState>,
+    service_id: &str,
+    img: &registry::ImageRef,
+    repo_tags: &[String],
+    host_platform: &str,
+    current_tag: &str,
+    current_digest: Option<&str>,
+    candidate_tag: Option<&str>,
+    candidate_digest: Option<&str>,
+    now: &str,
+) -> anyhow::Result<()> {
+    let mut digest_to_anchors: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+
+    if let Some(d) = current_digest.and_then(normalize_digest) {
+        digest_to_anchors
+            .entry(d)
+            .or_default()
+            .push(current_tag.to_string());
+    }
+
+    if let (Some(tag), Some(digest)) = (candidate_tag, candidate_digest) {
+        if let Some(d) = normalize_digest(digest) {
+            digest_to_anchors
+                .entry(d)
+                .or_default()
+                .extend([tag.to_string(), current_tag.to_string()]);
+        }
+    }
+
+    for anchors in digest_to_anchors.values_mut() {
+        anchors.retain(|t| !t.trim().is_empty());
+        anchors.sort();
+        anchors.dedup();
+    }
+
+    for (digest, anchors) in &digest_to_anchors {
+        let (tags, scan) = scan_digest_tags_snapshot_best_effort(
+            state.registry.clone(),
+            img.clone(),
+            host_platform,
+            repo_tags,
+            digest,
+            anchors,
+        )
+        .await;
+
+        let snapshot = ServiceDigestTagsSnapshotResponse {
+            digest: digest.clone(),
+            tags,
+            checked_at: now.to_string(),
+            scan,
+        };
+        let snapshot_json = serde_json::to_string(&snapshot)?;
+        state
+            .db
+            .upsert_service_digest_tags_snapshot(service_id, digest, &snapshot_json, now, now)
+            .await?;
+    }
+
+    let allowed_digests = digest_to_anchors.keys().cloned().collect::<Vec<_>>();
+    let _deleted = state
+        .db
+        .delete_service_digest_tags_snapshots_except(service_id, &allowed_digests)
+        .await?;
+    Ok(())
 }

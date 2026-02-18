@@ -1338,6 +1338,77 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       return json({ candidates })
     }
 
+    // service digest tags snapshot (used by version popovers)
+    if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/digest-tags-snapshot')) {
+      const parts = urlPath.split('/').filter(Boolean)
+      const serviceId = decodeURIComponent(parts[2])
+      const found = findService(serviceId)
+      if (!found) return json({ error: 'not found' }, { status: 404 })
+
+      const digest = (url?.searchParams.get('digest') ?? '').trim()
+      const digestNorm = digest ? (digest.includes(':') ? digest : `sha256:${digest}`) : ''
+
+      const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
+
+      // Keep it deterministic:
+      // - `repoTags`: all registry tags for the image (superset).
+      // - `tags`: tags that match the requested digest (subset).
+      const repoTags =
+        serviceId === 'svc-prod-api'
+          ? ['5.2.1', '5.2.3', '5.2.4', '5.3.0', 'v5.2.1', 'v5.2.3', 'stable', 'latest']
+          : serviceId === 'svc-prod-web'
+            ? (() => {
+                const out: string[] = ['5.1', '5.1.10', '5.1.11', '5.1.12', '5.2', 'v5.2.1', 'stable', 'latest']
+                for (let i = 0; i < 40; i++) out.push(`5.2.${i}`)
+                return out
+              })()
+            : serviceId === 'svc-resolved-web'
+              ? (() => {
+                  // Mimic a real repo: lots of patch tags, plus a few named aliases.
+                  const out: string[] = ['5.1', '5.1.10', '5.1.11', '5.1.12', '5.2', 'v5.2.1', 'v5.2.3', 'stable', 'latest']
+                  for (let i = 0; i < 40; i++) out.push(`5.2.${i}`)
+                  return out
+                })()
+            : scenario === 'version-tags-popover-demo' && serviceId === 'svc-version-tags'
+              ? ['v0.8.9-arm64', 'v0.8.8-arm64', 'v0.8.8', '0.8.8', 'stable', 'latest']
+              : digestNorm === `sha256:${'a'.repeat(64)}`
+                ? ['v0.1.8', '0.1.8']
+                : [found.svc.image.tag]
+
+      const tags = !digestNorm
+        ? []
+        : digestNorm === d('c', 'c2')
+          ? ['v5.2.1', '5.2.1', '5.2', 'stable', 'latest']
+          : digestNorm === d('a', 'b1') && serviceId === 'svc-resolved-web'
+            ? ['5.2.1', 'v5.2.1', 'stable', 'latest']
+          : digestNorm === d('b', '9f') && serviceId === 'svc-resolved-web'
+            ? ['5.2.3', 'v5.2.3']
+          : digestNorm === d('a', 'b1')
+            ? ['5.2.1', 'v5.2.1']
+          : digestNorm === d('b', '9f') && serviceId === 'svc-prod-api'
+            ? ['5.2.3', 'v5.2.3', 'stable', 'latest']
+            : digestNorm === d('b', '9f') && scenario === 'version-tags-popover-demo' && serviceId === 'svc-version-tags'
+              ? ['v0.8.8-arm64', 'v0.8.8', '0.8.8', 'stable', 'latest']
+            : digestNorm === `sha256:${'a'.repeat(64)}`
+              ? ['v0.1.8', '0.1.8']
+              : [found.svc.image.tag]
+
+      const considered = Math.min(100, repoTags.length)
+
+      return json({
+        digest: digestNorm,
+        tags,
+        checkedAt: nowIso(-5 * 60 * 1000),
+        scan: {
+          repoTagsTotal: repoTags.length,
+          repoTagsConsidered: considered,
+          manifestsOk: digestNorm ? considered : 0,
+          manifestsTimeout: 0,
+          manifestsError: 0,
+        },
+      })
+    }
+
     // service digest tags (used by version popovers)
     if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/digest-tags')) {
       const parts = urlPath.split('/').filter(Boolean)
@@ -1399,6 +1470,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         repoTags,
         scan: {
           repoTagsTotal: repoTags.length,
+          repoTagsConsidered: repoTags.length,
           manifestsOk: digestNorm ? repoTags.length : 0,
           manifestsTimeout: 0,
           manifestsError: 0,

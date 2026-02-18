@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { listServiceDigestTags, type ServiceDigestTagsScanSummary } from '../api'
+import { ApiError, getServiceDigestTagsSnapshot, type ServiceDigestTagsScanSummary } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 
 type TagSeries = {
@@ -69,6 +69,8 @@ type DigestTagsState = {
   key: string
   tags: string[] | null
   scan: ServiceDigestTagsScanSummary | null
+  checkedAt: string | null
+  missingSnapshot: boolean
   error: string | null
 }
 
@@ -118,7 +120,6 @@ export function CurrentVersionPopover(props: {
   }, [imageTag, props.displayTag, resolvedTag])
 
   const resolvedTagTrim = useMemo(() => (resolvedTag ?? '').trim(), [resolvedTag])
-  const resolvedTagsList = useMemo(() => uniquePreserveOrder(props.resolvedTags), [props.resolvedTags])
 
   const rawSeries = useMemo(() => parseTagSeries(imageTag), [imageTag])
 
@@ -127,21 +128,22 @@ export function CurrentVersionPopover(props: {
     key: digestKey,
     tags: null,
     scan: null,
+    checkedAt: null,
+    missingSnapshot: false,
     error: null,
   }))
   const digestTags = digestState.key === digestKey ? digestState.tags : null
   const scan = digestState.key === digestKey ? digestState.scan : null
+  const checkedAt = digestState.key === digestKey ? digestState.checkedAt : null
+  const missingSnapshot = digestState.key === digestKey ? digestState.missingSnapshot : false
   const loadError = digestState.key === digestKey ? digestState.error : null
 
   const digestTagsList = useMemo(() => uniquePreserveOrder(digestTags), [digestTags])
 
   const effectiveTags = useMemo(() => {
-    // When digest is available, prefer the API's digest-tags result; fall back to resolvedTags
-    // (if present) while loading / on errors.
-    const base = digestNorm ? (digestTags != null ? digestTagsList : resolvedTagsList) : resolvedTagsList
-    const uniq = uniquePreserveOrder(base)
-    return resolvedTagTrim ? moveToFront(uniq, resolvedTagTrim) : uniq
-  }, [digestNorm, digestTags, digestTagsList, resolvedTagTrim, resolvedTagsList])
+    if (!digestNorm) return []
+    return resolvedTagTrim ? moveToFront(digestTagsList, resolvedTagTrim) : digestTagsList
+  }, [digestNorm, digestTagsList, resolvedTagTrim])
 
   const tagsPreview = useMemo(() => effectiveTags.slice(0, TAGS_PREVIEW_MAX), [effectiveTags])
   const tagsMore = useMemo(() => Math.max(0, effectiveTags.length - tagsPreview.length), [effectiveTags.length, tagsPreview.length])
@@ -227,7 +229,8 @@ export function CurrentVersionPopover(props: {
   useEffect(() => {
     if (!open) return
     if (!digestNorm) return
-    if (digestTags != null) return
+    const shouldFetch = digestTags == null || (pinned && (missingSnapshot || loadError))
+    if (!shouldFetch) return
 
     let alive = true
     const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
@@ -241,22 +244,49 @@ export function CurrentVersionPopover(props: {
       // Avoid stale request finalizers / callbacks clobbering newer debounce timers.
       if (fetchTimer.current === timerId) fetchTimer.current = null
 
-      listServiceDigestTags(props.serviceId, digestNorm)
+      // Show an explicit loading state when the user pins the popover to retry.
+      if (pinned) {
+        setDigestState({
+          key: digestKey,
+          tags: null,
+          scan: null,
+          checkedAt: null,
+          missingSnapshot: false,
+          error: null,
+        })
+      }
+
+      getServiceDigestTagsSnapshot(props.serviceId, digestNorm)
         .then((data) => {
           if (!alive) return
           setDigestState({
             key: digestKey,
             tags: data.tags,
             scan: data.scan ?? null,
+            checkedAt: data.checkedAt ?? null,
+            missingSnapshot: false,
             error: null,
           })
         })
         .catch((e: unknown) => {
           if (!alive) return
+          if (e instanceof ApiError && e.status === 404) {
+            setDigestState({
+              key: digestKey,
+              tags: [],
+              scan: null,
+              checkedAt: null,
+              missingSnapshot: true,
+              error: null,
+            })
+            return
+          }
           setDigestState({
             key: digestKey,
             tags: [],
             scan: null,
+            checkedAt: null,
+            missingSnapshot: false,
             error: e instanceof Error ? e.message : String(e),
           })
         })
@@ -270,7 +300,7 @@ export function CurrentVersionPopover(props: {
         fetchTimer.current = null
       }
     }
-  }, [digestKey, digestNorm, digestTags, open, pinned, props.serviceId])
+  }, [digestKey, digestNorm, digestTags, loadError, missingSnapshot, open, pinned, props.serviceId])
 
   useLayoutEffect(() => {
     if (!open) return
@@ -485,19 +515,33 @@ export function CurrentVersionPopover(props: {
         <div className="label">同 digest 的 tags</div>
         {!digestNorm && effectiveTags.length === 0 ? (
           <div className="muted">digest 未知，暂无 tags 信息</div>
+        ) : digestNorm && missingSnapshot ? (
+          <div className="muted">快照缺失：请先执行一次 check（本气泡不再实时扫描 registry）</div>
         ) : digestNorm && digestTags == null && effectiveTags.length === 0 ? (
-          <div className="muted">加载中…</div>
+          <div className="muted">读取扫描快照中…</div>
         ) : loadError && effectiveTags.length === 0 ? (
-          <div className="muted">加载失败：{loadError}</div>
+          <div className="muted">读取失败：{loadError}</div>
         ) : effectiveTags.length === 0 ? (
           <div className="muted">未找到同 digest 的标签</div>
         ) : (
           <>
             <div className="muted">共 {effectiveTags.length} 个 tags</div>
 
+            {checkedAt ? (
+              <div className="muted">
+                快照时间 <span className="mono">{checkedAt}</span>
+              </div>
+            ) : null}
+
+            {scan && digestNorm && scan.repoTagsConsidered < scan.repoTagsTotal ? (
+              <div className="muted">
+                注意：仅比对最近 {scan.repoTagsConsidered} / {scan.repoTagsTotal} 个 tags，结果可能不完整
+              </div>
+            ) : null}
+
             {scan && digestNorm && (scan.manifestsTimeout > 0 || scan.manifestsError > 0) ? (
               <div className="muted">
-                注意：digest tags 可能不完整（ok {scan.manifestsOk} / {scan.repoTagsTotal}
+                注意：digest tags 可能不完整（ok {scan.manifestsOk} / {scan.repoTagsConsidered}
                 {scan.manifestsTimeout > 0 ? ` · timeout ${scan.manifestsTimeout}` : ''}
                 {scan.manifestsError > 0 ? ` · error ${scan.manifestsError}` : ''}
                 ）

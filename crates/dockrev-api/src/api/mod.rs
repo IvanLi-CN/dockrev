@@ -47,6 +47,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/api/services/{service_id}/digest-tags",
             get(list_service_digest_tags),
         )
+        .route(
+            "/api/services/{service_id}/digest-tags-snapshot",
+            get(get_service_digest_tags_snapshot),
+        )
         .route("/api/discovery/scan", post(trigger_discovery_scan))
         .route("/api/discovery/projects", get(list_discovery_projects))
         .route(
@@ -1947,6 +1951,64 @@ struct ListServiceDigestTagsQuery {
     digest: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetServiceDigestTagsSnapshotQuery {
+    digest: Option<String>,
+}
+
+async fn get_service_digest_tags_snapshot(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(service_id): Path<String>,
+    Query(q): Query<GetServiceDigestTagsSnapshotQuery>,
+) -> Result<Json<ServiceDigestTagsSnapshotResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+
+    let digest_input = q.digest.unwrap_or_default();
+    let digest_trimmed = digest_input.trim();
+    if digest_trimmed.is_empty() {
+        return Err(ApiError::invalid_argument("digest is required"));
+    }
+
+    let digest = if digest_trimmed.contains(':') {
+        digest_trimmed.to_string()
+    } else {
+        format!("sha256:{digest_trimmed}")
+    };
+
+    let stack_id = state
+        .db
+        .get_service_stack_id(&service_id)
+        .await
+        .map_err(map_internal)?;
+    if stack_id.is_none() {
+        return Err(ApiError::not_found("service not found"));
+    }
+
+    let snapshot = state
+        .db
+        .get_service_digest_tags_snapshot(&service_id, &digest)
+        .await
+        .map_err(map_internal)?;
+    let Some((snapshot_json, _checked_at, _updated_at)) = snapshot else {
+        return Err(
+            ApiError::not_found("digest tags snapshot not found").with_details(json!({
+                "digest": digest,
+            })),
+        );
+    };
+
+    let parsed: ServiceDigestTagsSnapshotResponse =
+        serde_json::from_str(&snapshot_json).map_err(|e| {
+            ApiError::internal("invalid digest tags snapshot").with_details(json!({
+                "error": e.to_string(),
+            }))
+        })?;
+
+    Ok(Json(parsed))
+}
+
 async fn list_service_digest_tags(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -2028,6 +2090,7 @@ async fn list_service_digest_tags(
             repo_tags,
             scan: ServiceDigestTagsScanSummary {
                 repo_tags_total,
+                repo_tags_considered: 0,
                 manifests_ok: 0,
                 manifests_timeout: 0,
                 manifests_error: 0,
@@ -2178,6 +2241,7 @@ async fn list_service_digest_tags(
         repo_tags,
         scan: ServiceDigestTagsScanSummary {
             repo_tags_total,
+            repo_tags_considered: repo_tags_total,
             manifests_ok,
             manifests_timeout,
             manifests_error,

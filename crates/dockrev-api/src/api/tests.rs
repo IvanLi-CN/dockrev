@@ -107,6 +107,40 @@ impl RegistryClient for DigestTagsRegistry {
 }
 
 #[derive(Clone, Default)]
+struct PruneRegistry;
+
+#[async_trait::async_trait]
+impl RegistryClient for PruneRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        Ok(vec![
+            "5.2.0".to_string(),
+            "5.3.0".to_string(),
+            "latest".to_string(),
+        ])
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        let digest = match reference {
+            "5.2.0" => "sha256:cur",
+            "5.3.0" => "sha256:cand",
+            // Keep floating tags deterministic for snapshot scan.
+            "latest" => "sha256:cur",
+            _ => "sha256:other",
+        };
+        Ok(ManifestInfo {
+            digest: Some(digest.to_string()),
+            platform_digest: None,
+            arch: vec!["linux/amd64".to_string()],
+        })
+    }
+}
+
+#[derive(Clone, Default)]
 struct FakeRunner;
 
 #[async_trait::async_trait]
@@ -701,6 +735,261 @@ services:
     assert_eq!(tags[49].as_str().unwrap(), "1.0.0");
     assert_eq!(repo_tags[0].as_str().unwrap(), "1.0.0");
     assert_eq!(repo_tags[49].as_str().unwrap(), "1.0.49");
+}
+
+#[tokio::test]
+async fn service_digest_tags_snapshot_404_when_missing() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(DigestTagsRegistry),
+        Arc::new(FakeRunner),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let detail = response_json(resp).await;
+    let service_id = detail["stack"]["services"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{service_id}/digest-tags-snapshot?digest=match"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn check_persists_digest_tags_snapshot_for_current_digest() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(DigestTagsRegistry),
+        Arc::new(FakeRunner),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let svc = services.first().unwrap().clone();
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let mut manifest_digest_cache: std::collections::HashMap<
+        String,
+        (Option<String>, Option<String>),
+    > = std::collections::HashMap::new();
+
+    // Use the same scan-time code path as real jobs.
+    crate::service_check::check_service_and_persist(
+        &state,
+        "job-test",
+        &svc,
+        None,
+        "linux/amd64",
+        &now,
+        &mut manifest_digest_cache,
+    )
+    .await
+    .unwrap();
+
+    // Use a bare hash to assert normalization (sha256: prefix added server-side).
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{}/digest-tags-snapshot?digest=match",
+                    svc.id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body = response_json(resp).await;
+    assert_eq!(body["digest"].as_str().unwrap(), "sha256:match");
+    assert_eq!(body["checkedAt"].as_str().unwrap(), now.as_str());
+
+    let tags = body["tags"].as_array().unwrap();
+    assert_eq!(tags.len(), 50);
+    assert_eq!(tags[0].as_str().unwrap(), "1.0.49");
+    assert_eq!(tags[49].as_str().unwrap(), "1.0.0");
+
+    assert_eq!(body["scan"]["repoTagsTotal"].as_u64().unwrap(), 50);
+    assert_eq!(body["scan"]["repoTagsConsidered"].as_u64().unwrap(), 50);
+    assert_eq!(body["scan"]["manifestsOk"].as_u64().unwrap(), 50);
+    assert_eq!(body["scan"]["manifestsTimeout"].as_u64().unwrap(), 0);
+    assert_eq!(body["scan"]["manifestsError"].as_u64().unwrap(), 0);
+}
+
+#[tokio::test]
+async fn digest_tags_snapshot_prune_keeps_only_current_and_candidate_digests() {
+    let state = test_state_with(":memory:", Arc::new(PruneRegistry), Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2.0
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let svc = services.first().unwrap().clone();
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    // Seed extra historical digests to ensure the prune step is exercised.
+    let seed_snapshot = |digest: &str| {
+        serde_json::json!({
+          "digest": digest,
+          "tags": ["seed"],
+          "checkedAt": now.as_str(),
+          "scan": {
+            "repoTagsTotal": 3,
+            "repoTagsConsidered": 3,
+            "manifestsOk": 3,
+            "manifestsTimeout": 0,
+            "manifestsError": 0,
+          }
+        })
+        .to_string()
+    };
+    state
+        .db
+        .upsert_service_digest_tags_snapshot(
+            &svc.id,
+            "sha256:old1",
+            &seed_snapshot("sha256:old1"),
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .upsert_service_digest_tags_snapshot(
+            &svc.id,
+            "sha256:old2",
+            &seed_snapshot("sha256:old2"),
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .upsert_service_digest_tags_snapshot(
+            &svc.id,
+            "sha256:old3",
+            &seed_snapshot("sha256:old3"),
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let mut manifest_digest_cache: std::collections::HashMap<
+        String,
+        (Option<String>, Option<String>),
+    > = std::collections::HashMap::new();
+    crate::service_check::check_service_and_persist(
+        &state,
+        "job-test",
+        &svc,
+        // Ensure current digest is known even if the registry is inconsistent.
+        Some("sha256:cur".to_string()),
+        "linux/amd64",
+        &now,
+        &mut manifest_digest_cache,
+    )
+    .await
+    .unwrap();
+
+    // old digests should be pruned
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{}/digest-tags-snapshot?digest=old2",
+                    svc.id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+
+    // current digest should exist
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{}/digest-tags-snapshot?digest=cur",
+                    svc.id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
 }
 
 #[tokio::test]
