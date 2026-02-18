@@ -97,3 +97,4 @@
 | wtb4a | Dockrev API/Web: 修复 check jobs 并发与退出未收尾 | 已完成 | `wtb4a:check-running-job-recovery/PLAN.md` | 2026-02-15 | PR #66 |
 | 8xt2t | Dockrev: 运行态版本漂移自动发现（runtime diff scan + SSE） | 已完成 | `8xt2t:runtime-drift-scan-sse/PLAN.md` | 2026-02-17 | PR #67 |
 | fc8ua | Dockrev Web: 左下角版本号链接指向 GitHub Release | 已完成 | `fc8ua:version-link-to-release/PLAN.md` | 2026-02-18 | PR #69 |
+| fknrb | Dockrev: digest-tags snapshot persistence (no live scan) | 待实现 | `fknrb:digest-tags-snapshot/PLAN.md` | 2026-02-18 | - |
