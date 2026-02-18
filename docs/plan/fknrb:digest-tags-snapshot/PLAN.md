@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-18
 - Last: 2026-02-18
 
@@ -53,9 +53,9 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: 扫描时生成并 upsert digest-tags 快照；按 service prune 仅保留 current/candidate digest
-- [ ] M2: 新增 snapshot API；Web popovers 改为只读快照并展示 checkedAt/considered summary
-- [ ] M3: API tests + web mocks 补齐；最小验证通过（cargo test + web lint/build）
+- [x] M1: 扫描时生成并 upsert digest-tags 快照；按 service prune 仅保留 current/candidate digest
+- [x] M2: 新增 snapshot API；Web popovers 改为只读快照并展示 checkedAt/considered summary
+- [x] M3: API tests + web mocks 补齐；最小验证通过（cargo test + web lint/build）
 
 ## 风险 / 开放问题（Risks & Open Questions）
 
@@ -64,4 +64,4 @@
 ## 变更记录（Change log）
 
 - 2026-02-18: 创建计划并冻结范围与验收标准（Status=待实现）。
-
+- 2026-02-18: 实现完成并创建 PR（PR #71）；UI popovers 改为只读扫描快照，后端扫描时持久化并 prune。

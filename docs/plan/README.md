@@ -98,4 +98,4 @@
 | 8xt2t | Dockrev: 运行态版本漂移自动发现（runtime diff scan + SSE） | 已完成 | `8xt2t:runtime-drift-scan-sse/PLAN.md` | 2026-02-17 | PR #67 |
 | fc8ua | Dockrev Web: 左下角版本号链接指向 GitHub Release | 已完成 | `fc8ua:version-link-to-release/PLAN.md` | 2026-02-18 | PR #69 |
 | zt9ks | Dockrev Web/API: 修复服务更新确认弹窗（popover 层级 + 目标版本错选） | 已完成 | `zt9ks:fix-update-confirm-modal-popover-target/PLAN.md` | 2026-02-18 | PR #70 |
-| fknrb | Dockrev: digest-tags snapshot persistence (no live scan) | 待实现 | `fknrb:digest-tags-snapshot/PLAN.md` | 2026-02-18 | - |
+| fknrb | Dockrev: digest-tags snapshot persistence (no live scan) | 已完成 | `fknrb:digest-tags-snapshot/PLAN.md` | 2026-02-18 | PR #71 |
