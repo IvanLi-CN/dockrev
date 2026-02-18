@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { listServiceDigestTags, type ServiceDigestTagsScanSummary } from '../api'
+import { ApiError, getServiceDigestTagsSnapshot, type ServiceDigestTagsScanSummary } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 
 function uniquePreserveOrder(values: Array<string | null | undefined> | null | undefined): string[] {
@@ -33,6 +33,8 @@ type DigestTagsState = {
   key: string
   tags: string[] | null
   scan: ServiceDigestTagsScanSummary | null
+  checkedAt: string | null
+  missingSnapshot: boolean
   error: string | null
 }
 
@@ -66,10 +68,14 @@ export function VersionTagsPopover(props: {
     key: digestKey,
     tags: null,
     scan: null,
+    checkedAt: null,
+    missingSnapshot: false,
     error: null,
   }))
   const digestTags = digestState.key === digestKey ? digestState.tags : null
   const scan = digestState.key === digestKey ? digestState.scan : null
+  const checkedAt = digestState.key === digestKey ? digestState.checkedAt : null
+  const missingSnapshot = digestState.key === digestKey ? digestState.missingSnapshot : false
   const loadError = digestState.key === digestKey ? digestState.error : null
 
   const clearHoverCloseTimer = useCallback(() => {
@@ -156,6 +162,8 @@ export function VersionTagsPopover(props: {
 
     // Digest tag listing is only meaningful when digest is known.
     if (!candidateDigestNorm) return
+    // Only fetch when there's no snapshot data loaded yet. Retries should be explicit
+    // (e.g. via re-pinning), not continuously driven by pinned+error state.
     if (digestTags != null) return
 
     let alive = true
@@ -170,22 +178,37 @@ export function VersionTagsPopover(props: {
       // Avoid stale request finalizers / callbacks clobbering newer debounce timers.
       if (fetchTimer.current === timerId) fetchTimer.current = null
 
-      listServiceDigestTags(serviceId, candidateDigestNorm)
+      getServiceDigestTagsSnapshot(serviceId, candidateDigestNorm)
         .then((data) => {
           if (!alive) return
           setDigestState({
             key: digestKey,
             tags: data.tags,
             scan: data.scan ?? null,
+            checkedAt: data.checkedAt ?? null,
+            missingSnapshot: false,
             error: null,
           })
         })
         .catch((e: unknown) => {
           if (!alive) return
+          if (e instanceof ApiError && e.status === 404) {
+            setDigestState({
+              key: digestKey,
+              tags: [],
+              scan: null,
+              checkedAt: null,
+              missingSnapshot: true,
+              error: null,
+            })
+            return
+          }
           setDigestState({
             key: digestKey,
             tags: [],
             scan: null,
+            checkedAt: null,
+            missingSnapshot: false,
             error: e instanceof Error ? e.message : String(e),
           })
         })
@@ -329,10 +352,12 @@ export function VersionTagsPopover(props: {
               </button>
             </div>
           </>
+        ) : missingSnapshot ? (
+          <div className="muted">快照缺失：请先执行一次 check（本气泡不再实时扫描 registry）</div>
         ) : digestTags == null ? (
-          <div className="muted">加载中…</div>
+          <div className="muted">读取扫描快照中…</div>
         ) : loadError ? (
-          <div className="muted">加载失败：{loadError}</div>
+          <div className="muted">读取失败：{loadError}</div>
         ) : digestTags.length === 0 ? (
           <div className="muted">未找到同 digest 的标签</div>
         ) : (
@@ -341,9 +366,21 @@ export function VersionTagsPopover(props: {
               共 {digestTagsUnique.length} 个 tags
             </div>
 
+            {checkedAt ? (
+              <div className="muted">
+                快照时间 <span className="mono">{checkedAt}</span>
+              </div>
+            ) : null}
+
+            {scan && candidateDigestNorm && scan.repoTagsConsidered < scan.repoTagsTotal ? (
+              <div className="muted">
+                注意：仅比对最近 {scan.repoTagsConsidered} / {scan.repoTagsTotal} 个 tags，结果可能不完整
+              </div>
+            ) : null}
+
             {scan && candidateDigestNorm && (scan.manifestsTimeout > 0 || scan.manifestsError > 0) ? (
               <div className="muted">
-                注意：digest tags 可能不完整（ok {scan.manifestsOk} / {scan.repoTagsTotal}
+                注意：digest tags 可能不完整（ok {scan.manifestsOk} / {scan.repoTagsConsidered}
                 {scan.manifestsTimeout > 0 ? ` · timeout ${scan.manifestsTimeout}` : ''}
                 {scan.manifestsError > 0 ? ` · error ${scan.manifestsError}` : ''}
                 ）
@@ -389,11 +426,21 @@ export function VersionTagsPopover(props: {
         }}
         onClick={() => {
           clearHoverCloseTimer()
-          setPinned((prev) => {
-            const next = !prev
-            pinnedRef.current = next
-            return next
-          })
+          const next = !pinnedRef.current
+          pinnedRef.current = next
+          setPinned(next)
+          // If we previously failed to load (404/no snapshot yet, or other error),
+          // treat pinning as an explicit one-shot retry by clearing state to "loading".
+          if (next && (missingSnapshot || loadError)) {
+            setDigestState({
+              key: digestKey,
+              tags: null,
+              scan: null,
+              checkedAt: null,
+              missingSnapshot: false,
+              error: null,
+            })
+          }
           setHoverOpen(true)
           showPopover()
         }}

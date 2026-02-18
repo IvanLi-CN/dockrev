@@ -1238,6 +1238,7 @@ pub struct ServiceCandidateOption {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceDigestTagsScanSummary {
     pub repo_tags_total: usize,
+    pub repo_tags_considered: usize,
     pub manifests_ok: usize,
     pub manifests_timeout: usize,
     pub manifests_error: usize,
@@ -1249,5 +1250,14 @@ pub struct ServiceDigestTagsResponse {
     pub digest: String,
     pub tags: Vec<String>,
     pub repo_tags: Vec<String>,
+    pub scan: ServiceDigestTagsScanSummary,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceDigestTagsSnapshotResponse {
+    pub digest: String,
+    pub tags: Vec<String>,
+    pub checked_at: String,
     pub scan: ServiceDigestTagsScanSummary,
 }

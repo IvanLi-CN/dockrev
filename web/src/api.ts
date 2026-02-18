@@ -72,6 +72,7 @@ export type ServiceCandidatesResponse = {
 
 export type ServiceDigestTagsScanSummary = {
   repoTagsTotal: number
+  repoTagsConsidered: number
   manifestsOk: number
   manifestsTimeout: number
   manifestsError: number
@@ -81,6 +82,13 @@ export type ServiceDigestTagsResponse = {
   digest: string
   tags: string[]
   repoTags?: string[]
+  scan: ServiceDigestTagsScanSummary
+}
+
+export type ServiceDigestTagsSnapshotResponse = {
+  digest: string
+  tags: string[]
+  checkedAt: string
   scan: ServiceDigestTagsScanSummary
 }
 
@@ -441,6 +449,13 @@ export async function listServiceDigestTags(serviceId: string, digest: string): 
     `/api/services/${encodeURIComponent(serviceId)}/digest-tags?digest=${encodeURIComponent(digest)}`,
   )
   return (await resp.json()) as ServiceDigestTagsResponse
+}
+
+export async function getServiceDigestTagsSnapshot(serviceId: string, digest: string): Promise<ServiceDigestTagsSnapshotResponse> {
+  const resp = await apiFetch(
+    `/api/services/${encodeURIComponent(serviceId)}/digest-tags-snapshot?digest=${encodeURIComponent(digest)}`,
+  )
+  return (await resp.json()) as ServiceDigestTagsSnapshotResponse
 }
 
 export async function triggerCheck(scope: string, stackId?: string, serviceId?: string) {

@@ -98,6 +98,15 @@ export const MissingDigest: Story = {
   },
 }
 
+export const MissingSnapshot: Story = {
+  parameters: { dockrevApiScenario: 'version-tags-popover-snapshot-missing' },
+  args: {
+    serviceId: 'svc-version-tags',
+    candidateTag: 'v0.8.8-arm64',
+    candidateDigest: d('b', '9f'),
+  },
+}
+
 export const ApiError: Story = {
   parameters: { dockrevApiScenario: 'error' },
   args: {
