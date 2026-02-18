@@ -229,8 +229,9 @@ export function CurrentVersionPopover(props: {
   useEffect(() => {
     if (!open) return
     if (!digestNorm) return
-    const shouldFetch = digestTags == null || (pinned && (missingSnapshot || loadError))
-    if (!shouldFetch) return
+    // Only fetch when there's no snapshot data loaded yet. Retries should be explicit
+    // (e.g. via re-pinning), not continuously driven by pinned+error state.
+    if (digestTags != null) return
 
     let alive = true
     const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
@@ -243,18 +244,6 @@ export function CurrentVersionPopover(props: {
       if (!alive) return
       // Avoid stale request finalizers / callbacks clobbering newer debounce timers.
       if (fetchTimer.current === timerId) fetchTimer.current = null
-
-      // Show an explicit loading state when the user pins the popover to retry.
-      if (pinned) {
-        setDigestState({
-          key: digestKey,
-          tags: null,
-          scan: null,
-          checkedAt: null,
-          missingSnapshot: false,
-          error: null,
-        })
-      }
 
       getServiceDigestTagsSnapshot(props.serviceId, digestNorm)
         .then((data) => {
@@ -300,7 +289,7 @@ export function CurrentVersionPopover(props: {
         fetchTimer.current = null
       }
     }
-  }, [digestKey, digestNorm, digestTags, loadError, missingSnapshot, open, pinned, props.serviceId])
+  }, [digestKey, digestNorm, digestTags, open, pinned, props.serviceId])
 
   useLayoutEffect(() => {
     if (!open) return
@@ -582,11 +571,21 @@ export function CurrentVersionPopover(props: {
         }}
         onClick={() => {
           clearHoverCloseTimer()
-          setPinned((prev) => {
-            const next = !prev
-            pinnedRef.current = next
-            return next
-          })
+          const next = !pinnedRef.current
+          pinnedRef.current = next
+          setPinned(next)
+          // If we previously failed to load (404/no snapshot yet, or other error),
+          // treat pinning as an explicit one-shot retry by clearing state to "loading".
+          if (next && (missingSnapshot || loadError)) {
+            setDigestState({
+              key: digestKey,
+              tags: null,
+              scan: null,
+              checkedAt: null,
+              missingSnapshot: false,
+              error: null,
+            })
+          }
           setHoverOpen(true)
           showPopover()
         }}

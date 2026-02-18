@@ -586,6 +586,12 @@ async fn persist_digest_tags_snapshots_best_effort(
         anchors.dedup();
     }
 
+    // If we couldn't determine any digests to snapshot, keep any existing snapshots instead of
+    // pruning them away on a transient failure.
+    if digest_to_anchors.is_empty() {
+        return Ok(());
+    }
+
     for (digest, anchors) in &digest_to_anchors {
         let (tags, scan) = scan_digest_tags_snapshot_best_effort(
             state.registry.clone(),

@@ -162,8 +162,9 @@ export function VersionTagsPopover(props: {
 
     // Digest tag listing is only meaningful when digest is known.
     if (!candidateDigestNorm) return
-    const shouldFetch = digestTags == null || (pinned && (missingSnapshot || loadError))
-    if (!shouldFetch) return
+    // Only fetch when there's no snapshot data loaded yet. Retries should be explicit
+    // (e.g. via re-pinning), not continuously driven by pinned+error state.
+    if (digestTags != null) return
 
     let alive = true
     const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
@@ -176,18 +177,6 @@ export function VersionTagsPopover(props: {
       if (!alive) return
       // Avoid stale request finalizers / callbacks clobbering newer debounce timers.
       if (fetchTimer.current === timerId) fetchTimer.current = null
-
-      // Show an explicit loading state when the user pins the popover to retry.
-      if (pinned) {
-        setDigestState({
-          key: digestKey,
-          tags: null,
-          scan: null,
-          checkedAt: null,
-          missingSnapshot: false,
-          error: null,
-        })
-      }
 
       getServiceDigestTagsSnapshot(serviceId, candidateDigestNorm)
         .then((data) => {
@@ -233,7 +222,7 @@ export function VersionTagsPopover(props: {
         fetchTimer.current = null
       }
     }
-  }, [candidateDigestNorm, candidateTag, digestKey, digestTags, loadError, missingSnapshot, open, pinned, serviceId])
+  }, [candidateDigestNorm, candidateTag, digestKey, digestTags, open, pinned, serviceId])
 
   const candidateTagTrim = useMemo(() => (candidateTag ?? '').trim(), [candidateTag])
 
@@ -437,11 +426,21 @@ export function VersionTagsPopover(props: {
         }}
         onClick={() => {
           clearHoverCloseTimer()
-          setPinned((prev) => {
-            const next = !prev
-            pinnedRef.current = next
-            return next
-          })
+          const next = !pinnedRef.current
+          pinnedRef.current = next
+          setPinned(next)
+          // If we previously failed to load (404/no snapshot yet, or other error),
+          // treat pinning as an explicit one-shot retry by clearing state to "loading".
+          if (next && (missingSnapshot || loadError)) {
+            setDigestState({
+              key: digestKey,
+              tags: null,
+              scan: null,
+              checkedAt: null,
+              missingSnapshot: false,
+              error: null,
+            })
+          }
           setHoverOpen(true)
           showPopover()
         }}
