@@ -503,6 +503,7 @@ pub struct JobDetail {
     pub backup_mode: String,
     pub summary: Value,
     pub logs: Vec<JobLogLine>,
+    pub logs_last_id: i64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

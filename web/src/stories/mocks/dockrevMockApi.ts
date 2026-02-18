@@ -302,6 +302,7 @@ function buildDashboardDemo(): Fixture {
         { ts: nowIso(-28_000), level: 'info', msg: 'Pulling images...' },
         { ts: nowIso(-12_000), level: 'info', msg: 'Waiting for healthcheck...' },
       ],
+      logsLastId: 2,
     } satisfies JobDetail,
   }
 
@@ -528,19 +529,23 @@ function buildQueueMixed(): Fixture {
 
   f.jobs = jobs
   f.jobById = Object.fromEntries(
-    jobs.map((j) => [
-      j.id,
-      {
-        ...j,
-        logs:
-          j.status === 'failed'
-            ? [
-                { ts: nowIso(-20_000), level: 'info', msg: 'Pulling images...' },
-                { ts: nowIso(-10_000), level: 'error', msg: 'Backup failed (fail-closed).' },
-              ]
-            : [{ ts: nowIso(-12_000), level: 'info', msg: 'Done.' }],
-      } satisfies JobDetail,
-    ]),
+    jobs.map((j) => {
+      const logs =
+        j.status === 'failed'
+          ? [
+              { ts: nowIso(-20_000), level: 'info', msg: 'Pulling images...' },
+              { ts: nowIso(-10_000), level: 'error', msg: 'Backup failed (fail-closed).' },
+            ]
+          : [{ ts: nowIso(-12_000), level: 'info', msg: 'Done.' }]
+      return [
+        j.id,
+        {
+          ...j,
+          logs,
+          logsLastId: logs.length,
+        } satisfies JobDetail,
+      ]
+    }),
   )
 
   return f
@@ -596,6 +601,7 @@ function buildQueueLongLogs(): Fixture {
     [jobShort.id]: {
       ...jobShort,
       logs: [{ ts: nowIso(-12_000), level: 'info', msg: 'check started' }],
+      logsLastId: 1,
     } satisfies JobDetail,
     [jobLong.id]: {
       ...jobLong,
@@ -643,10 +649,11 @@ function buildQueueLongLogs(): Fixture {
                 ? `digest mismatch: expected=${digest} got=sha256:${'f'.repeat(64)}`
                 : i % 13 === 0
                   ? `json: {"event":"registry_request","status":429,"retry_in_ms":500,"url":"${longUrl}"}`
-                : `line ${String(i + 1).padStart(2, '0')}: ${'x'.repeat(180)}`,
+                  : `line ${String(i + 1).padStart(2, '0')}: ${'x'.repeat(180)}`,
         })),
         { ts: nowIso(-10_000), level: 'info', msg: 'check finished' },
       ],
+      logsLastId: 105,
     } satisfies JobDetail,
   }
 
@@ -1143,6 +1150,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
           { ts: nowIso(-900), level: 'info', msg: 'Queued by UI.' },
           { ts: nowIso(-300), level: 'info', msg: mode === 'apply' ? 'Apply started...' : 'Dry run started...' },
         ],
+        logsLastId: 2,
       }
       return json({ jobId })
     }
@@ -1176,7 +1184,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         summary: { scan },
       }
       f.jobs = [job, ...f.jobs]
-      f.jobById[jobId] = { ...job, logs: [{ ts: startedAt, level: 'info', msg: 'discovery scan finished' }] }
+      f.jobById[jobId] = { ...job, logs: [{ ts: startedAt, level: 'info', msg: 'discovery scan finished' }], logsLastId: 1 }
       return json({ jobId })
     }
     if (method === 'GET' && (urlPathWithQuery === '/api/discovery/projects' || urlPathWithQuery.startsWith('/api/discovery/projects?'))) {
