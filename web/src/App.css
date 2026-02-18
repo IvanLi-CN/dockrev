@@ -399,7 +399,8 @@
 
 .versionTagsPopover {
   position: fixed;
-  z-index: 50;
+  /* Must be above modal overlay (z-index: 1000) because popovers are portaled to document.body. */
+  z-index: 1100;
   background: var(--panel);
   border: 1px solid var(--borderColor);
   border-radius: 14px;
