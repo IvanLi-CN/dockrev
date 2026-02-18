@@ -671,7 +671,7 @@ services:
 async fn service_candidates_orders_semver_first_for_floating_tags() {
     let state = test_state_with(
         ":memory:",
-        Arc::new(FloatingTagRegistry::default()),
+        Arc::new(FloatingTagRegistry),
         Arc::new(FakeRunner),
     )
     .await;
