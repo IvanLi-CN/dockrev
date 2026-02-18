@@ -2,10 +2,10 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-18
 - Last: 2026-02-18
-- Notes: -
+- Notes: PR #69
 
 ## 背景 / 问题陈述
 
@@ -54,11 +54,10 @@
 
 ## 里程碑（Milestones）
 
-- [ ] Web：版本号链接从 repo tree 改为 release tag
-- [ ] Web：同步更新 aria-label / title 文案
-- [ ] 验证：本地通过 web lint + build
+- [x] Web：版本号链接从 repo tree 改为 release tag
+- [x] Web：同步更新 aria-label / title 文案
+- [x] 验证：本地通过 web lint + build
 
 ## 风险与开放问题（Risks & Open Questions）
 
 - `/api/version` 若返回非标准 tag（例如包含空格/特殊字符），链接可能不可用；当前保持“按返回值直连”的策略不做额外纠错。
-
