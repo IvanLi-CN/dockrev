@@ -54,7 +54,10 @@ export default function App() {
         <div className="standaloneContent">
           <div className="standaloneHead">
             <div className="standaloneHeadLeft">
-              <div className="brand">Dockrev</div>
+              <div className="brand">
+                <img className="brandMark" src="/brand-mark.png" alt="" aria-hidden="true" />
+                Dockrev
+              </div>
             </div>
             <div className="chipStatic chipStaticUser">用户：ivan（FH）</div>
           </div>

@@ -46,9 +46,19 @@
 }
 
 .brand {
+  display: flex;
+  align-items: center;
+  /* The PNG has some transparent padding; keep gap small so the *visual* spacing is ~0.5 char. */
+  gap: 2px;
   font-size: 16px;
   font-weight: 650;
   color: var(--text);
+}
+
+.brandMark {
+  width: 28px;
+  height: 28px;
+  display: block;
 }
 
 .topbarHint {
