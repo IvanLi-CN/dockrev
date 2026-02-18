@@ -80,7 +80,7 @@ export function AppShell(props: {
   const versionDisplay = formatVersionDisplay(appVersion)
   const versionHref =
     versionLabel !== '-' && versionRef
-      ? `https://github.com/IvanLi-CN/dockrev/tree/${encodeGitRefForPath(versionRef)}`
+      ? `https://github.com/IvanLi-CN/dockrev/releases/tag/${encodeGitRefForPath(versionRef)}`
       : null
 
   return (
@@ -151,8 +151,8 @@ export function AppShell(props: {
                   href={versionHref}
                   target="_blank"
                   rel="noopener noreferrer"
-                  aria-label={`Version on GitHub: ${versionDisplay}`}
-                  title={`Version: ${versionDisplay}`}
+                  aria-label={`Release on GitHub: ${versionDisplay}`}
+                  title={`Release: ${versionDisplay}`}
                 >
                   <Mono>{versionDisplay}</Mono>
                 </a>
