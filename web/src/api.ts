@@ -451,6 +451,23 @@ export async function triggerCheck(scope: string, stackId?: string, serviceId?: 
   return (await resp.json()) as { checkId: string }
 }
 
+export async function triggerRuntimeScan(scope: string, stackId?: string, serviceId?: string) {
+  const resp = await apiFetch('/api/runtime-scans', {
+    method: 'POST',
+    body: JSON.stringify({ scope, stackId, serviceId, reason: 'ui' }),
+  })
+  return (await resp.json()) as { jobId: string }
+}
+
+export function jobEventsUrl(jobId: string): string {
+  const base = apiBaseUrl().replace(/\/$/, '')
+  return `${base}/api/jobs/${encodeURIComponent(jobId)}/events`
+}
+
+export function newJobEventsSource(jobId: string): EventSource {
+  return new EventSource(jobEventsUrl(jobId), { withCredentials: true })
+}
+
 export async function triggerUpdate(input: {
   scope: string
   stackId?: string

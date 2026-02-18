@@ -39,6 +39,15 @@ pub struct ServiceForCheck {
 }
 
 #[derive(Clone, Debug)]
+pub struct ServiceForRuntimeScan {
+    pub id: String,
+    pub name: String,
+    pub image_ref: String,
+    pub image_tag: String,
+    pub current_digest: Option<String>,
+}
+
+#[derive(Clone, Debug)]
 pub struct DiscoveredComposeProjectRecord {
     pub stack_id: Option<String>,
 }
@@ -58,6 +67,13 @@ pub struct DiscoveredComposeProjectUpsert {
 #[derive(Clone)]
 pub struct Db {
     conn: Connection,
+}
+
+#[derive(Clone, Debug)]
+pub struct JobLogRow {
+    pub id: i64,
+    pub level: String,
+    pub msg: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -756,6 +772,35 @@ ORDER BY name ASC
         })
         .await
         .context("list services for check")
+    }
+
+    pub async fn list_services_for_runtime_scan(
+        &self,
+        stack_id: &str,
+    ) -> anyhow::Result<Vec<ServiceForRuntimeScan>> {
+        let stack_id = stack_id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT id, name, image_ref, image_tag, current_digest
+FROM services
+WHERE stack_id = ?1
+ORDER BY name ASC
+"#,
+            )?;
+            let rows = stmt.query_map(params![stack_id], |row| {
+                Ok(ServiceForRuntimeScan {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    image_ref: row.get(2)?,
+                    image_tag: row.get(3)?,
+                    current_digest: row.get(4)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list services for runtime scan")
     }
 
     pub async fn get_stack_compose_project(
@@ -2524,6 +2569,80 @@ LIMIT 1
         .context("find latest running check job")
     }
 
+    pub async fn find_latest_running_runtime_scan_job(
+        &self,
+        scope: &JobScope,
+        stack_id: Option<&str>,
+        service_id: Option<&str>,
+    ) -> anyhow::Result<Option<JobListItem>> {
+        let scope = scope.as_str().to_string();
+        let stack_id = stack_id.map(|s| s.to_string());
+        let service_id = service_id.map(|s| s.to_string());
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT
+  id,
+  type,
+  scope,
+  stack_id,
+  service_id,
+  status,
+  created_by,
+  reason,
+  created_at,
+  started_at,
+  finished_at,
+  allow_arch_mismatch,
+  backup_mode,
+  summary_json
+FROM jobs
+WHERE type = 'runtime_scan'
+  AND status = 'running'
+  AND scope = ?1
+  AND (?2 IS NULL OR stack_id = ?2)
+  AND (?3 IS NULL OR service_id = ?3)
+ORDER BY created_at DESC
+LIMIT 1
+"#,
+            )?;
+
+            let row = stmt
+                .query_row(params![scope, stack_id, service_id], |row| {
+                    let summary_json: String = row.get(13)?;
+                    let summary: serde_json::Value =
+                        serde_json::from_str(&summary_json).map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                0,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?;
+                    Ok(JobListItem {
+                        id: row.get(0)?,
+                        r#type: JobType::from_str(&row.get::<_, String>(1)?),
+                        scope: JobScope::from_str(&row.get::<_, String>(2)?),
+                        stack_id: row.get(3)?,
+                        service_id: row.get(4)?,
+                        status: row.get(5)?,
+                        created_by: row.get(6)?,
+                        reason: row.get(7)?,
+                        created_at: row.get(8)?,
+                        started_at: row.get(9)?,
+                        finished_at: row.get(10)?,
+                        allow_arch_mismatch: row.get::<_, i64>(11)? != 0,
+                        backup_mode: row.get(12)?,
+                        summary_json: summary,
+                    })
+                })
+                .optional()?;
+
+            Ok(row)
+        })
+        .await
+        .context("find latest running runtime scan job")
+    }
+
     pub async fn recover_incomplete_jobs(
         &self,
         now: &str,
@@ -2786,6 +2905,37 @@ LIMIT 500
         })
         .await
         .context("list job logs")
+    }
+
+    pub async fn list_job_logs_since(
+        &self,
+        job_id: &str,
+        after_id: i64,
+        limit: u32,
+    ) -> anyhow::Result<Vec<JobLogRow>> {
+        let job_id = job_id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT id, level, msg
+FROM job_logs
+WHERE job_id = ?1 AND id > ?2
+ORDER BY id ASC
+LIMIT ?3
+"#,
+            )?;
+
+            let rows = stmt.query_map(params![job_id, after_id, limit as i64], |row| {
+                Ok(JobLogRow {
+                    id: row.get(0)?,
+                    level: row.get(1)?,
+                    msg: row.get(2)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list job logs since")
     }
 
     pub async fn insert_job_log(&self, job_id: &str, line: &JobLogLine) -> anyhow::Result<()> {

@@ -17,6 +17,7 @@ pub struct Config {
     pub host_platform: Option<String>,
     pub discovery_interval_seconds: u64,
     pub discovery_max_actions: u32,
+    pub runtime_scan_interval_seconds: u64,
 }
 
 impl Config {
@@ -77,6 +78,16 @@ impl Config {
             .and_then(|v| v.trim().parse::<u32>().ok())
             .unwrap_or(200);
 
+        let runtime_scan_interval_seconds = std::env::var("DOCKREV_RUNTIME_SCAN_INTERVAL_SECONDS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(600);
+        if runtime_scan_interval_seconds < 30 {
+            return Err(anyhow::anyhow!(
+                "DOCKREV_RUNTIME_SCAN_INTERVAL_SECONDS must be >= 30"
+            ));
+        }
+
         Ok(Self {
             app_effective_version,
             http_addr,
@@ -91,6 +102,7 @@ impl Config {
             host_platform,
             discovery_interval_seconds,
             discovery_max_actions,
+            runtime_scan_interval_seconds,
         })
     }
 }
