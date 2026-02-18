@@ -7,7 +7,7 @@ use std::{
 use axum::{
     Json, Router,
     extract::State,
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::{Html, IntoResponse},
     routing::{get, post},
 };
@@ -30,6 +30,8 @@ pub struct App {
     pub cfg: Config,
     runtime: Arc<Mutex<Runtime>>,
 }
+
+const UI_FAVICON_PNG: &[u8] = include_bytes!("../../../web/public/favicon.png");
 
 struct Runtime {
     state: StateFile,
@@ -85,6 +87,7 @@ impl App {
                 get(get_self_upgrade).post(post_self_upgrade),
             )
             .route("/self-upgrade/rollback", post(post_self_upgrade_rollback))
+            .route("/favicon.png", get(ui_favicon))
             .route("/", get(ui_index))
             .with_state(self);
         Router::new().nest(&base, api)
@@ -203,6 +206,10 @@ async fn version(State(_app): State<Arc<App>>) -> impl IntoResponse {
     Json(VersionResponse {
         version: env!("CARGO_PKG_VERSION"),
     })
+}
+
+async fn ui_favicon() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "image/png")], UI_FAVICON_PNG)
 }
 
 fn require_user(app: &App, headers: &HeaderMap) -> Result<String, ApiError> {
@@ -366,11 +373,12 @@ fn render_ui(base_path: &str) -> String {
     // Minimal, dependency-free console. Uses same-origin fetch under base_path.
     format!(
         r#"<!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Dockrev Supervisor</title>
+    <link rel="icon" type="image/png" href="{base_path}/favicon.png" />
     <style>
       body {{ font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; padding: 18px; max-width: 960px; margin: 0 auto; }}
       .row {{ display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }}
@@ -385,7 +393,10 @@ fn render_ui(base_path: &str) -> String {
     </style>
   </head>
   <body>
-    <h1>Dockrev 自我升级（Supervisor）</h1>
+    <div class="row" style="gap:12px;">
+      <img src="{base_path}/favicon.png" alt="" aria-hidden="true" width="24" height="24" style="display:block" />
+      <h1 style="margin:0;">Dockrev 自我升级（Supervisor）</h1>
+    </div>
     <div class="muted">该页面独立于 Dockrev 生命周期；Dockrev 重启期间仍可用。</div>
 
     <div class="card">
@@ -407,7 +418,7 @@ fn render_ui(base_path: &str) -> String {
     </div>
 
     <script>
-      const base = {base_path};
+      const base = {base_path_json};
       const toUrl = (p) => base.replace(/\/$/, '') + '/' + p.replace(/^\//, '');
 
       async function fetchJson(path, init) {{
@@ -464,7 +475,8 @@ fn render_ui(base_path: &str) -> String {
     </script>
   </body>
 </html>"#,
-        base_path =
+        base_path = base_path,
+        base_path_json =
             serde_json::to_string(base_path).unwrap_or_else(|_| "\"/supervisor\"".to_string())
     )
 }
