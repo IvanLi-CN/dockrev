@@ -2,9 +2,10 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-18
 - Last: 2026-02-18
+- Notes: PR #70
 
 ## 背景 / 问题陈述
 
@@ -49,9 +50,9 @@
 
 ## 实现里程碑（Milestones）
 
-- [ ] M1: Web z-index 修复 + UpdateTargetSelect 默认目标锁定 initialTag
-- [ ] M2: API candidates 在 floating tag 场景 semver-first 排序 + 回归测试
-- [ ] M3: Storybook Playwright 回归测试 + 最小验证通过
+- [x] M1: Web z-index 修复 + UpdateTargetSelect 默认目标锁定 initialTag
+- [x] M2: API candidates 在 floating tag 场景 semver-first 排序 + 回归测试
+- [x] M3: Storybook Playwright 回归测试 + 最小验证通过
 
 ## 风险 / 开放问题（Risks & Open Questions）
 
@@ -61,4 +62,4 @@
 ## 变更记录（Change log）
 
 - 2026-02-18: 创建计划并冻结范围与验收标准（Status=待实现）。
-
+- 2026-02-18: 完成实现与回归测试；本地验证通过（cargo test + web lint/build/storybook）；提交 PR #70。
