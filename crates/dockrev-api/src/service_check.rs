@@ -548,6 +548,7 @@ async fn scan_digest_tags_snapshot_best_effort(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn persist_digest_tags_snapshots_best_effort(
     state: &Arc<AppState>,
     service_id: &str,
@@ -570,13 +571,13 @@ async fn persist_digest_tags_snapshots_best_effort(
             .push(current_tag.to_string());
     }
 
-    if let (Some(tag), Some(digest)) = (candidate_tag, candidate_digest) {
-        if let Some(d) = normalize_digest(digest) {
-            digest_to_anchors
-                .entry(d)
-                .or_default()
-                .extend([tag.to_string(), current_tag.to_string()]);
-        }
+    if let (Some(tag), Some(digest)) = (candidate_tag, candidate_digest)
+        && let Some(d) = normalize_digest(digest)
+    {
+        digest_to_anchors
+            .entry(d)
+            .or_default()
+            .extend([tag.to_string(), current_tag.to_string()]);
     }
 
     for anchors in digest_to_anchors.values_mut() {
