@@ -26,6 +26,7 @@ export type DockrevApiScenario =
   | 'guide-line-long-names'
   | 'resolved-tag-demo'
   | 'version-tags-popover-demo'
+  | 'version-tags-popover-snapshot-missing'
   | 'multi-stack-mixed'
   | 'queue-mixed'
   | 'queue-long-logs'
@@ -40,6 +41,10 @@ type MockDebug = {
   lastUpdateRequest: unknown | null
   lastUpdateUrl: string | null
   lastUpdateMethod: string | null
+  digestTagsSnapshotCalls: number
+  digestTagsCalls: number
+  lastDigestTagsSnapshotUrl: string | null
+  lastDigestTagsUrl: string | null
 }
 
 declare global {
@@ -93,6 +98,18 @@ function getBoolean(v: unknown): boolean | null {
 
 function nowIso(offsetMs = 0) {
   return new Date(Date.now() + offsetMs).toISOString()
+}
+
+function makeMockDebug(): MockDebug {
+  return {
+    lastUpdateRequest: null,
+    lastUpdateUrl: null,
+    lastUpdateMethod: null,
+    digestTagsSnapshotCalls: 0,
+    digestTagsCalls: 0,
+    lastDigestTagsSnapshotUrl: null,
+    lastDigestTagsUrl: null,
+  }
 }
 
 function makeDefaultSettings(): SettingsResponse {
@@ -768,7 +785,7 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'dashboard-demo') return buildDashboardDemo()
   if (scenario === 'guide-line-long-names') return buildGuideLineLongNames()
   if (scenario === 'resolved-tag-demo') return buildResolvedTagDemo()
-  if (scenario === 'version-tags-popover-demo') return buildVersionTagsPopoverDemo()
+  if (scenario === 'version-tags-popover-demo' || scenario === 'version-tags-popover-snapshot-missing') return buildVersionTagsPopoverDemo()
   if (scenario === 'queue-mixed') return buildQueueMixed()
   if (scenario === 'queue-long-logs') return buildQueueLongLogs()
   if (scenario === 'settings-configured') return buildSettingsConfigured()
@@ -781,7 +798,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
   let ignoreSeq = 0
   let jobSeq = 0
 
-  globalThis.__DOCKREV_MOCK_DEBUG__ = { lastUpdateRequest: null, lastUpdateUrl: null, lastUpdateMethod: null }
+  globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug()
 
   function findService(serviceId: string) {
     if (!state) return null
@@ -1108,11 +1125,10 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
     if (method === 'POST' && urlPath === '/api/updates') {
       const body = typeof init?.body === 'string' ? init.body : ''
       const parsed = body ? (JSON.parse(body) as Record<string, unknown>) : {}
-      globalThis.__DOCKREV_MOCK_DEBUG__ = {
-        lastUpdateRequest: parsed,
-        lastUpdateUrl: urlPath,
-        lastUpdateMethod: method,
-      }
+      const dbg = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
+      dbg.lastUpdateRequest = parsed
+      dbg.lastUpdateUrl = urlPath
+      dbg.lastUpdateMethod = method
       const stackId = typeof parsed.stackId === 'string' ? parsed.stackId : null
       const serviceId = typeof parsed.serviceId === 'string' ? parsed.serviceId : null
       const scope = typeof parsed.scope === 'string' ? parsed.scope : 'service'
@@ -1340,10 +1356,18 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
 
     // service digest tags snapshot (used by version popovers)
     if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/digest-tags-snapshot')) {
+      const dbg = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
+      dbg.digestTagsSnapshotCalls += 1
+      dbg.lastDigestTagsSnapshotUrl = urlPathWithQuery
+
       const parts = urlPath.split('/').filter(Boolean)
       const serviceId = decodeURIComponent(parts[2])
       const found = findService(serviceId)
       if (!found) return json({ error: 'not found' }, { status: 404 })
+
+      if (scenario === 'version-tags-popover-snapshot-missing') {
+        return json({ error: 'not found' }, { status: 404 })
+      }
 
       const digest = (url?.searchParams.get('digest') ?? '').trim()
       const digestNorm = digest ? (digest.includes(':') ? digest : `sha256:${digest}`) : ''
@@ -1411,6 +1435,10 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
 
     // service digest tags (used by version popovers)
     if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/digest-tags')) {
+      const dbg = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
+      dbg.digestTagsCalls += 1
+      dbg.lastDigestTagsUrl = urlPathWithQuery
+
       const parts = urlPath.split('/').filter(Boolean)
       const serviceId = decodeURIComponent(parts[2])
       const found = findService(serviceId)

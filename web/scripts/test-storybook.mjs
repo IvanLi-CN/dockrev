@@ -493,6 +493,79 @@ async function runInteractive({ baseUrl, browser }) {
       await page.close().catch(() => {})
     }
   }
+
+  // 6) Version popovers: must read scan-time digest-tags snapshot only (no live /digest-tags fan-out).
+  {
+    const page = await openStory('components-versiontagspopover--multi-tags')
+    try {
+      await page.evaluate(() => {
+        if (!globalThis.__DOCKREV_MOCK_DEBUG__) return
+        globalThis.__DOCKREV_MOCK_DEBUG__.digestTagsSnapshotCalls = 0
+        globalThis.__DOCKREV_MOCK_DEBUG__.digestTagsCalls = 0
+        globalThis.__DOCKREV_MOCK_DEBUG__.lastDigestTagsSnapshotUrl = null
+        globalThis.__DOCKREV_MOCK_DEBUG__.lastDigestTagsUrl = null
+      })
+
+      const btn = page.getByRole('button', { name: 'v0.8.8-arm64' })
+      await btn.waitFor({ timeout: 10_000 })
+      await btn.click()
+
+      const popover = page.locator(".versionTagsPopover[data-state='open']")
+      await popover.waitFor({ timeout: 10_000 })
+
+      await page.waitForFunction(() => (globalThis.__DOCKREV_MOCK_DEBUG__?.digestTagsSnapshotCalls ?? 0) > 0, null, {
+        timeout: 10_000,
+      })
+      const dbg = await page.evaluate(() => globalThis.__DOCKREV_MOCK_DEBUG__ ?? null)
+      if (!dbg) throw new Error('Missing mock debug object.')
+
+      if (dbg.digestTagsCalls !== 0) {
+        throw new Error(`Expected no /digest-tags calls, got ${dbg.digestTagsCalls} (last=${String(dbg.lastDigestTagsUrl)})`)
+      }
+      if (dbg.digestTagsSnapshotCalls <= 0) {
+        throw new Error('Expected at least one /digest-tags-snapshot call, got 0.')
+      }
+
+      await popover.getByText('快照时间').waitFor({ timeout: 10_000 })
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
+  // 7) Snapshot missing: popover should show a clear message and must not retry in a loop.
+  {
+    const page = await openStory('components-versiontagspopover--missing-snapshot')
+    try {
+      await page.evaluate(() => {
+        if (!globalThis.__DOCKREV_MOCK_DEBUG__) return
+        globalThis.__DOCKREV_MOCK_DEBUG__.digestTagsSnapshotCalls = 0
+        globalThis.__DOCKREV_MOCK_DEBUG__.digestTagsCalls = 0
+        globalThis.__DOCKREV_MOCK_DEBUG__.lastDigestTagsSnapshotUrl = null
+        globalThis.__DOCKREV_MOCK_DEBUG__.lastDigestTagsUrl = null
+      })
+
+      const btn = page.getByRole('button', { name: 'v0.8.8-arm64' })
+      await btn.waitFor({ timeout: 10_000 })
+      await btn.click()
+
+      const popover = page.locator(".versionTagsPopover[data-state='open']")
+      await popover.waitFor({ timeout: 10_000 })
+
+      await popover.getByText('快照缺失：请先执行一次 check').waitFor({ timeout: 10_000 })
+
+      await page.waitForTimeout(700)
+      const dbg = await page.evaluate(() => globalThis.__DOCKREV_MOCK_DEBUG__ ?? null)
+      if (!dbg) throw new Error('Missing mock debug object.')
+      if (dbg.digestTagsCalls !== 0) {
+        throw new Error(`Expected no /digest-tags calls, got ${dbg.digestTagsCalls} (last=${String(dbg.lastDigestTagsUrl)})`)
+      }
+      if (dbg.digestTagsSnapshotCalls !== 1) {
+        throw new Error(`Expected exactly one /digest-tags-snapshot call, got ${dbg.digestTagsSnapshotCalls}.`)
+      }
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
 }
 
 async function main() {
