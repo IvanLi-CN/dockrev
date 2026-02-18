@@ -45,6 +45,16 @@ async fn enqueue_scheduled_scan(state: Arc<AppState>) -> anyhow::Result<()> {
         .find_latest_running_runtime_scan_job(&JobScope::All, None, None)
         .await?
         .is_some()
+        || state
+            .db
+            .find_latest_running_runtime_scan_job(&JobScope::Stack, None, None)
+            .await?
+            .is_some()
+        || state
+            .db
+            .find_latest_running_runtime_scan_job(&JobScope::Service, None, None)
+            .await?
+            .is_some()
     {
         return Ok(());
     }
@@ -158,6 +168,27 @@ pub async fn run_job(state: Arc<AppState>, args: RuntimeScanJobArgs) {
                 .await;
         }
         Err(e) => {
+            // Always emit a terminal event so SSE clients can close their EventSource even on failures.
+            let summary = json!({ "error": e.to_string() });
+            let finished_evt = json!({
+                "type": "runtime_scan_finished",
+                "jobId": job_id,
+                "ts": finished_at,
+                "summary": summary,
+                "status": "failed",
+            });
+            let _ = state
+                .db
+                .insert_job_log(
+                    &job_id,
+                    &JobLogLine {
+                        ts: finished_at.clone(),
+                        level: "event".to_string(),
+                        msg: finished_evt.to_string(),
+                    },
+                )
+                .await;
+
             let _ = state
                 .db
                 .insert_job_log(
@@ -169,7 +200,6 @@ pub async fn run_job(state: Arc<AppState>, args: RuntimeScanJobArgs) {
                     },
                 )
                 .await;
-            let summary = json!({ "error": e.to_string() });
             let _ = state
                 .db
                 .finish_job(&job_id, "failed", &finished_at, &summary)
