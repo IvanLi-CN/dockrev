@@ -57,11 +57,20 @@ export function UpdateTargetSelect(props: {
   const showComparison = props.showComparison !== false
 
   const defaultTag = useMemo(() => {
-    if (!opts) return initialTag ?? '-'
+    const init = (initialTag ?? '').trim()
+    if (!opts) return init || '-'
+
+    // If a candidate was already computed by the backend (and shown in the list view), the
+    // confirm modal must not silently switch targets after candidates load.
+    if (init && init !== '-') {
+      const initHit = opts.find((o) => o.tag === init) ?? null
+      if (initHit && isSelectable(initHit)) return init
+    }
+
     const preferred = opts.find((o) => isSelectable(o) && tagSeriesMatches(currentTag, o.tag) === true) ?? null
     const fallback = opts.find((o) => isSelectable(o)) ?? null
     const base = preferred ?? fallback
-    return base?.tag ?? initialTag ?? '-'
+    return base?.tag ?? (init || '-')
   }, [currentTag, initialTag, opts])
 
   const effectiveTag = useMemo(() => {
