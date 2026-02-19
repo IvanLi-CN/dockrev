@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { getJob, type JobDetail, type JobLogLine } from '../api'
+import { getJob, newJobEventsSource, type JobDetail, type JobLogLine } from '../api'
 import { navigate } from '../routes'
 import { Button, Chip, Mono, Pill } from '../ui'
 
@@ -94,11 +94,114 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     const j = await getJob(jobId)
     setJob(j)
     setLogs(j.logs)
+    return j
   }, [jobId])
 
   useEffect(() => {
-    void refresh().catch((e: unknown) => setError(errorMessage(e)))
-  }, [refresh])
+    let closed = false
+    let es: EventSource | null = null
+    let pollTimer: number | null = null
+    let refreshTimer: number | null = null
+    let errorStreak = 0
+
+    const stopPolling = () => {
+      if (pollTimer != null) window.clearInterval(pollTimer)
+      pollTimer = null
+    }
+
+    const scheduleRefresh = (delayMs: number) => {
+      if (refreshTimer != null) return
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = null
+        void (async () => {
+          try {
+            const j = await refresh()
+            if (closed) return
+            if (j.status !== 'running' || j.finishedAt) {
+              es?.close()
+              stopPolling()
+            }
+          } catch {
+            // ignore refresh failures; user can still use the manual refresh button
+          }
+        })()
+      }, delayMs)
+    }
+
+    const startPolling = () => {
+      if (pollTimer != null) return
+      pollTimer = window.setInterval(() => {
+        void refresh().catch(() => {})
+      }, 1000)
+    }
+
+    const start = async () => {
+      try {
+        const j = await refresh()
+        if (closed) return
+
+        // Nothing to stream for finished jobs.
+        if (j.status !== 'running' || j.finishedAt) return
+
+        try {
+          es = newJobEventsSource(jobId, { afterId: j.logsLastId })
+        } catch {
+          startPolling()
+          return
+        }
+
+        es.addEventListener('open', () => {
+          errorStreak = 0
+          stopPolling()
+        })
+
+        es.addEventListener('job_log', (evt: Event) => {
+          const data = (evt as MessageEvent).data
+          if (typeof data !== 'string' || !data) return
+          try {
+            const parsed = JSON.parse(data) as unknown
+            if (!parsed || typeof parsed !== 'object') return
+            const p = parsed as Record<string, unknown>
+            if (p.type !== 'job_log') return
+            const ts = typeof p.ts === 'string' ? p.ts : ''
+            const level = typeof p.level === 'string' ? p.level : ''
+            const msg = typeof p.msg === 'string' ? p.msg : ''
+            setLogs((prev) => {
+              const next = [...prev, { ts, level, msg }]
+              return next.length > 500 ? next.slice(-500) : next
+            })
+          } catch {
+            // ignore invalid events
+          }
+        })
+
+        es.onerror = () => {
+          errorStreak += 1
+          // The backend closes the SSE stream shortly after a job is finished (idle window).
+          // Refresh once on close/error so status/finishedAt become up-to-date.
+          scheduleRefresh(0)
+
+          if (errorStreak >= 3) {
+            // If SSE repeatedly fails (proxy buffering, auth, etc.), fall back to polling.
+            es?.close()
+            es = null
+            startPolling()
+          }
+        }
+      } catch (e: unknown) {
+        setError(errorMessage(e))
+      }
+    }
+
+    void start()
+
+    return () => {
+      closed = true
+      if (refreshTimer != null) window.clearTimeout(refreshTimer)
+      stopPolling()
+      es?.close()
+    }
+  }, [jobId, refresh])
 
   useEffect(() => {
     onTopActions(

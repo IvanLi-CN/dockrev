@@ -72,6 +72,7 @@ pub struct Db {
 #[derive(Clone, Debug)]
 pub struct JobLogRow {
     pub id: i64,
+    pub ts: String,
     pub level: String,
     pub msg: String,
 }
@@ -2994,7 +2995,7 @@ WHERE id = ?1
 SELECT ts, level, msg
 FROM job_logs
 WHERE job_id = ?1
-ORDER BY id ASC
+ORDER BY id DESC
 LIMIT 500
 "#,
             )?;
@@ -3006,7 +3007,10 @@ LIMIT 500
                     msg: row.get(2)?,
                 })
             })?;
-            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+            let mut out = rows.collect::<Result<Vec<_>, _>>()?;
+            // Return ascending order for UI consumption while keeping the query "tail"-friendly.
+            out.reverse();
+            Ok(out)
         })
         .await
         .context("list job logs")
@@ -3022,7 +3026,7 @@ LIMIT 500
         self.call(move |conn| {
             let mut stmt = conn.prepare(
                 r#"
-SELECT id, level, msg
+SELECT id, ts, level, msg
 FROM job_logs
 WHERE job_id = ?1 AND id > ?2
 ORDER BY id ASC
@@ -3033,14 +3037,33 @@ LIMIT ?3
             let rows = stmt.query_map(params![job_id, after_id, limit as i64], |row| {
                 Ok(JobLogRow {
                     id: row.get(0)?,
-                    level: row.get(1)?,
-                    msg: row.get(2)?,
+                    ts: row.get(1)?,
+                    level: row.get(2)?,
+                    msg: row.get(3)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
         })
         .await
         .context("list job logs since")
+    }
+
+    pub async fn get_job_logs_last_id(&self, job_id: &str) -> anyhow::Result<i64> {
+        let job_id = job_id.to_string();
+        self.call(move |conn| {
+            let v: i64 = conn.query_row(
+                r#"
+SELECT COALESCE(MAX(id), 0)
+FROM job_logs
+WHERE job_id = ?1
+"#,
+                params![job_id],
+                |row| row.get(0),
+            )?;
+            Ok(v)
+        })
+        .await
+        .context("get job logs last id")
     }
 
     pub async fn insert_job_log(&self, job_id: &str, line: &JobLogLine) -> anyhow::Result<()> {

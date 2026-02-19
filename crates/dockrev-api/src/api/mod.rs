@@ -1508,6 +1508,12 @@ async fn get_job(
         .await
         .map_err(map_internal)?;
 
+    let logs_last_id = state
+        .db
+        .get_job_logs_last_id(&job_id)
+        .await
+        .map_err(map_internal)?;
+
     Ok(Json(GetJobResponse {
         job: JobDetail {
             id: job.id,
@@ -1525,14 +1531,23 @@ async fn get_job(
             backup_mode: job.backup_mode,
             summary: job.summary_json,
             logs,
+            logs_last_id,
         },
     }))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JobEventsQuery {
+    #[serde(default)]
+    after_id: i64,
 }
 
 async fn job_events(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(job_id): Path<String>,
+    Query(q): Query<JobEventsQuery>,
 ) -> Result<impl axum::response::IntoResponse, ApiError> {
     let _user = require_user(&state, &headers)?;
 
@@ -1548,7 +1563,8 @@ async fn job_events(
         .unwrap_or_default()
         .trim()
         .to_string();
-    let mut after_id: i64 = last_event_id.parse::<i64>().unwrap_or(0);
+    let header_after_id: i64 = last_event_id.parse::<i64>().unwrap_or(0);
+    let mut after_id: i64 = std::cmp::max(header_after_id, q.after_id).max(0);
 
     let sse_state = state.clone();
     let sse_job_id = job_id.clone();
@@ -1600,6 +1616,19 @@ async fn job_events(
             for row in rows {
                 after_id = row.id;
                 if row.level != "event" {
+                    let evt = json!({
+                        "type": "job_log",
+                        "jobId": sse_job_id,
+                        "ts": row.ts,
+                        "level": row.level,
+                        "msg": row.msg,
+                    });
+                    yield Ok::<Event, Infallible>(
+                        Event::default()
+                            .id(row.id.to_string())
+                            .event("job_log")
+                            .data(evt.to_string()),
+                    );
                     continue;
                 }
 
