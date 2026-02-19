@@ -39,6 +39,8 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY src ./src
 COPY --from=web-builder /app/web/dist ./web/dist
+# dockrev-supervisor embeds some UI assets at compile time.
+COPY --from=web-builder /app/web/public ./web/public
 
 RUN case "${TARGETARCH}" in \
     amd64) target="x86_64-unknown-linux-musl" ;; \
