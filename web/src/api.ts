@@ -58,18 +58,6 @@ export type Service = {
   archived?: boolean
 }
 
-export type ServiceCandidateOption = {
-  tag: string
-  digest?: string | null
-  archMatch: ArchMatch
-  arch: string[]
-  ignored: boolean
-}
-
-export type ServiceCandidatesResponse = {
-  candidates: ServiceCandidateOption[]
-}
-
 export type ServiceDigestTagsScanSummary = {
   repoTagsTotal: number
   repoTagsConsidered: number
@@ -436,12 +424,6 @@ export async function archiveService(serviceId: string) {
 
 export async function restoreService(serviceId: string) {
   await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/restore`, { method: 'POST', body: '{}' })
-}
-
-export async function listServiceCandidates(serviceId: string): Promise<ServiceCandidateOption[]> {
-  const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/candidates`)
-  const data = (await resp.json()) as ServiceCandidatesResponse
-  return data.candidates
 }
 
 export async function listServiceDigestTags(serviceId: string, digest: string): Promise<ServiceDigestTagsResponse> {

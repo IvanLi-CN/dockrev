@@ -462,7 +462,7 @@ async function runInteractive({ baseUrl, browser }) {
     }
   }
 
-  // 5) Update confirm modal: default targetTag must stay on initialTag and update request must use it.
+  // 5) Update confirm modal: no target selector; update request must be pinned to scan-time candidate digest.
   {
     const page = await openStory('pages-servicespage--dashboard-demo')
     try {
@@ -474,10 +474,9 @@ async function runInteractive({ baseUrl, browser }) {
       const modal = page.getByRole('dialog')
       await modal.waitFor({ timeout: 10_000 })
 
+      // The confirm modal should not allow selecting a target version.
       const select = modal.locator('select.select')
-      await select.waitFor({ timeout: 10_000 })
-      const value = await select.inputValue()
-      if (value !== '5.2.3') throw new Error(`Expected default targetTag to be initialTag (5.2.3), got ${value}`)
+      if (await select.count()) throw new Error('Expected no <select> in update confirm modal (version selection removed).')
 
       await modal.getByRole('button', { name: '执行更新' }).click()
 
@@ -485,9 +484,15 @@ async function runInteractive({ baseUrl, browser }) {
         timeout: 10_000,
       })
       const req = await page.evaluate(() => globalThis.__DOCKREV_MOCK_DEBUG__?.lastUpdateRequest ?? null)
-      const targetTag = req && typeof req === 'object' ? req.targetTag : null
-      if (targetTag !== '5.2.3') {
-        throw new Error(`Expected update request targetTag=5.2.3, got ${String(targetTag)} (req=${JSON.stringify(req)})`)
+      if (!req || typeof req !== 'object') throw new Error('No update request recorded in mock API.')
+
+      // The dashboard demo fixture uses a deterministic digest generator: d('b','9f') => sha256: + 62 * 'b' + '9f'.
+      const expectedTargetDigest = `sha256:${'b'.repeat(62)}9f`
+      const targetDigest = req.targetDigest
+      if (targetDigest !== expectedTargetDigest) {
+        throw new Error(
+          `Expected update request targetDigest=${expectedTargetDigest}, got ${String(targetDigest)} (req=${JSON.stringify(req)})`,
+        )
       }
     } finally {
       await page.close().catch(() => {})

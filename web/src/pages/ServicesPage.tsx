@@ -20,7 +20,6 @@ import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { serviceRowStatus, type RowStatus } from '../updateStatus'
 import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
-import { UpdateTargetSelect } from '../components/UpdateTargetSelect'
 import { useConfirm } from '../confirm'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
@@ -36,7 +35,6 @@ function formatShort(ts: string) {
 function formatGroupSummary(services: number, counts: Record<Exclude<RowStatus, 'ok'>, number>) {
   const parts: string[] = [`${services} services`]
   if (counts.updatable > 0) parts.push(`${counts.updatable} 可更新`)
-  if (counts.crossTag > 0) parts.push(`${counts.crossTag} 跨标签版本`)
   if (counts.hint > 0) parts.push(`${counts.hint} 需确认`)
   if (counts.archMismatch > 0) parts.push(`${counts.archMismatch} 架构不匹配`)
   if (counts.blocked > 0) parts.push(`${counts.blocked} 被阻止`)
@@ -403,7 +401,10 @@ export function ServicesPage(props: {
       } catch (e: unknown) {
         if (e instanceof ApiError) {
           if (e.status === 401) setError('需要登录/鉴权（forward header）')
-          else if (e.status === 409) setError('该 stack 正在更新（禁止并发）')
+          else if (e.status === 409) {
+            setError('扫描结果已变化，请刷新并重新扫描后再更新')
+            await refresh()
+          }
           else setError(e.message)
         } else {
           setError(e instanceof Error ? e.message : String(e))
@@ -412,7 +413,7 @@ export function ServicesPage(props: {
         setBusy(false)
       }
     },
-    [confirm],
+    [confirm, refresh],
   )
 
   const groupsAll = useMemo(() => {
@@ -448,7 +449,6 @@ export function ServicesPage(props: {
       const countsAll: Record<Exclude<RowStatus, 'ok'>, number> = {
         updatable: 0,
         hint: 0,
-        crossTag: 0,
         archMismatch: 0,
         blocked: 0,
       }
@@ -460,7 +460,6 @@ export function ServicesPage(props: {
       const countsSearch: Record<Exclude<RowStatus, 'ok'>, number> = {
         updatable: 0,
         hint: 0,
-        crossTag: 0,
         archMismatch: 0,
         blocked: 0,
       }
@@ -490,7 +489,6 @@ export function ServicesPage(props: {
     const counts: Record<Exclude<RowStatus, 'ok'>, number> = {
       updatable: 0,
       hint: 0,
-      crossTag: 0,
       archMismatch: 0,
       blocked: 0,
     }
@@ -588,8 +586,8 @@ export function ServicesPage(props: {
 	            const stackApply =
 	              g.countsAll.updatable > 0
 	                ? { enabled: true, title: null as string | null }
-	                : g.countsAll.hint > 0 || g.countsAll.crossTag > 0
-	                  ? { enabled: true, title: '存在需确认/跨标签的候选；将由服务端计算是否实际变更' }
+	                : g.countsAll.hint > 0
+	                  ? { enabled: true, title: '存在需确认的候选；将由服务端计算是否实际变更' }
 	                  : { enabled: false, title: '无可更新服务' }
 	            return (
 	              <div key={g.stackId} className={isCollapsed ? 'tableGroup' : 'tableGroup tableGroupExpanded'}>
@@ -628,9 +626,9 @@ export function ServicesPage(props: {
 		                          ? d.services
 		                              .filter((svc) => !svc.archived)
 		                              .map((svc) => ({ svc, status: serviceRowStatus(svc) }))
-		                              .filter((x) => x.status === 'updatable' || x.status === 'hint' || x.status === 'crossTag')
+		                              .filter((x) => x.status === 'updatable' || x.status === 'hint')
 		                          : []
-		                        const totalCandidates = g.countsAll.updatable + g.countsAll.hint + g.countsAll.crossTag
+		                        const totalCandidates = g.countsAll.updatable + g.countsAll.hint
 		                        const body = (
 		                          <>
 		                            <div className="modalKvGrid">
@@ -643,10 +641,10 @@ export function ServicesPage(props: {
 	                                <Mono>{g.stackName}</Mono>
 	                              </div>
 	                              <div className="modalKvLabel">候选服务</div>
-	                              <div className="modalKvValue">{totalCandidates} 个（可更新/需确认/跨标签）</div>
+	                              <div className="modalKvValue">{totalCandidates} 个（可更新/需确认）</div>
 	                              <div className="modalKvLabel">其中</div>
 	                              <div className="modalKvValue">
-	                                可更新 {g.countsAll.updatable} · 需确认 {g.countsAll.hint} · 跨标签 {g.countsAll.crossTag}
+	                                可更新 {g.countsAll.updatable} · 需确认 {g.countsAll.hint}
 	                              </div>
 	                              <div className="modalKvLabel">将跳过</div>
 		                              <div className="modalKvValue">
@@ -756,10 +754,8 @@ export function ServicesPage(props: {
                       const svcApply =
                         status === 'updatable'
                           ? { enabled: true, title: null as string | null }
-                          : status === 'crossTag'
-                            ? { enabled: true, title: '跨标签版本更新；请确认风险后执行' }
                           : status === 'hint'
-                            ? { enabled: true, title: '未确认是否有更新；将由服务端计算是否实际变更' }
+                            ? { enabled: true, title: '需确认候选；将由服务端计算是否实际变更' }
                           : status === 'ok'
                             ? { enabled: false, title: '无候选版本' }
                               : status === 'archMismatch'
@@ -897,12 +893,11 @@ export function ServicesPage(props: {
                             ) : (
 	                              <Button
 	                                variant="ghost"
-	                                disabled={busy || !svcApply.enabled}
-	                                title={svcApply.title ?? undefined}
-	                                onClick={() => {
-	                                  const selected = { tag: svc.candidate?.tag ?? '-', digest: svc.candidate?.digest ?? null }
-	                                  const body = (
-	                                    <>
+		                                disabled={busy || !svcApply.enabled}
+		                                title={svcApply.title ?? undefined}
+		                                onClick={() => {
+		                                  const body = (
+		                                    <>
 	                                      <div className="modalLead">将对该服务执行更新（apply）。</div>
 	                                      <div className="modalKvGrid">
 	                                        <div className="modalKvLabel">范围</div>
@@ -940,23 +935,21 @@ export function ServicesPage(props: {
                                                   resolvedTag={svc.image.resolvedTag}
                                                   resolvedTags={svc.image.resolvedTags}
                                                 />
-                                                <span style={{ opacity: 0.8, margin: '0 6px' }}>
-                                                  <ArrowRightIcon className="inlineIcon" />
-                                                </span>
-                                              <UpdateTargetSelect
-                                                serviceId={svc.id}
-                                                currentTag={svc.image.resolvedTag ?? svc.image.tag}
-                                                initialTag={svc.candidate?.tag ?? null}
-                                                initialDigest={svc.candidate?.digest ?? null}
-                                                variant="inline"
-                                                showLabel={false}
-                                                showComparison={false}
-                                                onChange={(next) => {
-                                                  selected.tag = next.tag
-                                                  selected.digest = next.digest ?? null
-                                                }}
-                                              />
-                                              </div>
+	                                                <span style={{ opacity: 0.8, margin: '0 6px' }}>
+	                                                  <ArrowRightIcon className="inlineIcon" />
+	                                                </span>
+	                                                {svc.candidate?.tag ? (
+	                                                  <VersionTagsPopover
+	                                                    serviceId={svc.id}
+	                                                    candidateTag={svc.candidate.tag}
+	                                                    candidateDigest={svc.candidate.digest ?? null}
+	                                                  >
+	                                                    {svc.candidate.tag}
+	                                                  </VersionTagsPopover>
+	                                                ) : (
+	                                                  <span className="mono monoPrimary">-</span>
+	                                                )}
+	                                              </div>
                                               {showRawTag ? (
                                                 <div>
                                                   <CurrentVersionPopover
@@ -983,19 +976,16 @@ export function ServicesPage(props: {
 		                                      <div className="modalDivider" />
 		                                    </>
 	                                  )
-	                                  void triggerApply({
-	                                    scope: 'service',
-	                                    stackId: g.stackId,
-	                                    serviceId: svc.id,
-	                                    targetLabel: `service:${g.stackName}/${svc.name}`,
-	                                    getTarget: () => ({
-	                                      targetTag: selected.tag !== '-' ? selected.tag : undefined,
-	                                      targetDigest: selected.digest,
-	                                    }),
-	                                    confirmBody: body,
-	                                    confirmTitle: `确认更新服务 ${svc.name}？`,
-	                                  })
-	                                }}
+		                                  void triggerApply({
+		                                    scope: 'service',
+		                                    stackId: g.stackId,
+		                                    serviceId: svc.id,
+		                                    targetLabel: `service:${g.stackName}/${svc.name}`,
+		                                    targetDigest: svc.candidate?.digest ?? null,
+		                                    confirmBody: body,
+		                                    confirmTitle: `确认更新服务 ${svc.name}？`,
+		                                  })
+		                                }}
 	                              >
 	                                执行更新
 	                              </Button>

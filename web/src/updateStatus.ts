@@ -1,6 +1,6 @@
 import type { Service } from './api'
 
-export type RowStatus = 'ok' | 'updatable' | 'hint' | 'crossTag' | 'archMismatch' | 'blocked'
+export type RowStatus = 'ok' | 'updatable' | 'hint' | 'archMismatch' | 'blocked'
 
 type TagSeries = {
   major: number
@@ -44,19 +44,14 @@ export function serviceRowStatus(svc: Service): RowStatus {
   if (!svc.candidate) return 'ok'
   if (svc.candidate.archMatch === 'mismatch') return 'archMismatch'
 
-  const effectiveCurrentTag = svc.image.resolvedTag ?? svc.image.tag
-  const seriesMatch = tagSeriesMatches(effectiveCurrentTag, svc.candidate.tag)
-  if (seriesMatch === false) return 'crossTag'
-
-  // "unknown" arch and/or unparseable tags are still actionable, but should be treated as "needs confirmation".
-  if (svc.candidate.archMatch === 'unknown' || seriesMatch == null) return 'hint'
+  // Candidate always targets the same raw tag; only arch ambiguity should require confirmation.
+  if (svc.candidate.archMatch === 'unknown') return 'hint'
   return 'updatable'
 }
 
 export function statusDotClass(st: RowStatus): string {
   if (st === 'updatable') return 'statusDot statusDotOk'
   if (st === 'hint') return 'statusDot statusDotWarn'
-  if (st === 'crossTag') return 'statusDot statusDotWarn'
   if (st === 'archMismatch') return 'statusDot statusDotBad'
   if (st === 'blocked') return 'statusDot statusDotBad'
   return 'statusDot'
@@ -65,7 +60,6 @@ export function statusDotClass(st: RowStatus): string {
 export function statusLabel(st: RowStatus): string {
   if (st === 'updatable') return '可更新'
   if (st === 'hint') return '需确认'
-  if (st === 'crossTag') return '跨标签版本'
   if (st === 'archMismatch') return '架构不匹配'
   if (st === 'blocked') return '被阻止'
   return '无更新'
@@ -74,10 +68,9 @@ export function statusLabel(st: RowStatus): string {
 export function noteFor(svc: Service, st: RowStatus): string {
   if (st === 'blocked') return svc.ignore?.reason ?? '被阻止'
   if (st === 'archMismatch') return '仅提示，不允许更新'
-  if (st === 'crossTag') return '候选标签不匹配当前序列'
   if (st === 'hint') {
     if (svc.candidate?.archMatch === 'unknown') return 'arch 未知'
-    return '标签关系不确定'
+    return ''
   }
   if (st === 'updatable') {
     const hasForceBackup =

@@ -1331,35 +1331,9 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
     if (method === 'POST' && urlPath === '/api/web-push/subscriptions') return json({ ok: true })
     if (method === 'DELETE' && urlPath === '/api/web-push/subscriptions') return json({ ok: true })
 
-    // service candidates
+    // service candidates (removed)
     if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/candidates')) {
-      const parts = urlPath.split('/').filter(Boolean)
-      const serviceId = decodeURIComponent(parts[2])
-      const found = findService(serviceId)
-      if (!found) return json({ error: 'not found' }, { status: 404 })
-
-      const base = found.svc.candidate
-      const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
-      const candidateDigest = base?.digest ?? d('b', '9f')
-      const candidates =
-        scenario === 'version-tags-popover-demo' && serviceId === 'svc-version-tags'
-          ? [
-              { tag: 'v0.8.9-arm64', digest: d('b', 'b0'), archMatch: 'match', arch: ['linux/arm64'], ignored: false },
-              { tag: 'v0.8.8-arm64', digest: candidateDigest, archMatch: 'match', arch: ['linux/arm64'], ignored: false },
-              { tag: 'v0.8.8', digest: candidateDigest, archMatch: 'match', arch: ['linux/arm64'], ignored: false },
-              { tag: '0.8.8', digest: candidateDigest, archMatch: 'match', arch: ['linux/arm64'], ignored: false },
-            ]
-          : serviceId === 'svc-prod-api'
-          ? [
-              { tag: '5.3.0', digest: d('b', 'b0'), archMatch: 'match', arch: ['linux/amd64'], ignored: false },
-              { tag: '5.2.4', digest: d('b', 'a0'), archMatch: 'match', arch: ['linux/amd64'], ignored: false },
-              { tag: '5.2.3', digest: d('b', '9f'), archMatch: 'match', arch: ['linux/amd64'], ignored: false },
-            ]
-          : base
-            ? [{ ...base, ignored: false }]
-            : []
-
-      return json({ candidates })
+      return json({ error: 'not found' }, { status: 404 })
     }
 
     // service digest tags snapshot (used by version popovers)

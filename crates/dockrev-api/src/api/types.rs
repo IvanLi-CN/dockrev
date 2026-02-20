@@ -1219,24 +1219,6 @@ pub struct TriggerDiscoveryScanJobResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ServiceCandidatesResponse {
-    pub candidates: Vec<ServiceCandidateOption>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ServiceCandidateOption {
-    pub tag: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub digest: Option<String>,
-    pub arch_match: ArchMatch,
-    #[serde(default)]
-    pub arch: Vec<String>,
-    pub ignored: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ServiceDigestTagsScanSummary {
     pub repo_tags_total: usize,
     pub repo_tags_considered: usize,
