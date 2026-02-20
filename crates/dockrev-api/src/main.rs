@@ -2,8 +2,6 @@
 
 mod api;
 mod backup;
-#[cfg(test)]
-mod candidates;
 mod compose;
 mod compose_runner;
 mod config;
