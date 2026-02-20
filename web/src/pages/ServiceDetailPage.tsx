@@ -21,10 +21,9 @@ import { navigate } from '../routes'
 import { ArrowRightIcon, Button, Mono, Pill, Switch } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
-import { serviceRowStatus, tagSeriesMatches } from '../updateStatus'
+import { serviceRowStatus } from '../updateStatus'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
-import { UpdateTargetSelect } from '../components/UpdateTargetSelect'
 import { useConfirm } from '../confirm'
 
 function errorMessage(e: unknown): string {
@@ -35,7 +34,7 @@ function errorMessage(e: unknown): string {
 function svcTone(svc: Service): 'ok' | 'warn' | 'bad' | 'muted' {
   const st = serviceRowStatus(svc)
   if (st === 'updatable') return 'ok'
-  if (st === 'hint' || st === 'crossTag') return 'warn'
+  if (st === 'hint') return 'warn'
   if (st === 'archMismatch' || st === 'blocked') return 'bad'
   return 'muted'
 }
@@ -44,7 +43,6 @@ function svcBadge(svc: Service): string {
   const st = serviceRowStatus(svc)
   if (st === 'blocked') return '被阻止'
   if (st === 'archMismatch') return '架构不匹配'
-  if (st === 'crossTag') return '跨标签'
   if (st === 'hint') return '需确认'
   if (st === 'updatable') return '可更新'
   return '无候选'
@@ -259,10 +257,27 @@ export function ServiceDetailPage(props: {
           <>
             <Button
               variant="primary"
-              disabled={busy || !service}
+              disabled={
+                busy ||
+                !service ||
+                service.ignore?.matched ||
+                !service.candidate ||
+                service.candidate.archMatch === 'mismatch'
+              }
+              title={
+                !service
+                  ? undefined
+                  : service.ignore?.matched
+                    ? service.ignore.reason ?? '被阻止'
+                    : !service.candidate
+                      ? '无候选版本'
+                      : service.candidate.archMatch === 'mismatch'
+                        ? '架构不匹配（仅提示，不允许更新）'
+                        : undefined
+              }
               onClick={() => {
                 void (async () => {
-                  if (!service) return
+                  if (!service || !service.candidate) return
                   setBusy(true)
                   setError(null)
                   setNoticeJobId(null)
@@ -271,6 +286,7 @@ export function ServiceDetailPage(props: {
                       scope: 'service',
                       stackId,
                       serviceId,
+                      targetDigest: service.candidate.digest,
                       mode: 'dry-run',
                       allowArchMismatch: false,
                       backupMode: 'inherit',
@@ -279,8 +295,10 @@ export function ServiceDetailPage(props: {
                   } catch (e: unknown) {
                     if (e instanceof ApiError) {
                       if (e.status === 401) setError('需要登录/鉴权（forward header）')
-                      else if (e.status === 409) setError('该 stack 正在更新（禁止并发）')
-                      else setError(e.message)
+                      else if (e.status === 409) {
+                        setError('扫描结果已变化，请刷新并重新扫描后再更新')
+                        await refresh()
+                      } else setError(e.message)
                     } else {
                       setError(errorMessage(e))
                     }
@@ -314,8 +332,7 @@ export function ServiceDetailPage(props: {
               }
               onClick={() => {
                 void (async () => {
-	                  if (!service) return
-                    const selected = { tag: service.candidate?.tag ?? '-', digest: service.candidate?.digest ?? null }
+	                  if (!service || !service.candidate) return
                     const currentDisplayTag = formatTagDisplay(service.image.tag, service.image.resolvedTag)
                     const rawTagTrim = (service.image.tag ?? '').trim()
                     const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
@@ -366,19 +383,13 @@ export function ServiceDetailPage(props: {
                                   <span style={{ opacity: 0.8, margin: '0 6px' }}>
                                     <ArrowRightIcon className="inlineIcon" />
                                   </span>
-                              <UpdateTargetSelect
-                                serviceId={service.id}
-                                currentTag={service.image.resolvedTag ?? service.image.tag}
-                                initialTag={service.candidate?.tag ?? null}
-                                initialDigest={service.candidate?.digest ?? null}
-                                variant="inline"
-                                showLabel={false}
-                                showComparison={false}
-                                onChange={(next) => {
-                                  selected.tag = next.tag
-                                  selected.digest = next.digest ?? null
-                                }}
-                              />
+                                  <VersionTagsPopover
+                                    serviceId={service.id}
+                                    candidateTag={service.candidate.tag}
+                                    candidateDigest={service.candidate.digest ?? null}
+                                  >
+                                    {service.candidate.tag}
+                                  </VersionTagsPopover>
                                 </div>
                                 {showRawTag ? (
                                   <div>
@@ -429,8 +440,7 @@ export function ServiceDetailPage(props: {
                       scope: 'service',
                       stackId,
                       serviceId,
-                      targetTag: selected.tag !== '-' ? selected.tag : undefined,
-                      targetDigest: selected.digest ?? undefined,
+                      targetDigest: service.candidate.digest,
                       mode: 'apply',
                       allowArchMismatch: false,
                       backupMode: 'inherit',
@@ -439,8 +449,10 @@ export function ServiceDetailPage(props: {
                   } catch (e: unknown) {
                     if (e instanceof ApiError) {
                       if (e.status === 401) setError('需要登录/鉴权（forward header）')
-                      else if (e.status === 409) setError('该 stack 正在更新（禁止并发）')
-                      else setError(e.message)
+                      else if (e.status === 409) {
+                        setError('扫描结果已变化，请刷新并重新扫描后再更新')
+                        await refresh()
+                      } else setError(e.message)
                     } else {
                       setError(errorMessage(e))
                     }
@@ -544,8 +556,7 @@ export function ServiceDetailPage(props: {
     if (st === 'blocked') return '已阻止（忽略规则命中）'
     if (st === 'ok') return '暂无候选版本'
     if (st === 'archMismatch') return '架构不匹配（仅提示，不允许更新）'
-    if (st === 'crossTag') return '跨标签版本更新（建议确认）'
-    if (st === 'hint') return '需确认（arch 未知 / tag 关系不确定）'
+    if (st === 'hint') return '需确认（arch 未知）'
     return '可更新'
   }, [service])
 
@@ -620,14 +631,6 @@ export function ServiceDetailPage(props: {
       </>
     ) : null
 
-    const effectiveCurrentTag = service.image.resolvedTag ?? service.image.tag
-    const series = tagSeriesMatches(effectiveCurrentTag, service.candidate.tag)
-    const seriesHintNode = series === false ? (
-      <>
-        {' · '}跨标签
-      </>
-    ) : null
-
     return (
       <>
         当前: {currentNode}
@@ -643,7 +646,6 @@ export function ServiceDetailPage(props: {
         </VersionTagsPopover>
         <span className="mono">{`@${shortDigest(service.candidate.digest)}`}</span>
         {archNode}
-        {seriesHintNode}
       </>
     )
   }, [service])

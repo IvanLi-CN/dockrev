@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     api::types::{JobLogLine, ServiceDigestTagsScanSummary, ServiceDigestTagsSnapshotResponse},
-    candidates, ignore, registry,
+    ignore, registry,
     state::AppState,
 };
 
@@ -107,48 +107,51 @@ pub(crate) async fn check_service_and_persist(
         }
     };
 
-    let is_ignored = |tag: &str| matchers.iter().any(|(_, m)| m.matches(tag));
-    let candidate_non_ignored = candidates::select_candidate_tag(&svc.image_tag, &tags, is_ignored);
-    let candidate_any = candidates::select_candidate_tag(&svc.image_tag, &tags, |_| false);
-    let mut candidate_tag = candidate_non_ignored.or(candidate_any);
-
-    let current_manifest = state
+    let mut current_manifest = state
         .registry
         .get_manifest(&img, &svc.image_tag, host_platform)
         .await
         .ok();
-    let current_digest_registry = current_manifest.as_ref().and_then(|m| m.digest.clone());
+    if current_manifest.is_none() {
+        // Best-effort retry: the configured tag is the most important lookup for candidate
+        // digest-only updates, so transient registry failures should not immediately erase it.
+        current_manifest = state
+            .registry
+            .get_manifest(&img, &svc.image_tag, host_platform)
+            .await
+            .ok();
+    }
+    let current_digest_registry = current_manifest
+        .as_ref()
+        .and_then(|m| m.digest.clone().or(m.platform_digest.clone()));
     let effective_current_digest = runtime_digest.clone().or(current_digest_registry.clone());
     // Persist the best-known digest so that pinned tags and offline/missing compose projects
     // don't lose observability just because the runtime digest is unavailable.
     let current_digest = effective_current_digest.clone();
 
-    let (
-        candidate_digest_for_infer,
-        candidate_platform_digest_for_infer,
-        candidate_arch_match_for_infer,
-        candidate_arch_json_for_infer,
-    ) = if let Some(tag) = candidate_tag.as_deref() {
-        match state.registry.get_manifest(&img, tag, host_platform).await {
-            Ok(m) => {
-                let arch_match = registry::compute_arch_match(host_platform, &m.arch);
-                (
-                    m.digest,
-                    m.platform_digest,
-                    Some(arch_match.as_str().to_string()),
-                    Some(serde_json::to_string(&m.arch).unwrap_or_default()),
-                )
-            }
-            Err(_) => (None, None, None, None),
-        }
-    } else {
-        (None, None, None, None)
-    };
+    // Candidate policy: only consider digest changes for the service's *current* tag (no cross-tag
+    // upgrades). We only emit a candidate when the runtime digest is known and differs.
+    let mut candidate_tag: Option<String> = None;
+    let mut candidate_digest: Option<String> = None;
+    let mut candidate_platform_digest: Option<String> = None;
+    let mut candidate_arch_match: Option<String> = None;
+    let mut candidate_arch_json: Option<String> = None;
 
-    let mut candidate_digest = candidate_digest_for_infer;
-    let mut candidate_platform_digest = candidate_platform_digest_for_infer;
-    let mut candidate_arch_match = candidate_arch_match_for_infer;
-    let mut candidate_arch_json = candidate_arch_json_for_infer;
+    if runtime_digest.is_some()
+        && let Some(m) = current_manifest.as_ref()
+    {
+        // Prefer the registry-provided digest (index/manifest digest) when available; fall back
+        // to platform digest when that's the only option.
+        let digest = m.digest.clone().or(m.platform_digest.clone());
+        if let Some(digest) = digest {
+            candidate_tag = Some(svc.image_tag.clone());
+            candidate_digest = Some(digest);
+            candidate_platform_digest = m.platform_digest.clone();
+            let arch_match = registry::compute_arch_match(host_platform, &m.arch);
+            candidate_arch_match = Some(arch_match.as_str().to_string());
+            candidate_arch_json = Some(serde_json::to_string(&m.arch).unwrap_or_default());
+        }
+    }
 
     // If the candidate resolves to the same digest as current, there's no actionable update.
     //
@@ -208,11 +211,21 @@ pub(crate) async fn check_service_and_persist(
                         if let Some(v) = manifest_digest_cache.get(&cache_key) {
                             v.clone()
                         } else {
-                            let (d, pd) = state
+                            let mut manifest = state
                                 .registry
                                 .get_manifest(&img, &tag, host_platform)
                                 .await
-                                .ok()
+                                .ok();
+                            if manifest.is_none() {
+                                // Best-effort retry: registry lookups can fail transiently and we
+                                // still want resolvedTag inference to be useful.
+                                manifest = state
+                                    .registry
+                                    .get_manifest(&img, &tag, host_platform)
+                                    .await
+                                    .ok();
+                            }
+                            let (d, pd) = manifest
                                 .map(|m| (m.digest, m.platform_digest))
                                 .unwrap_or((None, None));
                             manifest_digest_cache.insert(cache_key, (d.clone(), pd.clone()));

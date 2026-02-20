@@ -40,10 +40,6 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/services/{service_id}/archive", post(archive_service))
         .route("/api/services/{service_id}/restore", post(restore_service))
         .route(
-            "/api/services/{service_id}/candidates",
-            get(list_service_candidates),
-        )
-        .route(
             "/api/services/{service_id}/digest-tags",
             get(list_service_digest_tags),
         )
@@ -906,6 +902,17 @@ async fn trigger_update(
         ));
     }
 
+    if req.scope == JobScope::Service
+        && req
+            .target_digest
+            .as_deref()
+            .is_none_or(|d| d.trim().is_empty())
+    {
+        return Err(ApiError::invalid_argument(
+            "targetDigest is required for scope=service",
+        ));
+    }
+
     let job_id = enqueue_update_job(state, user, req.reason.as_str().to_string(), req, now).await?;
 
     Ok(Json(TriggerUpdateResponse { job_id }))
@@ -989,18 +996,24 @@ async fn validate_arch_mismatch_for_update(
     req: &TriggerUpdateRequest,
     stack_ids: &[String],
 ) -> Result<(), ApiError> {
-    let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
-        .unwrap_or_else(|| "linux/amd64".to_string());
-
-    if req.allow_arch_mismatch {
-        return Ok(());
+    fn normalize_digest_for_compare(input: &str) -> Option<String> {
+        let t = input.trim();
+        if t.is_empty() {
+            return None;
+        }
+        if t.contains(':') {
+            return Some(t.to_string());
+        }
+        Some(format!("sha256:{t}"))
     }
 
-    // For stack/all updates we intentionally skip arch-mismatch services (UI shows them as non-actionable),
-    // so only enforce mismatch blocking for service-scoped updates.
+    // For stack/all updates we intentionally skip arch-mismatch services (UI shows them as
+    // non-actionable), so only enforce mismatch blocking and target locking for service updates.
     if req.scope != JobScope::Service {
         return Ok(());
     }
+
+    let got_digest = normalize_digest_for_compare(req.target_digest.as_deref().unwrap_or_default());
 
     for stack_id in stack_ids {
         let Some(stack) = state.db.get_stack(stack_id).await.map_err(map_internal)? else {
@@ -1012,49 +1025,49 @@ async fn validate_arch_mismatch_for_update(
                 continue;
             }
 
-            if let Some(tag) = req.target_tag.as_deref() {
-                let img = registry::ImageRef::parse(&svc.image.reference).map_err(|_| {
-                    ApiError::invalid_argument("invalid image ref (expected repo/name:tag)")
-                })?;
-
-                let reference = req.target_digest.as_deref().unwrap_or(tag);
-                let manifest = state
-                    .registry
-                    .get_manifest(&img, reference, &host_platform)
-                    .await
-                    .map_err(map_internal)?;
-                let arch_match =
-                    registry::compute_arch_match(host_platform.as_str(), &manifest.arch);
-                if matches!(arch_match, ArchMatch::Mismatch) {
-                    return Err(ApiError::invalid_argument(
-                        "candidate arch mismatch (set allowArchMismatch=true to override)",
-                    ));
-                }
-                continue;
+            // Cross-tag updates are not supported. If the client sends targetTag, it must match
+            // the service's configured tag.
+            if let Some(tag) = req.target_tag.as_deref()
+                && tag.trim() != svc.image.tag.trim()
+            {
+                return Err(ApiError::invalid_argument(
+                    "cross-tag updates are not supported (targetTag must match service image tag)",
+                ));
             }
 
-            if req.target_digest.is_some() {
-                let img = registry::ImageRef::parse(&svc.image.reference).map_err(|_| {
-                    ApiError::invalid_argument("invalid image ref (expected repo/name:tag)")
-                })?;
-                let reference = req.target_digest.as_deref().unwrap();
-                let manifest = state
-                    .registry
-                    .get_manifest(&img, reference, &host_platform)
-                    .await
-                    .map_err(map_internal)?;
-                let arch_match =
-                    registry::compute_arch_match(host_platform.as_str(), &manifest.arch);
-                if matches!(arch_match, ArchMatch::Mismatch) {
-                    return Err(ApiError::invalid_argument(
-                        "candidate arch mismatch (set allowArchMismatch=true to override)",
-                    ));
-                }
-                continue;
+            // Enforce "update locks to scan result": targetDigest must match the latest persisted
+            // candidate digest for this service.
+            let expected_opt = svc
+                .candidate
+                .as_ref()
+                .and_then(|c| normalize_digest_for_compare(&c.digest));
+            let got_opt = got_digest.clone();
+            let (Some(expected), Some(got)) = (expected_opt.clone(), got_opt.clone()) else {
+                return Err(ApiError::conflict(
+                    "target digest no longer matches latest scan (rescan required)",
+                )
+                .with_details(json!({
+                    "serviceId": svc.id,
+                    "expectedDigest": expected_opt,
+                    "gotDigest": got_opt,
+                })));
+            };
+            if expected != got {
+                return Err(ApiError::conflict(
+                    "target digest no longer matches latest scan (rescan required)",
+                )
+                .with_details(json!({
+                    "serviceId": svc.id,
+                    "expectedDigest": expected,
+                    "gotDigest": got,
+                })));
             }
 
-            if let Some(candidate) = svc.candidate.as_ref()
-                && matches!(candidate.arch_match, ArchMatch::Mismatch)
+            if !req.allow_arch_mismatch
+                && svc
+                    .candidate
+                    .as_ref()
+                    .is_some_and(|c| matches!(c.arch_match, ArchMatch::Mismatch))
             {
                 return Err(ApiError::invalid_argument(
                     "candidate arch mismatch (set allowArchMismatch=true to override)",
@@ -1751,234 +1764,6 @@ async fn get_service_settings(
         auto_rollback: settings.auto_rollback,
         backup_targets: settings.backup_targets,
     }))
-}
-
-async fn list_service_candidates(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(service_id): Path<String>,
-) -> Result<Json<ServiceCandidatesResponse>, ApiError> {
-    use std::time::Duration;
-
-    use tokio::{
-        task::JoinSet,
-        time::{Instant, timeout, timeout_at},
-    };
-
-    let _user = require_user(&state, &headers)?;
-
-    let stack_id = state
-        .db
-        .get_service_stack_id(&service_id)
-        .await
-        .map_err(map_internal)?;
-    let Some(stack_id) = stack_id else {
-        return Err(ApiError::not_found("service not found"));
-    };
-
-    let stack = state.db.get_stack(&stack_id).await.map_err(map_internal)?;
-    let Some(stack) = stack else {
-        return Err(ApiError::not_found("stack not found"));
-    };
-
-    let svc = stack
-        .services
-        .iter()
-        .find(|s| s.id == service_id)
-        .cloned()
-        .ok_or_else(|| ApiError::not_found("service not found"))?;
-
-    let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
-        .unwrap_or_else(|| "linux/amd64".to_string());
-
-    let img = registry::ImageRef::parse(&svc.image.reference)
-        .map_err(|_| ApiError::invalid_argument("invalid image ref (expected repo/name:tag)"))?;
-
-    let ignore_rules = state
-        .db
-        .list_ignore_rules_for_service(&svc.id)
-        .await
-        .map_err(map_internal)?;
-    let matchers = ignore_rules
-        .iter()
-        .map(|r| {
-            let kind = ignore::IgnoreKind::parse(&r.matcher.kind);
-            (
-                r.id.clone(),
-                ignore::IgnoreRuleMatcher {
-                    kind,
-                    value: r.matcher.value.clone(),
-                },
-            )
-        })
-        .collect::<Vec<_>>();
-
-    // Defensive: the candidates endpoint is on the hot path for UI interactivity. We aggressively
-    // bound latency and degrade by returning candidates with missing digests instead of letting
-    // the request hang until the edge gateway drops the connection (observed as HTTP/2 protocol
-    // errors in browsers).
-    const LIST_TAGS_TIMEOUT: Duration = Duration::from_secs(4);
-    const MANIFEST_TIMEOUT: Duration = Duration::from_secs(3);
-    const MANIFEST_BUDGET: Duration = Duration::from_secs(6);
-    const MANIFEST_CONCURRENCY: usize = 6;
-
-    let tags = match timeout(LIST_TAGS_TIMEOUT, state.registry.list_tags(&img)).await {
-        Ok(Ok(tags)) => tags,
-        Ok(Err(e)) => return Err(map_internal(e)),
-        Err(_) => {
-            return Err(ApiError::internal("registry timeout").with_details(json!({
-                "op": "list_tags"
-            })));
-        }
-    };
-
-    let current_tag = svc.image.tag.clone();
-    let current_semver = ignore::parse_version(&current_tag);
-
-    let mut semver_tags: Vec<(semver::Version, String)> = Vec::new();
-    let mut other_tags: Vec<String> = Vec::new();
-
-    for tag in tags {
-        if tag == current_tag {
-            continue;
-        }
-        if let Some(current) = current_semver.as_ref() {
-            if let Some(v) = ignore::parse_version(&tag)
-                && v > *current
-            {
-                semver_tags.push((v, tag));
-            }
-            continue;
-        }
-
-        // For floating tags (e.g. `latest`), prioritize parseable version tags over lexicographic
-        // ordering to avoid pitfalls like `v0.2.9` being considered greater than `v0.2.11`.
-        if let Some(v) = ignore::parse_version(&tag) {
-            semver_tags.push((v, tag));
-        } else {
-            other_tags.push(tag);
-        }
-    }
-
-    semver_tags.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
-    other_tags.sort_by(|a, b| b.cmp(a));
-
-    let mut picked: Vec<String> = Vec::new();
-    for (_, tag) in semver_tags {
-        picked.push(tag);
-    }
-    for tag in other_tags {
-        picked.push(tag);
-    }
-
-    // Avoid expensive manifest fan-out.
-    if picked.len() > 30 {
-        picked.truncate(30);
-    }
-
-    let is_ignored = |tag: &str| matchers.iter().any(|(_, m)| m.matches(tag));
-
-    let registry = state.registry.clone();
-    let img = img.clone();
-    let host_platform = host_platform.clone();
-
-    let mut slots: Vec<Option<ServiceCandidateOption>> = vec![None; picked.len()];
-    let mut join_set: JoinSet<(usize, ServiceCandidateOption)> = JoinSet::new();
-    let mut queue = picked.iter().enumerate();
-
-    let spawn_one = |join_set: &mut JoinSet<(usize, ServiceCandidateOption)>,
-                     idx: usize,
-                     tag: String,
-                     ignored: bool,
-                     registry: Arc<dyn registry::RegistryClient>,
-                     img: registry::ImageRef,
-                     host_platform: String| {
-        join_set.spawn(async move {
-            let opt = match timeout(
-                MANIFEST_TIMEOUT,
-                registry.get_manifest(&img, &tag, &host_platform),
-            )
-            .await
-            {
-                Ok(Ok(m)) => {
-                    let arch_match = registry::compute_arch_match(&host_platform, &m.arch);
-                    ServiceCandidateOption {
-                        tag,
-                        digest: m.digest,
-                        arch_match,
-                        arch: m.arch,
-                        ignored,
-                    }
-                }
-                _ => ServiceCandidateOption {
-                    tag,
-                    digest: None,
-                    arch_match: ArchMatch::Unknown,
-                    arch: Vec::new(),
-                    ignored,
-                },
-            };
-            (idx, opt)
-        });
-    };
-
-    for _ in 0..MANIFEST_CONCURRENCY {
-        let Some((idx, tag)) = queue.next() else {
-            break;
-        };
-        spawn_one(
-            &mut join_set,
-            idx,
-            tag.clone(),
-            is_ignored(tag),
-            registry.clone(),
-            img.clone(),
-            host_platform.clone(),
-        );
-    }
-
-    let deadline = Instant::now() + MANIFEST_BUDGET;
-    while let Ok(next) = timeout_at(deadline, join_set.join_next()).await {
-        let Some(joined) = next else { break };
-        if let Ok((idx, opt)) = joined
-            && idx < slots.len()
-        {
-            slots[idx] = Some(opt);
-        }
-
-        let Some((idx, tag)) = queue.next() else {
-            continue;
-        };
-        spawn_one(
-            &mut join_set,
-            idx,
-            tag.clone(),
-            is_ignored(tag),
-            registry.clone(),
-            img.clone(),
-            host_platform.clone(),
-        );
-    }
-
-    // If we ran out of time, abort remaining in-flight tasks and degrade gracefully.
-    join_set.abort_all();
-
-    for (idx, tag) in picked.iter().enumerate() {
-        if slots[idx].is_some() {
-            continue;
-        }
-        slots[idx] = Some(ServiceCandidateOption {
-            tag: tag.clone(),
-            digest: None,
-            arch_match: ArchMatch::Unknown,
-            arch: Vec::new(),
-            ignored: is_ignored(tag),
-        });
-    }
-
-    let out = slots.into_iter().flatten().collect::<Vec<_>>();
-
-    Ok(Json(ServiceCandidatesResponse { candidates: out }))
 }
 
 #[derive(Debug, Deserialize)]

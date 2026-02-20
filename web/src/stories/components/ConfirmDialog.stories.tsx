@@ -3,7 +3,6 @@ import { useState } from 'react'
 import { ConfirmProvider } from '../../ConfirmProvider'
 import { useConfirm } from '../../confirm'
 import { Mono } from '../../ui'
-import { UpdateTargetSelect } from '../../components/UpdateTargetSelect'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 
 function ConfirmSandbox() {
@@ -53,7 +52,6 @@ function ConfirmSandbox() {
           className="btn btnPrimary"
           onClick={() => {
             void (async () => {
-              const selected = { tag: '5.2.4', digest: null as string | null }
               const ok = await confirm({
                 title: '确认更新服务 svc-api？',
                 body: (
@@ -74,19 +72,7 @@ function ConfirmSandbox() {
                           {' '}
                           →{' '}
                         </span>
-                        <UpdateTargetSelect
-                          serviceId="svc-prod-api"
-                          currentTag="5.2.1"
-                          initialTag="5.2.4"
-                          initialDigest={null}
-                          variant="inline"
-                          showLabel={false}
-                          showComparison={false}
-                          onChange={(next) => {
-                            selected.tag = next.tag
-                            selected.digest = next.digest ?? null
-                          }}
-                        />
+                        <span className="mono">5.2.4</span>
                       </div>
                     </div>
                   </>
@@ -97,7 +83,7 @@ function ConfirmSandbox() {
                 badgeText: '将更新并重启',
                 badgeTone: 'warn',
               })
-              setLast(ok ? `ok (target=${selected.tag})` : 'cancel')
+              setLast(ok ? 'ok' : 'cancel')
             })()
           }}
         >
@@ -123,9 +109,9 @@ function ConfirmSandbox() {
                         <Mono>stack-prod</Mono>
                       </div>
                       <div className="modalKvLabel">候选服务</div>
-                      <div className="modalKvValue">3 个（可更新/需确认/跨标签）</div>
+                      <div className="modalKvValue">3 个（可更新/需确认）</div>
                       <div className="modalKvLabel">其中</div>
-                      <div className="modalKvValue">可更新 2 · 需确认 1 · 跨标签 0</div>
+                      <div className="modalKvValue">可更新 2 · 需确认 1</div>
                       <div className="modalKvLabel">将跳过</div>
                       <div className="modalKvValue">架构不匹配 0 · 被阻止 1</div>
                     </div>
@@ -222,13 +208,13 @@ function ConfirmSandbox() {
                       <div className="modalKvLabel">目标</div>
                       <div className="modalKvValue">
                         <Mono>all stacks</Mono>
-                      </div>
-                      <div className="modalKvLabel">候选服务</div>
-                      <div className="modalKvValue">5 个（可更新/需确认/跨标签）</div>
-                      <div className="modalKvLabel">其中</div>
-                      <div className="modalKvValue">可更新 3 · 需确认 1 · 跨标签 1</div>
-                      <div className="modalKvLabel">将跳过</div>
-                      <div className="modalKvValue">架构不匹配 1 · 被阻止 2</div>
+	                      </div>
+	                      <div className="modalKvLabel">候选服务</div>
+	                      <div className="modalKvValue">5 个（可更新/需确认）</div>
+	                      <div className="modalKvLabel">其中</div>
+	                      <div className="modalKvValue">可更新 3 · 需确认 1</div>
+	                      <div className="modalKvLabel">将跳过</div>
+	                      <div className="modalKvValue">架构不匹配 1 · 被阻止 2</div>
                     </div>
                     <div className="modalDivider" />
                     <div className="modalLead">将更新的服务（预览）</div>

@@ -59,14 +59,6 @@ export const AllStatuses: Story = {
       candidate: { tag: '2.9.1', digest: d('2', '22'), archMatch: 'unknown', arch: ['linux/amd64', 'linux/arm64'] },
     } satisfies Service
 
-    const crossTag = {
-      ...baseService(),
-      id: 'svc-cross-tag',
-      name: '跨标签',
-      image: { ref: 'docker.io/library/postgres', tag: '16', digest: d('p', '16') },
-      candidate: { tag: '18.1', digest: d('p', '18'), archMatch: 'match', arch: ['linux/amd64'] },
-    } satisfies Service
-
     const archMismatch = {
       ...baseService(),
       id: 'svc-arch-mismatch',
@@ -84,7 +76,7 @@ export const AllStatuses: Story = {
       ignore: { matched: true, ruleId: 'ignore-prod-worker', reason: '备份失败（fail-closed）' },
     } satisfies Service
 
-    const list = [updatable, updatableForceBackup, hint, crossTag, archMismatch, blocked]
+    const list = [updatable, updatableForceBackup, hint, archMismatch, blocked]
 
     return (
       <div className="card" style={{ width: 520 }}>

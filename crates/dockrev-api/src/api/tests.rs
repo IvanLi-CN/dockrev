@@ -48,16 +48,43 @@ impl RegistryClient for FakeRegistry {
 }
 
 #[derive(Clone, Default)]
-struct FloatingTagRegistry;
+struct DigestOnlyUpdateRegistry;
 
 #[async_trait::async_trait]
-impl RegistryClient for FloatingTagRegistry {
+impl RegistryClient for DigestOnlyUpdateRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        Ok(vec!["5.2".to_string(), "5.3".to_string()])
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        // Simulate "tag moved": registry digest is newer than what's currently running.
+        let digest = match reference {
+            "5.2" => "sha256:new",
+            _ => "sha256:other",
+        };
+        Ok(ManifestInfo {
+            digest: Some(digest.to_string()),
+            platform_digest: None,
+            arch: vec!["linux/amd64".to_string()],
+        })
+    }
+}
+
+#[derive(Clone, Default)]
+struct CrossTagSemverRegistry;
+
+#[async_trait::async_trait]
+impl RegistryClient for CrossTagSemverRegistry {
     async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
         Ok(vec![
-            "latest".to_string(),
-            "v0.2.9".to_string(),
-            "v0.2.11".to_string(),
-            "v0.2.10".to_string(),
+            "8-alpine".to_string(),
+            "9.0.1".to_string(),
+            "9.0.2".to_string(),
         ])
     }
 
@@ -67,8 +94,16 @@ impl RegistryClient for FloatingTagRegistry {
         reference: &str,
         _host_platform: &str,
     ) -> anyhow::Result<ManifestInfo> {
+        // The current tag (8-alpine) points to a new digest, while the runtime still runs an old
+        // digest. Higher semver tags exist but must never be selected as update targets.
+        let digest = match reference {
+            "8-alpine" => "sha256:new",
+            "9.0.2" => "sha256:other",
+            "9.0.1" => "sha256:other1",
+            _ => "sha256:unknown",
+        };
         Ok(ManifestInfo {
-            digest: Some(format!("sha256:{reference}")),
+            digest: Some(digest.to_string()),
             platform_digest: None,
             arch: vec!["linux/amd64".to_string()],
         })
@@ -641,126 +676,6 @@ async fn supervisor_paths_are_not_swallowed_by_ui_fallback() {
 }
 
 #[tokio::test]
-async fn service_candidates_is_fast_when_registry_is_slow_but_bounded() {
-    let state = test_state_with(
-        ":memory:",
-        Arc::new(SlowRegistry {
-            delay: Duration::from_millis(200),
-        }),
-        Arc::new(FakeRunner),
-    )
-    .await;
-    let app = api::router(state.clone());
-
-    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
-    std::fs::write(
-        &compose_path,
-        r#"
-services:
-  web:
-    image: ghcr.io/acme/web:5.2.0
-"#,
-    )
-    .unwrap();
-
-    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/stacks/{stack_id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let detail = response_json(resp).await;
-    let service_id = detail["stack"]["services"][0]["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    let resp = tokio::time::timeout(
-        Duration::from_secs(2),
-        app.clone().oneshot(
-            Request::builder()
-                .uri(format!("/api/services/{service_id}/candidates"))
-                .body(Body::empty())
-                .unwrap(),
-        ),
-    )
-    .await
-    .expect("candidates request should not exceed latency budget")
-    .unwrap();
-
-    assert_eq!(resp.status(), 200);
-    let body = response_json(resp).await;
-    let candidates = body["candidates"].as_array().unwrap();
-    // Tags <= current (5.2.0) are intentionally skipped by the endpoint.
-    assert_eq!(candidates.len(), 27);
-    assert!(candidates.iter().all(|c| !c["digest"].is_null()));
-}
-
-#[tokio::test]
-async fn service_candidates_orders_semver_first_for_floating_tags() {
-    let state = test_state_with(
-        ":memory:",
-        Arc::new(FloatingTagRegistry),
-        Arc::new(FakeRunner),
-    )
-    .await;
-    let app = api::router(state.clone());
-
-    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
-    std::fs::write(
-        &compose_path,
-        r#"
-services:
-  web:
-    image: ghcr.io/acme/web:latest
-"#,
-    )
-    .unwrap();
-
-    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/stacks/{stack_id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    let detail = response_json(resp).await;
-    let service_id = detail["stack"]["services"][0]["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/services/{service_id}/candidates"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-
-    let body = response_json(resp).await;
-    let candidates = body["candidates"].as_array().unwrap();
-    let tags = candidates
-        .iter()
-        .filter_map(|c| c["tag"].as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(tags, vec!["v0.2.11", "v0.2.10", "v0.2.9"]);
-}
-
-#[tokio::test]
 async fn service_digest_tags_lists_all_matches_without_truncation() {
     let state = test_state_with(
         ":memory:",
@@ -1080,12 +995,10 @@ services:
 }
 
 #[tokio::test]
-async fn service_candidates_degrades_when_registry_hangs() {
+async fn same_tag_digest_candidate_does_not_pick_higher_semver_tag() {
     let state = test_state_with(
         ":memory:",
-        Arc::new(SlowRegistry {
-            delay: Duration::from_secs(10),
-        }),
+        Arc::new(CrossTagSemverRegistry),
         Arc::new(FakeRunner),
     )
     .await;
@@ -1096,13 +1009,37 @@ async fn service_candidates_degrades_when_registry_hangs() {
         &compose_path,
         r#"
 services:
-  web:
-    image: ghcr.io/acme/web:5.2.0
+  valkey:
+    image: valkey/valkey:8-alpine
 "#,
     )
     .unwrap();
 
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let svc = services.first().unwrap().clone();
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let mut manifest_digest_cache: std::collections::HashMap<
+        String,
+        (Option<String>, Option<String>),
+    > = std::collections::HashMap::new();
+
+    crate::service_check::check_service_and_persist(
+        &state,
+        "job-test",
+        &svc,
+        // Simulate runtime being behind registry (digest-only update).
+        Some("sha256:old".to_string()),
+        "linux/amd64",
+        &now,
+        &mut manifest_digest_cache,
+    )
+    .await
+    .unwrap();
+
     let resp = app
         .clone()
         .oneshot(
@@ -1113,34 +1050,16 @@ services:
         )
         .await
         .unwrap();
-    let detail = response_json(resp).await;
-    let service_id = detail["stack"]["services"][0]["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    let resp = tokio::time::timeout(
-        Duration::from_secs(7),
-        app.clone().oneshot(
-            Request::builder()
-                .uri(format!("/api/services/{service_id}/candidates"))
-                .body(Body::empty())
-                .unwrap(),
-        ),
-    )
-    .await
-    .expect("candidates request should degrade instead of hanging")
-    .unwrap();
-
     assert_eq!(resp.status(), 200);
-    let body = response_json(resp).await;
-    let candidates = body["candidates"].as_array().unwrap();
-    assert_eq!(candidates.len(), 27);
-    assert!(candidates.iter().any(|c| c["digest"].is_null()));
+    let detail = response_json(resp).await;
+    let svc = &detail["stack"]["services"][0];
+    assert_eq!(svc["image"]["tag"].as_str().unwrap(), "8-alpine");
+    assert_eq!(svc["candidate"]["tag"].as_str().unwrap(), "8-alpine");
+    assert_eq!(svc["candidate"]["digest"].as_str().unwrap(), "sha256:new");
 }
 
 #[tokio::test]
-async fn register_stack_then_check_updates() {
+async fn service_candidates_endpoint_is_removed() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
 
@@ -1156,6 +1075,187 @@ services:
     .unwrap();
 
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let service_id = detail["stack"]["services"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/candidates"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn service_update_conflicts_when_target_digest_mismatches_latest_scan() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(DigestOnlyUpdateRegistry),
+        Arc::new(FakeRunner),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let svc = services.first().unwrap().clone();
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let mut manifest_digest_cache: std::collections::HashMap<
+        String,
+        (Option<String>, Option<String>),
+    > = std::collections::HashMap::new();
+    crate::service_check::check_service_and_persist(
+        &state,
+        "job-test",
+        &svc,
+        Some("sha256:old".to_string()),
+        "linux/amd64",
+        &now,
+        &mut manifest_digest_cache,
+    )
+    .await
+    .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let service_id = detail["stack"]["services"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let expected_digest = detail["stack"]["services"][0]["candidate"]["digest"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let bad = serde_json::json!({
+        "scope": "service",
+        "serviceId": service_id,
+        "targetDigest": "sha256:wrong",
+        "mode": "dry-run",
+        "allowArchMismatch": false,
+        "backupMode": "inherit",
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/updates")
+                .header("content-type", "application/json")
+                .body(Body::from(bad.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    let body = response_json(resp).await;
+    assert_eq!(body["error"]["code"].as_str().unwrap(), "conflict");
+
+    let ok = serde_json::json!({
+        "scope": "service",
+        "serviceId": svc.id,
+        "targetDigest": expected_digest,
+        "mode": "dry-run",
+        "allowArchMismatch": false,
+        "backupMode": "inherit",
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/updates")
+                .header("content-type", "application/json")
+                .body(Body::from(ok.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    assert!(triggered["jobId"].as_str().unwrap().starts_with("job_"));
+}
+
+#[tokio::test]
+async fn register_stack_then_check_updates() {
+    let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", Arc::new(DigestOnlyUpdateRegistry), runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "demo".to_string(),
+            stack_id: Some(stack_id.clone()),
+            status: "active".to_string(),
+            last_seen_at: Some(now.clone()),
+            last_scan_at: now,
+            last_error: None,
+            last_config_files: Some(vec![compose_path.clone()]),
+            unarchive_if_active: true,
+        })
+        .await
+        .unwrap();
 
     let resp = app
         .clone()
@@ -1988,7 +2088,8 @@ services:
 
 #[tokio::test]
 async fn webhook_trigger_check_creates_job_and_updates_stack() {
-    let state = test_state(":memory:").await;
+    let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", Arc::new(DigestOnlyUpdateRegistry), runner).await;
     let app = api::router(state.clone());
 
     let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
@@ -2003,6 +2104,23 @@ services:
     .unwrap();
 
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "demo".to_string(),
+            stack_id: Some(stack_id.clone()),
+            status: "active".to_string(),
+            last_seen_at: Some(now.clone()),
+            last_scan_at: now,
+            last_error: None,
+            last_config_files: Some(vec![compose_path.clone()]),
+            unarchive_if_active: true,
+        })
+        .await
+        .unwrap();
 
     let trigger = serde_json::json!({
         "action": "check",

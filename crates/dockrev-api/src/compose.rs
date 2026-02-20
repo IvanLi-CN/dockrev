@@ -55,10 +55,10 @@ pub fn merge_services(
 }
 
 fn extract_tag(image_ref: &str) -> Option<String> {
-    if image_ref.contains('@') {
-        return None;
-    }
-    let (left, right) = image_ref.rsplit_once(':')?;
+    // Strip digest first so refs like `repo:tag@sha256:...` still yield the tag, while
+    // digest-only refs like `repo@sha256:...` return None.
+    let (without_digest, _) = image_ref.split_once('@').unwrap_or((image_ref, ""));
+    let (left, right) = without_digest.rsplit_once(':')?;
     if right.is_empty() {
         return None;
     }
@@ -113,6 +113,18 @@ services:
         assert_eq!(
             extract_tag("ghcr.io/acme/web@sha256:deadbeef").as_deref(),
             None
+        );
+    }
+
+    #[test]
+    fn extract_tag_tag_plus_digest() {
+        assert_eq!(
+            extract_tag("valkey/valkey:8-alpine@sha256:deadbeef").as_deref(),
+            Some("8-alpine")
+        );
+        assert_eq!(
+            extract_tag("localhost:5000/repo/app:1.2.3@sha256:deadbeef").as_deref(),
+            Some("1.2.3")
         );
     }
 }
