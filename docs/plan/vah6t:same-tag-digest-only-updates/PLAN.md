@@ -1,5 +1,15 @@
 # Dockrev: 仅“同 tag 的新 digest”更新（移除版本候选/选择 + 更新锁定扫描结果）
 
+## 状态
+
+- Status: 已完成
+- Created: 2026-02-20
+- Last: 2026-02-20
+
+## Change log
+
+- 2026-02-20: 实现“同 tag 的新 digest”更新口径；移除 `/candidates`；更新请求锁定扫描 digest（409）；Web 去掉版本选择；PR #74
+
 ## 背景 / 问题陈述
 
 当前 Dockrev 会在扫描时基于 registry tags 选择“更高版本”的候选 tag（candidate），这会导致：
@@ -72,12 +82,11 @@
 
 ## 里程碑（Milestones）
 
-1. 后端：扫描逻辑改为同 tag digest-only candidate；更新接口加 409 digest 锁定；移除 `/candidates` endpoint；补齐/更新单测。
-2. 前端：移除 `UpdateTargetSelect` 与 `/candidates` 调用；去掉跨标签展示；更新请求必带 digest；冲突错误提示。
-3. 集成验证：在 `codex-testbox` 上完成按规则隔离的 Docker/Compose 验证并记录 Test Plan。
+1. 后端：扫描逻辑改为同 tag digest-only candidate；更新接口加 409 digest 锁定；移除 `/candidates` endpoint；补齐/更新单测。（已完成）
+2. 前端：移除 `UpdateTargetSelect` 与 `/candidates` 调用；去掉跨标签展示；更新请求必带 digest；冲突错误提示。（已完成）
+3. 集成验证：在 `codex-testbox` 上完成按规则隔离的 Docker/Compose 验证并记录 Test Plan。（已完成）
 
 ## 风险与回滚
 
 - `/candidates` 为破坏性 API 变更：通过同仓库 Web 同步移除调用来消解风险；如有外部客户端需另行评估。
 - runtime digest 缺失时无法比较：默认不产生 candidate（宁可不报，也不误报）。
-
