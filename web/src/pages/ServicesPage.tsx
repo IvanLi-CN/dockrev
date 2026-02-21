@@ -76,12 +76,23 @@ function splitImageNameForDisplay(
 }
 
 function formatTagDisplay(tag: string, resolvedTag: string | null | undefined): string {
+  const semverPattern = /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
   const r = (resolvedTag ?? '').trim()
-  if (r && /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(r)) return r
+  if (r && semverPattern.test(r)) return r
   const t = (tag ?? '').trim()
   if (!t) return '-'
-  if (/^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(t)) return t
+  if (semverPattern.test(t)) return t
   return '-'
+}
+
+function formatCandidateTagDisplay(tag: string, resolvedTag: string | null | undefined): string {
+  const semverPattern = /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
+  const r = (resolvedTag ?? '').trim()
+  if (r && semverPattern.test(r)) return r
+  const t = (tag ?? '').trim()
+  if (!t) return '-'
+  if (semverPattern.test(t)) return t
+  return t
 }
 
 function isDockrevService(svc: Service): boolean {
@@ -658,8 +669,11 @@ export function ServicesPage(props: {
 		                                const currentDisplayTag = formatTagDisplay(item.svc.image.tag, item.svc.image.resolvedTag)
 		                                const rawTagTrim = (item.svc.image.tag ?? '').trim()
 		                                const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
-		                                const candidateTag =
+		                                const candidateRawTag =
 		                                  item.svc.candidate?.tag && item.svc.candidate.tag !== '-' ? item.svc.candidate.tag : null
+		                                const candidateDisplayTag = candidateRawTag
+		                                  ? formatCandidateTagDisplay(candidateRawTag, item.svc.candidate?.resolvedTag ?? null)
+		                                  : null
 		                                return (
 		                                  <div key={item.svc.id} className="modalListItem">
 		                                    <div className="modalListLeft">
@@ -692,13 +706,13 @@ export function ServicesPage(props: {
 		                                            resolvedTags={item.svc.image.resolvedTags}
 		                                          />
 		                                          <ArrowRightIcon className="inlineIcon" />
-		                                          {candidateTag ? (
+		                                          {candidateRawTag && candidateDisplayTag ? (
 		                                            <VersionTagsPopover
 		                                              serviceId={item.svc.id}
-		                                              candidateTag={candidateTag}
+		                                              candidateTag={candidateRawTag}
 		                                              candidateDigest={item.svc.candidate?.digest ?? null}
 		                                            >
-		                                              {candidateTag}
+		                                              {candidateDisplayTag}
 		                                            </VersionTagsPopover>
 		                                          ) : (
 		                                            <span className="mono monoPrimary">-</span>
@@ -749,8 +763,11 @@ export function ServicesPage(props: {
                       const currentDisplayTag = formatTagDisplay(svc.image.tag, svc.image.resolvedTag)
                       const rawTagTrim = (svc.image.tag ?? '').trim()
                       const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
-                      const candidateTag = svc.candidate?.tag && svc.candidate.tag !== '-' ? svc.candidate.tag : null
-                      const showCandidate = Boolean(candidateTag && candidateTag !== currentDisplayTag)
+                      const candidateRawTag = svc.candidate?.tag && svc.candidate.tag !== '-' ? svc.candidate.tag : null
+                      const candidateDisplayTag = candidateRawTag
+                        ? formatCandidateTagDisplay(candidateRawTag, svc.candidate?.resolvedTag ?? null)
+                        : null
+                      const showCandidate = Boolean(candidateDisplayTag && candidateDisplayTag !== currentDisplayTag)
                       const svcApply =
                         status === 'updatable'
                           ? { enabled: true, title: null as string | null }
@@ -824,10 +841,10 @@ export function ServicesPage(props: {
                                     <ArrowRightIcon className="inlineIcon" />
                                     <VersionTagsPopover
                                       serviceId={svc.id}
-                                      candidateTag={candidateTag}
+                                      candidateTag={candidateRawTag}
                                       candidateDigest={svc.candidate?.digest ?? null}
                                     >
-                                      {candidateTag}
+                                      {candidateDisplayTag}
                                     </VersionTagsPopover>
                                   </>
                                 ) : null}
@@ -938,13 +955,13 @@ export function ServicesPage(props: {
 	                                                <span style={{ opacity: 0.8, margin: '0 6px' }}>
 	                                                  <ArrowRightIcon className="inlineIcon" />
 	                                                </span>
-	                                                {svc.candidate?.tag ? (
+	                                                {candidateRawTag && candidateDisplayTag ? (
 	                                                  <VersionTagsPopover
 	                                                    serviceId={svc.id}
-	                                                    candidateTag={svc.candidate.tag}
-	                                                    candidateDigest={svc.candidate.digest ?? null}
+	                                                    candidateTag={candidateRawTag}
+	                                                    candidateDigest={svc.candidate?.digest ?? null}
 	                                                  >
-	                                                    {svc.candidate.tag}
+	                                                    {candidateDisplayTag}
 	                                                  </VersionTagsPopover>
 	                                                ) : (
 	                                                  <span className="mono monoPrimary">-</span>
