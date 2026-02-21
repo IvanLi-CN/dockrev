@@ -16,6 +16,7 @@ pub struct Config {
     pub target_compose_service: Option<String>,
     pub target_compose_files: Vec<String>,
 
+    pub docker_bin: String,
     pub docker_host: Option<String>,
     pub compose_bin: String,
 
@@ -55,6 +56,8 @@ impl Config {
             .map(parse_csv_paths)
             .unwrap_or_default();
 
+        let docker_bin =
+            std::env::var("DOCKREV_SUPERVISOR_DOCKER_BIN").unwrap_or_else(|_| "docker".to_string());
         let docker_host = std::env::var("DOCKREV_SUPERVISOR_DOCKER_HOST")
             .ok()
             .and_then(non_empty);
@@ -74,6 +77,7 @@ impl Config {
             target_compose_project,
             target_compose_service,
             target_compose_files,
+            docker_bin,
             docker_host,
             compose_bin,
             state_path,

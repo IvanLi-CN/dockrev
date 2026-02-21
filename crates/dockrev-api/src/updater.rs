@@ -1,5 +1,9 @@
-use std::time::Duration;
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
+use semver::Version;
 use serde_json::json;
 
 use crate::{
@@ -101,6 +105,11 @@ pub async fn run_update_job(
     let mut changed = 0u32;
     let mut old_images = serde_json::Map::new();
     let mut new_images = serde_json::Map::new();
+    let mut semver_pulled: Vec<String> = Vec::new();
+    let mut semver_pulled_set: HashSet<String> = HashSet::new();
+    let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
+        serde_json::Map::new();
+    let mut semver_pull_cache: HashMap<String, Result<(), String>> = HashMap::new();
 
     let compose_for_update = override_stack.as_ref().unwrap_or(&compose_stack);
 
@@ -224,7 +233,8 @@ pub async fn run_update_job(
             Duration::from_secs(10),
         )
         .await?;
-        new_images.insert(svc.id.clone(), json!(new_image_id.trim()));
+        let new_image_id = new_image_id.trim().to_string();
+        new_images.insert(svc.id.clone(), json!(&new_image_id));
         changed += 1;
 
         if rolled_back {
@@ -234,9 +244,26 @@ pub async fn run_update_job(
                     "changedServices": changed,
                     "oldDigests": old_images,
                     "newDigests": new_images,
+                    "semverPulled": semver_pulled,
+                    "semverPullWarnings": semver_pull_warnings,
                 }),
             });
         }
+
+        let repo = strip_tag_and_digest(&svc.image.reference)
+            .unwrap_or_else(|| svc.image.reference.clone());
+        maybe_pull_semver_tag_for_image(
+            runner,
+            &docker_cfg,
+            &svc.id,
+            &repo,
+            &new_image_id,
+            &mut semver_pulled,
+            &mut semver_pulled_set,
+            &mut semver_pull_warnings,
+            &mut semver_pull_cache,
+        )
+        .await;
     }
 
     Ok(UpdateOutcome {
@@ -245,6 +272,8 @@ pub async fn run_update_job(
             "changedServices": changed,
             "oldDigests": old_images,
             "newDigests": new_images,
+            "semverPulled": semver_pulled,
+            "semverPullWarnings": semver_pull_warnings,
         }),
     })
 }
@@ -336,6 +365,115 @@ fn replace_tag(image_ref: &str, tag: &str) -> Option<String> {
     } else {
         Some(format!("{left}:{tag}@{digest}"))
     }
+}
+
+fn semver_tag_from_oci_version(raw: &str) -> Option<String> {
+    let t = raw.trim();
+    if t.is_empty() || t == "<no value>" {
+        return None;
+    }
+    let t = t
+        .strip_prefix('v')
+        .or_else(|| t.strip_prefix('V'))
+        .unwrap_or(t);
+    let v = Version::parse(t).ok()?;
+    if !v.build.is_empty() {
+        return None;
+    }
+    Some(v.to_string())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn maybe_pull_semver_tag_for_image(
+    runner: &dyn CommandRunner,
+    docker_cfg: &docker_runner::DockerRunnerConfig,
+    service_id: &str,
+    repo: &str,
+    image_id: &str,
+    semver_pulled: &mut Vec<String>,
+    semver_pulled_set: &mut HashSet<String>,
+    semver_pull_warnings: &mut serde_json::Map<String, serde_json::Value>,
+    semver_pull_cache: &mut HashMap<String, Result<(), String>>,
+) {
+    let version_out = runner
+        .run(
+            docker_runner::image_inspect_oci_version(docker_cfg, image_id),
+            Duration::from_secs(10),
+        )
+        .await;
+
+    let raw_version = match version_out {
+        Ok(out) if out.status == 0 => out.stdout,
+        Ok(out) => {
+            let msg = format!(
+                "docker image inspect (oci version) failed: status={} stderr={}",
+                out.status,
+                out.stderr.trim()
+            );
+            semver_pull_warnings.insert(service_id.to_string(), json!(msg));
+            return;
+        }
+        Err(e) => {
+            let msg = format!("docker image inspect (oci version) failed: {e}");
+            semver_pull_warnings.insert(service_id.to_string(), json!(msg));
+            return;
+        }
+    };
+
+    let Some(tag) = semver_tag_from_oci_version(&raw_version) else {
+        return;
+    };
+    let tag_ref = format!("{repo}:{tag}");
+
+    // Skip if the tag already exists locally for this image id.
+    let repo_tags_out = runner
+        .run(
+            docker_runner::image_inspect_repo_tags(docker_cfg, image_id),
+            Duration::from_secs(10),
+        )
+        .await;
+    if let Ok(out) = repo_tags_out
+        && out.status == 0
+        && let Ok(parsed) = serde_json::from_str::<Option<Vec<String>>>(out.stdout.trim())
+        && parsed.unwrap_or_default().iter().any(|t| t == &tag_ref)
+    {
+        return;
+    }
+
+    if let Some(cached) = semver_pull_cache.get(&tag_ref) {
+        if let Err(msg) = cached {
+            semver_pull_warnings.insert(service_id.to_string(), json!(msg.clone()));
+        }
+        return;
+    }
+
+    let pull_out = runner
+        .run(
+            docker_runner::pull_image(docker_cfg, &tag_ref),
+            Duration::from_secs(300),
+        )
+        .await;
+    let res: Result<(), String> = match pull_out {
+        Ok(out) if out.status == 0 => Ok(()),
+        Ok(out) => Err(format!(
+            "docker pull {tag_ref} failed: status={} stderr={}",
+            out.status,
+            out.stderr.trim()
+        )),
+        Err(e) => Err(format!("docker pull {tag_ref} failed: {e}")),
+    };
+
+    match &res {
+        Ok(()) => {
+            if semver_pulled_set.insert(tag_ref.clone()) {
+                semver_pulled.push(tag_ref.clone());
+            }
+        }
+        Err(msg) => {
+            semver_pull_warnings.insert(service_id.to_string(), json!(msg.clone()));
+        }
+    }
+    semver_pull_cache.insert(tag_ref, res);
 }
 
 async fn wait_healthy(
@@ -567,6 +705,28 @@ mod tests {
                         stderr: String::new(),
                     }
                 }
+                // docker image inspect version label (best-effort semver tag pull; empty => skip)
+                7 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec![
+                            "image",
+                            "inspect",
+                            "--format",
+                            r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
+                            "sha256:new"
+                        ]
+                        .into_iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: "\n".to_string(),
+                        stderr: String::new(),
+                    }
+                }
                 _ => panic!(
                     "unexpected extra command: program={} args={:?}",
                     spec.program, spec.args
@@ -683,7 +843,147 @@ mod tests {
 
         assert_eq!(outcome.status, "success");
         assert_eq!(outcome.summary_json["changedServices"].as_u64().unwrap(), 1);
-        assert_eq!(*runner.step.lock().unwrap(), 7);
+        assert_eq!(*runner.step.lock().unwrap(), 8);
+    }
+
+    #[derive(Default)]
+    struct SemverPullWarnRunner {
+        step: Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for SemverPullWarnRunner {
+        async fn run(
+            &self,
+            spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            let mut step = self.step.lock().unwrap();
+            let out = match *step {
+                // version label
+                0 | 3 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec![
+                            "image",
+                            "inspect",
+                            "--format",
+                            r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
+                            "sha256:new"
+                        ]
+                        .into_iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: "0.7.7\n".to_string(),
+                        stderr: String::new(),
+                    }
+                }
+                // repo tags
+                1 | 4 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec![
+                            "image",
+                            "inspect",
+                            "--format",
+                            "{{json .RepoTags}}",
+                            "sha256:new"
+                        ]
+                        .into_iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: r#"["ghcr.io/org/web:latest"]"#.to_string(),
+                        stderr: String::new(),
+                    }
+                }
+                // pull semver tag (fails)
+                2 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec!["pull", "ghcr.io/org/web:0.7.7"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: "not found".to_string(),
+                    }
+                }
+                _ => panic!(
+                    "unexpected extra command: program={} args={:?}",
+                    spec.program, spec.args
+                ),
+            };
+
+            *step += 1;
+            Ok(out)
+        }
+    }
+
+    #[tokio::test]
+    async fn semver_pull_is_best_effort_and_records_warning_per_service() {
+        let runner = SemverPullWarnRunner::default();
+        let docker_cfg = docker_runner::DockerRunnerConfig::default();
+
+        let mut semver_pulled: Vec<String> = Vec::new();
+        let mut semver_pulled_set: HashSet<String> = HashSet::new();
+        let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
+            serde_json::Map::new();
+        let mut semver_pull_cache: HashMap<String, Result<(), String>> = HashMap::new();
+
+        maybe_pull_semver_tag_for_image(
+            &runner,
+            &docker_cfg,
+            "svc_1",
+            "ghcr.io/org/web",
+            "sha256:new",
+            &mut semver_pulled,
+            &mut semver_pulled_set,
+            &mut semver_pull_warnings,
+            &mut semver_pull_cache,
+        )
+        .await;
+
+        maybe_pull_semver_tag_for_image(
+            &runner,
+            &docker_cfg,
+            "svc_2",
+            "ghcr.io/org/web",
+            "sha256:new",
+            &mut semver_pulled,
+            &mut semver_pulled_set,
+            &mut semver_pull_warnings,
+            &mut semver_pull_cache,
+        )
+        .await;
+
+        assert!(semver_pulled.is_empty());
+        assert!(
+            semver_pull_warnings
+                .get("svc_1")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .contains("docker pull ghcr.io/org/web:0.7.7 failed")
+        );
+        assert!(
+            semver_pull_warnings
+                .get("svc_2")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .contains("docker pull ghcr.io/org/web:0.7.7 failed")
+        );
+        assert_eq!(*runner.step.lock().unwrap(), 5);
     }
 
     #[test]

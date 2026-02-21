@@ -64,3 +64,39 @@ pub fn tag_image(cfg: &DockerRunnerConfig, image_id: &str, image_ref: &str) -> C
         env: Vec::new(),
     }
 }
+
+pub fn image_inspect_oci_version(cfg: &DockerRunnerConfig, image_id: &str) -> CommandSpec {
+    CommandSpec {
+        program: cfg.docker_bin.clone(),
+        args: vec![
+            "image".to_string(),
+            "inspect".to_string(),
+            "--format".to_string(),
+            r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#.to_string(),
+            image_id.to_string(),
+        ],
+        env: Vec::new(),
+    }
+}
+
+pub fn image_inspect_repo_tags(cfg: &DockerRunnerConfig, image_id: &str) -> CommandSpec {
+    CommandSpec {
+        program: cfg.docker_bin.clone(),
+        args: vec![
+            "image".to_string(),
+            "inspect".to_string(),
+            "--format".to_string(),
+            "{{json .RepoTags}}".to_string(),
+            image_id.to_string(),
+        ],
+        env: Vec::new(),
+    }
+}
+
+pub fn pull_image(cfg: &DockerRunnerConfig, image_ref: &str) -> CommandSpec {
+    CommandSpec {
+        program: cfg.docker_bin.clone(),
+        args: vec!["pull".to_string(), image_ref.to_string()],
+        env: Vec::new(),
+    }
+}
