@@ -100,3 +100,4 @@
 | zt9ks | Dockrev Web/API: 修复服务更新确认弹窗（popover 层级 + 目标版本错选） | 已完成 | `zt9ks:fix-update-confirm-modal-popover-target/PLAN.md` | 2026-02-18 | PR #70 |
 | fknrb | Dockrev: digest-tags snapshot persistence (no live scan) | 已完成 | `fknrb:digest-tags-snapshot/PLAN.md` | 2026-02-18 | PR #71 |
 | vah6t | Dockrev: 仅“同 tag 的新 digest”更新（移除版本候选/选择 + 更新锁定） | 已完成 | `vah6t:same-tag-digest-only-updates/PLAN.md` | 2026-02-20 | PR #74 |
+| nxjyx | Dockrev: 修复 supervisor 自动识别（labels-first + inspect fallback）+ 更新时 best-effort 拉 semver tag（避免悬空） | 待实现 | `nxjyx:supervisor-auto-match-and-semver-pull/PLAN.md` | 2026-02-21 | - |
