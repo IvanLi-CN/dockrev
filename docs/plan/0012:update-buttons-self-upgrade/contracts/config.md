@@ -84,6 +84,13 @@
 - Default: empty (use docker default)
 - Semantics: Docker engine 连接（例如 `unix:///var/run/docker.sock` 或 `tcp://docker-socket-proxy:2375`）。
 
+#### `DOCKREV_SUPERVISOR_DOCKER_BIN`
+
+- Scope: external
+- Change: New
+- Default: `docker`
+- Semantics: supervisor 调用 Docker CLI 时使用的可执行文件名或绝对路径（例如 `docker`、`/usr/bin/docker`）。
+
 #### `DOCKREV_SUPERVISOR_COMPOSE_BIN`
 
 - Scope: external
