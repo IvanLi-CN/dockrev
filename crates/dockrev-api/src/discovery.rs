@@ -389,7 +389,74 @@ async fn resolve_project_compose_files(
     }
 
     if candidates.is_empty() {
-        let details = variants_details_json(&variants, None);
+        // No canonical superset across variants. This commonly happens when Dockrev-generated
+        // override files (e.g. /tmp/dockrev-override-*.yml) differ per service. If *all* extra
+        // files are unreadable, fall back to common compose files and emit a warning instead of
+        // marking the project invalid.
+        let shortest = variants
+            .keys()
+            .min_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
+            .expect("variants non-empty");
+        let common_files = shortest
+            .iter()
+            .filter(|p| variants.keys().all(|v| v.contains(*p)))
+            .cloned()
+            .collect::<Vec<_>>();
+        if common_files.is_empty() {
+            let details = variants_details_json(&variants, None);
+            return Err(InvalidProjectComposeFiles {
+                reason: format!(
+                    "config_files_conflict: failed to compute common compose files across variants (project={project})"
+                ),
+                details: Some(details),
+            });
+        }
+
+        let mut extra_set = BTreeSet::<String>::new();
+        for files in variants.keys() {
+            for p in files {
+                if !common_files.contains(p) {
+                    extra_set.insert(p.clone());
+                }
+            }
+        }
+        let extra_files = extra_set.into_iter().collect::<Vec<_>>();
+
+        let mut unreadable = Vec::<serde_json::Value>::new();
+        let mut readable = Vec::<String>::new();
+        for path in &extra_files {
+            match tokio::fs::read_to_string(path).await {
+                Ok(_) => readable.push(path.clone()),
+                Err(e) => unreadable.push(serde_json::json!({
+                    "path": path,
+                    "error": e.to_string(),
+                })),
+            }
+        }
+
+        if readable.is_empty() {
+            let selected = serde_json::json!({
+                "mode": "common_fallback_no_superset_all_unreadable",
+                "configFiles": common_files.clone(),
+                "extraFiles": extra_files.clone(),
+                "unreadableExtra": unreadable,
+            });
+            let details = variants_details_json(&variants, Some(selected));
+            return Ok(ResolvedProjectComposeFiles {
+                compose_files: common_files.clone(),
+                warning: Some(
+                    "warning:config_files_conflict_fallback_common: no canonical superset found; all extra files unreadable; using common compose files. Hint: mount the override path into dockrev (same absolute path, read-only), or set DOCKREV_SUPERVISOR_STATE_PATH to a mounted directory".to_string(),
+                ),
+                details: Some(details),
+            });
+        }
+
+        let selected = serde_json::json!({
+            "mode": "invalid_no_superset",
+            "readableExtra": readable,
+            "unreadableExtra": unreadable,
+        });
+        let details = variants_details_json(&variants, Some(selected));
         return Err(InvalidProjectComposeFiles {
             reason: format!(
                 "config_files_conflict: multiple distinct config_files variants and no canonical superset found (project={project})"
@@ -452,6 +519,28 @@ async fn resolve_project_compose_files(
 
         if let Err(err) = validate_image_only_override(path, &contents, &superset_services) {
             let err_msg = err.clone();
+            if err.contains("not in allowed services for this variant") {
+                // The file is image-only, but it touches services outside the variant that
+                // reported the superset. This can happen after self-upgrade or stack updates
+                // when extra override files get propagated to unrelated services. In this case,
+                // do not accept the superset as canonical; fall back to common files and warn.
+                let selected = serde_json::json!({
+                    "mode": "common_fallback_unsafe_extra",
+                    "configFiles": common_files.clone(),
+                    "extraFiles": extra_files.clone(),
+                    "services": superset_services.iter().cloned().collect::<Vec<_>>(),
+                    "unsafeExtra": { "path": path, "error": err_msg },
+                });
+                let details = variants_details_json(&variants, Some(selected));
+                return Ok(ResolvedProjectComposeFiles {
+                    compose_files: common_files.clone(),
+                    warning: Some(format!(
+                        "warning:config_files_unsafe_extra_fallback_common: extra compose file unsafe for selected superset: {path} ({err}); using common compose files"
+                    )),
+                    details: Some(details),
+                });
+            }
+
             let selected = serde_json::json!({
                 "mode": "superset_rejected",
                 "configFiles": superset.clone(),
@@ -954,6 +1043,10 @@ mod tests {
         let a = dir.join("a.yml");
         let b = dir.join("b.yml");
 
+        // Ensure extra files are readable, otherwise the resolver will fall back to common files.
+        std::fs::write(&a, "# a\n").unwrap();
+        std::fs::write(&b, "# b\n").unwrap();
+
         let base_s = base.display().to_string();
         let a_s = a.display().to_string();
         let b_s = b.display().to_string();
@@ -982,6 +1075,90 @@ mod tests {
                 .map(|v| v.len()),
             Some(2)
         );
+    }
+
+    #[tokio::test]
+    async fn resolve_project_compose_files_no_superset_all_extras_unreadable_falls_back_to_common()
+    {
+        let dir = make_temp_dir();
+        let base = dir.join("docker-compose.yml");
+        let a = dir.join("missing-a.yml");
+        let b = dir.join("missing-b.yml");
+
+        let base_s = base.display().to_string();
+        let a_s = a.display().to_string();
+        let b_s = b.display().to_string();
+
+        // No canonical superset: two distinct variants with different extra files.
+        // Since all extra files are unreadable, fall back to common files (base only) with a warning.
+        let observed = vec![
+            ObservedComposeContainer {
+                service: "svc-a".to_string(),
+                config_files_raw: Some(format!("{base_s},{a_s}")),
+            },
+            ObservedComposeContainer {
+                service: "svc-b".to_string(),
+                config_files_raw: Some(format!("{base_s},{b_s}")),
+            },
+        ];
+
+        let resolved = resolve_project_compose_files("dockrev", &observed)
+            .await
+            .unwrap();
+        assert_eq!(resolved.compose_files, vec![base_s]);
+        assert!(
+            resolved
+                .warning
+                .as_deref()
+                .is_some_and(|w| { w.contains("warning:config_files_conflict_fallback_common") })
+        );
+        assert!(resolved.details.is_some());
+    }
+
+    #[tokio::test]
+    async fn resolve_project_compose_files_superset_unsafe_extra_falls_back_to_common() {
+        let dir = make_temp_dir();
+        let base = dir.join("docker-compose.yml");
+        let override_yml = dir.join("self-upgrade.override.yml");
+        let tmp_override = dir.join("dockrev-override.yml");
+
+        std::fs::write(
+            &override_yml,
+            "services:\n  dockrev:\n    image: ghcr.io/ivanli-cn/dockrev:latest\n",
+        )
+        .unwrap();
+
+        let base_s = base.display().to_string();
+        let override_s = override_yml.display().to_string();
+        let tmp_s = tmp_override.display().to_string();
+
+        // Superset candidate is reported by "dozzle", but the extra self-upgrade override touches
+        // a different service ("dockrev"). Treat as unsafe for the superset and fall back to common.
+        let observed = vec![
+            ObservedComposeContainer {
+                service: "dozzle".to_string(),
+                config_files_raw: Some(format!("{base_s},{override_s},{tmp_s}")),
+            },
+            ObservedComposeContainer {
+                service: "dockrev".to_string(),
+                config_files_raw: Some(format!("{base_s},{override_s}")),
+            },
+            ObservedComposeContainer {
+                service: "dockrev-supervisor".to_string(),
+                config_files_raw: Some(base_s.clone()),
+            },
+        ];
+
+        let resolved = resolve_project_compose_files("dockrev", &observed)
+            .await
+            .unwrap();
+        assert_eq!(resolved.compose_files, vec![base_s]);
+        assert!(
+            resolved.warning.as_deref().is_some_and(|w| {
+                w.contains("warning:config_files_unsafe_extra_fallback_common")
+            })
+        );
+        assert!(resolved.details.is_some());
     }
 
     #[tokio::test]
