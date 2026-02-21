@@ -600,6 +600,7 @@ dependencies = [
  "anyhow",
  "axum",
  "reqwest",
+ "semver",
  "serde",
  "serde_json",
  "time",

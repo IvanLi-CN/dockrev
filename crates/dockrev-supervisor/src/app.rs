@@ -18,7 +18,8 @@ use tokio::sync::Mutex;
 use crate::{
     config::Config,
     docker_exec::{
-        TargetRuntime, compose_up, docker_image_repo_digest, docker_pull, resolve_target,
+        TargetRuntime, compose_up, docker_image_repo_digest, docker_image_semver_tag_ref_to_pull,
+        docker_pull, resolve_target,
     },
     state_store::{
         LogLine, Progress, RequestParams, StateFile, load_or_idle, now_rfc3339, store_atomic,
@@ -567,6 +568,43 @@ async fn run_operation(app: Arc<App>, key: StartKey) -> anyhow::Result<()> {
 
     docker_pull(&app.cfg, &image_ref, Duration::from_secs(300)).await?;
 
+    match docker_image_semver_tag_ref_to_pull(&app.cfg, &image_ref, &app.cfg.target_image_repo)
+        .await
+    {
+        Ok(Some(tag_ref)) => {
+            update_state(&app, |st, now| {
+                st.logs.push(LogLine {
+                    ts: now.to_string(),
+                    level: "INFO".to_string(),
+                    msg: format!("best-effort pull semver tag {tag_ref}"),
+                });
+            })
+            .await?;
+
+            if let Err(e) = docker_pull(&app.cfg, &tag_ref, Duration::from_secs(300)).await {
+                update_state(&app, |st, now| {
+                    st.logs.push(LogLine {
+                        ts: now.to_string(),
+                        level: "WARN".to_string(),
+                        msg: format!("semver tag pull failed: {tag_ref}: {e}"),
+                    });
+                })
+                .await?;
+            }
+        }
+        Ok(None) => {}
+        Err(e) => {
+            update_state(&app, |st, now| {
+                st.logs.push(LogLine {
+                    ts: now.to_string(),
+                    level: "WARN".to_string(),
+                    msg: format!("semver tag pull skipped: {e}"),
+                });
+            })
+            .await?;
+        }
+    }
+
     if key.mode == "dry-run" {
         update_state(&app, |st, now| {
             st.state = "succeeded".to_string();
@@ -919,6 +957,7 @@ mod tests {
             target_compose_project: Some("p".to_string()),
             target_compose_service: Some("dockrev".to_string()),
             target_compose_files: vec!["/abs/compose.yml".to_string()],
+            docker_bin: "docker".to_string(),
             docker_host: None,
             compose_bin: "docker-compose".to_string(),
             state_path: dir.join("state.json"),
@@ -984,6 +1023,7 @@ mod tests {
             target_compose_project: Some("p".to_string()),
             target_compose_service: Some("dockrev".to_string()),
             target_compose_files: vec!["/abs/compose.yml".to_string()],
+            docker_bin: "docker".to_string(),
             docker_host: None,
             compose_bin: "docker-compose".to_string(),
             state_path: dir.join("state.json"),

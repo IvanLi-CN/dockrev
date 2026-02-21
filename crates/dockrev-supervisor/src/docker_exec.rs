@@ -1,5 +1,6 @@
 use std::{collections::HashMap, path::Path, time::Duration};
 
+use semver::Version;
 use serde::Deserialize;
 
 use crate::{config::Config, state_store::now_rfc3339};
@@ -164,50 +165,159 @@ struct DockerPsLine {
 }
 
 async fn auto_match_container(cfg: &Config) -> anyhow::Result<String> {
-    let out = run_docker_lines(
-        cfg,
-        &["ps", "--format", "{{json .}}"],
-        Duration::from_secs(10),
-    )
-    .await?;
-    let mut matches: Vec<String> = Vec::new();
+    // 1) labels-first when explicit compose selectors are configured. This works even if the image is
+    // dangling (docker ps shows short image id), because labels live on the container.
+    if let Some(id) = auto_match_container_by_compose_labels(cfg).await? {
+        return Ok(id);
+    }
+
+    // 2) legacy behavior: match by `docker ps` Image string (repo/repo:tag/repo@digest).
+    if let Some(id) = auto_match_container_by_ps_image_repo(cfg).await? {
+        return Ok(id);
+    }
+
+    // 3) fallback for dangling images: inspect each container and match against Config.Image.
+    if let Some(id) = auto_match_container_by_inspect_config_image(cfg).await? {
+        return Ok(id);
+    }
+
+    Err(anyhow::anyhow!(
+        "no running container matched image repo {}; set DOCKREV_SUPERVISOR_TARGET_CONTAINER_ID",
+        cfg.target_image_repo
+    ))
+}
+
+async fn docker_ps(cfg: &Config, filters: &[String]) -> anyhow::Result<Vec<DockerPsLine>> {
+    let mut args: Vec<String> = Vec::new();
+    args.push("ps".to_string());
+    args.push("--format".to_string());
+    args.push("{{json .}}".to_string());
+    for f in filters {
+        args.push("--filter".to_string());
+        args.push(f.clone());
+    }
+
+    let out = run_cmd_lines(cfg, &cfg.docker_bin, &args, Duration::from_secs(10)).await?;
+    let mut lines: Vec<DockerPsLine> = Vec::new();
     for line in out.lines().map(str::trim).filter(|l| !l.is_empty()) {
-        let parsed: DockerPsLine = serde_json::from_str(line)?;
-        if image_ref_matches_repo(&parsed.image, &cfg.target_image_repo) {
-            matches.push(parsed.id);
-        }
+        lines.push(serde_json::from_str::<DockerPsLine>(line)?);
     }
-    if matches.is_empty() {
-        return Err(anyhow::anyhow!(
-            "no running container matched image repo {}; set DOCKREV_SUPERVISOR_TARGET_CONTAINER_ID",
-            cfg.target_image_repo
-        ));
-    }
-    if matches.len() > 1 {
-        let desired = cfg.target_compose_service.as_deref().unwrap_or("dockrev");
-        let mut candidates: Vec<ComposeCandidate> = Vec::new();
-        for id in matches {
-            let inspect = docker_inspect(cfg, &id).await?;
-            let labels = inspect.config.labels.unwrap_or_default();
-            let compose_service = labels.get("com.docker.compose.service").cloned();
-            let compose_project = labels.get("com.docker.compose.project").cloned();
-            candidates.push(ComposeCandidate {
-                id,
-                compose_service,
-                compose_project,
-            });
-        }
+    Ok(lines)
+}
 
-        if let Some(id) = pick_compose_candidate(cfg, desired, &candidates) {
-            return Ok(id);
-        }
-
-        return Err(anyhow::anyhow!(
-            "multiple running containers matched image repo {}; set DOCKREV_SUPERVISOR_TARGET_CONTAINER_ID or DOCKREV_SUPERVISOR_TARGET_COMPOSE_SERVICE",
-            cfg.target_image_repo
-        ));
+async fn resolve_unique_candidate(
+    cfg: &Config,
+    matched_ids: Vec<String>,
+    error_context: &str,
+) -> anyhow::Result<Option<String>> {
+    if matched_ids.is_empty() {
+        return Ok(None);
     }
-    Ok(matches.remove(0))
+    if matched_ids.len() == 1 {
+        return Ok(Some(matched_ids.into_iter().next().unwrap()));
+    }
+
+    let desired = cfg.target_compose_service.as_deref().unwrap_or("dockrev");
+    let mut candidates: Vec<ComposeCandidate> = Vec::new();
+    for id in matched_ids {
+        let inspect = docker_inspect(cfg, &id).await?;
+        let labels = inspect.config.labels.unwrap_or_default();
+        let compose_service = labels.get("com.docker.compose.service").cloned();
+        let compose_project = labels.get("com.docker.compose.project").cloned();
+        candidates.push(ComposeCandidate {
+            id,
+            compose_service,
+            compose_project,
+        });
+    }
+
+    if let Some(id) = pick_compose_candidate(cfg, desired, &candidates) {
+        return Ok(Some(id));
+    }
+
+    Err(anyhow::anyhow!(
+        "multiple running containers matched {}; set DOCKREV_SUPERVISOR_TARGET_CONTAINER_ID or DOCKREV_SUPERVISOR_TARGET_COMPOSE_SERVICE",
+        error_context
+    ))
+}
+
+async fn auto_match_container_by_compose_labels(cfg: &Config) -> anyhow::Result<Option<String>> {
+    let mut filters: Vec<String> = Vec::new();
+    if let Some(project) = cfg.target_compose_project.as_deref() {
+        filters.push(format!("label=com.docker.compose.project={project}"));
+    }
+    if let Some(service) = cfg.target_compose_service.as_deref() {
+        filters.push(format!("label=com.docker.compose.service={service}"));
+    }
+    if filters.is_empty() {
+        return Ok(None);
+    }
+
+    let lines = docker_ps(cfg, &filters).await?;
+
+    // Validate repo using inspect.Config.Image (handles dangling cases).
+    let mut matches: Vec<String> = Vec::new();
+    for line in lines {
+        let inspect = docker_inspect(cfg, &line.id).await?;
+        if inspect
+            .config
+            .image
+            .as_deref()
+            .is_some_and(|img| image_ref_matches_repo(img, &cfg.target_image_repo))
+        {
+            matches.push(line.id);
+        }
+    }
+
+    resolve_unique_candidate(
+        cfg,
+        matches,
+        "compose labels (com.docker.compose.project/service)",
+    )
+    .await
+}
+
+async fn auto_match_container_by_ps_image_repo(cfg: &Config) -> anyhow::Result<Option<String>> {
+    let lines = docker_ps(cfg, &[]).await?;
+    let mut matches: Vec<String> = Vec::new();
+    for line in lines {
+        if image_ref_matches_repo(&line.image, &cfg.target_image_repo) {
+            matches.push(line.id);
+        }
+    }
+    resolve_unique_candidate(
+        cfg,
+        matches,
+        &format!("image repo {}", cfg.target_image_repo),
+    )
+    .await
+}
+
+async fn auto_match_container_by_inspect_config_image(
+    cfg: &Config,
+) -> anyhow::Result<Option<String>> {
+    let lines = docker_ps(cfg, &[]).await?;
+    let mut matches: Vec<String> = Vec::new();
+    for line in lines {
+        let inspect = docker_inspect(cfg, &line.id).await?;
+        if inspect
+            .config
+            .image
+            .as_deref()
+            .is_some_and(|img| image_ref_matches_repo(img, &cfg.target_image_repo))
+        {
+            matches.push(line.id);
+        }
+    }
+    resolve_unique_candidate(
+        cfg,
+        matches,
+        &format!(
+            "image repo {} (inspect Config.Image)",
+            cfg.target_image_repo
+        ),
+    )
+    .await
 }
 
 #[derive(Debug, Deserialize)]
@@ -462,6 +572,78 @@ pub async fn docker_image_repo_digest(
     Ok(None)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct DockerImageInspect {
+    #[serde(default)]
+    repo_tags: Option<Vec<String>>,
+    #[serde(default)]
+    config: Option<DockerImageInspectConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct DockerImageInspectConfig {
+    #[serde(default)]
+    labels: Option<HashMap<String, String>>,
+}
+
+async fn docker_image_inspect(
+    cfg: &Config,
+    image_ref_or_id: &str,
+) -> anyhow::Result<DockerImageInspect> {
+    let out = run_docker_lines(
+        cfg,
+        &[
+            "image",
+            "inspect",
+            image_ref_or_id,
+            "--format",
+            "{{json .}}",
+        ],
+        Duration::from_secs(10),
+    )
+    .await?;
+    Ok(serde_json::from_str::<DockerImageInspect>(out.trim())?)
+}
+
+fn semver_tag_from_oci_version(raw: &str) -> Option<String> {
+    let t = raw.trim();
+    if t.is_empty() {
+        return None;
+    }
+    let t = t
+        .strip_prefix('v')
+        .or_else(|| t.strip_prefix('V'))
+        .unwrap_or(t);
+    let v = Version::parse(t).ok()?;
+    if !v.build.is_empty() {
+        return None;
+    }
+    Some(v.to_string())
+}
+
+pub async fn docker_image_semver_tag_ref_to_pull(
+    cfg: &Config,
+    image_ref_or_id: &str,
+    repo: &str,
+) -> anyhow::Result<Option<String>> {
+    let inspected = docker_image_inspect(cfg, image_ref_or_id).await?;
+    let labels = inspected.config.and_then(|c| c.labels).unwrap_or_default();
+    let Some(raw_version) = labels.get("org.opencontainers.image.version") else {
+        return Ok(None);
+    };
+    let Some(tag) = semver_tag_from_oci_version(raw_version) else {
+        return Ok(None);
+    };
+    let desired = format!("{repo}:{tag}");
+    let repo_tags = inspected.repo_tags.unwrap_or_default();
+    if repo_tags.iter().any(|t| t == &desired) {
+        return Ok(None);
+    }
+    Ok(Some(desired))
+}
+
 async fn run_docker_lines(
     cfg: &Config,
     args: &[&str],
@@ -471,7 +653,7 @@ async fn run_docker_lines(
     for s in args {
         a.push((*s).to_string());
     }
-    run_cmd_lines(cfg, "docker", &a, timeout).await
+    run_cmd_lines(cfg, &cfg.docker_bin, &a, timeout).await
 }
 
 async fn run_cmd_lines(
@@ -521,6 +703,9 @@ async fn run_cmd_lines(
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     #[test]
     fn parse_port_from_http_addr_parses_common_forms() {
         assert_eq!(parse_port_from_http_addr("0.0.0.0:50883"), Some(50883));
@@ -559,5 +744,151 @@ mod tests {
             "ghcr.io/ivanli-cn/dockrev-supervisor:latest",
             "ghcr.io/ivanli-cn/dockrev"
         ));
+    }
+
+    #[test]
+    fn semver_tag_from_oci_version_parses_v_prefix_and_rejects_build() {
+        assert_eq!(
+            semver_tag_from_oci_version("v0.7.7"),
+            Some("0.7.7".to_string())
+        );
+        assert_eq!(
+            semver_tag_from_oci_version("0.7.7+build.1"),
+            None,
+            "docker tags cannot include '+' build metadata"
+        );
+    }
+
+    #[cfg(unix)]
+    struct TempDir {
+        path: std::path::PathBuf,
+    }
+
+    #[cfg(unix)]
+    impl TempDir {
+        fn new(prefix: &str) -> anyhow::Result<Self> {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            let path =
+                std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()));
+            std::fs::create_dir_all(&path)?;
+            Ok(Self { path })
+        }
+
+        fn path(&self) -> &std::path::Path {
+            &self.path
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[cfg(unix)]
+    fn install_fake_docker(script_body: &str) -> anyhow::Result<(TempDir, String)> {
+        let dir = TempDir::new("dockrev-supervisor-fake-docker")?;
+        let docker = dir.path().join("docker");
+        std::fs::write(&docker, script_body)?;
+        let mut perms = std::fs::metadata(&docker)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&docker, perms)?;
+        Ok((dir, docker.to_string_lossy().to_string()))
+    }
+
+    #[cfg(unix)]
+    fn test_cfg() -> Config {
+        Config {
+            http_addr: "127.0.0.1:0".to_string(),
+            base_path: "/supervisor".to_string(),
+            auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
+            target_image_repo: "ghcr.io/ivanli-cn/dockrev".to_string(),
+            target_container_id: None,
+            target_compose_project: None,
+            target_compose_service: None,
+            target_compose_files: Vec::new(),
+            docker_bin: "docker".to_string(),
+            docker_host: None,
+            compose_bin: "docker-compose".to_string(),
+            state_path: std::path::PathBuf::from("/tmp/dockrev-supervisor-test.json"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn auto_match_container_handles_dangling_images_via_inspect_config_image() {
+        let script = r#"#!/usr/bin/env bash
+set -euo pipefail
+cmd="${1:-}"
+shift || true
+
+if [[ "$cmd" == "ps" ]]; then
+  echo '{"ID":"ctr_dangling","Image":"c85819d0c6dd"}'
+  exit 0
+fi
+
+if [[ "$cmd" == "inspect" ]]; then
+  # docker inspect <id> --format {{json .}}
+  cat <<'JSON'
+{"Image":"sha256:deadbeef","Config":{"Labels":{"com.docker.compose.service":"dockrev","com.docker.compose.project":"dockrev"},"Env":[],"Image":"ghcr.io/ivanli-cn/dockrev:latest"},"NetworkSettings":{"Networks":{}}}
+JSON
+  exit 0
+fi
+
+echo "unexpected args: $cmd $*" >&2
+exit 1
+"#;
+
+        let (_dir, docker_bin) = install_fake_docker(script).unwrap();
+
+        let mut cfg = test_cfg();
+        cfg.docker_bin = docker_bin;
+        let got = auto_match_container(&cfg).await.unwrap();
+        assert_eq!(got, "ctr_dangling");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn auto_match_container_prefers_compose_labels_when_configured() {
+        let script = r#"#!/usr/bin/env bash
+set -euo pipefail
+cmd="${1:-}"
+shift || true
+
+if [[ "$cmd" == "ps" ]]; then
+  args="$*"
+  if [[ "$args" == *"label=com.docker.compose.project=dockrev"* && "$args" == *"label=com.docker.compose.service=dockrev"* ]]; then
+    echo '{"ID":"ctr_labels","Image":"c85819d0c6dd"}'
+    exit 0
+  fi
+  # Unfiltered ps should not be used when labels-first succeeds, but keep it deterministic.
+  echo '{"ID":"ctr_other","Image":"ghcr.io/ivanli-cn/dockrev:latest"}'
+  exit 0
+fi
+
+if [[ "$cmd" == "inspect" ]]; then
+  cat <<'JSON'
+{"Image":"sha256:deadbeef","Config":{"Labels":{"com.docker.compose.service":"dockrev","com.docker.compose.project":"dockrev"},"Env":[],"Image":"ghcr.io/ivanli-cn/dockrev:latest"},"NetworkSettings":{"Networks":{}}}
+JSON
+  exit 0
+fi
+
+echo "unexpected args: $cmd $*" >&2
+exit 1
+"#;
+
+        let (_dir, docker_bin) = install_fake_docker(script).unwrap();
+
+        let mut cfg = test_cfg();
+        cfg.target_compose_project = Some("dockrev".to_string());
+        cfg.target_compose_service = Some("dockrev".to_string());
+        cfg.docker_bin = docker_bin;
+
+        let got = auto_match_container(&cfg).await.unwrap();
+        assert_eq!(got, "ctr_labels");
     }
 }
