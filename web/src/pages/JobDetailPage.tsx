@@ -275,11 +275,19 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
 
   const knownProgressPercent = progress ? getKnownProgressPercent(progress) : null
   const isRunning = job?.status === 'running'
-  const isIndeterminateRunning = progress !== null && knownProgressPercent === null && isRunning
+  const zeroPercentWhileRunning =
+    progress !== null &&
+    isRunning &&
+    knownProgressPercent === 0 &&
+    progress.total > 0 &&
+    progress.current < progress.total
+  const isIndeterminateRunning =
+    progress !== null && isRunning && (knownProgressPercent === null || zeroPercentWhileRunning)
+  const displayedProgressPercent = isIndeterminateRunning ? null : knownProgressPercent
   const progressLabel =
-    knownProgressPercent !== null ? `${knownProgressPercent}%` : isRunning ? 'running' : job?.status ?? '-'
+    displayedProgressPercent !== null ? `${displayedProgressPercent}%` : isRunning ? 'running' : job?.status ?? '-'
   const progressAriaText =
-    knownProgressPercent !== null ? `${knownProgressPercent}%` : isRunning ? 'running' : job?.status ?? 'finished'
+    displayedProgressPercent !== null ? `${displayedProgressPercent}%` : isRunning ? 'running' : job?.status ?? 'finished'
 
   return (
     <div className="page jobDetailPage">
@@ -320,14 +328,14 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
               role="progressbar"
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-valuenow={knownProgressPercent ?? undefined}
+              aria-valuenow={displayedProgressPercent ?? undefined}
               aria-valuetext={progressAriaText}
             >
               <div
                 className={isIndeterminateRunning ? 'jobProgressFill jobProgressFillIndeterminate' : 'jobProgressFill'}
                 style={
-                  knownProgressPercent !== null
-                    ? { width: `${knownProgressPercent}%` }
+                  displayedProgressPercent !== null
+                    ? { width: `${displayedProgressPercent}%` }
                     : isIndeterminateRunning
                       ? undefined
                       : { width: '100%' }

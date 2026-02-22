@@ -5,6 +5,7 @@ use std::{
 
 use semver::Version;
 use serde_json::json;
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::{
     api::types::{JobScope, StackRecord},
@@ -28,6 +29,38 @@ pub struct UpdateOutcome {
     pub summary_json: serde_json::Value,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpdateProgressStep {
+    ServiceStart,
+    PullStart,
+    PullProgress,
+    PullDone,
+    UpStart,
+    UpDone,
+    HealthStart,
+    HealthDone,
+    ServiceDone,
+}
+
+#[derive(Clone, Debug)]
+pub struct UpdateProgressEvent {
+    pub step: UpdateProgressStep,
+    pub service_name: String,
+    pub service_index: u32,
+    pub service_total: u32,
+    pub pull_fraction: Option<f64>,
+    pub message: String,
+}
+
+fn emit_update_progress(
+    progress_events: Option<&UnboundedSender<UpdateProgressEvent>>,
+    event: UpdateProgressEvent,
+) {
+    if let Some(tx) = progress_events {
+        let _ = tx.send(event);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run_update_job(
     runner: &dyn CommandRunner,
@@ -39,6 +72,7 @@ pub async fn run_update_job(
     target_tag: Option<&str>,
     target_digest: Option<&str>,
     allow_arch_mismatch: bool,
+    progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
 ) -> anyhow::Result<UpdateOutcome> {
     let compose_cfg = ComposeRunnerConfig {
         compose_bin: compose_bin.to_string(),
@@ -113,7 +147,21 @@ pub async fn run_update_job(
 
     let compose_for_update = override_stack.as_ref().unwrap_or(&compose_stack);
 
-    for svc in services {
+    let service_total = services.len() as u32;
+    for (service_index, svc) in services.into_iter().enumerate() {
+        let service_index = service_index as u32;
+        emit_update_progress(
+            progress_events.as_ref(),
+            UpdateProgressEvent {
+                step: UpdateProgressStep::ServiceStart,
+                service_name: svc.name.clone(),
+                service_index,
+                service_total,
+                pull_fraction: None,
+                message: format!("starting service {}", svc.name),
+            },
+        );
+
         let pre_update_container_id = run_to_string(
             runner,
             compose_for_update.ps_q_service(&compose_cfg, &svc.name),
@@ -122,6 +170,17 @@ pub async fn run_update_job(
         .await?;
         let pre_update_container_id = pre_update_container_id.trim().to_string();
         if pre_update_container_id.is_empty() {
+            emit_update_progress(
+                progress_events.as_ref(),
+                UpdateProgressEvent {
+                    step: UpdateProgressStep::ServiceDone,
+                    service_name: svc.name.clone(),
+                    service_index,
+                    service_total,
+                    pull_fraction: None,
+                    message: format!("skipped service {} (container not running)", svc.name),
+                },
+            );
             continue;
         }
 
@@ -134,18 +193,89 @@ pub async fn run_update_job(
         let old_image_id = old_image_id.trim().to_string();
         old_images.insert(svc.id.clone(), json!(old_image_id));
 
-        run_checked(
-            runner,
-            compose_for_update.pull_service(&compose_cfg, &svc.name),
-            Duration::from_secs(300),
-        )
-        .await?;
+        emit_update_progress(
+            progress_events.as_ref(),
+            UpdateProgressEvent {
+                step: UpdateProgressStep::PullStart,
+                service_name: svc.name.clone(),
+                service_index,
+                service_total,
+                pull_fraction: None,
+                message: format!("pulling image for {}", svc.name),
+            },
+        );
+        if let Some(progress_events) = progress_events.as_ref() {
+            run_checked_with_pull_progress(
+                runner,
+                compose_for_update.pull_service_with_progress(&compose_cfg, &svc.name),
+                Duration::from_secs(300),
+                |fraction| {
+                    emit_update_progress(
+                        Some(progress_events),
+                        UpdateProgressEvent {
+                            step: UpdateProgressStep::PullProgress,
+                            service_name: svc.name.clone(),
+                            service_index,
+                            service_total,
+                            pull_fraction: Some(fraction),
+                            message: format!(
+                                "pulling image for {} ({:.0}%)",
+                                svc.name,
+                                fraction * 100.0
+                            ),
+                        },
+                    );
+                },
+            )
+            .await?;
+        } else {
+            run_checked(
+                runner,
+                compose_for_update.pull_service_with_progress(&compose_cfg, &svc.name),
+                Duration::from_secs(300),
+            )
+            .await?;
+        }
+        emit_update_progress(
+            progress_events.as_ref(),
+            UpdateProgressEvent {
+                step: UpdateProgressStep::PullDone,
+                service_name: svc.name.clone(),
+                service_index,
+                service_total,
+                pull_fraction: Some(1.0),
+                message: format!("pull completed for {}", svc.name),
+            },
+        );
+
+        emit_update_progress(
+            progress_events.as_ref(),
+            UpdateProgressEvent {
+                step: UpdateProgressStep::UpStart,
+                service_name: svc.name.clone(),
+                service_index,
+                service_total,
+                pull_fraction: None,
+                message: format!("recreating service {}", svc.name),
+            },
+        );
         run_checked(
             runner,
             compose_for_update.up_service(&compose_cfg, &svc.name),
             Duration::from_secs(300),
         )
         .await?;
+        emit_update_progress(
+            progress_events.as_ref(),
+            UpdateProgressEvent {
+                step: UpdateProgressStep::UpDone,
+                service_name: svc.name.clone(),
+                service_index,
+                service_total,
+                pull_fraction: None,
+                message: format!("service {} updated", svc.name),
+            },
+        );
 
         // `up -d` may recreate the container, so refresh the container id before any inspect/health checks.
         let post_update_container_id = run_to_string(
@@ -173,6 +303,17 @@ pub async fn run_update_job(
         let mut rolled_back = false;
         let mut active_container_id = post_update_container_id;
         if has_health {
+            emit_update_progress(
+                progress_events.as_ref(),
+                UpdateProgressEvent {
+                    step: UpdateProgressStep::HealthStart,
+                    service_name: svc.name.clone(),
+                    service_index,
+                    service_total,
+                    pull_fraction: None,
+                    message: format!("waiting healthcheck for {}", svc.name),
+                },
+            );
             let ok = wait_healthy(
                 runner,
                 &docker_cfg,
@@ -225,6 +366,17 @@ pub async fn run_update_job(
                 }
                 rolled_back = true;
             }
+            emit_update_progress(
+                progress_events.as_ref(),
+                UpdateProgressEvent {
+                    step: UpdateProgressStep::HealthDone,
+                    service_name: svc.name.clone(),
+                    service_index,
+                    service_total,
+                    pull_fraction: None,
+                    message: format!("healthcheck passed for {}", svc.name),
+                },
+            );
         }
 
         let new_image_id = run_to_string(
@@ -238,6 +390,17 @@ pub async fn run_update_job(
         changed += 1;
 
         if rolled_back {
+            emit_update_progress(
+                progress_events.as_ref(),
+                UpdateProgressEvent {
+                    step: UpdateProgressStep::ServiceDone,
+                    service_name: svc.name.clone(),
+                    service_index,
+                    service_total,
+                    pull_fraction: None,
+                    message: format!("service {} rolled back", svc.name),
+                },
+            );
             return Ok(UpdateOutcome {
                 status: "rolled_back".to_string(),
                 summary_json: json!({
@@ -264,6 +427,18 @@ pub async fn run_update_job(
             &mut semver_pull_cache,
         )
         .await;
+
+        emit_update_progress(
+            progress_events.as_ref(),
+            UpdateProgressEvent {
+                step: UpdateProgressStep::ServiceDone,
+                service_name: svc.name.clone(),
+                service_index,
+                service_total,
+                pull_fraction: None,
+                message: format!("service {} done", svc.name),
+            },
+        );
     }
 
     Ok(UpdateOutcome {
@@ -474,6 +649,98 @@ async fn maybe_pull_semver_tag_for_image(
         }
     }
     semver_pull_cache.insert(tag_ref, res);
+}
+
+fn parse_size_to_bytes(input: &str) -> Option<f64> {
+    let trimmed = input
+        .trim()
+        .trim_matches(|c| matches!(c, '[' | ']' | '(' | ')' | ','));
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut split_idx = None;
+    for (idx, ch) in trimmed.char_indices() {
+        if !(ch.is_ascii_digit() || ch == '.') {
+            split_idx = Some(idx);
+            break;
+        }
+    }
+    let idx = split_idx.unwrap_or(trimmed.len());
+    if idx == 0 {
+        return None;
+    }
+    let num = trimmed[..idx].parse::<f64>().ok()?;
+    let unit = trimmed[idx..].trim().to_ascii_uppercase();
+    let factor = match unit.as_str() {
+        "" | "B" => 1.0,
+        "K" | "KB" | "KIB" => 1024.0,
+        "M" | "MB" | "MIB" => 1024.0 * 1024.0,
+        "G" | "GB" | "GIB" => 1024.0 * 1024.0 * 1024.0,
+        "T" | "TB" | "TIB" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+        _ => return None,
+    };
+    Some(num * factor)
+}
+
+fn parse_pull_fraction_from_line(line: &str) -> Option<f64> {
+    let mut best: Option<f64> = None;
+    for token in line.split_whitespace() {
+        let clean = token
+            .trim()
+            .trim_matches(|c| matches!(c, '[' | ']' | '(' | ')' | ','));
+        let Some((current, total)) = clean.split_once('/') else {
+            continue;
+        };
+        let Some(current_bytes) = parse_size_to_bytes(current) else {
+            continue;
+        };
+        let Some(total_bytes) = parse_size_to_bytes(total) else {
+            continue;
+        };
+        if total_bytes <= 0.0 {
+            continue;
+        }
+        let ratio = (current_bytes / total_bytes).clamp(0.0, 1.0);
+        if best.is_none_or(|v| ratio > v) {
+            best = Some(ratio);
+        }
+    }
+    best
+}
+
+async fn run_checked_with_pull_progress<F>(
+    runner: &dyn CommandRunner,
+    spec: CommandSpec,
+    timeout: Duration,
+    mut on_progress: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(f64) + Send,
+{
+    let mut last_fraction = 0.0f64;
+    let mut on_stdout = |_chunk: String| {};
+    let mut on_stderr = |chunk: String| {
+        if let Some(frac) = parse_pull_fraction_from_line(&chunk) {
+            let capped = frac.clamp(0.0, 0.99);
+            if capped > last_fraction + 0.01 {
+                last_fraction = capped;
+                on_progress(capped);
+            }
+        }
+    };
+
+    let out = runner
+        .run_stream(spec, timeout, &mut on_stdout, &mut on_stderr)
+        .await?;
+    if out.status != 0 {
+        return Err(anyhow::anyhow!(
+            "command failed: status={} stderr={}",
+            out.status,
+            out.stderr
+        ));
+    }
+    Ok(())
 }
 
 async fn wait_healthy(
@@ -784,6 +1051,7 @@ mod tests {
             None,
             None,
             false,
+            None,
         )
         .await
         .unwrap();
@@ -837,6 +1105,7 @@ mod tests {
             None,
             None,
             false,
+            None,
         )
         .await
         .unwrap();
@@ -844,6 +1113,81 @@ mod tests {
         assert_eq!(outcome.status, "success");
         assert_eq!(outcome.summary_json["changedServices"].as_u64().unwrap(), 1);
         assert_eq!(*runner.step.lock().unwrap(), 8);
+    }
+
+    #[tokio::test]
+    async fn update_job_emits_service_progress_events() {
+        let stack = StackRecord {
+            id: "stk_1".to_string(),
+            name: "App".to_string(),
+            archived: false,
+            compose: crate::api::types::ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec!["/srv/docker-compose.yml".to_string()],
+                env_file: None,
+            },
+            backup: crate::api::types::StackBackupConfig::default(),
+            services: vec![Service {
+                id: "svc_1".to_string(),
+                name: "web".to_string(),
+                image: ComposeRef {
+                    reference: "ghcr.io/org/web:1.0".to_string(),
+                    tag: "1.0".to_string(),
+                    digest: None,
+                    resolved_tag: None,
+                    resolved_tags: None,
+                },
+                candidate: None,
+                ignore: None,
+                settings: ServiceSettings {
+                    auto_rollback: true,
+                    backup_targets: BackupTargetOverrides {
+                        bind_paths: BTreeMap::<String, TernaryChoice>::new(),
+                        volume_names: BTreeMap::<String, TernaryChoice>::new(),
+                    },
+                },
+                archived: None,
+            }],
+        };
+
+        let runner = RefreshContainerIdRunner::default();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<UpdateProgressEvent>();
+        let outcome = run_update_job(
+            &runner,
+            "docker-compose",
+            &stack,
+            &JobScope::Service,
+            Some("svc_1"),
+            "live",
+            None,
+            None,
+            false,
+            Some(tx),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.status, "success");
+        let mut steps = Vec::new();
+        while let Ok(evt) = rx.try_recv() {
+            steps.push(evt.step);
+        }
+        assert!(steps.contains(&UpdateProgressStep::ServiceStart));
+        assert!(steps.contains(&UpdateProgressStep::PullStart));
+        assert!(steps.contains(&UpdateProgressStep::PullDone));
+        assert!(steps.contains(&UpdateProgressStep::UpDone));
+        assert!(steps.contains(&UpdateProgressStep::ServiceDone));
+    }
+
+    #[test]
+    fn parse_pull_fraction_supports_size_ratio_tokens() {
+        let line = "d2cad1f9f7c9 Downloading [==================> ] 3.146MB/5.89MB";
+        let frac = parse_pull_fraction_from_line(line).unwrap();
+        assert!(frac > 0.50 && frac < 0.60);
+
+        let full = "9b4e5f7f3558 Downloading [==================================================>] 443B/443B";
+        let full_frac = parse_pull_fraction_from_line(full).unwrap();
+        assert!((full_frac - 1.0).abs() < f64::EPSILON);
     }
 
     #[derive(Default)]
