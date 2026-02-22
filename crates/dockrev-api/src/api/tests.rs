@@ -1,4 +1,12 @@
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use axum::{body::Body, http::Request};
 use http_body_util::BodyExt as _;
@@ -523,6 +531,56 @@ impl RegistryClient for DualDigestRegistry {
             digest,
             platform_digest,
             arch: vec!["linux/amd64".to_string(), "linux/arm64".to_string()],
+        })
+    }
+}
+
+#[derive(Clone)]
+struct CoalescingRegistry {
+    list_tags_calls: Arc<AtomicUsize>,
+    list_tags_delay: Duration,
+}
+
+impl CoalescingRegistry {
+    fn new(list_tags_delay: Duration) -> Self {
+        Self {
+            list_tags_calls: Arc::new(AtomicUsize::new(0)),
+            list_tags_delay,
+        }
+    }
+
+    fn list_tags_calls(&self) -> usize {
+        self.list_tags_calls.load(Ordering::Relaxed)
+    }
+}
+
+#[async_trait::async_trait]
+impl RegistryClient for CoalescingRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        self.list_tags_calls.fetch_add(1, Ordering::Relaxed);
+        tokio::time::sleep(self.list_tags_delay).await;
+        Ok(vec![
+            "latest".to_string(),
+            "5.2.0".to_string(),
+            "5.3.0".to_string(),
+        ])
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        let digest = match reference {
+            "latest" | "5.3.0" => "sha256:new",
+            "5.2.0" => "sha256:old",
+            _ => "sha256:other",
+        };
+        Ok(ManifestInfo {
+            digest: Some(digest.to_string()),
+            platform_digest: None,
+            arch: vec!["linux/amd64".to_string()],
         })
     }
 }
@@ -1366,6 +1424,80 @@ services:
         .unwrap();
     let list = response_json(resp).await;
     assert_eq!(list["stacks"][0]["updates"].as_u64().unwrap(), 1);
+}
+
+#[tokio::test]
+async fn check_coalesces_repo_tags_fetch_for_same_image() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(120)));
+    let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", registry.clone(), runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web1:
+    image: ghcr.io/acme/web:latest
+  web2:
+    image: ghcr.io/acme/web:latest
+  web3:
+    image: ghcr.io/acme/web:latest
+  web4:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let check = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(check.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let check_id = triggered["checkId"].as_str().unwrap().to_string();
+
+    let mut finished = false;
+    for _ in 0..200 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{check_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(finished, "check job did not finish in time");
+    assert_eq!(
+        registry.list_tags_calls(),
+        1,
+        "repo tags should be fetched once per repo in a single check job"
+    );
 }
 
 #[tokio::test]
