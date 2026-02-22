@@ -461,6 +461,7 @@ async fn persist_job_progress(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_check_worker_result(
     state: &Arc<AppState>,
     job_id: &str,
