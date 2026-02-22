@@ -2,10 +2,10 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-22
 - Last: 2026-02-22
-- Notes: -
+- Notes: PR #82
 
 ## 背景 / 问题陈述
 
@@ -84,11 +84,12 @@
 
 ## 里程碑（Milestones）
 
-- [ ] M1: 配置项与 `429` 重试机制落地（含单元测试）。
-- [ ] M2: per-host 并发闸门接入 registry 请求路径。
-- [ ] M3: check job 级 tags/manifest 缓存接入与回归测试。
-- [ ] M4: 最小验证通过并提交 PR（含 checks 结果明确）。
+- [x] M1: 配置项与 `429` 重试机制落地（含单元测试）。
+- [x] M2: per-host 并发闸门接入 registry 请求路径。
+- [x] M3: check job 级 tags/manifest 缓存接入与回归测试。
+- [x] M4: 最小验证通过并提交 PR（含 checks 结果明确）。
 
 ## 变更记录（Change log）
 
 - 2026-02-22: 创建计划并冻结范围、验收与测试口径（Status=待实现）。
+- 2026-02-22: 完成实现并提交 PR #82，`PR Label Gate`（run 283）与 `CI (PR)`（run 233）通过（Status=已完成）。
