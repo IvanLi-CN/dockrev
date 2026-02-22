@@ -45,6 +45,7 @@ export type Service = {
   image: ServiceImage
   candidate?: {
     tag: string
+    resolvedTag?: string | null
     digest: string
     archMatch: ArchMatch
     arch: string[]

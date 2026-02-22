@@ -349,6 +349,7 @@ WHERE id = ?1
 	  current_resolved_tag,
 	  current_resolved_tags_json,
 	  candidate_tag,
+	  candidate_resolved_tag,
 	  candidate_digest,
 	  candidate_arch_match,
 	  candidate_arch_json,
@@ -366,8 +367,8 @@ WHERE id = ?1
             let mut rows = stmt.query(params![stack.id.clone()])?;
 
             while let Some(row) = rows.next()? {
-                let bind_paths_json: String = row.get(15)?;
-                let volume_names_json: String = row.get(16)?;
+                let bind_paths_json: String = row.get(16)?;
+                let volume_names_json: String = row.get(17)?;
                 let bind_paths: BTreeMap<String, crate::api::types::TernaryChoice> =
                     serde_json::from_str(&bind_paths_json).map_err(|e| {
                         rusqlite::Error::FromSqlConversionFailure(
@@ -389,11 +390,12 @@ WHERE id = ?1
                 let current_resolved_tags_json: Option<String> = row.get(6)?;
 
                 let candidate_tag: Option<String> = row.get(7)?;
-                let candidate_digest: Option<String> = row.get(8)?;
-                let candidate_arch_match: Option<String> = row.get(9)?;
-                let candidate_arch_json: Option<String> = row.get(10)?;
-                let ignore_rule_id: Option<String> = row.get(11)?;
-                let ignore_reason: Option<String> = row.get(12)?;
+                let candidate_resolved_tag: Option<String> = row.get(8)?;
+                let candidate_digest: Option<String> = row.get(9)?;
+                let candidate_arch_match: Option<String> = row.get(10)?;
+                let candidate_arch_json: Option<String> = row.get(11)?;
+                let ignore_rule_id: Option<String> = row.get(12)?;
+                let ignore_reason: Option<String> = row.get(13)?;
 
                 let current_resolved_tags: Option<Vec<String>> = current_resolved_tags_json
                     .as_deref()
@@ -408,6 +410,7 @@ WHERE id = ?1
                 let candidate = match (candidate_tag, candidate_digest) {
                     (Some(tag), Some(digest)) => Some(crate::api::types::Candidate {
                         tag,
+                        resolved_tag: candidate_resolved_tag,
                         digest,
                         arch_match: crate::api::types::ArchMatch::from_str(
                             candidate_arch_match.as_deref().unwrap_or("unknown"),
@@ -439,13 +442,13 @@ WHERE id = ?1
                     candidate,
                     ignore,
                     settings: ServiceSettings {
-                        auto_rollback: row.get::<_, i64>(13)? != 0,
+                        auto_rollback: row.get::<_, i64>(14)? != 0,
                         backup_targets: crate::api::types::BackupTargetOverrides {
                             bind_paths,
                             volume_names,
                         },
                     },
-                    archived: Some(row.get::<_, i64>(14)? != 0),
+                    archived: Some(row.get::<_, i64>(15)? != 0),
                 });
             }
 
@@ -676,6 +679,7 @@ SET
   current_resolved_tag = NULL,
   current_resolved_tags_json = NULL,
   candidate_tag = NULL,
+  candidate_resolved_tag = NULL,
   candidate_digest = NULL,
   candidate_arch_match = NULL,
   candidate_arch_json = NULL,
@@ -1216,6 +1220,7 @@ ORDER BY created_at DESC
         current_resolved_tag: Option<String>,
         current_resolved_tags_json: Option<String>,
         candidate_tag: Option<String>,
+        candidate_resolved_tag: Option<String>,
         candidate_digest: Option<String>,
         candidate_arch_match: Option<String>,
         candidate_arch_json: Option<String>,
@@ -1236,13 +1241,14 @@ SET
   current_resolved_tag = ?3,
   current_resolved_tags_json = ?4,
   candidate_tag = ?5,
-  candidate_digest = ?6,
-  candidate_arch_match = ?7,
-  candidate_arch_json = ?8,
-  ignore_rule_id = ?9,
-  ignore_reason = ?10,
-  checked_at = ?11,
-  updated_at = ?12
+  candidate_resolved_tag = ?6,
+  candidate_digest = ?7,
+  candidate_arch_match = ?8,
+  candidate_arch_json = ?9,
+  ignore_rule_id = ?10,
+  ignore_reason = ?11,
+  checked_at = ?12,
+  updated_at = ?13
 WHERE id = ?1
 "#,
                 params![
@@ -1251,13 +1257,14 @@ WHERE id = ?1
                     current_resolved_tag,
                     current_resolved_tags_json,
                     candidate_tag,
+                    candidate_resolved_tag,
                     candidate_digest,
                     candidate_arch_match,
                     candidate_arch_json,
                     ignore_rule_id,
                     ignore_reason,
                     checked_at,
-                    now
+                    now,
                 ],
             )?;
             Ok(changed > 0)
@@ -3274,6 +3281,10 @@ fn ensure_service_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
             ddl: "ALTER TABLE services ADD COLUMN candidate_tag TEXT",
         },
         Col {
+            name: "candidate_resolved_tag",
+            ddl: "ALTER TABLE services ADD COLUMN candidate_resolved_tag TEXT",
+        },
+        Col {
             name: "candidate_digest",
             ddl: "ALTER TABLE services ADD COLUMN candidate_digest TEXT",
         },
@@ -3537,6 +3548,7 @@ CREATE TABLE IF NOT EXISTS services (
   current_resolved_tag TEXT,
   current_resolved_tags_json TEXT,
   candidate_tag TEXT,
+  candidate_resolved_tag TEXT,
   candidate_digest TEXT,
   candidate_arch_match TEXT,
   candidate_arch_json TEXT,

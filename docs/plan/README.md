@@ -101,3 +101,4 @@
 | fknrb | Dockrev: digest-tags snapshot persistence (no live scan) | 已完成 | `fknrb:digest-tags-snapshot/PLAN.md` | 2026-02-18 | PR #71 |
 | vah6t | Dockrev: 仅“同 tag 的新 digest”更新（移除版本候选/选择 + 更新锁定） | 已完成 | `vah6t:same-tag-digest-only-updates/PLAN.md` | 2026-02-20 | PR #74 |
 | nxjyx | Dockrev: 修复 supervisor 自动识别（labels-first + inspect fallback）+ 更新时 best-effort 拉 semver tag（避免悬空） | 待实现 | `nxjyx:supervisor-auto-match-and-semver-pull/PLAN.md` | 2026-02-21 | - |
+| rc9kk | Dockrev: 候选版本号推断修复（candidate resolved tag） | 已完成 | `rc9kk:fix-candidate-version-inference/PLAN.md` | 2026-02-21 | PR #80 |

@@ -92,6 +92,8 @@ pub struct ComposeRef {
 #[serde(rename_all = "camelCase")]
 pub struct Candidate {
     pub tag: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_tag: Option<String>,
     pub digest: String,
     pub arch_match: ArchMatch,
     pub arch: Vec<String>,

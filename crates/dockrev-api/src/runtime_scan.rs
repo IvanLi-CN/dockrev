@@ -337,6 +337,7 @@ async fn run_runtime_scan_for_job(
                         None,
                         None,
                         None,
+                        None,
                         now,
                         now,
                     )
@@ -347,6 +348,7 @@ async fn run_runtime_scan_for_job(
                 outcome.current_resolved_tags_json = None;
                 outcome.current_resolved_tags = None;
                 outcome.candidate_tag = None;
+                outcome.candidate_resolved_tag = None;
                 outcome.candidate_digest = None;
                 outcome.candidate_arch_match = None;
                 outcome.candidate_arch_json = None;

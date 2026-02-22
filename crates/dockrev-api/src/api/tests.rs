@@ -265,6 +265,39 @@ impl RegistryClient for StatefulRegistry {
     }
 }
 
+#[derive(Clone, Default)]
+struct CandidateResolvedTagRegistry;
+
+#[async_trait::async_trait]
+impl RegistryClient for CandidateResolvedTagRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        Ok(vec![
+            "latest".to_string(),
+            "v0.2.15".to_string(),
+            "0.2.15".to_string(),
+            "v0.2.14".to_string(),
+        ])
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        let digest = match reference {
+            "latest" | "v0.2.15" | "0.2.15" => "sha256:new",
+            "v0.2.14" => "sha256:old",
+            _ => "sha256:unknown",
+        };
+        Ok(ManifestInfo {
+            digest: Some(digest.to_string()),
+            platform_digest: None,
+            arch: vec!["linux/amd64".to_string()],
+        })
+    }
+}
+
 #[derive(Clone)]
 struct ScriptedRunner {
     calls: Arc<std::sync::Mutex<Vec<Vec<String>>>>,
@@ -2527,6 +2560,114 @@ services:
 }
 
 #[tokio::test]
+async fn candidate_resolved_tag_inference_prefers_semver_for_floating_candidate() {
+    let runner: Arc<ScriptedRunner> = Arc::new(ScriptedRunner::default());
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(CandidateResolvedTagRegistry),
+        runner.clone(),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "demo".to_string(),
+            stack_id: Some(stack_id.clone()),
+            status: "active".to_string(),
+            last_seen_at: Some(now.clone()),
+            last_scan_at: now,
+            last_error: None,
+            last_config_files: Some(vec![compose_path.clone()]),
+            unarchive_if_active: true,
+        })
+        .await
+        .unwrap();
+
+    let check = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(check.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let check_id = triggered["checkId"].as_str().unwrap().to_string();
+
+    let mut finished = false;
+    for _ in 0..80 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{check_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(finished, "check job did not finish in time");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let candidate = &detail["stack"]["services"][0]["candidate"];
+    assert_eq!(candidate["tag"].as_str().unwrap_or("<none>"), "latest");
+    assert_eq!(
+        candidate["resolvedTag"].as_str().unwrap_or("<none>"),
+        "v0.2.15"
+    );
+    assert_eq!(
+        candidate["digest"].as_str().unwrap_or("<none>"),
+        "sha256:new"
+    );
+}
+
+#[tokio::test]
 async fn resolved_tag_inference_matches_platform_digest_and_clears_noop_candidate() {
     let runner: Arc<PlatformDigestRunner> = Arc::new(PlatformDigestRunner::default());
     let state = test_state_with(":memory:", Arc::new(DualDigestRegistry), runner.clone()).await;
@@ -3306,6 +3447,7 @@ services:
             None,
             None,
             None,
+            None,
             &now,
             &now,
         )
@@ -3608,6 +3750,7 @@ services:
         .update_service_check_result(
             &service_id,
             Some("sha256:match".to_string()),
+            None,
             None,
             None,
             None,
