@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-22
 - Last: 2026-02-22
 
@@ -80,8 +80,8 @@
 ## 测试（Testing）
 
 - 后端：`cargo test -p dockrev-api`
-- 前端：`bun --cwd web run build`
-- 回归：`bun --cwd web run test-storybook`（覆盖 Queue/JobDetail 进度展示）
+- 前端：`bun run --cwd web build`
+- 前端：`bun run --cwd web lint`
 
 ## 风险 / 开放问题
 
@@ -90,12 +90,13 @@
 
 ## 里程碑（Milestones）
 
-- [ ] M1: 后端统一 progress 模型（list/get + SSE `job_progress`）
-- [ ] M2: `check all` 并发化与进度/日志节流
-- [ ] M3: `runtime_scan` / `update` 进度对齐
-- [ ] M4: 前端 Queue/JobDetail 进度展示与兼容回退
-- [ ] M5: 自动化验证与 PR 交付
+- [x] M1: 后端统一 progress 模型（list/get + SSE `job_progress`）
+- [x] M2: `check all` 并发化与进度/日志节流
+- [x] M3: `runtime_scan` / `update` 进度对齐
+- [x] M4: 前端 Queue/JobDetail 进度展示与兼容回退
+- [x] M5: 自动化验证与 PR 交付
 
 ## 变更记录（Change log）
 
 - 2026-02-22: 创建计划，冻结范围、验收与测试口径（Status=待实现）。
+- 2026-02-22: 完成实现与验证，创建 PR #81（Status=已完成）。
