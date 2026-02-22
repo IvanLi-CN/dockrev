@@ -48,7 +48,7 @@
 
 ## 里程碑
 
-- [ ] M1: docs freeze（计划与索引入库）
-- [ ] M2: 统一 helper 与页面替换完成
-- [ ] M3: 单测与构建通过
-- [ ] M4: PR 创建并 checks 结果明确
+- [x] M1: docs freeze（计划与索引入库）
+- [x] M2: 统一 helper 与页面替换完成
+- [x] M3: 单测与构建通过
+- [x] M4: PR 创建并 checks 结果明确
