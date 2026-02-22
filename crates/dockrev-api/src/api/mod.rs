@@ -929,7 +929,6 @@ async fn run_check_for_job(
     }))
 }
 
-#[cfg(test)]
 fn repo_candidates(img: &registry::ImageRef) -> Vec<String> {
     let mut out = Vec::<String>::new();
     out.push(format!("{}/{}", img.registry, img.name));
@@ -944,7 +943,6 @@ fn repo_candidates(img: &registry::ImageRef) -> Vec<String> {
     out
 }
 
-#[cfg(test)]
 async fn docker_compose_service_runtime_digest(
     state: &AppState,
     compose_project: &str,
