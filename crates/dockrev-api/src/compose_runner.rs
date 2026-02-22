@@ -45,6 +45,20 @@ impl ComposeStack {
         cmd
     }
 
+    pub fn pull_service_with_progress(
+        &self,
+        cfg: &ComposeRunnerConfig,
+        service: &str,
+    ) -> CommandSpec {
+        let mut cmd = self.pull_service(cfg, service);
+        // Docker Compose v2 supports COMPOSE_PROGRESS=plain for stable machine-friendly output.
+        if is_docker_plugin(&cfg.compose_bin) {
+            cmd.env
+                .push(("COMPOSE_PROGRESS".to_string(), "plain".to_string()));
+        }
+        cmd
+    }
+
     pub fn up_service(&self, cfg: &ComposeRunnerConfig, service: &str) -> CommandSpec {
         let mut cmd = self.base_command(cfg);
         cmd.args

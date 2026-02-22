@@ -397,6 +397,8 @@ async fn restore_discovery_project(
 }
 
 const CHECK_PROGRESS_LOG_INTERVAL: Duration = Duration::from_millis(500);
+const UPDATE_STACK_BASE_PROGRESS: f64 = 0.15;
+const UPDATE_STACK_APPLY_SPAN: f64 = 0.80;
 
 fn progress_percent(current: u32, total: u32) -> u32 {
     if total == 0 {
@@ -413,15 +415,69 @@ fn make_job_progress(
     current_target: Option<String>,
     updated_at: String,
 ) -> JobProgress {
+    make_job_progress_with_percent(
+        phase,
+        message,
+        current,
+        total,
+        current_target,
+        updated_at,
+        progress_percent(current, total),
+    )
+}
+
+fn make_job_progress_with_percent(
+    phase: &str,
+    message: String,
+    current: u32,
+    total: u32,
+    current_target: Option<String>,
+    updated_at: String,
+    percent: u32,
+) -> JobProgress {
     JobProgress {
         phase: phase.to_string(),
         message,
         current,
         total,
-        percent: progress_percent(current, total),
+        percent: percent.min(100),
         current_target,
         updated_at,
     }
+}
+
+fn update_progress_percent(processed_stacks: u32, total_stacks: u32, stack_fraction: f64) -> u32 {
+    if total_stacks == 0 {
+        return 0;
+    }
+    let stack_fraction = stack_fraction.clamp(0.0, 1.0);
+    let overall = ((processed_stacks as f64) + stack_fraction) / (total_stacks as f64);
+    (overall.clamp(0.0, 1.0) * 100.0).floor() as u32
+}
+
+fn update_apply_fraction(evt: &updater::UpdateProgressEvent) -> f64 {
+    use updater::UpdateProgressStep as S;
+
+    let service_total = evt.service_total.max(1);
+    let service_index = evt.service_index.min(service_total.saturating_sub(1));
+    let unit = 1.0 / service_total as f64;
+
+    let step_fraction = match evt.step {
+        S::ServiceStart => 0.02,
+        S::PullStart => 0.08,
+        S::PullProgress => {
+            let f = evt.pull_fraction.unwrap_or(0.0).clamp(0.0, 1.0);
+            0.08 + 0.42 * f
+        }
+        S::PullDone => 0.52,
+        S::UpStart => 0.60,
+        S::UpDone => 0.82,
+        S::HealthStart => 0.86,
+        S::HealthDone => 0.95,
+        S::ServiceDone => 1.0,
+    };
+
+    ((service_index as f64) + step_fraction) * unit
 }
 
 async fn persist_job_progress(
@@ -1372,13 +1428,14 @@ async fn run_update_job(
                 }
                 continue;
             };
-            latest_progress = make_job_progress(
+            latest_progress = make_job_progress_with_percent(
                 "backup",
                 format!("processing stack {stack_id}"),
                 processed_stacks,
                 total_stacks,
                 Some(stack_id.clone()),
                 now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
+                update_progress_percent(processed_stacks, total_stacks, 0.08),
             );
             if let Err(e) = persist_job_progress(&state, &job_id, &latest_progress).await {
                 tracing::warn!(job_id = %job_id, error = %e, "failed to persist update progress");
@@ -1520,17 +1577,90 @@ async fn run_update_job(
                 );
             }
 
-            latest_progress = make_job_progress(
+            latest_progress = make_job_progress_with_percent(
                 "apply",
                 format!("applying updates for stack {stack_id}"),
                 processed_stacks,
                 total_stacks,
                 Some(stack_id.clone()),
                 now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
+                update_progress_percent(processed_stacks, total_stacks, UPDATE_STACK_BASE_PROGRESS),
             );
             if let Err(e) = persist_job_progress(&state, &job_id, &latest_progress).await {
                 tracing::warn!(job_id = %job_id, error = %e, "failed to persist update progress");
             }
+
+            let (progress_tx, mut progress_rx) =
+                tokio::sync::mpsc::unbounded_channel::<updater::UpdateProgressEvent>();
+            let progress_state = state.clone();
+            let progress_job_id = job_id.clone();
+            let progress_stack_id = stack_id.clone();
+            let processed_stacks_for_progress = processed_stacks;
+            let total_stacks_for_progress = total_stacks;
+            let progress_task = tokio::spawn(async move {
+                let mut last_percent = update_progress_percent(
+                    processed_stacks_for_progress,
+                    total_stacks_for_progress,
+                    UPDATE_STACK_BASE_PROGRESS,
+                );
+                let mut last_emit = std::time::Instant::now()
+                    .checked_sub(Duration::from_secs(5))
+                    .unwrap_or_else(std::time::Instant::now);
+
+                while let Some(evt) = progress_rx.recv().await {
+                    let apply_fraction = update_apply_fraction(&evt);
+                    let stack_fraction =
+                        UPDATE_STACK_BASE_PROGRESS + UPDATE_STACK_APPLY_SPAN * apply_fraction;
+                    let next_percent = update_progress_percent(
+                        processed_stacks_for_progress,
+                        total_stacks_for_progress,
+                        stack_fraction,
+                    )
+                    .max(last_percent);
+
+                    let force_emit = matches!(
+                        evt.step,
+                        updater::UpdateProgressStep::PullDone
+                            | updater::UpdateProgressStep::UpDone
+                            | updater::UpdateProgressStep::HealthDone
+                            | updater::UpdateProgressStep::ServiceDone
+                    );
+                    let should_emit = force_emit
+                        || next_percent > last_percent
+                        || last_emit.elapsed() >= Duration::from_millis(600);
+                    if !should_emit {
+                        continue;
+                    }
+
+                    last_percent = next_percent;
+                    last_emit = std::time::Instant::now();
+                    let updated_at = now_rfc3339()
+                        .unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+                    let progress_message = if evt.message.contains(&evt.service_name) {
+                        evt.message
+                    } else {
+                        format!("{} · {}", evt.service_name, evt.message)
+                    };
+                    let progress = make_job_progress_with_percent(
+                        "apply",
+                        progress_message,
+                        processed_stacks_for_progress,
+                        total_stacks_for_progress,
+                        Some(progress_stack_id.clone()),
+                        updated_at,
+                        next_percent,
+                    );
+                    if let Err(e) =
+                        persist_job_progress(&progress_state, &progress_job_id, &progress).await
+                    {
+                        tracing::warn!(
+                            job_id = %progress_job_id,
+                            error = %e,
+                            "failed to persist streamed update progress"
+                        );
+                    }
+                }
+            });
 
             let update_outcome = updater::run_update_job(
                 &logging_runner,
@@ -1542,8 +1672,10 @@ async fn run_update_job(
                 req.target_tag.as_deref(),
                 req.target_digest.as_deref(),
                 req.allow_arch_mismatch,
+                Some(progress_tx),
             )
             .await;
+            let _ = progress_task.await;
             match update_outcome {
                 Ok(outcome) => {
                     final_status = outcome.status.clone();
@@ -1858,6 +1990,81 @@ impl crate::runner::CommandRunner for DbLoggingRunner {
             )
             .await;
         Ok(out)
+    }
+
+    async fn run_stream(
+        &self,
+        spec: crate::runner::CommandSpec,
+        timeout: std::time::Duration,
+        on_stdout: &mut (dyn FnMut(String) + Send),
+        on_stderr: &mut (dyn FnMut(String) + Send),
+    ) -> anyhow::Result<crate::runner::CommandOutput> {
+        let start = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)?;
+        let msg = format!("$ {} {}", spec.program, spec.args.join(" "));
+        let _ = self
+            .db
+            .insert_job_log(
+                &self.job_id,
+                &JobLogLine {
+                    ts: start,
+                    level: "info".to_string(),
+                    msg,
+                },
+            )
+            .await;
+
+        let mut captured_stdout = String::new();
+        let mut captured_stderr = String::new();
+        let mut tap_stdout = |chunk: String| {
+            captured_stdout.push_str(&chunk);
+            on_stdout(chunk);
+        };
+        let mut tap_stderr = |chunk: String| {
+            captured_stderr.push_str(&chunk);
+            on_stderr(chunk);
+        };
+
+        let out = self
+            .inner
+            .run_stream(spec, timeout, &mut tap_stdout, &mut tap_stderr)
+            .await?;
+        if captured_stdout.is_empty() {
+            captured_stdout = out.stdout.clone();
+        }
+        if captured_stderr.is_empty() {
+            captured_stderr = out.stderr.clone();
+        }
+
+        let ts = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)?;
+        let msg = format!(
+            "status={} stdout={} stderr={}",
+            out.status,
+            truncate(&captured_stdout, 2000),
+            truncate(&captured_stderr, 2000)
+        );
+        let _ = self
+            .db
+            .insert_job_log(
+                &self.job_id,
+                &JobLogLine {
+                    ts,
+                    level: if out.status == 0 {
+                        "info".to_string()
+                    } else {
+                        "warn".to_string()
+                    },
+                    msg,
+                },
+            )
+            .await;
+
+        Ok(crate::runner::CommandOutput {
+            status: out.status,
+            stdout: captured_stdout,
+            stderr: captured_stderr,
+        })
     }
 }
 

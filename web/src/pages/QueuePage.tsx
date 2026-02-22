@@ -61,7 +61,10 @@ function getProgressPercent(job: JobListItem): number | null {
   const total = Number.isFinite(p.total) ? Math.max(0, p.total) : 0
   if (total <= 0) return null
   if (!Number.isFinite(p.percent)) return null
-  return Math.max(0, Math.min(100, Math.round(p.percent)))
+  const percent = Math.max(0, Math.min(100, Math.round(p.percent)))
+  // Avoid misleading "stuck at 0%" for long-running jobs; use indeterminate while backend keeps refreshing.
+  if (job.status === 'running' && percent === 0 && p.current < total) return null
+  return percent
 }
 
 function shouldShowFinishedAt(job: JobListItem): boolean {
