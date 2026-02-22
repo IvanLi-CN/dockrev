@@ -110,6 +110,7 @@ async fn infer_semver_tags_for_digests(
     matched
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn check_service_and_persist(
     state: &Arc<AppState>,
     job_id: &str,
