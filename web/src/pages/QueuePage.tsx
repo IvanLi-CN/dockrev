@@ -44,12 +44,28 @@ function formatProgressLabel(job: JobListItem): string | null {
   const current = Number.isFinite(p.current) ? Math.max(0, p.current) : 0
   const total = Number.isFinite(p.total) ? Math.max(0, p.total) : 0
   const phase = (p.phase ?? '').trim()
+  const message = (p.message ?? '').trim()
   const target = (p.currentTarget ?? '').trim()
-  const head = total > 0 ? `${current}/${total}` : `${current}`
-  const parts = [head]
+  const parts: string[] = []
+  if (total > 0) parts.push(`${current}/${total}`)
   if (phase) parts.push(phase)
+  if (message) parts.push(message)
   if (target) parts.push(target)
-  return parts.join(' · ')
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
+function getProgressPercent(job: JobListItem): number | null {
+  const p = job.progress
+  if (!p) return null
+  // Frontend must not derive percent; only trust backend-provided percent when total is known.
+  const total = Number.isFinite(p.total) ? Math.max(0, p.total) : 0
+  if (total <= 0) return null
+  if (!Number.isFinite(p.percent)) return null
+  return Math.max(0, Math.min(100, Math.round(p.percent)))
+}
+
+function shouldShowFinishedAt(job: JobListItem): boolean {
+  return job.status !== 'running' && Boolean(job.finishedAt)
 }
 
 export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void }) {
@@ -119,44 +135,62 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
         </div>
 
         <div className="queueList">
-          {filtered.map((j) => (
-            <button
-              key={j.id}
-              className="queueItem"
-              onClick={() => navigate({ name: 'job', jobId: j.id })}
-            >
-              <div className="queueMain">
-                <div className="queueTitle">
-                  <Mono>{j.type}</Mono> · <Mono>{j.scope}</Mono>
-                </div>
-                <div className="queueMeta">
-                  <span>
-                    by <Mono>{j.createdBy}</Mono> · reason <Mono>{j.reason}</Mono>
-                  </span>
-                  {j.status === 'running' ? (
+          {filtered.map((j) => {
+            const progressLabel = formatProgressLabel(j)
+            const progressPercent = getProgressPercent(j)
+            return (
+              <button
+                key={j.id}
+                className="queueItem"
+                onClick={() => navigate({ name: 'job', jobId: j.id })}
+              >
+                <div className="queueMain">
+                  <div className="queueTitle">
+                    <Mono>{j.type}</Mono> · <Mono>{j.scope}</Mono>
+                  </div>
+                  <div className="queueMeta">
                     <span>
-                      progress{' '}
-                      <Mono>
-                        {formatProgressLabel(j) ?? `running ${formatRunningDuration(j.startedAt) ?? '-'}`}
-                      </Mono>
+                      by <Mono>{j.createdBy}</Mono> · reason <Mono>{j.reason}</Mono>
                     </span>
+                    {j.status === 'running' ? (
+                      <span>
+                        progress <Mono>{progressLabel ?? `running ${formatRunningDuration(j.startedAt) ?? '-'}`}</Mono>
+                      </span>
+                    ) : null}
+                    <span>
+                      created <Mono>{formatShort(j.createdAt)}</Mono>
+                    </span>
+                    <span>
+                      started <Mono>{formatShort(j.startedAt)}</Mono>
+                    </span>
+                    {shouldShowFinishedAt(j) ? (
+                      <span>
+                        finished <Mono>{formatShort(j.finishedAt)}</Mono>
+                      </span>
+                    ) : null}
+                  </div>
+                  {j.status === 'running' ? (
+                    <div
+                      className={progressPercent === null ? 'queueProgressBar queueProgressBarIndeterminate' : 'queueProgressBar'}
+                      role="progressbar"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={progressPercent ?? undefined}
+                      aria-valuetext={progressPercent === null ? 'running' : `${progressPercent}%`}
+                    >
+                      <div
+                        className={progressPercent === null ? 'queueProgressFill queueProgressFillIndeterminate' : 'queueProgressFill'}
+                        style={progressPercent === null ? undefined : { width: `${progressPercent}%` }}
+                      />
+                    </div>
                   ) : null}
-                  <span>
-                    created <Mono>{formatShort(j.createdAt)}</Mono>
-                  </span>
-                  <span>
-                    started <Mono>{formatShort(j.startedAt)}</Mono>
-                  </span>
-                  <span>
-                    finished <Mono>{formatShort(j.finishedAt)}</Mono>
-                  </span>
                 </div>
-              </div>
-              <div className="queueStatus">
-                <Pill tone={statusTone(j.status)}>{j.status}</Pill>
-              </div>
-            </button>
-          ))}
+                <div className="queueStatus">
+                  <Pill tone={statusTone(j.status)}>{j.status}</Pill>
+                </div>
+              </button>
+            )
+          })}
           {filtered.length === 0 ? <div className="muted">暂无任务</div> : null}
         </div>
 

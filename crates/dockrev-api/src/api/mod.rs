@@ -17,7 +17,7 @@ use axum::{
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::{sync::Semaphore, task::JoinSet};
+use tokio::task::JoinSet;
 use url::Url;
 
 use crate::github;
@@ -305,7 +305,7 @@ async fn trigger_discovery_scan(
     let run_state = state.clone();
     let run_job_id = job_id.clone();
     tokio::spawn(async move {
-        let outcome = discovery::run_scan(run_state.as_ref()).await;
+        let outcome = discovery::run_scan_for_job(run_state.as_ref(), &run_job_id).await;
         let finished_at =
             now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
         match outcome {
@@ -457,6 +457,78 @@ async fn persist_job_progress(
             },
         )
         .await?;
+
+    Ok(())
+}
+
+async fn handle_check_worker_result(
+    state: &Arc<AppState>,
+    job_id: &str,
+    now: &str,
+    joined: Result<
+        (
+            String,
+            String,
+            anyhow::Result<crate::service_check::ServiceCheckOutcome>,
+        ),
+        tokio::task::JoinError,
+    >,
+    total_services: u32,
+    services_checked: &mut u32,
+    services_with_candidate: &mut u32,
+    latest_target: &mut Option<String>,
+    last_progress_logged_at: &mut Option<std::time::Instant>,
+    latest_progress: &mut JobProgress,
+) -> Result<(), ApiError> {
+    let (stack_id, service_name, outcome) =
+        joined.map_err(|e| map_internal(anyhow::anyhow!("check worker join failed: {e}")))?;
+
+    *services_checked = (*services_checked).saturating_add(1);
+    *latest_target = Some(format!("{stack_id}/{service_name}"));
+
+    let outcome = outcome.map_err(map_internal)?;
+    if outcome.candidate_present {
+        *services_with_candidate = (*services_with_candidate).saturating_add(1);
+    }
+
+    let now_instant = std::time::Instant::now();
+    let should_emit = *services_checked == 1
+        || *services_checked == total_services
+        || last_progress_logged_at
+            .map(|ts| now_instant.duration_since(ts) >= CHECK_PROGRESS_LOG_INTERVAL)
+            .unwrap_or(true);
+    if should_emit {
+        *last_progress_logged_at = Some(now_instant);
+        let updated_at = now_rfc3339().unwrap_or_else(|_| now.to_string());
+        *latest_progress = make_job_progress(
+            "scanning",
+            format!("checking services ({}/{total_services})", *services_checked),
+            *services_checked,
+            total_services,
+            (*latest_target).clone(),
+            updated_at.clone(),
+        );
+        if let Err(e) = persist_job_progress(state, job_id, latest_progress).await {
+            tracing::warn!(job_id = %job_id, error = %e, "failed to persist check progress");
+        }
+        let _ = state
+            .db
+            .insert_job_log(
+                job_id,
+                &JobLogLine {
+                    ts: updated_at,
+                    level: "info".to_string(),
+                    msg: format!(
+                        "check progress: {}/{} ({}%) current={}",
+                        latest_progress.current,
+                        latest_progress.total,
+                        latest_progress.percent,
+                        latest_progress.current_target.as_deref().unwrap_or("-"),
+                    ),
+                },
+            )
+            .await;
+    }
 
     Ok(())
 }
@@ -769,29 +841,25 @@ async fn run_check_for_job(
         tracing::warn!(job_id = %job_id, error = %e, "failed to persist initial check progress");
     }
 
-    let semaphore = Arc::new(Semaphore::new(CHECK_CONCURRENCY));
     let mut join_set: JoinSet<(
         String,
         String,
         anyhow::Result<crate::service_check::ServiceCheckOutcome>,
     )> = JoinSet::new();
 
+    let mut services_checked = 0u32;
+    let mut services_with_candidate = 0u32;
+    let mut last_progress_logged_at: Option<std::time::Instant> = None;
+    let mut latest_target: Option<String> = None;
+    let manifest_digest_cache = crate::service_check::new_manifest_digest_cache();
+
     for unit in units {
-        let permit = semaphore
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|e| map_internal(anyhow::anyhow!("check semaphore closed: {e}")))?;
-        let state = state.clone();
-        let job_id = job_id.to_string();
-        let host_platform = host_platform.to_string();
-        let now = now.to_string();
+        let spawn_state = state.clone();
+        let spawn_job_id = job_id.to_string();
+        let spawn_host_platform = host_platform.to_string();
+        let spawn_now = now.to_string();
+        let spawn_manifest_digest_cache = manifest_digest_cache.clone();
         join_set.spawn(async move {
-            let _permit = permit;
-            let mut manifest_digest_cache: std::collections::HashMap<
-                String,
-                (Option<String>, Option<String>),
-            > = std::collections::HashMap::new();
             let stack_id = unit.stack_id.clone();
             let service_name = unit.service.name.clone();
             let runtime_digest = match (
@@ -799,7 +867,7 @@ async fn run_check_for_job(
                 registry::ImageRef::parse(&unit.service.image_ref),
             ) {
                 (Some(project), Ok(img)) => docker_compose_service_runtime_digest(
-                    state.as_ref(),
+                    spawn_state.as_ref(),
                     project,
                     &unit.service.name,
                     &repo_candidates(&img),
@@ -810,74 +878,50 @@ async fn run_check_for_job(
                 _ => None,
             };
             let outcome = crate::service_check::check_service_and_persist(
-                &state,
-                &job_id,
+                &spawn_state,
+                &spawn_job_id,
                 &unit.service,
                 runtime_digest,
-                &host_platform,
-                &now,
-                &mut manifest_digest_cache,
+                &spawn_host_platform,
+                &spawn_now,
+                &spawn_manifest_digest_cache,
             )
             .await;
             (stack_id, service_name, outcome)
         });
+        if join_set.len() >= CHECK_CONCURRENCY
+            && let Some(joined) = join_set.join_next().await
+        {
+            handle_check_worker_result(
+                state,
+                job_id,
+                now,
+                joined,
+                total_services,
+                &mut services_checked,
+                &mut services_with_candidate,
+                &mut latest_target,
+                &mut last_progress_logged_at,
+                &mut latest_progress,
+            )
+            .await?;
+        }
     }
 
-    let mut services_checked = 0u32;
-    let mut services_with_candidate = 0u32;
-    let mut last_progress_logged_at: Option<std::time::Instant> = None;
-    let mut latest_target: Option<String> = None;
-
     while let Some(joined) = join_set.join_next().await {
-        let (stack_id, service_name, outcome) =
-            joined.map_err(|e| map_internal(anyhow::anyhow!("check worker join failed: {e}")))?;
-
-        services_checked += 1;
-        latest_target = Some(format!("{stack_id}/{service_name}"));
-
-        let outcome = outcome.map_err(map_internal)?;
-        if outcome.candidate_present {
-            services_with_candidate += 1;
-        }
-
-        let now_instant = std::time::Instant::now();
-        let should_emit = services_checked == 1
-            || services_checked == total_services
-            || last_progress_logged_at
-                .map(|ts| now_instant.duration_since(ts) >= CHECK_PROGRESS_LOG_INTERVAL)
-                .unwrap_or(true);
-        if should_emit {
-            last_progress_logged_at = Some(now_instant);
-            let updated_at = now_rfc3339().unwrap_or_else(|_| now.to_string());
-            latest_progress = make_job_progress(
-                "scanning",
-                format!("checking services ({services_checked}/{total_services})"),
-                services_checked,
-                total_services,
-                latest_target.clone(),
-                updated_at.clone(),
-            );
-            if let Err(e) = persist_job_progress(state, job_id, &latest_progress).await {
-                tracing::warn!(job_id = %job_id, error = %e, "failed to persist check progress");
-            }
-            let _ = state
-                .db
-                .insert_job_log(
-                    job_id,
-                    &JobLogLine {
-                        ts: updated_at,
-                        level: "info".to_string(),
-                        msg: format!(
-                            "check progress: {}/{} ({}%) current={}",
-                            latest_progress.current,
-                            latest_progress.total,
-                            latest_progress.percent,
-                            latest_progress.current_target.as_deref().unwrap_or("-"),
-                        ),
-                    },
-                )
-                .await;
-        }
+        handle_check_worker_result(
+            state,
+            job_id,
+            now,
+            joined,
+            total_services,
+            &mut services_checked,
+            &mut services_with_candidate,
+            &mut latest_target,
+            &mut last_progress_logged_at,
+            &mut latest_progress,
+        )
+        .await?;
     }
 
     for stack_id in &stack_ids {
@@ -1292,11 +1336,11 @@ async fn run_update_job(
         let mut final_status = "success".to_string();
         let mut stack_summaries = Vec::new();
         let mut backups_to_cleanup: Vec<(String, u32)> = Vec::new();
-        let mut completed_stacks = 0u32;
+        let mut processed_stacks = 0u32;
         let mut latest_progress = make_job_progress(
             "prepare",
             format!("preparing update targets ({total_stacks} stacks)"),
-            completed_stacks,
+            processed_stacks,
             total_stacks,
             None,
             now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
@@ -1307,12 +1351,28 @@ async fn run_update_job(
 
         for stack_id in &stack_ids {
             let Some(stack) = state.db.get_stack(stack_id).await? else {
+                processed_stacks = processed_stacks.saturating_add(1);
+                latest_progress = make_job_progress(
+                    "apply",
+                    format!("skipped missing stack {stack_id}"),
+                    processed_stacks,
+                    total_stacks,
+                    Some(stack_id.clone()),
+                    now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
+                );
+                if let Err(e) = persist_job_progress(&state, &job_id, &latest_progress).await {
+                    tracing::warn!(
+                        job_id = %job_id,
+                        error = %e,
+                        "failed to persist update progress"
+                    );
+                }
                 continue;
             };
             latest_progress = make_job_progress(
                 "backup",
                 format!("processing stack {stack_id}"),
-                completed_stacks,
+                processed_stacks,
                 total_stacks,
                 Some(stack_id.clone()),
                 now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
@@ -1422,6 +1482,26 @@ async fn run_update_job(
                         if backup_settings.require_success {
                             final_status = "failed".to_string();
                             stack_summaries.push(serde_json::Value::Object(stack_summary));
+                            processed_stacks = processed_stacks.saturating_add(1);
+                            latest_progress = make_job_progress(
+                                "apply",
+                                format!("processed stacks ({processed_stacks}/{total_stacks})"),
+                                processed_stacks,
+                                total_stacks,
+                                Some(stack_id.clone()),
+                                now_rfc3339().unwrap_or_else(|_| {
+                                    time::OffsetDateTime::now_utc().to_string()
+                                }),
+                            );
+                            if let Err(err) =
+                                persist_job_progress(&state, &job_id, &latest_progress).await
+                            {
+                                tracing::warn!(
+                                    job_id = %job_id,
+                                    error = %err,
+                                    "failed to persist update progress"
+                                );
+                            }
                             break;
                         }
                     }
@@ -1440,7 +1520,7 @@ async fn run_update_job(
             latest_progress = make_job_progress(
                 "apply",
                 format!("applying updates for stack {stack_id}"),
-                completed_stacks,
+                processed_stacks,
                 total_stacks,
                 Some(stack_id.clone()),
                 now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
@@ -1466,11 +1546,11 @@ async fn run_update_job(
                     final_status = outcome.status.clone();
                     stack_summary.insert("update".to_string(), outcome.summary_json);
                     stack_summaries.push(serde_json::Value::Object(stack_summary));
-                    completed_stacks = completed_stacks.saturating_add(1);
+                    processed_stacks = processed_stacks.saturating_add(1);
                     latest_progress = make_job_progress(
                         "apply",
-                        format!("updated stacks ({completed_stacks}/{total_stacks})"),
-                        completed_stacks,
+                        format!("processed stacks ({processed_stacks}/{total_stacks})"),
+                        processed_stacks,
                         total_stacks,
                         Some(stack_id.clone()),
                         now_rfc3339()
@@ -1496,10 +1576,11 @@ async fn run_update_job(
                     final_status = "failed".to_string();
                     stack_summary.insert("update".to_string(), json!({"error": e.to_string()}));
                     stack_summaries.push(serde_json::Value::Object(stack_summary));
+                    processed_stacks = processed_stacks.saturating_add(1);
                     latest_progress = make_job_progress(
                         "apply",
-                        format!("update failed on stack {stack_id}"),
-                        completed_stacks,
+                        format!("processed stacks ({processed_stacks}/{total_stacks})"),
+                        processed_stacks,
                         total_stacks,
                         Some(stack_id.clone()),
                         now_rfc3339()
@@ -1525,7 +1606,7 @@ async fn run_update_job(
             } else {
                 "update finished with failures".to_string()
             },
-            completed_stacks,
+            processed_stacks,
             total_stacks,
             None,
             now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string()),
@@ -3551,7 +3632,7 @@ async fn github_packages_webhook(
     let run_job_id = job_id.clone();
     let run_repo_full_name = repo_full_name.clone();
     tokio::spawn(async move {
-        let outcome = discovery::run_scan(run_state.as_ref()).await;
+        let outcome = discovery::run_scan_for_job(run_state.as_ref(), &run_job_id).await;
         let finished_at =
             now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
         match outcome {

@@ -24,13 +24,20 @@ pub(crate) struct ServiceCheckOutcome {
 
 const RESOLVED_TAG_INFER_SCAN_LIMIT: usize = 60;
 
+pub(crate) type ManifestDigestCache =
+    Arc<tokio::sync::RwLock<HashMap<String, (Option<String>, Option<String>)>>>;
+
+pub(crate) fn new_manifest_digest_cache() -> ManifestDigestCache {
+    Arc::new(tokio::sync::RwLock::new(HashMap::new()))
+}
+
 async fn infer_semver_tags_for_digests(
     state: &Arc<AppState>,
     img: &registry::ImageRef,
     tags: &[String],
     host_platform: &str,
     wanted_digests: &[String],
-    manifest_digest_cache: &mut HashMap<String, (Option<String>, Option<String>)>,
+    manifest_digest_cache: &ManifestDigestCache,
 ) -> Vec<String> {
     let wanted: Vec<String> = wanted_digests
         .iter()
@@ -50,8 +57,12 @@ async fn infer_semver_tags_for_digests(
     let mut matched: Vec<String> = Vec::new();
     for (_v, tag) in semver_tags.into_iter().take(RESOLVED_TAG_INFER_SCAN_LIMIT) {
         let cache_key = format!("{}/{}:{}", img.registry, img.name, tag);
-        let (digest, platform_digest) = if let Some(v) = manifest_digest_cache.get(&cache_key) {
-            v.clone()
+        let cached = {
+            let cache = manifest_digest_cache.read().await;
+            cache.get(&cache_key).cloned()
+        };
+        let (digest, platform_digest) = if let Some(v) = cached {
+            v
         } else {
             let mut manifest = state
                 .registry
@@ -70,8 +81,14 @@ async fn infer_semver_tags_for_digests(
             let (d, pd) = manifest
                 .map(|m| (m.digest, m.platform_digest))
                 .unwrap_or((None, None));
-            manifest_digest_cache.insert(cache_key, (d.clone(), pd.clone()));
-            (d, pd)
+            let (digest, platform_digest) = {
+                let mut cache = manifest_digest_cache.write().await;
+                let entry = cache
+                    .entry(cache_key)
+                    .or_insert_with(|| (d.clone(), pd.clone()));
+                (entry.0.clone(), entry.1.clone())
+            };
+            (digest, platform_digest)
         };
 
         let digest_matches = digest
@@ -95,7 +112,7 @@ pub(crate) async fn check_service_and_persist(
     runtime_digest: Option<String>,
     host_platform: &str,
     now: &str,
-    manifest_digest_cache: &mut HashMap<String, (Option<String>, Option<String>)>,
+    manifest_digest_cache: &ManifestDigestCache,
 ) -> anyhow::Result<ServiceCheckOutcome> {
     let img = match registry::ImageRef::parse(&svc.image_ref) {
         Ok(img) => img,

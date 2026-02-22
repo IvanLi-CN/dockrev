@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     sync::Arc,
     time::Duration,
 };
@@ -331,8 +331,7 @@ async fn run_runtime_scan_for_job(
     let mut services_updated = 0u32;
     let mut stacks_with_errors: u32 = 0;
 
-    let mut manifest_digest_cache: HashMap<String, (Option<String>, Option<String>)> =
-        HashMap::new();
+    let manifest_digest_cache = service_check::new_manifest_digest_cache();
 
     for stack_id in &stack_ids {
         latest_progress = make_job_progress(
@@ -445,7 +444,7 @@ async fn run_runtime_scan_for_job(
                 Some(runtime_digest.clone()),
                 host_platform,
                 now,
-                &mut manifest_digest_cache,
+                &manifest_digest_cache,
             )
             .await?;
 

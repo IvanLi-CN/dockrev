@@ -430,10 +430,15 @@ pub struct JobListItem {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JobProgress {
+    /// Progress phase label (e.g. prepare/scan/apply/done).
     pub phase: String,
+    /// Human-readable status message for current phase.
     pub message: String,
+    /// Completed units in current phase.
     pub current: u32,
+    /// Total units in current phase. `0` means unknown total (indeterminate).
     pub total: u32,
+    /// Percent provided by backend. Frontend should not derive/override this value.
     pub percent: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_target: Option<String>,
