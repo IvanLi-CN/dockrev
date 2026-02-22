@@ -18,6 +18,11 @@ pub struct Config {
     pub discovery_interval_seconds: u64,
     pub discovery_max_actions: u32,
     pub runtime_scan_interval_seconds: u64,
+    pub check_concurrency: usize,
+    pub registry_per_host_concurrency: usize,
+    pub registry_retry_max_attempts: usize,
+    pub registry_retry_base_ms: u64,
+    pub registry_retry_max_ms: u64,
 }
 
 impl Config {
@@ -88,6 +93,54 @@ impl Config {
             ));
         }
 
+        let check_concurrency = std::env::var("DOCKREV_CHECK_CONCURRENCY")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .unwrap_or(8);
+        if check_concurrency == 0 {
+            return Err(anyhow::anyhow!("DOCKREV_CHECK_CONCURRENCY must be >= 1"));
+        }
+
+        let registry_per_host_concurrency = std::env::var("DOCKREV_REGISTRY_PER_HOST_CONCURRENCY")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .unwrap_or(3);
+        if registry_per_host_concurrency == 0 {
+            return Err(anyhow::anyhow!(
+                "DOCKREV_REGISTRY_PER_HOST_CONCURRENCY must be >= 1"
+            ));
+        }
+
+        let registry_retry_max_attempts = std::env::var("DOCKREV_REGISTRY_RETRY_MAX_ATTEMPTS")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .unwrap_or(3);
+
+        let registry_retry_base_ms = std::env::var("DOCKREV_REGISTRY_RETRY_BASE_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(250);
+        if registry_retry_base_ms == 0 {
+            return Err(anyhow::anyhow!(
+                "DOCKREV_REGISTRY_RETRY_BASE_MS must be >= 1"
+            ));
+        }
+
+        let registry_retry_max_ms = std::env::var("DOCKREV_REGISTRY_RETRY_MAX_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(2000);
+        if registry_retry_max_ms == 0 {
+            return Err(anyhow::anyhow!(
+                "DOCKREV_REGISTRY_RETRY_MAX_MS must be >= 1"
+            ));
+        }
+        if registry_retry_max_ms < registry_retry_base_ms {
+            return Err(anyhow::anyhow!(
+                "DOCKREV_REGISTRY_RETRY_MAX_MS must be >= DOCKREV_REGISTRY_RETRY_BASE_MS"
+            ));
+        }
+
         Ok(Self {
             app_effective_version,
             http_addr,
@@ -103,6 +156,11 @@ impl Config {
             discovery_interval_seconds,
             discovery_max_actions,
             runtime_scan_interval_seconds,
+            check_concurrency,
+            registry_per_host_concurrency,
+            registry_retry_max_attempts,
+            registry_retry_base_ms,
+            registry_retry_max_ms,
         })
     }
 }

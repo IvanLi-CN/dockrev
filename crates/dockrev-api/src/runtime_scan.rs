@@ -332,6 +332,7 @@ async fn run_runtime_scan_for_job(
     let mut stacks_with_errors: u32 = 0;
 
     let manifest_digest_cache = service_check::new_manifest_digest_cache();
+    let repo_tags_cache = service_check::new_repo_tags_cache();
 
     for stack_id in &stack_ids {
         latest_progress = make_job_progress(
@@ -445,6 +446,7 @@ async fn run_runtime_scan_for_job(
                 host_platform,
                 now,
                 &manifest_digest_cache,
+                &repo_tags_cache,
             )
             .await?;
 
