@@ -452,7 +452,7 @@ fn update_progress_percent(processed_stacks: u32, total_stacks: u32, stack_fract
     }
     let stack_fraction = stack_fraction.clamp(0.0, 1.0);
     let overall = ((processed_stacks as f64) + stack_fraction) / (total_stacks as f64);
-    (overall.clamp(0.0, 1.0) * 100.0).round() as u32
+    (overall.clamp(0.0, 1.0) * 100.0).floor() as u32
 }
 
 fn update_apply_fraction(evt: &updater::UpdateProgressEvent) -> f64 {

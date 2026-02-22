@@ -3358,6 +3358,17 @@ fn urls_match_is_tolerant_of_trailing_slash_and_default_ports() {
     ));
 }
 
+#[test]
+fn streamed_update_percent_uses_floor_to_match_stack_progress() {
+    // Regression guard: streamed percent must not exceed the subsequent
+    // stack-complete percent (which uses integer division / floor).
+    let streamed = super::update_progress_percent(9, 13, 1.0);
+    let stack_complete = super::progress_percent(10, 13);
+    assert_eq!(streamed, 76);
+    assert_eq!(stack_complete, 76);
+    assert!(streamed <= stack_complete);
+}
+
 #[tokio::test]
 async fn github_packages_webhook_validates_signature_and_dedupes_delivery() {
     use ring::hmac;
