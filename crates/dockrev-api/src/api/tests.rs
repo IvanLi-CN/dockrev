@@ -1493,6 +1493,96 @@ services:
 }
 
 #[tokio::test]
+async fn check_job_exposes_progress_in_detail_and_list() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let check = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(check.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let check_id = triggered["checkId"].as_str().unwrap().to_string();
+
+    let mut done = None;
+    for _ in 0..80 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{check_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            done = Some(job);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let done = done.expect("check job did not finish in time");
+    assert_eq!(done["job"]["progress"]["phase"].as_str().unwrap(), "done");
+    assert_eq!(done["job"]["progress"]["percent"].as_u64().unwrap(), 100);
+    assert_eq!(
+        done["job"]["summary"]["progress"]["phase"]
+            .as_str()
+            .unwrap(),
+        "done"
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/jobs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let list = response_json(resp).await;
+    let item = list["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|j| j["id"].as_str().unwrap() == check_id)
+        .cloned()
+        .expect("check job not in list");
+    assert_eq!(item["progress"]["phase"].as_str().unwrap(), "done");
+}
+
+#[tokio::test]
 async fn recover_incomplete_jobs_marks_running_as_failed() {
     let state = test_state(":memory:").await;
 

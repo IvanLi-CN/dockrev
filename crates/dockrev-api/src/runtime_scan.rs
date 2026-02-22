@@ -7,7 +7,7 @@ use std::{
 use serde_json::json;
 
 use crate::{
-    api::types::{JobLogLine, JobRecord, JobScope, JobType, RuntimeScanReason},
+    api::types::{JobLogLine, JobProgress, JobRecord, JobScope, JobType, RuntimeScanReason},
     ids, registry,
     runner::CommandSpec,
     service_check,
@@ -23,6 +23,77 @@ pub struct RuntimeScanJobArgs {
     pub host_platform: String,
     pub started_at: String,
     pub reason: String,
+}
+
+fn progress_percent(current: u32, total: u32) -> u32 {
+    if total == 0 {
+        return 0;
+    }
+    ((current.saturating_mul(100)) / total).min(100)
+}
+
+fn make_job_progress(
+    phase: &str,
+    message: String,
+    current: u32,
+    total: u32,
+    current_target: Option<String>,
+    updated_at: String,
+) -> JobProgress {
+    JobProgress {
+        phase: phase.to_string(),
+        message,
+        current,
+        total,
+        percent: progress_percent(current, total),
+        current_target,
+        updated_at,
+    }
+}
+
+async fn persist_job_progress(
+    state: &Arc<AppState>,
+    job_id: &str,
+    progress: &JobProgress,
+) -> anyhow::Result<()> {
+    let progress_json = serde_json::to_value(progress)?;
+    state.db.set_job_progress(job_id, &progress_json).await?;
+
+    let evt = json!({
+        "type": "job_progress",
+        "jobId": job_id,
+        "ts": progress.updated_at,
+        "phase": progress.phase,
+        "message": progress.message,
+        "current": progress.current,
+        "total": progress.total,
+        "percent": progress.percent,
+        "currentTarget": progress.current_target,
+        "updatedAt": progress.updated_at,
+    });
+    state
+        .db
+        .insert_job_log(
+            job_id,
+            &JobLogLine {
+                ts: progress.updated_at.clone(),
+                level: "event".to_string(),
+                msg: evt.to_string(),
+            },
+        )
+        .await?;
+
+    Ok(())
+}
+
+async fn persist_job_progress_best_effort(
+    state: &Arc<AppState>,
+    job_id: &str,
+    progress: &JobProgress,
+) {
+    if let Err(e) = persist_job_progress(state, job_id, progress).await {
+        tracing::warn!(job_id = %job_id, error = %e, "failed to persist runtime scan progress");
+    }
 }
 
 pub fn spawn_task(state: Arc<AppState>) {
@@ -169,7 +240,19 @@ pub async fn run_job(state: Arc<AppState>, args: RuntimeScanJobArgs) {
         }
         Err(e) => {
             // Always emit a terminal event so SSE clients can close their EventSource even on failures.
-            let summary = json!({ "error": e.to_string() });
+            let progress = make_job_progress(
+                "done",
+                "runtime scan failed".to_string(),
+                0,
+                0,
+                None,
+                finished_at.clone(),
+            );
+            persist_job_progress_best_effort(&state, &job_id, &progress).await;
+            let summary = json!({
+                "error": e.to_string(),
+                "progress": serde_json::to_value(&progress).unwrap_or_else(|_| json!({})),
+            });
             let finished_evt = json!({
                 "type": "runtime_scan_finished",
                 "jobId": job_id,
@@ -230,6 +313,17 @@ async fn run_runtime_scan_for_job(
                 .unwrap_or_default()
         }
     };
+    let total_stacks = stack_ids.len() as u32;
+    let mut progress_current = 0u32;
+    let mut latest_progress = make_job_progress(
+        "prepare",
+        format!("preparing runtime scan ({total_stacks} stacks)"),
+        progress_current,
+        total_stacks,
+        None,
+        now_rfc3339().unwrap_or_else(|_| now.to_string()),
+    );
+    persist_job_progress_best_effort(state, job_id, &latest_progress).await;
 
     let mut stacks_scanned = 0u32;
     let mut services_with_runtime = 0u32;
@@ -241,8 +335,28 @@ async fn run_runtime_scan_for_job(
         HashMap::new();
 
     for stack_id in &stack_ids {
+        latest_progress = make_job_progress(
+            "scanning",
+            format!("scanning stack {stack_id}"),
+            progress_current,
+            total_stacks,
+            Some(stack_id.clone()),
+            now_rfc3339().unwrap_or_else(|_| now.to_string()),
+        );
+        persist_job_progress_best_effort(state, job_id, &latest_progress).await;
+
         let compose_project = state.db.get_stack_compose_project(stack_id).await?;
         let Some(project) = compose_project.as_deref() else {
+            progress_current = progress_current.saturating_add(1);
+            latest_progress = make_job_progress(
+                "scanning",
+                format!("scanned stacks ({progress_current}/{total_stacks})"),
+                progress_current,
+                total_stacks,
+                Some(stack_id.clone()),
+                now_rfc3339().unwrap_or_else(|_| now.to_string()),
+            );
+            persist_job_progress_best_effort(state, job_id, &latest_progress).await;
             continue;
         };
 
@@ -251,6 +365,16 @@ async fn run_runtime_scan_for_job(
             services.retain(|s| service_id.is_some_and(|id| id == s.id));
         }
         if services.is_empty() {
+            progress_current = progress_current.saturating_add(1);
+            latest_progress = make_job_progress(
+                "scanning",
+                format!("scanned stacks ({progress_current}/{total_stacks})"),
+                progress_current,
+                total_stacks,
+                Some(stack_id.clone()),
+                now_rfc3339().unwrap_or_else(|_| now.to_string()),
+            );
+            persist_job_progress_best_effort(state, job_id, &latest_progress).await;
             continue;
         }
 
@@ -277,6 +401,16 @@ async fn run_runtime_scan_for_job(
                         },
                     )
                     .await;
+                progress_current = progress_current.saturating_add(1);
+                latest_progress = make_job_progress(
+                    "scanning",
+                    format!("scanned stacks ({progress_current}/{total_stacks})"),
+                    progress_current,
+                    total_stacks,
+                    Some(stack_id.clone()),
+                    now_rfc3339().unwrap_or_else(|_| now.to_string()),
+                );
+                persist_job_progress_best_effort(state, job_id, &latest_progress).await;
                 continue;
             }
         };
@@ -393,7 +527,29 @@ async fn run_runtime_scan_for_job(
 
         // Expose recency in the UI: this is still a scan that refreshes current_* for drifted services.
         state.db.update_stack_last_check_at(stack_id, now).await?;
+
+        progress_current = progress_current.saturating_add(1);
+        latest_progress = make_job_progress(
+            "scanning",
+            format!("scanned stacks ({progress_current}/{total_stacks})"),
+            progress_current,
+            total_stacks,
+            Some(stack_id.clone()),
+            now_rfc3339().unwrap_or_else(|_| now.to_string()),
+        );
+        persist_job_progress_best_effort(state, job_id, &latest_progress).await;
     }
+
+    latest_progress = make_job_progress(
+        "done",
+        "runtime scan finished".to_string(),
+        progress_current,
+        total_stacks,
+        None,
+        now_rfc3339().unwrap_or_else(|_| now.to_string()),
+    );
+    persist_job_progress_best_effort(state, job_id, &latest_progress).await;
+    let progress_json = serde_json::to_value(&latest_progress)?;
 
     Ok(json!({
         "hostPlatform": host_platform,
@@ -404,10 +560,11 @@ async fn run_runtime_scan_for_job(
         "servicesWithRuntimeDigest": services_with_runtime,
         "servicesDrifted": services_drifted,
         "servicesUpdated": services_updated,
+        "progress": progress_json,
     }))
 }
 
-async fn docker_compose_project_runtime_digests(
+pub(crate) async fn docker_compose_project_runtime_digests(
     state: &AppState,
     compose_project: &str,
     services: &[crate::db::ServiceForRuntimeScan],

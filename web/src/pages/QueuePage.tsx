@@ -20,6 +20,38 @@ function formatShort(ts?: string | null) {
   return d.toLocaleString()
 }
 
+function formatRunningDuration(startedAt?: string | null): string | null {
+  if (!startedAt) return null
+  const d = new Date(startedAt)
+  if (Number.isNaN(d.valueOf())) return null
+  const ms = Date.now() - d.valueOf()
+  if (ms <= 0) return null
+  const sec = Math.floor(ms / 1000)
+  const min = Math.floor(sec / 60)
+  const remSec = sec % 60
+  if (min >= 60) {
+    const h = Math.floor(min / 60)
+    const remMin = min % 60
+    return `${h}h ${remMin}m`
+  }
+  if (min > 0) return `${min}m ${remSec}s`
+  return `${remSec}s`
+}
+
+function formatProgressLabel(job: JobListItem): string | null {
+  const p = job.progress
+  if (!p) return null
+  const current = Number.isFinite(p.current) ? Math.max(0, p.current) : 0
+  const total = Number.isFinite(p.total) ? Math.max(0, p.total) : 0
+  const phase = (p.phase ?? '').trim()
+  const target = (p.currentTarget ?? '').trim()
+  const head = total > 0 ? `${current}/${total}` : `${current}`
+  const parts = [head]
+  if (phase) parts.push(phase)
+  if (target) parts.push(target)
+  return parts.join(' · ')
+}
+
 export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void }) {
   const { onTopActions } = props
   const [jobs, setJobs] = useState<JobListItem[]>([])
@@ -101,6 +133,14 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
                   <span>
                     by <Mono>{j.createdBy}</Mono> · reason <Mono>{j.reason}</Mono>
                   </span>
+                  {j.status === 'running' ? (
+                    <span>
+                      progress{' '}
+                      <Mono>
+                        {formatProgressLabel(j) ?? `running ${formatRunningDuration(j.startedAt) ?? '-'}`}
+                      </Mono>
+                    </span>
+                  ) : null}
                   <span>
                     created <Mono>{formatShort(j.createdAt)}</Mono>
                   </span>

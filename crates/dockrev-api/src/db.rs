@@ -2549,6 +2549,54 @@ WHERE id = ?1
         .context("finish job")
     }
 
+    pub async fn set_job_progress(
+        &self,
+        job_id: &str,
+        progress: &serde_json::Value,
+    ) -> anyhow::Result<()> {
+        let job_id = job_id.to_string();
+        let progress = progress.clone();
+        self.call(move |conn| {
+            let summary_raw = conn
+                .query_row(
+                    r#"
+SELECT summary_json
+FROM jobs
+WHERE id = ?1
+"#,
+                    params![&job_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+
+            let Some(summary_raw) = summary_raw else {
+                return Ok(());
+            };
+
+            let mut summary: serde_json::Value = serde_json::from_str(&summary_raw)
+                .unwrap_or_else(|_| serde_json::Value::Object(Default::default()));
+            if !summary.is_object() {
+                summary = serde_json::Value::Object(Default::default());
+            }
+
+            if let Some(obj) = summary.as_object_mut() {
+                obj.insert("progress".to_string(), progress);
+            }
+
+            conn.execute(
+                r#"
+UPDATE jobs
+SET summary_json = ?2
+WHERE id = ?1
+"#,
+                params![&job_id, serde_json::to_string(&summary)?],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("set job progress")
+    }
+
     pub async fn list_jobs(&self) -> anyhow::Result<Vec<JobListItem>> {
         self.call(|conn| {
             let mut stmt = conn.prepare(

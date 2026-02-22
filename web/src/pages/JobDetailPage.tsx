@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { getJob, newJobEventsSource, type JobDetail, type JobLogLine } from '../api'
+import { getJob, newJobEventsSource, type JobDetail, type JobLogLine, type JobProgress } from '../api'
 import { navigate } from '../routes'
 import { Button, Chip, Mono, Pill } from '../ui'
 
@@ -81,10 +81,20 @@ function formatLogLevel(level: string): string {
   return s.slice(0, 4).toUpperCase()
 }
 
+function normalizeProgress(input: JobProgress | null | undefined): JobProgress | null {
+  if (!input) return null
+  const total = Number.isFinite(input.total) ? Math.max(0, input.total) : 0
+  const current = Number.isFinite(input.current) ? Math.min(Math.max(0, input.current), total || input.current) : 0
+  const percentRaw = Number.isFinite(input.percent) ? input.percent : total > 0 ? Math.floor((current * 100) / total) : 0
+  const percent = Math.min(100, Math.max(0, percentRaw))
+  return { ...input, current, total, percent }
+}
+
 export function JobDetailPage(props: { jobId: string; onTopActions: (node: React.ReactNode) => void }) {
   const { jobId, onTopActions } = props
   const [job, setJob] = useState<JobDetail | null>(null)
   const [logs, setLogs] = useState<JobLogLine[]>([])
+  const [progress, setProgress] = useState<JobProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [logTz, setLogTz] = useState<LogTimeZone>('local')
@@ -94,6 +104,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     const j = await getJob(jobId)
     setJob(j)
     setLogs(j.logs)
+    setProgress(normalizeProgress(j.progress))
     return j
   }, [jobId])
 
@@ -170,6 +181,29 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
               const next = [...prev, { ts, level, msg }]
               return next.length > 500 ? next.slice(-500) : next
             })
+          } catch {
+            // ignore invalid events
+          }
+        })
+
+        es.addEventListener('job_progress', (evt: Event) => {
+          const data = (evt as MessageEvent).data
+          if (typeof data !== 'string' || !data) return
+          try {
+            const parsed = JSON.parse(data) as unknown
+            if (!parsed || typeof parsed !== 'object') return
+            const p = parsed as Record<string, unknown>
+            if (p.type !== 'job_progress') return
+            const next = normalizeProgress({
+              phase: typeof p.phase === 'string' ? p.phase : 'running',
+              message: typeof p.message === 'string' ? p.message : '',
+              current: typeof p.current === 'number' ? p.current : 0,
+              total: typeof p.total === 'number' ? p.total : 0,
+              percent: typeof p.percent === 'number' ? p.percent : 0,
+              currentTarget: typeof p.currentTarget === 'string' ? p.currentTarget : null,
+              updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : new Date().toISOString(),
+            })
+            if (next) setProgress(next)
           } catch {
             // ignore invalid events
           }
@@ -252,6 +286,34 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
               created <Mono>{formatShort(job.createdAt)}</Mono> · started <Mono>{formatShort(job.startedAt)}</Mono> ·
               finished <Mono>{formatShort(job.finishedAt)}</Mono>
             </div>
+          </div>
+        ) : null}
+        {progress ? (
+          <div className="jobProgress">
+            <div className="jobProgressHeader">
+              <div className="title">进度</div>
+              <div className="mono">{`${progress.percent}%`}</div>
+            </div>
+            <div className="jobProgressBar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent}>
+              <div className="jobProgressFill" style={{ width: `${progress.percent}%` }} />
+            </div>
+            <div className="jobProgressMeta">
+              <span>
+                <Mono>{progress.phase || '-'}</Mono>
+                {progress.message ? ` · ${progress.message}` : ''}
+              </span>
+              <span>
+                <Mono>{`${progress.current}/${progress.total}`}</Mono>
+                {progress.currentTarget ? ` · ${progress.currentTarget}` : ''}
+              </span>
+              <span>
+                updated <Mono>{formatShort(progress.updatedAt)}</Mono>
+              </span>
+            </div>
+          </div>
+        ) : job?.status === 'running' ? (
+          <div className="muted" style={{ marginTop: 8 }}>
+            运行中，等待进度数据…
           </div>
         ) : null}
 
