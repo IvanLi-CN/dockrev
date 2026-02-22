@@ -3,7 +3,10 @@ use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -395,6 +398,8 @@ impl HttpRegistryClient {
     where
         F: FnMut() -> reqwest::RequestBuilder,
     {
+        // Keep per-request retry timing stable while ensuring concurrent requests don't re-sync.
+        let request_seed = RETRY_JITTER_REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed);
         let mut attempts_done: usize = 0;
 
         loop {
@@ -420,6 +425,7 @@ impl HttpRegistryClient {
                         self.options.retry_max_ms,
                         attempts_done,
                         host,
+                        request_seed,
                     )
                 });
             attempts_done = attempts_done.saturating_add(1);
@@ -513,6 +519,8 @@ fn request_limit_host(url: &str, fallback_host: &str) -> String {
         .unwrap_or_else(|| fallback_host.to_string())
 }
 
+static RETRY_JITTER_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 fn parse_retry_after_delay(headers: &reqwest::header::HeaderMap, max_ms: u64) -> Option<Duration> {
     let raw = headers.get(RETRY_AFTER)?.to_str().ok()?.trim();
     if raw.is_empty() {
@@ -542,7 +550,13 @@ fn parse_retry_after_delay(headers: &reqwest::header::HeaderMap, max_ms: u64) ->
     None
 }
 
-fn retry_backoff_with_jitter(base_ms: u64, max_ms: u64, attempt: usize, host: &str) -> Duration {
+fn retry_backoff_with_jitter(
+    base_ms: u64,
+    max_ms: u64,
+    attempt: usize,
+    host: &str,
+    request_seed: u64,
+) -> Duration {
     let cap_ms = max_ms.max(1);
     let factor = 1u64
         .checked_shl((attempt as u32).min(16))
@@ -553,6 +567,7 @@ fn retry_backoff_with_jitter(base_ms: u64, max_ms: u64, attempt: usize, host: &s
     let mut hasher = DefaultHasher::new();
     host.hash(&mut hasher);
     attempt.hash(&mut hasher);
+    request_seed.hash(&mut hasher);
     let jitter_ms = hasher.finish() % (jitter_cap + 1);
 
     Duration::from_millis(raw_ms.saturating_add(jitter_ms).min(cap_ms))
@@ -962,9 +977,26 @@ mod tests {
 
     #[test]
     fn retry_backoff_with_jitter_stays_within_bounds() {
-        let delay = retry_backoff_with_jitter(250, 2_000, 2, "registry-1.docker.io");
+        let delay = retry_backoff_with_jitter(250, 2_000, 2, "registry-1.docker.io", 0);
         assert!(delay.as_millis() >= 1_000);
         assert!(delay.as_millis() <= 2_000);
+    }
+
+    #[test]
+    fn retry_backoff_with_jitter_varies_by_request_seed() {
+        let host = "registry-1.docker.io";
+        let attempt = 1;
+        let first = retry_backoff_with_jitter(250, 2_000, attempt, host, 1);
+        let second = retry_backoff_with_jitter(250, 2_000, attempt, host, 2);
+        let third = retry_backoff_with_jitter(250, 2_000, attempt, host, 3);
+
+        let unique = [first, second, third]
+            .into_iter()
+            .map(|d| d.as_millis())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+
+        assert!(unique > 1);
     }
 
     #[test]
