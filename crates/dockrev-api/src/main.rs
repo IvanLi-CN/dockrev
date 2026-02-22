@@ -78,6 +78,12 @@ async fn main() -> anyhow::Result<()> {
     let db = db::Db::open(&config.db_path).await?;
     let registry = std::sync::Arc::new(registry::HttpRegistryClient::new(
         config.docker_config_path.as_deref(),
+        registry::HttpRegistryClientOptions {
+            per_host_concurrency: config.registry_per_host_concurrency,
+            retry_max_attempts: config.registry_retry_max_attempts,
+            retry_base_ms: config.registry_retry_base_ms,
+            retry_max_ms: config.registry_retry_max_ms,
+        },
     )?);
     let runner = std::sync::Arc::new(runner::TokioCommandRunner);
     let state = state::AppState::new(config, db, registry, runner);

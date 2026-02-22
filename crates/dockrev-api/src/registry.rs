@@ -1,5 +1,7 @@
 use std::{
     collections::HashMap,
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
     path::Path,
     sync::{Arc, Mutex},
     time::Duration,
@@ -8,8 +10,9 @@ use std::{
 use anyhow::Context as _;
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use reqwest::header::{ACCEPT, AUTHORIZATION, LINK, WWW_AUTHENTICATE};
+use reqwest::header::{ACCEPT, AUTHORIZATION, LINK, RETRY_AFTER, WWW_AUTHENTICATE};
 use serde::Deserialize;
+use tokio::sync::Semaphore;
 
 use crate::api::types::ArchMatch;
 
@@ -96,19 +99,49 @@ pub struct HttpRegistryClient {
     http: reqwest::Client,
     docker: Option<DockerConfig>,
     token_cache: Arc<Mutex<HashMap<String, String>>>,
+    host_limiters: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
+    options: HttpRegistryClientOptions,
+}
+
+#[derive(Clone, Debug)]
+pub struct HttpRegistryClientOptions {
+    pub per_host_concurrency: usize,
+    pub retry_max_attempts: usize,
+    pub retry_base_ms: u64,
+    pub retry_max_ms: u64,
+}
+
+impl Default for HttpRegistryClientOptions {
+    fn default() -> Self {
+        Self {
+            per_host_concurrency: 3,
+            retry_max_attempts: 3,
+            retry_base_ms: 250,
+            retry_max_ms: 2000,
+        }
+    }
 }
 
 impl HttpRegistryClient {
-    pub fn new(docker_config_path: Option<&Path>) -> anyhow::Result<Self> {
+    pub fn new(
+        docker_config_path: Option<&Path>,
+        options: HttpRegistryClientOptions,
+    ) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(3))
             .timeout(Duration::from_secs(8))
             .build()?;
         let docker = docker_config_path.and_then(|p| DockerConfig::load(p).ok());
+        let per_host_concurrency = options.per_host_concurrency.max(1);
         Ok(Self {
             http,
             docker,
             token_cache: Arc::new(Mutex::new(HashMap::new())),
+            host_limiters: Arc::new(Mutex::new(HashMap::new())),
+            options: HttpRegistryClientOptions {
+                per_host_concurrency,
+                ..options
+            },
         })
     }
 }
@@ -250,22 +283,25 @@ impl HttpRegistryClient {
         url: String,
         accept: Option<&str>,
     ) -> anyhow::Result<reqwest::Response> {
-        let mut builder = self.http.get(url.clone());
-        if let Some(accept) = accept {
-            builder = builder.header(ACCEPT, accept);
-        }
-        if let Some((user, pass)) = self
+        let basic_auth = self
             .docker
             .as_ref()
             .and_then(|d| d.basic_auth(registry_host))
-        {
-            builder = builder.header(
-                AUTHORIZATION,
-                format!("Basic {}", BASE64.encode(format!("{user}:{pass}"))),
-            );
-        }
-
-        let resp = builder.send().await?;
+            .map(|(user, pass)| format!("Basic {}", BASE64.encode(format!("{user}:{pass}"))));
+        let accept_header = accept.map(|s| s.to_string());
+        let limit_host = request_limit_host(&url, registry_host);
+        let resp = self
+            .send_with_429_retry(&limit_host, || {
+                let mut builder = self.http.get(url.clone());
+                if let Some(accept) = accept_header.as_deref() {
+                    builder = builder.header(ACCEPT, accept);
+                }
+                if let Some(auth) = basic_auth.as_deref() {
+                    builder = builder.header(AUTHORIZATION, auth.to_string());
+                }
+                builder
+            })
+            .await?;
         if resp.status() != reqwest::StatusCode::UNAUTHORIZED {
             if !resp.status().is_success() {
                 return Err(anyhow::anyhow!(
@@ -291,13 +327,16 @@ impl HttpRegistryClient {
             .get_bearer_token(registry_host, &bearer, scope, false)
             .await?;
 
-        let mut builder2 = self.http.get(url.clone());
-        if let Some(accept) = accept {
-            builder2 = builder2.header(ACCEPT, accept);
-        }
-        builder2 = builder2.header(AUTHORIZATION, format!("Bearer {token}"));
-
-        let resp2 = builder2.send().await?;
+        let token_auth = format!("Bearer {token}");
+        let resp2 = self
+            .send_with_429_retry(&limit_host, || {
+                let mut builder = self.http.get(url.clone());
+                if let Some(accept) = accept_header.as_deref() {
+                    builder = builder.header(ACCEPT, accept);
+                }
+                builder.header(AUTHORIZATION, token_auth.clone())
+            })
+            .await?;
         if resp2.status() == reqwest::StatusCode::UNAUTHORIZED {
             // Registries frequently return short-lived bearer tokens. We cache them for performance,
             // but if a cached token is expired (or otherwise invalid), a retry with a refreshed
@@ -311,13 +350,16 @@ impl HttpRegistryClient {
             let token = self
                 .get_bearer_token(registry_host, &bearer, scope, true)
                 .await?;
-            let mut builder3 = self.http.get(url);
-            if let Some(accept) = accept {
-                builder3 = builder3.header(ACCEPT, accept);
-            }
-            builder3 = builder3.header(AUTHORIZATION, format!("Bearer {token}"));
-
-            let resp3 = builder3.send().await?;
+            let token_auth = format!("Bearer {token}");
+            let resp3 = self
+                .send_with_429_retry(&limit_host, || {
+                    let mut builder = self.http.get(url.clone());
+                    if let Some(accept) = accept_header.as_deref() {
+                        builder = builder.header(ACCEPT, accept);
+                    }
+                    builder.header(AUTHORIZATION, token_auth.clone())
+                })
+                .await?;
             if !resp3.status().is_success() {
                 return Err(anyhow::anyhow!(
                     "registry request failed: {}",
@@ -333,6 +375,64 @@ impl HttpRegistryClient {
             ));
         }
         Ok(resp2)
+    }
+
+    fn limiter_for_host(&self, host: &str) -> Arc<Semaphore> {
+        if let Ok(mut guard) = self.host_limiters.lock() {
+            return guard
+                .entry(host.to_string())
+                .or_insert_with(|| Arc::new(Semaphore::new(self.options.per_host_concurrency)))
+                .clone();
+        }
+        Arc::new(Semaphore::new(self.options.per_host_concurrency))
+    }
+
+    async fn send_with_429_retry<F>(
+        &self,
+        host: &str,
+        mut make_request: F,
+    ) -> anyhow::Result<reqwest::Response>
+    where
+        F: FnMut() -> reqwest::RequestBuilder,
+    {
+        let mut attempts_done: usize = 0;
+
+        loop {
+            let limiter = self.limiter_for_host(host);
+            let _permit = limiter
+                .acquire()
+                .await
+                .map_err(|_| anyhow::anyhow!("registry limiter closed for host {host}"))?;
+
+            let resp = make_request().send().await?;
+            if resp.status() != reqwest::StatusCode::TOO_MANY_REQUESTS {
+                return Ok(resp);
+            }
+
+            if attempts_done >= self.options.retry_max_attempts {
+                return Ok(resp);
+            }
+
+            let delay = parse_retry_after_delay(resp.headers(), self.options.retry_max_ms)
+                .unwrap_or_else(|| {
+                    retry_backoff_with_jitter(
+                        self.options.retry_base_ms,
+                        self.options.retry_max_ms,
+                        attempts_done,
+                        host,
+                    )
+                });
+            attempts_done = attempts_done.saturating_add(1);
+
+            tracing::warn!(
+                registry_host = host,
+                retry_attempt = attempts_done,
+                backoff_ms = delay.as_millis() as u64,
+                "registry rate limited (429); backing off"
+            );
+
+            tokio::time::sleep(delay).await;
+        }
     }
 
     async fn get_bearer_token(
@@ -404,6 +504,58 @@ fn registry_api_host(registry: &str) -> &str {
     } else {
         registry
     }
+}
+
+fn request_limit_host(url: &str, fallback_host: &str) -> String {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_string()))
+        .unwrap_or_else(|| fallback_host.to_string())
+}
+
+fn parse_retry_after_delay(headers: &reqwest::header::HeaderMap, max_ms: u64) -> Option<Duration> {
+    let raw = headers.get(RETRY_AFTER)?.to_str().ok()?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    let cap_ms = max_ms.max(1);
+
+    if let Ok(seconds) = raw.parse::<u64>() {
+        return Some(Duration::from_millis(
+            seconds.saturating_mul(1000).min(cap_ms),
+        ));
+    }
+
+    if let Ok(at) = time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc2822)
+    {
+        let now = time::OffsetDateTime::now_utc();
+        let delta = at - now;
+        let millis = if delta.is_negative() {
+            0
+        } else {
+            delta.whole_milliseconds().try_into().unwrap_or(u64::MAX)
+        };
+        return Some(Duration::from_millis(millis.min(cap_ms)));
+    }
+
+    None
+}
+
+fn retry_backoff_with_jitter(base_ms: u64, max_ms: u64, attempt: usize, host: &str) -> Duration {
+    let cap_ms = max_ms.max(1);
+    let factor = 1u64
+        .checked_shl((attempt as u32).min(16))
+        .unwrap_or(u64::MAX);
+    let raw_ms = base_ms.saturating_mul(factor).min(cap_ms);
+
+    let jitter_cap = (base_ms / 2).max(1);
+    let mut hasher = DefaultHasher::new();
+    host.hash(&mut hasher);
+    attempt.hash(&mut hasher);
+    let jitter_ms = hasher.finish() % (jitter_cap + 1);
+
+    Duration::from_millis(raw_ms.saturating_add(jitter_ms).min(cap_ms))
 }
 
 #[derive(Clone, Debug)]
@@ -685,7 +837,7 @@ mod http_registry_tests {
             axum::serve(listener, app).await.unwrap();
         });
 
-        let client = HttpRegistryClient::new(None).unwrap();
+        let client = HttpRegistryClient::new(None, HttpRegistryClientOptions::default()).unwrap();
         let scope = "repository:testrepo:pull";
         let url = format!("{base}/v2/testrepo/manifests/latest");
 
@@ -767,6 +919,7 @@ pub fn compute_arch_match(host_platform: &str, arch: &[String]) -> ArchMatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reqwest::header::HeaderValue;
 
     #[test]
     fn parse_image_ref_with_registry() {
@@ -782,6 +935,36 @@ mod tests {
         assert_eq!(img.registry, "docker.io");
         assert_eq!(img.name, "library/postgres");
         assert_eq!(img.reference, "16");
+    }
+
+    #[test]
+    fn parse_retry_after_seconds_header() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("2"));
+
+        let delay = parse_retry_after_delay(&headers, 5_000).unwrap();
+        assert_eq!(delay.as_millis(), 2_000);
+    }
+
+    #[test]
+    fn parse_retry_after_http_date_header() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        let future = time::OffsetDateTime::now_utc() + time::Duration::seconds(3);
+        let value = future
+            .format(&time::format_description::well_known::Rfc2822)
+            .unwrap();
+        headers.insert(RETRY_AFTER, HeaderValue::from_str(&value).unwrap());
+
+        let delay = parse_retry_after_delay(&headers, 10_000).unwrap();
+        assert!(delay.as_millis() <= 3_000);
+        assert!(delay.as_millis() > 0);
+    }
+
+    #[test]
+    fn retry_backoff_with_jitter_stays_within_bounds() {
+        let delay = retry_backoff_with_jitter(250, 2_000, 2, "registry-1.docker.io");
+        assert!(delay.as_millis() >= 1_000);
+        assert!(delay.as_millis() <= 2_000);
     }
 
     #[test]

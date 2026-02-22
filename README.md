@@ -79,6 +79,11 @@ Environment variables (API):
 - `DOCKREV_HOST_PLATFORM` (optional) override host platform (example `linux/amd64`)
 - `DOCKREV_DISCOVERY_INTERVAL_SECONDS` (default `60`; must be `>= 10`)
 - `DOCKREV_DISCOVERY_MAX_ACTIONS` (default `200`) max actions returned by `POST /api/discovery/scan`
+- `DOCKREV_CHECK_CONCURRENCY` (default `8`; must be `>= 1`) max concurrent service checks per check job
+- `DOCKREV_REGISTRY_PER_HOST_CONCURRENCY` (default `3`; must be `>= 1`) per-registry-host request concurrency guard
+- `DOCKREV_REGISTRY_RETRY_MAX_ATTEMPTS` (default `3`) max retry attempts after a `429 Too Many Requests`
+- `DOCKREV_REGISTRY_RETRY_BASE_MS` (default `250`; must be `>= 1`) exponential backoff base for `429` retries
+- `DOCKREV_REGISTRY_RETRY_MAX_MS` (default `2000`; must be `>= DOCKREV_REGISTRY_RETRY_BASE_MS`) max single retry delay
 
 Environment variables (Supervisor):
 

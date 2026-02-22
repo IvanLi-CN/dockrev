@@ -547,6 +547,11 @@ async fn test_state_with(
         discovery_interval_seconds: 60,
         discovery_max_actions: 200,
         runtime_scan_interval_seconds: 600,
+        check_concurrency: 8,
+        registry_per_host_concurrency: 3,
+        registry_retry_max_attempts: 3,
+        registry_retry_base_ms: 250,
+        registry_retry_max_ms: 2000,
     };
 
     let db = Db::open(&config.db_path).await.unwrap();
@@ -569,6 +574,11 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
         discovery_interval_seconds: 60,
         discovery_max_actions: 200,
         runtime_scan_interval_seconds: 600,
+        check_concurrency: 8,
+        registry_per_host_concurrency: 3,
+        registry_retry_max_attempts: 3,
+        registry_retry_base_ms: 250,
+        registry_retry_max_ms: 2000,
     };
 
     let db = Db::open(&config.db_path).await.unwrap();
@@ -854,6 +864,7 @@ services:
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap();
     let manifest_digest_cache = crate::service_check::new_manifest_digest_cache();
+    let repo_tags_cache = crate::service_check::new_repo_tags_cache();
 
     // Use the same scan-time code path as real jobs.
     crate::service_check::check_service_and_persist(
@@ -864,6 +875,7 @@ services:
         "linux/amd64",
         &now,
         &manifest_digest_cache,
+        &repo_tags_cache,
     )
     .await
     .unwrap();
@@ -975,6 +987,7 @@ services:
         .unwrap();
 
     let manifest_digest_cache = crate::service_check::new_manifest_digest_cache();
+    let repo_tags_cache = crate::service_check::new_repo_tags_cache();
     crate::service_check::check_service_and_persist(
         &state,
         "job-test",
@@ -984,6 +997,7 @@ services:
         "linux/amd64",
         &now,
         &manifest_digest_cache,
+        &repo_tags_cache,
     )
     .await
     .unwrap();
@@ -1050,6 +1064,7 @@ services:
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap();
     let manifest_digest_cache = crate::service_check::new_manifest_digest_cache();
+    let repo_tags_cache = crate::service_check::new_repo_tags_cache();
 
     crate::service_check::check_service_and_persist(
         &state,
@@ -1060,6 +1075,7 @@ services:
         "linux/amd64",
         &now,
         &manifest_digest_cache,
+        &repo_tags_cache,
     )
     .await
     .unwrap();
@@ -1158,6 +1174,7 @@ services:
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap();
     let manifest_digest_cache = crate::service_check::new_manifest_digest_cache();
+    let repo_tags_cache = crate::service_check::new_repo_tags_cache();
     crate::service_check::check_service_and_persist(
         &state,
         "job-test",
@@ -1166,6 +1183,7 @@ services:
         "linux/amd64",
         &now,
         &manifest_digest_cache,
+        &repo_tags_cache,
     )
     .await
     .unwrap();

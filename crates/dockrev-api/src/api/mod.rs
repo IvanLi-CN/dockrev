@@ -396,7 +396,6 @@ async fn restore_discovery_project(
     Ok(StatusCode::NO_CONTENT)
 }
 
-const CHECK_CONCURRENCY: usize = 8;
 const CHECK_PROGRESS_LOG_INTERVAL: Duration = Duration::from_millis(500);
 
 fn progress_percent(current: u32, total: u32) -> u32 {
@@ -853,6 +852,7 @@ async fn run_check_for_job(
     let mut last_progress_logged_at: Option<std::time::Instant> = None;
     let mut latest_target: Option<String> = None;
     let manifest_digest_cache = crate::service_check::new_manifest_digest_cache();
+    let repo_tags_cache = crate::service_check::new_repo_tags_cache();
 
     for unit in units {
         let spawn_state = state.clone();
@@ -860,6 +860,7 @@ async fn run_check_for_job(
         let spawn_host_platform = host_platform.to_string();
         let spawn_now = now.to_string();
         let spawn_manifest_digest_cache = manifest_digest_cache.clone();
+        let spawn_repo_tags_cache = repo_tags_cache.clone();
         join_set.spawn(async move {
             let stack_id = unit.stack_id.clone();
             let service_name = unit.service.name.clone();
@@ -886,11 +887,12 @@ async fn run_check_for_job(
                 &spawn_host_platform,
                 &spawn_now,
                 &spawn_manifest_digest_cache,
+                &spawn_repo_tags_cache,
             )
             .await;
             (stack_id, service_name, outcome)
         });
-        if join_set.len() >= CHECK_CONCURRENCY
+        if join_set.len() >= state.config.check_concurrency
             && let Some(joined) = join_set.join_next().await
         {
             handle_check_worker_result(

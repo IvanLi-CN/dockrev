@@ -26,8 +26,13 @@ const RESOLVED_TAG_INFER_SCAN_LIMIT: usize = 60;
 
 pub(crate) type ManifestDigestCache =
     Arc<tokio::sync::RwLock<HashMap<String, (Option<String>, Option<String>)>>>;
+pub(crate) type RepoTagsCache = Arc<tokio::sync::RwLock<HashMap<String, Vec<String>>>>;
 
 pub(crate) fn new_manifest_digest_cache() -> ManifestDigestCache {
+    Arc::new(tokio::sync::RwLock::new(HashMap::new()))
+}
+
+pub(crate) fn new_repo_tags_cache() -> RepoTagsCache {
     Arc::new(tokio::sync::RwLock::new(HashMap::new()))
 }
 
@@ -56,7 +61,7 @@ async fn infer_semver_tags_for_digests(
 
     let mut matched: Vec<String> = Vec::new();
     for (_v, tag) in semver_tags.into_iter().take(RESOLVED_TAG_INFER_SCAN_LIMIT) {
-        let cache_key = format!("{}/{}:{}", img.registry, img.name, tag);
+        let cache_key = format!("{}/{}:{}@{}", img.registry, img.name, tag, host_platform);
         let cached = {
             let cache = manifest_digest_cache.read().await;
             cache.get(&cache_key).cloned()
@@ -113,6 +118,7 @@ pub(crate) async fn check_service_and_persist(
     host_platform: &str,
     now: &str,
     manifest_digest_cache: &ManifestDigestCache,
+    repo_tags_cache: &RepoTagsCache,
 ) -> anyhow::Result<ServiceCheckOutcome> {
     let img = match registry::ImageRef::parse(&svc.image_ref) {
         Ok(img) => img,
@@ -161,36 +167,47 @@ pub(crate) async fn check_service_and_persist(
         })
         .collect::<Vec<_>>();
 
-    let tags = match state.registry.list_tags(&img).await {
-        Ok(t) => t,
-        Err(e) => {
-            // Preserve existing behavior: don't mutate DB if we can't read registry tags.
-            state
-                .db
-                .insert_job_log(
-                    job_id,
-                    &JobLogLine {
-                        ts: now.to_string(),
-                        level: "warn".to_string(),
-                        msg: format!("list tags failed for {}: {}", img.name, e),
-                    },
-                )
-                .await?;
-            return Ok(ServiceCheckOutcome {
-                current_digest: None,
-                current_resolved_tag: None,
-                current_resolved_tags_json: None,
-                current_resolved_tags: None,
-                candidate_tag: None,
-                candidate_resolved_tag: None,
-                candidate_digest: None,
-                candidate_arch_match: None,
-                candidate_arch_json: None,
-                ignore_rule_id: None,
-                ignore_reason: None,
-                candidate_present: false,
-            });
-        }
+    let tags_cache_key = format!("{}/{}", img.registry, img.name);
+    let tags = if let Some(cached) = {
+        let cache = repo_tags_cache.read().await;
+        cache.get(&tags_cache_key).cloned()
+    } {
+        cached
+    } else {
+        let fetched = match state.registry.list_tags(&img).await {
+            Ok(t) => t,
+            Err(e) => {
+                // Preserve existing behavior: don't mutate DB if we can't read registry tags.
+                state
+                    .db
+                    .insert_job_log(
+                        job_id,
+                        &JobLogLine {
+                            ts: now.to_string(),
+                            level: "warn".to_string(),
+                            msg: format!("list tags failed for {}: {}", img.name, e),
+                        },
+                    )
+                    .await?;
+                return Ok(ServiceCheckOutcome {
+                    current_digest: None,
+                    current_resolved_tag: None,
+                    current_resolved_tags_json: None,
+                    current_resolved_tags: None,
+                    candidate_tag: None,
+                    candidate_resolved_tag: None,
+                    candidate_digest: None,
+                    candidate_arch_match: None,
+                    candidate_arch_json: None,
+                    ignore_rule_id: None,
+                    ignore_reason: None,
+                    candidate_present: false,
+                });
+            }
+        };
+        let mut cache = repo_tags_cache.write().await;
+        cache.insert(tags_cache_key, fetched.clone());
+        fetched
     };
 
     let mut current_manifest = state
