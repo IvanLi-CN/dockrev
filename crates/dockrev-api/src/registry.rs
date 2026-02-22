@@ -403,13 +403,14 @@ impl HttpRegistryClient {
         let mut attempts_done: usize = 0;
 
         loop {
-            let limiter = self.limiter_for_host(host);
-            let _permit = limiter
-                .acquire()
-                .await
-                .map_err(|_| anyhow::anyhow!("registry limiter closed for host {host}"))?;
-
-            let resp = make_request().send().await?;
+            let resp = {
+                let limiter = self.limiter_for_host(host);
+                let _permit = limiter
+                    .acquire()
+                    .await
+                    .map_err(|_| anyhow::anyhow!("registry limiter closed for host {host}"))?;
+                make_request().send().await?
+            };
             if resp.status() != reqwest::StatusCode::TOO_MANY_REQUESTS {
                 return Ok(resp);
             }
@@ -779,7 +780,10 @@ mod http_registry_tests {
     };
     use serde_json::json;
     use std::collections::HashMap as StdHashMap;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     #[derive(Debug, Default)]
     struct TestState {
@@ -874,6 +878,93 @@ mod http_registry_tests {
         assert_eq!(state.lock().unwrap().token_calls, 2);
 
         // Stop the server task to avoid it outliving the test runtime.
+        server_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn retry_backoff_releases_host_permit_before_sleep() {
+        async fn endpoint(State(calls): State<Arc<AtomicUsize>>) -> impl IntoResponse {
+            let nth = calls.fetch_add(1, Ordering::SeqCst);
+            if nth == 0 {
+                return (StatusCode::TOO_MANY_REQUESTS, "rate limited").into_response();
+            }
+            (StatusCode::OK, "ok").into_response()
+        }
+
+        let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+            Ok(l) => l,
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                eprintln!("skipping network-bound test: {e}");
+                return;
+            }
+            Err(e) => panic!("failed to bind test listener: {e}"),
+        };
+        let addr = listener.local_addr().unwrap();
+        let base = format!("http://{addr}");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = Router::new()
+            .route("/v2/testrepo/tags/list", get(endpoint))
+            .with_state(calls.clone());
+
+        let server_handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = HttpRegistryClient::new(
+            None,
+            HttpRegistryClientOptions {
+                per_host_concurrency: 1,
+                retry_max_attempts: 1,
+                // Fixed backoff so the timing assertion is deterministic.
+                retry_base_ms: 800,
+                retry_max_ms: 800,
+            },
+        )
+        .unwrap();
+        let host = "rate-limit.test";
+        let url = format!("{base}/v2/testrepo/tags/list");
+
+        let client1 = client.clone();
+        let url1 = url.clone();
+        let first = tokio::spawn(async move {
+            let http = client1.http.clone();
+            client1
+                .send_with_429_retry(host, || http.get(url1.clone()))
+                .await
+                .unwrap()
+                .status()
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let client2 = client.clone();
+        let url2 = url.clone();
+        let second_started = tokio::time::Instant::now();
+        let second = tokio::spawn(async move {
+            let http = client2.http.clone();
+            client2
+                .send_with_429_retry(host, || http.get(url2.clone()))
+                .await
+                .unwrap()
+                .status()
+        });
+
+        let second_status = second.await.unwrap();
+        let second_elapsed = second_started.elapsed();
+        let first_status = first.await.unwrap();
+
+        assert_eq!(second_status, StatusCode::OK);
+        assert_eq!(first_status, StatusCode::OK);
+        assert!(
+            second_elapsed < Duration::from_millis(700),
+            "second request should not be blocked by another request's backoff sleep; elapsed={:?}",
+            second_elapsed
+        );
+        assert!(
+            calls.load(Ordering::SeqCst) >= 3,
+            "expected first=429, second=200, first-retry=200"
+        );
+
         server_handle.abort();
     }
 }
