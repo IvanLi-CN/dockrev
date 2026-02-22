@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { getJob, newJobEventsSource, type JobDetail, type JobLogLine } from '../api'
+import { getJob, newJobEventsSource, type JobDetail, type JobLogLine, type JobProgress } from '../api'
 import { navigate } from '../routes'
 import { Button, Chip, Mono, Pill } from '../ui'
 
@@ -81,10 +81,28 @@ function formatLogLevel(level: string): string {
   return s.slice(0, 4).toUpperCase()
 }
 
+function normalizeProgress(input: JobProgress | null | undefined): JobProgress | null {
+  if (!input) return null
+  const total = Number.isFinite(input.total) ? Math.max(0, input.total) : 0
+  const current = Number.isFinite(input.current) ? Math.min(Math.max(0, input.current), total || input.current) : 0
+  // Frontend only sanitizes backend values; percent is never derived from current/total.
+  const percentRaw = Number.isFinite(input.percent) ? input.percent : 0
+  const percent = Math.max(0, Math.min(100, Math.round(percentRaw)))
+  return { ...input, current, total, percent }
+}
+
+function getKnownProgressPercent(progress: JobProgress): number | null {
+  const total = Number.isFinite(progress.total) ? Math.max(0, progress.total) : 0
+  if (total <= 0) return null
+  if (!Number.isFinite(progress.percent)) return null
+  return Math.max(0, Math.min(100, Math.round(progress.percent)))
+}
+
 export function JobDetailPage(props: { jobId: string; onTopActions: (node: React.ReactNode) => void }) {
   const { jobId, onTopActions } = props
   const [job, setJob] = useState<JobDetail | null>(null)
   const [logs, setLogs] = useState<JobLogLine[]>([])
+  const [progress, setProgress] = useState<JobProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [logTz, setLogTz] = useState<LogTimeZone>('local')
@@ -94,6 +112,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     const j = await getJob(jobId)
     setJob(j)
     setLogs(j.logs)
+    setProgress(normalizeProgress(j.progress))
     return j
   }, [jobId])
 
@@ -117,7 +136,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
           try {
             const j = await refresh()
             if (closed) return
-            if (j.status !== 'running' || j.finishedAt) {
+            if (j.status !== 'running') {
               es?.close()
               stopPolling()
             }
@@ -140,8 +159,8 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
         const j = await refresh()
         if (closed) return
 
-        // Nothing to stream for finished jobs.
-        if (j.status !== 'running' || j.finishedAt) return
+        // Nothing to stream for non-running jobs.
+        if (j.status !== 'running') return
 
         try {
           es = newJobEventsSource(jobId, { afterId: j.logsLastId })
@@ -170,6 +189,29 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
               const next = [...prev, { ts, level, msg }]
               return next.length > 500 ? next.slice(-500) : next
             })
+          } catch {
+            // ignore invalid events
+          }
+        })
+
+        es.addEventListener('job_progress', (evt: Event) => {
+          const data = (evt as MessageEvent).data
+          if (typeof data !== 'string' || !data) return
+          try {
+            const parsed = JSON.parse(data) as unknown
+            if (!parsed || typeof parsed !== 'object') return
+            const p = parsed as Record<string, unknown>
+            if (p.type !== 'job_progress') return
+            const next = normalizeProgress({
+              phase: typeof p.phase === 'string' ? p.phase : 'running',
+              message: typeof p.message === 'string' ? p.message : '',
+              current: typeof p.current === 'number' ? p.current : 0,
+              total: typeof p.total === 'number' ? p.total : 0,
+              percent: typeof p.percent === 'number' ? p.percent : 0,
+              currentTarget: typeof p.currentTarget === 'string' ? p.currentTarget : null,
+              updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : new Date().toISOString(),
+            })
+            if (next) setProgress(next)
           } catch {
             // ignore invalid events
           }
@@ -231,6 +273,14 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     )
   }, [busy, onTopActions, refresh])
 
+  const knownProgressPercent = progress ? getKnownProgressPercent(progress) : null
+  const isRunning = job?.status === 'running'
+  const isIndeterminateRunning = progress !== null && knownProgressPercent === null && isRunning
+  const progressLabel =
+    knownProgressPercent !== null ? `${knownProgressPercent}%` : isRunning ? 'running' : job?.status ?? '-'
+  const progressAriaText =
+    knownProgressPercent !== null ? `${knownProgressPercent}%` : isRunning ? 'running' : job?.status ?? 'finished'
+
   return (
     <div className="page jobDetailPage">
       <div className="card">
@@ -249,8 +299,66 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
               <Mono>{job.reason}</Mono>
             </div>
             <div style={{ marginTop: 6 }}>
-              created <Mono>{formatShort(job.createdAt)}</Mono> · started <Mono>{formatShort(job.startedAt)}</Mono> ·
-              finished <Mono>{formatShort(job.finishedAt)}</Mono>
+              created <Mono>{formatShort(job.createdAt)}</Mono> · started <Mono>{formatShort(job.startedAt)}</Mono>
+              {job.status !== 'running' ? (
+                <>
+                  {' '}
+                  · finished <Mono>{formatShort(job.finishedAt)}</Mono>
+                </>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+        {progress ? (
+          <div className="jobProgress">
+            <div className="jobProgressHeader">
+              <div className="title">进度</div>
+              <div className="mono">{progressLabel}</div>
+            </div>
+            <div
+              className={isIndeterminateRunning ? 'jobProgressBar jobProgressBarIndeterminate' : 'jobProgressBar'}
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={knownProgressPercent ?? undefined}
+              aria-valuetext={progressAriaText}
+            >
+              <div
+                className={isIndeterminateRunning ? 'jobProgressFill jobProgressFillIndeterminate' : 'jobProgressFill'}
+                style={
+                  knownProgressPercent !== null
+                    ? { width: `${knownProgressPercent}%` }
+                    : isIndeterminateRunning
+                      ? undefined
+                      : { width: '100%' }
+                }
+              />
+            </div>
+            <div className="jobProgressMeta">
+              <span>
+                <Mono>{progress.phase || '-'}</Mono>
+                {progress.message ? ` · ${progress.message}` : ''}
+              </span>
+              <span>
+                <Mono>{progress.total > 0 ? `${progress.current}/${progress.total}` : '-'}</Mono>
+                {progress.currentTarget ? ` · ${progress.currentTarget}` : ''}
+              </span>
+              <span>
+                updated <Mono>{formatShort(progress.updatedAt)}</Mono>
+              </span>
+            </div>
+          </div>
+        ) : job?.status === 'running' ? (
+          <div className="jobProgress">
+            <div className="jobProgressHeader">
+              <div className="title">进度</div>
+              <div className="mono">running</div>
+            </div>
+            <div className="jobProgressBar jobProgressBarIndeterminate" role="progressbar" aria-valuetext="running">
+              <div className="jobProgressFill jobProgressFillIndeterminate" />
+            </div>
+            <div className="jobProgressMeta">
+              <span>运行中，等待进度数据…</span>
             </div>
           </div>
         ) : null}

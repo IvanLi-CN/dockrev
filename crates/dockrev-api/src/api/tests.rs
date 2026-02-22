@@ -853,10 +853,7 @@ services:
     let now = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap();
-    let mut manifest_digest_cache: std::collections::HashMap<
-        String,
-        (Option<String>, Option<String>),
-    > = std::collections::HashMap::new();
+    let manifest_digest_cache = crate::service_check::new_manifest_digest_cache();
 
     // Use the same scan-time code path as real jobs.
     crate::service_check::check_service_and_persist(
@@ -866,7 +863,7 @@ services:
         None,
         "linux/amd64",
         &now,
-        &mut manifest_digest_cache,
+        &manifest_digest_cache,
     )
     .await
     .unwrap();
@@ -977,10 +974,7 @@ services:
         .await
         .unwrap();
 
-    let mut manifest_digest_cache: std::collections::HashMap<
-        String,
-        (Option<String>, Option<String>),
-    > = std::collections::HashMap::new();
+    let manifest_digest_cache = crate::service_check::new_manifest_digest_cache();
     crate::service_check::check_service_and_persist(
         &state,
         "job-test",
@@ -989,7 +983,7 @@ services:
         Some("sha256:cur".to_string()),
         "linux/amd64",
         &now,
-        &mut manifest_digest_cache,
+        &manifest_digest_cache,
     )
     .await
     .unwrap();
@@ -1055,10 +1049,7 @@ services:
     let now = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap();
-    let mut manifest_digest_cache: std::collections::HashMap<
-        String,
-        (Option<String>, Option<String>),
-    > = std::collections::HashMap::new();
+    let manifest_digest_cache = crate::service_check::new_manifest_digest_cache();
 
     crate::service_check::check_service_and_persist(
         &state,
@@ -1068,7 +1059,7 @@ services:
         Some("sha256:old".to_string()),
         "linux/amd64",
         &now,
-        &mut manifest_digest_cache,
+        &manifest_digest_cache,
     )
     .await
     .unwrap();
@@ -1166,10 +1157,7 @@ services:
     let now = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap();
-    let mut manifest_digest_cache: std::collections::HashMap<
-        String,
-        (Option<String>, Option<String>),
-    > = std::collections::HashMap::new();
+    let manifest_digest_cache = crate::service_check::new_manifest_digest_cache();
     crate::service_check::check_service_and_persist(
         &state,
         "job-test",
@@ -1177,7 +1165,7 @@ services:
         Some("sha256:old".to_string()),
         "linux/amd64",
         &now,
-        &mut manifest_digest_cache,
+        &manifest_digest_cache,
     )
     .await
     .unwrap();
@@ -1490,6 +1478,187 @@ services:
         stale.summary_json["terminated"]["reason"].as_str().unwrap(),
         "stale_check"
     );
+}
+
+#[tokio::test]
+async fn check_job_exposes_progress_in_detail_and_list() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let check = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(check.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let check_id = triggered["checkId"].as_str().unwrap().to_string();
+
+    let mut done = None;
+    for _ in 0..80 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{check_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            done = Some(job);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let done = done.expect("check job did not finish in time");
+    assert_eq!(done["job"]["progress"]["phase"].as_str().unwrap(), "done");
+    assert_eq!(done["job"]["progress"]["percent"].as_u64().unwrap(), 100);
+    assert_eq!(
+        done["job"]["summary"]["progress"]["phase"]
+            .as_str()
+            .unwrap(),
+        "done"
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/jobs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let list = response_json(resp).await;
+    let item = list["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|j| j["id"].as_str().unwrap() == check_id)
+        .cloned()
+        .expect("check job not in list");
+    assert_eq!(item["progress"]["phase"].as_str().unwrap(), "done");
+}
+
+#[tokio::test]
+async fn finish_job_preserves_existing_progress_when_summary_omits_progress() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let created_at = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let job_id = ids::new_discovery_id();
+    let mut job = crate::api::types::JobRecord::new_running(
+        job_id.clone(),
+        crate::api::types::JobType::Discovery,
+        crate::api::types::JobScope::All,
+        None,
+        None,
+        &created_at,
+    )
+    .to_db();
+    job.created_by = "ivan".to_string();
+    job.reason = "ui".to_string();
+    state.db.insert_job(job).await.unwrap();
+
+    let progress = serde_json::json!({
+        "phase": "scan",
+        "message": "scanned projects (3/5)",
+        "current": 3,
+        "total": 5,
+        "percent": 60,
+        "currentTarget": "demo",
+        "updatedAt": created_at,
+    });
+    state.db.set_job_progress(&job_id, &progress).await.unwrap();
+
+    let finished_at = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .finish_job(
+            &job_id,
+            "success",
+            &finished_at,
+            &serde_json::json!({ "scan": { "projectsSeen": 5 } }),
+        )
+        .await
+        .unwrap();
+
+    let detail_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/jobs/{job_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail_resp.status(), 200);
+    let detail = response_json(detail_resp).await;
+    assert_eq!(detail["job"]["progress"]["phase"].as_str().unwrap(), "scan");
+    assert_eq!(detail["job"]["progress"]["percent"].as_u64().unwrap(), 60);
+    assert_eq!(
+        detail["job"]["summary"]["progress"]["phase"]
+            .as_str()
+            .unwrap(),
+        "scan"
+    );
+
+    let list_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/jobs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_resp.status(), 200);
+    let list = response_json(list_resp).await;
+    let item = list["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|j| j["id"].as_str().unwrap() == job_id)
+        .cloned()
+        .expect("job not in list");
+    assert_eq!(item["progress"]["phase"].as_str().unwrap(), "scan");
+    assert_eq!(item["progress"]["percent"].as_u64().unwrap(), 60);
 }
 
 #[tokio::test]

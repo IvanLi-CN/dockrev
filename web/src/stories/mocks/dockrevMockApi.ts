@@ -521,12 +521,28 @@ function buildQueueMixed(): Fixture {
       allowArchMismatch: input.allowArchMismatch ?? false,
       backupMode: input.backupMode ?? 'inherit',
       summary: input.summary ?? {},
+      progress: input.progress ?? null,
     }
     return base
   }
 
   const jobs: JobListItem[] = [
-    makeJob({ id: 'job-running', status: 'running', finishedAt: null, startedAt: nowIso(-20_000), createdAt: nowIso(-40_000) }),
+    makeJob({
+      id: 'job-running',
+      status: 'running',
+      finishedAt: null,
+      startedAt: nowIso(-20_000),
+      createdAt: nowIso(-40_000),
+      progress: {
+        phase: 'pulling',
+        message: 'updating images',
+        current: 2,
+        total: 5,
+        percent: 40,
+        currentTarget: 'worker',
+        updatedAt: nowIso(-2_000),
+      },
+    }),
     makeJob({
       id: 'job-discovery',
       type: 'discovery',
@@ -587,6 +603,7 @@ function buildQueueLongLogs(): Fixture {
       allowArchMismatch: input.allowArchMismatch ?? false,
       backupMode: input.backupMode ?? 'inherit',
       summary: input.summary ?? {},
+      progress: input.progress ?? null,
     }
     return base
   }
@@ -597,6 +614,15 @@ function buildQueueLongLogs(): Fixture {
     finishedAt: null,
     createdAt: nowIso(-40_000),
     startedAt: nowIso(-20_000),
+    progress: {
+      phase: 'checking',
+      message: 'scanning tags',
+      current: 7,
+      total: 10,
+      percent: 70,
+      currentTarget: 'api',
+      updatedAt: nowIso(-1_500),
+    },
   })
 
   const jobLong = makeJob({

@@ -8,7 +8,8 @@ use anyhow::Context as _;
 
 use crate::{
     api::types::{
-        DiscoveryAction, DiscoveryActionKind, DiscoveryScanSummary, TriggerDiscoveryScanResponse,
+        DiscoveryAction, DiscoveryActionKind, DiscoveryScanSummary, JobLogLine, JobProgress,
+        TriggerDiscoveryScanResponse,
     },
     compose,
     db::{ComposeServiceSpec, DiscoveredComposeProjectUpsert},
@@ -22,6 +23,87 @@ static DISCOVERY_SCAN_LOCK: LazyLock<tokio::sync::Mutex<()>> =
 
 fn now_rfc3339() -> anyhow::Result<String> {
     Ok(time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
+}
+
+fn progress_percent(current: u32, total: u32) -> u32 {
+    if total == 0 {
+        return 0;
+    }
+    ((current.saturating_mul(100)) / total).min(100)
+}
+
+fn make_job_progress(
+    phase: &str,
+    message: String,
+    current: u32,
+    total: u32,
+    current_target: Option<String>,
+    updated_at: String,
+) -> JobProgress {
+    JobProgress {
+        phase: phase.to_string(),
+        message,
+        current,
+        total,
+        percent: progress_percent(current, total),
+        current_target,
+        updated_at,
+    }
+}
+
+async fn persist_job_progress(
+    state: &AppState,
+    job_id: &str,
+    progress: &JobProgress,
+) -> anyhow::Result<()> {
+    let progress_json = serde_json::to_value(progress)?;
+    state.db.set_job_progress(job_id, &progress_json).await?;
+
+    let evt = serde_json::json!({
+        "type": "job_progress",
+        "jobId": job_id,
+        "ts": progress.updated_at,
+        "phase": progress.phase,
+        "message": progress.message,
+        "current": progress.current,
+        "total": progress.total,
+        "percent": progress.percent,
+        "currentTarget": progress.current_target,
+        "updatedAt": progress.updated_at,
+    });
+
+    state
+        .db
+        .insert_job_log(
+            job_id,
+            &JobLogLine {
+                ts: progress.updated_at.clone(),
+                level: "event".to_string(),
+                msg: evt.to_string(),
+            },
+        )
+        .await?;
+    Ok(())
+}
+
+async fn emit_job_progress_best_effort(
+    state: &AppState,
+    progress_job_id: Option<&str>,
+    phase: &str,
+    message: String,
+    current: u32,
+    total: u32,
+    current_target: Option<String>,
+) {
+    let Some(job_id) = progress_job_id else {
+        return;
+    };
+
+    let updated_at = now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+    let progress = make_job_progress(phase, message, current, total, current_target, updated_at);
+    if let Err(e) = persist_job_progress(state, job_id, &progress).await {
+        tracing::warn!(job_id = %job_id, error = %e, "failed to persist discovery progress");
+    }
 }
 
 fn stack_services_match_specs(
@@ -595,15 +677,55 @@ pub fn spawn_task(state: std::sync::Arc<AppState>) {
 }
 
 pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanResponse> {
+    run_scan_inner(state, None).await
+}
+
+pub async fn run_scan_for_job(
+    state: &AppState,
+    job_id: &str,
+) -> anyhow::Result<TriggerDiscoveryScanResponse> {
+    run_scan_inner(state, Some(job_id)).await
+}
+
+async fn run_scan_inner(
+    state: &AppState,
+    progress_job_id: Option<&str>,
+) -> anyhow::Result<TriggerDiscoveryScanResponse> {
     let _scan_guard = DISCOVERY_SCAN_LOCK.lock().await;
     let started_at = now_rfc3339()?;
     let start = std::time::Instant::now();
     let now = started_at.clone();
 
+    // Discovery setup can involve docker inspect and compose-file inference where total work
+    // is not yet known. Expose this as indeterminate progress (total=0).
+    emit_job_progress_best_effort(
+        state,
+        progress_job_id,
+        "prepare",
+        "discovering compose projects".to_string(),
+        0,
+        0,
+        None,
+    )
+    .await;
+
     let projects = list_compose_projects_from_docker(state).await?;
+    let total_projects = projects.len() as u32;
+
+    emit_job_progress_best_effort(
+        state,
+        progress_job_id,
+        "scan",
+        format!("scanning projects (0/{total_projects})"),
+        0,
+        total_projects,
+        None,
+    )
+    .await;
 
     let mut seen_projects = Vec::<String>::new();
     let mut actions = Vec::<DiscoveryAction>::new();
+    let mut projects_processed = 0u32;
 
     let mut summary = DiscoveryScanSummary {
         projects_seen: 0,
@@ -617,6 +739,16 @@ pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanRe
     for (project, observed) in &projects {
         seen_projects.push(project.clone());
         summary.projects_seen += 1;
+        emit_job_progress_best_effort(
+            state,
+            progress_job_id,
+            "scan",
+            format!("scanning project {project}"),
+            projects_processed,
+            total_projects,
+            Some(project.clone()),
+        )
+        .await;
 
         let resolved = match resolve_project_compose_files(project, observed).await {
             Ok(v) => v,
@@ -642,6 +774,17 @@ pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanRe
                     reason: Some(e.reason),
                     details: e.details,
                 });
+                projects_processed = projects_processed.saturating_add(1);
+                emit_job_progress_best_effort(
+                    state,
+                    progress_job_id,
+                    "scan",
+                    format!("scanned projects ({projects_processed}/{total_projects})"),
+                    projects_processed,
+                    total_projects,
+                    Some(project.clone()),
+                )
+                .await;
                 continue;
             }
         };
@@ -701,6 +844,17 @@ pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanRe
                 reason: Some(msg),
                 details: action_details,
             });
+            projects_processed = projects_processed.saturating_add(1);
+            emit_job_progress_best_effort(
+                state,
+                progress_job_id,
+                "scan",
+                format!("scanned projects ({projects_processed}/{total_projects})"),
+                projects_processed,
+                total_projects,
+                Some(project.clone()),
+            )
+            .await;
             continue;
         }
 
@@ -772,6 +926,17 @@ pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanRe
                 reason: warning.clone(),
                 details: action_details,
             });
+            projects_processed = projects_processed.saturating_add(1);
+            emit_job_progress_best_effort(
+                state,
+                progress_job_id,
+                "scan",
+                format!("scanned projects ({projects_processed}/{total_projects})"),
+                projects_processed,
+                total_projects,
+                Some(project.clone()),
+            )
+            .await;
             continue;
         }
 
@@ -822,6 +987,18 @@ pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanRe
                 unarchive_if_active: true,
             })
             .await?;
+
+        projects_processed = projects_processed.saturating_add(1);
+        emit_job_progress_best_effort(
+            state,
+            progress_job_id,
+            "scan",
+            format!("scanned projects ({projects_processed}/{total_projects})"),
+            projects_processed,
+            total_projects,
+            Some(project.clone()),
+        )
+        .await;
     }
 
     let newly_missing = state
@@ -843,6 +1020,17 @@ pub async fn run_scan(state: &AppState) -> anyhow::Result<TriggerDiscoveryScanRe
     if actions.len() > state.config.discovery_max_actions as usize {
         actions.truncate(state.config.discovery_max_actions as usize);
     }
+
+    emit_job_progress_best_effort(
+        state,
+        progress_job_id,
+        "done",
+        "discovery scan finished".to_string(),
+        projects_processed,
+        total_projects,
+        None,
+    )
+    .await;
 
     let duration_ms = start.elapsed().as_millis() as u64;
     Ok(TriggerDiscoveryScanResponse {

@@ -427,8 +427,32 @@ pub struct JobListItem {
     pub summary_json: Value,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobProgress {
+    /// Progress phase label (e.g. prepare/scan/apply/done).
+    pub phase: String,
+    /// Human-readable status message for current phase.
+    pub message: String,
+    /// Completed units in current phase.
+    pub current: u32,
+    /// Total units in current phase. `0` means unknown total (indeterminate).
+    pub total: u32,
+    /// Percent provided by backend. Frontend should not derive/override this value.
+    pub percent: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_target: Option<String>,
+    pub updated_at: String,
+}
+
+fn progress_from_summary(summary: &Value) -> Option<JobProgress> {
+    let progress = summary.as_object()?.get("progress")?.clone();
+    serde_json::from_value::<JobProgress>(progress).ok()
+}
+
 impl JobListItem {
     pub fn into_api(self) -> JobApiListItem {
+        let progress = progress_from_summary(&self.summary_json);
         JobApiListItem {
             id: self.id,
             r#type: self.r#type.as_str().to_string(),
@@ -444,6 +468,7 @@ impl JobListItem {
             allow_arch_mismatch: self.allow_arch_mismatch,
             backup_mode: self.backup_mode,
             summary: self.summary_json,
+            progress,
         }
     }
 }
@@ -475,6 +500,8 @@ pub struct JobApiListItem {
     pub allow_arch_mismatch: bool,
     pub backup_mode: String,
     pub summary: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<JobProgress>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -504,6 +531,8 @@ pub struct JobDetail {
     pub allow_arch_mismatch: bool,
     pub backup_mode: String,
     pub summary: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<JobProgress>,
     pub logs: Vec<JobLogLine>,
     pub logs_last_id: i64,
 }

@@ -141,6 +141,7 @@ export type JobListItem = {
   allowArchMismatch: boolean
   backupMode: string
   summary: unknown
+  progress?: JobProgress | null
 }
 
 export type JobLogLine = {
@@ -149,7 +150,17 @@ export type JobLogLine = {
   msg: string
 }
 
-export type JobDetail = JobListItem & { logs: JobLogLine[]; logsLastId: number }
+export type JobProgress = {
+  phase: string
+  message: string
+  current: number
+  total: number
+  percent: number
+  currentTarget?: string | null
+  updatedAt: string
+}
+
+export type JobDetail = JobListItem & { logs: JobLogLine[]; logsLastId: number; progress?: JobProgress | null }
 
 export type IgnoreRule = {
   id: string
