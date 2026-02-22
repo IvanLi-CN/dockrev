@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-22
 - Last: 2026-02-22
 
@@ -79,11 +79,12 @@
 
 ## 里程碑（Milestones）
 
-- [ ] M1: update job 服务级进度模型落地（后端）
-- [ ] M2: runner 流式执行 + pull 进度增强（best-effort）
-- [ ] M3: Queue/JobDetail 展示策略对齐（前端）
-- [ ] M4: 自动化验证与 PR 交付
+- [x] M1: update job 服务级进度模型落地（后端）
+- [x] M2: runner 流式执行 + pull 进度增强（best-effort）
+- [x] M3: Queue/JobDetail 展示策略对齐（前端）
+- [x] M4: 自动化验证与 PR 交付
 
 ## 变更记录（Change log）
 
 - 2026-02-22: 创建计划并冻结范围、验收与测试口径（Status=待实现）。
+- 2026-02-22: 完成实现与验证，创建 PR #84（Status=已完成）。
