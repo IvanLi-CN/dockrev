@@ -23,6 +23,7 @@ import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../component
 import { useConfirm } from '../confirm'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
+import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay } from '../versionDisplay'
 
 function formatShort(ts: string) {
   const d = new Date(ts)
@@ -73,26 +74,6 @@ function splitImageNameForDisplay(
   if (!t) return { base: n, suffix: '' }
   if (t.startsWith('sha256:')) return { base: n, suffix: `@${t}` }
   return { base: n, suffix: `:${t}` }
-}
-
-function formatTagDisplay(tag: string, resolvedTag: string | null | undefined): string {
-  const semverPattern = /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
-  const r = (resolvedTag ?? '').trim()
-  if (r && semverPattern.test(r)) return r
-  const t = (tag ?? '').trim()
-  if (!t) return '-'
-  if (semverPattern.test(t)) return t
-  return '-'
-}
-
-function formatCandidateTagDisplay(tag: string, resolvedTag: string | null | undefined): string {
-  const semverPattern = /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
-  const r = (resolvedTag ?? '').trim()
-  if (r && semverPattern.test(r)) return r
-  const t = (tag ?? '').trim()
-  if (!t) return '-'
-  if (semverPattern.test(t)) return t
-  return t
 }
 
 function isDockrevService(svc: Service): boolean {

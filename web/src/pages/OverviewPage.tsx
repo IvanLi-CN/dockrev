@@ -26,6 +26,7 @@ import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../component
 import { useConfirm } from '../confirm'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
+import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay } from '../versionDisplay'
 
 function formatShort(ts?: string | null) {
   if (!ts) return '-'
@@ -66,15 +67,6 @@ function splitImageNameForDisplay(
   if (!t) return { base: n, suffix: '' }
   if (t.startsWith('sha256:')) return { base: n, suffix: `@${t}` }
   return { base: n, suffix: `:${t}` }
-}
-
-function formatTagDisplay(tag: string, resolvedTag: string | null | undefined): string {
-  const r = (resolvedTag ?? '').trim()
-  if (r && /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(r)) return r
-  const t = (tag ?? '').trim()
-  if (!t) return '-'
-  if (/^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(t)) return t
-  return '-'
 }
 
 function getDiscoveryScanStartedAt(summary: unknown): string | null {
@@ -710,6 +702,9 @@ export function OverviewPage(props: {
                     const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
                     const candidateTag =
                       item.svc.candidate?.tag && item.svc.candidate.tag !== '-' ? item.svc.candidate.tag : null
+                    const candidateDisplayTag = candidateTag
+                      ? formatCandidateTagDisplay(candidateTag, item.svc.candidate?.resolvedTag ?? null)
+                      : null
                     return (
                       <div key={`${item.stackName}/${item.svc.id}`} className="modalListItem">
                         <div className="modalListLeft">
@@ -745,13 +740,13 @@ export function OverviewPage(props: {
                                 resolvedTags={item.svc.image.resolvedTags}
                               />
                               <ArrowRightIcon className="inlineIcon" />
-                              {candidateTag ? (
+                              {candidateTag && candidateDisplayTag ? (
                                 <VersionTagsPopover
                                   serviceId={item.svc.id}
                                   candidateTag={candidateTag}
                                   candidateDigest={item.svc.candidate?.digest ?? null}
                                 >
-                                  {candidateTag}
+                                  {candidateDisplayTag}
                                 </VersionTagsPopover>
                               ) : (
                                 <span className="mono monoPrimary">-</span>
@@ -991,6 +986,9 @@ export function OverviewPage(props: {
 		                                const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
 		                                const candidateTag =
 		                                  item.svc.candidate?.tag && item.svc.candidate.tag !== '-' ? item.svc.candidate.tag : null
+		                                const candidateDisplayTag = candidateTag
+		                                  ? formatCandidateTagDisplay(candidateTag, item.svc.candidate?.resolvedTag ?? null)
+		                                  : null
 		                                return (
 		                                  <div key={item.svc.id} className="modalListItem">
 		                                    <div className="modalListLeft">
@@ -1026,13 +1024,13 @@ export function OverviewPage(props: {
 		                                            resolvedTags={item.svc.image.resolvedTags}
 		                                          />
 		                                          <ArrowRightIcon className="inlineIcon" />
-		                                          {candidateTag ? (
+		                                          {candidateTag && candidateDisplayTag ? (
 		                                            <VersionTagsPopover
 		                                              serviceId={item.svc.id}
 		                                              candidateTag={candidateTag}
 		                                              candidateDigest={item.svc.candidate?.digest ?? null}
 		                                            >
-		                                              {candidateTag}
+		                                              {candidateDisplayTag}
 		                                            </VersionTagsPopover>
 		                                          ) : (
 		                                            <span className="mono monoPrimary">-</span>
@@ -1084,7 +1082,10 @@ export function OverviewPage(props: {
                       const rawTagTrim = (svc.image.tag ?? '').trim()
                       const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
                       const candidateTag = svc.candidate?.tag && svc.candidate.tag !== '-' ? svc.candidate.tag : null
-	                      const showCandidate = Boolean(candidateTag && candidateTag !== currentDisplayTag)
+	                      const candidateDisplayTag = candidateTag
+	                        ? formatCandidateTagDisplay(candidateTag, svc.candidate?.resolvedTag ?? null)
+	                        : null
+	                      const showCandidate = Boolean(candidateDisplayTag && candidateDisplayTag !== currentDisplayTag)
 	                      const svcApply =
 	                        stt === 'updatable'
 	                          ? { enabled: true, title: null as string | null, note: null as string | null }
@@ -1164,7 +1165,7 @@ export function OverviewPage(props: {
                                       candidateTag={candidateTag}
                                       candidateDigest={svc.candidate?.digest ?? null}
                                     >
-                                      {candidateTag}
+                                      {candidateDisplayTag}
                                     </VersionTagsPopover>
                                   </>
                                 ) : null}
@@ -1284,7 +1285,10 @@ export function OverviewPage(props: {
 	                                                  candidateTag={svc.candidate.tag}
 	                                                  candidateDigest={svc.candidate.digest ?? null}
 	                                                >
-	                                                  {svc.candidate.tag}
+	                                                  {formatCandidateTagDisplay(
+	                                                    svc.candidate.tag,
+	                                                    svc.candidate.resolvedTag ?? null,
+	                                                  )}
 	                                                </VersionTagsPopover>
 	                                              ) : (
 	                                                <span className="mono monoPrimary">-</span>

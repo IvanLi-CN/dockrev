@@ -25,6 +25,7 @@ import { serviceRowStatus } from '../updateStatus'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { useConfirm } from '../confirm'
+import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay } from '../versionDisplay'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -91,15 +92,6 @@ function splitImageNameForDisplay(
   if (!t) return { base: n, suffix: '' }
   if (t.startsWith('sha256:')) return { base: n, suffix: `@${t}` }
   return { base: n, suffix: `:${t}` }
-}
-
-function formatTagDisplay(tag: string, resolvedTag: string | null | undefined): string {
-  const r = (resolvedTag ?? '').trim()
-  if (r && /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(r)) return r
-  const t = (tag ?? '').trim()
-  if (!t) return '-'
-  if (/^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(t)) return t
-  return '-'
 }
 
 function isDockrevService(svc: Service): boolean {
@@ -332,8 +324,12 @@ export function ServiceDetailPage(props: {
               }
               onClick={() => {
                 void (async () => {
-	                  if (!service || !service.candidate) return
+		                  if (!service || !service.candidate) return
                     const currentDisplayTag = formatTagDisplay(service.image.tag, service.image.resolvedTag)
+                    const candidateDisplayTag = formatCandidateTagDisplay(
+                      service.candidate.tag,
+                      service.candidate.resolvedTag ?? null,
+                    )
                     const rawTagTrim = (service.image.tag ?? '').trim()
                     const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
 	                  const ok = await confirm({
@@ -388,7 +384,7 @@ export function ServiceDetailPage(props: {
                                     candidateTag={service.candidate.tag}
                                     candidateDigest={service.candidate.digest ?? null}
                                   >
-                                    {service.candidate.tag}
+                                    {candidateDisplayTag}
                                   </VersionTagsPopover>
                                 </div>
                                 {showRawTag ? (
@@ -625,6 +621,10 @@ export function ServiceDetailPage(props: {
       )
     }
 
+    const candidateDisplayTag = formatCandidateTagDisplay(
+      service.candidate.tag,
+      service.candidate.resolvedTag ?? null,
+    )
     const archNode = service.candidate.arch.length ? (
       <>
         {' · '}arch=<Mono>{service.candidate.arch.join(',')}</Mono>
@@ -642,7 +642,7 @@ export function ServiceDetailPage(props: {
           candidateTag={service.candidate.tag}
           candidateDigest={service.candidate.digest ?? null}
         >
-          {service.candidate.tag}
+          {candidateDisplayTag}
         </VersionTagsPopover>
         <span className="mono">{`@${shortDigest(service.candidate.digest)}`}</span>
         {archNode}
