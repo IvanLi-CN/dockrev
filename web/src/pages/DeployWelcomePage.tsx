@@ -61,6 +61,19 @@ export function DeployWelcomePage() {
     return { core, feature }
   }, [report])
 
+  const stats = useMemo(() => {
+    const checks = report?.checks ?? []
+    const required = checks.filter((item) => item.required)
+    const optional = checks.filter((item) => !item.required)
+    return {
+      requiredTotal: required.length,
+      requiredPass: required.filter((item) => item.status === 'pass').length,
+      requiredFail: required.filter((item) => item.status === 'fail').length,
+      optionalTotal: optional.length,
+      optionalNa: optional.filter((item) => item.status === 'na').length,
+    }
+  }, [report])
+
   const hasBlockingFailures = report?.overall.result === 'fail'
 
   async function enterDashboard() {
@@ -119,6 +132,26 @@ export function DeployWelcomePage() {
           <div className="muted">{report.overall.summary}</div>
           <div className="muted">生成时间：{formatTime(report.generatedAt)}</div>
         </div>
+        <div className="deployChecklistStatRow">
+          <div className="deployChecklistStat">
+            <div className="deployChecklistStatLabel">必需项</div>
+            <div className="deployChecklistStatValue">{stats.requiredTotal}</div>
+          </div>
+          <div className="deployChecklistStat">
+            <div className="deployChecklistStatLabel">已通过</div>
+            <div className="deployChecklistStatValue">{stats.requiredPass}</div>
+          </div>
+          <div className="deployChecklistStat">
+            <div className="deployChecklistStatLabel">阻塞失败</div>
+            <div className="deployChecklistStatValue">{stats.requiredFail}</div>
+          </div>
+          <div className="deployChecklistStat">
+            <div className="deployChecklistStatLabel">可选项（NA）</div>
+            <div className="deployChecklistStatValue">
+              {stats.optionalNa}/{stats.optionalTotal}
+            </div>
+          </div>
+        </div>
         {hasBlockingFailures ? (
           <div className="deployBlockingList">
             <div className="label">阻塞项：</div>
@@ -128,21 +161,46 @@ export function DeployWelcomePage() {
       </div>
 
       <div className="card deployChecklistCard">
-        <div className="title">核心功能（必须可用）</div>
-        <div className="deployChecklistGrid">
-          {groups.core.map((item) => (
-            <DeployCheckRow key={item.id} item={item} />
-          ))}
+        <div className="deployChecklistHead">
+          <div className="title">核心功能检查清单（必须可用）</div>
+          <div className="deployChecklistLegend">
+            <span className="deployChecklistLegendItem">
+              <span className="deployChecklistBox deployChecklistBoxPass" aria-hidden="true">
+                ✓
+              </span>
+              PASS
+            </span>
+            <span className="deployChecklistLegendItem">
+              <span className="deployChecklistBox deployChecklistBoxFail" aria-hidden="true">
+                !
+              </span>
+              FAIL
+            </span>
+            <span className="deployChecklistLegendItem">
+              <span className="deployChecklistBox deployChecklistBoxNa" aria-hidden="true">
+                –
+              </span>
+              NA
+            </span>
+          </div>
         </div>
+        <ol className="deployChecklistList">
+          {groups.core.map((item) => (
+            <DeployChecklistItem key={item.id} item={item} />
+          ))}
+        </ol>
       </div>
 
       <div className="card deployChecklistCard">
-        <div className="title">条件功能（按启用状态判定）</div>
-        <div className="deployChecklistGrid">
-          {groups.feature.map((item) => (
-            <DeployCheckRow key={item.id} item={item} />
-          ))}
+        <div className="deployChecklistHead">
+          <div className="title">条件功能检查清单（按启用状态判定）</div>
+          <div className="muted">未启用功能显示为 NA，不纳入 FAIL 判定。</div>
         </div>
+        <ol className="deployChecklistList">
+          {groups.feature.map((item) => (
+            <DeployChecklistItem key={item.id} item={item} />
+          ))}
+        </ol>
       </div>
 
       <div className="card deployWelcomeFooter">
@@ -171,48 +229,49 @@ export function DeployWelcomePage() {
   )
 }
 
-function DeployCheckRow(props: { item: DeployCheckItem }) {
+function DeployChecklistItem(props: { item: DeployCheckItem }) {
   const { item } = props
-  const statusClass =
-    item.status === 'pass'
-      ? 'deployStatusPill deployStatusPillPass'
-      : item.status === 'fail'
-        ? 'deployStatusPill deployStatusPillFail'
-        : 'deployStatusPill deployStatusPillNa'
+  const statusClass = item.status === 'pass' ? 'pass' : item.status === 'fail' ? 'fail' : 'na'
+  const markLabel = item.status === 'pass' ? '✓' : item.status === 'fail' ? '!' : '–'
+  const titleClass = item.status === 'fail' && item.required ? 'deployChecklistItem deployChecklistItemFail' : 'deployChecklistItem'
 
   return (
-    <div className={item.status === 'fail' && item.required ? 'deployCheckRow deployCheckRowFail' : 'deployCheckRow'}>
-      <div className="deployCheckHead">
-        <div>
-          <div className="deployCheckTitle">{item.title}</div>
-          <div className="mono">{item.id}</div>
-        </div>
-        <div className="deployCheckFlags">
-          <span className={statusClass}>{item.status.toUpperCase()}</span>
-          <span className={item.required ? 'deployRequiredFlag deployRequiredFlagYes' : 'deployRequiredFlag'}>
-            {item.required ? 'required' : 'optional'}
-          </span>
-        </div>
+    <li className={titleClass}>
+      <div className="deployChecklistMarker">
+        <span className={`deployChecklistBox deployChecklistBox${statusClass[0].toUpperCase()}${statusClass.slice(1)}`}>{markLabel}</span>
       </div>
-
-      <div className="deployCheckBody">
-        <div>
-          <span className="label">结论：</span>
+      <div className="deployChecklistContent">
+        <div className="deployChecklistTitleRow">
+          <div className="deployCheckTitle">{item.title}</div>
+          <div className="deployCheckFlags">
+            <span className={item.required ? 'deployRequiredFlag deployRequiredFlagYes' : 'deployRequiredFlag'}>
+              {item.required ? 'required' : 'optional'}
+            </span>
+            <span className={`deployStatusPill deployStatusPill${statusClass[0].toUpperCase()}${statusClass.slice(1)}`}>
+              {item.status.toUpperCase()}
+            </span>
+          </div>
+        </div>
+        <div className="mono">{item.id}</div>
+        <div className="deployChecklistSummary">
+          <span className="label">判定：</span>
           <span className="muted">{item.summary}</span>
         </div>
-        <div>
-          <span className="label">影响：</span>
-          <span className="muted">{item.impact}</span>
-        </div>
-        <div>
-          <span className="label">证据：</span>
-          <span className="mono">{item.evidence || '-'}</span>
-        </div>
-        <div>
-          <span className="label">建议：</span>
-          <span className="muted">{item.recommendation || '无需操作'}</span>
-        </div>
+        <ul className="deployChecklistMeta">
+          <li>
+            <span className="label">影响</span>
+            <span className="muted">{item.impact}</span>
+          </li>
+          <li>
+            <span className="label">证据</span>
+            <span className="mono">{item.evidence || '-'}</span>
+          </li>
+          <li>
+            <span className="label">建议</span>
+            <span className="muted">{item.recommendation || '无需操作'}</span>
+          </li>
+        </ul>
       </div>
-    </div>
+    </li>
   )
 }

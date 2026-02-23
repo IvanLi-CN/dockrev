@@ -1836,6 +1836,32 @@ html[data-theme='light'] .modalOverlay {
   gap: 6px;
 }
 
+.deployChecklistStatRow {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.deployChecklistStat {
+  border-radius: 12px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 75%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface) 86%, var(--panel2) 14%);
+}
+
+.deployChecklistStatLabel {
+  font-size: 11px;
+  color: var(--muted2);
+}
+
+.deployChecklistStatValue {
+  margin-top: 4px;
+  font-size: 18px;
+  font-weight: 780;
+  color: var(--text);
+}
+
 .deployBlockingList {
   margin-top: 12px;
   padding: 10px 12px;
@@ -1854,27 +1880,94 @@ html[data-theme='light'] .modalOverlay {
   gap: 12px;
 }
 
-.deployChecklistGrid {
-  display: grid;
-  gap: 10px;
+.deployChecklistHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
-.deployCheckRow {
+.deployChecklistLegend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.deployChecklistLegendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted2);
+  font-weight: 700;
+}
+
+.deployChecklistList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.deployChecklistItem {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--borderColor) 80%, transparent);
   background: var(--dockrev-surface);
   padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
 }
 
-.deployCheckRowFail {
+.deployChecklistItemFail {
   border-color: color-mix(in srgb, var(--color-error) 38%, transparent);
   background: color-mix(in srgb, var(--color-error) 8%, var(--dockrev-surface) 92%);
 }
 
-.deployCheckHead {
+.deployChecklistMarker {
+  padding-top: 2px;
+}
+
+.deployChecklistBox {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid var(--borderColor);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.deployChecklistBoxPass {
+  color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 38%, transparent);
+  background: color-mix(in srgb, var(--color-success) 14%, transparent);
+}
+
+.deployChecklistBoxFail {
+  color: var(--color-error);
+  border-color: color-mix(in srgb, var(--color-error) 42%, transparent);
+  background: color-mix(in srgb, var(--color-error) 14%, transparent);
+}
+
+.deployChecklistBoxNa {
+  color: var(--muted2);
+  border-color: var(--borderColor);
+  background: color-mix(in srgb, var(--dockrev-surface) 80%, var(--panel2) 20%);
+}
+
+.deployChecklistContent {
+  display: grid;
+  gap: 7px;
+}
+
+.deployChecklistTitleRow {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -1892,11 +1985,10 @@ html[data-theme='light'] .modalOverlay {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  justify-content: flex-end;
 }
 
 .deployStatusPill {
-  height: 24px;
+  height: 22px;
   padding: 0 10px;
   border-radius: 999px;
   border: 1px solid transparent;
@@ -1927,7 +2019,7 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .deployRequiredFlag {
-  height: 24px;
+  height: 22px;
   padding: 0 10px;
   border-radius: 999px;
   border: 1px solid var(--borderColor);
@@ -1942,9 +2034,26 @@ html[data-theme='light'] .modalOverlay {
   color: var(--text);
 }
 
-.deployCheckBody {
-  display: grid;
+.deployChecklistSummary {
+  display: flex;
   gap: 6px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.deployChecklistMeta {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+
+.deployChecklistMeta li {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 8px;
+  align-items: start;
 }
 
 .deployWelcomeFooter {
@@ -1967,10 +2076,24 @@ html[data-theme='light'] .modalOverlay {
 }
 
 @media (max-width: 780px) {
-  .deployCheckHead {
+  .deployChecklistStatRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .deployChecklistTitleRow {
     flex-direction: column;
   }
   .deployCheckFlags {
     justify-content: flex-start;
+  }
+  .deployChecklistItem {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .deployChecklistMarker {
+    padding-top: 0;
+  }
+  .deployChecklistMeta li {
+    grid-template-columns: 1fr;
+    gap: 3px;
   }
 }
