@@ -48,6 +48,13 @@ pub struct ServiceForRuntimeScan {
 }
 
 #[derive(Clone, Debug)]
+pub struct ServiceSnapshotTarget {
+    pub image_ref: String,
+    pub current_digest: Option<String>,
+    pub candidate_digest: Option<String>,
+}
+
+#[derive(Clone, Debug)]
 pub struct DiscoveredComposeProjectRecord {
     pub stack_id: Option<String>,
 }
@@ -854,23 +861,32 @@ WHERE id = ?1
         .context("get service stack id")
     }
 
-    pub async fn get_service_image_ref(&self, service_id: &str) -> anyhow::Result<Option<String>> {
+    pub async fn get_service_snapshot_target(
+        &self,
+        service_id: &str,
+    ) -> anyhow::Result<Option<ServiceSnapshotTarget>> {
         let service_id = service_id.to_string();
         self.call(move |conn| {
             Ok(conn
                 .query_row(
                     r#"
-SELECT image_ref
+SELECT image_ref, current_digest, candidate_digest
 FROM services
 WHERE id = ?1
 "#,
                     params![service_id],
-                    |row| row.get::<_, String>(0),
+                    |row| {
+                        Ok(ServiceSnapshotTarget {
+                            image_ref: row.get(0)?,
+                            current_digest: row.get(1)?,
+                            candidate_digest: row.get(2)?,
+                        })
+                    },
                 )
                 .optional()?)
         })
         .await
-        .context("get service image ref")
+        .context("get service snapshot target")
     }
 
     pub async fn list_snapshot_seed_targets(&self) -> anyhow::Result<Vec<(String, String)>> {

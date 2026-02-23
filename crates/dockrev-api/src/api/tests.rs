@@ -967,28 +967,34 @@ services:
     .unwrap();
 
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/stacks/{stack_id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let svc = services.first().unwrap().clone();
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
         .unwrap();
-    let detail = response_json(resp).await;
-    let service_id = detail["stack"]["services"][0]["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let manifest_digest_cache = crate::service_check::new_manifest_digest_cache();
+    let repo_tags_cache = crate::service_check::new_repo_tags_cache();
+    crate::service_check::check_service_and_persist(
+        &state,
+        "job-test",
+        &svc,
+        None,
+        "linux/amd64",
+        &now,
+        &manifest_digest_cache,
+        &repo_tags_cache,
+    )
+    .await
+    .unwrap();
 
     let resp = app
         .clone()
         .oneshot(
             Request::builder()
                 .uri(format!(
-                    "/api/services/{service_id}/digest-tags-snapshot?digest=match"
+                    "/api/services/{}/digest-tags-snapshot?digest=match",
+                    svc.id
                 ))
                 .body(Body::empty())
                 .unwrap(),
@@ -1000,6 +1006,77 @@ services:
     assert_eq!(body["status"].as_str().unwrap(), "pending");
     assert_eq!(body["digest"].as_str().unwrap(), "sha256:match");
     assert!(body["retryAfterMs"].as_u64().unwrap_or_default() > 0);
+}
+
+#[tokio::test]
+async fn service_digest_tags_snapshot_unknown_digest_is_not_enqueued() {
+    let registry = Arc::new(CountingRegistry::default());
+    let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let svc = services.first().unwrap().clone();
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let manifest_digest_cache = crate::service_check::new_manifest_digest_cache();
+    let repo_tags_cache = crate::service_check::new_repo_tags_cache();
+    crate::service_check::check_service_and_persist(
+        &state,
+        "job-test",
+        &svc,
+        None,
+        "linux/amd64",
+        &now,
+        &manifest_digest_cache,
+        &repo_tags_cache,
+    )
+    .await
+    .unwrap();
+
+    let calls_before = registry.total_calls();
+    let unknown_digest = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{}/digest-tags-snapshot?digest={unknown_digest}",
+                    svc.id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    assert_eq!(
+        registry.total_calls(),
+        calls_before,
+        "unknown digest should not trigger snapshot worker scans"
+    );
+
+    let image_repo = crate::snapshot_worker::image_repo_from_image_ref(&svc.image_ref).unwrap();
+    let snapshot = state
+        .db
+        .get_image_digest_tags_snapshot(&image_repo, unknown_digest, "linux/amd64")
+        .await
+        .unwrap();
+    assert!(snapshot.is_none(), "unknown digest should not be persisted");
 }
 
 #[tokio::test]
@@ -1114,6 +1191,28 @@ services:
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
     let services = state.db.list_services_for_check(&stack_id).await.unwrap();
     let svc = services.first().unwrap().clone();
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .update_service_check_result(
+            &svc.id,
+            Some("sha256:match".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
 
     let resp = app
         .clone()
@@ -1427,7 +1526,7 @@ services:
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), 202);
+    assert_eq!(resp.status(), 404);
 
     // current digest should be generated asynchronously and eventually become ready.
     let resp = app

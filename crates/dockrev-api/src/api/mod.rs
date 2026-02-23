@@ -2443,22 +2443,33 @@ async fn get_service_digest_tags_snapshot(
         return Err(ApiError::invalid_argument("digest is required"));
     }
 
-    let digest = if digest_trimmed.contains(':') {
-        digest_trimmed.to_string()
-    } else {
-        format!("sha256:{digest_trimmed}")
-    };
+    let digest = snapshot_worker::normalize_digest(digest_trimmed)
+        .ok_or_else(|| ApiError::invalid_argument("digest is required"))?;
 
-    let image_ref = state
+    let snapshot_target = state
         .db
-        .get_service_image_ref(&service_id)
+        .get_service_snapshot_target(&service_id)
         .await
         .map_err(map_internal)?;
-    let Some(image_ref) = image_ref else {
+    let Some(snapshot_target) = snapshot_target else {
         return Err(ApiError::not_found("service not found"));
     };
 
-    let image_repo = snapshot_worker::image_repo_from_image_ref(&image_ref)
+    let known_digest = snapshot_target
+        .current_digest
+        .as_deref()
+        .and_then(snapshot_worker::normalize_digest)
+        .is_some_and(|d| d.eq_ignore_ascii_case(&digest))
+        || snapshot_target
+            .candidate_digest
+            .as_deref()
+            .and_then(snapshot_worker::normalize_digest)
+            .is_some_and(|d| d.eq_ignore_ascii_case(&digest));
+    if !known_digest {
+        return Err(ApiError::not_found("digest snapshot not found"));
+    }
+
+    let image_repo = snapshot_worker::image_repo_from_image_ref(&snapshot_target.image_ref)
         .ok_or_else(|| ApiError::invalid_argument("invalid service image ref"))?;
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
