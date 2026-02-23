@@ -27,6 +27,87 @@ async fn response_json(resp: axum::response::Response) -> serde_json::Value {
     serde_json::from_slice(&payload).unwrap()
 }
 
+#[derive(Debug)]
+struct ParsedSseEvent {
+    id: Option<String>,
+    event: String,
+    data: String,
+}
+
+fn parse_sse_block(block: &str) -> Option<ParsedSseEvent> {
+    if block.trim().is_empty() || block.starts_with(':') {
+        return None;
+    }
+
+    let mut id: Option<String> = None;
+    let mut event = String::from("message");
+    let mut data_lines = Vec::<String>::new();
+
+    for line in block.lines() {
+        if let Some(rest) = line.strip_prefix("id:") {
+            id = Some(rest.trim().to_string());
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("event:") {
+            event = rest.trim().to_string();
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("data:") {
+            data_lines.push(rest.trim_start().to_string());
+            continue;
+        }
+    }
+
+    if data_lines.is_empty() {
+        return None;
+    }
+
+    Some(ParsedSseEvent {
+        id,
+        event,
+        data: data_lines.join("\n"),
+    })
+}
+
+async fn wait_for_sse_event(
+    body: &mut Body,
+    expected_event: &str,
+    timeout: Duration,
+) -> ParsedSseEvent {
+    let start = tokio::time::Instant::now();
+    let mut buf = String::new();
+
+    loop {
+        let elapsed = tokio::time::Instant::now().saturating_duration_since(start);
+        assert!(
+            elapsed < timeout,
+            "timed out waiting for SSE event `{expected_event}`"
+        );
+        let remaining = timeout.saturating_sub(elapsed);
+        let frame = tokio::time::timeout(remaining, body.frame())
+            .await
+            .expect("waiting for SSE frame timed out")
+            .expect("SSE stream ended unexpectedly")
+            .expect("SSE frame read failed");
+
+        let Ok(bytes) = frame.into_data() else {
+            continue;
+        };
+        buf.push_str(&String::from_utf8_lossy(&bytes));
+
+        while let Some(idx) = buf.find("\n\n") {
+            let block = buf[..idx].to_string();
+            buf = buf[(idx + 2)..].to_string();
+            let Some(evt) = parse_sse_block(&block) else {
+                continue;
+            };
+            if evt.event == expected_event {
+                return evt;
+            }
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 struct FakeRegistry;
 
@@ -2285,6 +2366,237 @@ async fn finish_job_preserves_existing_progress_when_summary_omits_progress() {
         .expect("job not in list");
     assert_eq!(item["progress"]["phase"].as_str().unwrap(), "scan");
     assert_eq!(item["progress"]["percent"].as_u64().unwrap(), 60);
+}
+
+#[tokio::test]
+async fn jobs_events_stream_emits_job_event_for_new_event_log() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let job_id = ids::new_job_id();
+    let mut job = crate::api::types::JobRecord::new_running(
+        job_id.clone(),
+        crate::api::types::JobType::Check,
+        crate::api::types::JobScope::All,
+        None,
+        None,
+        &now,
+    )
+    .to_db();
+    job.created_by = "ivan".to_string();
+    job.reason = "ui".to_string();
+    state.db.insert_job(job).await.unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/jobs/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers()
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok()),
+        Some("no-cache")
+    );
+
+    let mut body = resp.into_body();
+
+    state
+        .db
+        .insert_job_log(
+            &job_id,
+            &crate::api::types::JobLogLine {
+                ts: now.clone(),
+                level: "event".to_string(),
+                msg: serde_json::json!({
+                    "type": "job_progress",
+                    "jobId": job_id.clone(),
+                    "phase": "scan",
+                    "message": "in progress",
+                    "current": 1,
+                    "total": 2,
+                    "percent": 50,
+                })
+                .to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let evt = wait_for_sse_event(&mut body, "job_event", Duration::from_secs(3)).await;
+    assert!(evt.id.is_some(), "SSE event should include id");
+    let payload: serde_json::Value = serde_json::from_str(&evt.data).unwrap();
+    assert_eq!(payload["jobId"].as_str().unwrap(), job_id);
+    assert_eq!(payload["type"].as_str().unwrap(), "job_progress");
+}
+
+#[tokio::test]
+async fn jobs_events_stream_honors_after_id_or_last_event_id() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let job_id = ids::new_job_id();
+    let mut job = crate::api::types::JobRecord::new_running(
+        job_id.clone(),
+        crate::api::types::JobType::Check,
+        crate::api::types::JobScope::All,
+        None,
+        None,
+        &now,
+    )
+    .to_db();
+    job.created_by = "ivan".to_string();
+    job.reason = "ui".to_string();
+    state.db.insert_job(job).await.unwrap();
+
+    state
+        .db
+        .insert_job_log(
+            &job_id,
+            &crate::api::types::JobLogLine {
+                ts: now.clone(),
+                level: "event".to_string(),
+                msg: serde_json::json!({ "type": "job_progress", "step": "first" }).to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    let first_id = state.db.get_job_logs_last_id(&job_id).await.unwrap();
+
+    state
+        .db
+        .insert_job_log(
+            &job_id,
+            &crate::api::types::JobLogLine {
+                ts: now.clone(),
+                level: "event".to_string(),
+                msg: serde_json::json!({ "type": "job_progress", "step": "second" }).to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    let second_id = state.db.get_job_logs_last_id(&job_id).await.unwrap();
+    let second_id_s = second_id.to_string();
+
+    let resp_query = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/jobs/events?afterId={first_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp_query.status(), 200);
+    let mut body_query = resp_query.into_body();
+    let evt_query = wait_for_sse_event(&mut body_query, "job_event", Duration::from_secs(3)).await;
+    assert_eq!(evt_query.id.as_deref(), Some(second_id_s.as_str()));
+    let payload_query: serde_json::Value = serde_json::from_str(&evt_query.data).unwrap();
+    assert_eq!(payload_query["step"].as_str().unwrap(), "second");
+
+    let resp_header = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/jobs/events")
+                .header("Last-Event-ID", first_id.to_string())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp_header.status(), 200);
+    let mut body_header = resp_header.into_body();
+    let evt_header =
+        wait_for_sse_event(&mut body_header, "job_event", Duration::from_secs(3)).await;
+    assert_eq!(evt_header.id.as_deref(), Some(second_id_s.as_str()));
+    let payload_header: serde_json::Value = serde_json::from_str(&evt_header.data).unwrap();
+    assert_eq!(payload_header["step"].as_str().unwrap(), "second");
+}
+
+#[tokio::test]
+async fn jobs_events_stream_default_starts_from_tail_without_replay() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let job_id = ids::new_job_id();
+    let mut job = crate::api::types::JobRecord::new_running(
+        job_id.clone(),
+        crate::api::types::JobType::Check,
+        crate::api::types::JobScope::All,
+        None,
+        None,
+        &now,
+    )
+    .to_db();
+    job.created_by = "ivan".to_string();
+    job.reason = "ui".to_string();
+    state.db.insert_job(job).await.unwrap();
+
+    state
+        .db
+        .insert_job_log(
+            &job_id,
+            &crate::api::types::JobLogLine {
+                ts: now.clone(),
+                level: "event".to_string(),
+                msg: serde_json::json!({ "type": "job_progress", "step": "old" }).to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    let old_id = state.db.get_job_logs_last_id(&job_id).await.unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/jobs/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let mut body = resp.into_body();
+
+    state
+        .db
+        .insert_job_log(
+            &job_id,
+            &crate::api::types::JobLogLine {
+                ts: now.clone(),
+                level: "event".to_string(),
+                msg: serde_json::json!({ "type": "job_progress", "step": "new" }).to_string(),
+            },
+        )
+        .await
+        .unwrap();
+    let new_id = state.db.get_job_logs_last_id(&job_id).await.unwrap();
+    let new_id_s = new_id.to_string();
+    let old_id_s = old_id.to_string();
+
+    let evt = wait_for_sse_event(&mut body, "job_event", Duration::from_secs(3)).await;
+    assert_eq!(evt.id.as_deref(), Some(new_id_s.as_str()));
+    assert_ne!(evt.id.as_deref(), Some(old_id_s.as_str()));
+    let payload: serde_json::Value = serde_json::from_str(&evt.data).unwrap();
+    assert_eq!(payload["step"].as_str().unwrap(), "new");
 }
 
 #[tokio::test]

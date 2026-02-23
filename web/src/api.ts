@@ -497,6 +497,19 @@ export function newJobEventsSource(jobId: string, opts?: { afterId?: number }): 
   return new EventSource(jobEventsUrl(jobId, opts), { withCredentials: true })
 }
 
+export function jobsEventsUrl(opts?: { afterId?: number }): string {
+  const base = apiBaseUrl().replace(/\/$/, '')
+  let url = `${base}/api/jobs/events`
+  if (opts && typeof opts.afterId === 'number' && Number.isFinite(opts.afterId)) {
+    url += `?afterId=${encodeURIComponent(String(opts.afterId))}`
+  }
+  return url
+}
+
+export function newJobsEventsSource(opts?: { afterId?: number }): EventSource {
+  return new EventSource(jobsEventsUrl(opts), { withCredentials: true })
+}
+
 export async function triggerUpdate(input: {
   scope: string
   stackId?: string
