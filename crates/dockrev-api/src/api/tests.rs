@@ -231,6 +231,50 @@ impl RegistryClient for ListTagsFailRegistry {
 }
 
 #[derive(Clone, Default)]
+struct SnapshotConcurrencyProbeRegistry {
+    in_flight: Arc<AtomicUsize>,
+    max_in_flight: Arc<AtomicUsize>,
+}
+
+impl SnapshotConcurrencyProbeRegistry {
+    fn max_in_flight(&self) -> usize {
+        self.max_in_flight.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl RegistryClient for SnapshotConcurrencyProbeRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        let current = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        let mut seen = self.max_in_flight.load(Ordering::SeqCst);
+        while current > seen {
+            match self.max_in_flight.compare_exchange(
+                seen,
+                current,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => break,
+                Err(v) => seen = v,
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
+        Ok(Vec::new())
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        _reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        Err(anyhow::anyhow!("unexpected get_manifest"))
+    }
+}
+
+#[derive(Clone, Default)]
 struct PruneRegistry;
 
 #[async_trait::async_trait]
@@ -1129,6 +1173,52 @@ services:
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
+async fn snapshot_worker_limits_concurrent_runs() {
+    let registry = Arc::new(SnapshotConcurrencyProbeRegistry::default());
+    let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
+
+    let image_repo = "ghcr.io/acme/web";
+    let host_platform = "linux/amd64";
+    let mut digests: Vec<String> = Vec::new();
+    for i in 0..16 {
+        let digest = format!("sha256:{:064x}", i + 1);
+        digests.push(digest.clone());
+        state
+            .snapshot_worker
+            .enqueue(image_repo, &digest, host_platform, "concurrency_probe")
+            .await;
+    }
+
+    let mut all_ready = false;
+    for _ in 0..200 {
+        let mut ready = 0usize;
+        for digest in &digests {
+            if state
+                .db
+                .get_image_digest_tags_snapshot(image_repo, digest, host_platform)
+                .await
+                .unwrap()
+                .is_some()
+            {
+                ready += 1;
+            }
+        }
+        if ready == digests.len() {
+            all_ready = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(all_ready, "all queued snapshot tasks should complete");
+    assert!(
+        registry.max_in_flight() <= crate::snapshot_worker::SNAPSHOT_WORKER_MAX_CONCURRENCY,
+        "observed list_tags concurrency {} > configured cap {}",
+        registry.max_in_flight(),
+        crate::snapshot_worker::SNAPSHOT_WORKER_MAX_CONCURRENCY
+    );
 }
 
 #[tokio::test]

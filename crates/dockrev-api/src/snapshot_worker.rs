@@ -1,5 +1,7 @@
 use std::{collections::HashSet, sync::Arc};
 
+use tokio::sync::{Mutex, mpsc};
+
 use crate::{
     api::types::{ServiceDigestTagsScanSummary, ServiceDigestTagsSnapshotResponse},
     db::Db,
@@ -7,24 +9,80 @@ use crate::{
 };
 
 pub const SNAPSHOT_PENDING_RETRY_AFTER_MS: u64 = 800;
+pub const SNAPSHOT_WORKER_MAX_CONCURRENCY: usize = 4;
+
+#[derive(Debug)]
+struct SnapshotTask {
+    key: String,
+    repo: String,
+    digest: String,
+    host_platform: String,
+    reason: String,
+}
 
 #[derive(Clone)]
 pub struct SnapshotWorker {
     db: Db,
     registry: Arc<dyn registry::RegistryClient>,
-    in_flight: Arc<tokio::sync::Mutex<HashSet<String>>>,
+    in_flight: Arc<Mutex<HashSet<String>>>,
+    queue_tx: mpsc::UnboundedSender<SnapshotTask>,
 }
 
 impl SnapshotWorker {
     pub fn new(db: Db, registry: Arc<dyn registry::RegistryClient>) -> Self {
-        Self {
+        let (queue_tx, queue_rx) = mpsc::unbounded_channel();
+        let worker = Self {
             db,
             registry,
-            in_flight: Arc::new(tokio::sync::Mutex::new(HashSet::new())),
+            in_flight: Arc::new(Mutex::new(HashSet::new())),
+            queue_tx,
+        };
+        worker.spawn_workers(queue_rx, SNAPSHOT_WORKER_MAX_CONCURRENCY);
+        worker
+    }
+
+    fn spawn_workers(&self, queue_rx: mpsc::UnboundedReceiver<SnapshotTask>, concurrency: usize) {
+        let queue_rx = Arc::new(Mutex::new(queue_rx));
+        for _ in 0..concurrency {
+            let queue_rx = queue_rx.clone();
+            let worker = self.clone();
+            tokio::spawn(async move {
+                loop {
+                    let task = {
+                        let mut rx = queue_rx.lock().await;
+                        rx.recv().await
+                    };
+                    let Some(task) = task else {
+                        break;
+                    };
+
+                    let run = worker
+                        .run_single_snapshot(
+                            &task.repo,
+                            &task.digest,
+                            &task.host_platform,
+                            &task.reason,
+                        )
+                        .await;
+                    if let Err(e) = run {
+                        tracing::debug!(
+                            image_repo = %task.repo,
+                            digest = %task.digest,
+                            host_platform = %task.host_platform,
+                            reason = %task.reason,
+                            error = %e,
+                            "snapshot worker task failed"
+                        );
+                    }
+
+                    let mut inflight = worker.in_flight.lock().await;
+                    inflight.remove(&task.key);
+                }
+            });
         }
     }
 
-    pub fn enqueue(&self, image_repo: &str, digest: &str, host_platform: &str, reason: &str) {
+    pub async fn enqueue(&self, image_repo: &str, digest: &str, host_platform: &str, reason: &str) {
         let repo = image_repo.trim().to_string();
         let host_platform = host_platform.trim().to_string();
         let reason = reason.trim().to_string();
@@ -36,32 +94,31 @@ impl SnapshotWorker {
         }
 
         let key = format!("{repo}@{digest}@{host_platform}");
-        let worker = self.clone();
-        tokio::spawn(async move {
-            {
-                let mut inflight = worker.in_flight.lock().await;
-                if !inflight.insert(key.clone()) {
-                    return;
-                }
+        {
+            let mut inflight = self.in_flight.lock().await;
+            if !inflight.insert(key.clone()) {
+                return;
             }
+        }
 
-            let run = worker
-                .run_single_snapshot(&repo, &digest, &host_platform, &reason)
-                .await;
-            if let Err(e) = run {
-                tracing::debug!(
-                    image_repo = %repo,
-                    digest = %digest,
-                    host_platform = %host_platform,
-                    reason = %reason,
-                    error = %e,
-                    "snapshot worker task failed"
-                );
-            }
-
-            let mut inflight = worker.in_flight.lock().await;
+        let task = SnapshotTask {
+            key: key.clone(),
+            repo: repo.clone(),
+            digest: digest.clone(),
+            host_platform: host_platform.clone(),
+            reason: reason.clone(),
+        };
+        if self.queue_tx.send(task).is_err() {
+            let mut inflight = self.in_flight.lock().await;
             inflight.remove(&key);
-        });
+            tracing::debug!(
+                image_repo = %repo,
+                digest = %digest,
+                host_platform = %host_platform,
+                reason = %reason,
+                "snapshot worker queue closed; dropped enqueue"
+            );
+        }
     }
 
     pub fn spawn_startup_warmup(&self, host_platform: &str) {
@@ -80,7 +137,9 @@ impl SnapshotWorker {
             };
             for (image_ref, digest) in seeds {
                 if let Some(repo) = image_repo_from_image_ref(&image_ref) {
-                    worker.enqueue(&repo, &digest, &host_platform, "startup_warmup");
+                    worker
+                        .enqueue(&repo, &digest, &host_platform, "startup_warmup")
+                        .await;
                 }
             }
         });

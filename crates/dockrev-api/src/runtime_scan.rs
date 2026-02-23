@@ -500,12 +500,15 @@ async fn run_runtime_scan_for_job(
                     crate::snapshot_worker::image_repo_from_image_ref(&svc.image_ref)
                 && let Some(normalized) = crate::snapshot_worker::normalize_digest(d)
             {
-                state.snapshot_worker.enqueue(
-                    &repo,
-                    &normalized,
-                    host_platform,
-                    "runtime_scan_digest_changed",
-                );
+                state
+                    .snapshot_worker
+                    .enqueue(
+                        &repo,
+                        &normalized,
+                        host_platform,
+                        "runtime_scan_digest_changed",
+                    )
+                    .await;
             }
             let evt = json!({
                 "type": "runtime_scan_service",

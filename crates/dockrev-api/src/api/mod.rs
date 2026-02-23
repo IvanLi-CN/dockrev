@@ -174,7 +174,7 @@ fn parse_archived_filter(input: Option<&str>) -> Result<crate::db::ArchivedFilte
     }
 }
 
-fn enqueue_snapshot_for_image_ref(
+async fn enqueue_snapshot_for_image_ref(
     state: &Arc<AppState>,
     image_ref: &str,
     digest: &str,
@@ -189,7 +189,8 @@ fn enqueue_snapshot_for_image_ref(
     };
     state
         .snapshot_worker
-        .enqueue(&repo, &normalized, host_platform, reason);
+        .enqueue(&repo, &normalized, host_platform, reason)
+        .await;
 }
 
 async fn get_stack(
@@ -1733,7 +1734,8 @@ async fn run_update_job(
                                     &runtime_digest,
                                     &host_platform,
                                     "update_digest_changed",
-                                );
+                                )
+                                .await;
                             }
                         }
                     }
@@ -2467,12 +2469,15 @@ async fn get_service_digest_tags_snapshot(
         .await
         .map_err(map_internal)?;
     let Some((snapshot_json, _checked_at, _updated_at)) = snapshot else {
-        state.snapshot_worker.enqueue(
-            &image_repo,
-            &digest,
-            &host_platform,
-            "api_snapshot_read_miss",
-        );
+        state
+            .snapshot_worker
+            .enqueue(
+                &image_repo,
+                &digest,
+                &host_platform,
+                "api_snapshot_read_miss",
+            )
+            .await;
         let pending = ServiceDigestTagsSnapshotPendingResponse {
             status: "pending".to_string(),
             digest: digest.clone(),
