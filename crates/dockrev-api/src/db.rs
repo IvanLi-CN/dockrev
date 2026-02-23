@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -890,6 +890,112 @@ ORDER BY id ASC
         })
         .await
         .context("list snapshot seed targets")
+    }
+
+    pub async fn list_snapshot_anchor_tags(
+        &self,
+        image_repo: &str,
+        digest: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        let image_repo = image_repo.to_string();
+        let digest = digest.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT
+  image_ref,
+  image_tag,
+  current_digest,
+  current_resolved_tag,
+  candidate_tag,
+  candidate_digest,
+  candidate_resolved_tag
+FROM services
+WHERE
+  (current_digest IS NOT NULL AND TRIM(current_digest) = ?1)
+  OR (candidate_digest IS NOT NULL AND TRIM(candidate_digest) = ?1)
+ORDER BY id ASC
+"#,
+            )?;
+            let rows = stmt.query_map(params![digest], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                ))
+            })?;
+
+            let mut tags: BTreeSet<String> = BTreeSet::new();
+            for row in rows {
+                let (
+                    image_ref,
+                    image_tag,
+                    current_digest,
+                    current_resolved_tag,
+                    candidate_tag,
+                    candidate_digest,
+                    candidate_resolved_tag,
+                ) = row?;
+
+                let Some(parsed) = crate::registry::ImageRef::parse(&image_ref).ok() else {
+                    continue;
+                };
+                let row_repo = format!("{}/{}", parsed.registry, parsed.name);
+                if row_repo != image_repo {
+                    continue;
+                }
+
+                let current_matches = current_digest
+                    .as_deref()
+                    .is_some_and(|d| d.trim() == digest.as_str());
+                let candidate_matches = candidate_digest
+                    .as_deref()
+                    .is_some_and(|d| d.trim() == digest.as_str());
+
+                if current_matches {
+                    let tag = image_tag.trim();
+                    if !tag.is_empty() {
+                        tags.insert(tag.to_string());
+                    }
+                    if let Some(tag) = current_resolved_tag
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|t| !t.is_empty())
+                    {
+                        tags.insert(tag.to_string());
+                    }
+                }
+
+                if candidate_matches {
+                    if let Some(tag) = candidate_tag
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|t| !t.is_empty())
+                    {
+                        tags.insert(tag.to_string());
+                    }
+                    if let Some(tag) = candidate_resolved_tag
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|t| !t.is_empty())
+                    {
+                        tags.insert(tag.to_string());
+                    }
+                    let current_tag = image_tag.trim();
+                    if !current_tag.is_empty() {
+                        tags.insert(current_tag.to_string());
+                    }
+                }
+            }
+
+            Ok(tags.into_iter().collect())
+        })
+        .await
+        .context("list snapshot anchor tags")
     }
 
     pub async fn is_stack_archived(&self, stack_id: &str) -> anyhow::Result<Option<bool>> {

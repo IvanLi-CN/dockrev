@@ -1,6 +1,10 @@
 use std::{collections::HashSet, sync::Arc};
 
-use crate::{api::types::ServiceDigestTagsSnapshotResponse, db::Db, registry, service_check};
+use crate::{
+    api::types::{ServiceDigestTagsScanSummary, ServiceDigestTagsSnapshotResponse},
+    db::Db,
+    registry, service_check,
+};
 
 pub const SNAPSHOT_PENDING_RETRY_AFTER_MS: u64 = 800;
 
@@ -92,17 +96,52 @@ impl SnapshotWorker {
         let Some(img) = image_ref_from_repo(image_repo) else {
             return Ok(());
         };
-        let repo_tags = self.registry.list_tags(&img).await?;
-        let anchors: Vec<String> = Vec::new();
-        let (tags, scan) = service_check::scan_digest_tags_snapshot_best_effort(
-            self.registry.clone(),
-            img,
-            host_platform,
-            &repo_tags,
-            digest,
-            &anchors,
-        )
-        .await;
+        let anchors = match self.db.list_snapshot_anchor_tags(image_repo, digest).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::debug!(
+                    image_repo = %image_repo,
+                    digest = %digest,
+                    host_platform = %host_platform,
+                    error = %e,
+                    "snapshot worker failed to load anchor tags; fallback to empty anchors"
+                );
+                Vec::new()
+            }
+        };
+        let (tags, scan) = match self.registry.list_tags(&img).await {
+            Ok(repo_tags) => {
+                service_check::scan_digest_tags_snapshot_best_effort(
+                    self.registry.clone(),
+                    img,
+                    host_platform,
+                    &repo_tags,
+                    digest,
+                    &anchors,
+                )
+                .await
+            }
+            Err(e) => {
+                tracing::warn!(
+                    image_repo = %image_repo,
+                    digest = %digest,
+                    host_platform = %host_platform,
+                    reason = %reason,
+                    error = %e,
+                    "snapshot worker list_tags failed; persisting fallback error snapshot"
+                );
+                (
+                    Vec::new(),
+                    ServiceDigestTagsScanSummary {
+                        repo_tags_total: 0,
+                        repo_tags_considered: 0,
+                        manifests_ok: 0,
+                        manifests_timeout: 0,
+                        manifests_error: 1,
+                    },
+                )
+            }
+        };
 
         let now = now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
         let snapshot = ServiceDigestTagsSnapshotResponse {

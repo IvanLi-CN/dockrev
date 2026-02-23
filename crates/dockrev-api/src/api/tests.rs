@@ -178,6 +178,59 @@ impl RegistryClient for DigestTagsRegistry {
 }
 
 #[derive(Clone, Default)]
+struct AnchoredSnapshotRegistry;
+
+#[async_trait::async_trait]
+impl RegistryClient for AnchoredSnapshotRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        let mut out = Vec::new();
+        // Keep the semver set deep enough so a non-semver anchor would be outside SNAPSHOT_DEPTH.
+        for i in 0..130 {
+            out.push(format!("1.0.{i}"));
+        }
+        out.push("legacy-1".to_string());
+        Ok(out)
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        let digest = if reference == "legacy-1" {
+            "sha256:match"
+        } else {
+            "sha256:other"
+        };
+        Ok(ManifestInfo {
+            digest: Some(digest.to_string()),
+            platform_digest: None,
+            arch: vec!["linux/amd64".to_string()],
+        })
+    }
+}
+
+#[derive(Clone, Default)]
+struct ListTagsFailRegistry;
+
+#[async_trait::async_trait]
+impl RegistryClient for ListTagsFailRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        Err(anyhow::anyhow!("registry list tags failed"))
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        _reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        Err(anyhow::anyhow!("unexpected get_manifest"))
+    }
+}
+
+#[derive(Clone, Default)]
 struct PruneRegistry;
 
 #[async_trait::async_trait]
@@ -903,6 +956,179 @@ services:
     assert_eq!(body["status"].as_str().unwrap(), "pending");
     assert_eq!(body["digest"].as_str().unwrap(), "sha256:match");
     assert!(body["retryAfterMs"].as_u64().unwrap_or_default() > 0);
+}
+
+#[tokio::test]
+async fn service_digest_tags_snapshot_uses_anchor_tag_outside_depth() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(AnchoredSnapshotRegistry),
+        Arc::new(FakeRunner),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:legacy-1
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let svc = services.first().unwrap().clone();
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let manifest_digest_cache = crate::service_check::new_manifest_digest_cache();
+    let repo_tags_cache = crate::service_check::new_repo_tags_cache();
+    crate::service_check::check_service_and_persist(
+        &state,
+        "job-test",
+        &svc,
+        None,
+        "linux/amd64",
+        &now,
+        &manifest_digest_cache,
+        &repo_tags_cache,
+    )
+    .await
+    .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{}/digest-tags-snapshot?digest=match",
+                    svc.id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+
+    let mut body: Option<serde_json::Value> = None;
+    for _ in 0..40 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/services/{}/digest-tags-snapshot?digest=match",
+                        svc.id
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        if resp.status() == 200 {
+            body = Some(response_json(resp).await);
+            break;
+        }
+        assert_eq!(resp.status(), 202);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    let body = body.expect("snapshot should become ready");
+    let tags = body["tags"].as_array().unwrap();
+    assert_eq!(tags.len(), 1);
+    assert_eq!(tags[0].as_str().unwrap(), "legacy-1");
+    assert_eq!(body["scan"]["repoTagsTotal"].as_u64().unwrap(), 131);
+    assert_eq!(body["scan"]["repoTagsConsidered"].as_u64().unwrap(), 100);
+}
+
+#[tokio::test]
+async fn service_digest_tags_snapshot_failure_eventually_returns_ready() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(ListTagsFailRegistry),
+        Arc::new(FakeRunner),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let svc = services.first().unwrap().clone();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{}/digest-tags-snapshot?digest=match",
+                    svc.id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+
+    let mut body: Option<serde_json::Value> = None;
+    for _ in 0..40 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/services/{}/digest-tags-snapshot?digest=match",
+                        svc.id
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        if resp.status() == 200 {
+            body = Some(response_json(resp).await);
+            break;
+        }
+        assert_eq!(resp.status(), 202);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    let body = body.expect("snapshot should become ready even after worker failure");
+    assert_eq!(body["digest"].as_str().unwrap(), "sha256:match");
+    assert_eq!(body["tags"].as_array().unwrap().len(), 0);
+    assert!(body["scan"]["manifestsError"].as_u64().unwrap_or_default() >= 1);
+
+    // Once the fallback snapshot is persisted, the endpoint should stop returning pending.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{}/digest-tags-snapshot?digest=match",
+                    svc.id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
 }
 
 #[tokio::test]
