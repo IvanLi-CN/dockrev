@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { listJobs, newJobsEventsSource, type JobListItem } from '../api'
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
@@ -82,10 +82,19 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   const [filter, setFilter] = useState<Filter>('all')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const refreshRequestIdRef = useRef(0)
 
   const refresh = useCallback(async () => {
+    const requestId = ++refreshRequestIdRef.current
     setError(null)
-    setJobs(await listJobs())
+    try {
+      const nextJobs = await listJobs()
+      if (requestId !== refreshRequestIdRef.current) return
+      setJobs(nextJobs)
+    } catch (e: unknown) {
+      if (requestId !== refreshRequestIdRef.current) return
+      throw e
+    }
   }, [])
 
   useEffect(() => {
@@ -154,6 +163,8 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
       es.addEventListener('open', () => {
         errorStreak = 0
         stopPolling()
+        // Catch up once on successful subscribe so updates between initial list and SSE connect are not missed.
+        scheduleRefresh(0)
       })
 
       es.addEventListener('job_event', (evt: Event) => {
