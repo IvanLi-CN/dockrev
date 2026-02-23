@@ -613,7 +613,11 @@ async fn test_state_with(
     };
 
     let db = Db::open(&config.db_path).await.unwrap();
-    AppState::new(config, db, registry, runner)
+    let snapshot_worker = Arc::new(crate::snapshot_worker::SnapshotWorker::new(
+        db.clone(),
+        registry.clone(),
+    ));
+    AppState::new(config, db, registry, runner, snapshot_worker)
 }
 
 async fn test_state(db_path: &str) -> Arc<AppState> {
@@ -643,7 +647,11 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
 
     let registry = Arc::new(FakeRegistry);
     let runner = Arc::new(FakeRunner);
-    AppState::new(config, db, registry, runner)
+    let snapshot_worker = Arc::new(crate::snapshot_worker::SnapshotWorker::new(
+        db.clone(),
+        registry.clone(),
+    ));
+    AppState::new(config, db, registry, runner, snapshot_worker)
 }
 
 async fn seed_stack_from_compose(state: &Arc<AppState>, name: &str, compose_file: &str) -> String {
@@ -841,7 +849,7 @@ services:
 }
 
 #[tokio::test]
-async fn service_digest_tags_snapshot_404_when_missing() {
+async fn service_digest_tags_snapshot_returns_pending_when_missing() {
     let state = test_state_with(
         ":memory:",
         Arc::new(DigestTagsRegistry),
@@ -890,11 +898,15 @@ services:
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), 404);
+    assert_eq!(resp.status(), 202);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"].as_str().unwrap(), "pending");
+    assert_eq!(body["digest"].as_str().unwrap(), "sha256:match");
+    assert!(body["retryAfterMs"].as_u64().unwrap_or_default() > 0);
 }
 
 #[tokio::test]
-async fn check_persists_digest_tags_snapshot_for_current_digest() {
+async fn check_enqueues_digest_tags_snapshot_and_endpoint_eventually_returns_ready() {
     let state = test_state_with(
         ":memory:",
         Arc::new(DigestTagsRegistry),
@@ -952,11 +964,36 @@ services:
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.status(), 202);
+    let pending = response_json(resp).await;
+    assert_eq!(pending["status"].as_str().unwrap(), "pending");
 
-    let body = response_json(resp).await;
+    let mut body: Option<serde_json::Value> = None;
+    for _ in 0..30 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/services/{}/digest-tags-snapshot?digest=match",
+                        svc.id
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        if resp.status() == 200 {
+            body = Some(response_json(resp).await);
+            break;
+        }
+        assert_eq!(resp.status(), 202);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    let body = body.expect("snapshot should become ready");
     assert_eq!(body["digest"].as_str().unwrap(), "sha256:match");
-    assert_eq!(body["checkedAt"].as_str().unwrap(), now.as_str());
+    assert!(body["checkedAt"].as_str().is_some_and(|s| !s.is_empty()));
 
     let tags = body["tags"].as_array().unwrap();
     assert_eq!(tags.len(), 50);
@@ -971,7 +1008,7 @@ services:
 }
 
 #[tokio::test]
-async fn digest_tags_snapshot_prune_keeps_only_current_and_candidate_digests() {
+async fn digest_tags_snapshot_endpoint_ignores_legacy_service_snapshot_table() {
     let state = test_state_with(":memory:", Arc::new(PruneRegistry), Arc::new(FakeRunner)).await;
     let app = api::router(state.clone());
 
@@ -1060,7 +1097,7 @@ services:
     .await
     .unwrap();
 
-    // old digests should be pruned
+    // Legacy service-scoped snapshot rows should no longer be served by the endpoint.
     let resp = app
         .clone()
         .oneshot(
@@ -1074,9 +1111,9 @@ services:
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), 404);
+    assert_eq!(resp.status(), 202);
 
-    // current digest should exist
+    // current digest should be generated asynchronously and eventually become ready.
     let resp = app
         .clone()
         .oneshot(
@@ -1090,7 +1127,31 @@ services:
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.status(), 202);
+
+    let mut ready = false;
+    for _ in 0..30 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/services/{}/digest-tags-snapshot?digest=cur",
+                        svc.id
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        if resp.status() == 200 {
+            ready = true;
+            break;
+        }
+        assert_eq!(resp.status(), 202);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(ready, "current digest snapshot should become ready");
 }
 
 #[tokio::test]

@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-23
 - Last: 2026-02-23
 
@@ -75,12 +75,13 @@
 
 ## 里程碑（Milestones）
 
-- [ ] M1: check 链路与 snapshot 采集解耦。
-- [ ] M2: 全局 snapshot 存储 + 去重 worker。
-- [ ] M3: startup 预热 + digest 变化触发。
-- [ ] M4: API pending + 前端轮询交互。
-- [ ] M5: 自动化验证通过并提交 PR。
+- [x] M1: check 链路与 snapshot 采集解耦。
+- [x] M2: 全局 snapshot 存储 + 去重 worker。
+- [x] M3: startup 预热 + digest 变化触发。
+- [x] M4: API pending + 前端轮询交互。
+- [x] M5: 自动化验证通过并提交 PR。
 
 ## 变更记录（Change log）
 
 - 2026-02-23: 创建计划并冻结范围、验收与测试口径（Status=待实现）。
+- 2026-02-23: 完成实现与验证，进入快车道 PR 提交流程（Status=已完成）。
