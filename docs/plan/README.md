@@ -107,4 +107,4 @@
 | rsezg | Dockrev Web: 统一候选版本展示优先使用 resolvedTag | 已完成 | `rsezg:fix-candidate-resolvedtag-display/PLAN.md` | 2026-02-22 | PR #83 |
 | 6uedm | Dockrev: Update Job 进度从“0→100跳变”改为持续可观测 | 已完成 | `6uedm:update-job-progress-live/PLAN.md` | 2026-02-22 | PR #84 |
 | 4cn9r | Dockrev: check 提速（无更新跳过 snapshot）+ digest tags 异步去重采集 | 已完成 | `4cn9r:check-snapshot-decouple-worker/PLAN.md` | 2026-02-23 | - |
-| pgbb2 | Dockrev: 部署检查清单页（运维功能完整性判定） | 待实现 | `pgbb2:deploy-checklist-ops-preflight/PLAN.md` | 2026-02-23 | - |
+| pgbb2 | Dockrev: 部署检查清单页（运维功能完整性判定） | 已完成 | `pgbb2:deploy-checklist-ops-preflight/PLAN.md` | 2026-02-23 | PR #87 |
