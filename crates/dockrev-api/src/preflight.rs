@@ -437,23 +437,30 @@ async fn check_notification_features(state: &AppState) -> anyhow::Result<Vec<Dep
             "enabled=false",
         )
     } else if let Some(url) = settings.webhook_url.as_deref() {
-        if Url::parse(url).is_ok() {
-            pass_feature(
+        match Url::parse(url) {
+            Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => pass_feature(
                 "feature.notifications.webhook",
                 "通知能力：Webhook",
                 "webhook notification config is complete",
                 "启用后若配置缺失，Webhook 通知不可用",
                 "webhook URL configured",
-            )
-        } else {
-            fail_feature(
+            ),
+            Ok(parsed) => fail_feature(
+                "feature.notifications.webhook",
+                "通知能力：Webhook",
+                "webhook URL scheme is not supported",
+                "启用后若配置缺失，Webhook 通知不可用",
+                format!("unsupported scheme: {}", parsed.scheme()),
+                "提供合法的 webhook URL（http/https）",
+            ),
+            Err(_) => fail_feature(
                 "feature.notifications.webhook",
                 "通知能力：Webhook",
                 "webhook URL is invalid",
                 "启用后若配置缺失，Webhook 通知不可用",
                 "invalid webhook URL",
                 "提供合法的 webhook URL（http/https）",
-            )
+            ),
         }
     } else {
         fail_feature(

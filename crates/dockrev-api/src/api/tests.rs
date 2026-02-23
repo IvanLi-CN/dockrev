@@ -4224,6 +4224,57 @@ services:
 }
 
 #[tokio::test]
+async fn deploy_check_report_fails_when_webhook_scheme_is_not_http() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+
+    let compose_file = format!("/tmp/dockrev-preflight-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_file,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:1.2.3
+"#,
+    )
+    .unwrap();
+    let _stack_id = seed_stack_from_compose(&state, "prod", &compose_file).await;
+
+    let mut notification = state.db.get_notification_settings().await.unwrap();
+    notification.webhook_enabled = true;
+    notification.webhook_url = Some("ftp://dockrev.example.com/hook".to_string());
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .put_notification_settings(&notification, &now)
+        .await
+        .unwrap();
+
+    let app = api::router(state.clone());
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/deploy-check/report")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["overall"]["result"], "fail");
+    let blocking = body["overall"]["blockingCheckIds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>();
+    assert!(blocking.contains(&"feature.notifications.webhook"));
+}
+
+#[tokio::test]
 async fn github_packages_settings_masks_pat() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
