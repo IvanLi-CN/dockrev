@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -45,6 +45,13 @@ pub struct ServiceForRuntimeScan {
     pub image_ref: String,
     pub image_tag: String,
     pub current_digest: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ServiceSnapshotTarget {
+    pub image_ref: String,
+    pub current_digest: Option<String>,
+    pub candidate_digest: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -854,6 +861,159 @@ WHERE id = ?1
         .context("get service stack id")
     }
 
+    pub async fn get_service_snapshot_target(
+        &self,
+        service_id: &str,
+    ) -> anyhow::Result<Option<ServiceSnapshotTarget>> {
+        let service_id = service_id.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    r#"
+SELECT image_ref, current_digest, candidate_digest
+FROM services
+WHERE id = ?1
+"#,
+                    params![service_id],
+                    |row| {
+                        Ok(ServiceSnapshotTarget {
+                            image_ref: row.get(0)?,
+                            current_digest: row.get(1)?,
+                            candidate_digest: row.get(2)?,
+                        })
+                    },
+                )
+                .optional()?)
+        })
+        .await
+        .context("get service snapshot target")
+    }
+
+    pub async fn list_snapshot_seed_targets(&self) -> anyhow::Result<Vec<(String, String)>> {
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT image_ref, current_digest
+FROM services
+WHERE current_digest IS NOT NULL AND TRIM(current_digest) != ''
+ORDER BY id ASC
+"#,
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list snapshot seed targets")
+    }
+
+    pub async fn list_snapshot_anchor_tags(
+        &self,
+        image_repo: &str,
+        digest: &str,
+    ) -> anyhow::Result<Vec<String>> {
+        let image_repo = image_repo.to_string();
+        let digest = digest.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT
+  image_ref,
+  image_tag,
+  current_digest,
+  current_resolved_tag,
+  candidate_tag,
+  candidate_digest,
+  candidate_resolved_tag
+FROM services
+WHERE
+  (current_digest IS NOT NULL AND TRIM(current_digest) = ?1)
+  OR (candidate_digest IS NOT NULL AND TRIM(candidate_digest) = ?1)
+ORDER BY id ASC
+"#,
+            )?;
+            let rows = stmt.query_map(params![digest], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                ))
+            })?;
+
+            let mut tags: BTreeSet<String> = BTreeSet::new();
+            for row in rows {
+                let (
+                    image_ref,
+                    image_tag,
+                    current_digest,
+                    current_resolved_tag,
+                    candidate_tag,
+                    candidate_digest,
+                    candidate_resolved_tag,
+                ) = row?;
+
+                let Some(parsed) = crate::registry::ImageRef::parse(&image_ref).ok() else {
+                    continue;
+                };
+                let row_repo = format!("{}/{}", parsed.registry, parsed.name);
+                if row_repo != image_repo {
+                    continue;
+                }
+
+                let current_matches = current_digest
+                    .as_deref()
+                    .is_some_and(|d| d.trim() == digest.as_str());
+                let candidate_matches = candidate_digest
+                    .as_deref()
+                    .is_some_and(|d| d.trim() == digest.as_str());
+
+                if current_matches {
+                    let tag = image_tag.trim();
+                    if !tag.is_empty() {
+                        tags.insert(tag.to_string());
+                    }
+                    if let Some(tag) = current_resolved_tag
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|t| !t.is_empty())
+                    {
+                        tags.insert(tag.to_string());
+                    }
+                }
+
+                if candidate_matches {
+                    if let Some(tag) = candidate_tag
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|t| !t.is_empty())
+                    {
+                        tags.insert(tag.to_string());
+                    }
+                    if let Some(tag) = candidate_resolved_tag
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|t| !t.is_empty())
+                    {
+                        tags.insert(tag.to_string());
+                    }
+                    let current_tag = image_tag.trim();
+                    if !current_tag.is_empty() {
+                        tags.insert(current_tag.to_string());
+                    }
+                }
+            }
+
+            Ok(tags.into_iter().collect())
+        })
+        .await
+        .context("list snapshot anchor tags")
+    }
+
     pub async fn is_stack_archived(&self, stack_id: &str) -> anyhow::Result<Option<bool>> {
         let stack_id = stack_id.to_string();
         self.call(move |conn| {
@@ -1309,6 +1469,7 @@ ON CONFLICT(service_id, digest) DO UPDATE SET
         .context("upsert service digest tags snapshot")
     }
 
+    #[allow(dead_code)]
     pub async fn get_service_digest_tags_snapshot(
         &self,
         service_id: &str,
@@ -1333,6 +1494,7 @@ WHERE service_id = ?1 AND digest = ?2
         .context("get service digest tags snapshot")
     }
 
+    #[allow(dead_code)]
     pub async fn delete_service_digest_tags_snapshots_except(
         &self,
         service_id: &str,
@@ -1376,6 +1538,78 @@ WHERE service_id = ?1 AND digest NOT IN (?2, ?3)
         })
         .await
         .context("delete service digest tags snapshots except")
+    }
+
+    pub async fn upsert_image_digest_tags_snapshot(
+        &self,
+        image_repo: &str,
+        digest: &str,
+        host_platform: &str,
+        snapshot_json: &str,
+        checked_at: &str,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let image_repo = image_repo.to_string();
+        let digest = digest.to_string();
+        let host_platform = host_platform.to_string();
+        let snapshot_json = snapshot_json.to_string();
+        let checked_at = checked_at.to_string();
+        let now = now.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                r#"
+INSERT INTO image_digest_tags_snapshots (
+  image_repo,
+  digest,
+  host_platform,
+  snapshot_json,
+  checked_at,
+  updated_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+ON CONFLICT(image_repo, digest, host_platform) DO UPDATE SET
+  snapshot_json = excluded.snapshot_json,
+  checked_at = excluded.checked_at,
+  updated_at = excluded.updated_at
+"#,
+                params![
+                    image_repo,
+                    digest,
+                    host_platform,
+                    snapshot_json,
+                    checked_at,
+                    now
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("upsert image digest tags snapshot")
+    }
+
+    pub async fn get_image_digest_tags_snapshot(
+        &self,
+        image_repo: &str,
+        digest: &str,
+        host_platform: &str,
+    ) -> anyhow::Result<Option<(String, String, String)>> {
+        let image_repo = image_repo.to_string();
+        let digest = digest.to_string();
+        let host_platform = host_platform.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    r#"
+SELECT snapshot_json, checked_at, updated_at
+FROM image_digest_tags_snapshots
+WHERE image_repo = ?1 AND digest = ?2 AND host_platform = ?3
+"#,
+                    params![image_repo, digest, host_platform],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()?)
+        })
+        .await
+        .context("get image digest tags snapshot")
     }
 
     pub async fn get_service_settings(
@@ -3802,5 +4036,15 @@ CREATE TABLE IF NOT EXISTS service_digest_tags_snapshots (
   checked_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (service_id, digest)
+);
+
+CREATE TABLE IF NOT EXISTS image_digest_tags_snapshots (
+  image_repo TEXT NOT NULL,
+  digest TEXT NOT NULL,
+  host_platform TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  checked_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (image_repo, digest, host_platform)
 );
 "#;

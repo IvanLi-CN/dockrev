@@ -1275,3 +1275,11 @@ pub struct ServiceDigestTagsSnapshotResponse {
     pub checked_at: String,
     pub scan: ServiceDigestTagsScanSummary,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceDigestTagsSnapshotPendingResponse {
+    pub status: String,
+    pub digest: String,
+    pub retry_after_ms: u64,
+}

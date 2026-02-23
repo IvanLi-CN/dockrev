@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { ApiError, getServiceDigestTagsSnapshot, type ServiceDigestTagsScanSummary } from '../api'
+import {
+  ApiError,
+  getServiceDigestTagsSnapshot,
+  isServiceDigestTagsSnapshotPending,
+  type ServiceDigestTagsScanSummary,
+} from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 
 type TagSeries = {
@@ -245,40 +250,52 @@ export function CurrentVersionPopover(props: {
       // Avoid stale request finalizers / callbacks clobbering newer debounce timers.
       if (fetchTimer.current === timerId) fetchTimer.current = null
 
-      getServiceDigestTagsSnapshot(props.serviceId, digestNorm)
-        .then((data) => {
-          if (!alive) return
-          setDigestState({
-            key: digestKey,
-            tags: data.tags,
-            scan: data.scan ?? null,
-            checkedAt: data.checkedAt ?? null,
-            missingSnapshot: false,
-            error: null,
+      const poll = () => {
+        getServiceDigestTagsSnapshot(props.serviceId, digestNorm)
+          .then((data) => {
+            if (!alive) return
+            if (isServiceDigestTagsSnapshotPending(data)) {
+              const retryAfterMs = Math.max(200, Math.min(5000, Number(data.retryAfterMs) || FETCH_DEBOUNCE_MS))
+              fetchTimer.current = window.setTimeout(() => {
+                if (fetchTimer.current != null) fetchTimer.current = null
+                poll()
+              }, retryAfterMs)
+              return
+            }
+            setDigestState({
+              key: digestKey,
+              tags: data.tags,
+              scan: data.scan ?? null,
+              checkedAt: data.checkedAt ?? null,
+              missingSnapshot: false,
+              error: null,
+            })
           })
-        })
-        .catch((e: unknown) => {
-          if (!alive) return
-          if (e instanceof ApiError && e.status === 404) {
+          .catch((e: unknown) => {
+            if (!alive) return
+            if (e instanceof ApiError && e.status === 404) {
+              setDigestState({
+                key: digestKey,
+                tags: [],
+                scan: null,
+                checkedAt: null,
+                missingSnapshot: true,
+                error: null,
+              })
+              return
+            }
             setDigestState({
               key: digestKey,
               tags: [],
               scan: null,
               checkedAt: null,
-              missingSnapshot: true,
-              error: null,
+              missingSnapshot: false,
+              error: e instanceof Error ? e.message : String(e),
             })
-            return
-          }
-          setDigestState({
-            key: digestKey,
-            tags: [],
-            scan: null,
-            checkedAt: null,
-            missingSnapshot: false,
-            error: e instanceof Error ? e.message : String(e),
           })
-        })
+      }
+
+      poll()
     }, delay)
     fetchTimer.current = timerId
 

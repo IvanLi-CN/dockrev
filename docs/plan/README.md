@@ -106,3 +106,4 @@
 | gnae4 | Dockrev API: check 429 限流与中档提速 | 已完成 | `gnae4:check-429-throttle-and-speed/PLAN.md` | 2026-02-22 | PR #82 |
 | rsezg | Dockrev Web: 统一候选版本展示优先使用 resolvedTag | 已完成 | `rsezg:fix-candidate-resolvedtag-display/PLAN.md` | 2026-02-22 | PR #83 |
 | 6uedm | Dockrev: Update Job 进度从“0→100跳变”改为持续可观测 | 已完成 | `6uedm:update-job-progress-live/PLAN.md` | 2026-02-22 | PR #84 |
+| 4cn9r | Dockrev: check 提速（无更新跳过 snapshot）+ digest tags 异步去重采集 | 已完成 | `4cn9r:check-snapshot-decouple-worker/PLAN.md` | 2026-02-23 | - |

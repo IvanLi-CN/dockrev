@@ -17,6 +17,7 @@ mod registry;
 mod runner;
 mod runtime_scan;
 mod service_check;
+mod snapshot_worker;
 mod state;
 mod ui;
 mod updater;
@@ -86,7 +87,11 @@ async fn main() -> anyhow::Result<()> {
         },
     )?);
     let runner = std::sync::Arc::new(runner::TokioCommandRunner);
-    let state = state::AppState::new(config, db, registry, runner);
+    let snapshot_worker = std::sync::Arc::new(snapshot_worker::SnapshotWorker::new(
+        db.clone(),
+        registry.clone(),
+    ));
+    let state = state::AppState::new(config, db, registry, runner, snapshot_worker);
 
     // Recover orphaned/incomplete jobs created by a previous process instance.
     // This covers cases where the container was killed or the process panicked mid-job.
@@ -101,6 +106,9 @@ async fn main() -> anyhow::Result<()> {
             "recovered incomplete jobs on startup"
         );
     }
+    let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
+        .unwrap_or_else(|| "linux/amd64".to_string());
+    state.snapshot_worker.spawn_startup_warmup(&host_platform);
 
     backup::spawn_cleanup_task(state.clone());
     discovery::spawn_task(state.clone());

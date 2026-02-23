@@ -403,29 +403,6 @@ pub(crate) async fn check_service_and_persist(
         )
         .await?;
 
-    // Persist best-effort digest->tags snapshot at scan-time so UI can remain deterministic and
-    // avoid live registry fan-out (which may drift away from the last scan).
-    if let Err(e) = persist_digest_tags_snapshots_best_effort(
-        state,
-        &svc.id,
-        &img,
-        &tags,
-        host_platform,
-        &svc.image_tag,
-        current_digest.as_deref(),
-        candidate_tag.as_deref(),
-        candidate_digest.as_deref(),
-        now,
-    )
-    .await
-    {
-        tracing::debug!(
-            service_id = %svc.id,
-            error = %e,
-            "digest tags snapshot persistence failed (ignored)"
-        );
-    }
-
     Ok(ServiceCheckOutcome {
         current_digest,
         current_resolved_tag,
@@ -442,6 +419,7 @@ pub(crate) async fn check_service_and_persist(
     })
 }
 
+#[allow(dead_code)]
 fn normalize_digest(input: &str) -> Option<String> {
     let t = input.trim();
     if t.is_empty() {
@@ -522,7 +500,7 @@ fn pick_considered_tags_for_snapshot(
     out
 }
 
-async fn scan_digest_tags_snapshot_best_effort(
+pub(crate) async fn scan_digest_tags_snapshot_best_effort(
     registry: Arc<dyn registry::RegistryClient>,
     img: registry::ImageRef,
     host_platform: &str,
@@ -687,6 +665,7 @@ async fn scan_digest_tags_snapshot_best_effort(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(dead_code)]
 async fn persist_digest_tags_snapshots_best_effort(
     state: &Arc<AppState>,
     service_id: &str,

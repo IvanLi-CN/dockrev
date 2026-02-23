@@ -12,6 +12,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
     response::sse::{Event, KeepAlive, Sse},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use base64::Engine as _;
@@ -23,7 +24,7 @@ use url::Url;
 use crate::github;
 use crate::{
     backup, discovery, error::ApiError, ids, ignore, notify, registry, runtime_scan,
-    state::AppState, ui, updater,
+    snapshot_worker, state::AppState, ui, updater,
 };
 use types::*;
 
@@ -171,6 +172,25 @@ fn parse_archived_filter(input: Option<&str>) -> Result<crate::db::ArchivedFilte
             "invalid archived filter: {other}"
         ))),
     }
+}
+
+async fn enqueue_snapshot_for_image_ref(
+    state: &Arc<AppState>,
+    image_ref: &str,
+    digest: &str,
+    host_platform: &str,
+    reason: &str,
+) {
+    let Some(repo) = snapshot_worker::image_repo_from_image_ref(image_ref) else {
+        return;
+    };
+    let Some(normalized) = snapshot_worker::normalize_digest(digest) else {
+        return;
+    };
+    state
+        .snapshot_worker
+        .enqueue(&repo, &normalized, host_platform, reason)
+        .await;
 }
 
 async fn get_stack(
@@ -521,14 +541,7 @@ async fn handle_check_worker_result(
     state: &Arc<AppState>,
     job_id: &str,
     now: &str,
-    joined: Result<
-        (
-            String,
-            String,
-            anyhow::Result<crate::service_check::ServiceCheckOutcome>,
-        ),
-        tokio::task::JoinError,
-    >,
+    joined: Result<CheckWorkerResult, tokio::task::JoinError>,
     total_services: u32,
     services_checked: &mut u32,
     services_with_candidate: &mut u32,
@@ -536,8 +549,11 @@ async fn handle_check_worker_result(
     last_progress_logged_at: &mut Option<std::time::Instant>,
     latest_progress: &mut JobProgress,
 ) -> Result<(), ApiError> {
-    let (stack_id, service_name, outcome) =
-        joined.map_err(|e| map_internal(anyhow::anyhow!("check worker join failed: {e}")))?;
+    let CheckWorkerResult {
+        stack_id,
+        service_name,
+        outcome,
+    } = joined.map_err(|e| map_internal(anyhow::anyhow!("check worker join failed: {e}")))?;
 
     *services_checked = (*services_checked).saturating_add(1);
     *latest_target = Some(format!("{stack_id}/{service_name}"));
@@ -587,6 +603,13 @@ async fn handle_check_worker_result(
     }
 
     Ok(())
+}
+
+#[derive(Debug)]
+struct CheckWorkerResult {
+    stack_id: String,
+    service_name: String,
+    outcome: anyhow::Result<crate::service_check::ServiceCheckOutcome>,
 }
 
 async fn trigger_check(
@@ -897,11 +920,7 @@ async fn run_check_for_job(
         tracing::warn!(job_id = %job_id, error = %e, "failed to persist initial check progress");
     }
 
-    let mut join_set: JoinSet<(
-        String,
-        String,
-        anyhow::Result<crate::service_check::ServiceCheckOutcome>,
-    )> = JoinSet::new();
+    let mut join_set: JoinSet<CheckWorkerResult> = JoinSet::new();
 
     let mut services_checked = 0u32;
     let mut services_with_candidate = 0u32;
@@ -946,7 +965,11 @@ async fn run_check_for_job(
                 &spawn_repo_tags_cache,
             )
             .await;
-            (stack_id, service_name, outcome)
+            CheckWorkerResult {
+                stack_id,
+                service_name,
+                outcome,
+            }
         });
         if join_set.len() >= state.config.check_concurrency
             && let Some(joined) = join_set.join_next().await
@@ -1388,6 +1411,8 @@ async fn run_update_job(
     }
 
     let outcome: anyhow::Result<UpdateJobOutcome> = async {
+        let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
+            .unwrap_or_else(|| "linux/amd64".to_string());
         let backup_settings = state.db.get_backup_settings().await?;
         let stack_ids = resolve_stack_ids_for_update(state.as_ref(), &req).await?;
         let total_stacks = stack_ids.len() as u32;
@@ -1678,6 +1703,42 @@ async fn run_update_job(
             let _ = progress_task.await;
             match update_outcome {
                 Ok(outcome) => {
+                    if let Some(changed_service_ids) =
+                        extract_changed_service_ids(&outcome.summary_json)
+                        && let Some(project) = state.db.get_stack_compose_project(stack_id).await?
+                    {
+                        for changed_service_id in changed_service_ids {
+                            let Some(svc) = stack
+                                .services
+                                .iter()
+                                .find(|svc| svc.id == changed_service_id)
+                            else {
+                                continue;
+                            };
+                            let Ok(img) = registry::ImageRef::parse(&svc.image.reference) else {
+                                continue;
+                            };
+                            let runtime_digest = docker_compose_service_runtime_digest(
+                                state.as_ref(),
+                                &project,
+                                &svc.name,
+                                &repo_candidates(&img),
+                            )
+                            .await
+                            .ok()
+                            .flatten();
+                            if let Some(runtime_digest) = runtime_digest {
+                                enqueue_snapshot_for_image_ref(
+                                    &state,
+                                    &svc.image.reference,
+                                    &runtime_digest,
+                                    &host_platform,
+                                    "update_digest_changed",
+                                )
+                                .await;
+                            }
+                        }
+                    }
                     final_status = outcome.status.clone();
                     stack_summary.insert("update".to_string(), outcome.summary_json);
                     stack_summaries.push(serde_json::Value::Object(stack_summary));
@@ -2373,7 +2434,7 @@ async fn get_service_digest_tags_snapshot(
     headers: HeaderMap,
     Path(service_id): Path<String>,
     Query(q): Query<GetServiceDigestTagsSnapshotQuery>,
-) -> Result<Json<ServiceDigestTagsSnapshotResponse>, ApiError> {
+) -> Result<Response, ApiError> {
     let _user = require_user(&state, &headers)?;
 
     let digest_input = q.digest.unwrap_or_default();
@@ -2382,32 +2443,58 @@ async fn get_service_digest_tags_snapshot(
         return Err(ApiError::invalid_argument("digest is required"));
     }
 
-    let digest = if digest_trimmed.contains(':') {
-        digest_trimmed.to_string()
-    } else {
-        format!("sha256:{digest_trimmed}")
-    };
+    let digest = snapshot_worker::normalize_digest(digest_trimmed)
+        .ok_or_else(|| ApiError::invalid_argument("digest is required"))?;
 
-    let stack_id = state
+    let snapshot_target = state
         .db
-        .get_service_stack_id(&service_id)
+        .get_service_snapshot_target(&service_id)
         .await
         .map_err(map_internal)?;
-    if stack_id.is_none() {
+    let Some(snapshot_target) = snapshot_target else {
         return Err(ApiError::not_found("service not found"));
+    };
+
+    let known_digest = snapshot_target
+        .current_digest
+        .as_deref()
+        .and_then(snapshot_worker::normalize_digest)
+        .is_some_and(|d| d.eq_ignore_ascii_case(&digest))
+        || snapshot_target
+            .candidate_digest
+            .as_deref()
+            .and_then(snapshot_worker::normalize_digest)
+            .is_some_and(|d| d.eq_ignore_ascii_case(&digest));
+    if !known_digest {
+        return Err(ApiError::not_found("digest snapshot not found"));
     }
+
+    let image_repo = snapshot_worker::image_repo_from_image_ref(&snapshot_target.image_ref)
+        .ok_or_else(|| ApiError::invalid_argument("invalid service image ref"))?;
+    let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
+        .unwrap_or_else(|| "linux/amd64".to_string());
 
     let snapshot = state
         .db
-        .get_service_digest_tags_snapshot(&service_id, &digest)
+        .get_image_digest_tags_snapshot(&image_repo, &digest, &host_platform)
         .await
         .map_err(map_internal)?;
     let Some((snapshot_json, _checked_at, _updated_at)) = snapshot else {
-        return Err(
-            ApiError::not_found("digest tags snapshot not found").with_details(json!({
-                "digest": digest,
-            })),
-        );
+        state
+            .snapshot_worker
+            .enqueue(
+                &image_repo,
+                &digest,
+                &host_platform,
+                "api_snapshot_read_miss",
+            )
+            .await;
+        let pending = ServiceDigestTagsSnapshotPendingResponse {
+            status: "pending".to_string(),
+            digest: digest.clone(),
+            retry_after_ms: snapshot_worker::SNAPSHOT_PENDING_RETRY_AFTER_MS,
+        };
+        return Ok((StatusCode::ACCEPTED, Json(pending)).into_response());
     };
 
     let parsed: ServiceDigestTagsSnapshotResponse =
@@ -2417,7 +2504,7 @@ async fn get_service_digest_tags_snapshot(
             }))
         })?;
 
-    Ok(Json(parsed))
+    Ok(Json(parsed).into_response())
 }
 
 async fn list_service_digest_tags(

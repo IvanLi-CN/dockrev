@@ -178,6 +178,103 @@ impl RegistryClient for DigestTagsRegistry {
 }
 
 #[derive(Clone, Default)]
+struct AnchoredSnapshotRegistry;
+
+#[async_trait::async_trait]
+impl RegistryClient for AnchoredSnapshotRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        let mut out = Vec::new();
+        // Keep the semver set deep enough so a non-semver anchor would be outside SNAPSHOT_DEPTH.
+        for i in 0..130 {
+            out.push(format!("1.0.{i}"));
+        }
+        out.push("legacy-1".to_string());
+        Ok(out)
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        let digest = if reference == "legacy-1" {
+            "sha256:match"
+        } else {
+            "sha256:other"
+        };
+        Ok(ManifestInfo {
+            digest: Some(digest.to_string()),
+            platform_digest: None,
+            arch: vec!["linux/amd64".to_string()],
+        })
+    }
+}
+
+#[derive(Clone, Default)]
+struct ListTagsFailRegistry;
+
+#[async_trait::async_trait]
+impl RegistryClient for ListTagsFailRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        Err(anyhow::anyhow!("registry list tags failed"))
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        _reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        Err(anyhow::anyhow!("unexpected get_manifest"))
+    }
+}
+
+#[derive(Clone, Default)]
+struct SnapshotConcurrencyProbeRegistry {
+    in_flight: Arc<AtomicUsize>,
+    max_in_flight: Arc<AtomicUsize>,
+}
+
+impl SnapshotConcurrencyProbeRegistry {
+    fn max_in_flight(&self) -> usize {
+        self.max_in_flight.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl RegistryClient for SnapshotConcurrencyProbeRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        let current = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        let mut seen = self.max_in_flight.load(Ordering::SeqCst);
+        while current > seen {
+            match self.max_in_flight.compare_exchange(
+                seen,
+                current,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => break,
+                Err(v) => seen = v,
+            }
+        }
+
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
+        Ok(Vec::new())
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        _reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        Err(anyhow::anyhow!("unexpected get_manifest"))
+    }
+}
+
+#[derive(Clone, Default)]
 struct PruneRegistry;
 
 #[async_trait::async_trait]
@@ -613,7 +710,11 @@ async fn test_state_with(
     };
 
     let db = Db::open(&config.db_path).await.unwrap();
-    AppState::new(config, db, registry, runner)
+    let snapshot_worker = Arc::new(crate::snapshot_worker::SnapshotWorker::new(
+        db.clone(),
+        registry.clone(),
+    ));
+    AppState::new(config, db, registry, runner, snapshot_worker)
 }
 
 async fn test_state(db_path: &str) -> Arc<AppState> {
@@ -643,7 +744,11 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
 
     let registry = Arc::new(FakeRegistry);
     let runner = Arc::new(FakeRunner);
-    AppState::new(config, db, registry, runner)
+    let snapshot_worker = Arc::new(crate::snapshot_worker::SnapshotWorker::new(
+        db.clone(),
+        registry.clone(),
+    ));
+    AppState::new(config, db, registry, runner, snapshot_worker)
 }
 
 async fn seed_stack_from_compose(state: &Arc<AppState>, name: &str, compose_file: &str) -> String {
@@ -841,7 +946,7 @@ services:
 }
 
 #[tokio::test]
-async fn service_digest_tags_snapshot_404_when_missing() {
+async fn service_digest_tags_snapshot_returns_pending_when_missing() {
     let state = test_state_with(
         ":memory:",
         Arc::new(DigestTagsRegistry),
@@ -862,28 +967,94 @@ services:
     .unwrap();
 
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/stacks/{stack_id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let svc = services.first().unwrap().clone();
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
         .unwrap();
-    let detail = response_json(resp).await;
-    let service_id = detail["stack"]["services"][0]["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let manifest_digest_cache = crate::service_check::new_manifest_digest_cache();
+    let repo_tags_cache = crate::service_check::new_repo_tags_cache();
+    crate::service_check::check_service_and_persist(
+        &state,
+        "job-test",
+        &svc,
+        None,
+        "linux/amd64",
+        &now,
+        &manifest_digest_cache,
+        &repo_tags_cache,
+    )
+    .await
+    .unwrap();
 
     let resp = app
         .clone()
         .oneshot(
             Request::builder()
                 .uri(format!(
-                    "/api/services/{service_id}/digest-tags-snapshot?digest=match"
+                    "/api/services/{}/digest-tags-snapshot?digest=match",
+                    svc.id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"].as_str().unwrap(), "pending");
+    assert_eq!(body["digest"].as_str().unwrap(), "sha256:match");
+    assert!(body["retryAfterMs"].as_u64().unwrap_or_default() > 0);
+}
+
+#[tokio::test]
+async fn service_digest_tags_snapshot_unknown_digest_is_not_enqueued() {
+    let registry = Arc::new(CountingRegistry::default());
+    let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let svc = services.first().unwrap().clone();
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let manifest_digest_cache = crate::service_check::new_manifest_digest_cache();
+    let repo_tags_cache = crate::service_check::new_repo_tags_cache();
+    crate::service_check::check_service_and_persist(
+        &state,
+        "job-test",
+        &svc,
+        None,
+        "linux/amd64",
+        &now,
+        &manifest_digest_cache,
+        &repo_tags_cache,
+    )
+    .await
+    .unwrap();
+
+    let calls_before = registry.total_calls();
+    let unknown_digest = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{}/digest-tags-snapshot?digest={unknown_digest}",
+                    svc.id
                 ))
                 .body(Body::empty())
                 .unwrap(),
@@ -891,10 +1062,266 @@ services:
         .await
         .unwrap();
     assert_eq!(resp.status(), 404);
+
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    assert_eq!(
+        registry.total_calls(),
+        calls_before,
+        "unknown digest should not trigger snapshot worker scans"
+    );
+
+    let image_repo = crate::snapshot_worker::image_repo_from_image_ref(&svc.image_ref).unwrap();
+    let snapshot = state
+        .db
+        .get_image_digest_tags_snapshot(&image_repo, unknown_digest, "linux/amd64")
+        .await
+        .unwrap();
+    assert!(snapshot.is_none(), "unknown digest should not be persisted");
 }
 
 #[tokio::test]
-async fn check_persists_digest_tags_snapshot_for_current_digest() {
+async fn service_digest_tags_snapshot_uses_anchor_tag_outside_depth() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(AnchoredSnapshotRegistry),
+        Arc::new(FakeRunner),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:legacy-1
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let svc = services.first().unwrap().clone();
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let manifest_digest_cache = crate::service_check::new_manifest_digest_cache();
+    let repo_tags_cache = crate::service_check::new_repo_tags_cache();
+    crate::service_check::check_service_and_persist(
+        &state,
+        "job-test",
+        &svc,
+        None,
+        "linux/amd64",
+        &now,
+        &manifest_digest_cache,
+        &repo_tags_cache,
+    )
+    .await
+    .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{}/digest-tags-snapshot?digest=match",
+                    svc.id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+
+    let mut body: Option<serde_json::Value> = None;
+    for _ in 0..40 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/services/{}/digest-tags-snapshot?digest=match",
+                        svc.id
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        if resp.status() == 200 {
+            body = Some(response_json(resp).await);
+            break;
+        }
+        assert_eq!(resp.status(), 202);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    let body = body.expect("snapshot should become ready");
+    let tags = body["tags"].as_array().unwrap();
+    assert_eq!(tags.len(), 1);
+    assert_eq!(tags[0].as_str().unwrap(), "legacy-1");
+    assert_eq!(body["scan"]["repoTagsTotal"].as_u64().unwrap(), 131);
+    assert_eq!(body["scan"]["repoTagsConsidered"].as_u64().unwrap(), 100);
+}
+
+#[tokio::test]
+async fn service_digest_tags_snapshot_failure_eventually_returns_ready() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(ListTagsFailRegistry),
+        Arc::new(FakeRunner),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let svc = services.first().unwrap().clone();
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .update_service_check_result(
+            &svc.id,
+            Some("sha256:match".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{}/digest-tags-snapshot?digest=match",
+                    svc.id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+
+    let mut body: Option<serde_json::Value> = None;
+    for _ in 0..40 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/services/{}/digest-tags-snapshot?digest=match",
+                        svc.id
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        if resp.status() == 200 {
+            body = Some(response_json(resp).await);
+            break;
+        }
+        assert_eq!(resp.status(), 202);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    let body = body.expect("snapshot should become ready even after worker failure");
+    assert_eq!(body["digest"].as_str().unwrap(), "sha256:match");
+    assert_eq!(body["tags"].as_array().unwrap().len(), 0);
+    assert!(body["scan"]["manifestsError"].as_u64().unwrap_or_default() >= 1);
+
+    // Once the fallback snapshot is persisted, the endpoint should stop returning pending.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{}/digest-tags-snapshot?digest=match",
+                    svc.id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
+async fn snapshot_worker_limits_concurrent_runs() {
+    let registry = Arc::new(SnapshotConcurrencyProbeRegistry::default());
+    let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
+
+    let image_repo = "ghcr.io/acme/web";
+    let host_platform = "linux/amd64";
+    let mut digests: Vec<String> = Vec::new();
+    for i in 0..16 {
+        let digest = format!("sha256:{:064x}", i + 1);
+        digests.push(digest.clone());
+        state
+            .snapshot_worker
+            .enqueue(image_repo, &digest, host_platform, "concurrency_probe")
+            .await;
+    }
+
+    let mut all_ready = false;
+    for _ in 0..200 {
+        let mut ready = 0usize;
+        for digest in &digests {
+            if state
+                .db
+                .get_image_digest_tags_snapshot(image_repo, digest, host_platform)
+                .await
+                .unwrap()
+                .is_some()
+            {
+                ready += 1;
+            }
+        }
+        if ready == digests.len() {
+            all_ready = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(all_ready, "all queued snapshot tasks should complete");
+    assert!(
+        registry.max_in_flight() <= crate::snapshot_worker::SNAPSHOT_WORKER_MAX_CONCURRENCY,
+        "observed list_tags concurrency {} > configured cap {}",
+        registry.max_in_flight(),
+        crate::snapshot_worker::SNAPSHOT_WORKER_MAX_CONCURRENCY
+    );
+}
+
+#[tokio::test]
+async fn check_enqueues_digest_tags_snapshot_and_endpoint_eventually_returns_ready() {
     let state = test_state_with(
         ":memory:",
         Arc::new(DigestTagsRegistry),
@@ -952,11 +1379,36 @@ services:
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.status(), 202);
+    let pending = response_json(resp).await;
+    assert_eq!(pending["status"].as_str().unwrap(), "pending");
 
-    let body = response_json(resp).await;
+    let mut body: Option<serde_json::Value> = None;
+    for _ in 0..30 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/services/{}/digest-tags-snapshot?digest=match",
+                        svc.id
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        if resp.status() == 200 {
+            body = Some(response_json(resp).await);
+            break;
+        }
+        assert_eq!(resp.status(), 202);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    let body = body.expect("snapshot should become ready");
     assert_eq!(body["digest"].as_str().unwrap(), "sha256:match");
-    assert_eq!(body["checkedAt"].as_str().unwrap(), now.as_str());
+    assert!(body["checkedAt"].as_str().is_some_and(|s| !s.is_empty()));
 
     let tags = body["tags"].as_array().unwrap();
     assert_eq!(tags.len(), 50);
@@ -971,7 +1423,7 @@ services:
 }
 
 #[tokio::test]
-async fn digest_tags_snapshot_prune_keeps_only_current_and_candidate_digests() {
+async fn digest_tags_snapshot_endpoint_ignores_legacy_service_snapshot_table() {
     let state = test_state_with(":memory:", Arc::new(PruneRegistry), Arc::new(FakeRunner)).await;
     let app = api::router(state.clone());
 
@@ -1060,7 +1512,7 @@ services:
     .await
     .unwrap();
 
-    // old digests should be pruned
+    // Legacy service-scoped snapshot rows should no longer be served by the endpoint.
     let resp = app
         .clone()
         .oneshot(
@@ -1076,7 +1528,7 @@ services:
         .unwrap();
     assert_eq!(resp.status(), 404);
 
-    // current digest should exist
+    // current digest should be generated asynchronously and eventually become ready.
     let resp = app
         .clone()
         .oneshot(
@@ -1090,7 +1542,31 @@ services:
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.status(), 202);
+
+    let mut ready = false;
+    for _ in 0..30 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/services/{}/digest-tags-snapshot?digest=cur",
+                        svc.id
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        if resp.status() == 200 {
+            ready = true;
+            break;
+        }
+        assert_eq!(resp.status(), 202);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(ready, "current digest snapshot should become ready");
 }
 
 #[tokio::test]

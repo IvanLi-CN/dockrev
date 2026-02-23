@@ -81,6 +81,22 @@ export type ServiceDigestTagsSnapshotResponse = {
   scan: ServiceDigestTagsScanSummary
 }
 
+export type ServiceDigestTagsSnapshotPendingResponse = {
+  status: 'pending'
+  digest: string
+  retryAfterMs: number
+}
+
+export type ServiceDigestTagsSnapshotResult =
+  | ServiceDigestTagsSnapshotResponse
+  | ServiceDigestTagsSnapshotPendingResponse
+
+export function isServiceDigestTagsSnapshotPending(
+  data: ServiceDigestTagsSnapshotResult,
+): data is ServiceDigestTagsSnapshotPendingResponse {
+  return (data as ServiceDigestTagsSnapshotPendingResponse).status === 'pending'
+}
+
 export type StackDetail = {
   id: string
   name: string
@@ -445,11 +461,11 @@ export async function listServiceDigestTags(serviceId: string, digest: string): 
   return (await resp.json()) as ServiceDigestTagsResponse
 }
 
-export async function getServiceDigestTagsSnapshot(serviceId: string, digest: string): Promise<ServiceDigestTagsSnapshotResponse> {
+export async function getServiceDigestTagsSnapshot(serviceId: string, digest: string): Promise<ServiceDigestTagsSnapshotResult> {
   const resp = await apiFetch(
     `/api/services/${encodeURIComponent(serviceId)}/digest-tags-snapshot?digest=${encodeURIComponent(digest)}`,
   )
-  return (await resp.json()) as ServiceDigestTagsSnapshotResponse
+  return (await resp.json()) as ServiceDigestTagsSnapshotResult
 }
 
 export async function triggerCheck(scope: string, stackId?: string, serviceId?: string) {
