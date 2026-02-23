@@ -286,7 +286,7 @@ async fn check_update_executor_ready(state: &AppState) -> DeployCheckItem {
             let evidence = if stdout.is_empty() {
                 format!("{} version ok", state.config.compose_bin)
             } else {
-                format!("{}", first_line(stdout))
+                first_line(stdout)
             };
             pass_core(
                 "core.update_executor_ready",
