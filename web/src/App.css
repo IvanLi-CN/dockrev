@@ -1776,3 +1776,193 @@ html[data-theme='light'] .modalOverlay {
   justify-content: space-between;
   gap: 12px;
 }
+
+.deployWelcomePage {
+  gap: 18px;
+}
+
+.deployWelcomeHero {
+  border: 1px solid color-mix(in srgb, var(--color-primary) 28%, transparent);
+  background:
+    radial-gradient(140% 120% at 0% 0%, color-mix(in srgb, var(--color-primary) 24%, transparent), transparent 46%),
+    radial-gradient(120% 140% at 100% 100%, color-mix(in srgb, var(--color-success) 18%, transparent), transparent 55%),
+    var(--panel);
+}
+
+.deployWelcomeHeroTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.deployOverallBadge {
+  min-width: 92px;
+  height: 34px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+}
+
+.deployOverallBadgePass {
+  color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 38%, transparent);
+  background: color-mix(in srgb, var(--color-success) 16%, transparent);
+}
+
+.deployOverallBadgeFail {
+  color: var(--color-error);
+  border-color: color-mix(in srgb, var(--color-error) 42%, transparent);
+  background: color-mix(in srgb, var(--color-error) 14%, transparent);
+}
+
+.deployWelcomeHeroSummary {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.deployBlockingList {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--color-error) 38%, transparent);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.deployChecklistCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.deployChecklistGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.deployCheckRow {
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 80%, transparent);
+  background: var(--dockrev-surface);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.deployCheckRowFail {
+  border-color: color-mix(in srgb, var(--color-error) 38%, transparent);
+  background: color-mix(in srgb, var(--color-error) 8%, var(--dockrev-surface) 92%);
+}
+
+.deployCheckHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.deployCheckTitle {
+  font-size: 13px;
+  font-weight: 760;
+  color: var(--text);
+}
+
+.deployCheckFlags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.deployStatusPill {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.25px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.deployStatusPillPass {
+  color: var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 40%, transparent);
+  background: color-mix(in srgb, var(--color-success) 14%, transparent);
+}
+
+.deployStatusPillFail {
+  color: var(--color-error);
+  border-color: color-mix(in srgb, var(--color-error) 45%, transparent);
+  background: color-mix(in srgb, var(--color-error) 14%, transparent);
+}
+
+.deployStatusPillNa {
+  color: var(--muted2);
+  border-color: var(--borderColor);
+  background: color-mix(in srgb, var(--dockrev-surface) 80%, var(--panel2) 20%);
+}
+
+.deployRequiredFlag {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--borderColor);
+  color: var(--muted2);
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+}
+
+.deployRequiredFlagYes {
+  color: var(--text);
+}
+
+.deployCheckBody {
+  display: grid;
+  gap: 6px;
+}
+
+.deployWelcomeFooter {
+  border: 1px solid color-mix(in srgb, var(--borderColor) 70%, transparent);
+}
+
+.deployNeverAutoCheckbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.deployNeverAutoCheckbox input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
+}
+
+@media (max-width: 780px) {
+  .deployCheckHead {
+    flex-direction: column;
+  }
+  .deployCheckFlags {
+    justify-content: flex-start;
+  }
+}

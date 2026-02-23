@@ -1,7 +1,8 @@
 import './App.css'
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { AppShell } from './Shell'
 import type { Route } from './routes'
+import { navigate } from './routes'
 import { OverviewPage } from './pages/OverviewPage'
 import { QueuePage } from './pages/QueuePage'
 import { JobDetailPage } from './pages/JobDetailPage'
@@ -9,7 +10,9 @@ import { ServicesPage } from './pages/ServicesPage'
 import { ServiceDetailPage } from './pages/ServiceDetailPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SupervisorMisroutePage } from './pages/SupervisorMisroutePage'
+import { DeployWelcomePage } from './pages/DeployWelcomePage'
 import { useRoute } from './useRoute'
+import { getDeployWelcome } from './api'
 
 function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbarHint?: string } {
   switch (route.name) {
@@ -25,6 +28,12 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
       return { title: '任务详情', topbarHint: '更新队列' }
     case 'services':
       return { title: '服务', topbarHint: '服务' }
+    case 'deploy-check':
+      return {
+        title: '部署检查',
+        pageSubtitle: '面向运维：按功能能力判定配置完整性（PASS/FAIL）',
+        topbarHint: '部署检查',
+      }
     case 'settings':
       return {
         title: '系统设置',
@@ -42,11 +51,42 @@ export default function App() {
   const route = useRoute()
   const [pageActions, setPageActions] = useState<ReactNode>(null)
   const [composeHint, setComposeHint] = useState<{ path?: string; profile?: string; lastScan?: string }>({})
+  const [deployWelcomeState, setDeployWelcomeState] = useState<{ loaded: boolean; neverAutoOpen: boolean }>({
+    loaded: false,
+    neverAutoOpen: true,
+  })
 
   const head = useMemo(() => pageTitle(route), [route])
   const topActions = useMemo(() => {
     return <>{pageActions}</>
   }, [pageActions])
+
+  useEffect(() => {
+    let cancelled = false
+    void getDeployWelcome()
+      .then((settings) => {
+        if (cancelled) return
+        setDeployWelcomeState({ loaded: true, neverAutoOpen: settings.neverAutoOpen })
+      })
+      .catch(() => {
+        if (cancelled) return
+        // Fail open to dashboard when the preference endpoint is unavailable.
+        setDeployWelcomeState({ loaded: true, neverAutoOpen: true })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!deployWelcomeState.loaded || deployWelcomeState.neverAutoOpen) return
+    if (route.name !== 'overview') return
+    if (typeof window === 'undefined') return
+    const key = 'dockrev:deployWelcome:redirected'
+    if (window.sessionStorage.getItem(key) === '1') return
+    window.sessionStorage.setItem(key, '1')
+    navigate({ name: 'deploy-check' })
+  }, [deployWelcomeState, route.name])
 
   if (route.name === 'supervisor-misroute') {
     return (
@@ -80,6 +120,7 @@ export default function App() {
       {route.name === 'queue' ? <QueuePage onTopActions={setPageActions} /> : null}
       {route.name === 'job' ? <JobDetailPage jobId={route.jobId} onTopActions={setPageActions} /> : null}
       {route.name === 'services' ? <ServicesPage onComposeHint={setComposeHint} onTopActions={setPageActions} /> : null}
+      {route.name === 'deploy-check' ? <DeployWelcomePage onTopActions={setPageActions} /> : null}
       {route.name === 'settings' ? <SettingsPage onTopActions={setPageActions} /> : null}
       {route.name === 'service' ? (
         <ServiceDetailPage

@@ -13,6 +13,7 @@ mod github;
 mod ids;
 mod ignore;
 mod notify;
+mod preflight;
 mod registry;
 mod runner;
 mod runtime_scan;
