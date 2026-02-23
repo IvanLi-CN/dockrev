@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { listJobs, type JobListItem } from '../api'
+import { listJobs, newJobsEventsSource, type JobListItem } from '../api'
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
 
@@ -71,6 +71,11 @@ function shouldShowFinishedAt(job: JobListItem): boolean {
   return job.status !== 'running' && Boolean(job.finishedAt)
 }
 
+const QUEUE_SSE_ERROR_THRESHOLD = 3
+const QUEUE_SSE_RECONNECT_MS = 3000
+const QUEUE_SSE_REFRESH_DEBOUNCE_MS = 250
+const QUEUE_SSE_FALLBACK_POLL_MS = 10_000
+
 export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void }) {
   const { onTopActions } = props
   const [jobs, setJobs] = useState<JobListItem[]>([])
@@ -85,6 +90,105 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
 
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+  }, [refresh])
+
+  useEffect(() => {
+    let closed = false
+    let es: EventSource | null = null
+    let errorStreak = 0
+    let lastEventId = 0
+    let refreshTimer: number | null = null
+    let pollTimer: number | null = null
+    let reconnectTimer: number | null = null
+
+    const refreshSafely = async () => {
+      try {
+        await refresh()
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
+    }
+
+    const clearRefreshTimer = () => {
+      if (refreshTimer != null) window.clearTimeout(refreshTimer)
+      refreshTimer = null
+    }
+
+    const scheduleRefresh = (delayMs: number) => {
+      if (refreshTimer != null) return
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = null
+        void refreshSafely()
+      }, delayMs)
+    }
+
+    const stopPolling = () => {
+      if (pollTimer != null) window.clearInterval(pollTimer)
+      pollTimer = null
+    }
+
+    const startPolling = () => {
+      if (pollTimer != null) return
+      pollTimer = window.setInterval(() => {
+        void refreshSafely()
+      }, QUEUE_SSE_FALLBACK_POLL_MS)
+    }
+
+    const clearReconnectTimer = () => {
+      if (reconnectTimer != null) window.clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+
+    const trackEventId = (evt: Event) => {
+      const idRaw = (evt as MessageEvent).lastEventId
+      if (typeof idRaw !== 'string') return
+      const parsed = Number.parseInt(idRaw, 10)
+      if (Number.isFinite(parsed) && parsed > 0) lastEventId = parsed
+    }
+
+    const connect = () => {
+      if (closed) return
+      const opts = lastEventId > 0 ? { afterId: lastEventId } : undefined
+      es = newJobsEventsSource(opts)
+
+      es.addEventListener('open', () => {
+        errorStreak = 0
+        stopPolling()
+      })
+
+      es.addEventListener('job_event', (evt: Event) => {
+        trackEventId(evt)
+        scheduleRefresh(QUEUE_SSE_REFRESH_DEBOUNCE_MS)
+      })
+
+      es.addEventListener('job_events_error', () => {
+        scheduleRefresh(0)
+      })
+
+      es.onerror = () => {
+        errorStreak += 1
+        scheduleRefresh(0)
+        if (errorStreak < QUEUE_SSE_ERROR_THRESHOLD) return
+        es?.close()
+        es = null
+        startPolling()
+        if (reconnectTimer != null) return
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null
+          connect()
+        }, QUEUE_SSE_RECONNECT_MS)
+      }
+    }
+
+    connect()
+
+    return () => {
+      closed = true
+      clearRefreshTimer()
+      clearReconnectTimer()
+      stopPolling()
+      es?.close()
+    }
   }, [refresh])
 
   useEffect(() => {

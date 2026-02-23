@@ -84,6 +84,14 @@ pub struct JobLogRow {
     pub msg: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct JobEventLogRow {
+    pub id: i64,
+    pub job_id: String,
+    pub ts: String,
+    pub msg: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArchivedFilter {
     Exclude,
@@ -3374,6 +3382,36 @@ LIMIT ?3
         .context("list job logs since")
     }
 
+    pub async fn list_job_event_logs_since(
+        &self,
+        after_id: i64,
+        limit: u32,
+    ) -> anyhow::Result<Vec<JobEventLogRow>> {
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT id, job_id, ts, msg
+FROM job_logs
+WHERE level = 'event' AND id > ?1
+ORDER BY id ASC
+LIMIT ?2
+"#,
+            )?;
+
+            let rows = stmt.query_map(params![after_id, limit as i64], |row| {
+                Ok(JobEventLogRow {
+                    id: row.get(0)?,
+                    job_id: row.get(1)?,
+                    ts: row.get(2)?,
+                    msg: row.get(3)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list job event logs since")
+    }
+
     pub async fn get_job_logs_last_id(&self, job_id: &str) -> anyhow::Result<i64> {
         let job_id = job_id.to_string();
         self.call(move |conn| {
@@ -3390,6 +3428,23 @@ WHERE job_id = ?1
         })
         .await
         .context("get job logs last id")
+    }
+
+    pub async fn get_job_logs_global_last_id(&self) -> anyhow::Result<i64> {
+        self.call(move |conn| {
+            let v: i64 = conn.query_row(
+                r#"
+SELECT COALESCE(MAX(id), 0)
+FROM job_logs
+WHERE level = 'event'
+"#,
+                [],
+                |row| row.get(0),
+            )?;
+            Ok(v)
+        })
+        .await
+        .context("get global job logs last id")
     }
 
     pub async fn insert_job_log(&self, job_id: &str, line: &JobLogLine) -> anyhow::Result<()> {
