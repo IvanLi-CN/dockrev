@@ -26,6 +26,21 @@ function normalizeGroup(input: DeployCheckItem['group'], id: string): 'core' | '
   return 'feature'
 }
 
+function statusMeta(status: DeployCheckItem['status']): {
+  text: 'PASS' | 'FAIL' | 'NA'
+  mark: '✓' | '✕' | '–'
+  desc: string
+} {
+  switch (status) {
+    case 'pass':
+      return { text: 'PASS', mark: '✓', desc: '功能可用' }
+    case 'fail':
+      return { text: 'FAIL', mark: '✕', desc: '功能不可用（缺配置或配置错误）' }
+    default:
+      return { text: 'NA', mark: '–', desc: '功能未启用，不参与失败判定' }
+  }
+}
+
 export function DeployWelcomePage() {
   const [report, setReport] = useState<DeployCheckReportResponse | null>(null)
   const [neverAutoOpen, setNeverAutoOpen] = useState(false)
@@ -94,183 +109,206 @@ export function DeployWelcomePage() {
 
   if (!report) {
     return (
-      <div className="page">
-        <div className="card">
-          <div className="title">部署检查</div>
-          <div className="muted" style={{ marginTop: 10 }}>{loading ? '正在加载检查报告…' : error ?? '无法加载检查报告'}</div>
-          <div className="formActions">
-            <Button
-              variant="primary"
-              disabled={loading}
-              onClick={() => {
-                void refresh()
-              }}
-            >
-              重试
-            </Button>
-          </div>
-        </div>
+      <div className="deployWelcomeRoot">
+        <main className="deployWelcomeMain">
+          <section className="deployWelcomePanel">
+            <p className="deployWelcomeEyebrow">Deployment Checklist</p>
+            <h1 className="deployWelcomeTitle">部署功能完整性检查</h1>
+            <p className="deployWelcomeSubtitle">{loading ? '正在加载部署检查报告…' : error ?? '无法加载检查报告'}</p>
+            <div className="deployWelcomeActions">
+              <Button
+                variant="primary"
+                disabled={loading}
+                onClick={() => {
+                  void refresh()
+                }}
+              >
+                重试
+              </Button>
+            </div>
+          </section>
+        </main>
       </div>
     )
   }
 
   return (
-    <div className="page deployWelcomePage">
-      <div className="card deployWelcomeHero">
-        <div className="deployWelcomeHeroTop">
-          <div>
-            <div className="title">部署检查清单</div>
-            <div className="muted" style={{ marginTop: 8 }}>
-              面向运维：确认“功能是否因配置缺失而不可用”，不依赖任务队列状态
+    <div className="deployWelcomeRoot">
+      <main className="deployWelcomeMain">
+        <section className={`deployWelcomePanel deployWelcomeSummaryPanel ${hasBlockingFailures ? 'is-fail' : 'is-pass'}`}>
+          <div className="deployWelcomeSummaryHead">
+            <div>
+              <p className="deployWelcomeEyebrow">Deployment Checklist</p>
+              <h1 className="deployWelcomeTitle">部署功能完整性检查清单</h1>
+              <p className="deployWelcomeSubtitle">仅判定“功能是否因配置缺失而不可用”，不依赖 jobs 数据与外部网络。</p>
+            </div>
+            <div className={`deployWelcomeOverall ${hasBlockingFailures ? 'is-fail' : 'is-pass'}`}>
+              <span className="deployWelcomeOverallLabel">整体结论</span>
+              <strong>{hasBlockingFailures ? 'FAIL' : 'PASS'}</strong>
+              <span className="deployWelcomeOverallSummary">{report.overall.summary}</span>
             </div>
           </div>
-          <div className={hasBlockingFailures ? 'deployOverallBadge deployOverallBadgeFail' : 'deployOverallBadge deployOverallBadgePass'}>
-            {hasBlockingFailures ? 'FAIL' : 'PASS'}
-          </div>
-        </div>
-        <div className="deployWelcomeHeroSummary">
-          <div className="muted">{report.overall.summary}</div>
-          <div className="muted">生成时间：{formatTime(report.generatedAt)}</div>
-        </div>
-        <div className="deployChecklistStatRow">
-          <div className="deployChecklistStat">
-            <div className="deployChecklistStatLabel">必需项</div>
-            <div className="deployChecklistStatValue">{stats.requiredTotal}</div>
-          </div>
-          <div className="deployChecklistStat">
-            <div className="deployChecklistStatLabel">已通过</div>
-            <div className="deployChecklistStatValue">{stats.requiredPass}</div>
-          </div>
-          <div className="deployChecklistStat">
-            <div className="deployChecklistStatLabel">阻塞失败</div>
-            <div className="deployChecklistStatValue">{stats.requiredFail}</div>
-          </div>
-          <div className="deployChecklistStat">
-            <div className="deployChecklistStatLabel">可选项（NA）</div>
-            <div className="deployChecklistStatValue">
-              {stats.optionalNa}/{stats.optionalTotal}
+
+          <div className="deployWelcomeDefinitions" role="list" aria-label="状态说明">
+            <div className="deployWelcomeDefinition" role="listitem">
+              <span className="deployBadge pass">PASS</span>
+              <span>所有必需功能可用</span>
+            </div>
+            <div className="deployWelcomeDefinition" role="listitem">
+              <span className="deployBadge fail">FAIL</span>
+              <span>至少一个必需功能不可用（会阻塞功能完整性）</span>
+            </div>
+            <div className="deployWelcomeDefinition" role="listitem">
+              <span className="deployBadge na">NA</span>
+              <span>该功能未启用，不纳入 FAIL 判定</span>
             </div>
           </div>
-        </div>
-        {hasBlockingFailures ? (
-          <div className="deployBlockingList">
-            <div className="label">阻塞项：</div>
-            <div className="mono">{report.overall.blockingCheckIds.join(', ')}</div>
+
+          <div className="deployWelcomeStats" role="list" aria-label="统计">
+            <div className="deployWelcomeStat" role="listitem">
+              <span>必需项总数</span>
+              <strong>{stats.requiredTotal}</strong>
+            </div>
+            <div className="deployWelcomeStat" role="listitem">
+              <span>必需项通过</span>
+              <strong>{stats.requiredPass}</strong>
+            </div>
+            <div className="deployWelcomeStat" role="listitem">
+              <span>必需项失败</span>
+              <strong>{stats.requiredFail}</strong>
+            </div>
+            <div className="deployWelcomeStat" role="listitem">
+              <span>可选项 NA</span>
+              <strong>
+                {stats.optionalNa}/{stats.optionalTotal}
+              </strong>
+            </div>
           </div>
-        ) : null}
-      </div>
 
-      <div className="card deployChecklistCard">
-        <div className="deployChecklistHead">
-          <div className="title">核心功能检查清单（必须可用）</div>
-          <div className="deployChecklistLegend">
-            <span className="deployChecklistLegendItem">
-              <span className="deployChecklistBox deployChecklistBoxPass" aria-hidden="true">
-                ✓
-              </span>
-              PASS
-            </span>
-            <span className="deployChecklistLegendItem">
-              <span className="deployChecklistBox deployChecklistBoxFail" aria-hidden="true">
-                !
-              </span>
-              FAIL
-            </span>
-            <span className="deployChecklistLegendItem">
-              <span className="deployChecklistBox deployChecklistBoxNa" aria-hidden="true">
-                –
-              </span>
-              NA
-            </span>
+          {hasBlockingFailures ? (
+            <div className="deployBlockingNotice" role="alert">
+              <span className="deployBadge fail">BLOCKING</span>
+              <div>
+                <div className="deployBlockingTitle">以下检查项导致整体 FAIL（需先修复）：</div>
+                <div className="mono">{report.overall.blockingCheckIds.join(', ')}</div>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="deployWelcomeGeneratedAt">报告生成时间：{formatTime(report.generatedAt)}</div>
+        </section>
+
+        <section className="deployWelcomePanel">
+          <div className="deploySectionHead">
+            <h2>核心功能 Checklist（必须可用）</h2>
+            <p>任一项 FAIL 都会导致部署功能不完整。</p>
           </div>
-        </div>
-        <ol className="deployChecklistList">
-          {groups.core.map((item) => (
-            <DeployChecklistItem key={item.id} item={item} />
-          ))}
-        </ol>
-      </div>
+          <DeployChecklistList items={groups.core} prefix="CORE" />
+        </section>
 
-      <div className="card deployChecklistCard">
-        <div className="deployChecklistHead">
-          <div className="title">条件功能检查清单（按启用状态判定）</div>
-          <div className="muted">未启用功能显示为 NA，不纳入 FAIL 判定。</div>
-        </div>
-        <ol className="deployChecklistList">
-          {groups.feature.map((item) => (
-            <DeployChecklistItem key={item.id} item={item} />
-          ))}
-        </ol>
-      </div>
+        <section className="deployWelcomePanel">
+          <div className="deploySectionHead">
+            <h2>条件功能 Checklist（按启用状态）</h2>
+            <p>功能未启用时显示 NA；启用后缺配置会标记 FAIL。</p>
+          </div>
+          <DeployChecklistList items={groups.feature} prefix="FEATURE" />
+        </section>
 
-      <div className="card deployWelcomeFooter">
-        <label className="deployNeverAutoCheckbox">
-          <input
-            type="checkbox"
-            checked={neverAutoOpen}
-            onChange={(e) => setNeverAutoOpen(e.target.checked)}
-            disabled={saving}
-          />
-          不再自动显示此页面
-        </label>
-        <div className="muted">勾选后，后续访问首页将直接进入 Dashboard；可在“系统设置”里重新打开本页。</div>
-
-        <div className="formActions" style={{ marginTop: 14 }}>
-          <Button variant="primary" disabled={saving} onClick={() => void enterDashboard()}>
-            {saving ? '保存中…' : '进入 Dashboard'}
-          </Button>
-          <Button variant="ghost" disabled={loading || saving} onClick={() => void refresh()}>
-            重新检查
-          </Button>
-        </div>
-        {error ? <div className="error">{error}</div> : null}
-      </div>
+        <section className="deployWelcomePanel deployWelcomeActionPanel">
+          <label className="deployNeverAutoCheckbox">
+            <input
+              type="checkbox"
+              checked={neverAutoOpen}
+              onChange={(e) => setNeverAutoOpen(e.target.checked)}
+              disabled={saving}
+            />
+            <span>不再自动显示此页面</span>
+          </label>
+          <p className="deployWelcomeActionHint">勾选后，后续访问首页将直接进入 Dashboard；可在设置页手动重新打开本页面。</p>
+          <div className="deployWelcomeActions">
+            <Button variant="primary" disabled={saving} onClick={() => void enterDashboard()}>
+              {saving ? '保存中…' : '进入 Dashboard'}
+            </Button>
+            <Button variant="ghost" disabled={loading || saving} onClick={() => void refresh()}>
+              重新检查
+            </Button>
+          </div>
+          {error ? <div className="error">{error}</div> : null}
+        </section>
+      </main>
     </div>
   )
 }
 
-function DeployChecklistItem(props: { item: DeployCheckItem }) {
-  const { item } = props
-  const statusClass = item.status === 'pass' ? 'pass' : item.status === 'fail' ? 'fail' : 'na'
-  const markLabel = item.status === 'pass' ? '✓' : item.status === 'fail' ? '!' : '–'
-  const titleClass = item.status === 'fail' && item.required ? 'deployChecklistItem deployChecklistItemFail' : 'deployChecklistItem'
+function DeployChecklistList(props: { items: DeployCheckItem[]; prefix: string }) {
+  const { items, prefix } = props
+  if (items.length === 0) {
+    return <div className="deployChecklistEmpty">暂无检查项</div>
+  }
 
   return (
-    <li className={titleClass}>
-      <div className="deployChecklistMarker">
-        <span className={`deployChecklistBox deployChecklistBox${statusClass[0].toUpperCase()}${statusClass.slice(1)}`}>{markLabel}</span>
+    <ol className="deployChecklistList">
+      {items.map((item, index) => (
+        <DeployChecklistItem key={item.id} item={item} number={`${prefix}-${index + 1}`} />
+      ))}
+    </ol>
+  )
+}
+
+function DeployChecklistItem(props: { item: DeployCheckItem; number: string }) {
+  const { item, number } = props
+  const status = statusMeta(item.status)
+  const rowClass = [
+    'deployChecklistItem',
+    `deployChecklistItem--${item.status}`,
+    item.required && item.status === 'fail' ? 'deployChecklistItem--blocking' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  return (
+    <li className={rowClass}>
+      <div className="deployChecklistMark" aria-hidden="true">
+        {status.mark}
       </div>
-      <div className="deployChecklistContent">
-        <div className="deployChecklistTitleRow">
-          <div className="deployCheckTitle">{item.title}</div>
-          <div className="deployCheckFlags">
-            <span className={item.required ? 'deployRequiredFlag deployRequiredFlagYes' : 'deployRequiredFlag'}>
+      <div className="deployChecklistBody">
+        <div className="deployChecklistTopRow">
+          <div className="deployChecklistTitleGroup">
+            <span className="deployChecklistNumber">{number}</span>
+            <h3>{item.title}</h3>
+          </div>
+          <div className="deployChecklistFlags">
+            <span className={`deployBadge ${item.required ? 'required' : 'optional'}`}>
               {item.required ? 'required' : 'optional'}
             </span>
-            <span className={`deployStatusPill deployStatusPill${statusClass[0].toUpperCase()}${statusClass.slice(1)}`}>
-              {item.status.toUpperCase()}
-            </span>
+            <span className={`deployBadge ${item.status}`}>{status.text}</span>
           </div>
         </div>
-        <div className="mono">{item.id}</div>
-        <div className="deployChecklistSummary">
-          <span className="label">判定：</span>
-          <span className="muted">{item.summary}</span>
-        </div>
-        <ul className="deployChecklistMeta">
-          <li>
-            <span className="label">影响</span>
-            <span className="muted">{item.impact}</span>
-          </li>
-          <li>
-            <span className="label">证据</span>
-            <span className="mono">{item.evidence || '-'}</span>
-          </li>
-          <li>
-            <span className="label">建议</span>
-            <span className="muted">{item.recommendation || '无需操作'}</span>
-          </li>
-        </ul>
+
+        <div className="deployChecklistId mono">{item.id}</div>
+
+        <dl className="deployChecklistFacts">
+          <div>
+            <dt>判定</dt>
+            <dd>{item.summary}</dd>
+          </div>
+          <div>
+            <dt>影响</dt>
+            <dd>{item.impact}</dd>
+          </div>
+          <div>
+            <dt>建议</dt>
+            <dd>{item.recommendation || '无需操作'}</dd>
+          </div>
+          <div>
+            <dt>证据</dt>
+            <dd className="mono">{item.evidence || '-'}</dd>
+          </div>
+          <div>
+            <dt>说明</dt>
+            <dd>{status.desc}</dd>
+          </div>
+        </dl>
       </div>
     </li>
   )
