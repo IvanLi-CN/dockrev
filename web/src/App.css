@@ -1781,6 +1781,14 @@ html[data-theme='light'] .modalOverlay {
   gap: 18px;
 }
 
+.deployWelcomeStandaloneShell {
+  padding-top: 28px;
+}
+
+.deployWelcomeStandaloneContent {
+  max-width: 1180px;
+}
+
 .deployWelcomeHero {
   border: 1px solid color-mix(in srgb, var(--color-primary) 28%, transparent);
   background:

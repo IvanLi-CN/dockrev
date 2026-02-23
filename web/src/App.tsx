@@ -107,6 +107,25 @@ export default function App() {
     )
   }
 
+  if (route.name === 'deploy-check') {
+    return (
+      <div className="standaloneShell deployWelcomeStandaloneShell">
+        <div className="standaloneContent deployWelcomeStandaloneContent">
+          <div className="standaloneHead">
+            <div className="standaloneHeadLeft">
+              <div className="brand">
+                <img className="brandMark" src="/brand-mark.png" alt="" aria-hidden="true" />
+                Dockrev
+              </div>
+            </div>
+            <div className="chipStatic chipStaticUser">用户：ivan（FH）</div>
+          </div>
+          <DeployWelcomePage />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <AppShell
       route={route}
@@ -120,7 +139,6 @@ export default function App() {
       {route.name === 'queue' ? <QueuePage onTopActions={setPageActions} /> : null}
       {route.name === 'job' ? <JobDetailPage jobId={route.jobId} onTopActions={setPageActions} /> : null}
       {route.name === 'services' ? <ServicesPage onComposeHint={setComposeHint} onTopActions={setPageActions} /> : null}
-      {route.name === 'deploy-check' ? <DeployWelcomePage onTopActions={setPageActions} /> : null}
       {route.name === 'settings' ? <SettingsPage onTopActions={setPageActions} /> : null}
       {route.name === 'service' ? (
         <ServiceDetailPage

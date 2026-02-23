@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   getDeployCheckReport,
   getDeployWelcome,
@@ -7,7 +7,7 @@ import {
   type DeployCheckReportResponse,
 } from '../api'
 import { navigate } from '../routes'
-import { Button, RefreshIcon } from '../ui'
+import { Button } from '../ui'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -26,8 +26,7 @@ function normalizeGroup(input: DeployCheckItem['group'], id: string): 'core' | '
   return 'feature'
 }
 
-export function DeployWelcomePage(props: { onTopActions: (node: ReactNode) => void }) {
-  const { onTopActions } = props
+export function DeployWelcomePage() {
   const [report, setReport] = useState<DeployCheckReportResponse | null>(null)
   const [neverAutoOpen, setNeverAutoOpen] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -51,22 +50,6 @@ export function DeployWelcomePage(props: { onTopActions: (node: ReactNode) => vo
   useEffect(() => {
     void refresh()
   }, [refresh])
-
-  useEffect(() => {
-    onTopActions(
-      <Button
-        variant="ghost"
-        disabled={loading || saving}
-        onClick={() => {
-          void refresh()
-        }}
-      >
-        <RefreshIcon className="inlineIcon" />
-        重新检查
-      </Button>,
-    )
-    return () => onTopActions(null)
-  }, [loading, onTopActions, refresh, saving])
 
   const groups = useMemo(() => {
     const core: DeployCheckItem[] = []
