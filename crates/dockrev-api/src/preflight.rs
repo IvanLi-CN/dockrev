@@ -317,13 +317,90 @@ async fn check_update_executor_ready(state: &AppState) -> DeployCheckItem {
 
 fn check_registry_auth(state: &AppState, context: &PreflightContext) -> DeployCheckItem {
     let mut required_hosts = BTreeSet::<String>::new();
+    let mut potential_hosts = BTreeSet::<String>::new();
     for image in &context.parsed_images {
-        if likely_requires_registry_auth(image) {
-            required_hosts.insert(normalize_registry_host(&image.registry));
+        let host = normalize_registry_host(&image.registry);
+        match classify_registry_auth_need(image) {
+            RegistryAuthNeed::Required => {
+                required_hosts.insert(host);
+            }
+            RegistryAuthNeed::Potential => {
+                potential_hosts.insert(host);
+            }
+            RegistryAuthNeed::NotNeeded => {}
         }
     }
 
     if required_hosts.is_empty() {
+        if !potential_hosts.is_empty() {
+            let potential_evidence =
+                format!("potential hosts: {}", join_limited_set(&potential_hosts, 6));
+            let Some(path) = state.config.docker_config_path.clone() else {
+                return na_feature(
+                    "feature.registry_auth",
+                    "私有镜像仓库鉴权配置",
+                    "shared registry targets may require auth but DOCKREV_DOCKER_CONFIG is missing",
+                    "若这些镜像实际为私有仓库，可能出现 401，无法发现候选更新",
+                    &potential_evidence,
+                    DeployCheckNaReason::MissingPrerequisite,
+                    "若这些镜像中包含私有仓库，请设置 `DOCKREV_DOCKER_CONFIG` 指向有效 Docker `config.json` 并补齐对应 host 凭据（建议 `docker login <host>`）。",
+                );
+            };
+
+            let auth = match load_docker_auth_inventory(&path) {
+                Ok(v) => v,
+                Err(err) => {
+                    return na_feature(
+                        "feature.registry_auth",
+                        "私有镜像仓库鉴权配置",
+                        "docker auth config is unreadable for potential private targets",
+                        "若这些镜像实际为私有仓库，可能出现 401，无法发现候选更新",
+                        &format!("{potential_evidence}; {}: {}", path.display(), err),
+                        DeployCheckNaReason::MissingPrerequisite,
+                        "修复 `DOCKREV_DOCKER_CONFIG` 路径与 JSON 格式；如不确定可先执行 `docker login <host>` 重新生成凭据。",
+                    );
+                }
+            };
+
+            let mut missing_hosts = Vec::new();
+            for host in &potential_hosts {
+                if auth.has_global_creds_store
+                    || auth.auth_hosts.contains(host)
+                    || auth.cred_helper_hosts.contains(host)
+                {
+                    continue;
+                }
+                missing_hosts.push(host.clone());
+            }
+
+            if missing_hosts.is_empty() {
+                return na_feature(
+                    "feature.registry_auth",
+                    "私有镜像仓库鉴权配置",
+                    "potential private targets detected; auth config is present",
+                    "若这些镜像是公开仓库则无需额外动作；不纳入阻塞判定",
+                    &format!("{potential_evidence}; config: {}", path.display()),
+                    DeployCheckNaReason::NotApplicable,
+                    "无需操作；若后续拉取出现 401，再为对应 host 补齐凭据。",
+                );
+            }
+
+            return na_feature(
+                "feature.registry_auth",
+                "私有镜像仓库鉴权配置",
+                "potential private targets detected; credentials may be missing",
+                "若这些镜像实际为私有仓库，可能出现 401，无法发现候选更新",
+                &format!(
+                    "{}; missing hosts: {}; config: {}",
+                    potential_evidence,
+                    join_limited(&missing_hosts, 6),
+                    path.display()
+                ),
+                DeployCheckNaReason::MissingPrerequisite,
+                "若这些镜像中包含私有仓库，请在 Docker `config.json` 的 `auths`/`credHelpers` 中补齐缺失 host 凭据。",
+            );
+        }
+
         let na_reason = if context.compose_paths.is_empty() {
             DeployCheckNaReason::MissingPrerequisite
         } else {
@@ -850,25 +927,58 @@ fn load_docker_auth_inventory(path: &Path) -> anyhow::Result<DockerAuthInventory
     Ok(inventory)
 }
 
-fn likely_requires_registry_auth(image: &registry::ImageRef) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RegistryAuthNeed {
+    Required,
+    Potential,
+    NotNeeded,
+}
+
+fn classify_registry_auth_need(image: &registry::ImageRef) -> RegistryAuthNeed {
     let host = normalize_registry_host(&image.registry);
-    if host == "docker.io" {
-        let name = image.name.to_ascii_lowercase();
-        return name.starts_with("local/")
+    let host_no_port = split_host_port(&host);
+    let name = image.name.to_ascii_lowercase();
+
+    if host_no_port == "docker.io" {
+        if name.starts_with("local/")
             || name.starts_with("private/")
-            || name.starts_with("internal/");
+            || name.starts_with("internal/")
+        {
+            return RegistryAuthNeed::Required;
+        }
+        if name.starts_with("library/") {
+            return RegistryAuthNeed::NotNeeded;
+        }
+        return RegistryAuthNeed::Potential;
     }
 
-    // Public registries should not force auth for minimal deployment.
-    if matches!(
-        host.as_str(),
-        "ghcr.io" | "quay.io" | "gcr.io" | "public.ecr.aws" | "mcr.microsoft.com"
-    ) || host.ends_with(".gcr.io")
-    {
-        return false;
+    if is_private_registry_host(&host) || is_private_ecr_host(&host_no_port) {
+        return RegistryAuthNeed::Required;
     }
 
-    is_private_registry_host(&host)
+    if is_definitely_public_registry_host(&host_no_port) {
+        return RegistryAuthNeed::NotNeeded;
+    }
+
+    if is_shared_registry_host(&host_no_port) {
+        return RegistryAuthNeed::Potential;
+    }
+
+    RegistryAuthNeed::Potential
+}
+
+fn is_shared_registry_host(host_no_port: &str) -> bool {
+    matches!(host_no_port, "ghcr.io" | "quay.io" | "gcr.io")
+        || host_no_port.ends_with(".gcr.io")
+        || host_no_port.ends_with(".pkg.dev")
+}
+
+fn is_definitely_public_registry_host(host_no_port: &str) -> bool {
+    matches!(host_no_port, "public.ecr.aws" | "mcr.microsoft.com")
+}
+
+fn is_private_ecr_host(host_no_port: &str) -> bool {
+    host_no_port.contains(".dkr.ecr.") && host_no_port.ends_with(".amazonaws.com")
 }
 
 fn normalize_registry_host(input: &str) -> String {
@@ -939,7 +1049,11 @@ fn now_rfc3339() -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_private_registry_host, normalize_registry_host, split_host_port};
+    use super::{
+        RegistryAuthNeed, classify_registry_auth_need, is_private_registry_host,
+        normalize_registry_host, split_host_port,
+    };
+    use crate::registry::ImageRef;
 
     #[test]
     fn normalize_registry_host_maps_docker_variants() {
@@ -966,5 +1080,38 @@ mod tests {
         assert!(is_private_registry_host("192.168.1.20"));
         assert!(is_private_registry_host("172.20.0.5"));
         assert!(!is_private_registry_host("ghcr.io"));
+    }
+
+    #[test]
+    fn registry_auth_need_classification_covers_shared_hosts() {
+        let ghcr_private_or_public = ImageRef {
+            registry: "ghcr.io".to_string(),
+            name: "acme/web".to_string(),
+            reference: "1.2.3".to_string(),
+        };
+        assert_eq!(
+            classify_registry_auth_need(&ghcr_private_or_public),
+            RegistryAuthNeed::Potential
+        );
+
+        let docker_library = ImageRef {
+            registry: "docker.io".to_string(),
+            name: "library/nginx".to_string(),
+            reference: "1.2.3".to_string(),
+        };
+        assert_eq!(
+            classify_registry_auth_need(&docker_library),
+            RegistryAuthNeed::NotNeeded
+        );
+
+        let private_hint = ImageRef {
+            registry: "docker.io".to_string(),
+            name: "private/backend".to_string(),
+            reference: "1.2.3".to_string(),
+        };
+        assert_eq!(
+            classify_registry_auth_need(&private_hint),
+            RegistryAuthNeed::Required
+        );
     }
 }

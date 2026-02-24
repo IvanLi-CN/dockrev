@@ -4161,6 +4161,12 @@ services:
             .iter()
             .any(|c| c["id"] == "core.update_executor_ready")
     );
+    let registry_auth = checks
+        .iter()
+        .find(|c| c["id"] == "feature.registry_auth")
+        .unwrap();
+    assert_eq!(registry_auth["status"], "na");
+    assert_eq!(registry_auth["naReason"], "missing_prerequisite");
     let webhook = checks
         .iter()
         .find(|c| c["id"] == "feature.notifications.webhook")

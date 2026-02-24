@@ -117,15 +117,25 @@ export function DeployWelcomePage() {
   const refresh = useCallback(async () => {
     setLoading(true)
     setError(null)
-    try {
-      const [reportData, welcome] = await Promise.all([getDeployCheckReport(), getDeployWelcome()])
-      setReport(reportData)
-      setNeverAutoOpen(welcome.neverAutoOpen)
-    } catch (e: unknown) {
-      setError(errorMessage(e))
-    } finally {
+    const [reportResult, welcomeResult] = await Promise.allSettled([getDeployCheckReport(), getDeployWelcome()])
+
+    if (reportResult.status === 'fulfilled') {
+      setReport(reportResult.value)
+    } else {
+      setError(errorMessage(reportResult.reason))
       setLoading(false)
+      return
     }
+
+    if (welcomeResult.status === 'fulfilled') {
+      setNeverAutoOpen(welcomeResult.value.neverAutoOpen)
+      setError(null)
+    } else {
+      // Keep the checklist visible even if the preference endpoint is temporarily unavailable.
+      setError(`检查报告已加载，但欢迎页偏好读取失败：${errorMessage(welcomeResult.reason)}`)
+    }
+
+    setLoading(false)
   }, [])
 
   useEffect(() => {
