@@ -1266,27 +1266,30 @@ async fn run_check_for_job(
 
         if let Some(not_before) = next_spawn_not_before
             && let Some(wait) = not_before.checked_duration_since(std::time::Instant::now())
-            && !join_set.is_empty()
         {
-            tokio::select! {
-                _ = tokio::time::sleep(wait) => {}
-                Some(joined) = join_set.join_next() => {
-                    handle_check_worker_result(
-                        state,
-                        job_id,
-                        now,
-                        host_platform,
-                        joined,
-                        total_services,
-                        planned_services,
-                        &mut services_checked,
-                        &mut services_with_candidate,
-                        &mut latest_target,
-                        &mut last_progress_logged_at,
-                        &mut latest_progress,
-                    ).await?;
-                    units.push_front(unit);
-                    continue;
+            if join_set.is_empty() {
+                tokio::time::sleep(wait).await;
+            } else {
+                tokio::select! {
+                    _ = tokio::time::sleep(wait) => {}
+                    Some(joined) = join_set.join_next() => {
+                        handle_check_worker_result(
+                            state,
+                            job_id,
+                            now,
+                            host_platform,
+                            joined,
+                            total_services,
+                            planned_services,
+                            &mut services_checked,
+                            &mut services_with_candidate,
+                            &mut latest_target,
+                            &mut last_progress_logged_at,
+                            &mut latest_progress,
+                        ).await?;
+                        units.push_front(unit);
+                        continue;
+                    }
                 }
             }
         }
