@@ -15,7 +15,7 @@ Usage:
 
 import csv
 import json
-import os
+import re
 from datetime import datetime
 from pathlib import Path
 from core import search, DATA_DIR
@@ -31,6 +31,29 @@ SEARCH_CONFIG = {
     "landing": {"max_results": 2},
     "typography": {"max_results": 2}
 }
+
+SLUG_SANITIZE_RE = re.compile(r"[^a-z0-9-]+")
+SLUG_SEP_RE = re.compile(r"-{2,}")
+
+
+def _slugify_segment(value: str, fallback: str) -> str:
+    """Create a filesystem-safe slug for single path segments."""
+    if not value:
+        return fallback
+    slug = value.strip().lower().replace(" ", "-")
+    slug = SLUG_SANITIZE_RE.sub("-", slug)
+    slug = SLUG_SEP_RE.sub("-", slug).strip("-")
+    return slug or fallback
+
+
+def _ensure_within(base: Path, candidate: Path, field_name: str) -> None:
+    """Guard against path traversal by enforcing candidate under base."""
+    base_resolved = base.resolve()
+    candidate_resolved = candidate.resolve()
+    try:
+        candidate_resolved.relative_to(base_resolved)
+    except ValueError as exc:
+        raise ValueError(f"Invalid {field_name}: escapes output directory") from exc
 
 
 # ============ DESIGN SYSTEM GENERATOR ============
@@ -501,14 +524,17 @@ def persist_design_system(design_system: dict, page: str = None, output_dir: str
     Returns:
         dict with created file paths and status
     """
-    base_dir = Path(output_dir) if output_dir else Path.cwd()
+    base_dir = Path(output_dir).expanduser().resolve() if output_dir else Path.cwd().resolve()
     
     # Use project name for project-specific folder
     project_name = design_system.get("project_name", "default")
-    project_slug = project_name.lower().replace(' ', '-')
-    
-    design_system_dir = base_dir / "design-system" / project_slug
-    pages_dir = design_system_dir / "pages"
+    project_slug = _slugify_segment(project_name, "default")
+
+    design_system_root = (base_dir / "design-system").resolve()
+    design_system_dir = (design_system_root / project_slug).resolve()
+    pages_dir = (design_system_dir / "pages").resolve()
+    _ensure_within(design_system_root, design_system_dir, "project name")
+    _ensure_within(design_system_root, pages_dir, "pages directory")
     
     created_files = []
     
@@ -526,7 +552,9 @@ def persist_design_system(design_system: dict, page: str = None, output_dir: str
     
     # If page is specified, create page override file with intelligent content
     if page:
-        page_file = pages_dir / f"{page.lower().replace(' ', '-')}.md"
+        page_slug = _slugify_segment(page, "page")
+        page_file = (pages_dir / f"{page_slug}.md").resolve()
+        _ensure_within(pages_dir, page_file, "page name")
         page_content = format_page_override_md(design_system, page, page_query)
         with open(page_file, 'w', encoding='utf-8') as f:
             f.write(page_content)
@@ -556,7 +584,7 @@ def format_master_md(design_system: dict) -> str:
     # Logic header
     lines.append("# Design System Master File")
     lines.append("")
-    lines.append("> **LOGIC:** When building a specific page, first check `design-system/pages/[page-name].md`.")
+    lines.append("> **LOGIC:** When building a specific page, first check `pages/[page-name].md` (relative to this file).")
     lines.append("> If that file exists, its rules **override** this Master file.")
     lines.append("> If not, strictly follow the rules below.")
     lines.append("")
@@ -819,7 +847,7 @@ def format_page_override_md(design_system: dict, page_name: str, page_query: str
     lines.append(f"> **Generated:** {timestamp}")
     lines.append(f"> **Page Type:** {page_overrides.get('page_type', 'General')}")
     lines.append("")
-    lines.append("> ⚠️ **IMPORTANT:** Rules in this file **override** the Master file (`design-system/MASTER.md`).")
+    lines.append("> ⚠️ **IMPORTANT:** Rules in this file **override** the Master file (`../MASTER.md`).")
     lines.append("> Only deviations from the Master are documented here. For all other rules, refer to the Master.")
     lines.append("")
     lines.append("---")

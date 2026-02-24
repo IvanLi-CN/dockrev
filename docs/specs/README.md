@@ -27,4 +27,4 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
-| jjnz5 | Dockrev: 接入 UI UX Pro Max（Codex 团队共享） | 待实现 | `jjnz5-uipro-codex-integration/SPEC.md` | 2026-02-24 | Fast-track execution |
+| jjnz5 | Dockrev: 接入 UI UX Pro Max（Codex 团队共享） | 已完成 | `jjnz5-uipro-codex-integration/SPEC.md` | 2026-02-24 | PR #88 |

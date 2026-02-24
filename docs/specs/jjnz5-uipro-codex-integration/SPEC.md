@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-24
 - Last: 2026-02-24
 
@@ -140,9 +140,9 @@
 
 ## 实现里程碑（Milestones / Delivery checklist）
 
-- [ ] M1: 建立 `docs/specs` 最小迁移与本任务 `SPEC.md`。
-- [ ] M2: 完成 `.gitignore` 规则改造并接入 `ui-ux-pro-max` skill。
-- [ ] M3: 完成脚本验证、提交、推送与 PR 创建。
+- [x] M1: 建立 `docs/specs` 最小迁移与本任务 `SPEC.md`。
+- [x] M2: 完成 `.gitignore` 规则改造并接入 `ui-ux-pro-max` skill。
+- [x] M3: 完成脚本验证、提交、推送与 PR 创建。
 
 ## 方案概述（Approach, high-level）
 
@@ -159,6 +159,7 @@
 ## 变更记录（Change log）
 
 - 2026-02-24: 初始规格创建。
+- 2026-02-24: 完成接入与快车道交付（PR #88）。
 
 ## 参考（References）
 
