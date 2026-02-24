@@ -110,6 +110,7 @@ function resolveRecommendation(item: DeployCheckItem, allChecks: DeployCheckItem
 export function DeployWelcomePage() {
   const [report, setReport] = useState<DeployCheckReportResponse | null>(null)
   const [neverAutoOpen, setNeverAutoOpen] = useState(false)
+  const [welcomeLoaded, setWelcomeLoaded] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -129,9 +130,11 @@ export function DeployWelcomePage() {
 
     if (welcomeResult.status === 'fulfilled') {
       setNeverAutoOpen(welcomeResult.value.neverAutoOpen)
+      setWelcomeLoaded(true)
       setError(null)
     } else {
       // Keep the checklist visible even if the preference endpoint is temporarily unavailable.
+      setWelcomeLoaded(false)
       setError(`检查报告已加载，但欢迎页偏好读取失败：${errorMessage(welcomeResult.reason)}`)
     }
 
@@ -171,7 +174,9 @@ export function DeployWelcomePage() {
     setSaving(true)
     setError(null)
     try {
-      await putDeployWelcome({ neverAutoOpen })
+      if (welcomeLoaded) {
+        await putDeployWelcome({ neverAutoOpen })
+      }
       if (typeof window !== 'undefined') {
         window.sessionStorage.setItem('dockrev:deployWelcome:redirected', '1')
       }
@@ -298,7 +303,7 @@ export function DeployWelcomePage() {
                   type="checkbox"
                   checked={neverAutoOpen}
                   onChange={(e) => setNeverAutoOpen(e.target.checked)}
-                  disabled={saving}
+                  disabled={saving || !welcomeLoaded}
                 />
                 <span>不再自动显示此页面</span>
               </label>

@@ -982,10 +982,19 @@ fn is_private_ecr_host(host_no_port: &str) -> bool {
 }
 
 fn normalize_registry_host(input: &str) -> String {
-    if let Ok(url) = Url::parse(input)
-        && let Some(host) = url.host_str()
-    {
-        return normalize_registry_host(host);
+    if let Ok(url) = Url::parse(input) {
+        if let Some(host) = url.host_str() {
+            let normalized = if let Some(port) = url.port() {
+                if host.contains(':') {
+                    format!("[{host}]:{port}")
+                } else {
+                    format!("{host}:{port}")
+                }
+            } else {
+                host.to_string()
+            };
+            return normalize_registry_host(&normalized);
+        }
     }
 
     let mut host = input
@@ -1060,6 +1069,10 @@ mod tests {
         assert_eq!(
             normalize_registry_host("https://index.docker.io/v1/"),
             "docker.io"
+        );
+        assert_eq!(
+            normalize_registry_host("https://harbor.local:5000/v2/"),
+            "harbor.local:5000"
         );
         assert_eq!(normalize_registry_host("registry-1.docker.io"), "docker.io");
         assert_eq!(
