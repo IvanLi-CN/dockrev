@@ -4275,6 +4275,145 @@ services:
 }
 
 #[tokio::test]
+async fn deploy_check_report_fails_when_github_packages_callback_scheme_is_not_http() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+
+    let compose_file = format!("/tmp/dockrev-preflight-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_file,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:1.2.3
+"#,
+    )
+    .unwrap();
+    let _stack_id = seed_stack_from_compose(&state, "prod", &compose_file).await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let mut settings = state.db.get_github_packages_settings().await.unwrap();
+    settings.enabled = true;
+    settings.callback_url = "ftp://dockrev.example.com/api/webhooks/github-packages".to_string();
+    settings.pat = Some("ghp_example".to_string());
+    settings.webhook_secret = Some("secret123".to_string());
+    state
+        .db
+        .put_github_packages_settings(&settings, &now)
+        .await
+        .unwrap();
+    state
+        .db
+        .upsert_github_packages_repo_selected("acme", "widgets", true, &now)
+        .await
+        .unwrap();
+
+    let app = api::router(state.clone());
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/deploy-check/report")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["overall"]["result"], "fail");
+    let blocking = body["overall"]["blockingCheckIds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>();
+    assert!(blocking.contains(&"feature.github_packages"));
+
+    let github_packages = body["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "feature.github_packages")
+        .unwrap();
+    assert_eq!(github_packages["status"], "fail");
+    assert!(
+        github_packages["evidence"]
+            .as_str()
+            .unwrap()
+            .contains("callbackUrl(invalid_scheme)")
+    );
+}
+
+#[tokio::test]
+async fn deploy_check_report_fails_when_github_packages_has_no_selected_repos() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+
+    let compose_file = format!("/tmp/dockrev-preflight-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_file,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:1.2.3
+"#,
+    )
+    .unwrap();
+    let _stack_id = seed_stack_from_compose(&state, "prod", &compose_file).await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let mut settings = state.db.get_github_packages_settings().await.unwrap();
+    settings.enabled = true;
+    settings.callback_url = "https://dockrev.example.com/api/webhooks/github-packages".to_string();
+    settings.pat = Some("ghp_example".to_string());
+    settings.webhook_secret = Some("secret123".to_string());
+    state
+        .db
+        .put_github_packages_settings(&settings, &now)
+        .await
+        .unwrap();
+
+    let app = api::router(state.clone());
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/deploy-check/report")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["overall"]["result"], "fail");
+    let blocking = body["overall"]["blockingCheckIds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>();
+    assert!(blocking.contains(&"feature.github_packages"));
+
+    let github_packages = body["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "feature.github_packages")
+        .unwrap();
+    assert_eq!(github_packages["status"], "fail");
+    assert!(
+        github_packages["evidence"]
+            .as_str()
+            .unwrap()
+            .contains("repos(selected=0)")
+    );
+}
+
+#[tokio::test]
 async fn github_packages_settings_masks_pat() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());

@@ -573,6 +573,10 @@ async fn check_notification_features(state: &AppState) -> anyhow::Result<Vec<Dep
 
 async fn check_github_packages_feature(state: &AppState) -> anyhow::Result<DeployCheckItem> {
     let settings = state.db.get_github_packages_settings().await?;
+    let repos_selected_total = state
+        .db
+        .count_github_packages_repos_selected_total()
+        .await?;
 
     if !settings.enabled {
         return Ok(na_feature(
@@ -592,11 +596,18 @@ async fn check_github_packages_feature(state: &AppState) -> anyhow::Result<Deplo
     }
     if !is_non_empty(Some(settings.callback_url.as_str())) {
         missing.push("callbackUrl");
-    } else if Url::parse(settings.callback_url.as_str()).is_err() {
-        missing.push("callbackUrl(invalid)");
+    } else {
+        match Url::parse(settings.callback_url.as_str()) {
+            Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => {}
+            Ok(_) => missing.push("callbackUrl(invalid_scheme)"),
+            Err(_) => missing.push("callbackUrl(invalid)"),
+        }
     }
     if !is_non_empty(settings.webhook_secret.as_deref()) {
         missing.push("secret");
+    }
+    if repos_selected_total == 0 {
+        missing.push("repos(selected=0)");
     }
 
     if missing.is_empty() {
@@ -605,7 +616,9 @@ async fn check_github_packages_feature(state: &AppState) -> anyhow::Result<Deplo
             "GitHub Packages 功能配置",
             "github packages integration config is complete",
             "启用后若配置缺失，包发布触发链路不可用",
-            "pat + callbackUrl + secret configured",
+            format!(
+                "pat + callbackUrl + secret configured; selected repos: {repos_selected_total}"
+            ),
         ))
     } else {
         Ok(fail_feature(
@@ -614,7 +627,7 @@ async fn check_github_packages_feature(state: &AppState) -> anyhow::Result<Deplo
             "github packages integration config is incomplete",
             "启用后若配置缺失，包发布触发链路不可用",
             format!("missing {}", missing.join(", ")),
-            "进入“设置 -> GitHub Packages”补齐 `PAT`、`callbackUrl`、`secret`（以及目标仓库），保存后用“测试触发”验证。",
+            "进入“设置 -> GitHub Packages”补齐 `PAT`、`callbackUrl`、`secret` 并至少选择 1 个目标仓库，保存后用“测试触发”验证。",
         ))
     }
 }
