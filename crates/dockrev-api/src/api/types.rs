@@ -69,9 +69,21 @@ pub struct Service {
     pub candidate: Option<Candidate>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ignore: Option<IgnoreMatch>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version_inference: Option<VersionInferenceState>,
     pub settings: ServiceSettings,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archived: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionInferenceState {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checked_at: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1382,4 +1394,13 @@ pub struct ServiceDigestTagsSnapshotPendingResponse {
     pub status: String,
     pub digest: String,
     pub retry_after_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerVersionInferenceRefreshResponse {
+    pub status: String,
+    pub service_id: String,
+    pub image_repo: String,
+    pub reason: String,
 }

@@ -432,11 +432,6 @@ impl RegistryClient for StatefulRegistry {
         let count = calls.entry(reference.to_string()).or_insert(0);
         *count += 1;
 
-        // Simulate a transient failure for the would-be candidate tag on its first lookup.
-        if reference == "5.3.0" && *count == 1 {
-            return Err(anyhow::anyhow!("transient registry error"));
-        }
-
         let digest = match reference {
             "5.2.0" => "sha256:other",
             "5.3.0" => "sha256:match",
@@ -763,6 +758,43 @@ impl RegistryClient for CoalescingRegistry {
     }
 }
 
+#[derive(Clone)]
+struct StrictSemverDriftRegistry {
+    list_tags_delay: Duration,
+}
+
+impl StrictSemverDriftRegistry {
+    fn new(list_tags_delay: Duration) -> Self {
+        Self { list_tags_delay }
+    }
+}
+
+#[async_trait::async_trait]
+impl RegistryClient for StrictSemverDriftRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        tokio::time::sleep(self.list_tags_delay).await;
+        Ok(vec!["5.2.0".to_string(), "5.3.0".to_string()])
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        let digest = match reference {
+            "5.2.0" => "sha256:new",
+            "5.3.0" => "sha256:newer",
+            _ => "sha256:other",
+        };
+        Ok(ManifestInfo {
+            digest: Some(digest.to_string()),
+            platform_digest: None,
+            arch: vec!["linux/amd64".to_string()],
+        })
+    }
+}
+
 async fn test_state_with(
     db_path: &str,
     registry: Arc<dyn RegistryClient>,
@@ -796,7 +828,17 @@ async fn test_state_with(
         db.clone(),
         registry.clone(),
     ));
-    AppState::new(config, db, registry, runner, snapshot_worker)
+    let version_inference_worker = Arc::new(
+        crate::version_inference_worker::VersionInferenceWorker::new(db.clone(), registry.clone()),
+    );
+    AppState::new(
+        config,
+        db,
+        registry,
+        runner,
+        snapshot_worker,
+        version_inference_worker,
+    )
 }
 
 async fn test_state(db_path: &str) -> Arc<AppState> {
@@ -831,7 +873,17 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
         db.clone(),
         registry.clone(),
     ));
-    AppState::new(config, db, registry, runner, snapshot_worker)
+    let version_inference_worker = Arc::new(
+        crate::version_inference_worker::VersionInferenceWorker::new(db.clone(), registry.clone()),
+    );
+    AppState::new(
+        config,
+        db,
+        registry,
+        runner,
+        snapshot_worker,
+        version_inference_worker,
+    )
 }
 
 async fn seed_stack_from_compose(state: &Arc<AppState>, name: &str, compose_file: &str) -> String {
@@ -1930,7 +1982,7 @@ services:
 
     let check = serde_json::json!({
         "scope": "stack",
-        "stackId": stack_id,
+        "stackId": stack_id.clone(),
         "reason": "ui"
     });
     let resp = app
@@ -2054,8 +2106,502 @@ services:
     assert!(finished, "check job did not finish in time");
     assert_eq!(
         registry.list_tags_calls(),
-        1,
-        "repo tags should be fetched once per repo in a single check job"
+        0,
+        "check main path should not block on version inference tag scans"
+    );
+}
+
+#[tokio::test]
+async fn get_stack_version_inference_cache_miss_returns_pending() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(200)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    assert_eq!(
+        detail["stack"]["services"][0]["versionInference"]["status"]
+            .as_str()
+            .unwrap_or("<none>"),
+        "pending"
+    );
+    assert_eq!(
+        detail["stack"]["services"][0]["versionInference"]["reason"]
+            .as_str()
+            .unwrap_or("<none>"),
+        "cache_miss"
+    );
+}
+
+#[tokio::test]
+async fn get_stack_shows_pending_when_new_version_task_is_inflight_even_with_cache() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(400)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let snapshot = crate::version_inference_worker::VersionInferenceSnapshot {
+        checked_at: now.clone(),
+        digests: BTreeMap::new(),
+        scan: crate::version_inference_worker::VersionInferenceScanSummary {
+            semver_tags_total: 2,
+            semver_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+        all_failed: false,
+    };
+    state
+        .db
+        .upsert_image_version_inference_snapshot(
+            "ghcr.io/acme/web",
+            "linux/amd64",
+            &serde_json::to_string(&snapshot).unwrap(),
+            false,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let enqueued = state
+        .version_inference_worker
+        .enqueue(
+            "ghcr.io/acme/web",
+            "linux/amd64",
+            crate::version_inference_worker::VersionInferenceReason::NewVersion,
+        )
+        .await;
+    assert!(enqueued);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let status = detail["stack"]["services"][0]["versionInference"]["status"]
+        .as_str()
+        .unwrap_or("<none>");
+    assert!(
+        status == "pending" || status == "ready",
+        "unexpected stack detail: {detail}"
+    );
+    if status == "pending" {
+        assert_eq!(
+            detail["stack"]["services"][0]["versionInference"]["reason"]
+                .as_str()
+                .unwrap_or("<none>"),
+            "new_version"
+        );
+    }
+}
+
+#[tokio::test]
+async fn get_stack_all_failed_recent_snapshot_is_ready_without_reenqueue() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(200)));
+    let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let snapshot = crate::version_inference_worker::VersionInferenceSnapshot {
+        checked_at: now.clone(),
+        digests: BTreeMap::new(),
+        scan: crate::version_inference_worker::VersionInferenceScanSummary {
+            semver_tags_total: 2,
+            semver_tags_considered: 2,
+            manifests_ok: 0,
+            manifests_timeout: 0,
+            manifests_error: 2,
+        },
+        all_failed: true,
+    };
+    state
+        .db
+        .upsert_image_version_inference_snapshot(
+            "ghcr.io/acme/web",
+            "linux/amd64",
+            &serde_json::to_string(&snapshot).unwrap(),
+            true,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    assert_eq!(
+        detail["stack"]["services"][0]["versionInference"]["status"]
+            .as_str()
+            .unwrap_or("<none>"),
+        "ready"
+    );
+    assert_eq!(
+        detail["stack"]["services"][0]["versionInference"]["reason"]
+            .as_str()
+            .unwrap_or("<none>"),
+        "all_failed"
+    );
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        registry.list_tags_calls(),
+        0,
+        "recent all_failed cache should not immediately re-enqueue inference"
+    );
+}
+
+#[tokio::test]
+async fn force_refresh_endpoint_returns_accepted_and_dedupes() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(300)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let stack = state.db.get_stack(&stack_id).await.unwrap().unwrap();
+    let service_id = stack.services[0].id.clone();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/services/{}/version-inference/refresh",
+                    service_id
+                ))
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"].as_str().unwrap_or("<none>"), "pending");
+    assert_eq!(body["reason"].as_str().unwrap_or("<none>"), "force");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/services/{}/version-inference/refresh",
+                    service_id
+                ))
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"].as_str().unwrap_or("<none>"), "pending");
+    assert_eq!(body["reason"].as_str().unwrap_or("<none>"), "running");
+}
+
+#[tokio::test]
+async fn check_candidate_digest_change_enqueues_new_version_inference() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(400)));
+    let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", registry, runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let snapshot = crate::version_inference_worker::VersionInferenceSnapshot {
+        checked_at: now.clone(),
+        digests: BTreeMap::new(),
+        scan: crate::version_inference_worker::VersionInferenceScanSummary {
+            semver_tags_total: 2,
+            semver_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+        all_failed: false,
+    };
+    state
+        .db
+        .upsert_image_version_inference_snapshot(
+            "ghcr.io/acme/web",
+            "linux/amd64",
+            &serde_json::to_string(&snapshot).unwrap(),
+            false,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let check = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(check.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let check_id = triggered["checkId"].as_str().unwrap().to_string();
+
+    let mut finished = false;
+    for _ in 0..200 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{check_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(finished, "check job did not finish in time");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let status = detail["stack"]["services"][0]["versionInference"]["status"]
+        .as_str()
+        .unwrap_or("<none>");
+    assert!(
+        status == "pending" || status == "ready",
+        "unexpected stack detail: {detail}"
+    );
+    if status == "pending" {
+        assert_eq!(
+            detail["stack"]["services"][0]["versionInference"]["reason"]
+                .as_str()
+                .unwrap_or("<none>"),
+            "new_version"
+        );
+    }
+}
+
+#[tokio::test]
+async fn check_candidate_digest_change_for_strict_semver_does_not_enqueue_inference() {
+    let registry = Arc::new(StrictSemverDriftRegistry::new(Duration::from_millis(400)));
+    let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", registry.clone(), runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2.0
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "demo".to_string(),
+            stack_id: Some(stack_id.clone()),
+            status: "active".to_string(),
+            last_seen_at: Some(now.clone()),
+            last_scan_at: now,
+            last_error: None,
+            last_config_files: Some(vec![compose_path.clone()]),
+            unarchive_if_active: true,
+        })
+        .await
+        .unwrap();
+
+    let check = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(check.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let check_id = triggered["checkId"].as_str().unwrap().to_string();
+
+    let mut finished = false;
+    for _ in 0..120 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{check_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(finished, "check job did not finish in time");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    assert_eq!(
+        detail["stack"]["services"][0]["candidate"]["digest"]
+            .as_str()
+            .unwrap_or("<none>"),
+        "sha256:new"
+    );
+
+    let in_flight = state
+        .version_inference_worker
+        .in_flight_reason("ghcr.io/acme/web", "linux/amd64")
+        .await;
+    assert!(
+        in_flight.is_none(),
+        "strict semver check candidate changes should not enqueue version inference"
     );
 }
 
@@ -3537,18 +4083,29 @@ services:
     assert_eq!(resp.status(), 200);
     let job_detail = response_json(resp).await;
 
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/stacks/{stack_id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let detail = response_json(resp).await;
+    let mut detail = serde_json::json!({});
+    for _ in 0..120 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/stacks/{stack_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        detail = response_json(resp).await;
+        let status = detail["stack"]["services"][0]["versionInference"]["status"]
+            .as_str()
+            .unwrap_or("");
+        if status != "pending" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
     let image = &detail["stack"]["services"][0]["image"];
     let digest = image["digest"].as_str().unwrap_or("<none>");
     let resolved = image["resolvedTag"].as_str().unwrap_or("<none>");
@@ -3647,18 +4204,29 @@ services:
     }
     assert!(finished, "check job did not finish in time");
 
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/stacks/{stack_id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let detail = response_json(resp).await;
+    let mut detail = serde_json::json!({});
+    for _ in 0..120 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/stacks/{stack_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        detail = response_json(resp).await;
+        let status = detail["stack"]["services"][0]["versionInference"]["status"]
+            .as_str()
+            .unwrap_or("");
+        if status != "pending" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
     let resolved = detail["stack"]["services"][0]["image"]["resolvedTag"]
         .as_str()
         .unwrap_or("<none>");
@@ -3855,18 +4423,28 @@ services:
     }
     assert!(finished, "check job did not finish in time");
 
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/stacks/{stack_id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let detail = response_json(resp).await;
+    let mut detail = serde_json::json!({});
+    for _ in 0..120 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/stacks/{stack_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        detail = response_json(resp).await;
+        let status = detail["stack"]["services"][0]["versionInference"]["status"]
+            .as_str()
+            .unwrap_or("");
+        if status != "pending" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     let svc = &detail["stack"]["services"][0];
     let image = &svc["image"];
 
@@ -5177,6 +5755,135 @@ services:
 }
 
 #[tokio::test]
+async fn runtime_scan_preserves_candidate_resolved_tag_when_candidate_digest_unchanged() {
+    let compose_path = format!(
+        "/tmp/dockrev-test-runtime-scan-preserve-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+
+    let runner: Arc<CheckAndRuntimeScanRunner> =
+        Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", Arc::new(DigestOnlyUpdateRegistry), runner).await;
+    let app = api::router(state.clone());
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "demo".to_string(),
+            stack_id: Some(stack_id.clone()),
+            status: "active".to_string(),
+            last_seen_at: Some(now.clone()),
+            last_scan_at: now.clone(),
+            last_error: None,
+            last_config_files: Some(vec![compose_path.clone()]),
+            unarchive_if_active: true,
+        })
+        .await
+        .unwrap();
+
+    let service = state
+        .db
+        .list_services_for_runtime_scan(&stack_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name == "web")
+        .unwrap();
+
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            Some("sha256:older".to_string()),
+            None,
+            None,
+            Some("5.2".to_string()),
+            Some("5.2".to_string()),
+            Some("sha256:new".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let scan_payload = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui",
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/runtime-scans")
+                .header("content-type", "application/json")
+                .body(Body::from(scan_payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let job_id = triggered["jobId"].as_str().unwrap().to_string();
+
+    let mut finished = false;
+    for _ in 0..120 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{job_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(finished, "runtime scan job did not finish in time");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let candidate = &detail["stack"]["services"][0]["candidate"];
+    assert_eq!(candidate["digest"].as_str(), Some("sha256:new"));
+    assert_eq!(candidate["resolvedTag"].as_str(), Some("5.2"));
+}
+
+#[tokio::test]
 async fn runtime_scan_no_drift_does_not_hit_registry() {
     let registry = Arc::new(CountingRegistry::default());
     let runner: Arc<CheckAndRuntimeScanRunner> =
@@ -5290,5 +5997,151 @@ services:
         registry.total_calls(),
         0,
         "runtime scan should not hit registry when there is no drift"
+    );
+}
+
+#[tokio::test]
+async fn runtime_scan_candidate_change_for_strict_semver_does_not_enqueue_inference() {
+    let registry = Arc::new(StrictSemverDriftRegistry::new(Duration::from_millis(400)));
+    let runner: Arc<CheckAndRuntimeScanRunner> =
+        Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", registry.clone(), runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2.0
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "demo".to_string(),
+            stack_id: Some(stack_id.clone()),
+            status: "active".to_string(),
+            last_seen_at: Some(now.clone()),
+            last_scan_at: now.clone(),
+            last_error: None,
+            last_config_files: Some(vec![compose_path.clone()]),
+            unarchive_if_active: true,
+        })
+        .await
+        .unwrap();
+
+    let service_id = state
+        .db
+        .list_services_for_runtime_scan(&stack_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name == "web")
+        .unwrap()
+        .id;
+    state
+        .db
+        .update_service_check_result(
+            &service_id,
+            Some("sha256:older".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let payload = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui",
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/runtime-scans")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let job_id = triggered["jobId"].as_str().unwrap().to_string();
+
+    let mut finished = false;
+    for _ in 0..120 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{job_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(finished, "runtime scan job did not finish in time");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/jobs/{job_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let job = response_json(resp).await;
+    assert_eq!(
+        job["job"]["summary"]["servicesDrifted"]
+            .as_u64()
+            .unwrap_or_default(),
+        1,
+        "runtime scan summary: {job}"
+    );
+    assert_eq!(
+        job["job"]["summary"]["servicesUpdated"]
+            .as_u64()
+            .unwrap_or_default(),
+        1
+    );
+
+    let in_flight = state
+        .version_inference_worker
+        .in_flight_reason("ghcr.io/acme/web", "linux/amd64")
+        .await;
+    assert!(
+        in_flight.is_none(),
+        "strict semver runtime-scan candidate changes should not enqueue version inference"
     );
 }

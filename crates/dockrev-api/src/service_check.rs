@@ -20,137 +20,21 @@ pub(crate) struct ServiceCheckOutcome {
     pub ignore_rule_id: Option<String>,
     pub ignore_reason: Option<String>,
     pub candidate_present: bool,
+    pub candidate_digest_changed: bool,
 }
-
-const RESOLVED_TAG_INFER_SCAN_LIMIT: usize = 60;
 
 pub(crate) type ManifestDigestCache =
     Arc<tokio::sync::RwLock<HashMap<String, (Option<String>, Option<String>)>>>;
 pub(crate) type RepoTagsCache = Arc<RepoTagsCacheInner>;
 
-pub(crate) struct RepoTagsCacheInner {
-    values: tokio::sync::RwLock<HashMap<String, Vec<String>>>,
-    key_locks: tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-}
+pub(crate) struct RepoTagsCacheInner;
 
 pub(crate) fn new_manifest_digest_cache() -> ManifestDigestCache {
     Arc::new(tokio::sync::RwLock::new(HashMap::new()))
 }
 
 pub(crate) fn new_repo_tags_cache() -> RepoTagsCache {
-    Arc::new(RepoTagsCacheInner {
-        values: tokio::sync::RwLock::new(HashMap::new()),
-        key_locks: tokio::sync::Mutex::new(HashMap::new()),
-    })
-}
-
-async fn list_tags_with_singleflight_cache(
-    state: &Arc<AppState>,
-    img: &registry::ImageRef,
-    repo_tags_cache: &RepoTagsCache,
-) -> anyhow::Result<Vec<String>> {
-    let cache_key = format!("{}/{}", img.registry, img.name);
-    if let Some(cached) = {
-        let cache = repo_tags_cache.values.read().await;
-        cache.get(&cache_key).cloned()
-    } {
-        return Ok(cached);
-    }
-
-    let key_lock = {
-        let mut locks = repo_tags_cache.key_locks.lock().await;
-        locks
-            .entry(cache_key.clone())
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-            .clone()
-    };
-    let _guard = key_lock.lock().await;
-
-    if let Some(cached) = {
-        let cache = repo_tags_cache.values.read().await;
-        cache.get(&cache_key).cloned()
-    } {
-        return Ok(cached);
-    }
-
-    let fetched = state.registry.list_tags(img).await?;
-    let mut cache = repo_tags_cache.values.write().await;
-    cache.insert(cache_key, fetched.clone());
-    Ok(fetched)
-}
-
-async fn infer_semver_tags_for_digests(
-    state: &Arc<AppState>,
-    img: &registry::ImageRef,
-    tags: &[String],
-    host_platform: &str,
-    wanted_digests: &[String],
-    manifest_digest_cache: &ManifestDigestCache,
-) -> Vec<String> {
-    let wanted: Vec<String> = wanted_digests
-        .iter()
-        .map(|d| d.trim().to_ascii_lowercase())
-        .filter(|d| !d.is_empty())
-        .collect();
-    if wanted.is_empty() {
-        return Vec::new();
-    }
-
-    let mut semver_tags: Vec<(semver::Version, String)> = tags
-        .iter()
-        .filter_map(|t| ignore::parse_version(t).map(|v| (v, t.clone())))
-        .collect();
-    semver_tags.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
-
-    let mut matched: Vec<String> = Vec::new();
-    for (_v, tag) in semver_tags.into_iter().take(RESOLVED_TAG_INFER_SCAN_LIMIT) {
-        let cache_key = format!("{}/{}:{}@{}", img.registry, img.name, tag, host_platform);
-        let cached = {
-            let cache = manifest_digest_cache.read().await;
-            cache.get(&cache_key).cloned()
-        };
-        let (digest, platform_digest) = if let Some(v) = cached {
-            v
-        } else {
-            let mut manifest = state
-                .registry
-                .get_manifest(img, &tag, host_platform)
-                .await
-                .ok();
-            if manifest.is_none() {
-                // Best-effort retry: registry lookups can fail transiently and we still want
-                // resolvedTag inference to be useful.
-                manifest = state
-                    .registry
-                    .get_manifest(img, &tag, host_platform)
-                    .await
-                    .ok();
-            }
-            let (d, pd) = manifest
-                .map(|m| (m.digest, m.platform_digest))
-                .unwrap_or((None, None));
-            let (digest, platform_digest) = {
-                let mut cache = manifest_digest_cache.write().await;
-                let entry = cache
-                    .entry(cache_key)
-                    .or_insert_with(|| (d.clone(), pd.clone()));
-                (entry.0.clone(), entry.1.clone())
-            };
-            (digest, platform_digest)
-        };
-
-        let digest_matches = digest
-            .as_deref()
-            .is_some_and(|d| wanted.iter().any(|w| d.trim().eq_ignore_ascii_case(w)))
-            || platform_digest
-                .as_deref()
-                .is_some_and(|d| wanted.iter().any(|w| d.trim().eq_ignore_ascii_case(w)));
-        if digest_matches {
-            matched.push(tag);
-        }
-    }
-
-    matched
+    Arc::new(RepoTagsCacheInner)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -164,6 +48,8 @@ pub(crate) async fn check_service_and_persist(
     manifest_digest_cache: &ManifestDigestCache,
     repo_tags_cache: &RepoTagsCache,
 ) -> anyhow::Result<ServiceCheckOutcome> {
+    let _ = manifest_digest_cache;
+    let _ = repo_tags_cache;
     let img = match registry::ImageRef::parse(&svc.image_ref) {
         Ok(img) => img,
         Err(_) => {
@@ -192,6 +78,7 @@ pub(crate) async fn check_service_and_persist(
                 ignore_rule_id: None,
                 ignore_reason: None,
                 candidate_present: false,
+                candidate_digest_changed: false,
             });
         }
     };
@@ -210,38 +97,6 @@ pub(crate) async fn check_service_and_persist(
             )
         })
         .collect::<Vec<_>>();
-
-    let tags = match list_tags_with_singleflight_cache(state, &img, repo_tags_cache).await {
-        Ok(t) => t,
-        Err(e) => {
-            // Preserve existing behavior: don't mutate DB if we can't read registry tags.
-            state
-                .db
-                .insert_job_log(
-                    job_id,
-                    &JobLogLine {
-                        ts: now.to_string(),
-                        level: "warn".to_string(),
-                        msg: format!("list tags failed for {}: {}", img.name, e),
-                    },
-                )
-                .await?;
-            return Ok(ServiceCheckOutcome {
-                current_digest: None,
-                current_resolved_tag: None,
-                current_resolved_tags_json: None,
-                current_resolved_tags: None,
-                candidate_tag: None,
-                candidate_resolved_tag: None,
-                candidate_digest: None,
-                candidate_arch_match: None,
-                candidate_arch_json: None,
-                ignore_rule_id: None,
-                ignore_reason: None,
-                candidate_present: false,
-            });
-        }
-    };
 
     let mut current_manifest = state
         .registry
@@ -308,12 +163,12 @@ pub(crate) async fn check_service_and_persist(
     if can_compare_current && current_matches_candidate {
         candidate_tag = None;
         candidate_digest = None;
-        candidate_platform_digest = None;
         candidate_arch_match = None;
         candidate_arch_json = None;
     }
 
     let candidate_present = candidate_tag.is_some();
+    let candidate_digest_changed = candidate_digest.as_deref() != svc.candidate_digest.as_deref();
 
     let mut ignore_match: Option<(String, String)> = None;
     if let Some(ref tag) = candidate_tag
@@ -325,63 +180,27 @@ pub(crate) async fn check_service_and_persist(
         ));
     }
 
+    let current_digest_changed = current_digest.as_deref() != svc.current_digest.as_deref();
     let (current_resolved_tag, current_resolved_tags_json, current_resolved_tags) =
-        if let Some(runtime_digest) = runtime_digest.as_deref()
-            && !ignore::is_strict_semver(&svc.image_tag)
-        {
-            let mut resolved_tags = infer_semver_tags_for_digests(
-                state,
-                &img,
-                &tags,
-                host_platform,
-                &[runtime_digest.to_string()],
-                manifest_digest_cache,
-            )
-            .await;
-
-            resolved_tags.retain(|t| t != &svc.image_tag);
-            let resolved_tag = resolved_tags.first().cloned();
-            let resolved_tags_json = if resolved_tags.len() > 1 {
-                serde_json::to_string(&resolved_tags).ok()
-            } else {
-                None
-            };
-
-            let resolved_tags_api = if resolved_tags.is_empty() {
-                None
-            } else {
-                Some(resolved_tags)
-            };
-
-            (resolved_tag, resolved_tags_json, resolved_tags_api)
-        } else {
+        if current_digest_changed {
             (None, None, None)
+        } else {
+            let resolved_tags_api = svc
+                .current_resolved_tags_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                .and_then(|v| if v.is_empty() { None } else { Some(v) });
+            (
+                svc.current_resolved_tag.clone(),
+                svc.current_resolved_tags_json.clone(),
+                resolved_tags_api,
+            )
         };
 
-    let candidate_resolved_tag = if let (Some(tag), Some(digest)) =
-        (candidate_tag.as_deref(), candidate_digest.as_deref())
-        && !ignore::is_strict_semver(tag)
-    {
-        let mut wanted_digests = vec![digest.to_string()];
-        if let Some(platform_digest) = candidate_platform_digest.as_deref()
-            && !platform_digest.trim().is_empty()
-            && !platform_digest.eq_ignore_ascii_case(digest)
-        {
-            wanted_digests.push(platform_digest.to_string());
-        }
-        let mut resolved_tags = infer_semver_tags_for_digests(
-            state,
-            &img,
-            &tags,
-            host_platform,
-            &wanted_digests,
-            manifest_digest_cache,
-        )
-        .await;
-        resolved_tags.retain(|t| t != tag);
-        resolved_tags.first().cloned()
-    } else {
+    let candidate_resolved_tag = if candidate_digest_changed {
         None
+    } else {
+        svc.candidate_resolved_tag.clone()
     };
 
     state
@@ -416,6 +235,7 @@ pub(crate) async fn check_service_and_persist(
         ignore_rule_id: ignore_match.as_ref().map(|(id, _)| id.clone()),
         ignore_reason: ignore_match.as_ref().map(|(_, r)| r.clone()),
         candidate_present,
+        candidate_digest_changed,
     })
 }
 

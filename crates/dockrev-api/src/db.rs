@@ -36,6 +36,11 @@ pub struct ServiceForCheck {
     pub name: String,
     pub image_ref: String,
     pub image_tag: String,
+    pub current_digest: Option<String>,
+    pub current_resolved_tag: Option<String>,
+    pub current_resolved_tags_json: Option<String>,
+    pub candidate_digest: Option<String>,
+    pub candidate_resolved_tag: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -45,6 +50,10 @@ pub struct ServiceForRuntimeScan {
     pub image_ref: String,
     pub image_tag: String,
     pub current_digest: Option<String>,
+    pub current_resolved_tag: Option<String>,
+    pub current_resolved_tags_json: Option<String>,
+    pub candidate_digest: Option<String>,
+    pub candidate_resolved_tag: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -150,6 +159,7 @@ impl Db {
             ensure_stack_archive_columns(conn)?;
             ensure_service_archive_columns(conn)?;
             ensure_discovery_schema(conn)?;
+            ensure_version_inference_schema(conn)?;
             ensure_schema_migrations_table(conn)?;
             apply_migration_0007_remove_manual_stacks(conn)?;
             auto_archive_missing_discovery_projects_on_startup(conn)?;
@@ -467,6 +477,7 @@ WHERE id = ?1
                     },
                     candidate,
                     ignore,
+                    version_inference: None,
                     settings: ServiceSettings {
                         auto_rollback: row.get::<_, i64>(14)? != 0,
                         backup_targets: crate::api::types::BackupTargetOverrides {
@@ -785,7 +796,16 @@ INSERT INTO services (
         self.call(move |conn| {
             let mut stmt = conn.prepare(
                 r#"
-SELECT id, name, image_ref, image_tag
+SELECT
+  id,
+  name,
+  image_ref,
+  image_tag,
+  current_digest,
+  current_resolved_tag,
+  current_resolved_tags_json,
+  candidate_digest,
+  candidate_resolved_tag
 FROM services
 WHERE stack_id = ?1
 ORDER BY name ASC
@@ -797,6 +817,11 @@ ORDER BY name ASC
                     name: row.get(1)?,
                     image_ref: row.get(2)?,
                     image_tag: row.get(3)?,
+                    current_digest: row.get(4)?,
+                    current_resolved_tag: row.get(5)?,
+                    current_resolved_tags_json: row.get(6)?,
+                    candidate_digest: row.get(7)?,
+                    candidate_resolved_tag: row.get(8)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -813,7 +838,16 @@ ORDER BY name ASC
         self.call(move |conn| {
             let mut stmt = conn.prepare(
                 r#"
-SELECT id, name, image_ref, image_tag, current_digest
+SELECT
+  id,
+  name,
+  image_ref,
+  image_tag,
+  current_digest,
+  current_resolved_tag,
+  current_resolved_tags_json,
+  candidate_digest,
+  candidate_resolved_tag
 FROM services
 WHERE stack_id = ?1
 ORDER BY name ASC
@@ -826,6 +860,10 @@ ORDER BY name ASC
                     image_ref: row.get(2)?,
                     image_tag: row.get(3)?,
                     current_digest: row.get(4)?,
+                    current_resolved_tag: row.get(5)?,
+                    current_resolved_tags_json: row.get(6)?,
+                    candidate_digest: row.get(7)?,
+                    candidate_resolved_tag: row.get(8)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -1629,6 +1667,83 @@ WHERE image_repo = ?1 AND digest = ?2 AND host_platform = ?3
         })
         .await
         .context("get image digest tags snapshot")
+    }
+
+    pub async fn upsert_image_version_inference_snapshot(
+        &self,
+        image_repo: &str,
+        host_platform: &str,
+        snapshot_json: &str,
+        all_failed: bool,
+        checked_at: &str,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let image_repo = image_repo.to_string();
+        let host_platform = host_platform.to_string();
+        let snapshot_json = snapshot_json.to_string();
+        let checked_at = checked_at.to_string();
+        let now = now.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                r#"
+INSERT INTO image_version_inference_snapshots (
+  image_repo,
+  host_platform,
+  snapshot_json,
+  all_failed,
+  checked_at,
+  updated_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+ON CONFLICT(image_repo, host_platform) DO UPDATE SET
+  snapshot_json = excluded.snapshot_json,
+  all_failed = excluded.all_failed,
+  checked_at = excluded.checked_at,
+  updated_at = excluded.updated_at
+"#,
+                params![
+                    image_repo,
+                    host_platform,
+                    snapshot_json,
+                    all_failed as i64,
+                    checked_at,
+                    now
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("upsert image version inference snapshot")
+    }
+
+    pub async fn get_image_version_inference_snapshot(
+        &self,
+        image_repo: &str,
+        host_platform: &str,
+    ) -> anyhow::Result<Option<(String, bool, String, String)>> {
+        let image_repo = image_repo.to_string();
+        let host_platform = host_platform.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    r#"
+SELECT snapshot_json, all_failed, checked_at, updated_at
+FROM image_version_inference_snapshots
+WHERE image_repo = ?1 AND host_platform = ?2
+"#,
+                    params![image_repo, host_platform],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get::<_, i64>(1)? != 0,
+                            row.get(2)?,
+                            row.get(3)?,
+                        ))
+                    },
+                )
+                .optional()?)
+        })
+        .await
+        .context("get image version inference snapshot")
     }
 
     pub async fn get_service_settings(
@@ -3911,6 +4026,23 @@ CREATE INDEX IF NOT EXISTS idx_discovered_compose_projects_stack_id ON discovere
     Ok(())
 }
 
+fn ensure_version_inference_schema(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+CREATE TABLE IF NOT EXISTS image_version_inference_snapshots (
+  image_repo TEXT NOT NULL,
+  host_platform TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  all_failed INTEGER NOT NULL DEFAULT 0,
+  checked_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (image_repo, host_platform)
+);
+"#,
+    )?;
+    Ok(())
+}
+
 fn ensure_schema_migrations_table(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -4191,5 +4323,15 @@ CREATE TABLE IF NOT EXISTS image_digest_tags_snapshots (
   checked_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (image_repo, digest, host_platform)
+);
+
+CREATE TABLE IF NOT EXISTS image_version_inference_snapshots (
+  image_repo TEXT NOT NULL,
+  host_platform TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  all_failed INTEGER NOT NULL DEFAULT 0,
+  checked_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (image_repo, host_platform)
 );
 "#;

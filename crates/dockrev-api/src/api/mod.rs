@@ -24,7 +24,7 @@ use url::Url;
 use crate::github;
 use crate::{
     backup, discovery, error::ApiError, ids, ignore, notify, preflight, registry, runtime_scan,
-    snapshot_worker, state::AppState, ui, updater,
+    snapshot_worker, state::AppState, ui, updater, version_inference_worker,
 };
 use types::*;
 
@@ -48,6 +48,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/api/services/{service_id}/digest-tags-snapshot",
             get(get_service_digest_tags_snapshot),
+        )
+        .route(
+            "/api/services/{service_id}/version-inference/refresh",
+            post(trigger_service_version_inference_refresh),
         )
         .route("/api/discovery/scan", post(trigger_discovery_scan))
         .route("/api/discovery/projects", get(list_discovery_projects))
@@ -199,6 +203,188 @@ async fn enqueue_snapshot_for_image_ref(
         .await;
 }
 
+fn needs_version_inference(service: &Service) -> bool {
+    if !ignore::is_strict_semver(&service.image.tag) {
+        return true;
+    }
+    service
+        .candidate
+        .as_ref()
+        .is_some_and(|c| !ignore::is_strict_semver(&c.tag))
+}
+
+fn checked_at_is_older_than(checked_at: &str, min_age: time::Duration) -> bool {
+    let parsed =
+        time::OffsetDateTime::parse(checked_at, &time::format_description::well_known::Rfc3339);
+    let now = time::OffsetDateTime::now_utc();
+    match parsed {
+        Ok(ts) => now - ts > min_age,
+        Err(_) => true,
+    }
+}
+
+fn checked_at_is_stale(checked_at: &str) -> bool {
+    checked_at_is_older_than(
+        checked_at,
+        time::Duration::days(version_inference_worker::VERSION_INFERENCE_TTL_DAYS),
+    )
+}
+
+fn checked_at_is_retryable_all_failed(checked_at: Option<&str>) -> bool {
+    checked_at.is_none_or(|ts| {
+        checked_at_is_older_than(
+            ts,
+            time::Duration::minutes(
+                version_inference_worker::VERSION_INFERENCE_ALL_FAILED_RETRY_MINUTES,
+            ),
+        )
+    })
+}
+
+fn needs_version_inference_for_tags(current_tag: &str, candidate_tag: Option<&str>) -> bool {
+    if !ignore::is_strict_semver(current_tag) {
+        return true;
+    }
+    candidate_tag.is_some_and(|tag| !ignore::is_strict_semver(tag))
+}
+
+fn update_service_inference_from_snapshot(
+    service: &mut Service,
+    snapshot: &version_inference_worker::VersionInferenceSnapshot,
+) {
+    if !ignore::is_strict_semver(&service.image.tag)
+        && let Some(digest) = service.image.digest.as_deref()
+    {
+        let mut tags = version_inference_worker::lookup_tags_for_digest(snapshot, digest);
+        tags.retain(|t| t != &service.image.tag);
+        service.image.resolved_tag = tags.first().cloned();
+        service.image.resolved_tags = if tags.len() > 1 { Some(tags) } else { None };
+    }
+
+    if let Some(candidate) = service.candidate.as_mut()
+        && !ignore::is_strict_semver(&candidate.tag)
+    {
+        let mut tags =
+            version_inference_worker::lookup_tags_for_digest(snapshot, &candidate.digest);
+        tags.retain(|t| t != &candidate.tag);
+        candidate.resolved_tag = tags.first().cloned();
+    }
+}
+
+async fn enrich_stack_with_version_inference(
+    state: &Arc<AppState>,
+    stack: &mut StackRecord,
+) -> Result<(), ApiError> {
+    use std::collections::BTreeMap;
+
+    let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
+        .unwrap_or_else(|| "linux/amd64".to_string());
+
+    let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (idx, svc) in stack.services.iter_mut().enumerate() {
+        if !needs_version_inference(svc) {
+            svc.version_inference = Some(VersionInferenceState {
+                status: "ready".to_string(),
+                reason: Some(
+                    version_inference_worker::VersionInferenceReason::NotRequired
+                        .as_str()
+                        .to_string(),
+                ),
+                checked_at: None,
+            });
+            continue;
+        }
+        let Some(image_repo) = snapshot_worker::image_repo_from_image_ref(&svc.image.reference)
+        else {
+            svc.version_inference = Some(VersionInferenceState {
+                status: "ready".to_string(),
+                reason: Some(
+                    version_inference_worker::VersionInferenceReason::NotRequired
+                        .as_str()
+                        .to_string(),
+                ),
+                checked_at: None,
+            });
+            continue;
+        };
+        groups.entry(image_repo).or_default().push(idx);
+    }
+
+    for (image_repo, indices) in groups {
+        let snapshot_row = state
+            .db
+            .get_image_version_inference_snapshot(&image_repo, &host_platform)
+            .await
+            .map_err(map_internal)?;
+        let mut snapshot: Option<version_inference_worker::VersionInferenceSnapshot> = None;
+        let mut checked_at: Option<String> = None;
+        let mut all_failed = false;
+        if let Some((snapshot_json, row_all_failed, row_checked_at, _updated_at)) = snapshot_row {
+            checked_at = Some(row_checked_at.clone());
+            all_failed = row_all_failed;
+            snapshot = serde_json::from_str::<version_inference_worker::VersionInferenceSnapshot>(
+                &snapshot_json,
+            )
+            .ok();
+        }
+
+        let mut pending_reason: Option<version_inference_worker::VersionInferenceReason> = None;
+        let mut ready_reason: Option<version_inference_worker::VersionInferenceReason> = None;
+        if snapshot.is_none() {
+            pending_reason = Some(version_inference_worker::VersionInferenceReason::CacheMiss);
+        } else if checked_at.as_deref().is_some_and(checked_at_is_stale) {
+            pending_reason = Some(version_inference_worker::VersionInferenceReason::CacheStale);
+        } else if all_failed {
+            ready_reason = Some(version_inference_worker::VersionInferenceReason::AllFailed);
+            if checked_at_is_retryable_all_failed(checked_at.as_deref()) {
+                pending_reason = Some(version_inference_worker::VersionInferenceReason::AllFailed);
+            }
+        }
+
+        if let Some(reason) = pending_reason {
+            state
+                .version_inference_worker
+                .enqueue(&image_repo, &host_platform, reason)
+                .await;
+        }
+
+        let in_flight_reason = state
+            .version_inference_worker
+            .in_flight_reason(&image_repo, &host_platform)
+            .await;
+        let in_flight = in_flight_reason.is_some();
+        let status = if in_flight { "pending" } else { "ready" };
+        let reason = if in_flight {
+            Some(
+                pending_reason
+                    .or(in_flight_reason)
+                    .unwrap_or(version_inference_worker::VersionInferenceReason::Running)
+                    .as_str()
+                    .to_string(),
+            )
+        } else {
+            ready_reason.map(|r| r.as_str().to_string())
+        };
+
+        for idx in indices {
+            let svc = stack
+                .services
+                .get_mut(idx)
+                .ok_or_else(|| ApiError::internal("invalid service index"))?;
+            if let Some(snapshot) = snapshot.as_ref() {
+                update_service_inference_from_snapshot(svc, snapshot);
+            }
+            svc.version_inference = Some(VersionInferenceState {
+                status: status.to_string(),
+                reason: reason.clone(),
+                checked_at: checked_at.clone(),
+            });
+        }
+    }
+
+    Ok(())
+}
+
 async fn get_stack(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -206,9 +392,10 @@ async fn get_stack(
 ) -> Result<Json<GetStackResponse>, ApiError> {
     let _user = require_user(&state, &headers)?;
     let stack = state.db.get_stack(&stack_id).await.map_err(map_internal)?;
-    let Some(stack) = stack else {
+    let Some(mut stack) = stack else {
         return Err(ApiError::not_found("stack not found"));
     };
+    enrich_stack_with_version_inference(&state, &mut stack).await?;
 
     Ok(Json(GetStackResponse {
         stack: StackResponse {
@@ -547,6 +734,7 @@ async fn handle_check_worker_result(
     state: &Arc<AppState>,
     job_id: &str,
     now: &str,
+    host_platform: &str,
     joined: Result<CheckWorkerResult, tokio::task::JoinError>,
     total_services: u32,
     services_checked: &mut u32,
@@ -558,6 +746,8 @@ async fn handle_check_worker_result(
     let CheckWorkerResult {
         stack_id,
         service_name,
+        service_image_ref,
+        service_image_tag,
         outcome,
     } = joined.map_err(|e| map_internal(anyhow::anyhow!("check worker join failed: {e}")))?;
 
@@ -567,6 +757,21 @@ async fn handle_check_worker_result(
     let outcome = outcome.map_err(map_internal)?;
     if outcome.candidate_present {
         *services_with_candidate = (*services_with_candidate).saturating_add(1);
+    }
+    if outcome.candidate_digest_changed
+        && outcome.candidate_digest.is_some()
+        && needs_version_inference_for_tags(&service_image_tag, outcome.candidate_tag.as_deref())
+        && let Some(image_repo) =
+            crate::snapshot_worker::image_repo_from_image_ref(&service_image_ref)
+    {
+        state
+            .version_inference_worker
+            .enqueue(
+                &image_repo,
+                host_platform,
+                crate::version_inference_worker::VersionInferenceReason::NewVersion,
+            )
+            .await;
     }
 
     let now_instant = std::time::Instant::now();
@@ -615,6 +820,8 @@ async fn handle_check_worker_result(
 struct CheckWorkerResult {
     stack_id: String,
     service_name: String,
+    service_image_ref: String,
+    service_image_tag: String,
     outcome: anyhow::Result<crate::service_check::ServiceCheckOutcome>,
 }
 
@@ -945,6 +1152,8 @@ async fn run_check_for_job(
         join_set.spawn(async move {
             let stack_id = unit.stack_id.clone();
             let service_name = unit.service.name.clone();
+            let service_image_ref = unit.service.image_ref.clone();
+            let service_image_tag = unit.service.image_tag.clone();
             let runtime_digest = match (
                 unit.compose_project.as_deref(),
                 registry::ImageRef::parse(&unit.service.image_ref),
@@ -974,6 +1183,8 @@ async fn run_check_for_job(
             CheckWorkerResult {
                 stack_id,
                 service_name,
+                service_image_ref,
+                service_image_tag,
                 outcome,
             }
         });
@@ -984,6 +1195,7 @@ async fn run_check_for_job(
                 state,
                 job_id,
                 now,
+                host_platform,
                 joined,
                 total_services,
                 &mut services_checked,
@@ -1001,6 +1213,7 @@ async fn run_check_for_job(
             state,
             job_id,
             now,
+            host_platform,
             joined,
             total_services,
             &mut services_checked,
@@ -2514,6 +2727,55 @@ async fn get_service_settings(
         auto_rollback: settings.auto_rollback,
         backup_targets: settings.backup_targets,
     }))
+}
+
+async fn trigger_service_version_inference_refresh(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(service_id): Path<String>,
+) -> Result<Response, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let stack_id = state
+        .db
+        .get_service_stack_id(&service_id)
+        .await
+        .map_err(map_internal)?;
+    let Some(stack_id) = stack_id else {
+        return Err(ApiError::not_found("service not found"));
+    };
+    let stack = state.db.get_stack(&stack_id).await.map_err(map_internal)?;
+    let Some(stack) = stack else {
+        return Err(ApiError::not_found("stack not found"));
+    };
+    let Some(service) = stack.services.iter().find(|svc| svc.id == service_id) else {
+        return Err(ApiError::not_found("service not found"));
+    };
+    let Some(image_repo) = snapshot_worker::image_repo_from_image_ref(&service.image.reference)
+    else {
+        return Err(ApiError::invalid_argument("invalid service image ref"));
+    };
+    let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
+        .unwrap_or_else(|| "linux/amd64".to_string());
+    let inserted = state
+        .version_inference_worker
+        .enqueue(
+            &image_repo,
+            &host_platform,
+            version_inference_worker::VersionInferenceReason::Force,
+        )
+        .await;
+    let reason = if inserted {
+        version_inference_worker::VersionInferenceReason::Force
+    } else {
+        version_inference_worker::VersionInferenceReason::Running
+    };
+    let resp = TriggerVersionInferenceRefreshResponse {
+        status: "pending".to_string(),
+        service_id,
+        image_repo,
+        reason: reason.as_str().to_string(),
+    };
+    Ok((StatusCode::ACCEPTED, Json(resp)).into_response())
 }
 
 #[derive(Debug, Deserialize)]

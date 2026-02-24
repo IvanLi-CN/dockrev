@@ -282,6 +282,90 @@ export function OverviewPage(props: {
   }, [refresh])
 
   useEffect(() => {
+    let alive = true
+    const onVersionRefresh = (evt: Event) => {
+      const detail = evt instanceof CustomEvent ? evt.detail : null
+      const serviceId =
+        detail && typeof detail === 'object' && 'serviceId' in detail && typeof detail.serviceId === 'string'
+          ? detail.serviceId
+          : null
+
+      const targetedStackIds =
+        serviceId == null
+          ? []
+          : Object.entries(details)
+              .filter(([, d]) => d?.services.some((svc) => svc.id === serviceId))
+              .map(([stackId]) => stackId)
+      const ids = targetedStackIds.length > 0 ? targetedStackIds : stacks.map((s) => s.id)
+      if (ids.length === 0) return
+
+      void (async () => {
+        const results = await Promise.all(
+          ids.map(async (id) => {
+            try {
+              return [id, await getStack(id)] as const
+            } catch {
+              return [id, undefined] as const
+            }
+          }),
+        )
+        if (!alive) return
+        setDetails((prev) => ({ ...prev, ...Object.fromEntries(results) }))
+      })()
+    }
+    window.addEventListener('dockrev:version-inference-refresh', onVersionRefresh)
+    return () => {
+      alive = false
+      window.removeEventListener('dockrev:version-inference-refresh', onVersionRefresh)
+    }
+  }, [details, stacks])
+
+  const pendingInferenceStackIds = useMemo(() => {
+    const ids: string[] = []
+    for (const [stackId, detail] of Object.entries(details)) {
+      if (!detail) continue
+      const hasPending = detail.services.some(
+        (svc) => !svc.archived && svc.versionInference?.status === 'pending',
+      )
+      if (hasPending) ids.push(stackId)
+    }
+    return ids
+  }, [details])
+
+  useEffect(() => {
+    if (pendingInferenceStackIds.length === 0) return
+    let closed = false
+    let timer: number | null = null
+
+    const poll = async () => {
+      const ids = [...pendingInferenceStackIds]
+      const results = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            return [id, await getStack(id)] as const
+          } catch {
+            return [id, undefined] as const
+          }
+        }),
+      )
+      if (closed) return
+      setDetails((prev) => ({ ...prev, ...Object.fromEntries(results) }))
+      timer = window.setTimeout(() => {
+        void poll()
+      }, 1200)
+    }
+
+    timer = window.setTimeout(() => {
+      void poll()
+    }, 1200)
+
+    return () => {
+      closed = true
+      if (timer != null) window.clearTimeout(timer)
+    }
+  }, [pendingInferenceStackIds])
+
+  useEffect(() => {
     let closed = false
     let es: EventSource | null = null
     let timer: number | null = null
@@ -697,13 +781,21 @@ export function OverviewPage(props: {
                 <div className="modalLead">将更新的服务（预览）</div>
                 <div className="modalList">
                   {allCandidates.map((item) => {
-                    const currentDisplayTag = formatTagDisplay(item.svc.image.tag, item.svc.image.resolvedTag)
+                    const currentDisplayTag = formatTagDisplay(
+                      item.svc.image.tag,
+                      item.svc.image.resolvedTag,
+                      item.svc.versionInference?.status,
+                    )
                     const rawTagTrim = (item.svc.image.tag ?? '').trim()
                     const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
                     const candidateTag =
                       item.svc.candidate?.tag && item.svc.candidate.tag !== '-' ? item.svc.candidate.tag : null
                     const candidateDisplayTag = candidateTag
-                      ? formatCandidateTagDisplay(candidateTag, item.svc.candidate?.resolvedTag ?? null)
+                      ? formatCandidateTagDisplay(
+                          candidateTag,
+                          item.svc.candidate?.resolvedTag ?? null,
+                          item.svc.versionInference?.status,
+                        )
                       : null
                     return (
                       <div key={`${item.stackName}/${item.svc.id}`} className="modalListItem">
@@ -981,13 +1073,21 @@ export function OverviewPage(props: {
 		                            <div className="modalLead">将更新的服务（预览）</div>
 		                            <div className="modalList">
 		                              {candidateServices.map((item) => {
-		                                const currentDisplayTag = formatTagDisplay(item.svc.image.tag, item.svc.image.resolvedTag)
+		                                const currentDisplayTag = formatTagDisplay(
+                                      item.svc.image.tag,
+                                      item.svc.image.resolvedTag,
+                                      item.svc.versionInference?.status,
+                                    )
 		                                const rawTagTrim = (item.svc.image.tag ?? '').trim()
 		                                const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
 		                                const candidateTag =
 		                                  item.svc.candidate?.tag && item.svc.candidate.tag !== '-' ? item.svc.candidate.tag : null
 		                                const candidateDisplayTag = candidateTag
-		                                  ? formatCandidateTagDisplay(candidateTag, item.svc.candidate?.resolvedTag ?? null)
+		                                  ? formatCandidateTagDisplay(
+                                      candidateTag,
+                                      item.svc.candidate?.resolvedTag ?? null,
+                                      item.svc.versionInference?.status,
+                                    )
 		                                  : null
 		                                return (
 		                                  <div key={item.svc.id} className="modalListItem">
@@ -1078,12 +1178,20 @@ export function OverviewPage(props: {
                 {!isCollapsed
                   ? rows.map(({ svc, stt }) => {
                       const isDockrev = isDockrevService(svc)
-                      const currentDisplayTag = formatTagDisplay(svc.image.tag, svc.image.resolvedTag)
+                      const currentDisplayTag = formatTagDisplay(
+                        svc.image.tag,
+                        svc.image.resolvedTag,
+                        svc.versionInference?.status,
+                      )
                       const rawTagTrim = (svc.image.tag ?? '').trim()
                       const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
                       const candidateTag = svc.candidate?.tag && svc.candidate.tag !== '-' ? svc.candidate.tag : null
 	                      const candidateDisplayTag = candidateTag
-	                        ? formatCandidateTagDisplay(candidateTag, svc.candidate?.resolvedTag ?? null)
+	                        ? formatCandidateTagDisplay(
+                            candidateTag,
+                            svc.candidate?.resolvedTag ?? null,
+                            svc.versionInference?.status,
+                          )
 	                        : null
 	                      const showCandidate = Boolean(candidateDisplayTag && candidateDisplayTag !== currentDisplayTag)
 	                      const svcApply =
@@ -1288,6 +1396,7 @@ export function OverviewPage(props: {
 	                                                  {formatCandidateTagDisplay(
 	                                                    svc.candidate.tag,
 	                                                    svc.candidate.resolvedTag ?? null,
+                                                      svc.versionInference?.status,
 	                                                  )}
 	                                                </VersionTagsPopover>
 	                                              ) : (
@@ -1295,7 +1404,11 @@ export function OverviewPage(props: {
 	                                              )}
 	                                            </div>
                                             {(() => {
-                                              const currentTag = formatTagDisplay(svc.image.tag, svc.image.resolvedTag)
+                                              const currentTag = formatTagDisplay(
+                                                svc.image.tag,
+                                                svc.image.resolvedTag,
+                                                svc.versionInference?.status,
+                                              )
                                               const rawTrim = (svc.image.tag ?? '').trim()
                                               const showRaw = Boolean(rawTrim && rawTrim !== currentTag)
                                               return showRaw ? (
