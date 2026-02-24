@@ -18,6 +18,7 @@ pub struct Config {
     pub discovery_interval_seconds: u64,
     pub discovery_max_actions: u32,
     pub runtime_scan_interval_seconds: u64,
+    pub deploy_check_local_command_timeout_seconds: u64,
     pub check_concurrency: usize,
     pub registry_per_host_concurrency: usize,
     pub registry_retry_max_attempts: usize,
@@ -93,6 +94,17 @@ impl Config {
             ));
         }
 
+        let deploy_check_local_command_timeout_seconds =
+            std::env::var("DOCKREV_DEPLOY_CHECK_LOCAL_COMMAND_TIMEOUT_SECONDS")
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .unwrap_or(12);
+        if deploy_check_local_command_timeout_seconds == 0 {
+            return Err(anyhow::anyhow!(
+                "DOCKREV_DEPLOY_CHECK_LOCAL_COMMAND_TIMEOUT_SECONDS must be >= 1"
+            ));
+        }
+
         let check_concurrency = std::env::var("DOCKREV_CHECK_CONCURRENCY")
             .ok()
             .and_then(|v| v.trim().parse::<usize>().ok())
@@ -156,6 +168,7 @@ impl Config {
             discovery_interval_seconds,
             discovery_max_actions,
             runtime_scan_interval_seconds,
+            deploy_check_local_command_timeout_seconds,
             check_concurrency,
             registry_per_host_concurrency,
             registry_retry_max_attempts,

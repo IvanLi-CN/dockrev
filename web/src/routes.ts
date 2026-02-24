@@ -5,6 +5,7 @@ export type Route =
   | { name: 'queue' }
   | { name: 'job'; jobId: string }
   | { name: 'services' }
+  | { name: 'deploy-check' }
   | { name: 'settings' }
   | { name: 'service'; stackId: string; serviceId: string }
   | { name: 'supervisor-misroute'; basePath: string; pathname: string }
@@ -18,6 +19,7 @@ export function parseRoute(pathname: string): Route {
   if (parts.length === 1 && parts[0] === 'queue') return { name: 'queue' }
   if (parts.length === 2 && parts[0] === 'queue') return { name: 'job', jobId: parts[1] }
   if (parts.length === 1 && parts[0] === 'services') return { name: 'services' }
+  if (parts.length === 1 && parts[0] === 'deploy-check') return { name: 'deploy-check' }
   if (parts.length === 1 && parts[0] === 'settings') return { name: 'settings' }
   if (parts.length === 3 && parts[0] === 'services') {
     return { name: 'service', stackId: parts[1], serviceId: parts[2] }
@@ -35,6 +37,8 @@ export function href(route: Route): string {
       return `/queue/${encodeURIComponent(route.jobId)}`
     case 'services':
       return '/services'
+    case 'deploy-check':
+      return '/deploy-check'
     case 'settings':
       return '/settings'
     case 'service':
