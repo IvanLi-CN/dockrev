@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（4/5）
+- Status: 已完成
 - Created: 2026-02-24
 - Last: 2026-02-24
 
@@ -114,7 +114,7 @@
 - [x] M2: check 固定并发 + 1 秒错峰调度落地。
 - [x] M3: JobProgress 双层字段与 SSE/API 对齐。
 - [x] M4: Queue/JobDetail 双层进度条完成并兼容历史数据。
-- [ ] M5: 验证通过并快车道交付（PR + checks + review-loop）。
+- [x] M5: 验证通过并快车道交付（PR + checks + review-loop）。
 
 ## 风险 / 假设
 
@@ -125,4 +125,5 @@
 ## 变更记录（Change log）
 
 - 2026-02-24: 创建规格并冻结范围与验收口径。
-- 2026-02-24: 完成实现与本地验证（cargo test + web lint/build），进入快车道交付阶段。
+- 2026-02-24: 完成实现与本地验证（cargo test + web lint/build）。
+- 2026-02-24: 快车道交付完成（PR #90，CI 全绿，review-loop 无 P0/P1 阻塞）。
