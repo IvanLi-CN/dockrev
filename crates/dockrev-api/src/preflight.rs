@@ -984,19 +984,19 @@ fn is_private_ecr_host(host_no_port: &str) -> bool {
 }
 
 fn normalize_registry_host(input: &str) -> String {
-    if let Ok(url) = Url::parse(input) {
-        if let Some(host) = url.host_str() {
-            let normalized = if let Some(port) = url.port() {
-                if host.contains(':') {
-                    format!("[{host}]:{port}")
-                } else {
-                    format!("{host}:{port}")
-                }
+    if let Ok(url) = Url::parse(input)
+        && let Some(host) = url.host_str()
+    {
+        let normalized = if let Some(port) = url.port() {
+            if host.contains(':') {
+                format!("[{host}]:{port}")
             } else {
-                host.to_string()
-            };
-            return normalize_registry_host(&normalized);
-        }
+                format!("{host}:{port}")
+            }
+        } else {
+            host.to_string()
+        };
+        return normalize_registry_host(&normalized);
     }
 
     let mut host = input
