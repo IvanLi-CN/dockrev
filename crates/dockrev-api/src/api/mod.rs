@@ -1266,9 +1266,7 @@ async fn run_check_for_job(
 
         if let Some(not_before) = next_spawn_not_before {
             if let Some(wait) = not_before.checked_duration_since(std::time::Instant::now()) {
-                if join_set.is_empty() {
-                    tokio::time::sleep(wait).await;
-                } else {
+                if !join_set.is_empty() {
                     tokio::select! {
                         _ = tokio::time::sleep(wait) => {}
                         Some(joined) = join_set.join_next() => {
