@@ -15,7 +15,9 @@ use crate::{
     state::AppState,
 };
 
-const LOCAL_COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
+fn local_command_timeout(state: &AppState) -> Duration {
+    Duration::from_secs(state.config.deploy_check_local_command_timeout_seconds)
+}
 
 pub async fn build_report(state: &AppState) -> anyhow::Result<DeployCheckReportResponse> {
     let context = collect_context(state).await?;
@@ -110,7 +112,7 @@ async fn collect_context(state: &AppState) -> anyhow::Result<PreflightContext> {
         .db
         .list_discovered_compose_projects(ArchivedFilter::Exclude)
         .await
-        .unwrap_or_default();
+        .context("list discovered compose projects for deploy preflight")?;
     for project in discovered {
         if let Some(files) = project.config_files {
             for file in files {
@@ -140,7 +142,7 @@ async fn check_docker_engine(state: &AppState) -> DeployCheckItem {
         env: Vec::new(),
     };
 
-    match state.runner.run(spec, LOCAL_COMMAND_TIMEOUT).await {
+    match state.runner.run(spec, local_command_timeout(state)).await {
         Ok(output) if output.status == 0 => {
             let version = output.stdout.trim();
             let evidence = if version.is_empty() {
@@ -280,7 +282,7 @@ async fn check_update_executor_ready(state: &AppState) -> DeployCheckItem {
         env: Vec::new(),
     };
 
-    match state.runner.run(spec, LOCAL_COMMAND_TIMEOUT).await {
+    match state.runner.run(spec, local_command_timeout(state)).await {
         Ok(output) if output.status == 0 => {
             let stdout = output.stdout.trim();
             let evidence = if stdout.is_empty() {

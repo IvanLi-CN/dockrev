@@ -71,6 +71,7 @@ Environment variables (API):
 - `DOCKREV_DB_PATH` (default `./data/dockrev.sqlite3`)
 - `DOCKREV_DOCKER_CONFIG` (optional) path to Docker `config.json` for registry credentials
 - `DOCKREV_COMPOSE_BIN` (default `docker-compose`; set to `docker` to use the plugin)
+- `DOCKREV_DEPLOY_CHECK_LOCAL_COMMAND_TIMEOUT_SECONDS` (default `12`; must be `>= 1`) timeout for local `docker info` / `compose version` probes used by `GET /api/deploy-check/report`
 - `DOCKREV_AUTH_FORWARD_HEADER_NAME` (default `X-Forwarded-User`)
 - `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV` (default `true`; set to `false` in production)
 - `DOCKREV_SELF_UPGRADE_URL` (default `/supervisor/`) UI jump target for “升级 Dockrev”
