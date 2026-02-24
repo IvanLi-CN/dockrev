@@ -208,16 +208,39 @@ fn needs_version_inference(service: &Service) -> bool {
         .is_some_and(|c| !ignore::is_strict_semver(&c.tag))
 }
 
-fn checked_at_is_stale(checked_at: &str) -> bool {
+fn checked_at_is_older_than(checked_at: &str, min_age: time::Duration) -> bool {
     let parsed =
         time::OffsetDateTime::parse(checked_at, &time::format_description::well_known::Rfc3339);
     let now = time::OffsetDateTime::now_utc();
     match parsed {
-        Ok(ts) => {
-            now - ts > time::Duration::days(version_inference_worker::VERSION_INFERENCE_TTL_DAYS)
-        }
+        Ok(ts) => now - ts > min_age,
         Err(_) => true,
     }
+}
+
+fn checked_at_is_stale(checked_at: &str) -> bool {
+    checked_at_is_older_than(
+        checked_at,
+        time::Duration::days(version_inference_worker::VERSION_INFERENCE_TTL_DAYS),
+    )
+}
+
+fn checked_at_is_retryable_all_failed(checked_at: Option<&str>) -> bool {
+    checked_at.is_none_or(|ts| {
+        checked_at_is_older_than(
+            ts,
+            time::Duration::minutes(
+                version_inference_worker::VERSION_INFERENCE_ALL_FAILED_RETRY_MINUTES,
+            ),
+        )
+    })
+}
+
+fn needs_version_inference_for_tags(current_tag: &str, candidate_tag: Option<&str>) -> bool {
+    if !ignore::is_strict_semver(current_tag) {
+        return true;
+    }
+    candidate_tag.is_some_and(|tag| !ignore::is_strict_semver(tag))
 }
 
 fn update_service_inference_from_snapshot(
@@ -301,12 +324,16 @@ async fn enrich_stack_with_version_inference(
         }
 
         let mut pending_reason: Option<version_inference_worker::VersionInferenceReason> = None;
+        let mut ready_reason: Option<version_inference_worker::VersionInferenceReason> = None;
         if snapshot.is_none() {
             pending_reason = Some(version_inference_worker::VersionInferenceReason::CacheMiss);
         } else if checked_at.as_deref().is_some_and(checked_at_is_stale) {
             pending_reason = Some(version_inference_worker::VersionInferenceReason::CacheStale);
         } else if all_failed {
-            pending_reason = Some(version_inference_worker::VersionInferenceReason::AllFailed);
+            ready_reason = Some(version_inference_worker::VersionInferenceReason::AllFailed);
+            if checked_at_is_retryable_all_failed(checked_at.as_deref()) {
+                pending_reason = Some(version_inference_worker::VersionInferenceReason::AllFailed);
+            }
         }
 
         if let Some(reason) = pending_reason {
@@ -331,7 +358,7 @@ async fn enrich_stack_with_version_inference(
                     .to_string(),
             )
         } else {
-            None
+            ready_reason.map(|r| r.as_str().to_string())
         };
 
         for idx in indices {
@@ -715,6 +742,7 @@ async fn handle_check_worker_result(
         stack_id,
         service_name,
         service_image_ref,
+        service_image_tag,
         outcome,
     } = joined.map_err(|e| map_internal(anyhow::anyhow!("check worker join failed: {e}")))?;
 
@@ -727,6 +755,7 @@ async fn handle_check_worker_result(
     }
     if outcome.candidate_digest_changed
         && outcome.candidate_digest.is_some()
+        && needs_version_inference_for_tags(&service_image_tag, outcome.candidate_tag.as_deref())
         && let Some(image_repo) =
             crate::snapshot_worker::image_repo_from_image_ref(&service_image_ref)
     {
@@ -787,6 +816,7 @@ struct CheckWorkerResult {
     stack_id: String,
     service_name: String,
     service_image_ref: String,
+    service_image_tag: String,
     outcome: anyhow::Result<crate::service_check::ServiceCheckOutcome>,
 }
 
@@ -1118,6 +1148,7 @@ async fn run_check_for_job(
             let stack_id = unit.stack_id.clone();
             let service_name = unit.service.name.clone();
             let service_image_ref = unit.service.image_ref.clone();
+            let service_image_tag = unit.service.image_tag.clone();
             let runtime_digest = match (
                 unit.compose_project.as_deref(),
                 registry::ImageRef::parse(&unit.service.image_ref),
@@ -1148,6 +1179,7 @@ async fn run_check_for_job(
                 stack_id,
                 service_name,
                 service_image_ref,
+                service_image_tag,
                 outcome,
             }
         });

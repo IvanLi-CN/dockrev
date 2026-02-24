@@ -8,7 +8,7 @@ use serde_json::json;
 
 use crate::{
     api::types::{JobLogLine, JobProgress, JobRecord, JobScope, JobType, RuntimeScanReason},
-    ids, registry,
+    ids, ignore, registry,
     runner::CommandSpec,
     service_check,
     state::AppState,
@@ -49,6 +49,13 @@ fn make_job_progress(
         current_target,
         updated_at,
     }
+}
+
+fn needs_version_inference_for_tags(current_tag: &str, candidate_tag: Option<&str>) -> bool {
+    if !ignore::is_strict_semver(current_tag) {
+        return true;
+    }
+    candidate_tag.is_some_and(|tag| !ignore::is_strict_semver(tag))
 }
 
 async fn persist_job_progress(
@@ -500,6 +507,10 @@ async fn run_runtime_scan_for_job(
             services_updated += 1;
             if outcome.candidate_digest_changed
                 && outcome.candidate_digest.is_some()
+                && needs_version_inference_for_tags(
+                    &svc.image_tag,
+                    outcome.candidate_tag.as_deref(),
+                )
                 && let Some(repo) =
                     crate::snapshot_worker::image_repo_from_image_ref(&svc.image_ref)
             {

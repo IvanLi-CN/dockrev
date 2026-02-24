@@ -10,6 +10,7 @@ use tokio::sync::{Mutex, mpsc};
 use crate::{db::Db, ignore, registry};
 
 pub const VERSION_INFERENCE_TTL_DAYS: i64 = 7;
+pub const VERSION_INFERENCE_ALL_FAILED_RETRY_MINUTES: i64 = 10;
 pub const VERSION_INFERENCE_WORKER_MAX_CONCURRENCY: usize = 4;
 const VERSION_INFERENCE_SCAN_LIMIT: usize = 60;
 const MANIFEST_TIMEOUT: Duration = Duration::from_secs(4);
