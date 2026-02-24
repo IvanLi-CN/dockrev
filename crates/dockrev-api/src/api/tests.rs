@@ -769,6 +769,73 @@ impl StrictSemverDriftRegistry {
     }
 }
 
+#[derive(Clone)]
+struct StaggeredCheckRegistry {
+    delay: Duration,
+    in_flight: Arc<AtomicUsize>,
+    max_in_flight: Arc<AtomicUsize>,
+    started_at: Arc<std::sync::Mutex<Vec<std::time::Instant>>>,
+}
+
+impl StaggeredCheckRegistry {
+    fn new(delay: Duration) -> Self {
+        Self {
+            delay,
+            in_flight: Arc::new(AtomicUsize::new(0)),
+            max_in_flight: Arc::new(AtomicUsize::new(0)),
+            started_at: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+
+    fn max_in_flight(&self) -> usize {
+        self.max_in_flight.load(Ordering::SeqCst)
+    }
+
+    fn started_at(&self) -> Vec<std::time::Instant> {
+        self.started_at.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl RegistryClient for StaggeredCheckRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        Ok(vec!["5.2".to_string()])
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        _reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        let started = std::time::Instant::now();
+        self.started_at.lock().unwrap().push(started);
+
+        let current = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        let mut seen = self.max_in_flight.load(Ordering::SeqCst);
+        while current > seen {
+            match self.max_in_flight.compare_exchange(
+                seen,
+                current,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => break,
+                Err(v) => seen = v,
+            }
+        }
+
+        tokio::time::sleep(self.delay).await;
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
+
+        Ok(ManifestInfo {
+            digest: Some("sha256:new".to_string()),
+            platform_digest: None,
+            arch: vec!["linux/amd64".to_string()],
+        })
+    }
+}
+
 #[async_trait::async_trait]
 impl RegistryClient for StrictSemverDriftRegistry {
     async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
@@ -816,7 +883,6 @@ async fn test_state_with(
         discovery_max_actions: 200,
         runtime_scan_interval_seconds: 600,
         deploy_check_local_command_timeout_seconds: 12,
-        check_concurrency: 8,
         registry_per_host_concurrency: 3,
         registry_retry_max_attempts: 3,
         registry_retry_base_ms: 250,
@@ -858,7 +924,6 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
         discovery_max_actions: 200,
         runtime_scan_interval_seconds: 600,
         deploy_check_local_command_timeout_seconds: 12,
-        check_concurrency: 8,
         registry_per_host_concurrency: 3,
         registry_retry_max_attempts: 3,
         registry_retry_base_ms: 250,
@@ -1427,7 +1492,7 @@ async fn snapshot_worker_limits_concurrent_runs() {
     }
 
     let mut all_ready = false;
-    for _ in 0..200 {
+    for _ in 0..800 {
         let mut ready = 0usize;
         for digest in &digests {
             if state
@@ -2038,6 +2103,177 @@ services:
 }
 
 #[tokio::test]
+async fn check_progress_event_includes_planned_fields() {
+    let registry = Arc::new(StaggeredCheckRegistry::new(Duration::from_millis(900)));
+    let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", registry, runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let check = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(check.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let check_id = triggered["checkId"].as_str().unwrap().to_string();
+
+    let sse_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/jobs/{check_id}/events"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(sse_resp.status(), 200);
+
+    let mut body = sse_resp.into_body();
+    let evt = wait_for_sse_event(&mut body, "job_progress", Duration::from_secs(5)).await;
+    let payload: serde_json::Value = serde_json::from_str(&evt.data).unwrap();
+    assert!(payload["plannedCurrent"].is_number());
+    assert!(payload["plannedTotal"].is_number());
+    assert!(payload["plannedPercent"].is_number());
+}
+
+#[tokio::test]
+async fn check_uses_fixed_parallelism_stagger_and_dual_progress() {
+    let registry = Arc::new(StaggeredCheckRegistry::new(Duration::from_millis(2200)));
+    let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", registry.clone(), runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web1:
+    image: ghcr.io/acme/web:5.2
+  web2:
+    image: ghcr.io/acme/web:5.2
+  web3:
+    image: ghcr.io/acme/web:5.2
+  web4:
+    image: ghcr.io/acme/web:5.2
+  web5:
+    image: ghcr.io/acme/web:5.2
+  web6:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let check = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(check.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let check_id = triggered["checkId"].as_str().unwrap().to_string();
+
+    let mut finished = false;
+    let mut saw_split_progress = false;
+    for _ in 0..400 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{check_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        let progress = &job["job"]["progress"];
+        let planned_current = progress["plannedCurrent"].as_u64().unwrap_or(0);
+        let completed_current = progress["current"].as_u64().unwrap_or(0);
+        if planned_current > completed_current {
+            saw_split_progress = true;
+        }
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            finished = true;
+            assert_eq!(progress["plannedCurrent"], progress["current"]);
+            assert_eq!(progress["plannedTotal"], progress["total"]);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(finished, "check job did not finish in time");
+    assert!(
+        saw_split_progress,
+        "check progress should expose planned > completed while running"
+    );
+
+    let max_in_flight = registry.max_in_flight();
+    assert!(
+        max_in_flight <= 5,
+        "max in-flight should be capped at 5, got {max_in_flight}"
+    );
+    assert!(
+        max_in_flight >= 2,
+        "check should run with observable concurrency"
+    );
+
+    let starts = registry.started_at();
+    assert!(
+        starts.len() >= 2,
+        "expected at least two scheduled manifest requests, got {}",
+        starts.len()
+    );
+    for pair in starts.windows(2) {
+        let gap = pair[1].duration_since(pair[0]);
+        assert!(
+            gap >= Duration::from_millis(900),
+            "spawn gap should be ~1s, got {:?}",
+            gap
+        );
+    }
+}
+
+#[tokio::test]
 async fn check_coalesces_repo_tags_fetch_for_same_image() {
     let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(120)));
     let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
@@ -2084,7 +2320,7 @@ services:
     let check_id = triggered["checkId"].as_str().unwrap().to_string();
 
     let mut finished = false;
-    for _ in 0..200 {
+    for _ in 0..800 {
         let resp = app
             .clone()
             .oneshot(

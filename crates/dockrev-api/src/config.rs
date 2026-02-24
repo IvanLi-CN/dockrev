@@ -2,6 +2,9 @@ use std::path::PathBuf;
 
 use axum::http::HeaderName;
 
+pub const FIXED_CHECK_PARALLELISM: usize = 5;
+pub const FIXED_REGISTRY_PER_HOST_CONCURRENCY: usize = 5;
+
 #[derive(Clone)]
 pub struct Config {
     pub app_effective_version: String,
@@ -19,7 +22,6 @@ pub struct Config {
     pub discovery_max_actions: u32,
     pub runtime_scan_interval_seconds: u64,
     pub deploy_check_local_command_timeout_seconds: u64,
-    pub check_concurrency: usize,
     pub registry_per_host_concurrency: usize,
     pub registry_retry_max_attempts: usize,
     pub registry_retry_base_ms: u64,
@@ -105,23 +107,7 @@ impl Config {
             ));
         }
 
-        let check_concurrency = std::env::var("DOCKREV_CHECK_CONCURRENCY")
-            .ok()
-            .and_then(|v| v.trim().parse::<usize>().ok())
-            .unwrap_or(8);
-        if check_concurrency == 0 {
-            return Err(anyhow::anyhow!("DOCKREV_CHECK_CONCURRENCY must be >= 1"));
-        }
-
-        let registry_per_host_concurrency = std::env::var("DOCKREV_REGISTRY_PER_HOST_CONCURRENCY")
-            .ok()
-            .and_then(|v| v.trim().parse::<usize>().ok())
-            .unwrap_or(3);
-        if registry_per_host_concurrency == 0 {
-            return Err(anyhow::anyhow!(
-                "DOCKREV_REGISTRY_PER_HOST_CONCURRENCY must be >= 1"
-            ));
-        }
+        let registry_per_host_concurrency = FIXED_REGISTRY_PER_HOST_CONCURRENCY;
 
         let registry_retry_max_attempts = std::env::var("DOCKREV_REGISTRY_RETRY_MAX_ATTEMPTS")
             .ok()
@@ -169,7 +155,6 @@ impl Config {
             discovery_max_actions,
             runtime_scan_interval_seconds,
             deploy_check_local_command_timeout_seconds,
-            check_concurrency,
             registry_per_host_concurrency,
             registry_retry_max_attempts,
             registry_retry_base_ms,

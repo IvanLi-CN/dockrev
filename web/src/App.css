@@ -229,6 +229,7 @@
 }
 
 .jobProgressBar {
+  margin-top: 6px;
   height: 10px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--panel2) 82%, var(--color-base-300) 18%);
@@ -237,11 +238,24 @@
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
 }
 
+.jobProgressBarPlanned {
+  height: 8px;
+}
+
 .jobProgressFill {
   height: 100%;
   border-radius: 999px;
   background: linear-gradient(90deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 58%, var(--color-success) 42%));
   box-shadow: 0 0 10px color-mix(in srgb, var(--color-primary) 40%, transparent);
+}
+
+.jobProgressFillPlanned {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-warning) 72%, var(--color-primary) 28%),
+    color-mix(in srgb, var(--color-warning) 52%, var(--color-success) 48%)
+  );
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-warning) 32%, transparent);
 }
 
 .jobProgressBarIndeterminate,
@@ -268,6 +282,16 @@
   flex-wrap: wrap;
   gap: 8px 14px;
   color: var(--muted);
+  font-size: 12px;
+}
+
+.jobProgressLayerHead {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted2);
   font-size: 12px;
 }
 
@@ -1440,7 +1464,7 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .queueProgressBar {
-  margin-top: 8px;
+  margin-top: 6px;
   width: 100%;
   height: 8px;
   border-radius: 999px;
@@ -1455,6 +1479,23 @@ html[data-theme='light'] .modalOverlay {
   border-radius: 999px;
   background: linear-gradient(90deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 56%, var(--color-success) 44%));
   box-shadow: 0 0 10px color-mix(in srgb, var(--color-primary) 36%, transparent);
+}
+
+.queueProgressLayers {
+  margin-top: 8px;
+}
+
+.queueProgressBarPlanned {
+  height: 6px;
+}
+
+.queueProgressFillPlanned {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-warning) 72%, var(--color-primary) 28%),
+    color-mix(in srgb, var(--color-warning) 52%, var(--color-success) 48%)
+  );
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-warning) 28%, transparent);
 }
 
 @keyframes progressIndeterminate {
