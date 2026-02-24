@@ -6,8 +6,8 @@ use url::Url;
 
 use crate::{
     api::types::{
-        DeployCheckGroup, DeployCheckItem, DeployCheckOverall, DeployCheckReportResponse,
-        DeployCheckResult, DeployCheckStatus,
+        DeployCheckGroup, DeployCheckItem, DeployCheckNaReason, DeployCheckOverall,
+        DeployCheckReportResponse, DeployCheckResult, DeployCheckStatus,
     },
     db::ArchivedFilter,
     registry,
@@ -324,12 +324,18 @@ fn check_registry_auth(state: &AppState, context: &PreflightContext) -> DeployCh
     }
 
     if required_hosts.is_empty() {
+        let na_reason = if context.compose_paths.is_empty() {
+            DeployCheckNaReason::MissingPrerequisite
+        } else {
+            DeployCheckNaReason::NotApplicable
+        };
         return na_feature(
             "feature.registry_auth",
             "私有镜像仓库鉴权配置",
             "no deterministic private-registry target detected",
             "该功能未启用；不纳入阻塞判定",
             "targets: none",
+            na_reason,
         );
     }
 
@@ -408,6 +414,7 @@ async fn check_notification_features(state: &AppState) -> anyhow::Result<Vec<Dep
             "email notification is disabled",
             "该功能未启用；不纳入阻塞判定",
             "enabled=false",
+            DeployCheckNaReason::DisabledBySwitch,
         )
     } else if is_non_empty(settings.email_smtp_url.as_deref()) {
         pass_feature(
@@ -435,6 +442,7 @@ async fn check_notification_features(state: &AppState) -> anyhow::Result<Vec<Dep
             "webhook notification is disabled",
             "该功能未启用；不纳入阻塞判定",
             "enabled=false",
+            DeployCheckNaReason::DisabledBySwitch,
         )
     } else if let Some(url) = settings.webhook_url.as_deref() {
         match Url::parse(url) {
@@ -480,6 +488,7 @@ async fn check_notification_features(state: &AppState) -> anyhow::Result<Vec<Dep
             "telegram notification is disabled",
             "该功能未启用；不纳入阻塞判定",
             "enabled=false",
+            DeployCheckNaReason::DisabledBySwitch,
         )
     } else {
         let has_token = is_non_empty(settings.telegram_bot_token.as_deref());
@@ -518,6 +527,7 @@ async fn check_notification_features(state: &AppState) -> anyhow::Result<Vec<Dep
             "web push notification is disabled",
             "该功能未启用；不纳入阻塞判定",
             "enabled=false",
+            DeployCheckNaReason::DisabledBySwitch,
         )
     } else {
         let has_pub = is_non_empty(settings.webpush_vapid_public_key.as_deref());
@@ -566,6 +576,7 @@ async fn check_github_packages_feature(state: &AppState) -> anyhow::Result<Deplo
             "github packages integration is disabled",
             "该功能未启用；不纳入阻塞判定",
             "enabled=false",
+            DeployCheckNaReason::DisabledBySwitch,
         ));
     }
 
@@ -615,6 +626,7 @@ fn pass_core(
         group: DeployCheckGroup::Core,
         required: true,
         status: DeployCheckStatus::Pass,
+        na_reason: None,
         summary: summary.to_string(),
         impact: impact.to_string(),
         evidence,
@@ -636,6 +648,7 @@ fn fail_core(
         group: DeployCheckGroup::Core,
         required: true,
         status: DeployCheckStatus::Fail,
+        na_reason: None,
         summary: summary.to_string(),
         impact: impact.to_string(),
         evidence,
@@ -656,6 +669,7 @@ fn pass_feature(
         group: DeployCheckGroup::Feature,
         required: true,
         status: DeployCheckStatus::Pass,
+        na_reason: None,
         summary: summary.to_string(),
         impact: impact.to_string(),
         evidence: evidence.into(),
@@ -677,6 +691,7 @@ fn fail_feature(
         group: DeployCheckGroup::Feature,
         required: true,
         status: DeployCheckStatus::Fail,
+        na_reason: None,
         summary: summary.to_string(),
         impact: impact.to_string(),
         evidence: evidence.into(),
@@ -690,6 +705,7 @@ fn na_feature(
     summary: &str,
     impact: &str,
     evidence: &str,
+    na_reason: DeployCheckNaReason,
 ) -> DeployCheckItem {
     DeployCheckItem {
         id: id.to_string(),
@@ -697,6 +713,7 @@ fn na_feature(
         group: DeployCheckGroup::Feature,
         required: false,
         status: DeployCheckStatus::Na,
+        na_reason: Some(na_reason),
         summary: summary.to_string(),
         impact: impact.to_string(),
         evidence: evidence.to_string(),

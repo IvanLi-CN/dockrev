@@ -2021,6 +2021,11 @@ html[data-theme='light'] .modalOverlay {
   border-color: rgba(121, 145, 170, 0.32);
 }
 
+.deployChecklistItem--na-warning {
+  border-color: rgba(240, 176, 77, 0.45);
+  background: rgba(82, 58, 17, 0.18);
+}
+
 .deployChecklistItem--blocking {
   background: rgba(84, 23, 23, 0.28);
 }
@@ -2052,6 +2057,11 @@ html[data-theme='light'] .modalOverlay {
 
 .deployChecklistItem--na .deployChecklistMark {
   color: #96adbf;
+}
+
+.deployChecklistItem--na-warning .deployChecklistMark {
+  color: #ffd48e;
+  border-color: rgba(255, 197, 107, 0.58);
 }
 
 .deployChecklistBody {
@@ -2122,6 +2132,12 @@ html[data-theme='light'] .modalOverlay {
   color: #a0b6ca;
   border-color: rgba(132, 155, 181, 0.5);
   background: rgba(22, 31, 44, 0.5);
+}
+
+.deployBadge.na-warning {
+  color: #ffd38d;
+  border-color: rgba(255, 197, 107, 0.6);
+  background: rgba(92, 62, 14, 0.35);
 }
 
 .deployBadge.required {

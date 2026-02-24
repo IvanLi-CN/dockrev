@@ -41,6 +41,21 @@ function statusMeta(status: DeployCheckItem['status']): {
   }
 }
 
+function isWarningNa(item: DeployCheckItem, allChecks: DeployCheckItem[]): boolean {
+  if (item.status !== 'na') return false
+  if (item.naReason === 'missing_prerequisite') return true
+  if (item.naReason === 'disabled_by_switch' || item.evidence.trim().toLowerCase() === 'enabled=false') return false
+  if (item.naReason === 'not_applicable') return false
+
+  // Backward-compatible fallback for older API payloads without naReason.
+  if (item.id === 'feature.registry_auth') {
+    const composeAccess = allChecks.find((check) => check.id === 'core.compose_access')
+    if (composeAccess?.status === 'fail') return true
+  }
+  if (/\bmissing\b/i.test(item.summary) || /\bmissing\b/i.test(item.evidence)) return true
+  return false
+}
+
 export function DeployWelcomePage() {
   const [report, setReport] = useState<DeployCheckReportResponse | null>(null)
   const [neverAutoOpen, setNeverAutoOpen] = useState(false)
@@ -203,7 +218,7 @@ export function DeployWelcomePage() {
             <h2>核心功能 Checklist（必须可用）</h2>
             <p>任一项 FAIL 都会导致部署功能不完整。</p>
           </div>
-          <DeployChecklistList items={groups.core} prefix="CORE" />
+          <DeployChecklistList items={groups.core} allChecks={report.checks} prefix="CORE" />
         </section>
 
         <section className="deployWelcomePanel">
@@ -211,7 +226,7 @@ export function DeployWelcomePage() {
             <h2>条件功能 Checklist（按启用状态）</h2>
             <p>功能未启用时显示 NA；启用后缺配置会标记 FAIL。</p>
           </div>
-          <DeployChecklistList items={groups.feature} prefix="FEATURE" />
+          <DeployChecklistList items={groups.feature} allChecks={report.checks} prefix="FEATURE" />
         </section>
 
         <section className="deployWelcomePanel deployWelcomeActionPanel">
@@ -240,8 +255,8 @@ export function DeployWelcomePage() {
   )
 }
 
-function DeployChecklistList(props: { items: DeployCheckItem[]; prefix: string }) {
-  const { items, prefix } = props
+function DeployChecklistList(props: { items: DeployCheckItem[]; allChecks: DeployCheckItem[]; prefix: string }) {
+  const { items, allChecks, prefix } = props
   if (items.length === 0) {
     return <div className="deployChecklistEmpty">暂无检查项</div>
   }
@@ -249,17 +264,19 @@ function DeployChecklistList(props: { items: DeployCheckItem[]; prefix: string }
   return (
     <ol className="deployChecklistList">
       {items.map((item, index) => (
-        <DeployChecklistItem key={item.id} item={item} number={`${prefix}-${index + 1}`} />
+        <DeployChecklistItem key={item.id} item={item} allChecks={allChecks} number={`${prefix}-${index + 1}`} />
       ))}
     </ol>
   )
 }
 
-function DeployChecklistItem(props: { item: DeployCheckItem; number: string }) {
-  const { item, number } = props
+function DeployChecklistItem(props: { item: DeployCheckItem; allChecks: DeployCheckItem[]; number: string }) {
+  const { item, allChecks, number } = props
+  const warningNa = isWarningNa(item, allChecks)
   const status = statusMeta(item.status)
   const rowClass = [
     'deployChecklistItem',
+    warningNa ? 'deployChecklistItem--na-warning' : '',
     `deployChecklistItem--${item.status}`,
     item.required && item.status === 'fail' ? 'deployChecklistItem--blocking' : '',
   ]
@@ -281,7 +298,7 @@ function DeployChecklistItem(props: { item: DeployCheckItem; number: string }) {
             <span className={`deployBadge ${item.required ? 'required' : 'optional'}`}>
               {item.required ? 'required' : 'optional'}
             </span>
-            <span className={`deployBadge ${item.status}`}>{status.text}</span>
+            <span className={`deployBadge ${warningNa ? 'na-warning' : item.status}`}>{status.text}</span>
           </div>
         </div>
 
@@ -306,7 +323,7 @@ function DeployChecklistItem(props: { item: DeployCheckItem; number: string }) {
           </div>
           <div>
             <dt>说明</dt>
-            <dd>{status.desc}</dd>
+            <dd>{warningNa ? '功能未启用（前置配置/条件缺失，建议尽快补齐）' : status.desc}</dd>
           </div>
         </dl>
       </div>

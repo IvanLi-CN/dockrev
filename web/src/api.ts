@@ -200,6 +200,7 @@ export type SettingsResponse = {
 }
 
 export type DeployCheckStatus = 'pass' | 'fail' | 'na'
+export type DeployCheckNaReason = 'disabled_by_switch' | 'missing_prerequisite' | 'not_applicable'
 
 export type DeployCheckGroup = 'core' | 'feature' | string
 
@@ -209,6 +210,7 @@ export type DeployCheckItem = {
   group: DeployCheckGroup
   required: boolean
   status: DeployCheckStatus
+  naReason?: DeployCheckNaReason
   summary: string
   impact: string
   evidence: string

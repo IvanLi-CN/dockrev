@@ -1182,6 +1182,14 @@ pub enum DeployCheckStatus {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum DeployCheckNaReason {
+    DisabledBySwitch,
+    MissingPrerequisite,
+    NotApplicable,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum DeployCheckGroup {
     Core,
     Feature,
@@ -1195,6 +1203,8 @@ pub struct DeployCheckItem {
     pub group: DeployCheckGroup,
     pub required: bool,
     pub status: DeployCheckStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub na_reason: Option<DeployCheckNaReason>,
     pub summary: String,
     pub impact: String,
     pub evidence: String,
