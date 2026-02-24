@@ -281,23 +281,27 @@ export function DeployWelcomePage() {
         </section>
 
         <section className="deployWelcomePanel deployWelcomeActionPanel">
-          <label className="deployNeverAutoCheckbox">
-            <input
-              type="checkbox"
-              checked={neverAutoOpen}
-              onChange={(e) => setNeverAutoOpen(e.target.checked)}
-              disabled={saving}
-            />
-            <span>不再自动显示此页面</span>
-          </label>
-          <p className="deployWelcomeActionHint">勾选后，后续访问首页将直接进入 Dashboard；可在设置页手动重新打开本页面。</p>
-          <div className="deployWelcomeActions">
-            <Button variant="primary" disabled={saving} onClick={() => void enterDashboard()}>
-              {saving ? '保存中…' : '进入 Dashboard'}
-            </Button>
-            <Button variant="ghost" disabled={loading || saving} onClick={() => void refresh()}>
-              重新检查
-            </Button>
+          <div className="deployWelcomeActionLayout">
+            <div className="deployWelcomeActionCopy">
+              <label className="deployNeverAutoCheckbox">
+                <input
+                  type="checkbox"
+                  checked={neverAutoOpen}
+                  onChange={(e) => setNeverAutoOpen(e.target.checked)}
+                  disabled={saving}
+                />
+                <span>不再自动显示此页面</span>
+              </label>
+              <p className="deployWelcomeActionHint">勾选后，后续访问首页将直接进入 Dashboard；可在设置页手动重新打开本页面。</p>
+            </div>
+            <div className="deployWelcomeActions">
+              <Button variant="primary" disabled={saving} onClick={() => void enterDashboard()}>
+                {saving ? '保存中…' : '进入 Dashboard'}
+              </Button>
+              <Button variant="ghost" disabled={loading || saving} onClick={() => void refresh()}>
+                重新检查
+              </Button>
+            </div>
           </div>
           {error ? <div className="error">{error}</div> : null}
         </section>
@@ -356,15 +360,15 @@ function DeployChecklistItem(props: { item: DeployCheckItem; allChecks: DeployCh
         </div>
 
         <dl className="deployChecklistFacts">
-          <div>
+          <div className="deployChecklistFact deployChecklistFact--summary">
             <dt>判定</dt>
             <dd>{item.summary}</dd>
           </div>
-          <div>
+          <div className="deployChecklistFact deployChecklistFact--impact">
             <dt>影响</dt>
             <dd>{item.impact}</dd>
           </div>
-          <div>
+          <div className="deployChecklistFact deployChecklistFact--recommendation">
             <dt>建议</dt>
             <dd>{recommendation}</dd>
           </div>

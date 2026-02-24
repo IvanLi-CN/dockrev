@@ -2208,6 +2208,16 @@ html[data-theme='light'] .modalOverlay {
   gap: 10px;
 }
 
+.deployWelcomeActionLayout {
+  display: grid;
+  gap: 12px;
+}
+
+.deployWelcomeActionCopy {
+  display: grid;
+  gap: 8px;
+}
+
 .deployNeverAutoCheckbox {
   display: inline-flex;
   align-items: center;
@@ -2236,6 +2246,36 @@ html[data-theme='light'] .modalOverlay {
   flex-wrap: wrap;
 }
 
+@media (min-width: 980px) {
+  .deployChecklistFacts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 14px;
+  }
+
+  .deployChecklistFacts div {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .deployChecklistFact--recommendation {
+    grid-column: 1 / -1;
+  }
+
+  .deployChecklistFactsSecondary {
+    grid-template-columns: 1fr;
+  }
+
+  .deployWelcomeActionLayout {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 14px 24px;
+  }
+
+  .deployWelcomeActions {
+    justify-content: flex-end;
+    align-items: center;
+  }
+}
+
 @media (max-width: 980px) {
   .deployWelcomeDefinitions {
     grid-template-columns: 1fr;
@@ -2243,6 +2283,10 @@ html[data-theme='light'] .modalOverlay {
 
   .deployWelcomeStats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .deployWelcomeActions {
+    justify-content: flex-start;
   }
 }
 
