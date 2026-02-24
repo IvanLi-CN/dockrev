@@ -2003,7 +2003,7 @@ html[data-theme='light'] .modalOverlay {
   border-radius: 12px;
   border: 1px solid rgba(116, 141, 168, 0.3);
   background: rgba(9, 14, 22, 0.74);
-  padding: 14px 14px 12px;
+  padding: 12px 13px 11px;
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr);
   gap: 12px;
@@ -2066,14 +2066,14 @@ html[data-theme='light'] .modalOverlay {
 
 .deployChecklistBody {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .deployChecklistTopRow {
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  align-items: flex-start;
+  align-items: center;
 }
 
 .deployChecklistTitleGroup {
@@ -2091,7 +2091,7 @@ html[data-theme='light'] .modalOverlay {
 
 .deployChecklistTitleGroup h3 {
   margin: 0;
-  font-size: 18px;
+  font-size: 16px;
   color: #eff6ff;
   font-weight: 720;
 }
@@ -2156,18 +2156,14 @@ html[data-theme='light'] .modalOverlay {
 .deployChecklistFacts {
   margin: 0;
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .deployChecklistFacts div {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 5px;
-  align-items: start;
-  border-radius: 10px;
-  border: 1px solid rgba(102, 127, 153, 0.32);
-  background: rgba(11, 18, 28, 0.62);
-  padding: 8px 10px;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
 }
 
 .deployChecklistFacts dt {
@@ -2182,8 +2178,22 @@ html[data-theme='light'] .modalOverlay {
 .deployChecklistFacts dd {
   margin: 0;
   color: #e0ebf6;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.45;
+}
+
+.deployChecklistFact--recommendation {
+  grid-template-columns: 1fr;
+  gap: 6px;
+  align-items: start;
+  border-radius: 9px;
+  border: 1px dashed rgba(118, 144, 171, 0.38);
+  background: rgba(11, 18, 28, 0.5);
+  padding: 8px 10px;
+}
+
+.deployChecklistFact--recommendation dd {
+  font-size: 13.5px;
 }
 
 .deployChecklistDetails {
@@ -2279,17 +2289,12 @@ html[data-theme='light'] .modalOverlay {
 
 @media (min-width: 980px) {
   .deployChecklistFacts {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-  }
-
-  .deployChecklistFacts div {
-    min-height: 86px;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+    gap: 8px 16px;
   }
 
   .deployChecklistFact--recommendation {
     grid-column: 1 / -1;
-    min-height: auto;
   }
 
   .deployChecklistFactsSecondary {
