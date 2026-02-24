@@ -295,7 +295,8 @@ async fn build_snapshot(
                 manifests_timeout: 0,
                 manifests_error: 0,
             },
-            all_failed: true,
+            // No semver tags means "not applicable", not a failed scan.
+            all_failed: false,
         };
     }
 
@@ -422,4 +423,42 @@ async fn build_snapshot(
 
 fn now_rfc3339() -> anyhow::Result<String> {
     Ok(time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::registry::{ImageRef, ManifestInfo, RegistryClient};
+
+    #[derive(Clone, Default)]
+    struct NonSemverOnlyRegistry;
+
+    #[async_trait::async_trait]
+    impl RegistryClient for NonSemverOnlyRegistry {
+        async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+            Ok(vec!["latest".to_string(), "main".to_string()])
+        }
+
+        async fn get_manifest(
+            &self,
+            _image: &ImageRef,
+            _reference: &str,
+            _host_platform: &str,
+        ) -> anyhow::Result<ManifestInfo> {
+            anyhow::bail!("manifest lookup should not run without semver tags")
+        }
+    }
+
+    #[tokio::test]
+    async fn non_semver_only_snapshot_is_not_all_failed() {
+        let registry: Arc<dyn RegistryClient> = Arc::new(NonSemverOnlyRegistry);
+        let image = ImageRef::parse("ghcr.io/acme/web:latest").unwrap();
+
+        let snapshot = build_snapshot(registry, image, "linux/amd64").await;
+
+        assert_eq!(snapshot.scan.semver_tags_total, 0);
+        assert_eq!(snapshot.scan.semver_tags_considered, 0);
+        assert!(!snapshot.all_failed);
+        assert!(snapshot.digests.is_empty());
+    }
 }

@@ -50,7 +50,10 @@ pub struct ServiceForRuntimeScan {
     pub image_ref: String,
     pub image_tag: String,
     pub current_digest: Option<String>,
+    pub current_resolved_tag: Option<String>,
+    pub current_resolved_tags_json: Option<String>,
     pub candidate_digest: Option<String>,
+    pub candidate_resolved_tag: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -824,7 +827,16 @@ ORDER BY name ASC
         self.call(move |conn| {
             let mut stmt = conn.prepare(
                 r#"
-SELECT id, name, image_ref, image_tag, current_digest, candidate_digest
+SELECT
+  id,
+  name,
+  image_ref,
+  image_tag,
+  current_digest,
+  current_resolved_tag,
+  current_resolved_tags_json,
+  candidate_digest,
+  candidate_resolved_tag
 FROM services
 WHERE stack_id = ?1
 ORDER BY name ASC
@@ -837,7 +849,10 @@ ORDER BY name ASC
                     image_ref: row.get(2)?,
                     image_tag: row.get(3)?,
                     current_digest: row.get(4)?,
-                    candidate_digest: row.get(5)?,
+                    current_resolved_tag: row.get(5)?,
+                    current_resolved_tags_json: row.get(6)?,
+                    candidate_digest: row.get(7)?,
+                    candidate_resolved_tag: row.get(8)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
