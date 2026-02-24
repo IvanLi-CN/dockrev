@@ -55,6 +55,13 @@ cd web
 bun run storybook:start
 ```
 
+Codex UI/UX skill (UI UX Pro Max):
+
+```bash
+npx -y uipro-cli@2.2.3 init --ai codex --offline
+python3 .codex/skills/ui-ux-pro-max/scripts/search.py "dockrev docker compose dashboard" --design-system -f markdown
+```
+
 Open:
 
 - UI (dev server): `http://127.0.0.1:50884/`
