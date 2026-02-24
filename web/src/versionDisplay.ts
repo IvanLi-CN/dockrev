@@ -9,7 +9,16 @@ export function isStrictSemverTag(tag: string | null | undefined): boolean {
   return t.length > 0 && STRICT_SEMVER_PATTERN.test(t)
 }
 
-export function formatCurrentTagDisplay(tag: string, resolvedTag: string | null | undefined): string {
+function isPending(status: string | null | undefined): boolean {
+  return trimOrEmpty(status) === 'pending'
+}
+
+export function formatCurrentTagDisplay(
+  tag: string,
+  resolvedTag: string | null | undefined,
+  inferenceStatus?: string | null,
+): string {
+  if (isPending(inferenceStatus)) return '等待中…'
   const resolved = trimOrEmpty(resolvedTag)
   if (isStrictSemverTag(resolved)) return resolved
 
@@ -19,7 +28,12 @@ export function formatCurrentTagDisplay(tag: string, resolvedTag: string | null 
   return '-'
 }
 
-export function formatCandidateTagDisplay(tag: string, resolvedTag: string | null | undefined): string {
+export function formatCandidateTagDisplay(
+  tag: string,
+  resolvedTag: string | null | undefined,
+  inferenceStatus?: string | null,
+): string {
+  if (isPending(inferenceStatus)) return '等待中…'
   const resolved = trimOrEmpty(resolvedTag)
   if (isStrictSemverTag(resolved)) return resolved
 

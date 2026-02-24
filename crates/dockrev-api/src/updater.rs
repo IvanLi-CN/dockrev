@@ -1029,6 +1029,7 @@ mod tests {
                 },
                 candidate: None,
                 ignore: None,
+                version_inference: None,
                 settings: ServiceSettings {
                     auto_rollback: true,
                     backup_targets: BackupTargetOverrides {
@@ -1083,6 +1084,7 @@ mod tests {
                 },
                 candidate: None,
                 ignore: None,
+                version_inference: None,
                 settings: ServiceSettings {
                     auto_rollback: true,
                     backup_targets: BackupTargetOverrides {
@@ -1139,6 +1141,7 @@ mod tests {
                 },
                 candidate: None,
                 ignore: None,
+                version_inference: None,
                 settings: ServiceSettings {
                     auto_rollback: true,
                     backup_targets: BackupTargetOverrides {

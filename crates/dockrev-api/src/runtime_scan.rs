@@ -435,6 +435,11 @@ async fn run_runtime_scan_for_job(
                 name: svc.name.clone(),
                 image_ref: svc.image_ref.clone(),
                 image_tag: svc.image_tag.clone(),
+                current_digest: svc.current_digest.clone(),
+                current_resolved_tag: None,
+                current_resolved_tags_json: None,
+                candidate_digest: svc.candidate_digest.clone(),
+                candidate_resolved_tag: None,
             };
 
             let before_digest = svc.current_digest.clone();
@@ -493,6 +498,20 @@ async fn run_runtime_scan_for_job(
             }
 
             services_updated += 1;
+            if outcome.candidate_digest_changed
+                && outcome.candidate_digest.is_some()
+                && let Some(repo) =
+                    crate::snapshot_worker::image_repo_from_image_ref(&svc.image_ref)
+            {
+                state
+                    .version_inference_worker
+                    .enqueue(
+                        &repo,
+                        host_platform,
+                        crate::version_inference_worker::VersionInferenceReason::NewVersion,
+                    )
+                    .await;
+            }
             let changed = before_digest.as_deref() != Some(runtime_digest.as_str());
             if changed
                 && let Some(d) = outcome.current_digest.as_deref()

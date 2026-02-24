@@ -150,6 +150,39 @@ export function ServiceDetailPage(props: {
   }, [refresh])
 
   useEffect(() => {
+    const onVersionRefresh = () => {
+      void refreshStackOnly().catch(() => {})
+    }
+    window.addEventListener('dockrev:version-inference-refresh', onVersionRefresh)
+    return () => {
+      window.removeEventListener('dockrev:version-inference-refresh', onVersionRefresh)
+    }
+  }, [refreshStackOnly])
+
+  useEffect(() => {
+    if (service?.versionInference?.status !== 'pending') return
+    let closed = false
+    let timer: number | null = null
+
+    const poll = async () => {
+      await refreshStackOnly().catch(() => {})
+      if (closed) return
+      timer = window.setTimeout(() => {
+        void poll()
+      }, 1200)
+    }
+
+    timer = window.setTimeout(() => {
+      void poll()
+    }, 1200)
+
+    return () => {
+      closed = true
+      if (timer != null) window.clearTimeout(timer)
+    }
+  }, [refreshStackOnly, service?.versionInference?.status])
+
+  useEffect(() => {
     let closed = false
     let es: EventSource | null = null
     let timer: number | null = null
@@ -325,10 +358,15 @@ export function ServiceDetailPage(props: {
               onClick={() => {
                 void (async () => {
 		                  if (!service || !service.candidate) return
-                    const currentDisplayTag = formatTagDisplay(service.image.tag, service.image.resolvedTag)
+                    const currentDisplayTag = formatTagDisplay(
+                      service.image.tag,
+                      service.image.resolvedTag,
+                      service.versionInference?.status,
+                    )
                     const candidateDisplayTag = formatCandidateTagDisplay(
                       service.candidate.tag,
                       service.candidate.resolvedTag ?? null,
+                      service.versionInference?.status,
                     )
                     const rawTagTrim = (service.image.tag ?? '').trim()
                     const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
@@ -559,7 +597,11 @@ export function ServiceDetailPage(props: {
   const bannerDetail = useMemo<ReactNode>(() => {
     if (!service) return null
 
-    const currentTag = formatTagDisplay(service.image.tag, service.image.resolvedTag)
+    const currentTag = formatTagDisplay(
+      service.image.tag,
+      service.image.resolvedTag,
+      service.versionInference?.status,
+    )
     const currentDigestNode = service.image.digest ? (
       <span className="mono">{`@${shortDigest(service.image.digest)}`}</span>
     ) : null
@@ -624,6 +666,7 @@ export function ServiceDetailPage(props: {
     const candidateDisplayTag = formatCandidateTagDisplay(
       service.candidate.tag,
       service.candidate.resolvedTag ?? null,
+      service.versionInference?.status,
     )
     const archNode = service.candidate.arch.length ? (
       <>

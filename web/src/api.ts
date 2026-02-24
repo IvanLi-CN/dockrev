@@ -39,6 +39,12 @@ export type ServiceImage = {
   resolvedTags?: string[] | null
 }
 
+export type VersionInferenceState = {
+  status: 'ready' | 'pending' | string
+  reason?: string | null
+  checkedAt?: string | null
+}
+
 export type Service = {
   id: string
   name: string
@@ -55,6 +61,7 @@ export type Service = {
     ruleId: string
     reason: string
   } | null
+  versionInference?: VersionInferenceState | null
   settings: ServiceSettings
   archived?: boolean
 }
@@ -140,6 +147,13 @@ export type DiscoveryScanResponse = {
 
 export type TriggerDiscoveryScanJobResponse = {
   jobId: string
+}
+
+export type TriggerVersionInferenceRefreshResponse = {
+  status: 'pending' | string
+  serviceId: string
+  imageRepo: string
+  reason: string
 }
 
 export type JobListItem = {
@@ -466,6 +480,16 @@ export async function getServiceDigestTagsSnapshot(serviceId: string, digest: st
     `/api/services/${encodeURIComponent(serviceId)}/digest-tags-snapshot?digest=${encodeURIComponent(digest)}`,
   )
   return (await resp.json()) as ServiceDigestTagsSnapshotResult
+}
+
+export async function forceRefreshServiceVersionInference(
+  serviceId: string,
+): Promise<TriggerVersionInferenceRefreshResponse> {
+  const resp = await apiFetch(
+    `/api/services/${encodeURIComponent(serviceId)}/version-inference/refresh`,
+    { method: 'POST', body: '{}' },
+  )
+  return (await resp.json()) as TriggerVersionInferenceRefreshResponse
 }
 
 export async function triggerCheck(scope: string, stackId?: string, serviceId?: string) {

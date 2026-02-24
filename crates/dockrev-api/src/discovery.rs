@@ -1095,6 +1095,7 @@ mod tests {
                 },
                 candidate: None,
                 ignore: None,
+                version_inference: None,
                 settings: crate::api::types::ServiceSettings {
                     auto_rollback: true,
                     backup_targets: crate::api::types::BackupTargetOverrides {

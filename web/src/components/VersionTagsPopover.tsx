@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from 'react-dom'
 import {
   ApiError,
+  forceRefreshServiceVersionInference,
   getServiceDigestTagsSnapshot,
   isServiceDigestTagsSnapshotPending,
   type ServiceDigestTagsScanSummary,
@@ -82,6 +83,9 @@ export function VersionTagsPopover(props: {
   const checkedAt = digestState.key === digestKey ? digestState.checkedAt : null
   const missingSnapshot = digestState.key === digestKey ? digestState.missingSnapshot : false
   const loadError = digestState.key === digestKey ? digestState.error : null
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshNotice, setRefreshNotice] = useState<string | null>(null)
+  const [refreshError, setRefreshError] = useState<string | null>(null)
 
   const clearHoverCloseTimer = useCallback(() => {
     if (hoverCloseTimer.current == null) return
@@ -160,6 +164,38 @@ export function VersionTagsPopover(props: {
       }
     }
   }, [clearHoverCloseTimer, clearPopoverShowRaf, clearPopoverUnmountTimer])
+
+  const triggerForceRefresh = useCallback(async () => {
+    if (refreshing) return
+    setRefreshing(true)
+    setRefreshError(null)
+    setRefreshNotice(null)
+    try {
+      const resp = await forceRefreshServiceVersionInference(serviceId)
+      setRefreshNotice(
+        resp.reason === 'running'
+          ? '已有版本推测任务在进行中。'
+          : '已触发强制刷新，版本推测进行中。',
+      )
+      setDigestState({
+        key: digestKey,
+        tags: null,
+        scan: null,
+        checkedAt: null,
+        missingSnapshot: false,
+        error: null,
+      })
+      window.dispatchEvent(
+        new CustomEvent('dockrev:version-inference-refresh', {
+          detail: { serviceId },
+        }),
+      )
+    } catch (e: unknown) {
+      setRefreshError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRefreshing(false)
+    }
+  }, [digestKey, refreshing, serviceId])
 
   useEffect(() => {
     if (!open) return
@@ -354,7 +390,22 @@ export function VersionTagsPopover(props: {
             <span className="mono muted">digest 未知</span>
           )}
         </div>
+        <div className="versionTagsPopoverActions">
+          <button
+            type="button"
+            className="versionTagsPopoverAction"
+            disabled={refreshing}
+            onClick={() => {
+              void triggerForceRefresh()
+            }}
+          >
+            {refreshing ? '强制刷新中…' : '强制刷新'}
+          </button>
+        </div>
       </div>
+
+      {refreshNotice ? <div className="muted">{refreshNotice}</div> : null}
+      {refreshError ? <div className="muted">触发失败：{refreshError}</div> : null}
 
       <div className="versionTagsPopoverSection">
         <div className="label">参考信息</div>

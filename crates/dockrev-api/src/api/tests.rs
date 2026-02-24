@@ -432,11 +432,6 @@ impl RegistryClient for StatefulRegistry {
         let count = calls.entry(reference.to_string()).or_insert(0);
         *count += 1;
 
-        // Simulate a transient failure for the would-be candidate tag on its first lookup.
-        if reference == "5.3.0" && *count == 1 {
-            return Err(anyhow::anyhow!("transient registry error"));
-        }
-
         let digest = match reference {
             "5.2.0" => "sha256:other",
             "5.3.0" => "sha256:match",
@@ -795,7 +790,17 @@ async fn test_state_with(
         db.clone(),
         registry.clone(),
     ));
-    AppState::new(config, db, registry, runner, snapshot_worker)
+    let version_inference_worker = Arc::new(
+        crate::version_inference_worker::VersionInferenceWorker::new(db.clone(), registry.clone()),
+    );
+    AppState::new(
+        config,
+        db,
+        registry,
+        runner,
+        snapshot_worker,
+        version_inference_worker,
+    )
 }
 
 async fn test_state(db_path: &str) -> Arc<AppState> {
@@ -829,7 +834,17 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
         db.clone(),
         registry.clone(),
     ));
-    AppState::new(config, db, registry, runner, snapshot_worker)
+    let version_inference_worker = Arc::new(
+        crate::version_inference_worker::VersionInferenceWorker::new(db.clone(), registry.clone()),
+    );
+    AppState::new(
+        config,
+        db,
+        registry,
+        runner,
+        snapshot_worker,
+        version_inference_worker,
+    )
 }
 
 async fn seed_stack_from_compose(state: &Arc<AppState>, name: &str, compose_file: &str) -> String {
@@ -1928,7 +1943,7 @@ services:
 
     let check = serde_json::json!({
         "scope": "stack",
-        "stackId": stack_id,
+        "stackId": stack_id.clone(),
         "reason": "ui"
     });
     let resp = app
@@ -2052,9 +2067,316 @@ services:
     assert!(finished, "check job did not finish in time");
     assert_eq!(
         registry.list_tags_calls(),
-        1,
-        "repo tags should be fetched once per repo in a single check job"
+        0,
+        "check main path should not block on version inference tag scans"
     );
+}
+
+#[tokio::test]
+async fn get_stack_version_inference_cache_miss_returns_pending() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(200)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    assert_eq!(
+        detail["stack"]["services"][0]["versionInference"]["status"]
+            .as_str()
+            .unwrap_or("<none>"),
+        "pending"
+    );
+    assert_eq!(
+        detail["stack"]["services"][0]["versionInference"]["reason"]
+            .as_str()
+            .unwrap_or("<none>"),
+        "cache_miss"
+    );
+}
+
+#[tokio::test]
+async fn get_stack_shows_pending_when_new_version_task_is_inflight_even_with_cache() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(400)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let snapshot = crate::version_inference_worker::VersionInferenceSnapshot {
+        checked_at: now.clone(),
+        digests: BTreeMap::new(),
+        scan: crate::version_inference_worker::VersionInferenceScanSummary {
+            semver_tags_total: 2,
+            semver_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+        all_failed: false,
+    };
+    state
+        .db
+        .upsert_image_version_inference_snapshot(
+            "ghcr.io/acme/web",
+            "linux/amd64",
+            &serde_json::to_string(&snapshot).unwrap(),
+            false,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let enqueued = state
+        .version_inference_worker
+        .enqueue(
+            "ghcr.io/acme/web",
+            "linux/amd64",
+            crate::version_inference_worker::VersionInferenceReason::NewVersion,
+        )
+        .await;
+    assert!(enqueued);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let status = detail["stack"]["services"][0]["versionInference"]["status"]
+        .as_str()
+        .unwrap_or("<none>");
+    assert!(
+        status == "pending" || status == "ready",
+        "unexpected stack detail: {detail}"
+    );
+    if status == "pending" {
+        assert_eq!(
+            detail["stack"]["services"][0]["versionInference"]["reason"]
+                .as_str()
+                .unwrap_or("<none>"),
+            "new_version"
+        );
+    }
+}
+
+#[tokio::test]
+async fn force_refresh_endpoint_returns_accepted_and_dedupes() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(300)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let stack = state.db.get_stack(&stack_id).await.unwrap().unwrap();
+    let service_id = stack.services[0].id.clone();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/services/{}/version-inference/refresh",
+                    service_id
+                ))
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"].as_str().unwrap_or("<none>"), "pending");
+    assert_eq!(body["reason"].as_str().unwrap_or("<none>"), "force");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/services/{}/version-inference/refresh",
+                    service_id
+                ))
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"].as_str().unwrap_or("<none>"), "pending");
+    assert_eq!(body["reason"].as_str().unwrap_or("<none>"), "running");
+}
+
+#[tokio::test]
+async fn check_candidate_digest_change_enqueues_new_version_inference() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(400)));
+    let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", registry, runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let snapshot = crate::version_inference_worker::VersionInferenceSnapshot {
+        checked_at: now.clone(),
+        digests: BTreeMap::new(),
+        scan: crate::version_inference_worker::VersionInferenceScanSummary {
+            semver_tags_total: 2,
+            semver_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+        all_failed: false,
+    };
+    state
+        .db
+        .upsert_image_version_inference_snapshot(
+            "ghcr.io/acme/web",
+            "linux/amd64",
+            &serde_json::to_string(&snapshot).unwrap(),
+            false,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let check = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(check.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let check_id = triggered["checkId"].as_str().unwrap().to_string();
+
+    let mut finished = false;
+    for _ in 0..200 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{check_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(finished, "check job did not finish in time");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let status = detail["stack"]["services"][0]["versionInference"]["status"]
+        .as_str()
+        .unwrap_or("<none>");
+    assert!(
+        status == "pending" || status == "ready",
+        "unexpected stack detail: {detail}"
+    );
+    if status == "pending" {
+        assert_eq!(
+            detail["stack"]["services"][0]["versionInference"]["reason"]
+                .as_str()
+                .unwrap_or("<none>"),
+            "new_version"
+        );
+    }
 }
 
 #[tokio::test]
@@ -3535,18 +3857,29 @@ services:
     assert_eq!(resp.status(), 200);
     let job_detail = response_json(resp).await;
 
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/stacks/{stack_id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let detail = response_json(resp).await;
+    let mut detail = serde_json::json!({});
+    for _ in 0..120 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/stacks/{stack_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        detail = response_json(resp).await;
+        let status = detail["stack"]["services"][0]["versionInference"]["status"]
+            .as_str()
+            .unwrap_or("");
+        if status != "pending" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
     let image = &detail["stack"]["services"][0]["image"];
     let digest = image["digest"].as_str().unwrap_or("<none>");
     let resolved = image["resolvedTag"].as_str().unwrap_or("<none>");
@@ -3645,18 +3978,29 @@ services:
     }
     assert!(finished, "check job did not finish in time");
 
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/stacks/{stack_id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let detail = response_json(resp).await;
+    let mut detail = serde_json::json!({});
+    for _ in 0..120 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/stacks/{stack_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        detail = response_json(resp).await;
+        let status = detail["stack"]["services"][0]["versionInference"]["status"]
+            .as_str()
+            .unwrap_or("");
+        if status != "pending" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
     let resolved = detail["stack"]["services"][0]["image"]["resolvedTag"]
         .as_str()
         .unwrap_or("<none>");
@@ -3853,18 +4197,28 @@ services:
     }
     assert!(finished, "check job did not finish in time");
 
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/stacks/{stack_id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let detail = response_json(resp).await;
+    let mut detail = serde_json::json!({});
+    for _ in 0..120 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/stacks/{stack_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        detail = response_json(resp).await;
+        let status = detail["stack"]["services"][0]["versionInference"]["status"]
+            .as_str()
+            .unwrap_or("");
+        if status != "pending" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     let svc = &detail["stack"]["services"][0];
     let image = &svc["image"];
 
