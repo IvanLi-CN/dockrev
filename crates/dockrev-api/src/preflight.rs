@@ -162,7 +162,7 @@ async fn check_docker_engine(state: &AppState) -> DeployCheckItem {
             "docker daemon unreachable",
             "不可用时无法执行更新与运行时检查",
             summarize_command_failure(output.status, &output.stderr),
-            "检查 Docker 服务是否运行，并确认 dockrev 进程有权访问 Docker socket",
+            "在 Dockrev 运行环境先执行 `docker info`；容器部署请挂载 `/var/run/docker.sock:/var/run/docker.sock` 或设置 `DOCKER_HOST=tcp://docker-socket-proxy:2375`；修复后重启 Dockrev 并点击“重新检查”。",
         ),
         Err(err) => fail_core(
             "core.docker_engine",
@@ -170,7 +170,7 @@ async fn check_docker_engine(state: &AppState) -> DeployCheckItem {
             "docker daemon probe failed",
             "不可用时无法执行更新与运行时检查",
             err.to_string(),
-            "检查 Docker 命令可执行路径与 socket 挂载",
+            "确认 `docker` 命令在 PATH 可执行；容器部署时补齐 docker socket/proxy 访问；重启后重新检查。",
         ),
     }
 }
@@ -183,7 +183,7 @@ fn check_compose_access(context: &PreflightContext) -> DeployCheckItem {
             "no compose files discovered",
             "服务解析不完整，更新目标不可信",
             "未发现任何 compose 路径（active stack / discovered project）".to_string(),
-            "先完成 compose 项目发现，确认服务已被 dockrev 管理",
+            "到概览页执行“发现扫描”；确保目标项目由 Docker Compose 启动（含 compose labels）；若 Dockrev 在容器内，按相同绝对路径只读挂载 compose 文件目录。",
         );
     }
 
@@ -234,7 +234,7 @@ fn check_compose_access(context: &PreflightContext) -> DeployCheckItem {
         "compose path validation failed",
         "服务解析不完整，更新目标不可信",
         reasons.join("; "),
-        "确保 compose / env 文件使用绝对路径并且在容器内可读",
+        "把 compose/env_file 改为绝对路径；确保这些路径在 Dockrev 进程（或容器）内可读；再执行一次“发现扫描”。",
     )
 }
 
@@ -268,7 +268,7 @@ fn check_service_image_ref_valid(context: &PreflightContext) -> DeployCheckItem 
         "invalid image ref found",
         "不可解析时对应服务会被跳过，导致功能不完整",
         join_limited(&context.invalid_image_refs, 4),
-        "修复 compose 里的 image 字段，使用 repo/name:tag 格式",
+        "修复 compose 中的 `image` 字段为合法格式（例如 `ghcr.io/org/app:1.2.3` 或 `ghcr.io/org/app@sha256:...`），然后重新发现/扫描。",
     )
 }
 
@@ -302,7 +302,7 @@ async fn check_update_executor_ready(state: &AppState) -> DeployCheckItem {
             "compose executor is not ready",
             "发现到更新也无法执行 pull/up",
             summarize_command_failure(output.status, &output.stderr),
-            "确认 DOCKREV_COMPOSE_BIN 指向可执行命令（docker 或 docker-compose）",
+            "设置 `DOCKREV_COMPOSE_BIN` 为可执行命令：插件模式用 `docker`（需 `docker compose version` 成功），v1 模式用 `docker-compose`（需 `docker-compose version` 成功）。",
         ),
         Err(err) => fail_core(
             "core.update_executor_ready",
@@ -310,7 +310,7 @@ async fn check_update_executor_ready(state: &AppState) -> DeployCheckItem {
             "compose executor probe failed",
             "发现到更新也无法执行 pull/up",
             err.to_string(),
-            "确认 DOCKREV_COMPOSE_BIN 可执行且包含 compose version 子命令",
+            "安装并暴露 compose 命令到 PATH；`DOCKREV_COMPOSE_BIN=docker` 时要求 Docker Compose 插件可用；修复后重启并复检。",
         ),
     }
 }
@@ -336,6 +336,7 @@ fn check_registry_auth(state: &AppState, context: &PreflightContext) -> DeployCh
             "该功能未启用；不纳入阻塞判定",
             "targets: none",
             na_reason,
+            "如需启用私有仓库镜像，请使用私有 registry host（或 `docker.io/local/*`），并设置 `DOCKREV_DOCKER_CONFIG` 指向包含该 registry 凭据的 `config.json`。",
         );
     }
 
@@ -346,7 +347,7 @@ fn check_registry_auth(state: &AppState, context: &PreflightContext) -> DeployCh
             "private registry auth is required but DOCKREV_DOCKER_CONFIG is missing",
             "对应服务可能出现 401，无法发现候选更新",
             format!("required hosts: {}", join_limited_set(&required_hosts, 6)),
-            "设置 DOCKREV_DOCKER_CONFIG 并提供对应 registry 凭据",
+            "把 `DOCKREV_DOCKER_CONFIG` 指向有效的 Docker `config.json`（容器部署需挂载该文件），并在 `auths`/`credHelpers` 中配置所需 registry 凭据。",
         );
     };
 
@@ -359,7 +360,7 @@ fn check_registry_auth(state: &AppState, context: &PreflightContext) -> DeployCh
                 "failed to parse docker auth config",
                 "对应服务可能出现 401，无法发现候选更新",
                 format!("{}: {}", path.display(), err),
-                "检查 DOCKREV_DOCKER_CONFIG 路径和 JSON 内容",
+                "修复 `DOCKREV_DOCKER_CONFIG` 文件路径与 JSON 格式；可用 `docker login <registry>` 重新生成凭据后再试。",
             );
         }
     };
@@ -399,7 +400,7 @@ fn check_registry_auth(state: &AppState, context: &PreflightContext) -> DeployCh
             join_limited(&missing_hosts, 6),
             path.display()
         ),
-        "在 Docker config 的 auths/credHelpers 中补齐对应 registry host 的凭据",
+        "在 Docker `config.json` 的 `auths` 或 `credHelpers` 中补齐缺失 host 的凭据（建议执行 `docker login <host>`），然后重试检查。",
     )
 }
 
@@ -415,6 +416,7 @@ async fn check_notification_features(state: &AppState) -> anyhow::Result<Vec<Dep
             "该功能未启用；不纳入阻塞判定",
             "enabled=false",
             DeployCheckNaReason::DisabledBySwitch,
+            "如需启用：进入“设置 -> 通知 -> Email”，打开开关并填写 `smtpUrl`（示例：`smtp://user:pass@mail.example.com:587/?to=ops@example.com&from=Dockrev%20<noreply@example.com>`）。",
         )
     } else if is_non_empty(settings.email_smtp_url.as_deref()) {
         pass_feature(
@@ -431,7 +433,7 @@ async fn check_notification_features(state: &AppState) -> anyhow::Result<Vec<Dep
             "email notification config is incomplete",
             "启用后若配置缺失，邮件通知不可用",
             "missing smtpUrl",
-            "补齐通知设置中的 SMTP URL",
+            "进入“设置 -> 通知 -> Email”补齐 `smtpUrl`，保存后建议发送一次测试通知。",
         )
     });
 
@@ -443,6 +445,7 @@ async fn check_notification_features(state: &AppState) -> anyhow::Result<Vec<Dep
             "该功能未启用；不纳入阻塞判定",
             "enabled=false",
             DeployCheckNaReason::DisabledBySwitch,
+            "如需启用：进入“设置 -> 通知 -> Webhook”，打开开关并填写可达的 `https://...` 地址。",
         )
     } else if let Some(url) = settings.webhook_url.as_deref() {
         match Url::parse(url) {
@@ -467,7 +470,7 @@ async fn check_notification_features(state: &AppState) -> anyhow::Result<Vec<Dep
                 "webhook URL is invalid",
                 "启用后若配置缺失，Webhook 通知不可用",
                 "invalid webhook URL",
-                "提供合法的 webhook URL（http/https）",
+                "将 webhook URL 改为合法 `http/https` 地址（建议使用 `https`），保存后执行一次测试通知。",
             ),
         }
     } else {
@@ -477,7 +480,7 @@ async fn check_notification_features(state: &AppState) -> anyhow::Result<Vec<Dep
             "webhook notification config is incomplete",
             "启用后若配置缺失，Webhook 通知不可用",
             "missing webhook URL",
-            "补齐通知设置中的 webhook URL",
+            "进入“设置 -> 通知 -> Webhook”补齐 webhook URL 并保存。",
         )
     });
 
@@ -489,6 +492,7 @@ async fn check_notification_features(state: &AppState) -> anyhow::Result<Vec<Dep
             "该功能未启用；不纳入阻塞判定",
             "enabled=false",
             DeployCheckNaReason::DisabledBySwitch,
+            "如需启用：进入“设置 -> 通知 -> Telegram”，打开开关并填写 `botToken` 与 `chatId`。",
         )
     } else {
         let has_token = is_non_empty(settings.telegram_bot_token.as_deref());
@@ -515,7 +519,7 @@ async fn check_notification_features(state: &AppState) -> anyhow::Result<Vec<Dep
                 "telegram notification config is incomplete",
                 "启用后若配置缺失，Telegram 通知不可用",
                 format!("missing {}", missing.join(", ")),
-                "补齐 Telegram botToken 与 chatId",
+                "进入“设置 -> 通知 -> Telegram”补齐缺失字段并保存，然后发送测试消息确认。",
             )
         }
     });
@@ -528,6 +532,7 @@ async fn check_notification_features(state: &AppState) -> anyhow::Result<Vec<Dep
             "该功能未启用；不纳入阻塞判定",
             "enabled=false",
             DeployCheckNaReason::DisabledBySwitch,
+            "如需启用：进入“设置 -> 通知 -> Web Push”，打开开关并填写 `vapidPublicKey`、`vapidPrivateKey`、`vapidSubject`。",
         )
     } else {
         let has_pub = is_non_empty(settings.webpush_vapid_public_key.as_deref());
@@ -558,7 +563,7 @@ async fn check_notification_features(state: &AppState) -> anyhow::Result<Vec<Dep
                 "web push notification config is incomplete",
                 "启用后若配置缺失，Web Push 通知不可用",
                 format!("missing {}", missing.join(", ")),
-                "补齐 Web Push VAPID 配置",
+                "进入“设置 -> 通知 -> Web Push”补齐缺失 VAPID 字段并保存。",
             )
         }
     });
@@ -577,6 +582,7 @@ async fn check_github_packages_feature(state: &AppState) -> anyhow::Result<Deplo
             "该功能未启用；不纳入阻塞判定",
             "enabled=false",
             DeployCheckNaReason::DisabledBySwitch,
+            "如需启用：进入“设置 -> GitHub Packages”，开启功能，配置 PAT/Callback URL/Secret，并选择要监听的仓库。",
         ));
     }
 
@@ -608,7 +614,7 @@ async fn check_github_packages_feature(state: &AppState) -> anyhow::Result<Deplo
             "github packages integration config is incomplete",
             "启用后若配置缺失，包发布触发链路不可用",
             format!("missing {}", missing.join(", ")),
-            "补齐 GitHub Packages 设置中的 PAT、回调地址与 secret",
+            "进入“设置 -> GitHub Packages”补齐 `PAT`、`callbackUrl`、`secret`（以及目标仓库），保存后用“测试触发”验证。",
         ))
     }
 }
@@ -706,6 +712,7 @@ fn na_feature(
     impact: &str,
     evidence: &str,
     na_reason: DeployCheckNaReason,
+    recommendation: &str,
 ) -> DeployCheckItem {
     DeployCheckItem {
         id: id.to_string(),
@@ -717,7 +724,7 @@ fn na_feature(
         summary: summary.to_string(),
         impact: impact.to_string(),
         evidence: evidence.to_string(),
-        recommendation: String::new(),
+        recommendation: recommendation.to_string(),
     }
 }
 

@@ -56,6 +56,57 @@ function isWarningNa(item: DeployCheckItem, allChecks: DeployCheckItem[]): boole
   return false
 }
 
+function resolveRecommendation(item: DeployCheckItem, allChecks: DeployCheckItem[], warningNa: boolean): string {
+  const current = item.recommendation.trim()
+
+  if (item.id === 'core.docker_engine' && item.status === 'fail') {
+    return '在 Dockrev 运行环境执行 `docker info`；容器部署请挂载 `/var/run/docker.sock`（或设置 `DOCKER_HOST=tcp://docker-socket-proxy:2375`）；修复后重启 Dockrev 并重新检查。'
+  }
+  if (item.id === 'core.compose_access' && item.status === 'fail') {
+    return '到概览页执行“发现扫描”；确保目标项目由 Docker Compose 启动并带 compose labels；若 Dockrev 在容器内，按相同绝对路径只读挂载 compose 文件目录。'
+  }
+  if (item.id === 'core.service_image_ref_valid' && item.status === 'fail') {
+    return '修复 compose 中服务的 `image` 字段（例如 `ghcr.io/org/app:1.2.3` 或 `ghcr.io/org/app@sha256:...`），然后重新发现/扫描。'
+  }
+  if (item.id === 'core.update_executor_ready' && item.status === 'fail') {
+    return '设置 `DOCKREV_COMPOSE_BIN` 为可执行命令：插件模式用 `docker`（要求 `docker compose version` 成功），v1 模式用 `docker-compose`。'
+  }
+  if (item.id === 'feature.registry_auth') {
+    if (item.status === 'fail') {
+      return '设置 `DOCKREV_DOCKER_CONFIG` 指向有效 Docker `config.json`，并在 `auths/credHelpers` 补齐缺失 registry 凭据（建议先 `docker login <host>`）。'
+    }
+    if (item.status === 'na') {
+      if (warningNa || allChecks.some((check) => check.id === 'core.compose_access' && check.status === 'fail')) {
+        return '先修复核心前置项（尤其 compose 发现/路径可访问）后再检查私有仓库鉴权。'
+      }
+      return '如需启用私有仓库镜像：使用私有 registry host（或 `docker.io/local/*`），并设置 `DOCKREV_DOCKER_CONFIG` 指向带凭据的 `config.json`。'
+    }
+  }
+  if (item.id === 'feature.notifications.email') {
+    if (item.status === 'fail') return '进入“设置 -> 通知 -> Email”补齐 `smtpUrl` 并保存，建议发送一次测试通知。'
+    if (item.status === 'na') return '如需启用：进入“设置 -> 通知 -> Email”，打开开关并填写 `smtpUrl`。'
+  }
+  if (item.id === 'feature.notifications.webhook') {
+    if (item.status === 'fail') return '进入“设置 -> 通知 -> Webhook”补齐合法 `http/https` URL 并保存。'
+    if (item.status === 'na') return '如需启用：进入“设置 -> 通知 -> Webhook”，打开开关并填写可达 webhook URL。'
+  }
+  if (item.id === 'feature.notifications.telegram') {
+    if (item.status === 'fail') return '进入“设置 -> 通知 -> Telegram”补齐 `botToken` 与 `chatId` 并保存。'
+    if (item.status === 'na') return '如需启用：进入“设置 -> 通知 -> Telegram”，打开开关并填写 `botToken` 与 `chatId`。'
+  }
+  if (item.id === 'feature.notifications.web_push') {
+    if (item.status === 'fail') return '进入“设置 -> 通知 -> Web Push”补齐 `vapidPublicKey`、`vapidPrivateKey`、`vapidSubject` 并保存。'
+    if (item.status === 'na') return '如需启用：进入“设置 -> 通知 -> Web Push”，打开开关并填写 VAPID 配置。'
+  }
+  if (item.id === 'feature.github_packages') {
+    if (item.status === 'fail') return '进入“设置 -> GitHub Packages”补齐 `PAT`、`callbackUrl`、`secret` 与目标仓库，然后测试触发。'
+    if (item.status === 'na') return '如需启用：进入“设置 -> GitHub Packages”，开启功能并配置 `PAT`、`callbackUrl`、`secret`。'
+  }
+
+  if (current) return current
+  return '无需操作'
+}
+
 export function DeployWelcomePage() {
   const [report, setReport] = useState<DeployCheckReportResponse | null>(null)
   const [neverAutoOpen, setNeverAutoOpen] = useState(false)
@@ -273,6 +324,7 @@ function DeployChecklistList(props: { items: DeployCheckItem[]; allChecks: Deplo
 function DeployChecklistItem(props: { item: DeployCheckItem; allChecks: DeployCheckItem[]; number: string }) {
   const { item, allChecks, number } = props
   const warningNa = isWarningNa(item, allChecks)
+  const recommendation = resolveRecommendation(item, allChecks, warningNa)
   const status = statusMeta(item.status)
   const rowClass = [
     'deployChecklistItem',
@@ -315,7 +367,7 @@ function DeployChecklistItem(props: { item: DeployCheckItem; allChecks: DeployCh
           </div>
           <div>
             <dt>建议</dt>
-            <dd>{item.recommendation || '无需操作'}</dd>
+            <dd>{recommendation}</dd>
           </div>
           <div>
             <dt>证据</dt>
