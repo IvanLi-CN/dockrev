@@ -295,11 +295,11 @@ export function DeployWelcomePage() {
               <p className="deployWelcomeActionHint">勾选后，后续访问首页将直接进入 Dashboard；可在设置页手动重新打开本页面。</p>
             </div>
             <div className="deployWelcomeActions">
-              <Button variant="primary" disabled={saving} onClick={() => void enterDashboard()}>
-                {saving ? '保存中…' : '进入 Dashboard'}
-              </Button>
               <Button variant="ghost" disabled={loading || saving} onClick={() => void refresh()}>
                 重新检查
+              </Button>
+              <Button variant="primary" disabled={saving} onClick={() => void enterDashboard()}>
+                {saving ? '保存中…' : '进入 Dashboard'}
               </Button>
             </div>
           </div>
