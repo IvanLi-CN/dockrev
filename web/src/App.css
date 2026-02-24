@@ -2003,10 +2003,10 @@ html[data-theme='light'] .modalOverlay {
   border-radius: 12px;
   border: 1px solid rgba(116, 141, 168, 0.3);
   background: rgba(9, 14, 22, 0.74);
-  padding: 11px 12px;
+  padding: 14px 14px 12px;
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr);
-  gap: 10px;
+  gap: 12px;
 }
 
 .deployChecklistItem--pass {
@@ -2066,7 +2066,7 @@ html[data-theme='light'] .modalOverlay {
 
 .deployChecklistBody {
   display: grid;
-  gap: 7px;
+  gap: 10px;
 }
 
 .deployChecklistTopRow {
@@ -2091,9 +2091,9 @@ html[data-theme='light'] .modalOverlay {
 
 .deployChecklistTitleGroup h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: 18px;
   color: #eff6ff;
-  font-weight: 740;
+  font-weight: 720;
 }
 
 .deployChecklistFlags {
@@ -2156,42 +2156,50 @@ html[data-theme='light'] .modalOverlay {
 .deployChecklistFacts {
   margin: 0;
   display: grid;
-  gap: 5px;
+  gap: 8px;
 }
 
 .deployChecklistFacts div {
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr);
-  gap: 8px;
-  align-items: baseline;
+  grid-template-columns: 1fr;
+  gap: 5px;
+  align-items: start;
+  border-radius: 10px;
+  border: 1px solid rgba(102, 127, 153, 0.32);
+  background: rgba(11, 18, 28, 0.62);
+  padding: 8px 10px;
 }
 
 .deployChecklistFacts dt {
   margin: 0;
-  color: #9fb5c9;
+  color: #8fb2cf;
   font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-weight: 700;
 }
 
 .deployChecklistFacts dd {
   margin: 0;
-  color: #d6e2ef;
-  font-size: 12px;
+  color: #e0ebf6;
+  font-size: 14px;
   line-height: 1.45;
 }
 
 .deployChecklistDetails {
-  margin-top: 2px;
+  margin-top: 0;
   border: 1px dashed rgba(124, 149, 176, 0.36);
   border-radius: 10px;
   background: rgba(10, 16, 24, 0.56);
-  padding: 6px 8px;
+  padding: 8px 10px;
 }
 
 .deployChecklistDetails > summary {
   cursor: pointer;
   color: #9fb7cc;
-  font-size: 12px;
+  font-size: 13px;
   user-select: none;
+  font-weight: 600;
 }
 
 .deployChecklistDetails[open] > summary {
@@ -2206,6 +2214,10 @@ html[data-theme='light'] .modalOverlay {
 .deployWelcomeActionPanel {
   display: grid;
   gap: 10px;
+  border-color: rgba(84, 124, 164, 0.38);
+  background:
+    linear-gradient(160deg, rgba(14, 24, 38, 0.96), rgba(10, 20, 34, 0.9)),
+    radial-gradient(80% 120% at 0% 100%, rgba(34, 95, 146, 0.14), transparent 60%);
 }
 
 .deployWelcomeActionLayout {
@@ -2242,22 +2254,42 @@ html[data-theme='light'] .modalOverlay {
 
 .deployWelcomeActions {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
+}
+
+.deployWelcomeActions .btnPrimary {
+  min-width: 220px;
+  height: 42px;
+  padding: 0 22px;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 850;
+  letter-spacing: 0.01em;
+  box-shadow:
+    0 10px 24px rgba(20, 129, 214, 0.32),
+    inset 0 0 0 1px rgba(184, 232, 255, 0.22);
+}
+
+.deployWelcomeActions .btnGhost {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 10px;
 }
 
 @media (min-width: 980px) {
   .deployChecklistFacts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 6px 14px;
+    gap: 10px;
   }
 
   .deployChecklistFacts div {
-    grid-template-columns: 44px minmax(0, 1fr);
+    min-height: 86px;
   }
 
   .deployChecklistFact--recommendation {
     grid-column: 1 / -1;
+    min-height: auto;
   }
 
   .deployChecklistFactsSecondary {
@@ -2272,7 +2304,7 @@ html[data-theme='light'] .modalOverlay {
 
   .deployWelcomeActions {
     justify-content: flex-end;
-    align-items: center;
+    align-items: flex-end;
   }
 }
 
