@@ -16,6 +16,7 @@ Usage:
 import csv
 import json
 import re
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from core import search, DATA_DIR
@@ -32,7 +33,7 @@ SEARCH_CONFIG = {
     "typography": {"max_results": 2}
 }
 
-SLUG_SANITIZE_RE = re.compile(r"[^a-z0-9-]+")
+SLUG_SANITIZE_RE = re.compile(r"[^\w-]+")
 SLUG_SEP_RE = re.compile(r"-{2,}")
 
 
@@ -40,10 +41,14 @@ def _slugify_segment(value: str, fallback: str) -> str:
     """Create a filesystem-safe slug for single path segments."""
     if not value:
         return fallback
-    slug = value.strip().lower().replace(" ", "-")
+    raw = value.strip()
+    slug = raw.lower().replace(" ", "-").replace("_", "-")
     slug = SLUG_SANITIZE_RE.sub("-", slug)
     slug = SLUG_SEP_RE.sub("-", slug).strip("-")
-    return slug or fallback
+    if slug:
+        return slug
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
+    return f"{fallback}-{digest}"
 
 
 def _ensure_within(base: Path, candidate: Path, field_name: str) -> None:
@@ -948,14 +953,16 @@ def _generate_intelligent_overrides(page_name: str, page_query: str, design_syst
     """
     from core import search
     
-    page_lower = page_name.lower()
-    query_lower = (page_query or "").lower()
-    combined_context = f"{page_lower} {query_lower}"
+    page_lower = page_name.lower().strip()
+    query_lower = (page_query or "").lower().strip()
+    page_context = page_lower or query_lower
+    if not page_context:
+        page_context = "page"
     
     # Search across multiple domains for page-specific guidance
-    style_search = search(combined_context, "style", max_results=1)
-    ux_search = search(combined_context, "ux", max_results=3)
-    landing_search = search(combined_context, "landing", max_results=1)
+    style_search = search(page_context, "style", max_results=1)
+    ux_search = search(page_context, "ux", max_results=3)
+    landing_search = search(page_context, "landing", max_results=1)
     
     # Extract results from search response
     style_results = style_search.get("results", [])
@@ -963,7 +970,7 @@ def _generate_intelligent_overrides(page_name: str, page_query: str, design_syst
     landing_results = landing_search.get("results", [])
     
     # Detect page type from search results or context
-    page_type = _detect_page_type(combined_context, style_results)
+    page_type = _detect_page_type(page_context, style_results)
     
     # Build overrides from search results
     layout = {}

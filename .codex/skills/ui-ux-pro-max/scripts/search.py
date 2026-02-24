@@ -18,6 +18,7 @@ import argparse
 import sys
 import io
 import re
+import hashlib
 from core import CSV_CONFIG, AVAILABLE_STACKS, MAX_RESULTS, search, search_stack
 from design_system import generate_design_system
 
@@ -27,17 +28,21 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
 if sys.stderr.encoding and sys.stderr.encoding.lower() != 'utf-8':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
-SLUG_SANITIZE_RE = re.compile(r"[^a-z0-9-]+")
+SLUG_SANITIZE_RE = re.compile(r"[^\w-]+")
 SLUG_SEP_RE = re.compile(r"-{2,}")
 
 
 def to_slug(value: str, fallback: str) -> str:
     if not value:
         return fallback
-    slug = value.strip().lower().replace(" ", "-")
+    raw = value.strip()
+    slug = raw.lower().replace(" ", "-").replace("_", "-")
     slug = SLUG_SANITIZE_RE.sub("-", slug)
     slug = SLUG_SEP_RE.sub("-", slug).strip("-")
-    return slug or fallback
+    if slug:
+        return slug
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
+    return f"{fallback}-{digest}"
 
 
 def format_output(result):

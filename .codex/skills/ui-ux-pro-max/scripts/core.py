@@ -91,6 +91,12 @@ _STACK_COLS = {
 
 AVAILABLE_STACKS = list(STACK_CONFIG.keys())
 
+QUERY_TOKEN_EXPANSIONS = {
+    "ux": "usability accessibility interaction navigation animation",
+    "ui": "interface design components layout",
+    "ai": "assistant chatbot agentic conversational",
+}
+
 
 # ============ BM25 IMPLEMENTATION ============
 class BM25:
@@ -109,7 +115,7 @@ class BM25:
     def tokenize(self, text):
         """Lowercase, split, remove punctuation, filter short words"""
         text = re.sub(r'[^\w\s]', ' ', str(text).lower())
-        return [w for w in text.split() if len(w) > 2]
+        return [w for w in text.split() if len(w) >= 2]
 
     def fit(self, documents):
         """Build BM25 index from documents"""
@@ -187,6 +193,21 @@ def _search_csv(filepath, search_cols, output_cols, query, max_results):
     return results
 
 
+def _expand_query_terms(query, domain):
+    """
+    Expand terse two-letter tokens (ui/ux/ai) so short intent queries can
+    still match domain-specific rows even when those abbreviations are not
+    explicitly present in CSV content.
+    """
+    tokens = set(re.findall(r"\w+", query.lower()))
+    expansions = [QUERY_TOKEN_EXPANSIONS[token] for token in tokens if token in QUERY_TOKEN_EXPANSIONS]
+    if domain == "ux" and query.strip().lower() == "ux":
+        expansions.append("accessibility navigation")
+    if not expansions:
+        return query
+    return f"{query} {' '.join(expansions)}"
+
+
 def detect_domain(query):
     """Auto-detect the most relevant domain from query"""
     query_lower = query.lower()
@@ -220,7 +241,8 @@ def search(query, domain=None, max_results=MAX_RESULTS):
     if not filepath.exists():
         return {"error": f"File not found: {filepath}", "domain": domain}
 
-    results = _search_csv(filepath, config["search_cols"], config["output_cols"], query, max_results)
+    expanded_query = _expand_query_terms(query, domain)
+    results = _search_csv(filepath, config["search_cols"], config["output_cols"], expanded_query, max_results)
 
     return {
         "domain": domain,
@@ -241,7 +263,8 @@ def search_stack(query, stack, max_results=MAX_RESULTS):
     if not filepath.exists():
         return {"error": f"Stack file not found: {filepath}", "stack": stack}
 
-    results = _search_csv(filepath, _STACK_COLS["search_cols"], _STACK_COLS["output_cols"], query, max_results)
+    expanded_query = _expand_query_terms(query, stack)
+    results = _search_csv(filepath, _STACK_COLS["search_cols"], _STACK_COLS["output_cols"], expanded_query, max_results)
 
     return {
         "domain": "stack",
