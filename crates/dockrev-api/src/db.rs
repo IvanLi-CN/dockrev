@@ -9,10 +9,10 @@ use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 use tokio_rusqlite::Connection;
 
 use crate::api::types::{
-    BackupSettings, ComposeConfig, ComposeRef, GitHubPackagesRepoDb, GitHubPackagesSettingsDb,
-    GitHubPackagesTargetDb, IgnoreRule, IgnoreRuleMatch, IgnoreRuleScope, JobListItem, JobLogLine,
-    JobScope, JobType, NotificationSettings, ServiceSettings, StackListItem, StackRecord,
-    StackStatus,
+    BackupSettings, ComposeConfig, ComposeRef, DeployWelcomeSettings, GitHubPackagesRepoDb,
+    GitHubPackagesSettingsDb, GitHubPackagesTargetDb, IgnoreRule, IgnoreRuleMatch, IgnoreRuleScope,
+    JobListItem, JobLogLine, JobScope, JobType, NotificationSettings, ServiceSettings,
+    StackListItem, StackRecord, StackStatus,
 };
 
 #[derive(Clone, Debug)]
@@ -155,6 +155,7 @@ impl Db {
         self.call(|conn| {
             ensure_service_columns(conn)?;
             ensure_notification_columns(conn)?;
+            ensure_settings_deploy_welcome_columns(conn)?;
             ensure_stack_archive_columns(conn)?;
             ensure_service_archive_columns(conn)?;
             ensure_discovery_schema(conn)?;
@@ -179,10 +180,20 @@ INSERT OR IGNORE INTO settings (
   backup_enabled,
   backup_require_success,
   backup_base_dir,
-  backup_skip_targets_over_bytes
-) VALUES (?1, ?2, ?3, ?4, ?5)
+  backup_skip_targets_over_bytes,
+  deploy_welcome_never_auto_open,
+  deploy_welcome_updated_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
 "#,
-                params!["default", 1i64, 1i64, "/data/backups", 104857600i64],
+                params![
+                    "default",
+                    1i64,
+                    1i64,
+                    "/data/backups",
+                    104857600i64,
+                    0i64,
+                    Option::<String>::None
+                ],
             )?;
 
             tx.execute(
@@ -2803,6 +2814,51 @@ WHERE id = 'default'
         .context("get backup settings")
     }
 
+    pub async fn get_deploy_welcome_settings(&self) -> anyhow::Result<DeployWelcomeSettings> {
+        self.call(|conn| {
+            Ok(conn.query_row(
+                r#"
+SELECT deploy_welcome_never_auto_open, deploy_welcome_updated_at
+FROM settings
+WHERE id = 'default'
+"#,
+                [],
+                |row| {
+                    Ok(DeployWelcomeSettings {
+                        never_auto_open: row.get::<_, i64>(0)? != 0,
+                        updated_at: row.get(1)?,
+                    })
+                },
+            )?)
+        })
+        .await
+        .context("get deploy welcome settings")
+    }
+
+    pub async fn put_deploy_welcome_settings(
+        &self,
+        never_auto_open: bool,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let now = now.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                r#"
+UPDATE settings
+SET
+  deploy_welcome_never_auto_open = ?1,
+  deploy_welcome_updated_at = ?2,
+  updated_at = ?2
+WHERE id = 'default'
+"#,
+                params![never_auto_open as i64, now],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("put deploy welcome settings")
+    }
+
     pub async fn put_backup_settings(
         &self,
         backup: &BackupSettings,
@@ -3845,6 +3901,38 @@ fn ensure_notification_columns(conn: &rusqlite::Connection) -> anyhow::Result<()
     Ok(())
 }
 
+fn ensure_settings_deploy_welcome_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    #[derive(Clone)]
+    struct Col<'a> {
+        name: &'a str,
+        ddl: &'a str,
+    }
+
+    let desired = [
+        Col {
+            name: "deploy_welcome_never_auto_open",
+            ddl: "ALTER TABLE settings ADD COLUMN deploy_welcome_never_auto_open INTEGER NOT NULL DEFAULT 0",
+        },
+        Col {
+            name: "deploy_welcome_updated_at",
+            ddl: "ALTER TABLE settings ADD COLUMN deploy_welcome_updated_at TEXT",
+        },
+    ];
+
+    let mut stmt = conn.prepare("PRAGMA table_info(settings)")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let existing = rows.collect::<Result<Vec<_>, _>>()?;
+
+    for col in desired {
+        if existing.iter().any(|c| c == col.name) {
+            continue;
+        }
+        conn.execute_batch(col.ddl)?;
+    }
+
+    Ok(())
+}
+
 fn ensure_stack_archive_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     #[derive(Clone)]
     struct Col<'a> {
@@ -4109,6 +4197,8 @@ CREATE TABLE IF NOT EXISTS settings (
   backup_require_success INTEGER NOT NULL,
   backup_base_dir TEXT NOT NULL,
   backup_skip_targets_over_bytes INTEGER NOT NULL,
+  deploy_welcome_never_auto_open INTEGER NOT NULL DEFAULT 0,
+  deploy_welcome_updated_at TEXT,
   updated_at TEXT
 );
 

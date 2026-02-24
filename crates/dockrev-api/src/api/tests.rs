@@ -815,6 +815,7 @@ async fn test_state_with(
         discovery_interval_seconds: 60,
         discovery_max_actions: 200,
         runtime_scan_interval_seconds: 600,
+        deploy_check_local_command_timeout_seconds: 12,
         check_concurrency: 8,
         registry_per_host_concurrency: 3,
         registry_retry_max_attempts: 3,
@@ -856,6 +857,7 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
         discovery_interval_seconds: 60,
         discovery_max_actions: 200,
         runtime_scan_interval_seconds: 600,
+        deploy_check_local_command_timeout_seconds: 12,
         check_concurrency: 8,
         registry_per_host_concurrency: 3,
         registry_retry_max_attempts: 3,
@@ -4637,6 +4639,364 @@ async fn settings_and_notifications_roundtrip() {
     let conf = response_json(resp).await;
     assert!(conf["webhook"]["enabled"].as_bool().unwrap());
     assert_eq!(conf["webhook"]["url"].as_str().unwrap(), "******");
+}
+
+#[tokio::test]
+async fn deploy_welcome_roundtrip() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/deploy-welcome")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["neverAutoOpen"], false);
+    assert!(body["updatedAt"].is_null());
+
+    let put = serde_json::json!({ "neverAutoOpen": true });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/deploy-welcome")
+                .header("content-type", "application/json")
+                .body(Body::from(put.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["neverAutoOpen"], true);
+    assert!(body["updatedAt"].as_str().unwrap().len() > 10);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/deploy-welcome")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["neverAutoOpen"], true);
+}
+
+#[tokio::test]
+async fn deploy_check_report_is_read_only() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+
+    let compose_file = format!("/tmp/dockrev-preflight-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_file,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:1.2.3
+"#,
+    )
+    .unwrap();
+    let _stack_id = seed_stack_from_compose(&state, "prod", &compose_file).await;
+
+    let app = api::router(state.clone());
+    let before_jobs = state.db.list_jobs().await.unwrap().len();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/deploy-check/report")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["overall"]["result"], "pass");
+    assert_eq!(body["overall"]["blockingCheckIds"], serde_json::json!([]));
+    let checks = body["checks"].as_array().unwrap();
+    assert!(checks.iter().any(|c| c["id"] == "core.docker_engine"));
+    assert!(checks.iter().any(|c| c["id"] == "core.compose_access"));
+    assert!(
+        checks
+            .iter()
+            .any(|c| c["id"] == "core.service_image_ref_valid")
+    );
+    assert!(
+        checks
+            .iter()
+            .any(|c| c["id"] == "core.update_executor_ready")
+    );
+    let registry_auth = checks
+        .iter()
+        .find(|c| c["id"] == "feature.registry_auth")
+        .unwrap();
+    assert_eq!(registry_auth["status"], "na");
+    assert_eq!(registry_auth["naReason"], "missing_prerequisite");
+    let webhook = checks
+        .iter()
+        .find(|c| c["id"] == "feature.notifications.webhook")
+        .unwrap();
+    assert_eq!(webhook["status"], "na");
+    assert_eq!(webhook["required"], false);
+
+    let after_jobs = state.db.list_jobs().await.unwrap().len();
+    assert_eq!(before_jobs, after_jobs);
+}
+
+#[tokio::test]
+async fn deploy_check_report_fails_when_enabled_feature_is_misconfigured() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+
+    let compose_file = format!("/tmp/dockrev-preflight-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_file,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:1.2.3
+"#,
+    )
+    .unwrap();
+    let _stack_id = seed_stack_from_compose(&state, "prod", &compose_file).await;
+
+    let mut notification = state.db.get_notification_settings().await.unwrap();
+    notification.webhook_enabled = true;
+    notification.webhook_url = None;
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .put_notification_settings(&notification, &now)
+        .await
+        .unwrap();
+
+    let app = api::router(state.clone());
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/deploy-check/report")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["overall"]["result"], "fail");
+    let blocking = body["overall"]["blockingCheckIds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>();
+    assert!(blocking.contains(&"feature.notifications.webhook"));
+}
+
+#[tokio::test]
+async fn deploy_check_report_fails_when_webhook_scheme_is_not_http() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+
+    let compose_file = format!("/tmp/dockrev-preflight-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_file,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:1.2.3
+"#,
+    )
+    .unwrap();
+    let _stack_id = seed_stack_from_compose(&state, "prod", &compose_file).await;
+
+    let mut notification = state.db.get_notification_settings().await.unwrap();
+    notification.webhook_enabled = true;
+    notification.webhook_url = Some("ftp://dockrev.example.com/hook".to_string());
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .put_notification_settings(&notification, &now)
+        .await
+        .unwrap();
+
+    let app = api::router(state.clone());
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/deploy-check/report")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["overall"]["result"], "fail");
+    let blocking = body["overall"]["blockingCheckIds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>();
+    assert!(blocking.contains(&"feature.notifications.webhook"));
+}
+
+#[tokio::test]
+async fn deploy_check_report_fails_when_github_packages_callback_scheme_is_not_http() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+
+    let compose_file = format!("/tmp/dockrev-preflight-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_file,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:1.2.3
+"#,
+    )
+    .unwrap();
+    let _stack_id = seed_stack_from_compose(&state, "prod", &compose_file).await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let mut settings = state.db.get_github_packages_settings().await.unwrap();
+    settings.enabled = true;
+    settings.callback_url = "ftp://dockrev.example.com/api/webhooks/github-packages".to_string();
+    settings.pat = Some("ghp_example".to_string());
+    settings.webhook_secret = Some("secret123".to_string());
+    state
+        .db
+        .put_github_packages_settings(&settings, &now)
+        .await
+        .unwrap();
+    state
+        .db
+        .upsert_github_packages_repo_selected("acme", "widgets", true, &now)
+        .await
+        .unwrap();
+
+    let app = api::router(state.clone());
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/deploy-check/report")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["overall"]["result"], "fail");
+    let blocking = body["overall"]["blockingCheckIds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>();
+    assert!(blocking.contains(&"feature.github_packages"));
+
+    let github_packages = body["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "feature.github_packages")
+        .unwrap();
+    assert_eq!(github_packages["status"], "fail");
+    assert!(
+        github_packages["evidence"]
+            .as_str()
+            .unwrap()
+            .contains("callbackUrl(invalid_scheme)")
+    );
+}
+
+#[tokio::test]
+async fn deploy_check_report_fails_when_github_packages_has_no_selected_repos() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+
+    let compose_file = format!("/tmp/dockrev-preflight-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_file,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:1.2.3
+"#,
+    )
+    .unwrap();
+    let _stack_id = seed_stack_from_compose(&state, "prod", &compose_file).await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let mut settings = state.db.get_github_packages_settings().await.unwrap();
+    settings.enabled = true;
+    settings.callback_url = "https://dockrev.example.com/api/webhooks/github-packages".to_string();
+    settings.pat = Some("ghp_example".to_string());
+    settings.webhook_secret = Some("secret123".to_string());
+    state
+        .db
+        .put_github_packages_settings(&settings, &now)
+        .await
+        .unwrap();
+
+    let app = api::router(state.clone());
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/deploy-check/report")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["overall"]["result"], "fail");
+    let blocking = body["overall"]["blockingCheckIds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>();
+    assert!(blocking.contains(&"feature.github_packages"));
+
+    let github_packages = body["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "feature.github_packages")
+        .unwrap();
+    assert_eq!(github_packages["status"], "fail");
+    assert!(
+        github_packages["evidence"]
+            .as_str()
+            .unwrap()
+            .contains("repos(selected=0)")
+    );
 }
 
 #[tokio::test]

@@ -26,6 +26,7 @@ import { Button, IconButton, Mono, RefreshIcon, Switch, TrashIcon } from '../ui'
 import { useConfirm } from '../confirm'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
+import { navigate } from '../routes'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -332,6 +333,23 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                 }}
               >
                 重试
+              </Button>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="title">部署检查</div>
+            <div className="muted">手动打开部署检查清单页，不会修改“自动打开”偏好。</div>
+
+            <div className="formActions">
+              <Button
+                variant="primary"
+                disabled={busy}
+                onClick={() => {
+                  navigate({ name: 'deploy-check' })
+                }}
+              >
+                打开部署检查页
               </Button>
             </div>
           </div>

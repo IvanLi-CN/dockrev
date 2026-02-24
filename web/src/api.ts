@@ -213,6 +213,39 @@ export type SettingsResponse = {
   }
 }
 
+export type DeployCheckStatus = 'pass' | 'fail' | 'na'
+export type DeployCheckNaReason = 'disabled_by_switch' | 'missing_prerequisite' | 'not_applicable'
+
+export type DeployCheckGroup = 'core' | 'feature' | string
+
+export type DeployCheckItem = {
+  id: string
+  title: string
+  group: DeployCheckGroup
+  required: boolean
+  status: DeployCheckStatus
+  naReason?: DeployCheckNaReason
+  summary: string
+  impact: string
+  evidence: string
+  recommendation: string
+}
+
+export type DeployCheckReportResponse = {
+  overall: {
+    result: 'pass' | 'fail'
+    blockingCheckIds: string[]
+    summary: string
+  }
+  generatedAt: string
+  checks: DeployCheckItem[]
+}
+
+export type DeployWelcomeResponse = {
+  neverAutoOpen: boolean
+  updatedAt?: string | null
+}
+
 export type NotificationConfig = {
   email: { enabled: boolean; smtpUrl?: string | null }
   webhook: { enabled: boolean; url?: string | null }
@@ -607,6 +640,24 @@ export async function putSettings(input: SettingsResponse['backup']) {
     body: JSON.stringify({ backup: input }),
   })
   return (await resp.json()) as { ok: boolean }
+}
+
+export async function getDeployCheckReport(): Promise<DeployCheckReportResponse> {
+  const resp = await apiFetch('/api/deploy-check/report')
+  return (await resp.json()) as DeployCheckReportResponse
+}
+
+export async function getDeployWelcome(): Promise<DeployWelcomeResponse> {
+  const resp = await apiFetch('/api/deploy-welcome')
+  return (await resp.json()) as DeployWelcomeResponse
+}
+
+export async function putDeployWelcome(input: { neverAutoOpen: boolean }): Promise<DeployWelcomeResponse & { ok: boolean }> {
+  const resp = await apiFetch('/api/deploy-welcome', {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  })
+  return (await resp.json()) as DeployWelcomeResponse & { ok: boolean }
 }
 
 export async function getNotifications(): Promise<NotificationConfig> {

@@ -1,4 +1,6 @@
 import type {
+  DeployCheckReportResponse,
+  DeployWelcomeResponse,
   DiscoveredProject,
   GitHubPackagesRepo,
   GitHubPackagesSettingsResponse,
@@ -63,6 +65,8 @@ type Fixture = {
   githubPackagesSettings: GitHubPackagesSettingsResponse
   githubPackagesRepos: GitHubPackagesRepo[]
   serviceSettingsById: Record<string, ServiceSettings>
+  deployCheckReport: DeployCheckReportResponse
+  deployWelcome: DeployWelcomeResponse
 }
 
 function json(data: unknown, init?: ResponseInit) {
@@ -140,6 +144,60 @@ function makeDefaultGitHubPackagesSettings(): GitHubPackagesSettingsResponse {
   }
 }
 
+function makeDefaultDeployCheckReport(): DeployCheckReportResponse {
+  return {
+    overall: {
+      result: 'pass',
+      blockingCheckIds: [],
+      summary: 'All required capabilities are available',
+    },
+    generatedAt: nowIso(),
+    checks: [
+      {
+        id: 'core.docker_engine',
+        title: 'Docker 引擎可用',
+        group: 'core',
+        required: true,
+        status: 'pass',
+        summary: 'docker daemon reachable',
+        impact: '不可用时无法执行更新',
+        evidence: 'docker info ok',
+        recommendation: '',
+      },
+      {
+        id: 'core.compose_access',
+        title: 'Compose 配置可访问',
+        group: 'core',
+        required: true,
+        status: 'pass',
+        summary: 'compose paths are readable',
+        impact: '服务解析不完整，更新目标不可信',
+        evidence: '/srv/app/docker-compose.yml',
+        recommendation: '',
+      },
+      {
+        id: 'feature.notifications.webhook',
+        title: '通知能力：Webhook',
+        group: 'feature',
+        required: false,
+        status: 'na',
+        summary: 'webhook notification is disabled',
+        impact: '该功能未启用；不纳入阻塞判定',
+        evidence: 'enabled=false',
+        recommendation: '',
+      },
+    ],
+  }
+}
+
+function makeDefaultDeployWelcome(): DeployWelcomeResponse {
+  return {
+    // Keep Storybook on existing pages by default.
+    neverAutoOpen: true,
+    updatedAt: null,
+  }
+}
+
 function baseEmpty(): Fixture {
   return {
     stacks: [],
@@ -153,6 +211,8 @@ function baseEmpty(): Fixture {
     githubPackagesSettings: makeDefaultGitHubPackagesSettings(),
     githubPackagesRepos: [],
     serviceSettingsById: {},
+    deployCheckReport: makeDefaultDeployCheckReport(),
+    deployWelcome: makeDefaultDeployWelcome(),
   }
 }
 
@@ -1315,6 +1375,21 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         }
       }
       return json({ ok: true })
+    }
+
+    // deploy welcome / preflight
+    if (method === 'GET' && urlPath === '/api/deploy-check/report') {
+      return json(f.deployCheckReport)
+    }
+    if (method === 'GET' && urlPath === '/api/deploy-welcome') {
+      return json(f.deployWelcome)
+    }
+    if (method === 'PUT' && urlPath === '/api/deploy-welcome') {
+      const parsed = parseJsonBody(init?.body)
+      const rec = isRecord(parsed) ? parsed : {}
+      const neverAutoOpen = getBoolean(rec.neverAutoOpen) ?? f.deployWelcome.neverAutoOpen
+      f.deployWelcome = { neverAutoOpen, updatedAt: nowIso() }
+      return json({ ok: true, ...f.deployWelcome })
     }
 
     // notifications

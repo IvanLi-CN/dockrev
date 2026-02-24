@@ -1776,3 +1776,587 @@ html[data-theme='light'] .modalOverlay {
   justify-content: space-between;
   gap: 12px;
 }
+
+.deployWelcomeRoot {
+  min-height: 100vh;
+  padding: 28px 18px 44px;
+  background:
+    radial-gradient(130% 140% at 0% 0%, rgba(17, 77, 95, 0.3), transparent 56%),
+    linear-gradient(160deg, #05090f 0%, #0a111d 42%, #081216 100%);
+}
+
+.deployWelcomeMain {
+  width: min(1160px, 100%);
+  margin: 0 auto;
+  display: grid;
+  gap: 18px;
+}
+
+.deployWelcomePanel {
+  border-radius: 18px;
+  border: 1px solid rgba(116, 141, 168, 0.26);
+  background:
+    linear-gradient(165deg, rgba(18, 28, 41, 0.96), rgba(12, 20, 33, 0.94)),
+    rgba(9, 14, 23, 0.92);
+  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.34);
+  padding: 18px 20px;
+}
+
+.deployWelcomeSummaryPanel {
+  background:
+    radial-gradient(120% 130% at 0% 0%, rgba(38, 103, 120, 0.32), transparent 46%),
+    linear-gradient(165deg, rgba(18, 28, 41, 0.96), rgba(12, 20, 33, 0.94));
+}
+
+.deployWelcomeSummaryPanel.is-fail {
+  border-color: rgba(224, 91, 91, 0.48);
+}
+
+.deployWelcomeSummaryPanel.is-pass {
+  border-color: rgba(82, 189, 146, 0.46);
+}
+
+.deployWelcomeSummaryHead {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.deployWelcomeEyebrow {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #8ec7dc;
+  font-weight: 780;
+}
+
+.deployWelcomeTitle {
+  margin: 8px 0 0;
+  font-size: clamp(22px, 3vw, 30px);
+  line-height: 1.22;
+  color: #f2f7fc;
+}
+
+.deployWelcomeSubtitle {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #b3c6d8;
+  line-height: 1.5;
+}
+
+.deployWelcomeOverall {
+  min-width: 240px;
+  border-radius: 14px;
+  border: 1px solid rgba(136, 162, 188, 0.32);
+  background: rgba(12, 18, 28, 0.72);
+  padding: 12px 14px;
+  display: grid;
+  gap: 6px;
+}
+
+.deployWelcomeOverall.is-pass {
+  border-color: rgba(82, 189, 146, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(82, 189, 146, 0.18);
+}
+
+.deployWelcomeOverall.is-fail {
+  border-color: rgba(224, 91, 91, 0.56);
+  box-shadow: inset 0 0 0 1px rgba(224, 91, 91, 0.2);
+}
+
+.deployWelcomeOverallLabel {
+  color: #a8bfd4;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.deployWelcomeOverall strong {
+  font-size: 26px;
+  font-weight: 840;
+  letter-spacing: 0.05em;
+}
+
+.deployWelcomeOverall.is-pass strong {
+  color: #5ad0a3;
+}
+
+.deployWelcomeOverall.is-fail strong {
+  color: #ff7e7e;
+}
+
+.deployWelcomeOverallSummary {
+  color: #d2deea;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.deployWelcomeDefinitions {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.deployWelcomeDefinition {
+  border: 1px solid rgba(113, 134, 158, 0.28);
+  border-radius: 12px;
+  background: rgba(9, 15, 23, 0.66);
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #cae0f4;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.deployWelcomeStats {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.deployWelcomeStat {
+  border-radius: 12px;
+  border: 1px solid rgba(116, 141, 168, 0.3);
+  background: rgba(11, 17, 26, 0.72);
+  padding: 10px 12px;
+  display: grid;
+  gap: 5px;
+}
+
+.deployWelcomeStat span {
+  font-size: 11px;
+  color: #9ab2c9;
+}
+
+.deployWelcomeStat strong {
+  font-size: 20px;
+  color: #f4f8fe;
+  font-weight: 780;
+}
+
+.deployBlockingNotice {
+  margin-top: 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(224, 91, 91, 0.52);
+  background: rgba(87, 19, 19, 0.24);
+  padding: 12px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.deployBlockingTitle {
+  color: #ffdddd;
+  font-size: 13px;
+  font-weight: 680;
+  margin-bottom: 3px;
+}
+
+.deployWelcomeGeneratedAt {
+  margin-top: 12px;
+  color: #98afc5;
+  font-size: 12px;
+}
+
+.deploySectionHead {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.deploySectionHead h2 {
+  margin: 0;
+  font-size: 17px;
+  color: #f4f8fe;
+}
+
+.deploySectionHead p {
+  margin: 0;
+  font-size: 12px;
+  color: #9ab2c9;
+}
+
+.deployChecklistList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.deployChecklistEmpty {
+  border-radius: 12px;
+  border: 1px dashed rgba(121, 145, 170, 0.42);
+  background: rgba(10, 16, 24, 0.6);
+  padding: 14px;
+  color: #98afc5;
+  font-size: 12px;
+}
+
+.deployChecklistItem {
+  border-radius: 12px;
+  border: 1px solid rgba(116, 141, 168, 0.3);
+  background: rgba(9, 14, 22, 0.74);
+  padding: 12px 13px 11px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.deployChecklistItem--pass {
+  border-color: rgba(82, 189, 146, 0.38);
+}
+
+.deployChecklistItem--fail {
+  border-color: rgba(224, 91, 91, 0.44);
+}
+
+.deployChecklistItem--na {
+  border-color: rgba(121, 145, 170, 0.32);
+}
+
+.deployChecklistItem--na-warning {
+  border-color: rgba(240, 176, 77, 0.45);
+  background: rgba(82, 58, 17, 0.18);
+}
+
+.deployChecklistItem--blocking {
+  background: rgba(84, 23, 23, 0.28);
+}
+
+.deployChecklistMark {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  border: 1px solid rgba(130, 154, 181, 0.46);
+  background: rgba(12, 18, 28, 0.86);
+  color: #d7e5f4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 12px;
+  margin-top: 1px;
+}
+
+.deployChecklistItem--pass .deployChecklistMark {
+  color: #61cfa4;
+  border-color: rgba(97, 207, 164, 0.5);
+}
+
+.deployChecklistItem--fail .deployChecklistMark {
+  color: #ff8f8f;
+  border-color: rgba(255, 143, 143, 0.6);
+}
+
+.deployChecklistItem--na .deployChecklistMark {
+  color: #96adbf;
+}
+
+.deployChecklistItem--na-warning .deployChecklistMark {
+  color: #ffd48e;
+  border-color: rgba(255, 197, 107, 0.58);
+}
+
+.deployChecklistBody {
+  display: grid;
+  gap: 8px;
+}
+
+.deployChecklistTopRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.deployChecklistTitleGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.deployChecklistNumber {
+  font-size: 11px;
+  color: #7ea9c4;
+  font-weight: 760;
+  letter-spacing: 0.05em;
+}
+
+.deployChecklistTitleGroup h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #eff6ff;
+  font-weight: 720;
+}
+
+.deployChecklistFlags {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.deployBadge {
+  height: 22px;
+  border-radius: 999px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(122, 146, 172, 0.5);
+  font-size: 11px;
+  font-weight: 770;
+  letter-spacing: 0.03em;
+}
+
+.deployBadge.pass {
+  color: #65d3a9;
+  border-color: rgba(101, 211, 169, 0.54);
+  background: rgba(38, 121, 88, 0.25);
+}
+
+.deployBadge.fail {
+  color: #ff9e9e;
+  border-color: rgba(255, 158, 158, 0.6);
+  background: rgba(125, 29, 29, 0.3);
+}
+
+.deployBadge.na {
+  color: #a0b6ca;
+  border-color: rgba(132, 155, 181, 0.5);
+  background: rgba(22, 31, 44, 0.5);
+}
+
+.deployBadge.na-warning {
+  color: #ffd38d;
+  border-color: rgba(255, 197, 107, 0.6);
+  background: rgba(92, 62, 14, 0.35);
+}
+
+.deployBadge.required {
+  color: #f4f8fe;
+}
+
+.deployBadge.optional {
+  color: #a8bfd4;
+}
+
+.deployChecklistId {
+  font-size: 12px;
+  color: #87a6c1;
+}
+
+.deployChecklistFacts {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.deployChecklistFacts div {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+
+.deployChecklistFacts dt {
+  margin: 0;
+  color: #8fb2cf;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.deployChecklistFacts dd {
+  margin: 0;
+  color: #e0ebf6;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.deployChecklistFact--recommendation {
+  grid-template-columns: 1fr;
+  gap: 6px;
+  align-items: start;
+  border-radius: 9px;
+  border: 1px dashed rgba(118, 144, 171, 0.38);
+  background: rgba(11, 18, 28, 0.5);
+  padding: 8px 10px;
+}
+
+.deployChecklistFact--recommendation dd {
+  font-size: 13.5px;
+}
+
+.deployChecklistDetails {
+  margin-top: 0;
+  border: 1px dashed rgba(124, 149, 176, 0.36);
+  border-radius: 10px;
+  background: rgba(10, 16, 24, 0.56);
+  padding: 8px 10px;
+}
+
+.deployChecklistDetails > summary {
+  cursor: pointer;
+  color: #9fb7cc;
+  font-size: 13px;
+  user-select: none;
+  font-weight: 600;
+}
+
+.deployChecklistDetails[open] > summary {
+  color: #d7e6f5;
+  margin-bottom: 6px;
+}
+
+.deployChecklistFactsSecondary {
+  gap: 4px;
+}
+
+.deployWelcomeActionPanel {
+  display: grid;
+  gap: 10px;
+  border-color: rgba(84, 124, 164, 0.38);
+  background:
+    linear-gradient(160deg, rgba(14, 24, 38, 0.96), rgba(10, 20, 34, 0.9)),
+    radial-gradient(80% 120% at 0% 100%, rgba(34, 95, 146, 0.14), transparent 60%);
+}
+
+.deployWelcomeActionLayout {
+  display: grid;
+  gap: 12px;
+}
+
+.deployWelcomeActionCopy {
+  display: grid;
+  gap: 8px;
+}
+
+.deployNeverAutoCheckbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #eff6ff;
+}
+
+.deployNeverAutoCheckbox input {
+  width: 16px;
+  height: 16px;
+  accent-color: #50b7ff;
+}
+
+.deployWelcomeActionHint {
+  margin: 0;
+  color: #a5bbcf;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.deployWelcomeActions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.deployWelcomeActions .btnPrimary {
+  min-width: 220px;
+  height: 42px;
+  padding: 0 22px;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 850;
+  letter-spacing: 0.01em;
+  box-shadow:
+    0 10px 24px rgba(20, 129, 214, 0.32),
+    inset 0 0 0 1px rgba(184, 232, 255, 0.22);
+}
+
+.deployWelcomeActions .btnGhost {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 10px;
+}
+
+@media (min-width: 980px) {
+  .deployChecklistFacts {
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+    gap: 8px 16px;
+  }
+
+  .deployChecklistFact--recommendation {
+    grid-column: 1 / -1;
+  }
+
+  .deployChecklistFactsSecondary {
+    grid-template-columns: 1fr;
+  }
+
+  .deployWelcomeActionLayout {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 14px 24px;
+  }
+
+  .deployWelcomeActions {
+    justify-content: flex-end;
+    align-items: flex-end;
+  }
+}
+
+@media (max-width: 980px) {
+  .deployWelcomeDefinitions {
+    grid-template-columns: 1fr;
+  }
+
+  .deployWelcomeStats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .deployWelcomeActions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 780px) {
+  .deployWelcomeRoot {
+    padding: 18px 12px 28px;
+  }
+
+  .deployWelcomePanel {
+    padding: 14px;
+  }
+
+  .deployWelcomeSummaryHead {
+    flex-direction: column;
+  }
+
+  .deployWelcomeOverall {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .deployChecklistItem {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .deployChecklistTopRow {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .deployChecklistFacts div {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+}

@@ -23,7 +23,7 @@ use url::Url;
 
 use crate::github;
 use crate::{
-    backup, discovery, error::ApiError, ids, ignore, notify, registry, runtime_scan,
+    backup, discovery, error::ApiError, ids, ignore, notify, preflight, registry, runtime_scan,
     snapshot_worker, state::AppState, ui, updater, version_inference_worker,
 };
 use types::*;
@@ -129,6 +129,11 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(github_packages_webhook),
         )
         .route("/api/settings", get(get_settings).put(put_settings))
+        .route("/api/deploy-check/report", get(get_deploy_check_report))
+        .route(
+            "/api/deploy-welcome",
+            get(get_deploy_welcome).put(put_deploy_welcome),
+        )
         .merge(ui::router())
         .with_state(state)
 }
@@ -4565,6 +4570,49 @@ async fn put_settings(
         .await
         .map_err(map_internal)?;
     Ok(Json(PutSettingsResponse { ok: true }))
+}
+
+async fn get_deploy_check_report(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<DeployCheckReportResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let report = preflight::build_report(state.as_ref())
+        .await
+        .map_err(map_internal)?;
+    Ok(Json(report))
+}
+
+async fn get_deploy_welcome(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<DeployWelcomeResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let settings = state
+        .db
+        .get_deploy_welcome_settings()
+        .await
+        .map_err(map_internal)?;
+    Ok(Json(DeployWelcomeResponse::from(settings)))
+}
+
+async fn put_deploy_welcome(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<PutDeployWelcomeRequest>,
+) -> Result<Json<PutDeployWelcomeResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let now = now_rfc3339().map_err(map_internal)?;
+    state
+        .db
+        .put_deploy_welcome_settings(req.never_auto_open, &now)
+        .await
+        .map_err(map_internal)?;
+    Ok(Json(PutDeployWelcomeResponse {
+        ok: true,
+        never_auto_open: req.never_auto_open,
+        updated_at: Some(now),
+    }))
 }
 
 fn require_user(state: &AppState, headers: &HeaderMap) -> Result<String, ApiError> {
