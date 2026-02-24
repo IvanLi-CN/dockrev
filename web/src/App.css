@@ -2179,6 +2179,30 @@ html[data-theme='light'] .modalOverlay {
   line-height: 1.45;
 }
 
+.deployChecklistDetails {
+  margin-top: 2px;
+  border: 1px dashed rgba(124, 149, 176, 0.36);
+  border-radius: 10px;
+  background: rgba(10, 16, 24, 0.56);
+  padding: 6px 8px;
+}
+
+.deployChecklistDetails > summary {
+  cursor: pointer;
+  color: #9fb7cc;
+  font-size: 12px;
+  user-select: none;
+}
+
+.deployChecklistDetails[open] > summary {
+  color: #d7e6f5;
+  margin-bottom: 6px;
+}
+
+.deployChecklistFactsSecondary {
+  gap: 4px;
+}
+
 .deployWelcomeActionPanel {
   display: grid;
   gap: 10px;

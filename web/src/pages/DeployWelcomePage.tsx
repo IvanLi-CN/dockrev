@@ -326,6 +326,7 @@ function DeployChecklistItem(props: { item: DeployCheckItem; allChecks: DeployCh
   const warningNa = isWarningNa(item, allChecks)
   const recommendation = resolveRecommendation(item, allChecks, warningNa)
   const status = statusMeta(item.status)
+  const statusDescription = warningNa ? '功能未启用（前置配置/条件缺失，建议尽快补齐）' : status.desc
   const rowClass = [
     'deployChecklistItem',
     warningNa ? 'deployChecklistItem--na-warning' : '',
@@ -354,8 +355,6 @@ function DeployChecklistItem(props: { item: DeployCheckItem; allChecks: DeployCh
           </div>
         </div>
 
-        <div className="deployChecklistId mono">{item.id}</div>
-
         <dl className="deployChecklistFacts">
           <div>
             <dt>判定</dt>
@@ -369,15 +368,25 @@ function DeployChecklistItem(props: { item: DeployCheckItem; allChecks: DeployCh
             <dt>建议</dt>
             <dd>{recommendation}</dd>
           </div>
-          <div>
-            <dt>证据</dt>
-            <dd className="mono">{item.evidence || '-'}</dd>
-          </div>
-          <div>
-            <dt>说明</dt>
-            <dd>{warningNa ? '功能未启用（前置配置/条件缺失，建议尽快补齐）' : status.desc}</dd>
-          </div>
         </dl>
+
+        <details className="deployChecklistDetails">
+          <summary>展开证据与技术细节</summary>
+          <dl className="deployChecklistFacts deployChecklistFactsSecondary">
+            <div>
+              <dt>ID</dt>
+              <dd className="mono">{item.id}</dd>
+            </div>
+            <div>
+              <dt>证据</dt>
+              <dd className="mono">{item.evidence || '-'}</dd>
+            </div>
+            <div>
+              <dt>说明</dt>
+              <dd>{statusDescription}</dd>
+            </div>
+          </dl>
+        </details>
       </div>
     </li>
   )
