@@ -282,9 +282,23 @@ export function OverviewPage(props: {
   }, [refresh])
 
   useEffect(() => {
-    const onVersionRefresh = () => {
-      const ids = stacks.map((s) => s.id)
+    let alive = true
+    const onVersionRefresh = (evt: Event) => {
+      const detail = evt instanceof CustomEvent ? evt.detail : null
+      const serviceId =
+        detail && typeof detail === 'object' && 'serviceId' in detail && typeof detail.serviceId === 'string'
+          ? detail.serviceId
+          : null
+
+      const targetedStackIds =
+        serviceId == null
+          ? []
+          : Object.entries(details)
+              .filter(([, d]) => d?.services.some((svc) => svc.id === serviceId))
+              .map(([stackId]) => stackId)
+      const ids = targetedStackIds.length > 0 ? targetedStackIds : stacks.map((s) => s.id)
       if (ids.length === 0) return
+
       void (async () => {
         const results = await Promise.all(
           ids.map(async (id) => {
@@ -295,14 +309,16 @@ export function OverviewPage(props: {
             }
           }),
         )
+        if (!alive) return
         setDetails((prev) => ({ ...prev, ...Object.fromEntries(results) }))
       })()
     }
     window.addEventListener('dockrev:version-inference-refresh', onVersionRefresh)
     return () => {
+      alive = false
       window.removeEventListener('dockrev:version-inference-refresh', onVersionRefresh)
     }
-  }, [stacks])
+  }, [details, stacks])
 
   const pendingInferenceStackIds = useMemo(() => {
     const ids: string[] = []
