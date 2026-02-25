@@ -272,13 +272,29 @@ export function VersionInferencePage(props: {
   const currentPage = overview?.page ?? page
   const summary = overview?.summary ?? null
   const rows = useMemo(() => sortRows(overview?.rows ?? []), [overview?.rows])
+  const gcTip = useMemo(() => {
+    const gc = overview?.gc
+    if (!gc) return 'GC 状态加载中'
+    const parts = [
+      `保留 ${gc.retentionDays ?? '-'} 天`,
+      `间隔 ${gc.intervalSeconds ?? '-'}s`,
+      `最近执行 ${formatShort(gc.lastRunAt ?? null)}`,
+      `最近删除 ${gc.lastDeleted ?? 0}`,
+    ]
+    if (gc.lastError) parts.push(`错误：${gc.lastError}`)
+    return `GC ${parts.join('；')}`
+  }, [overview?.gc])
 
   return (
     <div className="page versionInferencePage">
       <div className="card">
         <div className="sectionRow">
           <div className="title">任务与缓存总览</div>
+          <button type="button" className="versionInferenceSortHint versionInferenceGcHint" aria-label="GC 说明" data-tip={gcTip}>
+            ?
+          </button>
           <div className="chipRow" style={{ marginLeft: 'auto' }}>
+            {overview?.gc.lastError ? <Pill tone="bad">GC 异常</Pill> : null}
             <Pill tone={sseStatusTone(sseStatus)}>{sseStatusLabel(sseStatus)}</Pill>
             <Pill tone="muted">最近更新：{formatShort(lastRefreshAt)}</Pill>
           </div>
@@ -313,14 +329,6 @@ export function VersionInferencePage(props: {
             <span>stale + all_failed</span>
             <strong>{(summary?.stale ?? 0) + (summary?.allFailed ?? 0)}</strong>
           </div>
-        </div>
-
-        <div className="versionInferenceGcMeta">
-          <span>GC 保留 {overview?.gc.retentionDays ?? '-'} 天</span>
-          <span>间隔 {overview?.gc.intervalSeconds ?? '-'}s</span>
-          <span>最近执行 {formatShort(overview?.gc.lastRunAt ?? null)}</span>
-          <span>最近删除 {overview?.gc.lastDeleted ?? 0}</span>
-          {overview?.gc.lastError ? <span className="versionInferenceGcError">GC 错误：{overview.gc.lastError}</span> : null}
         </div>
       </div>
 
