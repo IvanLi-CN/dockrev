@@ -46,6 +46,135 @@ export type DockrevApiScenario =
 
 const realFetch = globalThis.fetch.bind(globalThis)
 
+type ParsedSseEvent = {
+  id: string
+  event: string
+  data: string
+}
+
+function parseSsePayload(payload: string): ParsedSseEvent[] {
+  const chunks = payload.split(/\r?\n\r?\n/)
+  const out: ParsedSseEvent[] = []
+  for (const chunk of chunks) {
+    const lines = chunk.split(/\r?\n/)
+    let id = ''
+    let event = ''
+    const dataLines: string[] = []
+    for (const line of lines) {
+      if (!line || line.startsWith(':')) continue
+      if (line.startsWith('id:')) {
+        id = line.slice(3).trim()
+        continue
+      }
+      if (line.startsWith('event:')) {
+        event = line.slice(6).trim()
+        continue
+      }
+      if (line.startsWith('data:')) {
+        dataLines.push(line.slice(5).trimStart())
+      }
+    }
+    if (!id && !event && dataLines.length === 0) continue
+    out.push({ id, event, data: dataLines.join('\n') })
+  }
+  return out
+}
+
+class MockEventSource extends EventTarget {
+  static readonly CONNECTING = 0
+  static readonly OPEN = 1
+  static readonly CLOSED = 2
+
+  readonly CONNECTING = MockEventSource.CONNECTING
+  readonly OPEN = MockEventSource.OPEN
+  readonly CLOSED = MockEventSource.CLOSED
+
+  readonly url: string
+  readonly withCredentials: boolean
+
+  readyState = MockEventSource.CONNECTING
+  onopen: ((this: EventSource, ev: Event) => unknown) | null = null
+  onmessage: ((this: EventSource, ev: MessageEvent) => unknown) | null = null
+  onerror: ((this: EventSource, ev: Event) => unknown) | null = null
+
+  private closed = false
+  private polling = false
+  private lastEventId = 0
+  private pollTimer: number | null = null
+
+  constructor(url: string | URL, eventSourceInitDict?: EventSourceInit) {
+    super()
+    this.url = String(url)
+    this.withCredentials = eventSourceInitDict?.withCredentials === true
+    this.connect()
+    this.pollTimer = window.setInterval(() => {
+      this.connect()
+    }, 4_000)
+  }
+
+  close() {
+    this.closed = true
+    this.readyState = MockEventSource.CLOSED
+    if (this.pollTimer != null) {
+      window.clearInterval(this.pollTimer)
+      this.pollTimer = null
+    }
+  }
+
+  private emitOpen() {
+    if (this.closed || this.readyState === MockEventSource.OPEN) return
+    this.readyState = MockEventSource.OPEN
+    const evt = new Event('open')
+    this.onopen?.call(this as unknown as EventSource, evt)
+    this.dispatchEvent(evt)
+  }
+
+  private emitError() {
+    if (this.closed) return
+    this.readyState = MockEventSource.CONNECTING
+    const evt = new Event('error')
+    this.onerror?.call(this as unknown as EventSource, evt)
+    this.dispatchEvent(evt)
+  }
+
+  private emitMessage(name: string, data: string, id: string) {
+    if (this.closed) return
+    const evt = new MessageEvent(name || 'message', {
+      data,
+      lastEventId: id,
+      origin: typeof window !== 'undefined' ? window.location.origin : '',
+    })
+    if (!name || name === 'message') this.onmessage?.call(this as unknown as EventSource, evt)
+    this.dispatchEvent(evt)
+  }
+
+  private async connect() {
+    if (this.closed || this.polling) return
+    this.polling = true
+    try {
+      const u = new URL(this.url, typeof window !== 'undefined' ? window.location.href : 'http://localhost')
+      if (this.lastEventId > 0) u.searchParams.set('afterId', String(this.lastEventId))
+      const resp = await globalThis.fetch(u.toString(), {
+        method: 'GET',
+        credentials: this.withCredentials ? 'include' : 'same-origin',
+        headers: { Accept: 'text/event-stream' },
+      })
+      if (!resp.ok) throw new Error(`SSE request failed: ${resp.status}`)
+      const payload = await resp.text()
+      this.emitOpen()
+      for (const evt of parseSsePayload(payload)) {
+        this.emitMessage(evt.event || 'message', evt.data, evt.id)
+        const parsedId = Number.parseInt(evt.id, 10)
+        if (Number.isFinite(parsedId) && parsedId > this.lastEventId) this.lastEventId = parsedId
+      }
+    } catch {
+      this.emitError()
+    } finally {
+      this.polling = false
+    }
+  }
+}
+
 type MockDebug = {
   lastUpdateRequest: unknown | null
   lastUpdateUrl: string | null
@@ -1568,6 +1697,9 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
   let jobSeq = 0
 
   globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug()
+  if (typeof window !== 'undefined') {
+    globalThis.EventSource = MockEventSource as unknown as typeof EventSource
+  }
 
   function findService(serviceId: string) {
     if (!state) return null
