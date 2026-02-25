@@ -74,6 +74,12 @@ pub struct VersionInferenceTaskProgress {
     pub current: u32,
     pub total: u32,
     pub percent: u32,
+    pub assigned_current: u32,
+    pub assigned_total: u32,
+    pub assigned_percent: u32,
+    pub result_current: u32,
+    pub result_total: u32,
+    pub result_percent: u32,
     pub updated_at: String,
 }
 
@@ -176,6 +182,10 @@ struct BuildProgress {
     message: String,
     current: u32,
     total: u32,
+    assigned_current: u32,
+    assigned_total: u32,
+    result_current: u32,
+    result_total: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -380,9 +390,17 @@ impl VersionInferenceWorker {
         }
     }
 
+    pub async fn worker_stats(&self) -> VersionInferenceWorkerSnapshot {
+        self.worker_snapshot().await
+    }
+
     pub async fn gc_snapshot(&self) -> VersionInferenceGcSnapshot {
         let runtime = self.runtime.lock().await;
         runtime.gc.clone()
+    }
+
+    pub async fn gc_status(&self) -> VersionInferenceGcSnapshot {
+        self.gc_snapshot().await
     }
 
     pub async fn list_tasks(&self) -> Vec<VersionInferenceTaskSnapshot> {
@@ -411,6 +429,10 @@ impl VersionInferenceWorker {
                 .then_with(|| a.host_platform.cmp(&b.host_platform))
         });
         tasks
+    }
+
+    pub async fn snapshot_tasks(&self) -> Vec<VersionInferenceTaskSnapshot> {
+        self.list_tasks().await
     }
 
     pub async fn latest_event_id(&self) -> i64 {
@@ -496,6 +518,10 @@ impl VersionInferenceWorker {
                 message: "preparing version inference".to_string(),
                 current: 0,
                 total: 0,
+                assigned_current: 0,
+                assigned_total: 0,
+                result_current: 0,
+                result_total: 0,
             },
         )
         .await;
@@ -526,6 +552,10 @@ impl VersionInferenceWorker {
                 message: "persisting snapshot".to_string(),
                 current: 1,
                 total: 1,
+                assigned_current: 1,
+                assigned_total: 1,
+                result_current: 1,
+                result_total: 1,
             },
         )
         .await;
@@ -570,7 +600,7 @@ impl VersionInferenceWorker {
 
         let delete_result = self
             .db
-            .delete_image_version_inference_snapshots_older_than(&cutoff)
+            .delete_expired_image_version_inference_snapshots(&cutoff)
             .await;
 
         let duration_ms = start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
@@ -642,17 +672,41 @@ impl VersionInferenceWorker {
         let now = now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
         let mut runtime = self.runtime.lock().await;
         let payload = if let Some(entry) = runtime.tasks.get_mut(task_key) {
-            let percent = if progress.total == 0 {
+            let result_total = progress.result_total.max(progress.total);
+            let result_current = progress
+                .result_current
+                .max(progress.current)
+                .min(result_total);
+            let result_percent = if result_total == 0 {
                 0
             } else {
-                ((progress.current.saturating_mul(100)) / progress.total).min(100)
+                ((result_current.saturating_mul(100)) / result_total).min(100)
+            };
+            let assigned_total = progress
+                .assigned_total
+                .max(result_total)
+                .max(progress.total);
+            let assigned_current = progress
+                .assigned_current
+                .max(result_current)
+                .min(assigned_total);
+            let assigned_percent = if assigned_total == 0 {
+                0
+            } else {
+                ((assigned_current.saturating_mul(100)) / assigned_total).min(100)
             };
             let snapshot = VersionInferenceTaskProgress {
                 phase: progress.phase.clone(),
                 message: progress.message.clone(),
-                current: progress.current,
-                total: progress.total,
-                percent,
+                current: result_current,
+                total: result_total,
+                percent: result_percent,
+                assigned_current,
+                assigned_total,
+                assigned_percent,
+                result_current,
+                result_total,
+                result_percent,
                 updated_at: now.clone(),
             };
             entry.progress = Some(snapshot.clone());
@@ -670,6 +724,12 @@ impl VersionInferenceWorker {
                 "current": snapshot.current,
                 "total": snapshot.total,
                 "percent": snapshot.percent,
+                "assignedCurrent": snapshot.assigned_current,
+                "assignedTotal": snapshot.assigned_total,
+                "assignedPercent": snapshot.assigned_percent,
+                "resultCurrent": snapshot.result_current,
+                "resultTotal": snapshot.result_total,
+                "resultPercent": snapshot.result_percent,
                 "updatedAt": snapshot.updated_at,
             }))
         } else {
@@ -795,15 +855,23 @@ fn send_build_progress(
     message: String,
     current: u32,
     total: u32,
+    assignment: Option<(u32, u32)>,
+    result: Option<(u32, u32)>,
 ) {
     let Some(tx) = progress_tx.as_ref() else {
         return;
     };
+    let (assigned_current, assigned_total) = assignment.unwrap_or((current, total));
+    let (result_current, result_total) = result.unwrap_or((current, total));
     let _ = tx.send(BuildProgress {
         phase: phase.to_string(),
         message,
         current,
         total,
+        assigned_current,
+        assigned_total,
+        result_current,
+        result_total,
     });
 }
 
@@ -820,6 +888,8 @@ async fn build_snapshot(
         "listing semver tags".to_string(),
         0,
         0,
+        None,
+        None,
     );
 
     let repo_tags = match registry.list_tags(&img).await {
@@ -831,6 +901,8 @@ async fn build_snapshot(
                 "list tags failed".to_string(),
                 1,
                 1,
+                None,
+                None,
             );
             return VersionInferenceSnapshot {
                 checked_at,
@@ -862,6 +934,8 @@ async fn build_snapshot(
             "no semver tags to scan".to_string(),
             1,
             1,
+            None,
+            None,
         );
         return VersionInferenceSnapshot {
             checked_at,
@@ -884,6 +958,8 @@ async fn build_snapshot(
         format!("scanning manifests (0/{semver_tags_considered})"),
         0,
         semver_tags_considered as u32,
+        Some((0, semver_tags_considered as u32)),
+        Some((0, semver_tags_considered as u32)),
     );
 
     enum ScanOutcome {
@@ -899,6 +975,7 @@ async fn build_snapshot(
     let host_platform = host_platform.to_string();
     let mut join_set: tokio::task::JoinSet<ScanOutcome> = tokio::task::JoinSet::new();
     let mut queue = considered.into_iter();
+    let mut assigned = 0usize;
 
     let spawn_one = |join_set: &mut tokio::task::JoinSet<ScanOutcome>,
                      tag: String,
@@ -932,6 +1009,7 @@ async fn build_snapshot(
             img.clone(),
             host_platform.clone(),
         );
+        assigned = assigned.saturating_add(1);
     }
 
     let mut digests: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -984,6 +1062,8 @@ async fn build_snapshot(
                 format!("scanning manifests ({processed}/{semver_tags_considered})"),
                 processed as u32,
                 semver_tags_considered as u32,
+                Some((assigned as u32, semver_tags_considered as u32)),
+                Some((processed as u32, semver_tags_considered as u32)),
             );
         }
 
@@ -997,11 +1077,13 @@ async fn build_snapshot(
             img.clone(),
             host_platform.clone(),
         );
+        assigned = assigned.saturating_add(1);
     }
 
     if processed < semver_tags_considered {
         manifests_timeout += semver_tags_considered - processed;
         processed = semver_tags_considered;
+        assigned = semver_tags_considered;
     }
 
     send_build_progress(
@@ -1010,6 +1092,8 @@ async fn build_snapshot(
         format!("scanning manifests ({processed}/{semver_tags_considered})"),
         processed as u32,
         semver_tags_considered as u32,
+        Some((assigned as u32, semver_tags_considered as u32)),
+        Some((processed as u32, semver_tags_considered as u32)),
     );
 
     for tags in digests.values_mut() {

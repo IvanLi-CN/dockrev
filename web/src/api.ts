@@ -157,7 +157,6 @@ export type TriggerVersionInferenceRefreshResponse = {
 }
 
 export type VersionInferenceOverviewStatus =
-  | 'missing'
   | 'queued'
   | 'running'
   | 'ready'
@@ -171,10 +170,16 @@ export type VersionInferenceTaskProgress = {
   current: number
   total: number
   percent: number
+  assignedCurrent?: number
+  assignedTotal?: number
+  assignedPercent?: number
+  resultCurrent?: number
+  resultTotal?: number
+  resultPercent?: number
   updatedAt: string
 }
 
-export type VersionInferenceTaskState = {
+export type VersionInferenceTask = {
   key: string
   imageRepo: string
   hostPlatform: string
@@ -186,7 +191,7 @@ export type VersionInferenceTaskState = {
   progress?: VersionInferenceTaskProgress | null
 }
 
-export type VersionInferenceOverviewRow = {
+export type VersionInferenceCacheRow = {
   key: string
   imageRepo: string
   hostPlatform: string
@@ -199,8 +204,7 @@ export type VersionInferenceOverviewRow = {
 }
 
 export type VersionInferenceOverviewSummary = {
-  total: number
-  missing: number
+  snapshotsTotal: number
   queued: number
   running: number
   ready: number
@@ -228,12 +232,16 @@ export type VersionInferenceOverviewResponse = {
   worker: VersionInferenceWorkerState
   gc: VersionInferenceGcState
   summary: VersionInferenceOverviewSummary
-  tasks: VersionInferenceTaskState[]
-  rows: VersionInferenceOverviewRow[]
+  tasks: VersionInferenceTask[]
+  rows: VersionInferenceCacheRow[]
   page: number
   perPage: number
   total: number
 }
+
+// Backward-compatible aliases for existing imports.
+export type VersionInferenceTaskState = VersionInferenceTask
+export type VersionInferenceOverviewRow = VersionInferenceCacheRow
 
 export type GetVersionInferenceOverviewInput = {
   q?: string | null

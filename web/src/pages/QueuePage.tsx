@@ -5,8 +5,7 @@ import { Button, Mono, Pill } from '../ui'
 
 type Filter = 'all' | 'running' | 'success' | 'failed' | 'rolled_back'
 type VersionInferenceSummary = {
-  total: number
-  missing: number
+  snapshotsTotal: number
   queued: number
   running: number
   ready: number
@@ -15,8 +14,7 @@ type VersionInferenceSummary = {
 }
 
 const DEFAULT_VERSION_INFERENCE_SUMMARY: VersionInferenceSummary = {
-  total: 0,
-  missing: 0,
+  snapshotsTotal: 0,
   queued: 0,
   running: 0,
   ready: 0,
@@ -141,8 +139,7 @@ function parseVersionInferenceSummary(data: unknown): VersionInferenceSummary {
   if (!isRecord(data)) return DEFAULT_VERSION_INFERENCE_SUMMARY
   const summary = isRecord(data.summary) ? data.summary : {}
   return {
-    total: safeCount(summary.total),
-    missing: safeCount(summary.missing),
+    snapshotsTotal: safeCount(summary.snapshotsTotal),
     queued: safeCount(summary.queued),
     running: safeCount(summary.running),
     ready: safeCount(summary.ready),
@@ -153,14 +150,13 @@ function parseVersionInferenceSummary(data: unknown): VersionInferenceSummary {
 
 function versionInferenceTone(summary: VersionInferenceSummary): 'ok' | 'warn' | 'bad' {
   if (summary.running > 0 || summary.queued > 0) return 'warn'
-  if (summary.missing > 0 || summary.stale > 0 || summary.allFailed > 0) return 'bad'
+  if (summary.stale > 0 || summary.allFailed > 0) return 'bad'
   return 'ok'
 }
 
 function versionInferenceLabel(summary: VersionInferenceSummary): string {
   if (summary.running > 0) return 'running'
   if (summary.queued > 0) return 'queued'
-  if (summary.missing > 0) return 'missing'
   if (summary.stale > 0) return 'stale'
   if (summary.allFailed > 0) return 'all_failed'
   return 'ready'
@@ -389,7 +385,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
             </div>
             <div className="queueMeta">
               <span>
-                missing <Mono>{versionInferenceSummary.missing}</Mono>
+                snapshots <Mono>{versionInferenceSummary.snapshotsTotal}</Mono>
               </span>
               <span>
                 queued <Mono>{versionInferenceSummary.queued}</Mono>
@@ -399,6 +395,9 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
               </span>
               <span>
                 stale <Mono>{versionInferenceSummary.stale}</Mono>
+              </span>
+              <span>
+                all_failed <Mono>{versionInferenceSummary.allFailed}</Mono>
               </span>
             </div>
             <div className="muted" style={{ marginTop: 8 }}>

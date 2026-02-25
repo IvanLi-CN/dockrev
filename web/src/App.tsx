@@ -32,7 +32,7 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
     case 'version-inference':
       return {
         title: '版本推测',
-        pageSubtitle: '镜像版本推测任务与缓存状态总览（SSE 实时 + 自动降级轮询）',
+        pageSubtitle: '镜像版本推测任务与缓存状态总览',
         topbarHint: '版本推测可观测性',
       }
     case 'deploy-check':

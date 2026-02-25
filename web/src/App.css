@@ -1495,19 +1495,6 @@ html[data-theme='light'] .modalOverlay {
   font-weight: 760;
 }
 
-.versionInferenceGcMeta {
-  margin-top: 10px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.versionInferenceGcError {
-  color: var(--color-error);
-}
-
 .versionInferenceControls {
   margin-top: 10px;
   display: flex;
@@ -1541,6 +1528,105 @@ html[data-theme='light'] .modalOverlay {
   min-height: 40px;
 }
 
+.versionInferenceListHead {
+  align-items: center;
+  gap: 8px;
+}
+
+.versionInferenceSummaryHead {
+  gap: 8px;
+  row-gap: 8px;
+}
+
+.versionInferenceSummaryTitle,
+.versionInferenceListHead .title {
+  overflow-wrap: normal;
+  word-break: keep-all;
+}
+
+.versionInferenceSummaryStatus {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+.versionInferenceSortHint {
+  margin-left: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--muted2) 34%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface) 84%, transparent);
+  color: color-mix(in srgb, var(--muted2) 80%, transparent);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  cursor: help;
+  flex-shrink: 0;
+}
+
+.versionInferenceGcHint {
+  margin-left: 0;
+  flex-shrink: 0;
+}
+
+.versionInferenceSortHint:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--color-primary) 60%, transparent);
+  outline-offset: 1px;
+}
+
+.versionInferenceSortHint::before,
+.versionInferenceSortHint::after {
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: 20;
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.versionInferenceSortHint::before {
+  content: '';
+  right: 2px;
+  top: calc(100% + 2px);
+  border-width: 6px;
+  border-style: solid;
+  border-color: transparent transparent color-mix(in srgb, var(--panel) 94%, #050b1a 6%) transparent;
+  transform: translateY(-3px);
+}
+
+.versionInferenceSortHint::after {
+  content: attr(data-tip);
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 220px;
+  max-width: min(72vw, 420px);
+  padding: 7px 9px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 78%, transparent);
+  background: color-mix(in srgb, var(--panel) 94%, #050b1a 6%);
+  color: color-mix(in srgb, var(--muted) 88%, transparent);
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.35);
+  transform: translateY(-3px);
+}
+
+.versionInferenceSortHint:hover::before,
+.versionInferenceSortHint:hover::after,
+.versionInferenceSortHint:focus-visible::before,
+.versionInferenceSortHint:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .versionInferenceItem {
   border: 1px solid rgba(229, 231, 235, 0.08);
   background: var(--dockrev-surface);
@@ -1572,6 +1658,7 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .versionInferenceProgressBar {
+  position: relative;
   width: 100%;
   height: 8px;
   border-radius: 999px;
@@ -1582,8 +1669,20 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .versionInferenceProgressFill {
+  position: absolute;
+  left: 0;
+  top: 0;
   height: 100%;
   border-radius: 999px;
+}
+
+.versionInferenceProgressFillAssigned {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--color-info) 56%, transparent), color-mix(in srgb, var(--color-info) 78%, var(--color-primary) 22%));
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-info) 30%, transparent);
+  opacity: 0.72;
+}
+
+.versionInferenceProgressFillResult {
   background: linear-gradient(
     90deg,
     var(--color-primary),
@@ -1597,12 +1696,39 @@ html[data-theme='light'] .modalOverlay {
   animation: progressIndeterminate 1.2s ease-in-out infinite;
 }
 
+.versionInferenceProgressFillAssigned.versionInferenceProgressFillIndeterminate {
+  animation-duration: 1.4s;
+  animation-delay: 0.06s;
+}
+
+.versionInferenceProgressFillResult.versionInferenceProgressFillIndeterminate {
+  animation-duration: 1.1s;
+  animation-delay: 0.14s;
+}
+
 .versionInferenceProgressMeta {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 12px;
   color: var(--muted);
   font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .versionInferenceSummaryStatus {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .versionInferenceSortHint,
+  .versionInferenceGcHint {
+    display: none;
+  }
+
+  .versionInferenceSortHint::after {
+    min-width: 0;
+    width: min(88vw, 320px);
+  }
 }
 
 /* Queue */
