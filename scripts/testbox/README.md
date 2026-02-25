@@ -17,7 +17,7 @@ These scripts are intentionally **not wired into GitHub Actions** because they d
 host environment and can be flaky due to network / registry rate limits.
 
 Important: the shared testbox runs Docker inside LXC where `CAP_SETFCAP` is not available. This
-means `docker build` / `docker compose up --build` can fail. To keep the test reliable, this
+means `docker build` / `docker compose up --build` can fail. To keep tests reliable, these
 scripts:
 
 - builds the Dockrev binary on the testbox **inside a `rust:1.91-bookworm` container** with caps
