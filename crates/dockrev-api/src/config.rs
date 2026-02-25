@@ -107,11 +107,11 @@ impl Config {
             ));
         }
 
-        enforce_fixed_concurrency_env("DOCKREV_CHECK_CONCURRENCY", FIXED_CHECK_PARALLELISM)?;
-        enforce_fixed_concurrency_env(
+        warn_legacy_fixed_concurrency_env("DOCKREV_CHECK_CONCURRENCY", FIXED_CHECK_PARALLELISM);
+        warn_legacy_fixed_concurrency_env(
             "DOCKREV_REGISTRY_PER_HOST_CONCURRENCY",
             FIXED_REGISTRY_PER_HOST_CONCURRENCY,
-        )?;
+        );
 
         let registry_per_host_concurrency = FIXED_REGISTRY_PER_HOST_CONCURRENCY;
 
@@ -177,13 +177,13 @@ fn parse_bool(input: &str) -> Option<bool> {
     }
 }
 
-fn enforce_fixed_concurrency_env(name: &str, fixed_value: usize) -> anyhow::Result<()> {
+fn warn_legacy_fixed_concurrency_env(name: &str, fixed_value: usize) {
     let Some(raw_value) = std::env::var_os(name) else {
-        return Ok(());
+        return;
     };
 
-    let value = raw_value.to_string_lossy();
-    match value.trim().parse::<usize>() {
+    let raw_value = raw_value.to_string_lossy();
+    match parse_legacy_fixed_value(&raw_value) {
         Ok(parsed) if parsed == fixed_value => {
             tracing::warn!(
                 env = name,
@@ -191,51 +191,44 @@ fn enforce_fixed_concurrency_env(name: &str, fixed_value: usize) -> anyhow::Resu
                 fixed_value,
                 "legacy concurrency env is deprecated and ignored because concurrency is fixed"
             );
-            Ok(())
         }
-        Ok(parsed) => Err(anyhow::anyhow!(
-            "{name}={parsed} is no longer supported; concurrency is fixed at {fixed_value}. Remove this env var."
-        )),
-        Err(_) => Err(anyhow::anyhow!(
-            "{name} has invalid value '{value}' and is no longer supported; concurrency is fixed at {fixed_value}. Remove this env var."
-        )),
+        Ok(parsed) => {
+            tracing::warn!(
+                env = name,
+                value = parsed,
+                fixed_value,
+                "legacy concurrency env override is ignored because concurrency is fixed; remove this env var"
+            );
+        }
+        Err(_) => {
+            tracing::warn!(
+                env = name,
+                value = raw_value.as_ref(),
+                fixed_value,
+                "legacy concurrency env has invalid value and is ignored because concurrency is fixed; remove this env var"
+            );
+        }
     }
+}
+
+fn parse_legacy_fixed_value(raw_value: &str) -> Result<usize, ()> {
+    raw_value.trim().parse::<usize>().map_err(|_| ())
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn enforce_fixed_concurrency_accepts_matching_value() {
-        assert!(check_legacy_fixed_value("DOCKREV_CHECK_CONCURRENCY", "5", 5).is_ok());
+    fn parse_legacy_fixed_value_accepts_matching_value() {
+        assert_eq!(super::parse_legacy_fixed_value("5"), Ok(5));
     }
 
     #[test]
-    fn enforce_fixed_concurrency_rejects_mismatch() {
-        let err = check_legacy_fixed_value("DOCKREV_CHECK_CONCURRENCY", "8", 5)
-            .expect_err("mismatched legacy value should fail");
-        assert!(err.to_string().contains("fixed at 5"));
+    fn parse_legacy_fixed_value_accepts_mismatch_value_for_warning_only_path() {
+        assert_eq!(super::parse_legacy_fixed_value("8"), Ok(8));
     }
 
     #[test]
-    fn enforce_fixed_concurrency_rejects_invalid_value() {
-        let err = check_legacy_fixed_value("DOCKREV_CHECK_CONCURRENCY", "abc", 5)
-            .expect_err("invalid legacy value should fail");
-        assert!(err.to_string().contains("invalid value"));
-    }
-
-    fn check_legacy_fixed_value(
-        name: &str,
-        raw_value: &str,
-        fixed_value: usize,
-    ) -> anyhow::Result<()> {
-        match raw_value.trim().parse::<usize>() {
-            Ok(parsed) if parsed == fixed_value => Ok(()),
-            Ok(parsed) => Err(anyhow::anyhow!(
-                "{name}={parsed} is no longer supported; concurrency is fixed at {fixed_value}. Remove this env var."
-            )),
-            Err(_) => Err(anyhow::anyhow!(
-                "{name} has invalid value '{raw_value}' and is no longer supported; concurrency is fixed at {fixed_value}. Remove this env var."
-            )),
-        }
+    fn parse_legacy_fixed_value_rejects_invalid_value() {
+        assert_eq!(super::parse_legacy_fixed_value("abc"), Err(()));
     }
 }

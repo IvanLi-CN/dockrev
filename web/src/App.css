@@ -310,6 +310,18 @@
   );
 }
 
+.jobProgressFillLayerPlanned.jobProgressFillIndeterminate,
+.queueProgressFillLayerPlanned.queueProgressFillIndeterminate {
+  opacity: 0.92;
+}
+
+.jobProgressFillLayerCompleted.jobProgressFillIndeterminate,
+.queueProgressFillLayerCompleted.queueProgressFillIndeterminate {
+  opacity: 0.74;
+  animation-delay: -0.55s;
+  animation-duration: 1.45s;
+}
+
 .queueProgressFillPlanned.queueProgressFillIndeterminate {
   background: linear-gradient(
     90deg,
