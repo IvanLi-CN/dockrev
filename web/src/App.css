@@ -535,6 +535,26 @@
   border-radius: 8px;
 }
 
+.versionTagsTriggerLoading {
+  color: var(--muted2);
+  text-decoration: none;
+  animation: versionTagsTriggerPulse 1.15s ease-in-out infinite;
+}
+
+.versionTagsTriggerLoading:hover {
+  text-decoration: none;
+}
+
+@keyframes versionTagsTriggerPulse {
+  0%,
+  100% {
+    opacity: 0.68;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 .versionTagsPopover {
   position: fixed;
   /* Must be above modal overlay (z-index: 1000) because popovers are portaled to document.body. */
