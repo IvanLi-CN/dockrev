@@ -290,6 +290,9 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
             const progress = getProgressMetrics(j)
             const plannedPercent = progress?.plannedPercent ?? null
             const completedPercent = progress?.completedPercent ?? null
+            const plannedAria = plannedPercent !== null ? `${plannedPercent}%` : 'running'
+            const completedAria = completedPercent !== null ? `${completedPercent}%` : 'running'
+            const isDualIndeterminate = plannedPercent === null || completedPercent === null
             return (
               <button
                 key={j.id}
@@ -323,11 +326,30 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
                   </div>
                   {j.status === 'running' ? (
                     <div className="queueProgressLayers">
-                      <div className={plannedPercent === null ? 'queueProgressBar queueProgressBarPlanned queueProgressBarIndeterminate' : 'queueProgressBar queueProgressBarPlanned'} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={plannedPercent ?? undefined} aria-valuetext={plannedPercent === null ? 'running' : `${plannedPercent}%`}>
-                        <div className={plannedPercent === null ? 'queueProgressFill queueProgressFillPlanned queueProgressFillIndeterminate' : 'queueProgressFill queueProgressFillPlanned'} style={plannedPercent === null ? undefined : { width: `${plannedPercent}%` }} />
-                      </div>
-                      <div className={completedPercent === null ? 'queueProgressBar queueProgressBarIndeterminate' : 'queueProgressBar'} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={completedPercent ?? undefined} aria-valuetext={completedPercent === null ? 'running' : `${completedPercent}%`}>
-                        <div className={completedPercent === null ? 'queueProgressFill queueProgressFillIndeterminate' : 'queueProgressFill'} style={completedPercent === null ? undefined : { width: `${completedPercent}%` }} />
+                      <div
+                        className={isDualIndeterminate ? 'queueProgressBar queueProgressBarDual queueProgressBarIndeterminate' : 'queueProgressBar queueProgressBarDual'}
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={completedPercent ?? plannedPercent ?? undefined}
+                        aria-valuetext={`安排 ${plannedAria} · 完成 ${completedAria}`}
+                      >
+                        <div
+                          className={
+                            plannedPercent === null
+                              ? 'queueProgressFill queueProgressFillPlanned queueProgressFillLayerPlanned queueProgressFillIndeterminate'
+                              : 'queueProgressFill queueProgressFillPlanned queueProgressFillLayerPlanned'
+                          }
+                          style={plannedPercent === null ? undefined : { width: `${plannedPercent}%` }}
+                        />
+                        <div
+                          className={
+                            completedPercent === null
+                              ? 'queueProgressFill queueProgressFillCompleted queueProgressFillLayerCompleted queueProgressFillIndeterminate'
+                              : 'queueProgressFill queueProgressFillCompleted queueProgressFillLayerCompleted'
+                          }
+                          style={completedPercent === null ? undefined : { width: `${completedPercent}%` }}
+                        />
                       </div>
                     </div>
                   ) : null}

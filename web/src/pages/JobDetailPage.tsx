@@ -315,6 +315,8 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     displayedPlannedPercent !== null ? `${displayedPlannedPercent}%` : isRunning ? 'running' : job?.status ?? 'finished'
   const completedProgressAriaText =
     displayedCompletedPercent !== null ? `${displayedCompletedPercent}%` : isRunning ? 'running' : job?.status ?? 'finished'
+  const dualProgressAriaText = `安排 ${plannedProgressAriaText} · 完成 ${completedProgressAriaText}`
+  const isDualIndeterminate = isPlannedIndeterminateRunning || isCompletedIndeterminateRunning
 
   return (
     <div className="page jobDetailPage">
@@ -352,20 +354,20 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
                 安排 {plannedProgressLabel} · 完成 {completedProgressLabel}
               </div>
             </div>
-            <div className="jobProgressLayerHead">
-              <span className="muted">安排进度</span>
-              <Mono>{plannedTotal > 0 ? `${plannedCurrent}/${plannedTotal}` : '-'}</Mono>
-            </div>
             <div
-              className={isPlannedIndeterminateRunning ? 'jobProgressBar jobProgressBarPlanned jobProgressBarIndeterminate' : 'jobProgressBar jobProgressBarPlanned'}
+              className={isDualIndeterminate ? 'jobProgressBar jobProgressBarDual jobProgressBarIndeterminate' : 'jobProgressBar jobProgressBarDual'}
               role="progressbar"
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-valuenow={displayedPlannedPercent ?? undefined}
-              aria-valuetext={plannedProgressAriaText}
+              aria-valuenow={displayedCompletedPercent ?? displayedPlannedPercent ?? undefined}
+              aria-valuetext={dualProgressAriaText}
             >
               <div
-                className={isPlannedIndeterminateRunning ? 'jobProgressFill jobProgressFillPlanned jobProgressFillIndeterminate' : 'jobProgressFill jobProgressFillPlanned'}
+                className={
+                  isPlannedIndeterminateRunning
+                    ? 'jobProgressFill jobProgressFillPlanned jobProgressFillLayerPlanned jobProgressFillIndeterminate'
+                    : 'jobProgressFill jobProgressFillPlanned jobProgressFillLayerPlanned'
+                }
                 style={
                   displayedPlannedPercent !== null
                     ? { width: `${displayedPlannedPercent}%` }
@@ -374,21 +376,12 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
                       : { width: '100%' }
                 }
               />
-            </div>
-            <div className="jobProgressLayerHead">
-              <span className="muted">实际完成</span>
-              <Mono>{progress.total > 0 ? `${progress.current}/${progress.total}` : '-'}</Mono>
-            </div>
-            <div
-              className={isCompletedIndeterminateRunning ? 'jobProgressBar jobProgressBarIndeterminate' : 'jobProgressBar'}
-              role="progressbar"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={displayedCompletedPercent ?? undefined}
-              aria-valuetext={completedProgressAriaText}
-            >
               <div
-                className={isCompletedIndeterminateRunning ? 'jobProgressFill jobProgressFillIndeterminate' : 'jobProgressFill'}
+                className={
+                  isCompletedIndeterminateRunning
+                    ? 'jobProgressFill jobProgressFillCompleted jobProgressFillLayerCompleted jobProgressFillIndeterminate'
+                    : 'jobProgressFill jobProgressFillCompleted jobProgressFillLayerCompleted'
+                }
                 style={
                   displayedCompletedPercent !== null
                     ? { width: `${displayedCompletedPercent}%` }
@@ -397,6 +390,14 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
                       : { width: '100%' }
                 }
               />
+            </div>
+            <div className="jobProgressCounters">
+              <span>
+                安排 <Mono>{plannedTotal > 0 ? `${plannedCurrent}/${plannedTotal}` : '-'}</Mono>
+              </span>
+              <span>
+                完成 <Mono>{progress.total > 0 ? `${progress.current}/${progress.total}` : '-'}</Mono>
+              </span>
             </div>
             <div className="jobProgressMeta">
               <span>
@@ -419,19 +420,17 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
               <div className="title">进度</div>
               <div className="mono">安排 running · 完成 running</div>
             </div>
-            <div className="jobProgressLayerHead">
-              <span className="muted">安排进度</span>
-              <Mono>-</Mono>
+            <div className="jobProgressBar jobProgressBarDual jobProgressBarIndeterminate" role="progressbar" aria-valuetext="安排 running · 完成 running">
+              <div className="jobProgressFill jobProgressFillPlanned jobProgressFillLayerPlanned jobProgressFillIndeterminate" />
+              <div className="jobProgressFill jobProgressFillCompleted jobProgressFillLayerCompleted jobProgressFillIndeterminate" />
             </div>
-            <div className="jobProgressBar jobProgressBarPlanned jobProgressBarIndeterminate" role="progressbar" aria-valuetext="running">
-              <div className="jobProgressFill jobProgressFillPlanned jobProgressFillIndeterminate" />
-            </div>
-            <div className="jobProgressLayerHead">
-              <span className="muted">实际完成</span>
-              <Mono>-</Mono>
-            </div>
-            <div className="jobProgressBar jobProgressBarIndeterminate" role="progressbar" aria-valuetext="running">
-              <div className="jobProgressFill jobProgressFillIndeterminate" />
+            <div className="jobProgressCounters">
+              <span>
+                安排 <Mono>-</Mono>
+              </span>
+              <span>
+                完成 <Mono>-</Mono>
+              </span>
             </div>
             <div className="jobProgressMeta">
               <span>运行中，等待进度数据…</span>
