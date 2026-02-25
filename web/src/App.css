@@ -263,6 +263,11 @@
 
 .jobProgressFillLayerCompleted {
   z-index: 2;
+  top: 2px;
+  height: calc(100% - 4px);
+  box-shadow:
+    0 0 10px color-mix(in srgb, var(--color-primary) 40%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--color-base-100) 28%, transparent);
 }
 
 .jobProgressFillPlanned {
@@ -1539,6 +1544,11 @@ html[data-theme='light'] .modalOverlay {
 
 .queueProgressFillLayerCompleted {
   z-index: 2;
+  top: 1px;
+  height: calc(100% - 2px);
+  box-shadow:
+    0 0 8px color-mix(in srgb, var(--color-primary) 32%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--color-base-100) 24%, transparent);
 }
 
 .queueProgressFillPlanned {
