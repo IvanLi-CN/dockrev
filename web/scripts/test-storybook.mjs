@@ -783,10 +783,10 @@ async function runInteractive({ baseUrl, browser }) {
 
       await page.waitForFunction(() => {
         const triggerEl = document.querySelector('.versionLine .versionTagsTrigger')
-        return triggerEl?.textContent?.trim() === 'v5.2.1'
+        return triggerEl?.textContent?.trim() === 'v0.8.8-arm64'
       }, null, { timeout: 10_000 })
 
-      const popover = page.locator(".currentVersionPopover[data-state='open']")
+      const popover = page.locator(".versionTagsPopover[data-state='open']")
       await popover.waitFor({ timeout: 10_000 })
       await popover.getByText('快照时间').waitFor({ timeout: 10_000 })
 

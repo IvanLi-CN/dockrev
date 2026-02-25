@@ -146,6 +146,8 @@ export function CurrentVersionPopover(props: {
   const missingSnapshot = digestState.key === digestKey ? digestState.missingSnapshot : false
   const loadError = digestState.key === digestKey ? digestState.error : null
   const [snapshotPhase, setSnapshotPhase] = useState<SnapshotFetchPhase>('idle')
+  const snapshotPhaseRef = useRef<SnapshotFetchPhase>(snapshotPhase)
+  snapshotPhaseRef.current = snapshotPhase
   const [refreshing, setRefreshing] = useState(false)
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null)
   const [refreshError, setRefreshError] = useState<string | null>(null)
@@ -273,7 +275,7 @@ export function CurrentVersionPopover(props: {
   }, [digestKey, props.serviceId, refreshing])
 
   useEffect(() => {
-    const shouldPollSnapshot = open || snapshotPhase === 'loading'
+    const shouldPollSnapshot = open || snapshotPhaseRef.current === 'loading'
     if (!shouldPollSnapshot) return
     if (!digestNorm) return
     // Only fetch when there's no snapshot data loaded yet. Retries should be explicit
@@ -352,7 +354,7 @@ export function CurrentVersionPopover(props: {
         fetchTimer.current = null
       }
     }
-  }, [digestKey, digestNorm, digestTags, open, pinned, props.serviceId, snapshotPhase])
+  }, [digestKey, digestNorm, digestTags, open, pinned, props.serviceId])
 
   useEffect(() => {
     setSnapshotPhase('idle')

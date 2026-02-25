@@ -86,6 +86,8 @@ export function VersionTagsPopover(props: {
   const missingSnapshot = digestState.key === digestKey ? digestState.missingSnapshot : false
   const loadError = digestState.key === digestKey ? digestState.error : null
   const [snapshotPhase, setSnapshotPhase] = useState<SnapshotFetchPhase>('idle')
+  const snapshotPhaseRef = useRef<SnapshotFetchPhase>(snapshotPhase)
+  snapshotPhaseRef.current = snapshotPhase
   const [refreshing, setRefreshing] = useState(false)
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null)
   const [refreshError, setRefreshError] = useState<string | null>(null)
@@ -203,7 +205,7 @@ export function VersionTagsPopover(props: {
   }, [digestKey, refreshing, serviceId])
 
   useEffect(() => {
-    const shouldPollSnapshot = open || snapshotPhase === 'loading'
+    const shouldPollSnapshot = open || snapshotPhaseRef.current === 'loading'
     if (!shouldPollSnapshot) return
     if (!candidateTagTrim) return
 
@@ -285,7 +287,7 @@ export function VersionTagsPopover(props: {
         fetchTimer.current = null
       }
     }
-  }, [candidateDigestNorm, candidateTagTrim, digestKey, digestTags, open, pinned, serviceId, snapshotPhase])
+  }, [candidateDigestNorm, candidateTagTrim, digestKey, digestTags, open, pinned, serviceId])
 
   useEffect(() => {
     setSnapshotPhase('idle')
