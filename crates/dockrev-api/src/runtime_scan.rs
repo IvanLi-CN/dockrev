@@ -46,6 +46,9 @@ fn make_job_progress(
         current,
         total,
         percent: progress_percent(current, total),
+        planned_current: Some(current),
+        planned_total: Some(total),
+        planned_percent: Some(progress_percent(current, total)),
         current_target,
         updated_at,
     }
@@ -75,6 +78,9 @@ async fn persist_job_progress(
         "current": progress.current,
         "total": progress.total,
         "percent": progress.percent,
+        "plannedCurrent": progress.planned_current,
+        "plannedTotal": progress.planned_total,
+        "plannedPercent": progress.planned_percent,
         "currentTarget": progress.current_target,
         "updatedAt": progress.updated_at,
     });

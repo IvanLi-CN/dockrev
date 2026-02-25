@@ -610,6 +610,8 @@ async fn restore_discovery_project(
 }
 
 const CHECK_PROGRESS_LOG_INTERVAL: Duration = Duration::from_millis(500);
+const CHECK_PARALLELISM: usize = crate::config::FIXED_CHECK_PARALLELISM;
+const CHECK_SPAWN_STAGGER: Duration = Duration::from_secs(1);
 const UPDATE_STACK_BASE_PROGRESS: f64 = 0.15;
 const UPDATE_STACK_APPLY_SPAN: f64 = 0.80;
 
@@ -648,15 +650,67 @@ fn make_job_progress_with_percent(
     updated_at: String,
     percent: u32,
 ) -> JobProgress {
+    make_job_progress_with_percent_and_plan(
+        phase,
+        message,
+        current,
+        total,
+        current_target,
+        updated_at,
+        percent,
+        current,
+        total,
+        percent,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn make_job_progress_with_percent_and_plan(
+    phase: &str,
+    message: String,
+    current: u32,
+    total: u32,
+    current_target: Option<String>,
+    updated_at: String,
+    percent: u32,
+    planned_current: u32,
+    planned_total: u32,
+    planned_percent: u32,
+) -> JobProgress {
     JobProgress {
         phase: phase.to_string(),
         message,
         current,
         total,
         percent: percent.min(100),
+        planned_current: Some(planned_current),
+        planned_total: Some(planned_total),
+        planned_percent: Some(planned_percent.min(100)),
         current_target,
         updated_at,
     }
+}
+
+fn make_check_job_progress(
+    message: String,
+    completed: u32,
+    planned: u32,
+    total: u32,
+    current_target: Option<String>,
+    updated_at: String,
+) -> JobProgress {
+    make_job_progress_with_percent_and_plan(
+        "scanning",
+        message,
+        completed,
+        total,
+        current_target,
+        updated_at,
+        progress_percent(completed, total),
+        planned,
+        total,
+        progress_percent(planned, total),
+    )
 }
 
 fn update_progress_percent(processed_stacks: u32, total_stacks: u32, stack_fraction: f64) -> u32 {
@@ -710,6 +764,9 @@ async fn persist_job_progress(
         "current": progress.current,
         "total": progress.total,
         "percent": progress.percent,
+        "plannedCurrent": progress.planned_current,
+        "plannedTotal": progress.planned_total,
+        "plannedPercent": progress.planned_percent,
         "currentTarget": progress.current_target,
         "updatedAt": progress.updated_at,
     });
@@ -737,6 +794,7 @@ async fn handle_check_worker_result(
     host_platform: &str,
     joined: Result<CheckWorkerResult, tokio::task::JoinError>,
     total_services: u32,
+    planned_services: u32,
     services_checked: &mut u32,
     services_with_candidate: &mut u32,
     latest_target: &mut Option<String>,
@@ -783,10 +841,10 @@ async fn handle_check_worker_result(
     if should_emit {
         *last_progress_logged_at = Some(now_instant);
         let updated_at = now_rfc3339().unwrap_or_else(|_| now.to_string());
-        *latest_progress = make_job_progress(
-            "scanning",
+        *latest_progress = make_check_job_progress(
             format!("checking services ({}/{total_services})", *services_checked),
             *services_checked,
+            planned_services,
             total_services,
             (*latest_target).clone(),
             updated_at.clone(),
@@ -1095,7 +1153,7 @@ async fn run_check_for_job(
         }
     };
 
-    let mut units: Vec<CheckUnit> = Vec::new();
+    let mut units: std::collections::VecDeque<CheckUnit> = std::collections::VecDeque::new();
 
     for stack_id in &stack_ids {
         let compose_project = state
@@ -1111,7 +1169,7 @@ async fn run_check_for_job(
             .map_err(map_internal)?;
 
         for svc in services {
-            units.push(CheckUnit {
+            units.push_back(CheckUnit {
                 stack_id: stack_id.clone(),
                 compose_project: compose_project.clone(),
                 service: svc,
@@ -1135,14 +1193,107 @@ async fn run_check_for_job(
 
     let mut join_set: JoinSet<CheckWorkerResult> = JoinSet::new();
 
+    let mut planned_services = 0u32;
     let mut services_checked = 0u32;
     let mut services_with_candidate = 0u32;
     let mut last_progress_logged_at: Option<std::time::Instant> = None;
     let mut latest_target: Option<String> = None;
+    let mut next_spawn_not_before: Option<std::time::Instant> = None;
     let manifest_digest_cache = crate::service_check::new_manifest_digest_cache();
     let repo_tags_cache = crate::service_check::new_repo_tags_cache();
 
-    for unit in units {
+    while services_checked < total_services {
+        // Drain any ready workers first so completed progress stays responsive.
+        while let Some(joined) = join_set.try_join_next() {
+            handle_check_worker_result(
+                state,
+                job_id,
+                now,
+                host_platform,
+                joined,
+                total_services,
+                planned_services,
+                &mut services_checked,
+                &mut services_with_candidate,
+                &mut latest_target,
+                &mut last_progress_logged_at,
+                &mut latest_progress,
+            )
+            .await?;
+        }
+
+        if join_set.len() >= CHECK_PARALLELISM {
+            if let Some(joined) = join_set.join_next().await {
+                handle_check_worker_result(
+                    state,
+                    job_id,
+                    now,
+                    host_platform,
+                    joined,
+                    total_services,
+                    planned_services,
+                    &mut services_checked,
+                    &mut services_with_candidate,
+                    &mut latest_target,
+                    &mut last_progress_logged_at,
+                    &mut latest_progress,
+                )
+                .await?;
+            }
+            continue;
+        }
+
+        let Some(unit) = units.pop_front() else {
+            if let Some(joined) = join_set.join_next().await {
+                handle_check_worker_result(
+                    state,
+                    job_id,
+                    now,
+                    host_platform,
+                    joined,
+                    total_services,
+                    planned_services,
+                    &mut services_checked,
+                    &mut services_with_candidate,
+                    &mut latest_target,
+                    &mut last_progress_logged_at,
+                    &mut latest_progress,
+                )
+                .await?;
+            }
+            continue;
+        };
+
+        if let Some(not_before) = next_spawn_not_before
+            && let Some(wait) = not_before.checked_duration_since(std::time::Instant::now())
+        {
+            if join_set.is_empty() {
+                tokio::time::sleep(wait).await;
+            } else {
+                tokio::select! {
+                    _ = tokio::time::sleep(wait) => {}
+                    Some(joined) = join_set.join_next() => {
+                        handle_check_worker_result(
+                            state,
+                            job_id,
+                            now,
+                            host_platform,
+                            joined,
+                            total_services,
+                            planned_services,
+                            &mut services_checked,
+                            &mut services_with_candidate,
+                            &mut latest_target,
+                            &mut last_progress_logged_at,
+                            &mut latest_progress,
+                        ).await?;
+                        units.push_front(unit);
+                        continue;
+                    }
+                }
+            }
+        }
+
         let spawn_state = state.clone();
         let spawn_job_id = job_id.to_string();
         let spawn_host_platform = host_platform.to_string();
@@ -1188,41 +1339,21 @@ async fn run_check_for_job(
                 outcome,
             }
         });
-        if join_set.len() >= state.config.check_concurrency
-            && let Some(joined) = join_set.join_next().await
-        {
-            handle_check_worker_result(
-                state,
-                job_id,
-                now,
-                host_platform,
-                joined,
-                total_services,
-                &mut services_checked,
-                &mut services_with_candidate,
-                &mut latest_target,
-                &mut last_progress_logged_at,
-                &mut latest_progress,
-            )
-            .await?;
-        }
-    }
 
-    while let Some(joined) = join_set.join_next().await {
-        handle_check_worker_result(
-            state,
-            job_id,
-            now,
-            host_platform,
-            joined,
+        planned_services = planned_services.saturating_add(1);
+        next_spawn_not_before = Some(std::time::Instant::now() + CHECK_SPAWN_STAGGER);
+        let updated_at = now_rfc3339().unwrap_or_else(|_| now.to_string());
+        latest_progress = make_check_job_progress(
+            format!("scheduled checks ({planned_services}/{total_services})"),
+            services_checked,
+            planned_services,
             total_services,
-            &mut services_checked,
-            &mut services_with_candidate,
-            &mut latest_target,
-            &mut last_progress_logged_at,
-            &mut latest_progress,
-        )
-        .await?;
+            latest_target.clone(),
+            updated_at,
+        );
+        if let Err(e) = persist_job_progress(state, job_id, &latest_progress).await {
+            tracing::warn!(job_id = %job_id, error = %e, "failed to persist check scheduling progress");
+        }
     }
 
     for stack_id in &stack_ids {
@@ -1234,13 +1365,17 @@ async fn run_check_for_job(
     }
 
     let finished_ts = now_rfc3339().unwrap_or_else(|_| now.to_string());
-    latest_progress = make_job_progress(
+    latest_progress = make_job_progress_with_percent_and_plan(
         "done",
         "check finished".to_string(),
         services_checked,
         total_services,
         latest_target,
         finished_ts.clone(),
+        progress_percent(services_checked, total_services),
+        planned_services,
+        total_services,
+        progress_percent(planned_services, total_services),
     );
     if let Err(e) = persist_job_progress(state, job_id, &latest_progress).await {
         tracing::warn!(job_id = %job_id, error = %e, "failed to persist final check progress");

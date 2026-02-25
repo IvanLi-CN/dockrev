@@ -229,19 +229,57 @@
 }
 
 .jobProgressBar {
-  height: 10px;
+  margin-top: 8px;
+  height: 12px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--panel2) 82%, var(--color-base-300) 18%);
+  background: color-mix(in srgb, var(--panel2) 76%, var(--color-base-300) 24%);
   border: 1px solid var(--borderColor);
   overflow: hidden;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
 }
 
+.jobProgressBarDual {
+  position: relative;
+}
+
 .jobProgressFill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 58%, var(--color-success) 42%));
-  box-shadow: 0 0 10px color-mix(in srgb, var(--color-primary) 40%, transparent);
+}
+
+.jobProgressFillCompleted {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-primary) 92%, #bff8ff 8%),
+    color-mix(in srgb, var(--color-primary) 72%, var(--color-success) 28%)
+  );
+  box-shadow:
+    inset -2px 0 0 color-mix(in srgb, white 72%, transparent),
+    0 0 10px color-mix(in srgb, var(--color-primary) 42%, transparent);
+}
+
+.jobProgressFillLayerPlanned {
+  z-index: 1;
+  opacity: 1;
+}
+
+.jobProgressFillLayerCompleted {
+  z-index: 2;
+  top: 0;
+  height: 100%;
+}
+
+.jobProgressFillPlanned {
+  background: repeating-linear-gradient(
+    125deg,
+    color-mix(in srgb, var(--color-warning) 88%, #fff2cf 12%) 0 9px,
+    color-mix(in srgb, var(--color-warning) 66%, #b45309 34%) 9px 18px
+  );
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-warning) 36%, transparent);
 }
 
 .jobProgressBarIndeterminate,
@@ -262,6 +300,38 @@
   animation: progressIndeterminate 1.2s ease-in-out infinite;
 }
 
+.jobProgressFillPlanned.jobProgressFillIndeterminate {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--color-warning) 88%, white 12%) 30%,
+    color-mix(in srgb, var(--color-warning) 58%, var(--color-success) 42%) 65%,
+    transparent 100%
+  );
+}
+
+.jobProgressFillLayerPlanned.jobProgressFillIndeterminate,
+.queueProgressFillLayerPlanned.queueProgressFillIndeterminate {
+  opacity: 0.92;
+}
+
+.jobProgressFillLayerCompleted.jobProgressFillIndeterminate,
+.queueProgressFillLayerCompleted.queueProgressFillIndeterminate {
+  opacity: 0.74;
+  animation-delay: -0.55s;
+  animation-duration: 1.45s;
+}
+
+.queueProgressFillPlanned.queueProgressFillIndeterminate {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--color-warning) 88%, white 12%) 30%,
+    color-mix(in srgb, var(--color-warning) 58%, var(--color-success) 42%) 65%,
+    transparent 100%
+  );
+}
+
 .jobProgressMeta {
   margin-top: 8px;
   display: flex;
@@ -269,6 +339,16 @@
   gap: 8px 14px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.jobProgressCounters {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--muted2);
+  font-size: 12px;
+  flex-wrap: wrap;
 }
 
 .standaloneShell {
@@ -1440,21 +1520,62 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .queueProgressBar {
-  margin-top: 8px;
+  margin-top: 6px;
   width: 100%;
-  height: 8px;
+  height: 12px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--panel2) 80%, var(--color-base-300) 20%);
+  background: color-mix(in srgb, var(--panel2) 76%, var(--color-base-300) 24%);
   border: 1px solid var(--borderColor);
   overflow: hidden;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
 }
 
+.queueProgressBarDual {
+  position: relative;
+}
+
 .queueProgressFill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 56%, var(--color-success) 44%));
-  box-shadow: 0 0 10px color-mix(in srgb, var(--color-primary) 36%, transparent);
+}
+
+.queueProgressFillCompleted {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-primary) 92%, #bff8ff 8%),
+    color-mix(in srgb, var(--color-primary) 72%, var(--color-success) 28%)
+  );
+  box-shadow:
+    inset -2px 0 0 color-mix(in srgb, white 72%, transparent),
+    0 0 10px color-mix(in srgb, var(--color-primary) 36%, transparent);
+}
+
+.queueProgressLayers {
+  margin-top: 8px;
+}
+
+.queueProgressFillLayerPlanned {
+  z-index: 1;
+  opacity: 1;
+}
+
+.queueProgressFillLayerCompleted {
+  z-index: 2;
+  top: 0;
+  height: 100%;
+}
+
+.queueProgressFillPlanned {
+  background: repeating-linear-gradient(
+    125deg,
+    color-mix(in srgb, var(--color-warning) 88%, #fff2cf 12%) 0 9px,
+    color-mix(in srgb, var(--color-warning) 66%, #b45309 34%) 9px 18px
+  );
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-warning) 32%, transparent);
 }
 
 @keyframes progressIndeterminate {

@@ -427,6 +427,147 @@ async function runInteractive({ baseUrl, browser }) {
     }
   }
 
+  // 3b) Queue dual progress: split planned/completed must render as two layers on one bar.
+  {
+    const page = await openStory('pages-queuepage--default')
+    try {
+      const bar = page.locator('.queueProgressBarDual').first()
+      await bar.waitFor({ timeout: 10_000 })
+
+      const ariaValueText = await bar.getAttribute('aria-valuetext')
+      if (!ariaValueText?.includes('安排 80%') || !ariaValueText.includes('完成 40%')) {
+        throw new Error(`Unexpected queue dual-progress aria text: ${String(ariaValueText)}`)
+      }
+
+      const info = await bar.evaluate((el) => {
+        const fills = Array.from(el.querySelectorAll('.queueProgressFill'))
+        const planned = fills[0]
+        const completed = fills[1]
+        return {
+          fillCount: fills.length,
+          plannedWidth: planned ? planned.style.width : null,
+          completedWidth: completed ? completed.style.width : null,
+        }
+      })
+
+      if (info.fillCount < 2) throw new Error(`Expected at least 2 queue progress fill layers, got ${info.fillCount}`)
+      if (info.plannedWidth === info.completedWidth) {
+        throw new Error(
+          `Expected queue planned/completed widths to differ for split progress, got planned=${String(info.plannedWidth)}, completed=${String(info.completedWidth)}`,
+        )
+      }
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
+  // 3c) Queue fallback: legacy payload without planned* must fallback to planned=completed.
+  {
+    const page = await openStory('pages-queuepage--legacy-progress-fallback')
+    try {
+      const bar = page.locator('.queueProgressBarDual').first()
+      await bar.waitFor({ timeout: 10_000 })
+
+      const ariaValueText = await bar.getAttribute('aria-valuetext')
+      if (!ariaValueText?.includes('安排 40%') || !ariaValueText.includes('完成 40%')) {
+        throw new Error(`Unexpected queue legacy fallback aria text: ${String(ariaValueText)}`)
+      }
+
+      const info = await bar.evaluate((el) => {
+        const fills = Array.from(el.querySelectorAll('.queueProgressFill'))
+        const planned = fills[0]
+        const completed = fills[1]
+        return {
+          fillCount: fills.length,
+          plannedWidth: planned ? planned.style.width : null,
+          completedWidth: completed ? completed.style.width : null,
+        }
+      })
+
+      if (info.fillCount < 2) throw new Error(`Expected at least 2 queue progress fill layers, got ${info.fillCount}`)
+      if (info.plannedWidth !== '40%' || info.completedWidth !== '40%') {
+        throw new Error(
+          `Expected queue legacy fallback widths to match 40%, got planned=${String(info.plannedWidth)}, completed=${String(info.completedWidth)}`,
+        )
+      }
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
+  // 3d) Job detail dual progress: planned/completed split must be visible and accessible.
+  {
+    const page = await openStory('pages-jobdetailpage--running-dual-progress')
+    try {
+      const bar = page.locator('.jobProgressBarDual').first()
+      await bar.waitFor({ timeout: 10_000 })
+
+      const ariaValueText = await bar.getAttribute('aria-valuetext')
+      if (!ariaValueText?.includes('安排 90%') || !ariaValueText.includes('完成 70%')) {
+        throw new Error(`Unexpected job detail dual-progress aria text: ${String(ariaValueText)}`)
+      }
+
+      const info = await bar.evaluate((el) => {
+        const fills = Array.from(el.querySelectorAll('.jobProgressFill'))
+        const planned = fills[0]
+        const completed = fills[1]
+        return {
+          fillCount: fills.length,
+          plannedWidth: planned ? planned.style.width : null,
+          completedWidth: completed ? completed.style.width : null,
+        }
+      })
+
+      if (info.fillCount < 2) throw new Error(`Expected at least 2 job detail progress fill layers, got ${info.fillCount}`)
+      if (info.plannedWidth !== '90%' || info.completedWidth !== '70%') {
+        throw new Error(
+          `Expected job detail split widths planned=90% completed=70%, got planned=${String(info.plannedWidth)}, completed=${String(info.completedWidth)}`,
+        )
+      }
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
+  // 3e) Job detail fallback: legacy payload without planned* must fallback to planned=completed.
+  {
+    const page = await openStory('pages-jobdetailpage--legacy-progress-fallback')
+    try {
+      const bar = page.locator('.jobProgressBarDual').first()
+      await bar.waitFor({ timeout: 10_000 })
+
+      const ariaValueText = await bar.getAttribute('aria-valuetext')
+      if (!ariaValueText?.includes('安排 40%') || !ariaValueText.includes('完成 40%')) {
+        throw new Error(`Unexpected job detail legacy fallback aria text: ${String(ariaValueText)}`)
+      }
+
+      const info = await bar.evaluate((el) => {
+        const fills = Array.from(el.querySelectorAll('.jobProgressFill'))
+        const planned = fills[0]
+        const completed = fills[1]
+        return {
+          fillCount: fills.length,
+          plannedWidth: planned ? planned.style.width : null,
+          completedWidth: completed ? completed.style.width : null,
+        }
+      })
+
+      if (info.fillCount < 2) throw new Error(`Expected at least 2 job detail progress fill layers, got ${info.fillCount}`)
+      if (info.plannedWidth !== '40%' || info.completedWidth !== '40%') {
+        throw new Error(
+          `Expected job detail legacy fallback widths to match 40%, got planned=${String(info.plannedWidth)}, completed=${String(info.completedWidth)}`,
+        )
+      }
+
+      const counters = await page.locator('.jobProgressCounters').innerText()
+      if (!counters.includes('安排 2/5') || !counters.includes('完成 2/5')) {
+        throw new Error(`Unexpected job detail legacy fallback counters: ${counters}`)
+      }
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
   // 4) Update confirm modal: version popover must be above the modal overlay (not occluded).
   {
     const page = await openStory('pages-servicespage--dashboard-demo')

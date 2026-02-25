@@ -178,7 +178,8 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.6
-          token: ''
+          # Avoid GitHub API rate limits when setup-bun resolves tags/releases.
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@v1

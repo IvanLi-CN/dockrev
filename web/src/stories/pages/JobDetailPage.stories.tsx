@@ -27,3 +27,35 @@ export const LongLogs: Story = {
     )
   },
 }
+
+export const RunningDualProgress: Story = {
+  parameters: { dockrevApiScenario: 'queue-long-logs' },
+  render: () => {
+    return (
+      <PageHarness
+        route={{ name: 'job', jobId: 'job-short' }}
+        title="任务详情"
+        topbarHint="更新队列"
+        pageSubtitle="运行中：安排进度与完成进度同时显示"
+      >
+        {({ onTopActions }) => <JobDetailPage jobId="job-short" onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}
+
+export const LegacyProgressFallback: Story = {
+  parameters: { dockrevApiScenario: 'queue-legacy-progress' },
+  render: () => {
+    return (
+      <PageHarness
+        route={{ name: 'job', jobId: 'job-legacy-running' }}
+        title="任务详情"
+        topbarHint="更新队列"
+        pageSubtitle="兼容场景：旧任务缺失 planned* 字段时，UI 自动回退 planned=completed"
+      >
+        {({ onTopActions }) => <JobDetailPage jobId="job-legacy-running" onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}

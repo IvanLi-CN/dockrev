@@ -31,6 +31,7 @@ export type DockrevApiScenario =
   | 'version-tags-popover-snapshot-missing'
   | 'multi-stack-mixed'
   | 'queue-mixed'
+  | 'queue-legacy-progress'
   | 'queue-long-logs'
   | 'settings-configured'
   | 'no-candidates'
@@ -599,6 +600,9 @@ function buildQueueMixed(): Fixture {
         current: 2,
         total: 5,
         percent: 40,
+        plannedCurrent: 4,
+        plannedTotal: 5,
+        plannedPercent: 80,
         currentTarget: 'worker',
         updatedAt: nowIso(-2_000),
       },
@@ -680,6 +684,9 @@ function buildQueueLongLogs(): Fixture {
       current: 7,
       total: 10,
       percent: 70,
+      plannedCurrent: 9,
+      plannedTotal: 10,
+      plannedPercent: 90,
       currentTarget: 'api',
       updatedAt: nowIso(-1_500),
     },
@@ -757,6 +764,70 @@ function buildQueueLongLogs(): Fixture {
         { ts: nowIso(-10_000), level: 'info', msg: 'check finished' },
       ],
       logsLastId: 105,
+    } satisfies JobDetail,
+  }
+
+  return f
+}
+
+function buildQueueLegacyProgress(): Fixture {
+  const f = buildDashboardDemo()
+
+  const legacyJob: JobListItem = {
+    id: 'job-legacy-running',
+    type: 'check',
+    scope: 'service',
+    stackId: 'stack-prod',
+    serviceId: 'svc-prod-api',
+    status: 'running',
+    createdBy: 'ivan',
+    reason: 'ui',
+    createdAt: nowIso(-70_000),
+    startedAt: nowIso(-45_000),
+    finishedAt: null,
+    allowArchMismatch: false,
+    backupMode: 'inherit',
+    summary: {},
+    progress: {
+      phase: 'checking',
+      message: 'legacy progress payload',
+      current: 2,
+      total: 5,
+      percent: 40,
+      currentTarget: 'api',
+      updatedAt: nowIso(-1_500),
+    },
+  }
+
+  const completedJob: JobListItem = {
+    id: 'job-legacy-done',
+    type: 'check',
+    scope: 'service',
+    stackId: 'stack-prod',
+    serviceId: 'svc-prod-worker',
+    status: 'success',
+    createdBy: 'ivan',
+    reason: 'ui',
+    createdAt: nowIso(-140_000),
+    startedAt: nowIso(-130_000),
+    finishedAt: nowIso(-90_000),
+    allowArchMismatch: false,
+    backupMode: 'inherit',
+    summary: {},
+    progress: null,
+  }
+
+  f.jobs = [legacyJob, completedJob]
+  f.jobById = {
+    [legacyJob.id]: {
+      ...legacyJob,
+      logs: [{ ts: nowIso(-1_500), level: 'info', msg: 'legacy payload received' }],
+      logsLastId: 1,
+    } satisfies JobDetail,
+    [completedJob.id]: {
+      ...completedJob,
+      logs: [{ ts: nowIso(-91_000), level: 'info', msg: 'done' }],
+      logsLastId: 1,
     } satisfies JobDetail,
   }
 
@@ -880,6 +951,7 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'resolved-tag-demo') return buildResolvedTagDemo()
   if (scenario === 'version-tags-popover-demo' || scenario === 'version-tags-popover-snapshot-missing') return buildVersionTagsPopoverDemo()
   if (scenario === 'queue-mixed') return buildQueueMixed()
+  if (scenario === 'queue-legacy-progress') return buildQueueLegacyProgress()
   if (scenario === 'queue-long-logs') return buildQueueLongLogs()
   if (scenario === 'settings-configured') return buildSettingsConfigured()
   if (scenario === 'multi-stack-mixed') return buildMultiStackMixed()
