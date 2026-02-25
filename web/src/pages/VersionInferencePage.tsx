@@ -395,14 +395,15 @@ export function VersionInferencePage(props: {
       <div className="card">
         <div className="sectionRow versionInferenceListHead">
           <div className="title">统一状态列表（进行中 + 缓存）</div>
-          <div className="versionInferenceSortTip">
-            排序提示：执行中 &gt; 排队中 &gt; 已过期 &gt; 全部失败 &gt; 已就绪（同状态按更新时间倒序）
-          </div>
+          <button
+            type="button"
+            className="versionInferenceSortHint"
+            aria-label="排序说明"
+            data-tip="执行中 > 排队中 > 已过期 > 全部失败 > 已就绪（同状态按更新时间倒序）"
+          >
+            ?
+          </button>
         </div>
-        <details className="versionInferenceSortTipCompact">
-          <summary>排序说明</summary>
-          <div>执行中 &gt; 排队中 &gt; 已过期 &gt; 全部失败 &gt; 已就绪（同状态按更新时间倒序）</div>
-        </details>
         <div className="versionInferenceList">
           {loading && !overview ? <div className="muted">正在加载…</div> : null}
           {!loading && overview && rows.length === 0 ? <div className="muted">当前筛选条件下没有数据</div> : null}
