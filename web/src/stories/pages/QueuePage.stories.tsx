@@ -34,6 +34,22 @@ export const DashboardDemo: Story = {
   },
 }
 
+export const LegacyProgressFallback: Story = {
+  parameters: { dockrevApiScenario: 'queue-legacy-progress' },
+  render: () => {
+    return (
+      <PageHarness
+        route={{ name: 'queue' }}
+        title="任务队列"
+        topbarHint="任务队列"
+        pageSubtitle="兼容场景：旧任务仅有 completed 进度字段，UI 自动回退 planned=completed"
+      >
+        {({ onTopActions }) => <QueuePage onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}
+
 export const Empty: Story = {
   parameters: { dockrevApiScenario: 'empty' },
   render: () => {

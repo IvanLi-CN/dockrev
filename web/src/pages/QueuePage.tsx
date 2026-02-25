@@ -58,32 +58,64 @@ function formatRunningDuration(startedAt?: string | null): string | null {
 }
 
 function formatProgressLabel(job: JobListItem): string | null {
-  const p = job.progress
-  if (!p) return null
-  const current = Number.isFinite(p.current) ? Math.max(0, p.current) : 0
-  const total = Number.isFinite(p.total) ? Math.max(0, p.total) : 0
-  const phase = (p.phase ?? '').trim()
-  const message = (p.message ?? '').trim()
-  const target = (p.currentTarget ?? '').trim()
+  const m = getProgressMetrics(job)
+  if (!m) return null
+  const phase = (job.progress?.phase ?? '').trim()
+  const message = (job.progress?.message ?? '').trim()
+  const target = (job.progress?.currentTarget ?? '').trim()
   const parts: string[] = []
-  if (total > 0) parts.push(`${current}/${total}`)
+  if (m.plannedTotal > 0 || m.completedTotal > 0) {
+    parts.push(`安排 ${m.plannedCurrent}/${m.plannedTotal || '-'} · 完成 ${m.completedCurrent}/${m.completedTotal || '-'}`)
+  }
   if (phase) parts.push(phase)
   if (message) parts.push(message)
   if (target) parts.push(target)
   return parts.length > 0 ? parts.join(' · ') : null
 }
 
-function getProgressPercent(job: JobListItem): number | null {
+function getProgressMetrics(job: JobListItem): {
+  plannedCurrent: number
+  plannedTotal: number
+  plannedPercent: number | null
+  completedCurrent: number
+  completedTotal: number
+  completedPercent: number | null
+} | null {
   const p = job.progress
   if (!p) return null
-  // Frontend must not derive percent; only trust backend-provided percent when total is known.
-  const total = Number.isFinite(p.total) ? Math.max(0, p.total) : 0
-  if (total <= 0) return null
-  if (!Number.isFinite(p.percent)) return null
-  const percent = Math.max(0, Math.min(100, Math.round(p.percent)))
-  // Avoid misleading "stuck at 0%" for long-running jobs; use indeterminate while backend keeps refreshing.
-  if (job.status === 'running' && percent === 0 && p.current < total) return null
-  return percent
+  const completedTotal = Number.isFinite(p.total) ? Math.max(0, p.total) : 0
+  const completedCurrentRaw = Number.isFinite(p.current) ? Math.max(0, p.current) : 0
+  const completedCurrent = Math.min(completedCurrentRaw, completedTotal || completedCurrentRaw)
+  const completedPercent =
+    completedTotal > 0 && Number.isFinite(p.percent) ? Math.max(0, Math.min(100, Math.round(p.percent))) : null
+
+  const plannedTotalRaw = p.plannedTotal
+  const plannedCurrentInput = p.plannedCurrent
+  const plannedTotal =
+    typeof plannedTotalRaw === 'number' && Number.isFinite(plannedTotalRaw) ? Math.max(0, plannedTotalRaw) : completedTotal
+  const plannedCurrentRaw =
+    typeof plannedCurrentInput === 'number' && Number.isFinite(plannedCurrentInput)
+      ? Math.max(0, plannedCurrentInput)
+      : completedCurrent
+  const plannedCurrent = Math.min(plannedCurrentRaw, plannedTotal || plannedCurrentRaw)
+  const plannedPercent =
+    plannedTotal > 0 && Number.isFinite(p.plannedPercent)
+      ? Math.max(0, Math.min(100, Math.round(p.plannedPercent ?? 0)))
+      : completedPercent
+
+  const normalizedCompletedPercent =
+    job.status === 'running' && completedPercent === 0 && completedCurrent < completedTotal ? null : completedPercent
+  const normalizedPlannedPercent =
+    job.status === 'running' && plannedPercent === 0 && plannedCurrent < plannedTotal ? null : plannedPercent
+
+  return {
+    plannedCurrent,
+    plannedTotal,
+    plannedPercent: normalizedPlannedPercent,
+    completedCurrent,
+    completedTotal,
+    completedPercent: normalizedCompletedPercent,
+  }
 }
 
 function shouldShowFinishedAt(job: JobListItem): boolean {
@@ -388,7 +420,12 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
         <div className="queueList">
           {filtered.map((j) => {
             const progressLabel = formatProgressLabel(j)
-            const progressPercent = getProgressPercent(j)
+            const progress = getProgressMetrics(j)
+            const plannedPercent = progress?.plannedPercent ?? null
+            const completedPercent = progress?.completedPercent ?? null
+            const plannedAria = plannedPercent !== null ? `${plannedPercent}%` : 'running'
+            const completedAria = completedPercent !== null ? `${completedPercent}%` : 'running'
+            const isDualIndeterminate = plannedPercent === null || completedPercent === null
             return (
               <button
                 key={j.id}
@@ -421,18 +458,32 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
                     ) : null}
                   </div>
                   {j.status === 'running' ? (
-                    <div
-                      className={progressPercent === null ? 'queueProgressBar queueProgressBarIndeterminate' : 'queueProgressBar'}
-                      role="progressbar"
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={progressPercent ?? undefined}
-                      aria-valuetext={progressPercent === null ? 'running' : `${progressPercent}%`}
-                    >
+                    <div className="queueProgressLayers">
                       <div
-                        className={progressPercent === null ? 'queueProgressFill queueProgressFillIndeterminate' : 'queueProgressFill'}
-                        style={progressPercent === null ? undefined : { width: `${progressPercent}%` }}
-                      />
+                        className={isDualIndeterminate ? 'queueProgressBar queueProgressBarDual queueProgressBarIndeterminate' : 'queueProgressBar queueProgressBarDual'}
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={completedPercent ?? plannedPercent ?? undefined}
+                        aria-valuetext={`安排 ${plannedAria} · 完成 ${completedAria}`}
+                      >
+                        <div
+                          className={
+                            plannedPercent === null
+                              ? 'queueProgressFill queueProgressFillPlanned queueProgressFillLayerPlanned queueProgressFillIndeterminate'
+                              : 'queueProgressFill queueProgressFillPlanned queueProgressFillLayerPlanned'
+                          }
+                          style={plannedPercent === null ? undefined : { width: `${plannedPercent}%` }}
+                        />
+                        <div
+                          className={
+                            completedPercent === null
+                              ? 'queueProgressFill queueProgressFillCompleted queueProgressFillLayerCompleted queueProgressFillIndeterminate'
+                              : 'queueProgressFill queueProgressFillCompleted queueProgressFillLayerCompleted'
+                          }
+                          style={completedPercent === null ? undefined : { width: `${completedPercent}%` }}
+                        />
+                      </div>
                     </div>
                   ) : null}
                 </div>

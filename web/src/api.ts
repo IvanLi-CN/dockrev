@@ -272,6 +272,9 @@ export type JobProgress = {
   current: number
   total: number
   percent: number
+  plannedCurrent?: number | null
+  plannedTotal?: number | null
+  plannedPercent?: number | null
   currentTarget?: string | null
   updatedAt: string
 }

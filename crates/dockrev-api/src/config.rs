@@ -2,6 +2,9 @@ use std::path::PathBuf;
 
 use axum::http::HeaderName;
 
+pub const FIXED_CHECK_PARALLELISM: usize = 5;
+pub const FIXED_REGISTRY_PER_HOST_CONCURRENCY: usize = 5;
+
 #[derive(Clone)]
 pub struct Config {
     pub app_effective_version: String,
@@ -19,7 +22,6 @@ pub struct Config {
     pub discovery_max_actions: u32,
     pub runtime_scan_interval_seconds: u64,
     pub deploy_check_local_command_timeout_seconds: u64,
-    pub check_concurrency: usize,
     pub registry_per_host_concurrency: usize,
     pub registry_retry_max_attempts: usize,
     pub registry_retry_base_ms: u64,
@@ -105,23 +107,13 @@ impl Config {
             ));
         }
 
-        let check_concurrency = std::env::var("DOCKREV_CHECK_CONCURRENCY")
-            .ok()
-            .and_then(|v| v.trim().parse::<usize>().ok())
-            .unwrap_or(8);
-        if check_concurrency == 0 {
-            return Err(anyhow::anyhow!("DOCKREV_CHECK_CONCURRENCY must be >= 1"));
-        }
+        warn_legacy_fixed_concurrency_env("DOCKREV_CHECK_CONCURRENCY", FIXED_CHECK_PARALLELISM);
+        warn_legacy_fixed_concurrency_env(
+            "DOCKREV_REGISTRY_PER_HOST_CONCURRENCY",
+            FIXED_REGISTRY_PER_HOST_CONCURRENCY,
+        );
 
-        let registry_per_host_concurrency = std::env::var("DOCKREV_REGISTRY_PER_HOST_CONCURRENCY")
-            .ok()
-            .and_then(|v| v.trim().parse::<usize>().ok())
-            .unwrap_or(3);
-        if registry_per_host_concurrency == 0 {
-            return Err(anyhow::anyhow!(
-                "DOCKREV_REGISTRY_PER_HOST_CONCURRENCY must be >= 1"
-            ));
-        }
+        let registry_per_host_concurrency = FIXED_REGISTRY_PER_HOST_CONCURRENCY;
 
         let registry_retry_max_attempts = std::env::var("DOCKREV_REGISTRY_RETRY_MAX_ATTEMPTS")
             .ok()
@@ -169,7 +161,6 @@ impl Config {
             discovery_max_actions,
             runtime_scan_interval_seconds,
             deploy_check_local_command_timeout_seconds,
-            check_concurrency,
             registry_per_host_concurrency,
             registry_retry_max_attempts,
             registry_retry_base_ms,
@@ -183,5 +174,61 @@ fn parse_bool(input: &str) -> Option<bool> {
         "1" | "true" | "yes" | "y" | "on" => Some(true),
         "0" | "false" | "no" | "n" | "off" => Some(false),
         _ => None,
+    }
+}
+
+fn warn_legacy_fixed_concurrency_env(name: &str, fixed_value: usize) {
+    let Some(raw_value) = std::env::var_os(name) else {
+        return;
+    };
+
+    let raw_value = raw_value.to_string_lossy();
+    match parse_legacy_fixed_value(&raw_value) {
+        Ok(parsed) if parsed == fixed_value => {
+            tracing::warn!(
+                env = name,
+                value = parsed,
+                fixed_value,
+                "legacy concurrency env is deprecated and ignored because concurrency is fixed"
+            );
+        }
+        Ok(parsed) => {
+            tracing::warn!(
+                env = name,
+                value = parsed,
+                fixed_value,
+                "legacy concurrency env override is ignored because concurrency is fixed; remove this env var"
+            );
+        }
+        Err(_) => {
+            tracing::warn!(
+                env = name,
+                value = raw_value.as_ref(),
+                fixed_value,
+                "legacy concurrency env has invalid value and is ignored because concurrency is fixed; remove this env var"
+            );
+        }
+    }
+}
+
+fn parse_legacy_fixed_value(raw_value: &str) -> Result<usize, ()> {
+    raw_value.trim().parse::<usize>().map_err(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn parse_legacy_fixed_value_accepts_matching_value() {
+        assert_eq!(super::parse_legacy_fixed_value("5"), Ok(5));
+    }
+
+    #[test]
+    fn parse_legacy_fixed_value_accepts_mismatch_value_for_warning_only_path() {
+        assert_eq!(super::parse_legacy_fixed_value("8"), Ok(8));
+    }
+
+    #[test]
+    fn parse_legacy_fixed_value_rejects_invalid_value() {
+        assert_eq!(super::parse_legacy_fixed_value("abc"), Err(()));
     }
 }
