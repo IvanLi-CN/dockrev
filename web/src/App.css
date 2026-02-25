@@ -1383,6 +1383,154 @@ html[data-theme='light'] .modalOverlay {
   gap: 10px;
 }
 
+/* Version inference */
+.versionInferencePage {
+  gap: 14px;
+}
+
+.versionInferenceMetrics {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.versionInferenceMetric {
+  border: 1px solid rgba(229, 231, 235, 0.08);
+  border-radius: 12px;
+  background: var(--dockrev-surface);
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.versionInferenceMetric span {
+  font-size: 11px;
+  color: var(--muted2);
+}
+
+.versionInferenceMetric strong {
+  font-size: 20px;
+  color: var(--text);
+  font-weight: 760;
+}
+
+.versionInferenceGcMeta {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.versionInferenceGcError {
+  color: var(--color-error);
+}
+
+.versionInferenceControls {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.versionInferenceSearch {
+  max-width: 520px;
+}
+
+.versionInferencePager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.versionInferenceColumns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.versionInferenceList {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.versionInferenceItem {
+  border: 1px solid rgba(229, 231, 235, 0.08);
+  background: var(--dockrev-surface);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.versionInferenceItemHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.versionInferenceItemTitle {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.versionInferenceItemMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: var(--muted2);
+  font-size: 12px;
+}
+
+.versionInferenceProgressBar {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel2) 80%, var(--color-base-300) 20%);
+  border: 1px solid var(--borderColor);
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
+.versionInferenceProgressFill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    var(--color-primary),
+    color-mix(in srgb, var(--color-primary) 54%, var(--color-success) 46%)
+  );
+  box-shadow: 0 0 10px color-mix(in srgb, var(--color-primary) 36%, transparent);
+}
+
+.versionInferenceProgressFillIndeterminate {
+  width: 42%;
+  animation: progressIndeterminate 1.2s ease-in-out infinite;
+}
+
+.versionInferenceProgressMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 1200px) {
+  .versionInferenceColumns {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Queue */
 .queueList {
   display: flex;

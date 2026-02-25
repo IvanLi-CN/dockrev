@@ -9,6 +9,7 @@ import { JobDetailPage } from './pages/JobDetailPage'
 import { ServicesPage } from './pages/ServicesPage'
 import { ServiceDetailPage } from './pages/ServiceDetailPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { VersionInferencePage } from './pages/VersionInferencePage'
 import { SupervisorMisroutePage } from './pages/SupervisorMisroutePage'
 import { DeployWelcomePage } from './pages/DeployWelcomePage'
 import { useRoute } from './useRoute'
@@ -28,6 +29,12 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
       return { title: '任务详情', topbarHint: '更新队列' }
     case 'services':
       return { title: '服务', topbarHint: '服务' }
+    case 'version-inference':
+      return {
+        title: '版本推测',
+        pageSubtitle: '镜像版本推测任务与缓存状态总览（SSE 实时 + 自动降级轮询）',
+        topbarHint: '版本推测可观测性',
+      }
     case 'deploy-check':
       return {
         title: '部署检查',
@@ -124,6 +131,9 @@ export default function App() {
       {route.name === 'queue' ? <QueuePage onTopActions={setPageActions} /> : null}
       {route.name === 'job' ? <JobDetailPage jobId={route.jobId} onTopActions={setPageActions} /> : null}
       {route.name === 'services' ? <ServicesPage onComposeHint={setComposeHint} onTopActions={setPageActions} /> : null}
+      {route.name === 'version-inference' ? (
+        <VersionInferencePage onComposeHint={setComposeHint} onTopActions={setPageActions} />
+      ) : null}
       {route.name === 'settings' ? <SettingsPage onTopActions={setPageActions} /> : null}
       {route.name === 'service' ? (
         <ServiceDetailPage

@@ -3,7 +3,7 @@ pub mod types;
 #[cfg(test)]
 mod tests;
 
-use std::{convert::Infallible, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, convert::Infallible, sync::Arc, time::Duration};
 
 use anyhow::Context as _;
 use axum::{
@@ -52,6 +52,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/api/services/{service_id}/version-inference/refresh",
             post(trigger_service_version_inference_refresh),
+        )
+        .route(
+            "/api/version-inference/overview",
+            get(get_version_inference_overview),
+        )
+        .route(
+            "/api/version-inference/events",
+            get(version_inference_events),
         )
         .route("/api/discovery/scan", post(trigger_discovery_scan))
         .route("/api/discovery/projects", get(list_discovery_projects))
@@ -2776,6 +2784,373 @@ async fn trigger_service_version_inference_refresh(
         reason: reason.as_str().to_string(),
     };
     Ok((StatusCode::ACCEPTED, Json(resp)).into_response())
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VersionInferenceOverviewQuery {
+    q: Option<String>,
+    status: Option<String>,
+    page: Option<u32>,
+    per_page: Option<u32>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VersionInferenceEventsQuery {
+    #[serde(default)]
+    after_id: i64,
+}
+
+#[derive(Debug, Clone)]
+struct VersionInferenceOverviewRowAccum {
+    image_repo: String,
+    host_platform: String,
+    service_count: u32,
+    snapshot: Option<crate::db::ImageVersionInferenceSnapshotRow>,
+    task: Option<version_inference_worker::VersionInferenceTaskSnapshot>,
+}
+
+fn normalize_version_inference_status_filter(
+    input: Option<&str>,
+) -> Result<Option<String>, ApiError> {
+    let Some(raw) = input.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    if raw == "all" {
+        return Ok(None);
+    }
+    match raw {
+        "missing" | "queued" | "running" | "ready" | "stale" | "all_failed" => {
+            Ok(Some(raw.to_string()))
+        }
+        other => Err(ApiError::invalid_argument(format!(
+            "invalid status filter: {other}"
+        ))),
+    }
+}
+
+fn map_task_progress_state(
+    progress: Option<version_inference_worker::VersionInferenceTaskProgress>,
+) -> Option<VersionInferenceTaskProgressState> {
+    progress.map(|p| VersionInferenceTaskProgressState {
+        phase: p.phase,
+        message: p.message,
+        current: p.current,
+        total: p.total,
+        percent: p.percent,
+        updated_at: p.updated_at,
+    })
+}
+
+fn derive_overview_row_status(
+    row: &VersionInferenceOverviewRowAccum,
+) -> (
+    String,
+    Option<String>,
+    Option<VersionInferenceTaskProgressState>,
+) {
+    if let Some(task) = row.task.as_ref() {
+        if task.status == "running" {
+            return (
+                "running".to_string(),
+                Some(task.reason.clone()),
+                map_task_progress_state(task.progress.clone()),
+            );
+        }
+        if task.status == "queued" {
+            return ("queued".to_string(), Some(task.reason.clone()), None);
+        }
+    }
+
+    if let Some(snapshot) = row.snapshot.as_ref() {
+        if snapshot.all_failed {
+            return (
+                "all_failed".to_string(),
+                Some("all_failed".to_string()),
+                None,
+            );
+        }
+        if checked_at_is_stale(&snapshot.checked_at) {
+            return ("stale".to_string(), Some("cache_stale".to_string()), None);
+        }
+        return ("ready".to_string(), None, None);
+    }
+
+    ("missing".to_string(), Some("cache_miss".to_string()), None)
+}
+
+fn version_inference_status_rank(status: &str) -> u8 {
+    match status {
+        "running" => 0,
+        "queued" => 1,
+        "missing" => 2,
+        "stale" => 3,
+        "all_failed" => 4,
+        "ready" => 5,
+        _ => 9,
+    }
+}
+
+async fn get_version_inference_overview(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<VersionInferenceOverviewQuery>,
+) -> Result<Json<VersionInferenceOverviewResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let page = q.page.unwrap_or(1).max(1);
+    let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
+    let status_filter = normalize_version_inference_status_filter(q.status.as_deref())?;
+    let search =
+        q.q.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_ascii_lowercase());
+
+    let worker_snapshot = state.version_inference_worker.worker_snapshot().await;
+    let gc_snapshot = state.version_inference_worker.gc_snapshot().await;
+    let task_snapshots = state.version_inference_worker.list_tasks().await;
+    let snapshot_rows = state
+        .db
+        .list_image_version_inference_snapshot_rows()
+        .await
+        .map_err(map_internal)?;
+    let service_targets = state
+        .db
+        .list_version_inference_service_targets()
+        .await
+        .map_err(map_internal)?;
+
+    let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
+        .unwrap_or_else(|| "linux/amd64".to_string());
+    let mut rows_by_key = BTreeMap::<String, VersionInferenceOverviewRowAccum>::new();
+
+    for service in service_targets {
+        if !needs_version_inference_for_tags(&service.image_tag, service.candidate_tag.as_deref()) {
+            continue;
+        }
+        let Some(image_repo) = snapshot_worker::image_repo_from_image_ref(&service.image_ref)
+        else {
+            continue;
+        };
+        let key = format!("{image_repo}@{host_platform}");
+        let entry = rows_by_key
+            .entry(key)
+            .or_insert_with(|| VersionInferenceOverviewRowAccum {
+                image_repo: image_repo.clone(),
+                host_platform: host_platform.clone(),
+                service_count: 0,
+                snapshot: None,
+                task: None,
+            });
+        entry.service_count = entry.service_count.saturating_add(1);
+    }
+
+    for snapshot in snapshot_rows {
+        let key = format!("{}@{}", snapshot.image_repo, snapshot.host_platform);
+        let entry = rows_by_key
+            .entry(key)
+            .or_insert_with(|| VersionInferenceOverviewRowAccum {
+                image_repo: snapshot.image_repo.clone(),
+                host_platform: snapshot.host_platform.clone(),
+                service_count: 0,
+                snapshot: None,
+                task: None,
+            });
+        entry.snapshot = Some(snapshot);
+    }
+
+    for task in task_snapshots.iter() {
+        let entry = rows_by_key.entry(task.key.clone()).or_insert_with(|| {
+            VersionInferenceOverviewRowAccum {
+                image_repo: task.image_repo.clone(),
+                host_platform: task.host_platform.clone(),
+                service_count: 0,
+                snapshot: None,
+                task: None,
+            }
+        });
+        entry.task = Some(task.clone());
+    }
+
+    let mut all_rows = rows_by_key
+        .into_values()
+        .map(|row| {
+            let (status, reason, progress) = derive_overview_row_status(&row);
+            let checked_at = row.snapshot.as_ref().map(|v| v.checked_at.clone());
+            let updated_at = row
+                .task
+                .as_ref()
+                .map(|v| v.updated_at.clone())
+                .or_else(|| row.snapshot.as_ref().map(|v| v.updated_at.clone()));
+            VersionInferenceOverviewRow {
+                key: format!("{}@{}", row.image_repo, row.host_platform),
+                image_repo: row.image_repo,
+                host_platform: row.host_platform,
+                status,
+                service_count: row.service_count,
+                reason,
+                checked_at,
+                updated_at,
+                progress,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    all_rows.sort_by(|a, b| {
+        version_inference_status_rank(&a.status)
+            .cmp(&version_inference_status_rank(&b.status))
+            .then_with(|| b.updated_at.cmp(&a.updated_at))
+            .then_with(|| a.image_repo.cmp(&b.image_repo))
+            .then_with(|| a.host_platform.cmp(&b.host_platform))
+    });
+
+    let mut summary = VersionInferenceOverviewSummary {
+        total: all_rows.len() as u32,
+        missing: 0,
+        queued: 0,
+        running: 0,
+        ready: 0,
+        stale: 0,
+        all_failed: 0,
+    };
+    for row in &all_rows {
+        match row.status.as_str() {
+            "missing" => summary.missing = summary.missing.saturating_add(1),
+            "queued" => summary.queued = summary.queued.saturating_add(1),
+            "running" => summary.running = summary.running.saturating_add(1),
+            "ready" => summary.ready = summary.ready.saturating_add(1),
+            "stale" => summary.stale = summary.stale.saturating_add(1),
+            "all_failed" => summary.all_failed = summary.all_failed.saturating_add(1),
+            _ => {}
+        }
+    }
+
+    let mut filtered_rows = all_rows;
+    if let Some(status_filter) = status_filter.as_deref() {
+        filtered_rows.retain(|row| row.status == status_filter);
+    }
+    if let Some(search) = search.as_deref() {
+        filtered_rows.retain(|row| {
+            row.image_repo.to_ascii_lowercase().contains(search)
+                || row.key.to_ascii_lowercase().contains(search)
+        });
+    }
+
+    let total = filtered_rows.len() as u32;
+    let start = ((page - 1) * per_page) as usize;
+    let rows = filtered_rows
+        .into_iter()
+        .skip(start)
+        .take(per_page as usize)
+        .collect::<Vec<_>>();
+
+    let tasks = task_snapshots
+        .into_iter()
+        .map(|task| VersionInferenceTaskState {
+            key: task.key,
+            image_repo: task.image_repo,
+            host_platform: task.host_platform,
+            status: task.status,
+            reason: task.reason,
+            enqueued_at: task.enqueued_at,
+            started_at: task.started_at,
+            updated_at: task.updated_at,
+            progress: map_task_progress_state(task.progress),
+        })
+        .collect::<Vec<_>>();
+
+    Ok(Json(VersionInferenceOverviewResponse {
+        worker: VersionInferenceWorkerState {
+            max_concurrency: worker_snapshot.max_concurrency,
+            queued: worker_snapshot.queued,
+            running: worker_snapshot.running,
+            in_flight: worker_snapshot.in_flight,
+        },
+        gc: VersionInferenceGcState {
+            retention_days: gc_snapshot.retention_days,
+            interval_seconds: gc_snapshot.interval_seconds,
+            last_run_at: gc_snapshot.last_run_at,
+            last_deleted: gc_snapshot.last_deleted,
+            last_duration_ms: gc_snapshot.last_duration_ms,
+            last_error: gc_snapshot.last_error,
+        },
+        summary,
+        tasks,
+        rows,
+        page,
+        per_page,
+        total,
+    }))
+}
+
+async fn version_inference_events(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<VersionInferenceEventsQuery>,
+) -> Result<impl axum::response::IntoResponse, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let mut after_id = resolve_sse_after_id(&headers, q.after_id);
+    if after_id <= 0 {
+        after_id = state.version_inference_worker.latest_event_id().await;
+    }
+    let sse_state = state.clone();
+
+    let stream = async_stream::stream! {
+        loop {
+            let batch = sse_state
+                .version_inference_worker
+                .events_since(after_id, 200)
+                .await;
+
+            if let Some(oldest_id) = batch.oldest_id
+                && after_id > 0
+                && after_id < oldest_id.saturating_sub(1)
+            {
+                let evt = sse_state
+                    .version_inference_worker
+                    .emit_resync_required(after_id, oldest_id, batch.latest_id)
+                    .await;
+                after_id = evt.id;
+                yield Ok::<Event, Infallible>(
+                    Event::default()
+                        .id(evt.id.to_string())
+                        .event("version_inference_event")
+                        .data(evt.data.to_string()),
+                );
+                continue;
+            }
+
+            if batch.events.is_empty() {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                continue;
+            }
+
+            for evt in batch.events {
+                after_id = evt.id;
+                yield Ok::<Event, Infallible>(
+                    Event::default()
+                        .id(evt.id.to_string())
+                        .event("version_inference_event")
+                        .data(evt.data.to_string()),
+                );
+            }
+        }
+    };
+    let sse = Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    );
+
+    let mut resp_headers = HeaderMap::new();
+    resp_headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    resp_headers.insert(
+        HeaderName::from_static("x-accel-buffering"),
+        HeaderValue::from_static("no"),
+    );
+
+    Ok((resp_headers, sse))
 }
 
 #[derive(Debug, Deserialize)]

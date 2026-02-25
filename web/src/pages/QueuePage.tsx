@@ -1,9 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { listJobs, newJobsEventsSource, type JobListItem } from '../api'
+import { getVersionInferenceOverview, listJobs, newJobsEventsSource, type JobListItem } from '../api'
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
 
 type Filter = 'all' | 'running' | 'success' | 'failed' | 'rolled_back'
+type VersionInferenceSummary = {
+  total: number
+  missing: number
+  queued: number
+  running: number
+  ready: number
+  stale: number
+  allFailed: number
+}
+
+const DEFAULT_VERSION_INFERENCE_SUMMARY: VersionInferenceSummary = {
+  total: 0,
+  missing: 0,
+  queued: 0,
+  running: 0,
+  ready: 0,
+  stale: 0,
+  allFailed: 0,
+}
 
 function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' {
   if (status === 'success') return 'ok'
@@ -75,14 +94,59 @@ const QUEUE_SSE_ERROR_THRESHOLD = 3
 const QUEUE_SSE_RECONNECT_MS = 3000
 const QUEUE_SSE_REFRESH_DEBOUNCE_MS = 250
 const QUEUE_SSE_FALLBACK_POLL_MS = 10_000
+const VERSION_INFERENCE_SUMMARY_POLL_MS = 15_000
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null
+}
+
+function safeCount(v: unknown): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return 0
+  return Math.max(0, Math.trunc(v))
+}
+
+function parseVersionInferenceSummary(data: unknown): VersionInferenceSummary {
+  if (!isRecord(data)) return DEFAULT_VERSION_INFERENCE_SUMMARY
+  const summary = isRecord(data.summary) ? data.summary : {}
+  return {
+    total: safeCount(summary.total),
+    missing: safeCount(summary.missing),
+    queued: safeCount(summary.queued),
+    running: safeCount(summary.running),
+    ready: safeCount(summary.ready),
+    stale: safeCount(summary.stale),
+    allFailed: safeCount(summary.allFailed),
+  }
+}
+
+function versionInferenceTone(summary: VersionInferenceSummary): 'ok' | 'warn' | 'bad' {
+  if (summary.running > 0 || summary.queued > 0) return 'warn'
+  if (summary.missing > 0 || summary.stale > 0 || summary.allFailed > 0) return 'bad'
+  return 'ok'
+}
+
+function versionInferenceLabel(summary: VersionInferenceSummary): string {
+  if (summary.running > 0) return 'running'
+  if (summary.queued > 0) return 'queued'
+  if (summary.missing > 0) return 'missing'
+  if (summary.stale > 0) return 'stale'
+  if (summary.allFailed > 0) return 'all_failed'
+  return 'ready'
+}
 
 export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void }) {
   const { onTopActions } = props
   const [jobs, setJobs] = useState<JobListItem[]>([])
   const [filter, setFilter] = useState<Filter>('all')
   const [error, setError] = useState<string | null>(null)
+  const [versionInferenceSummary, setVersionInferenceSummary] = useState<VersionInferenceSummary>(
+    DEFAULT_VERSION_INFERENCE_SUMMARY,
+  )
+  const [versionInferenceLoaded, setVersionInferenceLoaded] = useState(false)
+  const [versionInferenceError, setVersionInferenceError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const refreshRequestIdRef = useRef(0)
+  const inferenceRequestIdRef = useRef(0)
 
   const refresh = useCallback(async () => {
     const requestId = ++refreshRequestIdRef.current
@@ -100,6 +164,35 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
   }, [refresh])
+
+  const refreshVersionInferenceSummary = useCallback(async () => {
+    const requestId = ++inferenceRequestIdRef.current
+    try {
+      const payload = await getVersionInferenceOverview({
+        page: 1,
+        perPage: 1,
+      })
+      if (requestId !== inferenceRequestIdRef.current) return
+      setVersionInferenceSummary(parseVersionInferenceSummary(payload))
+      setVersionInferenceError(null)
+      setVersionInferenceLoaded(true)
+    } catch (e: unknown) {
+      if (requestId !== inferenceRequestIdRef.current) return
+      setVersionInferenceError(e instanceof Error ? e.message : String(e))
+      setVersionInferenceLoaded(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshVersionInferenceSummary()
+  }, [refreshVersionInferenceSummary])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void refreshVersionInferenceSummary()
+    }, VERSION_INFERENCE_SUMMARY_POLL_MS)
+    return () => window.clearInterval(timer)
+  }, [refreshVersionInferenceSummary])
 
   useEffect(() => {
     let closed = false
@@ -211,7 +304,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
           void (async () => {
             setBusy(true)
             try {
-              await refresh()
+              await Promise.all([refresh(), refreshVersionInferenceSummary()])
             } catch (e: unknown) {
               setError(e instanceof Error ? e.message : String(e))
             } finally {
@@ -223,7 +316,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
         刷新
       </Button>,
     )
-  }, [busy, onTopActions, refresh])
+  }, [busy, onTopActions, refresh, refreshVersionInferenceSummary])
 
   const filtered = useMemo(() => {
     if (filter === 'all') return jobs
@@ -251,6 +344,46 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
         <div className="muted" style={{ marginTop: 8 }}>
           点击任务查看详情与日志
         </div>
+
+        <button
+          type="button"
+          className="queueItem"
+          style={{ marginTop: 12 }}
+          onClick={() => navigate({ name: 'version-inference' })}
+        >
+          <div className="queueMain">
+            <div className="queueTitle">
+              <Mono>版本推测状态</Mono>
+            </div>
+            <div className="queueMeta">
+              <span>
+                missing <Mono>{versionInferenceSummary.missing}</Mono>
+              </span>
+              <span>
+                queued <Mono>{versionInferenceSummary.queued}</Mono>
+              </span>
+              <span>
+                running <Mono>{versionInferenceSummary.running}</Mono>
+              </span>
+              <span>
+                stale <Mono>{versionInferenceSummary.stale}</Mono>
+              </span>
+            </div>
+            <div className="muted" style={{ marginTop: 8 }}>
+              查看版本推测任务与缓存状态
+            </div>
+            {versionInferenceError ? (
+              <div className="error" style={{ marginTop: 8 }}>
+                {versionInferenceError}
+              </div>
+            ) : null}
+          </div>
+          <div className="queueStatus">
+            <Pill tone={versionInferenceTone(versionInferenceSummary)}>
+              {versionInferenceLoaded ? versionInferenceLabel(versionInferenceSummary) : 'loading'}
+            </Pill>
+          </div>
+        </button>
 
         <div className="queueList">
           {filtered.map((j) => {

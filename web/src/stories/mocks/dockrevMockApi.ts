@@ -27,6 +27,8 @@ export type DockrevApiScenario =
   | 'dashboard-demo'
   | 'guide-line-long-names'
   | 'resolved-tag-demo'
+  | 'version-inference-overview'
+  | 'version-inference-resync-required'
   | 'version-tags-popover-demo'
   | 'version-tags-popover-snapshot-missing'
   | 'multi-stack-mixed'
@@ -49,6 +51,75 @@ type MockDebug = {
   lastDigestTagsUrl: string | null
 }
 
+type VersionInferenceTaskProgressMock = {
+  phase: string
+  message: string
+  current: number
+  total: number
+  percent: number
+  updatedAt: string
+}
+
+type VersionInferenceTaskMock = {
+  key: string
+  imageRepo: string
+  hostPlatform: string
+  status: string
+  reason: string
+  enqueuedAt: string
+  startedAt?: string | null
+  updatedAt: string
+  progress?: VersionInferenceTaskProgressMock | null
+}
+
+type VersionInferenceOverviewRowMock = {
+  key: string
+  imageRepo: string
+  hostPlatform: string
+  status: string
+  serviceCount: number
+  reason?: string | null
+  checkedAt?: string | null
+  updatedAt?: string | null
+  progress?: VersionInferenceTaskProgressMock | null
+}
+
+type VersionInferenceOverviewMock = {
+  worker: {
+    maxConcurrency: number
+    queued: number
+    running: number
+    inFlight: number
+  }
+  gc: {
+    retentionDays: number
+    intervalSeconds: number
+    lastRunAt?: string | null
+    lastDeleted?: number | null
+    lastDurationMs?: number | null
+    lastError?: string | null
+  }
+  summary: {
+    total: number
+    missing: number
+    queued: number
+    running: number
+    ready: number
+    stale: number
+    allFailed: number
+  }
+  tasks: VersionInferenceTaskMock[]
+  rows: VersionInferenceOverviewRowMock[]
+  page: number
+  perPage: number
+  total: number
+}
+
+type VersionInferenceEventMock = {
+  id: number
+  data: Record<string, unknown>
+}
+
 declare global {
   var __DOCKREV_MOCK_DEBUG__: MockDebug | undefined
 }
@@ -67,6 +138,8 @@ type Fixture = {
   serviceSettingsById: Record<string, ServiceSettings>
   deployCheckReport: DeployCheckReportResponse
   deployWelcome: DeployWelcomeResponse
+  versionInferenceOverview: VersionInferenceOverviewMock
+  versionInferenceEvents: VersionInferenceEventMock[]
 }
 
 function json(data: unknown, init?: ResponseInit) {
@@ -198,6 +271,82 @@ function makeDefaultDeployWelcome(): DeployWelcomeResponse {
   }
 }
 
+function summarizeVersionInferenceRows(rows: VersionInferenceOverviewRowMock[]) {
+  const summary = {
+    total: rows.length,
+    missing: 0,
+    queued: 0,
+    running: 0,
+    ready: 0,
+    stale: 0,
+    allFailed: 0,
+  }
+  for (const row of rows) {
+    switch (row.status) {
+      case 'missing':
+        summary.missing += 1
+        break
+      case 'queued':
+        summary.queued += 1
+        break
+      case 'running':
+        summary.running += 1
+        break
+      case 'ready':
+        summary.ready += 1
+        break
+      case 'stale':
+        summary.stale += 1
+        break
+      case 'all_failed':
+        summary.allFailed += 1
+        break
+      default:
+        break
+    }
+  }
+  return summary
+}
+
+function makeVersionInferenceOverview(input?: {
+  rows?: VersionInferenceOverviewRowMock[]
+  tasks?: VersionInferenceTaskMock[]
+  worker?: Partial<VersionInferenceOverviewMock['worker']>
+  gc?: Partial<VersionInferenceOverviewMock['gc']>
+}): VersionInferenceOverviewMock {
+  const rows = input?.rows ?? []
+  const tasks = input?.tasks ?? []
+  const summary = summarizeVersionInferenceRows(rows)
+  const workerBase = {
+    maxConcurrency: 4,
+    queued: tasks.filter((x) => x.status === 'queued').length,
+    running: tasks.filter((x) => x.status === 'running').length,
+    inFlight: tasks.filter((x) => x.status === 'queued' || x.status === 'running').length,
+  }
+  const worker = {
+    ...workerBase,
+    ...(input?.worker ?? {}),
+  }
+  return {
+    worker,
+    gc: {
+      retentionDays: 30,
+      intervalSeconds: 24 * 60 * 60,
+      lastRunAt: nowIso(-5 * 60 * 1000),
+      lastDeleted: 3,
+      lastDurationMs: 42,
+      lastError: null,
+      ...(input?.gc ?? {}),
+    },
+    summary,
+    tasks,
+    rows,
+    page: 1,
+    perPage: 50,
+    total: rows.length,
+  }
+}
+
 function baseEmpty(): Fixture {
   return {
     stacks: [],
@@ -213,6 +362,8 @@ function baseEmpty(): Fixture {
     serviceSettingsById: {},
     deployCheckReport: makeDefaultDeployCheckReport(),
     deployWelcome: makeDefaultDeployWelcome(),
+    versionInferenceOverview: makeVersionInferenceOverview(),
+    versionInferenceEvents: [],
   }
 }
 
@@ -382,6 +533,103 @@ function buildDashboardDemo(): Fixture {
       logsLastId: 2,
     } satisfies JobDetail,
   }
+
+  const now = nowIso()
+  f.versionInferenceOverview = makeVersionInferenceOverview({
+    rows: [
+      {
+        key: 'ghcr.io/acme/api@linux/amd64',
+        imageRepo: 'ghcr.io/acme/api',
+        hostPlatform: 'linux/amd64',
+        status: 'ready',
+        serviceCount: 1,
+        checkedAt: nowIso(-4 * 60 * 1000),
+      },
+      {
+        key: 'harbor.local/ops/web@linux/amd64',
+        imageRepo: 'harbor.local/ops/web',
+        hostPlatform: 'linux/amd64',
+        status: 'queued',
+        serviceCount: 1,
+        reason: 'new_version',
+        updatedAt: nowIso(-20 * 1000),
+      },
+      {
+        key: 'ghcr.io/acme/worker@linux/amd64',
+        imageRepo: 'ghcr.io/acme/worker',
+        hostPlatform: 'linux/amd64',
+        status: 'stale',
+        serviceCount: 1,
+        checkedAt: nowIso(-8 * 24 * 60 * 60 * 1000),
+        reason: 'cache_stale',
+      },
+      {
+        key: 'quay.io/prometheus/prometheus@linux/amd64',
+        imageRepo: 'quay.io/prometheus/prometheus',
+        hostPlatform: 'linux/amd64',
+        status: 'missing',
+        serviceCount: 1,
+      },
+    ],
+    tasks: [
+      {
+        key: 'harbor.local/ops/web@linux/amd64',
+        imageRepo: 'harbor.local/ops/web',
+        hostPlatform: 'linux/amd64',
+        status: 'queued',
+        reason: 'new_version',
+        enqueuedAt: nowIso(-30 * 1000),
+        updatedAt: nowIso(-20 * 1000),
+      },
+    ],
+    gc: {
+      lastRunAt: nowIso(-5 * 60 * 1000),
+      lastDeleted: 2,
+      lastDurationMs: 31,
+      lastError: null,
+    },
+  })
+  f.versionInferenceEvents = [
+    {
+      id: 41,
+      data: {
+        type: 'task_enqueued',
+        ts: nowIso(-30 * 1000),
+        key: 'harbor.local/ops/web@linux/amd64',
+        imageRepo: 'harbor.local/ops/web',
+        hostPlatform: 'linux/amd64',
+        reason: 'new_version',
+      },
+    },
+    {
+      id: 42,
+      data: {
+        type: 'gc_ran',
+        ts: nowIso(-5 * 60 * 1000),
+        cutoff: nowIso(-30 * 24 * 60 * 60 * 1000),
+        deleted: 2,
+        durationMs: 31,
+        ok: true,
+      },
+    },
+    {
+      id: 43,
+      data: {
+        type: 'task_progress',
+        ts: now,
+        key: 'harbor.local/ops/web@linux/amd64',
+        imageRepo: 'harbor.local/ops/web',
+        hostPlatform: 'linux/amd64',
+        reason: 'new_version',
+        phase: 'scan_tags',
+        message: 'scanning tags',
+        current: 4,
+        total: 10,
+        percent: 40,
+        updatedAt: now,
+      },
+    },
+  ]
 
   return f
 }
@@ -641,6 +889,119 @@ function buildQueueMixed(): Fixture {
     }),
   )
 
+  const now = nowIso()
+  f.versionInferenceOverview = makeVersionInferenceOverview({
+    rows: [
+      {
+        key: 'ghcr.io/acme/api@linux/amd64',
+        imageRepo: 'ghcr.io/acme/api',
+        hostPlatform: 'linux/amd64',
+        status: 'running',
+        serviceCount: 1,
+        reason: 'new_version',
+        updatedAt: now,
+        progress: {
+          phase: 'scan_tags',
+          message: 'checking registry tags',
+          current: 2,
+          total: 5,
+          percent: 40,
+          updatedAt: now,
+        },
+      },
+      {
+        key: 'harbor.local/ops/web@linux/amd64',
+        imageRepo: 'harbor.local/ops/web',
+        hostPlatform: 'linux/amd64',
+        status: 'queued',
+        serviceCount: 1,
+        reason: 'force',
+        updatedAt: nowIso(-20 * 1000),
+      },
+      {
+        key: 'ghcr.io/acme/worker@linux/amd64',
+        imageRepo: 'ghcr.io/acme/worker',
+        hostPlatform: 'linux/amd64',
+        status: 'all_failed',
+        serviceCount: 1,
+        checkedAt: nowIso(-2 * 60 * 1000),
+        reason: 'all_failed',
+      },
+      {
+        key: 'quay.io/prometheus/prometheus@linux/amd64',
+        imageRepo: 'quay.io/prometheus/prometheus',
+        hostPlatform: 'linux/amd64',
+        status: 'missing',
+        serviceCount: 1,
+      },
+    ],
+    tasks: [
+      {
+        key: 'ghcr.io/acme/api@linux/amd64',
+        imageRepo: 'ghcr.io/acme/api',
+        hostPlatform: 'linux/amd64',
+        status: 'running',
+        reason: 'new_version',
+        enqueuedAt: nowIso(-40 * 1000),
+        startedAt: nowIso(-30 * 1000),
+        updatedAt: now,
+        progress: {
+          phase: 'scan_tags',
+          message: 'checking registry tags',
+          current: 2,
+          total: 5,
+          percent: 40,
+          updatedAt: now,
+        },
+      },
+      {
+        key: 'harbor.local/ops/web@linux/amd64',
+        imageRepo: 'harbor.local/ops/web',
+        hostPlatform: 'linux/amd64',
+        status: 'queued',
+        reason: 'force',
+        enqueuedAt: nowIso(-20 * 1000),
+        updatedAt: nowIso(-20 * 1000),
+      },
+    ],
+    gc: {
+      lastRunAt: nowIso(-6 * 60 * 1000),
+      lastDeleted: 5,
+      lastDurationMs: 55,
+      lastError: null,
+    },
+  })
+  f.versionInferenceEvents = [
+    {
+      id: 100,
+      data: {
+        type: 'task_started',
+        ts: nowIso(-30 * 1000),
+        key: 'ghcr.io/acme/api@linux/amd64',
+        imageRepo: 'ghcr.io/acme/api',
+        hostPlatform: 'linux/amd64',
+        reason: 'new_version',
+      },
+    },
+    {
+      id: 101,
+      data: {
+        type: 'task_progress',
+        ts: now,
+        key: 'ghcr.io/acme/api@linux/amd64',
+        imageRepo: 'ghcr.io/acme/api',
+        hostPlatform: 'linux/amd64',
+        reason: 'new_version',
+        phase: 'scan_tags',
+        message: 'checking registry tags',
+        current: 2,
+        total: 5,
+        percent: 40,
+        updatedAt: now,
+      },
+    },
+  ]
+
   return f
 }
 
@@ -763,6 +1124,29 @@ function buildQueueLongLogs(): Fixture {
   return f
 }
 
+function buildVersionInferenceOverviewFixture(): Fixture {
+  return buildQueueMixed()
+}
+
+function buildVersionInferenceResyncRequiredFixture(): Fixture {
+  const f = buildQueueMixed()
+  const now = nowIso()
+  f.versionInferenceEvents = [
+    {
+      id: 200,
+      data: {
+        type: 'resync_required',
+        ts: now,
+        requestedAfterId: 1,
+        oldestAvailableId: 180,
+        latestEventId: 199,
+        reason: 'buffer_overflow',
+      },
+    },
+  ]
+  return f
+}
+
 function buildSettingsConfigured(): Fixture {
   const f = buildDashboardDemo()
   f.notifications = {
@@ -878,6 +1262,8 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'dashboard-demo') return buildDashboardDemo()
   if (scenario === 'guide-line-long-names') return buildGuideLineLongNames()
   if (scenario === 'resolved-tag-demo') return buildResolvedTagDemo()
+  if (scenario === 'version-inference-overview') return buildVersionInferenceOverviewFixture()
+  if (scenario === 'version-inference-resync-required') return buildVersionInferenceResyncRequiredFixture()
   if (scenario === 'version-tags-popover-demo' || scenario === 'version-tags-popover-snapshot-missing') return buildVersionTagsPopoverDemo()
   if (scenario === 'queue-mixed') return buildQueueMixed()
   if (scenario === 'queue-long-logs') return buildQueueLongLogs()
@@ -1177,6 +1563,52 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
     if (urlPath === '/api/version' && method === 'GET') {
       // Use an existing repo tag so the version link in UI can be exercised in Storybook.
       return json({ version: '0.5.0' })
+    }
+
+    if (urlPath === '/api/version-inference/overview' && method === 'GET') {
+      const params = url?.searchParams ?? new URLSearchParams()
+      const page = Math.max(1, Number(params.get('page') ?? '1') || 1)
+      const perPage = Math.min(200, Math.max(1, Number(params.get('perPage') ?? '50') || 50))
+      const q = (params.get('q') ?? '').trim().toLowerCase()
+      const status = (params.get('status') ?? '').trim().toLowerCase()
+
+      const rows = f.versionInferenceOverview.rows.filter((row) => {
+        if (status && row.status.toLowerCase() !== status) return false
+        if (!q) return true
+        const haystack = `${row.imageRepo} ${row.hostPlatform} ${row.key}`.toLowerCase()
+        return haystack.includes(q)
+      })
+      const offset = (page - 1) * perPage
+      const pagedRows = rows.slice(offset, offset + perPage)
+      const summary = summarizeVersionInferenceRows(rows)
+
+      return json({
+        worker: f.versionInferenceOverview.worker,
+        gc: f.versionInferenceOverview.gc,
+        summary,
+        tasks: f.versionInferenceOverview.tasks,
+        rows: pagedRows,
+        page,
+        perPage,
+        total: rows.length,
+      } satisfies VersionInferenceOverviewMock)
+    }
+
+    if (urlPath === '/api/version-inference/events' && method === 'GET') {
+      const params = url?.searchParams ?? new URLSearchParams()
+      const afterId = Number(params.get('afterId') ?? '0') || 0
+      const events = f.versionInferenceEvents.filter((evt) => evt.id > afterId).slice(0, 200)
+      const body = events
+        .map((evt) => `id: ${evt.id}\nevent: version_inference_event\ndata: ${JSON.stringify(evt.data)}\n\n`)
+        .join('')
+      return new Response(body || ': keep-alive\n\n', {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'x-accel-buffering': 'no',
+        },
+      })
     }
 
     // stacks

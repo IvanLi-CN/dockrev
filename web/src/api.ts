@@ -156,6 +156,92 @@ export type TriggerVersionInferenceRefreshResponse = {
   reason: string
 }
 
+export type VersionInferenceOverviewStatus =
+  | 'missing'
+  | 'queued'
+  | 'running'
+  | 'ready'
+  | 'stale'
+  | 'all_failed'
+  | string
+
+export type VersionInferenceTaskProgress = {
+  phase: string
+  message: string
+  current: number
+  total: number
+  percent: number
+  updatedAt: string
+}
+
+export type VersionInferenceTaskState = {
+  key: string
+  imageRepo: string
+  hostPlatform: string
+  status: 'queued' | 'running' | string
+  reason: string
+  enqueuedAt: string
+  startedAt?: string | null
+  updatedAt: string
+  progress?: VersionInferenceTaskProgress | null
+}
+
+export type VersionInferenceOverviewRow = {
+  key: string
+  imageRepo: string
+  hostPlatform: string
+  status: VersionInferenceOverviewStatus
+  serviceCount: number
+  reason?: string | null
+  checkedAt?: string | null
+  updatedAt?: string | null
+  progress?: VersionInferenceTaskProgress | null
+}
+
+export type VersionInferenceOverviewSummary = {
+  total: number
+  missing: number
+  queued: number
+  running: number
+  ready: number
+  stale: number
+  allFailed: number
+}
+
+export type VersionInferenceWorkerState = {
+  maxConcurrency: number
+  queued: number
+  running: number
+  inFlight: number
+}
+
+export type VersionInferenceGcState = {
+  retentionDays: number
+  intervalSeconds: number
+  lastRunAt?: string | null
+  lastDeleted?: number | null
+  lastDurationMs?: number | null
+  lastError?: string | null
+}
+
+export type VersionInferenceOverviewResponse = {
+  worker: VersionInferenceWorkerState
+  gc: VersionInferenceGcState
+  summary: VersionInferenceOverviewSummary
+  tasks: VersionInferenceTaskState[]
+  rows: VersionInferenceOverviewRow[]
+  page: number
+  perPage: number
+  total: number
+}
+
+export type GetVersionInferenceOverviewInput = {
+  q?: string | null
+  status?: string | null
+  page?: number
+  perPage?: number
+}
+
 export type JobListItem = {
   id: string
   type: string
@@ -525,6 +611,27 @@ export async function forceRefreshServiceVersionInference(
   return (await resp.json()) as TriggerVersionInferenceRefreshResponse
 }
 
+export async function getVersionInferenceOverview(
+  input: GetVersionInferenceOverviewInput = {},
+): Promise<VersionInferenceOverviewResponse> {
+  const sp = new URLSearchParams()
+  const q = (input.q ?? '').trim()
+  const status = (input.status ?? '').trim()
+
+  if (q) sp.set('q', q)
+  if (status) sp.set('status', status)
+  if (typeof input.page === 'number' && Number.isFinite(input.page)) {
+    sp.set('page', String(Math.max(1, Math.round(input.page))))
+  }
+  if (typeof input.perPage === 'number' && Number.isFinite(input.perPage)) {
+    sp.set('perPage', String(Math.max(1, Math.round(input.perPage))))
+  }
+
+  const query = sp.toString()
+  const resp = await apiFetch(`/api/version-inference/overview${query ? `?${query}` : ''}`)
+  return (await resp.json()) as VersionInferenceOverviewResponse
+}
+
 export async function triggerCheck(scope: string, stackId?: string, serviceId?: string) {
   const resp = await apiFetch('/api/checks', {
     method: 'POST',
@@ -565,6 +672,19 @@ export function jobsEventsUrl(opts?: { afterId?: number }): string {
 
 export function newJobsEventsSource(opts?: { afterId?: number }): EventSource {
   return new EventSource(jobsEventsUrl(opts), { withCredentials: true })
+}
+
+export function versionInferenceEventsUrl(opts?: { afterId?: number }): string {
+  const base = apiBaseUrl().replace(/\/$/, '')
+  let url = `${base}/api/version-inference/events`
+  if (opts && typeof opts.afterId === 'number' && Number.isFinite(opts.afterId)) {
+    url += `?afterId=${encodeURIComponent(String(opts.afterId))}`
+  }
+  return url
+}
+
+export function newVersionInferenceEventsSource(opts?: { afterId?: number }): EventSource {
+  return new EventSource(versionInferenceEventsUrl(opts), { withCredentials: true })
 }
 
 export async function triggerUpdate(input: {
