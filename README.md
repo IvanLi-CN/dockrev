@@ -89,6 +89,8 @@ Environment variables (API):
 - `DOCKREV_DISCOVERY_MAX_ACTIONS` (default `200`) max actions returned by `POST /api/discovery/scan`
 - Check scheduling is fixed: `5` concurrent check workers with a `1s` stagger between worker starts (not runtime-configurable)
 - Registry host concurrency is fixed: `5` in-flight requests per host (aligned with check concurrency; not runtime-configurable)
+- Legacy `DOCKREV_CHECK_CONCURRENCY` / `DOCKREV_REGISTRY_PER_HOST_CONCURRENCY` are deprecated:
+  set to `5` = warning + ignored, non-`5` = startup error (remove them)
 - `DOCKREV_REGISTRY_RETRY_MAX_ATTEMPTS` (default `3`) max retry attempts after a `429 Too Many Requests`
 - `DOCKREV_REGISTRY_RETRY_BASE_MS` (default `250`; must be `>= 1`) exponential backoff base for `429` retries
 - `DOCKREV_REGISTRY_RETRY_MAX_MS` (default `2000`; must be `>= DOCKREV_REGISTRY_RETRY_BASE_MS`) max single retry delay
