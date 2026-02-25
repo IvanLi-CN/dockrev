@@ -1534,6 +1534,7 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .versionInferenceSummaryHead {
+  gap: 8px;
   row-gap: 8px;
 }
 
@@ -1549,7 +1550,7 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .versionInferenceSortHint {
-  margin-left: auto;
+  margin-left: 0;
   width: 20px;
   height: 20px;
   padding: 0;
@@ -1565,10 +1566,11 @@ html[data-theme='light'] .modalOverlay {
   justify-content: center;
   position: relative;
   cursor: help;
+  flex-shrink: 0;
 }
 
 .versionInferenceGcHint {
-  margin-left: 8px;
+  margin-left: 0;
   flex-shrink: 0;
 }
 
