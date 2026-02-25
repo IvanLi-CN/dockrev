@@ -2956,9 +2956,7 @@ fn normalize_version_inference_status_filter(
         return Ok(None);
     }
     match raw {
-        "missing" | "queued" | "running" | "ready" | "stale" | "all_failed" => {
-            Ok(Some(raw.to_string()))
-        }
+        "queued" | "running" | "ready" | "stale" | "all_failed" => Ok(Some(raw.to_string())),
         other => Err(ApiError::invalid_argument(format!(
             "invalid status filter: {other}"
         ))),
@@ -3012,17 +3010,17 @@ fn derive_overview_row_status(
         return ("ready".to_string(), None, None);
     }
 
-    ("missing".to_string(), Some("cache_miss".to_string()), None)
+    // Rows are constructed from cached snapshots and in-flight tasks only.
+    ("queued".to_string(), Some("cache_miss".to_string()), None)
 }
 
 fn version_inference_status_rank(status: &str) -> u8 {
     match status {
         "running" => 0,
         "queued" => 1,
-        "missing" => 2,
-        "stale" => 3,
-        "all_failed" => 4,
-        "ready" => 5,
+        "stale" => 2,
+        "all_failed" => 3,
+        "ready" => 4,
         _ => 9,
     }
 }
@@ -3042,14 +3040,15 @@ async fn get_version_inference_overview(
             .filter(|s| !s.is_empty())
             .map(|s| s.to_ascii_lowercase());
 
-    let worker_snapshot = state.version_inference_worker.worker_snapshot().await;
-    let gc_snapshot = state.version_inference_worker.gc_snapshot().await;
-    let task_snapshots = state.version_inference_worker.list_tasks().await;
+    let worker_snapshot = state.version_inference_worker.worker_stats().await;
+    let gc_snapshot = state.version_inference_worker.gc_status().await;
+    let task_snapshots = state.version_inference_worker.snapshot_tasks().await;
     let snapshot_rows = state
         .db
-        .list_image_version_inference_snapshot_rows()
+        .list_image_version_inference_snapshots()
         .await
         .map_err(map_internal)?;
+    let snapshots_total = snapshot_rows.len() as u32;
     let service_targets = state
         .db
         .list_version_inference_service_targets()
@@ -3058,8 +3057,7 @@ async fn get_version_inference_overview(
 
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
-    let mut rows_by_key = BTreeMap::<String, VersionInferenceOverviewRowAccum>::new();
-
+    let mut service_count_by_key = BTreeMap::<String, u32>::new();
     for service in service_targets {
         if !needs_version_inference_for_tags(&service.image_tag, service.candidate_tag.as_deref()) {
             continue;
@@ -3069,17 +3067,11 @@ async fn get_version_inference_overview(
             continue;
         };
         let key = format!("{image_repo}@{host_platform}");
-        let entry = rows_by_key
-            .entry(key)
-            .or_insert_with(|| VersionInferenceOverviewRowAccum {
-                image_repo: image_repo.clone(),
-                host_platform: host_platform.clone(),
-                service_count: 0,
-                snapshot: None,
-                task: None,
-            });
-        entry.service_count = entry.service_count.saturating_add(1);
+        let count = service_count_by_key.entry(key).or_insert(0);
+        *count = count.saturating_add(1);
     }
+
+    let mut rows_by_key = BTreeMap::<String, VersionInferenceOverviewRowAccum>::new();
 
     for snapshot in snapshot_rows {
         let key = format!("{}@{}", snapshot.image_repo, snapshot.host_platform);
@@ -3088,7 +3080,12 @@ async fn get_version_inference_overview(
             .or_insert_with(|| VersionInferenceOverviewRowAccum {
                 image_repo: snapshot.image_repo.clone(),
                 host_platform: snapshot.host_platform.clone(),
-                service_count: 0,
+                service_count: *service_count_by_key
+                    .get(&format!(
+                        "{}@{}",
+                        snapshot.image_repo, snapshot.host_platform
+                    ))
+                    .unwrap_or(&0),
                 snapshot: None,
                 task: None,
             });
@@ -3100,7 +3097,7 @@ async fn get_version_inference_overview(
             VersionInferenceOverviewRowAccum {
                 image_repo: task.image_repo.clone(),
                 host_platform: task.host_platform.clone(),
-                service_count: 0,
+                service_count: *service_count_by_key.get(&task.key).unwrap_or(&0),
                 snapshot: None,
                 task: None,
             }
@@ -3141,8 +3138,7 @@ async fn get_version_inference_overview(
     });
 
     let mut summary = VersionInferenceOverviewSummary {
-        total: all_rows.len() as u32,
-        missing: 0,
+        snapshots_total,
         queued: 0,
         running: 0,
         ready: 0,
@@ -3151,7 +3147,6 @@ async fn get_version_inference_overview(
     };
     for row in &all_rows {
         match row.status.as_str() {
-            "missing" => summary.missing = summary.missing.saturating_add(1),
             "queued" => summary.queued = summary.queued.saturating_add(1),
             "running" => summary.running = summary.running.saturating_add(1),
             "ready" => summary.ready = summary.ready.saturating_add(1),

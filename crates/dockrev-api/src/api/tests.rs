@@ -3588,7 +3588,7 @@ services:
     assert_eq!(resp.status(), 200);
     let body = response_json(resp).await;
 
-    assert_eq!(body["summary"]["total"].as_u64(), Some(2));
+    assert_eq!(body["summary"]["snapshotsTotal"].as_u64(), Some(2));
     assert_eq!(body["summary"]["ready"].as_u64(), Some(1));
     assert_eq!(body["summary"]["allFailed"].as_u64(), Some(1));
     assert_eq!(body["page"].as_u64(), Some(1));
@@ -3620,7 +3620,7 @@ services:
     assert_eq!(filtered.status(), 200);
     let filtered_body = response_json(filtered).await;
     assert_eq!(filtered_body["total"].as_u64(), Some(1));
-    assert_eq!(filtered_body["summary"]["total"].as_u64(), Some(2));
+    assert_eq!(filtered_body["summary"]["snapshotsTotal"].as_u64(), Some(2));
     assert_eq!(filtered_body["summary"]["ready"].as_u64(), Some(1));
     assert_eq!(filtered_body["summary"]["allFailed"].as_u64(), Some(1));
     let filtered_rows = filtered_body["rows"].as_array().unwrap();
@@ -3628,6 +3628,7 @@ services:
     assert_eq!(filtered_rows[0]["status"].as_str(), Some("all_failed"));
 
     let overflow_page = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/api/version-inference/overview?page=4294967295&perPage=200")
@@ -3642,6 +3643,136 @@ services:
     assert_eq!(overflow_body["perPage"].as_u64(), Some(200));
     assert_eq!(overflow_body["total"].as_u64(), Some(2));
     assert_eq!(overflow_body["rows"].as_array().unwrap().len(), 0);
+
+    let invalid = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/version-inference/overview?status=missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), 400);
+}
+
+#[tokio::test]
+async fn version_inference_overview_merges_cached_and_in_flight_without_missing_rows() {
+    let registry = Arc::new(SlowRegistry {
+        delay: Duration::from_millis(250),
+    });
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let snapshot = crate::version_inference_worker::VersionInferenceSnapshot {
+        checked_at: now.clone(),
+        digests: BTreeMap::new(),
+        scan: crate::version_inference_worker::VersionInferenceScanSummary {
+            semver_tags_total: 1,
+            semver_tags_considered: 1,
+            manifests_ok: 1,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+        all_failed: false,
+    };
+    state
+        .db
+        .upsert_image_version_inference_snapshot(
+            "ghcr.io/acme/cached",
+            "linux/amd64",
+            &serde_json::to_string(&snapshot).unwrap(),
+            false,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let enqueued = state
+        .version_inference_worker
+        .enqueue(
+            "ghcr.io/acme/running",
+            "linux/amd64",
+            crate::version_inference_worker::VersionInferenceReason::Force,
+        )
+        .await;
+    assert!(enqueued);
+
+    let mut observed: Option<serde_json::Value> = None;
+    for _ in 0..80 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/version-inference/overview?page=1&perPage=20")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = response_json(resp).await;
+
+        let tasks = body["tasks"].as_array().cloned().unwrap_or_default();
+        let has_task = tasks
+            .iter()
+            .any(|task| task["key"].as_str() == Some("ghcr.io/acme/running@linux/amd64"));
+        let has_progress = tasks
+            .iter()
+            .any(|task| task["status"].as_str() == Some("running") && task["progress"].is_object());
+        if has_task && has_progress {
+            observed = Some(body);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    let body = observed.expect("expected in-flight task with progress in overview");
+    assert_eq!(body["summary"]["snapshotsTotal"].as_u64(), Some(1));
+
+    let rows = body["rows"].as_array().expect("rows should be array");
+    assert!(
+        rows.iter()
+            .all(|row| row["status"].as_str() != Some("missing")),
+        "overview rows should not include missing status"
+    );
+    assert!(rows.iter().any(|row| {
+        row["imageRepo"].as_str() == Some("ghcr.io/acme/cached")
+            && row["status"].as_str() == Some("ready")
+    }));
+    assert!(rows.iter().any(|row| {
+        row["imageRepo"].as_str() == Some("ghcr.io/acme/running")
+            && matches!(row["status"].as_str(), Some("running") | Some("queued"))
+    }));
+
+    let running_task = body["tasks"]
+        .as_array()
+        .and_then(|tasks| {
+            tasks
+                .iter()
+                .find(|task| task["key"].as_str() == Some("ghcr.io/acme/running@linux/amd64"))
+        })
+        .expect("in-flight task should be present");
+    assert!(
+        matches!(
+            running_task["status"].as_str(),
+            Some("running") | Some("queued")
+        ),
+        "task status should be queued or running"
+    );
+    if running_task["status"].as_str() == Some("running") {
+        let progress = running_task["progress"]
+            .as_object()
+            .expect("running task should include progress");
+        assert!(progress.contains_key("phase"));
+        assert!(progress.contains_key("current"));
+        assert!(progress.contains_key("total"));
+        assert!(progress.contains_key("percent"));
+    }
 }
 
 #[tokio::test]

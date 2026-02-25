@@ -1,64 +1,24 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   getVersionInferenceOverview,
-  newVersionInferenceEventsSource,
+  type VersionInferenceCacheRow,
   type VersionInferenceOverviewResponse,
-  type VersionInferenceOverviewRow,
+  type VersionInferenceTask,
   type VersionInferenceTaskProgress,
-  type VersionInferenceTaskState,
 } from '../api'
 import { Button, Mono, Pill } from '../ui'
 
-type StreamMode = 'connecting' | 'live' | 'polling'
-type StatusFilter = 'all' | 'missing' | 'queued' | 'running' | 'ready' | 'stale' | 'all_failed'
+type StatusFilter = 'all' | 'queued' | 'running' | 'ready' | 'stale' | 'all_failed'
 
-type VersionInferenceEventPayload = {
-  type?: string
-  key?: string
-  imageRepo?: string
-  hostPlatform?: string
-  reason?: string
-  ts?: string
-  status?: string
-  checkedAt?: string
-  allFailed?: boolean
-  phase?: string
-  message?: string
-  current?: number
-  total?: number
-  percent?: number
-  updatedAt?: string
-  latestEventId?: number
-  deleted?: number
-  durationMs?: number
-  ok?: boolean
-  error?: string
-}
-
-const STATUS_FILTERS: readonly StatusFilter[] = ['all', 'missing', 'queued', 'running', 'ready', 'stale', 'all_failed']
+const STATUS_FILTERS: readonly StatusFilter[] = ['all', 'queued', 'running', 'ready', 'stale', 'all_failed']
 const PER_PAGE_OPTIONS = [20, 50, 100, 200] as const
 const QUERY_DEBOUNCE_MS = 250
-const SSE_ERROR_THRESHOLD = 3
-const SSE_RECONNECT_MS = 3000
-const SSE_REFRESH_DEBOUNCE_MS = 250
-const SSE_FALLBACK_POLL_MS = 10_000
-const RESYNC_NOTICE_TIMEOUT_MS = 4500
+const ACTIVE_POLL_MS = 2_000
+const IDLE_POLL_MS = 15_000
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
   return String(e)
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null
-}
-
-function asString(v: unknown): string | null {
-  return typeof v === 'string' && v.trim() ? v.trim() : null
-}
-
-function asNumber(v: unknown): number | null {
-  return typeof v === 'number' && Number.isFinite(v) ? v : null
 }
 
 function formatShort(ts?: string | null): string {
@@ -70,7 +30,6 @@ function formatShort(ts?: string | null): string {
 
 function statusLabel(status: string): string {
   if (status === 'all') return '全部'
-  if (status === 'missing') return '缺失'
   if (status === 'queued') return '排队中'
   if (status === 'running') return '执行中'
   if (status === 'ready') return '已就绪'
@@ -82,41 +41,8 @@ function statusLabel(status: string): string {
 function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' {
   if (status === 'ready') return 'ok'
   if (status === 'queued' || status === 'running' || status === 'stale') return 'warn'
-  if (status === 'missing' || status === 'all_failed') return 'bad'
+  if (status === 'all_failed') return 'bad'
   return 'muted'
-}
-
-function streamModeLabel(mode: StreamMode): string {
-  if (mode === 'live') return 'SSE 实时'
-  if (mode === 'polling') return '轮询降级'
-  return '连接中'
-}
-
-function streamModeTone(mode: StreamMode): 'ok' | 'warn' | 'bad' | 'muted' {
-  if (mode === 'live') return 'ok'
-  if (mode === 'polling') return 'warn'
-  return 'muted'
-}
-
-function normalizeProgress(input: {
-  phase: string
-  message: string
-  current: number
-  total: number
-  percent: number
-  updatedAt: string
-}): VersionInferenceTaskProgress {
-  const current = Number.isFinite(input.current) ? Math.max(0, Math.round(input.current)) : 0
-  const total = Number.isFinite(input.total) ? Math.max(0, Math.round(input.total)) : 0
-  const percent = Number.isFinite(input.percent) ? Math.max(0, Math.min(100, Math.round(input.percent))) : 0
-  return {
-    phase: input.phase || 'running',
-    message: input.message || '',
-    current: total > 0 ? Math.min(current, total) : current,
-    total,
-    percent,
-    updatedAt: input.updatedAt || new Date().toISOString(),
-  }
 }
 
 function knownPercent(progress?: VersionInferenceTaskProgress | null): number | null {
@@ -127,26 +53,7 @@ function knownPercent(progress?: VersionInferenceTaskProgress | null): number | 
   return Math.max(0, Math.min(100, Math.round(progress.percent)))
 }
 
-function parseEventPayload(raw: unknown): VersionInferenceEventPayload | null {
-  if (typeof raw !== 'string' || !raw) return null
-  try {
-    const parsed = JSON.parse(raw) as unknown
-    if (!isRecord(parsed)) return null
-    return parsed as VersionInferenceEventPayload
-  } catch {
-    return null
-  }
-}
-
-function parseLastEventId(evt: Event): number | null {
-  const idRaw = (evt as MessageEvent).lastEventId
-  if (typeof idRaw !== 'string' || !idRaw.trim()) return null
-  const parsed = Number.parseInt(idRaw, 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) return null
-  return parsed
-}
-
-function sortTasks(tasks: VersionInferenceTaskState[]): VersionInferenceTaskState[] {
+function sortTasks(tasks: VersionInferenceTask[]): VersionInferenceTask[] {
   const next = [...tasks]
   next.sort((a, b) => {
     const byUpdated = String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''))
@@ -156,191 +63,40 @@ function sortTasks(tasks: VersionInferenceTaskState[]): VersionInferenceTaskStat
   return next
 }
 
-function upsertTask(tasks: VersionInferenceTaskState[], nextTask: VersionInferenceTaskState): VersionInferenceTaskState[] {
-  const idx = tasks.findIndex((task) => task.key === nextTask.key)
-  if (idx < 0) return sortTasks([...tasks, nextTask])
-  const next = [...tasks]
-  next[idx] = nextTask
-  return sortTasks(next)
-}
-
-function updateRowForTask(
-  row: VersionInferenceOverviewRow,
-  patch: Partial<VersionInferenceOverviewRow>,
-): VersionInferenceOverviewRow {
-  return {
-    ...row,
-    ...patch,
-    progress: patch.progress ?? (patch.progress === null ? null : row.progress ?? null),
-    reason: patch.reason ?? (patch.reason === null ? null : row.reason ?? null),
-    checkedAt: patch.checkedAt ?? (patch.checkedAt === null ? null : row.checkedAt ?? null),
-    updatedAt: patch.updatedAt ?? (patch.updatedAt === null ? null : row.updatedAt ?? null),
-  }
-}
-
-function applyEventToOverview(
-  prev: VersionInferenceOverviewResponse | null,
-  payload: VersionInferenceEventPayload,
-): VersionInferenceOverviewResponse | null {
-  if (!prev || typeof payload.type !== 'string') return prev
-  const type = payload.type
-  const key = asString(payload.key)
-  const ts = asString(payload.ts) ?? new Date().toISOString()
-  const imageRepo = asString(payload.imageRepo) ?? ''
-  const hostPlatform = asString(payload.hostPlatform) ?? ''
-  const reason = asString(payload.reason) ?? ''
-
-  if (type === 'task_enqueued' && key) {
-    const nextTask: VersionInferenceTaskState = {
-      key,
-      imageRepo,
-      hostPlatform,
-      status: 'queued',
-      reason,
-      enqueuedAt: ts,
-      startedAt: null,
-      updatedAt: ts,
-      progress: null,
-    }
-    return {
-      ...prev,
-      tasks: upsertTask(prev.tasks, nextTask),
-      rows: prev.rows.map((row) =>
-        row.key === key
-          ? updateRowForTask(row, {
-              status: 'queued',
-              reason,
-              updatedAt: ts,
-              progress: null,
-            })
-          : row,
-      ),
-    }
-  }
-
-  if (type === 'task_started' && key) {
-    const existing = prev.tasks.find((task) => task.key === key)
-    const nextTask: VersionInferenceTaskState = {
-      key,
-      imageRepo: imageRepo || existing?.imageRepo || '',
-      hostPlatform: hostPlatform || existing?.hostPlatform || '',
-      status: 'running',
-      reason: reason || existing?.reason || '',
-      enqueuedAt: existing?.enqueuedAt || ts,
-      startedAt: ts,
-      updatedAt: ts,
-      progress: existing?.progress ?? null,
-    }
-    return {
-      ...prev,
-      tasks: upsertTask(prev.tasks, nextTask),
-      rows: prev.rows.map((row) =>
-        row.key === key
-          ? updateRowForTask(row, {
-              status: 'running',
-              reason: nextTask.reason || row.reason || null,
-              updatedAt: ts,
-            })
-          : row,
-      ),
-    }
-  }
-
-  if (type === 'task_progress' && key) {
-    const phase = asString(payload.phase) ?? 'running'
-    const message = asString(payload.message) ?? ''
-    const current = asNumber(payload.current) ?? 0
-    const total = asNumber(payload.total) ?? 0
-    const percent = asNumber(payload.percent) ?? 0
-    const updatedAt = asString(payload.updatedAt) ?? ts
-    const progress = normalizeProgress({ phase, message, current, total, percent, updatedAt })
-    const existing = prev.tasks.find((task) => task.key === key)
-    const nextTask: VersionInferenceTaskState = {
-      key,
-      imageRepo: imageRepo || existing?.imageRepo || '',
-      hostPlatform: hostPlatform || existing?.hostPlatform || '',
-      status: 'running',
-      reason: reason || existing?.reason || '',
-      enqueuedAt: existing?.enqueuedAt || ts,
-      startedAt: existing?.startedAt || ts,
-      updatedAt,
-      progress,
-    }
-    return {
-      ...prev,
-      tasks: upsertTask(prev.tasks, nextTask),
-      rows: prev.rows.map((row) =>
-        row.key === key
-          ? updateRowForTask(row, {
-              status: 'running',
-              reason: nextTask.reason || row.reason || null,
-              updatedAt,
-              progress,
-            })
-          : row,
-      ),
-    }
-  }
-
-  if (type === 'task_finished' && key) {
-    const status = asString(payload.status) ?? ''
-    const checkedAt = asString(payload.checkedAt)
-    const allFailed = payload.allFailed === true
-    const nextRows = prev.rows.map((row) => {
-      if (row.key !== key) return row
-      let nextStatus = row.status
-      if (status === 'success') {
-        nextStatus = allFailed ? 'all_failed' : 'ready'
-      }
-      const rowReason = status === 'error' ? asString(payload.error) ?? row.reason ?? null : row.reason ?? null
-      return updateRowForTask(row, {
-        status: nextStatus,
-        reason: rowReason,
-        checkedAt: checkedAt ?? row.checkedAt ?? null,
-        updatedAt: ts,
-        progress: null,
-      })
-    })
-    return {
-      ...prev,
-      tasks: prev.tasks.filter((task) => task.key !== key),
-      rows: nextRows,
-    }
-  }
-
-  if (type === 'gc_ran') {
-    const lastDeleted = asNumber(payload.deleted)
-    const lastDurationMs = asNumber(payload.durationMs)
-    const ok = payload.ok !== false
-    return {
-      ...prev,
-      gc: {
-        ...prev.gc,
-        lastRunAt: ts,
-        lastDeleted: lastDeleted ?? prev.gc.lastDeleted ?? null,
-        lastDurationMs: lastDurationMs ?? prev.gc.lastDurationMs ?? null,
-        lastError: ok ? null : asString(payload.error) ?? prev.gc.lastError ?? null,
-      },
-    }
-  }
-
-  return prev
-}
-
 function statusCount(summary: VersionInferenceOverviewResponse['summary'] | null, key: StatusFilter): number {
   if (!summary) return 0
-  if (key === 'all') return summary.total
-  if (key === 'missing') return summary.missing
   if (key === 'queued') return summary.queued
   if (key === 'running') return summary.running
   if (key === 'ready') return summary.ready
   if (key === 'stale') return summary.stale
-  return summary.allFailed
+  if (key === 'all_failed') return summary.allFailed
+  return summary.queued + summary.running + summary.ready + summary.stale + summary.allFailed
+}
+
+function rowSortValue(status: string): number {
+  if (status === 'running') return 0
+  if (status === 'queued') return 1
+  if (status === 'stale') return 2
+  if (status === 'all_failed') return 3
+  if (status === 'ready') return 4
+  return 9
+}
+
+function sortRows(rows: VersionInferenceCacheRow[]): VersionInferenceCacheRow[] {
+  const next = [...rows]
+  next.sort((a, b) => {
+    const byStatus = rowSortValue(a.status) - rowSortValue(b.status)
+    if (byStatus !== 0) return byStatus
+    const byUpdated = String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''))
+    if (byUpdated !== 0) return byUpdated
+    return String(a.key || '').localeCompare(String(b.key || ''))
+  })
+  return next
 }
 
 export function VersionInferencePage(props: {
   onComposeHint?: (hint: { path?: string; profile?: string; lastScan?: string }) => void
-  onTopActions: (node: React.ReactNode) => void
+  onTopActions: (node: ReactNode) => void
 }) {
   const { onComposeHint, onTopActions } = props
   const [overview, setOverview] = useState<VersionInferenceOverviewResponse | null>(null)
@@ -352,10 +108,7 @@ export function VersionInferencePage(props: {
   const [loading, setLoading] = useState(true)
   const [manualBusy, setManualBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [streamMode, setStreamMode] = useState<StreamMode>('connecting')
-  const [lastEventId, setLastEventId] = useState(0)
-  const [lastEventAt, setLastEventAt] = useState<string | null>(null)
-  const [resyncNotice, setResyncNotice] = useState<string | null>(null)
+  const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null)
   const refreshRequestIdRef = useRef(0)
 
   useEffect(() => {
@@ -371,7 +124,7 @@ export function VersionInferencePage(props: {
   }, [queryInput])
 
   const refresh = useCallback(
-    async (opts?: { silent?: boolean; reason?: 'manual' | 'auto' | 'resync' }) => {
+    async (opts?: { silent?: boolean }) => {
       const requestId = ++refreshRequestIdRef.current
       const silent = opts?.silent === true
 
@@ -388,13 +141,11 @@ export function VersionInferencePage(props: {
         if (requestId !== refreshRequestIdRef.current) return
 
         setOverview(next)
+        setLastRefreshAt(new Date().toISOString())
         setPage((prev) => {
           const normalized = Number.isFinite(next.page) ? Math.max(1, Math.round(next.page)) : prev
           return prev === normalized ? prev : normalized
         })
-        if (opts?.reason === 'resync') {
-          setResyncNotice('检测到事件偏移已过期，已完成全量同步。')
-        }
       } catch (e: unknown) {
         if (requestId !== refreshRequestIdRef.current) return
         setError(errorMessage(e))
@@ -410,133 +161,18 @@ export function VersionInferencePage(props: {
 
   useEffect(() => {
     setLoading(true)
-    void refresh({ silent: true, reason: 'auto' })
+    void refresh({ silent: true })
   }, [refresh])
 
-  useEffect(() => {
-    if (!resyncNotice) return
-    const timer = window.setTimeout(() => setResyncNotice(null), RESYNC_NOTICE_TIMEOUT_MS)
-    return () => window.clearTimeout(timer)
-  }, [resyncNotice])
+  const hasActiveTasks = (overview?.summary.running ?? 0) + (overview?.summary.queued ?? 0) > 0
 
   useEffect(() => {
-    let closed = false
-    let es: EventSource | null = null
-    let errorStreak = 0
-    let lastSeenEventId = 0
-    let refreshTimer: number | null = null
-    let pollTimer: number | null = null
-    let reconnectTimer: number | null = null
-
-    const clearRefreshTimer = () => {
-      if (refreshTimer != null) window.clearTimeout(refreshTimer)
-      refreshTimer = null
-    }
-
-    const clearReconnectTimer = () => {
-      if (reconnectTimer != null) window.clearTimeout(reconnectTimer)
-      reconnectTimer = null
-    }
-
-    const stopPolling = () => {
-      if (pollTimer != null) window.clearInterval(pollTimer)
-      pollTimer = null
-    }
-
-    const refreshSafely = async (reason: 'auto' | 'resync' = 'auto') => {
-      await refresh({ silent: true, reason })
-    }
-
-    const scheduleRefresh = (delayMs: number, reason: 'auto' | 'resync' = 'auto') => {
-      if (refreshTimer != null) return
-      refreshTimer = window.setTimeout(() => {
-        refreshTimer = null
-        void refreshSafely(reason).catch(() => {})
-      }, delayMs)
-    }
-
-    const startPolling = () => {
-      if (pollTimer != null) return
-      setStreamMode('polling')
-      pollTimer = window.setInterval(() => {
-        void refreshSafely('auto').catch(() => {})
-      }, SSE_FALLBACK_POLL_MS)
-    }
-
-    const trackEventId = (evt: Event) => {
-      const parsed = parseLastEventId(evt)
-      if (!parsed) return
-      lastSeenEventId = Math.max(lastSeenEventId, parsed)
-      setLastEventId(lastSeenEventId)
-      setLastEventAt(new Date().toISOString())
-    }
-
-    const connect = () => {
-      if (closed) return
-      setStreamMode('connecting')
-      try {
-        es = newVersionInferenceEventsSource(lastSeenEventId > 0 ? { afterId: lastSeenEventId } : undefined)
-      } catch {
-        startPolling()
-        return
-      }
-
-      es.addEventListener('open', () => {
-        errorStreak = 0
-        setStreamMode('live')
-        stopPolling()
-        scheduleRefresh(0, 'auto')
-      })
-
-      es.addEventListener('version_inference_event', (evt: Event) => {
-        trackEventId(evt)
-        const payload = parseEventPayload((evt as MessageEvent).data)
-        if (!payload) {
-          scheduleRefresh(SSE_REFRESH_DEBOUNCE_MS, 'auto')
-          return
-        }
-
-        setOverview((prev) => applyEventToOverview(prev, payload))
-
-        if (payload.type === 'resync_required') {
-          const latest = asNumber(payload.latestEventId)
-          if (latest != null && latest > 0) {
-            lastSeenEventId = Math.max(lastSeenEventId, Math.round(latest))
-            setLastEventId(lastSeenEventId)
-          }
-          clearRefreshTimer()
-          scheduleRefresh(0, 'resync')
-          return
-        }
-
-        scheduleRefresh(SSE_REFRESH_DEBOUNCE_MS, 'auto')
-      })
-
-      es.onerror = () => {
-        errorStreak += 1
-        scheduleRefresh(0, 'auto')
-        if (errorStreak < SSE_ERROR_THRESHOLD) return
-        es?.close()
-        es = null
-        startPolling()
-        if (reconnectTimer != null) return
-        reconnectTimer = window.setTimeout(() => {
-          reconnectTimer = null
-          connect()
-        }, SSE_RECONNECT_MS)
-      }
-    }
-
-    connect()
-
-    return () => {
-      closed = true
-      clearRefreshTimer()
-      clearReconnectTimer()
-      stopPolling()
-      es?.close()
-    }
-  }, [refresh])
+    const pollMs = hasActiveTasks ? ACTIVE_POLL_MS : IDLE_POLL_MS
+    const timer = window.setInterval(() => {
+      void refresh({ silent: true })
+    }, pollMs)
+    return () => window.clearInterval(timer)
+  }, [hasActiveTasks, refresh])
 
   useEffect(() => {
     onTopActions(
@@ -544,7 +180,7 @@ export function VersionInferencePage(props: {
         variant="ghost"
         disabled={manualBusy}
         onClick={() => {
-          void refresh({ silent: false, reason: 'manual' })
+          void refresh({ silent: false })
         }}
       >
         刷新
@@ -560,6 +196,8 @@ export function VersionInferencePage(props: {
 
   const currentPage = overview?.page ?? page
   const summary = overview?.summary ?? null
+  const tasks = useMemo(() => sortTasks(overview?.tasks ?? []), [overview?.tasks])
+  const rows = useMemo(() => sortRows(overview?.rows ?? []), [overview?.rows])
 
   return (
     <div className="page versionInferencePage">
@@ -567,12 +205,9 @@ export function VersionInferencePage(props: {
         <div className="sectionRow">
           <div className="title">任务与缓存总览</div>
           <div className="chipRow" style={{ marginLeft: 'auto' }}>
-            <Pill tone={streamModeTone(streamMode)}>{streamModeLabel(streamMode)}</Pill>
-            <Pill tone="muted">事件ID：{lastEventId > 0 ? String(lastEventId) : '-'}</Pill>
+            <Pill tone={hasActiveTasks ? 'warn' : 'ok'}>{hasActiveTasks ? `高频刷新 ${ACTIVE_POLL_MS / 1000}s` : `低频刷新 ${IDLE_POLL_MS / 1000}s`}</Pill>
+            <Pill tone="muted">最近刷新：{formatShort(lastRefreshAt)}</Pill>
           </div>
-        </div>
-        <div className="muted" style={{ marginTop: 8 }}>
-          {lastEventAt ? `最近事件：${formatShort(lastEventAt)}` : '等待事件流建立…'}
         </div>
 
         <div className="versionInferenceMetrics">
@@ -593,16 +228,16 @@ export function VersionInferencePage(props: {
             <strong>{overview?.worker.inFlight ?? 0}</strong>
           </div>
           <div className="versionInferenceMetric">
-            <span>总条目</span>
-            <strong>{summary?.total ?? 0}</strong>
+            <span>缓存快照</span>
+            <strong>{summary?.snapshotsTotal ?? 0}</strong>
           </div>
           <div className="versionInferenceMetric">
             <span>已就绪</span>
             <strong>{summary?.ready ?? 0}</strong>
           </div>
           <div className="versionInferenceMetric">
-            <span>缺失 + 失败</span>
-            <strong>{(summary?.missing ?? 0) + (summary?.allFailed ?? 0)}</strong>
+            <span>stale + all_failed</span>
+            <strong>{(summary?.stale ?? 0) + (summary?.allFailed ?? 0)}</strong>
           </div>
         </div>
 
@@ -682,64 +317,110 @@ export function VersionInferencePage(props: {
       </div>
 
       {error ? <div className="error">{error}</div> : null}
-      {resyncNotice ? <div className="success">{resyncNotice}</div> : null}
 
-      <div className="versionInferenceColumns">
-        <div className="card">
-          <div className="sectionRow">
-            <div className="title">缓存列表</div>
-          </div>
-          <div className="versionInferenceList">
-            {loading && !overview ? (
-              <div className="muted">正在加载…</div>
-            ) : null}
-            {!loading && overview && overview.rows.length === 0 ? (
-              <div className="muted">当前筛选条件下没有数据</div>
-            ) : null}
-
-            {overview?.rows.map((row) => {
-              const progressPercent = knownPercent(row.progress)
-              return (
-                <div key={row.key} className="versionInferenceItem">
-                  <div className="versionInferenceItemHead">
-                    <div className="versionInferenceItemTitle">
-                      <Mono>{row.imageRepo}</Mono>
-                    </div>
-                    <Pill tone={statusTone(row.status)}>{statusLabel(row.status)}</Pill>
+      <div className="card">
+        <div className="sectionRow">
+          <div className="title">进行中任务</div>
+        </div>
+        <div className="versionInferenceList">
+          {tasks.length === 0 ? <div className="muted">当前无 in-flight 任务</div> : null}
+          {tasks.map((task) => {
+            const progressPercent = knownPercent(task.progress)
+            return (
+              <div key={task.key} className="versionInferenceItem">
+                <div className="versionInferenceItemHead">
+                  <div className="versionInferenceItemTitle">
+                    <Mono>{task.imageRepo}</Mono>
                   </div>
-                  <div className="versionInferenceItemMeta">
-                    <span>平台：{row.hostPlatform}</span>
-                    <span>服务数：{row.serviceCount}</span>
-                    <span>检查时间：{formatShort(row.checkedAt ?? null)}</span>
-                    <span>更新时间：{formatShort(row.updatedAt ?? null)}</span>
-                  </div>
-                  {row.reason ? <div className="muted">原因：{row.reason}</div> : null}
-                  {row.progress ? (
-                    <>
-                      <div className="versionInferenceProgressBar">
-                        <div
-                          className={
-                            progressPercent == null
-                              ? 'versionInferenceProgressFill versionInferenceProgressFillIndeterminate'
-                              : 'versionInferenceProgressFill'
-                          }
-                          style={progressPercent == null ? undefined : { width: `${progressPercent}%` }}
-                        />
-                      </div>
-                      <div className="versionInferenceProgressMeta">
-                        <span>{row.progress.phase || '执行中'}</span>
-                        <span>{row.progress.message || '-'}</span>
-                        <span>
-                          {row.progress.current}/{row.progress.total}
-                        </span>
-                        <span>{progressPercent == null ? '进行中' : `${progressPercent}%`}</span>
-                      </div>
-                    </>
-                  ) : null}
+                  <Pill tone={statusTone(task.status)}>{statusLabel(task.status)}</Pill>
                 </div>
-              )
-            })}
-          </div>
+                <div className="versionInferenceItemMeta">
+                  <span>平台：{task.hostPlatform}</span>
+                  <span>原因：{task.reason || '-'}</span>
+                  <span>入队：{formatShort(task.enqueuedAt)}</span>
+                  <span>开始：{formatShort(task.startedAt ?? null)}</span>
+                  <span>更新：{formatShort(task.updatedAt)}</span>
+                </div>
+                {task.progress ? (
+                  <>
+                    <div className="versionInferenceProgressBar">
+                      <div
+                        className={
+                          progressPercent == null
+                            ? 'versionInferenceProgressFill versionInferenceProgressFillIndeterminate'
+                            : 'versionInferenceProgressFill'
+                        }
+                        style={progressPercent == null ? undefined : { width: `${progressPercent}%` }}
+                      />
+                    </div>
+                    <div className="versionInferenceProgressMeta">
+                      <span>{task.progress.phase || '执行中'}</span>
+                      <span>{task.progress.message || '-'}</span>
+                      <span>
+                        {task.progress.current}/{task.progress.total}
+                      </span>
+                      <span>{progressPercent == null ? '进行中' : `${progressPercent}%`}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="muted">等待 worker 返回进度…</div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="sectionRow">
+          <div className="title">缓存状态列表</div>
+        </div>
+        <div className="versionInferenceList">
+          {loading && !overview ? <div className="muted">正在加载…</div> : null}
+          {!loading && overview && rows.length === 0 ? <div className="muted">当前筛选条件下没有数据</div> : null}
+
+          {rows.map((row) => {
+            const progressPercent = knownPercent(row.progress)
+            return (
+              <div key={row.key} className="versionInferenceItem">
+                <div className="versionInferenceItemHead">
+                  <div className="versionInferenceItemTitle">
+                    <Mono>{row.imageRepo}</Mono>
+                  </div>
+                  <Pill tone={statusTone(row.status)}>{statusLabel(row.status)}</Pill>
+                </div>
+                <div className="versionInferenceItemMeta">
+                  <span>平台：{row.hostPlatform}</span>
+                  <span>服务数：{row.serviceCount}</span>
+                  <span>检查时间：{formatShort(row.checkedAt ?? null)}</span>
+                  <span>更新时间：{formatShort(row.updatedAt ?? null)}</span>
+                </div>
+                {row.reason ? <div className="muted">原因：{row.reason}</div> : null}
+                {row.progress ? (
+                  <>
+                    <div className="versionInferenceProgressBar">
+                      <div
+                        className={
+                          progressPercent == null
+                            ? 'versionInferenceProgressFill versionInferenceProgressFillIndeterminate'
+                            : 'versionInferenceProgressFill'
+                        }
+                        style={progressPercent == null ? undefined : { width: `${progressPercent}%` }}
+                      />
+                    </div>
+                    <div className="versionInferenceProgressMeta">
+                      <span>{row.progress.phase || '执行中'}</span>
+                      <span>{row.progress.message || '-'}</span>
+                      <span>
+                        {row.progress.current}/{row.progress.total}
+                      </span>
+                      <span>{progressPercent == null ? '进行中' : `${progressPercent}%`}</span>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            )
+          })}
         </div>
       </div>
     </div>

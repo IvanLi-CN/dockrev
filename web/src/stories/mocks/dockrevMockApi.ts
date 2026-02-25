@@ -29,6 +29,10 @@ export type DockrevApiScenario =
   | 'resolved-tag-demo'
   | 'version-inference-overview'
   | 'version-inference-resync-required'
+  | 'version-inference-idle'
+  | 'version-inference-running'
+  | 'version-inference-queue-backlog'
+  | 'version-inference-stale-all-failed'
   | 'version-tags-popover-demo'
   | 'version-tags-popover-snapshot-missing'
   | 'multi-stack-mixed'
@@ -101,8 +105,7 @@ type VersionInferenceOverviewMock = {
     lastError?: string | null
   }
   summary: {
-    total: number
-    missing: number
+    snapshotsTotal: number
     queued: number
     running: number
     ready: number
@@ -274,8 +277,7 @@ function makeDefaultDeployWelcome(): DeployWelcomeResponse {
 
 function summarizeVersionInferenceRows(rows: VersionInferenceOverviewRowMock[]) {
   const summary = {
-    total: rows.length,
-    missing: 0,
+    snapshotsTotal: 0,
     queued: 0,
     running: 0,
     ready: 0,
@@ -283,10 +285,8 @@ function summarizeVersionInferenceRows(rows: VersionInferenceOverviewRowMock[]) 
     allFailed: 0,
   }
   for (const row of rows) {
+    if (row.checkedAt) summary.snapshotsTotal += 1
     switch (row.status) {
-      case 'missing':
-        summary.missing += 1
-        break
       case 'queued':
         summary.queued += 1
         break
@@ -568,8 +568,10 @@ function buildDashboardDemo(): Fixture {
         key: 'quay.io/prometheus/prometheus@linux/amd64',
         imageRepo: 'quay.io/prometheus/prometheus',
         hostPlatform: 'linux/amd64',
-        status: 'missing',
+        status: 'stale',
         serviceCount: 1,
+        checkedAt: nowIso(-9 * 24 * 60 * 60 * 1000),
+        reason: 'cache_stale',
       },
     ],
     tasks: [
@@ -935,8 +937,10 @@ function buildQueueMixed(): Fixture {
         key: 'quay.io/prometheus/prometheus@linux/amd64',
         imageRepo: 'quay.io/prometheus/prometheus',
         hostPlatform: 'linux/amd64',
-        status: 'missing',
+        status: 'stale',
         serviceCount: 1,
+        checkedAt: nowIso(-9 * 24 * 60 * 60 * 1000),
+        reason: 'cache_stale',
       },
     ],
     tasks: [
@@ -1154,6 +1158,217 @@ function buildVersionInferenceResyncRequiredFixture(): Fixture {
   return f
 }
 
+function buildVersionInferenceIdleFixture(): Fixture {
+  const f = baseEmpty()
+  f.versionInferenceOverview = makeVersionInferenceOverview({
+    rows: [
+      {
+        key: 'ghcr.io/acme/api@linux/amd64',
+        imageRepo: 'ghcr.io/acme/api',
+        hostPlatform: 'linux/amd64',
+        status: 'ready',
+        serviceCount: 2,
+        checkedAt: nowIso(-2 * 60 * 1000),
+        updatedAt: nowIso(-2 * 60 * 1000),
+      },
+    ],
+    tasks: [],
+    worker: {
+      queued: 0,
+      running: 0,
+      inFlight: 0,
+    },
+  })
+  return f
+}
+
+function buildVersionInferenceRunningFixture(): Fixture {
+  const f = baseEmpty()
+  const now = nowIso()
+  f.versionInferenceOverview = makeVersionInferenceOverview({
+    rows: [
+      {
+        key: 'ghcr.io/acme/running@linux/amd64',
+        imageRepo: 'ghcr.io/acme/running',
+        hostPlatform: 'linux/amd64',
+        status: 'running',
+        serviceCount: 1,
+        reason: 'new_version',
+        updatedAt: now,
+        progress: {
+          phase: 'scanning_manifests',
+          message: 'scanning manifests (8/30)',
+          current: 8,
+          total: 30,
+          percent: 26,
+          updatedAt: now,
+        },
+      },
+      {
+        key: 'ghcr.io/acme/cached@linux/amd64',
+        imageRepo: 'ghcr.io/acme/cached',
+        hostPlatform: 'linux/amd64',
+        status: 'ready',
+        serviceCount: 1,
+        checkedAt: nowIso(-4 * 60 * 1000),
+        updatedAt: nowIso(-4 * 60 * 1000),
+      },
+    ],
+    tasks: [
+      {
+        key: 'ghcr.io/acme/running@linux/amd64',
+        imageRepo: 'ghcr.io/acme/running',
+        hostPlatform: 'linux/amd64',
+        status: 'running',
+        reason: 'new_version',
+        enqueuedAt: nowIso(-40 * 1000),
+        startedAt: nowIso(-35 * 1000),
+        updatedAt: now,
+        progress: {
+          phase: 'scanning_manifests',
+          message: 'scanning manifests (8/30)',
+          current: 8,
+          total: 30,
+          percent: 26,
+          updatedAt: now,
+        },
+      },
+    ],
+    worker: {
+      queued: 0,
+      running: 1,
+      inFlight: 1,
+    },
+  })
+  return f
+}
+
+function buildVersionInferenceQueueBacklogFixture(): Fixture {
+  const f = baseEmpty()
+  f.versionInferenceOverview = makeVersionInferenceOverview({
+    rows: [
+      {
+        key: 'ghcr.io/acme/a@linux/amd64',
+        imageRepo: 'ghcr.io/acme/a',
+        hostPlatform: 'linux/amd64',
+        status: 'queued',
+        serviceCount: 1,
+        reason: 'new_version',
+        updatedAt: nowIso(-25 * 1000),
+      },
+      {
+        key: 'ghcr.io/acme/b@linux/amd64',
+        imageRepo: 'ghcr.io/acme/b',
+        hostPlatform: 'linux/amd64',
+        status: 'queued',
+        serviceCount: 1,
+        reason: 'cache_stale',
+        updatedAt: nowIso(-22 * 1000),
+      },
+      {
+        key: 'ghcr.io/acme/c@linux/amd64',
+        imageRepo: 'ghcr.io/acme/c',
+        hostPlatform: 'linux/amd64',
+        status: 'queued',
+        serviceCount: 2,
+        reason: 'all_failed',
+        updatedAt: nowIso(-19 * 1000),
+      },
+    ],
+    tasks: [
+      {
+        key: 'ghcr.io/acme/a@linux/amd64',
+        imageRepo: 'ghcr.io/acme/a',
+        hostPlatform: 'linux/amd64',
+        status: 'queued',
+        reason: 'new_version',
+        enqueuedAt: nowIso(-28 * 1000),
+        updatedAt: nowIso(-25 * 1000),
+      },
+      {
+        key: 'ghcr.io/acme/b@linux/amd64',
+        imageRepo: 'ghcr.io/acme/b',
+        hostPlatform: 'linux/amd64',
+        status: 'queued',
+        reason: 'cache_stale',
+        enqueuedAt: nowIso(-24 * 1000),
+        updatedAt: nowIso(-22 * 1000),
+      },
+      {
+        key: 'ghcr.io/acme/c@linux/amd64',
+        imageRepo: 'ghcr.io/acme/c',
+        hostPlatform: 'linux/amd64',
+        status: 'queued',
+        reason: 'all_failed',
+        enqueuedAt: nowIso(-21 * 1000),
+        updatedAt: nowIso(-19 * 1000),
+      },
+    ],
+    worker: {
+      queued: 3,
+      running: 0,
+      inFlight: 3,
+    },
+    gc: {
+      lastRunAt: nowIso(-10 * 60 * 1000),
+      lastDeleted: 0,
+      lastDurationMs: 18,
+      lastError: null,
+    },
+  })
+  return f
+}
+
+function buildVersionInferenceStaleAllFailedFixture(): Fixture {
+  const f = baseEmpty()
+  f.versionInferenceOverview = makeVersionInferenceOverview({
+    rows: [
+      {
+        key: 'ghcr.io/acme/stale@linux/amd64',
+        imageRepo: 'ghcr.io/acme/stale',
+        hostPlatform: 'linux/amd64',
+        status: 'stale',
+        serviceCount: 1,
+        checkedAt: nowIso(-10 * 24 * 60 * 60 * 1000),
+        updatedAt: nowIso(-10 * 24 * 60 * 60 * 1000),
+        reason: 'cache_stale',
+      },
+      {
+        key: 'ghcr.io/acme/fail@linux/amd64',
+        imageRepo: 'ghcr.io/acme/fail',
+        hostPlatform: 'linux/amd64',
+        status: 'all_failed',
+        serviceCount: 1,
+        checkedAt: nowIso(-3 * 60 * 1000),
+        updatedAt: nowIso(-3 * 60 * 1000),
+        reason: 'all_failed',
+      },
+      {
+        key: 'ghcr.io/acme/ready@linux/amd64',
+        imageRepo: 'ghcr.io/acme/ready',
+        hostPlatform: 'linux/amd64',
+        status: 'ready',
+        serviceCount: 1,
+        checkedAt: nowIso(-2 * 60 * 1000),
+        updatedAt: nowIso(-2 * 60 * 1000),
+      },
+    ],
+    tasks: [],
+    worker: {
+      queued: 0,
+      running: 0,
+      inFlight: 0,
+    },
+    gc: {
+      lastRunAt: nowIso(-8 * 60 * 1000),
+      lastDeleted: 7,
+      lastDurationMs: 44,
+      lastError: null,
+    },
+  })
+  return f
+}
+
 function buildQueueLegacyProgress(): Fixture {
   const f = buildDashboardDemo()
 
@@ -1334,6 +1549,10 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'resolved-tag-demo') return buildResolvedTagDemo()
   if (scenario === 'version-inference-overview') return buildVersionInferenceOverviewFixture()
   if (scenario === 'version-inference-resync-required') return buildVersionInferenceResyncRequiredFixture()
+  if (scenario === 'version-inference-idle') return buildVersionInferenceIdleFixture()
+  if (scenario === 'version-inference-running') return buildVersionInferenceRunningFixture()
+  if (scenario === 'version-inference-queue-backlog') return buildVersionInferenceQueueBacklogFixture()
+  if (scenario === 'version-inference-stale-all-failed') return buildVersionInferenceStaleAllFailedFixture()
   if (scenario === 'version-tags-popover-demo' || scenario === 'version-tags-popover-snapshot-missing') return buildVersionTagsPopoverDemo()
   if (scenario === 'queue-mixed') return buildQueueMixed()
   if (scenario === 'queue-legacy-progress') return buildQueueLegacyProgress()
@@ -1642,10 +1861,12 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       const perPage = Math.min(200, Math.max(1, Number(params.get('perPage') ?? '50') || 50))
       const q = (params.get('q') ?? '').trim().toLowerCase()
       const status = (params.get('status') ?? '').trim().toLowerCase()
+      const validStatus = new Set(['', 'all', 'queued', 'running', 'ready', 'stale', 'all_failed'])
+      if (!validStatus.has(status)) return json({ error: 'invalid status filter' }, { status: 400 })
 
       const summary = summarizeVersionInferenceRows(f.versionInferenceOverview.rows)
       const rows = f.versionInferenceOverview.rows.filter((row) => {
-        if (status && row.status.toLowerCase() !== status) return false
+        if (status && status !== 'all' && row.status.toLowerCase() !== status) return false
         if (!q) return true
         const haystack = `${row.imageRepo} ${row.hostPlatform} ${row.key}`.toLowerCase()
         return haystack.includes(q)

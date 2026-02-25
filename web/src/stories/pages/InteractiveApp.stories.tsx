@@ -56,6 +56,18 @@ export const QueueLongLogs: Story = {
   },
 }
 
+export const VersionInference: Story = {
+  parameters: { dockrevApiScenario: 'version-inference-running' },
+  render: () => {
+    return (
+      <>
+        <LocationReset pathname="/queue/version-inference" />
+        <App />
+      </>
+    )
+  },
+}
+
 export const Services: Story = {
   parameters: { dockrevApiScenario: 'multi-stack-mixed' },
   render: () => {

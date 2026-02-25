@@ -1788,6 +1788,12 @@ ORDER BY updated_at DESC, image_repo ASC, host_platform ASC
         .context("list image version inference snapshot rows")
     }
 
+    pub async fn list_image_version_inference_snapshots(
+        &self,
+    ) -> anyhow::Result<Vec<ImageVersionInferenceSnapshotRow>> {
+        self.list_image_version_inference_snapshot_rows().await
+    }
+
     pub async fn list_version_inference_service_targets(
         &self,
     ) -> anyhow::Result<Vec<VersionInferenceServiceTargetRow>> {
@@ -1830,6 +1836,14 @@ WHERE checked_at < ?1
         })
         .await
         .context("delete image version inference snapshots older than cutoff")
+    }
+
+    pub async fn delete_expired_image_version_inference_snapshots(
+        &self,
+        cutoff_checked_at: &str,
+    ) -> anyhow::Result<u64> {
+        self.delete_image_version_inference_snapshots_older_than(cutoff_checked_at)
+            .await
     }
 
     pub async fn get_service_settings(

@@ -380,9 +380,17 @@ impl VersionInferenceWorker {
         }
     }
 
+    pub async fn worker_stats(&self) -> VersionInferenceWorkerSnapshot {
+        self.worker_snapshot().await
+    }
+
     pub async fn gc_snapshot(&self) -> VersionInferenceGcSnapshot {
         let runtime = self.runtime.lock().await;
         runtime.gc.clone()
+    }
+
+    pub async fn gc_status(&self) -> VersionInferenceGcSnapshot {
+        self.gc_snapshot().await
     }
 
     pub async fn list_tasks(&self) -> Vec<VersionInferenceTaskSnapshot> {
@@ -411,6 +419,10 @@ impl VersionInferenceWorker {
                 .then_with(|| a.host_platform.cmp(&b.host_platform))
         });
         tasks
+    }
+
+    pub async fn snapshot_tasks(&self) -> Vec<VersionInferenceTaskSnapshot> {
+        self.list_tasks().await
     }
 
     pub async fn latest_event_id(&self) -> i64 {
@@ -570,7 +582,7 @@ impl VersionInferenceWorker {
 
         let delete_result = self
             .db
-            .delete_image_version_inference_snapshots_older_than(&cutoff)
+            .delete_expired_image_version_inference_snapshots(&cutoff)
             .await;
 
         let duration_ms = start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;

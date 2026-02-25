@@ -1454,8 +1454,7 @@ pub struct VersionInferenceGcState {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionInferenceOverviewSummary {
-    pub total: u32,
-    pub missing: u32,
+    pub snapshots_total: u32,
     pub queued: u32,
     pub running: u32,
     pub ready: u32,
