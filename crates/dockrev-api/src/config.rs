@@ -107,6 +107,12 @@ impl Config {
             ));
         }
 
+        warn_ignored_fixed_concurrency_env("DOCKREV_CHECK_CONCURRENCY", FIXED_CHECK_PARALLELISM);
+        warn_ignored_fixed_concurrency_env(
+            "DOCKREV_REGISTRY_PER_HOST_CONCURRENCY",
+            FIXED_REGISTRY_PER_HOST_CONCURRENCY,
+        );
+
         let registry_per_host_concurrency = FIXED_REGISTRY_PER_HOST_CONCURRENCY;
 
         let registry_retry_max_attempts = std::env::var("DOCKREV_REGISTRY_RETRY_MAX_ATTEMPTS")
@@ -168,5 +174,15 @@ fn parse_bool(input: &str) -> Option<bool> {
         "1" | "true" | "yes" | "y" | "on" => Some(true),
         "0" | "false" | "no" | "n" | "off" => Some(false),
         _ => None,
+    }
+}
+
+fn warn_ignored_fixed_concurrency_env(name: &str, fixed_value: usize) {
+    if std::env::var_os(name).is_some() {
+        tracing::warn!(
+            env = name,
+            fixed_value,
+            "legacy concurrency env is ignored because concurrency is fixed"
+        );
     }
 }
