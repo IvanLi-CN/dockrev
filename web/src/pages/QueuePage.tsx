@@ -379,7 +379,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
 
         <button
           type="button"
-          className="queueItem"
+          className="queueSummaryItem"
           style={{ marginTop: 12 }}
           onClick={() => navigate({ name: 'version-inference' })}
         >

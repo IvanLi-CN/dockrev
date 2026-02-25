@@ -3173,7 +3173,7 @@ async fn get_version_inference_overview(
     }
 
     let total = filtered_rows.len() as u32;
-    let start = ((page - 1) * per_page) as usize;
+    let start = page.saturating_sub(1).saturating_mul(per_page) as usize;
     let rows = filtered_rows
         .into_iter()
         .skip(start)

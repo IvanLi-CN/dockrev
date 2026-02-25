@@ -3620,9 +3620,28 @@ services:
     assert_eq!(filtered.status(), 200);
     let filtered_body = response_json(filtered).await;
     assert_eq!(filtered_body["total"].as_u64(), Some(1));
+    assert_eq!(filtered_body["summary"]["total"].as_u64(), Some(2));
+    assert_eq!(filtered_body["summary"]["ready"].as_u64(), Some(1));
+    assert_eq!(filtered_body["summary"]["allFailed"].as_u64(), Some(1));
     let filtered_rows = filtered_body["rows"].as_array().unwrap();
     assert_eq!(filtered_rows.len(), 1);
     assert_eq!(filtered_rows[0]["status"].as_str(), Some("all_failed"));
+
+    let overflow_page = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/version-inference/overview?page=4294967295&perPage=200")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(overflow_page.status(), 200);
+    let overflow_body = response_json(overflow_page).await;
+    assert_eq!(overflow_body["page"].as_u64(), Some(4_294_967_295));
+    assert_eq!(overflow_body["perPage"].as_u64(), Some(200));
+    assert_eq!(overflow_body["total"].as_u64(), Some(2));
+    assert_eq!(overflow_body["rows"].as_array().unwrap().len(), 0);
 }
 
 #[tokio::test]

@@ -1643,6 +1643,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       const q = (params.get('q') ?? '').trim().toLowerCase()
       const status = (params.get('status') ?? '').trim().toLowerCase()
 
+      const summary = summarizeVersionInferenceRows(f.versionInferenceOverview.rows)
       const rows = f.versionInferenceOverview.rows.filter((row) => {
         if (status && row.status.toLowerCase() !== status) return false
         if (!q) return true
@@ -1651,7 +1652,6 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       })
       const offset = (page - 1) * perPage
       const pagedRows = rows.slice(offset, offset + perPage)
-      const summary = summarizeVersionInferenceRows(rows)
 
       return json({
         worker: f.versionInferenceOverview.worker,

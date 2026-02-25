@@ -1613,7 +1613,8 @@ html[data-theme='light'] .modalOverlay {
   margin-top: 12px;
 }
 
-.queueItem {
+.queueItem,
+.queueSummaryItem {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -1627,7 +1628,8 @@ html[data-theme='light'] .modalOverlay {
   text-align: left;
 }
 
-.queueItem:hover {
+.queueItem:hover,
+.queueSummaryItem:hover {
   border-color: rgba(56, 189, 248, 0.35);
 }
 
