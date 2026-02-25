@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   getVersionInferenceOverview,
+  newVersionInferenceEventsSource,
   type VersionInferenceCacheRow,
   type VersionInferenceOverviewResponse,
-  type VersionInferenceTask,
   type VersionInferenceTaskProgress,
 } from '../api'
 import { Button, Mono, Pill } from '../ui'
@@ -13,8 +13,8 @@ type StatusFilter = 'all' | 'queued' | 'running' | 'ready' | 'stale' | 'all_fail
 const STATUS_FILTERS: readonly StatusFilter[] = ['all', 'queued', 'running', 'ready', 'stale', 'all_failed']
 const PER_PAGE_OPTIONS = [20, 50, 100, 200] as const
 const QUERY_DEBOUNCE_MS = 250
-const ACTIVE_POLL_MS = 2_000
-const IDLE_POLL_MS = 15_000
+const SSE_RECONNECT_MS = 3_000
+const SSE_REFRESH_DEBOUNCE_MS = 250
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -45,22 +45,23 @@ function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' {
   return 'muted'
 }
 
+function sseStatusLabel(status: 'connecting' | 'open' | 'reconnecting'): string {
+  if (status === 'open') return 'SSE 已连接'
+  if (status === 'reconnecting') return 'SSE 重连中'
+  return 'SSE 连接中'
+}
+
+function sseStatusTone(status: 'connecting' | 'open' | 'reconnecting'): 'ok' | 'warn' {
+  if (status === 'open') return 'ok'
+  return 'warn'
+}
+
 function knownPercent(progress?: VersionInferenceTaskProgress | null): number | null {
   if (!progress) return null
   const total = Number.isFinite(progress.total) ? Math.max(0, progress.total) : 0
   if (total <= 0) return null
   if (!Number.isFinite(progress.percent)) return null
   return Math.max(0, Math.min(100, Math.round(progress.percent)))
-}
-
-function sortTasks(tasks: VersionInferenceTask[]): VersionInferenceTask[] {
-  const next = [...tasks]
-  next.sort((a, b) => {
-    const byUpdated = String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''))
-    if (byUpdated !== 0) return byUpdated
-    return String(a.key || '').localeCompare(String(b.key || ''))
-  })
-  return next
 }
 
 function statusCount(summary: VersionInferenceOverviewResponse['summary'] | null, key: StatusFilter): number {
@@ -109,6 +110,7 @@ export function VersionInferencePage(props: {
   const [manualBusy, setManualBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null)
+  const [sseStatus, setSseStatus] = useState<'connecting' | 'open' | 'reconnecting'>('connecting')
   const refreshRequestIdRef = useRef(0)
 
   useEffect(() => {
@@ -159,20 +161,93 @@ export function VersionInferencePage(props: {
     [page, perPage, query, statusFilter],
   )
 
+  const refreshRef = useRef(refresh)
+  useEffect(() => {
+    refreshRef.current = refresh
+  }, [refresh])
+
   useEffect(() => {
     setLoading(true)
     void refresh({ silent: true })
   }, [refresh])
 
-  const hasActiveTasks = (overview?.summary.running ?? 0) + (overview?.summary.queued ?? 0) > 0
-
   useEffect(() => {
-    const pollMs = hasActiveTasks ? ACTIVE_POLL_MS : IDLE_POLL_MS
-    const timer = window.setInterval(() => {
-      void refresh({ silent: true })
-    }, pollMs)
-    return () => window.clearInterval(timer)
-  }, [hasActiveTasks, refresh])
+    let closed = false
+    let es: EventSource | null = null
+    let reconnectTimer: number | null = null
+    let refreshTimer: number | null = null
+    let lastEventId = 0
+
+    const clearReconnectTimer = () => {
+      if (reconnectTimer != null) window.clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+
+    const clearRefreshTimer = () => {
+      if (refreshTimer != null) window.clearTimeout(refreshTimer)
+      refreshTimer = null
+    }
+
+    const scheduleRefresh = (delayMs: number) => {
+      if (closed || refreshTimer != null) return
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = null
+        void refreshRef.current({ silent: true })
+      }, delayMs)
+    }
+
+    const scheduleReconnect = () => {
+      if (closed || reconnectTimer != null) return
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null
+        connect()
+      }, SSE_RECONNECT_MS)
+    }
+
+    const trackEventId = (evt: Event) => {
+      const idRaw = (evt as MessageEvent).lastEventId
+      if (typeof idRaw !== 'string') return
+      const parsed = Number.parseInt(idRaw, 10)
+      if (Number.isFinite(parsed) && parsed > 0) lastEventId = parsed
+    }
+
+    const connect = () => {
+      if (closed) return
+      const opts = lastEventId > 0 ? { afterId: lastEventId } : undefined
+      es = newVersionInferenceEventsSource(opts)
+      setSseStatus(lastEventId > 0 ? 'reconnecting' : 'connecting')
+
+      es.addEventListener('open', () => {
+        setSseStatus('open')
+        // Catch up once on subscribe so in-between updates are reflected immediately.
+        scheduleRefresh(0)
+      })
+
+      es.addEventListener('version_inference_event', (evt: Event) => {
+        trackEventId(evt)
+        scheduleRefresh(SSE_REFRESH_DEBOUNCE_MS)
+      })
+
+      es.onerror = () => {
+        if (closed) return
+        setSseStatus('reconnecting')
+        es?.close()
+        es = null
+        // Trigger one immediate sync before reconnecting to reduce stale windows.
+        scheduleRefresh(0)
+        scheduleReconnect()
+      }
+    }
+
+    connect()
+
+    return () => {
+      closed = true
+      clearReconnectTimer()
+      clearRefreshTimer()
+      es?.close()
+    }
+  }, [])
 
   useEffect(() => {
     onTopActions(
@@ -196,7 +271,6 @@ export function VersionInferencePage(props: {
 
   const currentPage = overview?.page ?? page
   const summary = overview?.summary ?? null
-  const tasks = useMemo(() => sortTasks(overview?.tasks ?? []), [overview?.tasks])
   const rows = useMemo(() => sortRows(overview?.rows ?? []), [overview?.rows])
 
   return (
@@ -205,8 +279,8 @@ export function VersionInferencePage(props: {
         <div className="sectionRow">
           <div className="title">任务与缓存总览</div>
           <div className="chipRow" style={{ marginLeft: 'auto' }}>
-            <Pill tone={hasActiveTasks ? 'warn' : 'ok'}>{hasActiveTasks ? `高频刷新 ${ACTIVE_POLL_MS / 1000}s` : `低频刷新 ${IDLE_POLL_MS / 1000}s`}</Pill>
-            <Pill tone="muted">最近刷新：{formatShort(lastRefreshAt)}</Pill>
+            <Pill tone={sseStatusTone(sseStatus)}>{sseStatusLabel(sseStatus)}</Pill>
+            <Pill tone="muted">最近更新：{formatShort(lastRefreshAt)}</Pill>
           </div>
         </div>
 
@@ -320,60 +394,10 @@ export function VersionInferencePage(props: {
 
       <div className="card">
         <div className="sectionRow">
-          <div className="title">进行中任务</div>
-        </div>
-        <div className="versionInferenceList">
-          {tasks.length === 0 ? <div className="muted">当前无 in-flight 任务</div> : null}
-          {tasks.map((task) => {
-            const progressPercent = knownPercent(task.progress)
-            return (
-              <div key={task.key} className="versionInferenceItem">
-                <div className="versionInferenceItemHead">
-                  <div className="versionInferenceItemTitle">
-                    <Mono>{task.imageRepo}</Mono>
-                  </div>
-                  <Pill tone={statusTone(task.status)}>{statusLabel(task.status)}</Pill>
-                </div>
-                <div className="versionInferenceItemMeta">
-                  <span>平台：{task.hostPlatform}</span>
-                  <span>原因：{task.reason || '-'}</span>
-                  <span>入队：{formatShort(task.enqueuedAt)}</span>
-                  <span>开始：{formatShort(task.startedAt ?? null)}</span>
-                  <span>更新：{formatShort(task.updatedAt)}</span>
-                </div>
-                {task.progress ? (
-                  <>
-                    <div className="versionInferenceProgressBar">
-                      <div
-                        className={
-                          progressPercent == null
-                            ? 'versionInferenceProgressFill versionInferenceProgressFillIndeterminate'
-                            : 'versionInferenceProgressFill'
-                        }
-                        style={progressPercent == null ? undefined : { width: `${progressPercent}%` }}
-                      />
-                    </div>
-                    <div className="versionInferenceProgressMeta">
-                      <span>{task.progress.phase || '执行中'}</span>
-                      <span>{task.progress.message || '-'}</span>
-                      <span>
-                        {task.progress.current}/{task.progress.total}
-                      </span>
-                      <span>{progressPercent == null ? '进行中' : `${progressPercent}%`}</span>
-                    </div>
-                  </>
-                ) : (
-                  <div className="muted">等待 worker 返回进度…</div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="sectionRow">
-          <div className="title">缓存状态列表</div>
+          <div className="title">统一状态列表（进行中 + 缓存）</div>
+          <div className="muted" style={{ marginLeft: 'auto' }}>
+            排序：执行中 &gt; 排队中 &gt; 已过期 &gt; 全部失败 &gt; 已就绪（同状态按更新时间倒序）
+          </div>
         </div>
         <div className="versionInferenceList">
           {loading && !overview ? <div className="muted">正在加载…</div> : null}

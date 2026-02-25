@@ -64,7 +64,7 @@
 
 - 总览 rows 只展示“已缓存 + 即将缓存（queued/running）”，不含缺失项。
 - `rows[].status` 枚举：`queued | running | ready | stale | all_failed`。
-- 状态判定优先级：`running > queued > all_failed > stale > ready`。
+- 状态展示优先级：`running > queued > stale > all_failed > ready`。
 - `summary` 口径：
   - `snapshotsTotal`：缓存快照总量（仅已落库快照）。
   - `queued/running/ready/stale/allFailed`：按 rows 状态聚合。
@@ -75,7 +75,7 @@
 - Overview：`queued/running/ready/stale/all_failed` 判定正确，过滤与分页正确。
 - Overview：列表口径为“缓存 + in-flight”，且不出现 `missing`。
 - GC：启动后首次执行 + 每 24h 周期执行；`checkedAt > 30 天` 数据被删除；错误写入 `gc.lastError`。
-- 前端：队列页状态卡片可跳转；独立页在 `queued/running` 时高频刷新、空闲时低频刷新。
+- 前端：队列页状态卡片可跳转；独立页数据更新由 SSE 推送驱动（无定时轮询）。
 - 回归：`GET /api/stacks/{id}` 的 `versionInference pending/ready` 行为不回归。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
@@ -101,3 +101,4 @@
 
 - 2026-02-25: 口径重置为“overview + 队列入口 + 缓存列表 + 30 天 GC”，移除 missing/SSE 作为验收前置。
 - 2026-02-25: 完成后端 overview 契约收敛（去 missing 口径、summary=snapshotsTotal+状态计数）、worker/DB GC 能力与前端路由迁移（`/queue/version-inference`）、页面轮询策略、队列卡片与 Storybook 场景补齐；通过 `cargo test -p dockrev-api`、`bun run --cwd web lint`、`bun run --cwd web build`。
+- 2026-02-25: 按反馈将 `/queue/version-inference` 页面更新机制切到 SSE 事件驱动，移除高频/低频轮询；页面保持“统一状态列表（进行中 + 缓存）”展示口径。
