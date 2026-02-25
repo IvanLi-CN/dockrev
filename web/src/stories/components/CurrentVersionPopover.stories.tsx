@@ -119,3 +119,14 @@ export const SemverTag: Story = {
     resolvedTags: null,
   },
 }
+
+export const PendingSnapshot: Story = {
+  parameters: { dockrevApiScenario: 'version-tags-popover-snapshot-pending' },
+  args: {
+    displayTag: 'v5.2.1',
+    imageTag: 'v5.2.1',
+    imageDigest: d('c', 'c2'),
+    resolvedTag: null,
+    resolvedTags: null,
+  },
+}

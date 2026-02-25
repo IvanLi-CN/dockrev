@@ -280,7 +280,6 @@ export function CurrentVersionPopover(props: {
     // (e.g. via re-pinning), not continuously driven by pinned+error state.
     if (digestTags != null) return
 
-    setSnapshotPhase('loading')
     let alive = true
     const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
     if (fetchTimer.current != null) {
