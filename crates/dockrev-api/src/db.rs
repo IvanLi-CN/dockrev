@@ -64,6 +64,22 @@ pub struct ServiceSnapshotTarget {
 }
 
 #[derive(Clone, Debug)]
+pub struct VersionInferenceServiceTargetRow {
+    pub image_ref: String,
+    pub image_tag: String,
+    pub candidate_tag: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ImageVersionInferenceSnapshotRow {
+    pub image_repo: String,
+    pub host_platform: String,
+    pub all_failed: bool,
+    pub checked_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct DiscoveredComposeProjectRecord {
     pub stack_id: Option<String>,
 }
@@ -1744,6 +1760,76 @@ WHERE image_repo = ?1 AND host_platform = ?2
         })
         .await
         .context("get image version inference snapshot")
+    }
+
+    pub async fn list_image_version_inference_snapshot_rows(
+        &self,
+    ) -> anyhow::Result<Vec<ImageVersionInferenceSnapshotRow>> {
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT image_repo, host_platform, all_failed, checked_at, updated_at
+FROM image_version_inference_snapshots
+ORDER BY updated_at DESC, image_repo ASC, host_platform ASC
+"#,
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(ImageVersionInferenceSnapshotRow {
+                    image_repo: row.get(0)?,
+                    host_platform: row.get(1)?,
+                    all_failed: row.get::<_, i64>(2)? != 0,
+                    checked_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list image version inference snapshot rows")
+    }
+
+    pub async fn list_version_inference_service_targets(
+        &self,
+    ) -> anyhow::Result<Vec<VersionInferenceServiceTargetRow>> {
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT image_ref, image_tag, candidate_tag
+FROM services
+WHERE archived = 0
+ORDER BY image_ref ASC
+"#,
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(VersionInferenceServiceTargetRow {
+                    image_ref: row.get(0)?,
+                    image_tag: row.get(1)?,
+                    candidate_tag: row.get(2)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list version inference service targets")
+    }
+
+    pub async fn delete_image_version_inference_snapshots_older_than(
+        &self,
+        cutoff_checked_at: &str,
+    ) -> anyhow::Result<u64> {
+        let cutoff_checked_at = cutoff_checked_at.to_string();
+        self.call(move |conn| {
+            let deleted = conn.execute(
+                r#"
+DELETE FROM image_version_inference_snapshots
+WHERE checked_at < ?1
+"#,
+                params![cutoff_checked_at],
+            )?;
+            Ok(deleted as u64)
+        })
+        .await
+        .context("delete image version inference snapshots older than cutoff")
     }
 
     pub async fn get_service_settings(
@@ -4038,6 +4124,8 @@ CREATE TABLE IF NOT EXISTS image_version_inference_snapshots (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (image_repo, host_platform)
 );
+CREATE INDEX IF NOT EXISTS idx_image_version_inference_snapshots_checked_at
+ON image_version_inference_snapshots(checked_at);
 "#,
     )?;
     Ok(())
@@ -4334,4 +4422,5 @@ CREATE TABLE IF NOT EXISTS image_version_inference_snapshots (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (image_repo, host_platform)
 );
+CREATE INDEX IF NOT EXISTS idx_image_version_inference_snapshots_checked_at ON image_version_inference_snapshots(checked_at);
 "#;

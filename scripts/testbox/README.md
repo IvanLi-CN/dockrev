@@ -1,17 +1,24 @@
-# codex-testbox E2E: check job concurrency + restart recovery
+# codex-testbox E2E scripts
 
-This folder contains a manual regression script designed to run Dockrev on the shared test
-machine `codex-testbox` (192.168.31.15) in an isolated per-run workspace, then verify:
+This folder contains manual regression scripts that run Dockrev on the shared test machine
+`codex-testbox` (192.168.31.15) in an isolated per-run workspace.
 
-1) `POST /api/checks` blocks parallel runs for the same scope (expects `409 conflict`)
-2) a Dockrev container restart terminates orphaned jobs (expects `failed` + `summary.terminated`)
+Available scripts:
 
-The script is intentionally **not wired into GitHub Actions** because it depends on SSH + a shared
+1) `check-job-recovery.e2e.ts`
+   - `POST /api/checks` blocks parallel runs for the same scope (`409 conflict`)
+   - Dockrev restart terminates orphaned running jobs (`failed` + `summary.terminated`)
+2) `check-version-inference-sse.e2e.ts`
+   - `/api/version-inference/events` pushes `version_inference_event` with monotonic ids
+   - `POST /api/services/{id}/version-inference/refresh` emits `task_enqueued`
+   - reconnect with `afterId` receives newer events
+
+These scripts are intentionally **not wired into GitHub Actions** because they depend on SSH + a shared
 host environment and can be flaky due to network / registry rate limits.
 
 Important: the shared testbox runs Docker inside LXC where `CAP_SETFCAP` is not available. This
-means `docker build` / `docker compose up --build` can fail. To keep the test reliable, this
-script:
+means `docker build` / `docker compose up --build` can fail. To keep tests reliable, these
+scripts:
 
 - builds the Dockrev binary on the testbox **inside a `rust:1.91-bookworm` container** with caps
   dropped (so it can run under LXC),
@@ -26,10 +33,11 @@ script:
 
 ## Quickstart
 
-From the repo root:
+From the repo root, run one of:
 
 ```bash
 bun scripts/testbox/check-job-recovery.e2e.ts
+bun scripts/testbox/check-version-inference-sse.e2e.ts
 ```
 
 Run twice to reduce false confidence:
@@ -37,6 +45,8 @@ Run twice to reduce false confidence:
 ```bash
 bun scripts/testbox/check-job-recovery.e2e.ts
 bun scripts/testbox/check-job-recovery.e2e.ts
+bun scripts/testbox/check-version-inference-sse.e2e.ts
+bun scripts/testbox/check-version-inference-sse.e2e.ts
 ```
 
 ## Environment variables
@@ -50,6 +60,7 @@ bun scripts/testbox/check-job-recovery.e2e.ts
 - `DOCKREV_BUILD_TIMEOUT_SECONDS` (default: `900`): timeout for building the Dockrev binary on the testbox.
 - `DOCKREV_TEST_TIMEOUT_SECONDS` (default: `180`): overall timeout for the test portion (excluding build).
 - `DOCKREV_JOB_WAIT_SECONDS` (default: `60`): timeout for job state transitions.
+- `DOCKREV_SSE_WAIT_MS` (default: `45000`): SSE event wait timeout (used by `check-version-inference-sse.e2e.ts`).
 - `DOCKREV_RESTART_GRACE_SECONDS` (default: `1`): small sleep after restart.
 - `DOCKREV_RESTART_MODE` (default: `hard`): `hard` uses SIGKILL to exercise startup recovery;
   `soft` uses SIGTERM to exercise graceful shutdown.
@@ -62,7 +73,7 @@ bun scripts/testbox/check-job-recovery.e2e.ts
 - Starts the fixture stack (`scripts/testbox/fixtures.compose.yml`) under a unique `<project>_fixtures`
   and drops capabilities (LXC quirk) so containers can start on the shared host.
 - Opens an SSH port-forward so the local script can call Dockrev via `http://127.0.0.1:<localPort>`
-- Runs the two test cases (409 + restart recovery)
+- Runs script-specific assertions (job recovery or version inference SSE)
 - Cleans up remote containers/volumes and the remote run directory (unless `DOCKREV_TEST_KEEP=1`)
 
 ## Troubleshooting

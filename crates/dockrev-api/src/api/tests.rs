@@ -3501,6 +3501,311 @@ async fn jobs_events_stream_default_starts_from_tail_without_replay() {
 }
 
 #[tokio::test]
+async fn version_inference_overview_reports_rows_filters_and_pagination() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+  worker:
+    image: ghcr.io/acme/worker:latest
+  stable:
+    image: ghcr.io/acme/stable:1.2.3
+"#,
+    )
+    .unwrap();
+    let _stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    let ready_snapshot = crate::version_inference_worker::VersionInferenceSnapshot {
+        checked_at: now.clone(),
+        digests: BTreeMap::new(),
+        scan: crate::version_inference_worker::VersionInferenceScanSummary {
+            semver_tags_total: 2,
+            semver_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+        all_failed: false,
+    };
+    state
+        .db
+        .upsert_image_version_inference_snapshot(
+            "ghcr.io/acme/web",
+            "linux/amd64",
+            &serde_json::to_string(&ready_snapshot).unwrap(),
+            false,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let failed_snapshot = crate::version_inference_worker::VersionInferenceSnapshot {
+        checked_at: now.clone(),
+        digests: BTreeMap::new(),
+        scan: crate::version_inference_worker::VersionInferenceScanSummary {
+            semver_tags_total: 2,
+            semver_tags_considered: 2,
+            manifests_ok: 0,
+            manifests_timeout: 0,
+            manifests_error: 2,
+        },
+        all_failed: true,
+    };
+    state
+        .db
+        .upsert_image_version_inference_snapshot(
+            "ghcr.io/acme/worker",
+            "linux/amd64",
+            &serde_json::to_string(&failed_snapshot).unwrap(),
+            true,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/version-inference/overview?page=1&perPage=10")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+
+    assert_eq!(body["summary"]["total"].as_u64(), Some(2));
+    assert_eq!(body["summary"]["ready"].as_u64(), Some(1));
+    assert_eq!(body["summary"]["allFailed"].as_u64(), Some(1));
+    assert_eq!(body["page"].as_u64(), Some(1));
+    assert_eq!(body["perPage"].as_u64(), Some(10));
+
+    let rows = body["rows"].as_array().expect("rows must be an array");
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().any(|row| {
+        row["imageRepo"].as_str() == Some("ghcr.io/acme/web")
+            && row["status"].as_str() == Some("ready")
+            && row["serviceCount"].as_u64() == Some(1)
+    }));
+    assert!(rows.iter().any(|row| {
+        row["imageRepo"].as_str() == Some("ghcr.io/acme/worker")
+            && row["status"].as_str() == Some("all_failed")
+            && row["serviceCount"].as_u64() == Some(1)
+    }));
+
+    let filtered = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/version-inference/overview?status=all_failed&page=1&perPage=10")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(filtered.status(), 200);
+    let filtered_body = response_json(filtered).await;
+    assert_eq!(filtered_body["total"].as_u64(), Some(1));
+    assert_eq!(filtered_body["summary"]["total"].as_u64(), Some(2));
+    assert_eq!(filtered_body["summary"]["ready"].as_u64(), Some(1));
+    assert_eq!(filtered_body["summary"]["allFailed"].as_u64(), Some(1));
+    let filtered_rows = filtered_body["rows"].as_array().unwrap();
+    assert_eq!(filtered_rows.len(), 1);
+    assert_eq!(filtered_rows[0]["status"].as_str(), Some("all_failed"));
+
+    let overflow_page = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/version-inference/overview?page=4294967295&perPage=200")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(overflow_page.status(), 200);
+    let overflow_body = response_json(overflow_page).await;
+    assert_eq!(overflow_body["page"].as_u64(), Some(4_294_967_295));
+    assert_eq!(overflow_body["perPage"].as_u64(), Some(200));
+    assert_eq!(overflow_body["total"].as_u64(), Some(2));
+    assert_eq!(overflow_body["rows"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn version_inference_events_stream_emits_task_enqueued() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/version-inference/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers()
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok()),
+        Some("no-cache")
+    );
+
+    let mut body = resp.into_body();
+    let enqueued = state
+        .version_inference_worker
+        .enqueue(
+            "ghcr.io/acme/web",
+            "linux/amd64",
+            crate::version_inference_worker::VersionInferenceReason::Force,
+        )
+        .await;
+    assert!(enqueued);
+
+    let evt =
+        wait_for_sse_event(&mut body, "version_inference_event", Duration::from_secs(3)).await;
+    assert!(evt.id.is_some(), "SSE event should include id");
+    let payload: serde_json::Value = serde_json::from_str(&evt.data).unwrap();
+    assert_eq!(payload["type"].as_str(), Some("task_enqueued"));
+    assert_eq!(payload["imageRepo"].as_str(), Some("ghcr.io/acme/web"));
+}
+
+#[tokio::test]
+async fn version_inference_events_stream_emits_resync_required_when_after_id_is_too_old() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    for i in 0..2105 {
+        let image_repo = format!("ghcr.io/acme/resync-{i}");
+        let enqueued = state
+            .version_inference_worker
+            .enqueue(
+                &image_repo,
+                "linux/amd64",
+                crate::version_inference_worker::VersionInferenceReason::Force,
+            )
+            .await;
+        assert!(enqueued);
+    }
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/version-inference/events?afterId=1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let mut body = resp.into_body();
+
+    let evt =
+        wait_for_sse_event(&mut body, "version_inference_event", Duration::from_secs(3)).await;
+    let payload: serde_json::Value = serde_json::from_str(&evt.data).unwrap();
+    assert_eq!(payload["type"].as_str(), Some("resync_required"));
+    assert_eq!(payload["requestedAfterId"].as_i64(), Some(1));
+    assert!(
+        payload["oldestAvailableId"].as_i64().unwrap_or_default() > 1,
+        "expected ring buffer oldest event id to move forward"
+    );
+}
+
+#[tokio::test]
+async fn version_inference_gc_runs_on_start_and_deletes_expired_snapshots() {
+    let state = test_state(":memory:").await;
+
+    let old = (time::OffsetDateTime::now_utc() - time::Duration::days(40))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let snapshot = crate::version_inference_worker::VersionInferenceSnapshot {
+        checked_at: old.clone(),
+        digests: BTreeMap::new(),
+        scan: crate::version_inference_worker::VersionInferenceScanSummary {
+            semver_tags_total: 0,
+            semver_tags_considered: 0,
+            manifests_ok: 0,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+        all_failed: false,
+    };
+
+    state
+        .db
+        .upsert_image_version_inference_snapshot(
+            "ghcr.io/acme/old",
+            "linux/amd64",
+            &serde_json::to_string(&snapshot).unwrap(),
+            false,
+            &old,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        state
+            .db
+            .get_image_version_inference_snapshot("ghcr.io/acme/old", "linux/amd64")
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    state.version_inference_worker.spawn_gc_task();
+
+    let mut deleted = false;
+    for _ in 0..80 {
+        if state
+            .db
+            .get_image_version_inference_snapshot("ghcr.io/acme/old", "linux/amd64")
+            .await
+            .unwrap()
+            .is_none()
+        {
+            deleted = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        deleted,
+        "expired version inference snapshots should be deleted"
+    );
+
+    let gc = state.version_inference_worker.gc_snapshot().await;
+    assert!(
+        gc.last_run_at.is_some(),
+        "gc should record last run timestamp"
+    );
+    assert!(
+        gc.last_deleted.unwrap_or(0) >= 1,
+        "gc should report at least one deleted snapshot"
+    );
+}
+
+#[tokio::test]
 async fn recover_incomplete_jobs_marks_running_as_failed() {
     let state = test_state(":memory:").await;
 

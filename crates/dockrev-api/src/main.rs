@@ -121,6 +121,7 @@ async fn main() -> anyhow::Result<()> {
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
     state.snapshot_worker.spawn_startup_warmup(&host_platform);
+    state.version_inference_worker.spawn_gc_task();
 
     backup::spawn_cleanup_task(state.clone());
     discovery::spawn_task(state.clone());

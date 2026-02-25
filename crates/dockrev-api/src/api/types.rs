@@ -1413,3 +1413,97 @@ pub struct TriggerVersionInferenceRefreshResponse {
     pub image_repo: String,
     pub reason: String,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionInferenceOverviewResponse {
+    pub worker: VersionInferenceWorkerState,
+    pub gc: VersionInferenceGcState,
+    pub summary: VersionInferenceOverviewSummary,
+    pub tasks: Vec<VersionInferenceTaskState>,
+    pub rows: Vec<VersionInferenceOverviewRow>,
+    pub page: u32,
+    pub per_page: u32,
+    pub total: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionInferenceWorkerState {
+    pub max_concurrency: u32,
+    pub queued: u32,
+    pub running: u32,
+    pub in_flight: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionInferenceGcState {
+    pub retention_days: i64,
+    pub interval_seconds: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_run_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_deleted: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_duration_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionInferenceOverviewSummary {
+    pub total: u32,
+    pub missing: u32,
+    pub queued: u32,
+    pub running: u32,
+    pub ready: u32,
+    pub stale: u32,
+    pub all_failed: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionInferenceTaskProgressState {
+    pub phase: String,
+    pub message: String,
+    pub current: u32,
+    pub total: u32,
+    pub percent: u32,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionInferenceTaskState {
+    pub key: String,
+    pub image_repo: String,
+    pub host_platform: String,
+    pub status: String,
+    pub reason: String,
+    pub enqueued_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<VersionInferenceTaskProgressState>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionInferenceOverviewRow {
+    pub key: String,
+    pub image_repo: String,
+    pub host_platform: String,
+    pub status: String,
+    pub service_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checked_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<VersionInferenceTaskProgressState>,
+}
