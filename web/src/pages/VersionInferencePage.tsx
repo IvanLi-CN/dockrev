@@ -69,6 +69,7 @@ function formatShort(ts?: string | null): string {
 }
 
 function statusLabel(status: string): string {
+  if (status === 'all') return '全部'
   if (status === 'missing') return '缺失'
   if (status === 'queued') return '排队中'
   if (status === 'running') return '执行中'
@@ -564,10 +565,10 @@ export function VersionInferencePage(props: {
     <div className="page versionInferencePage">
       <div className="card">
         <div className="sectionRow">
-          <div className="title">Worker / 缓存总览</div>
+          <div className="title">任务与缓存总览</div>
           <div className="chipRow" style={{ marginLeft: 'auto' }}>
             <Pill tone={streamModeTone(streamMode)}>{streamModeLabel(streamMode)}</Pill>
-            <Pill tone="muted">eventId: {lastEventId > 0 ? String(lastEventId) : '-'}</Pill>
+            <Pill tone="muted">事件ID：{lastEventId > 0 ? String(lastEventId) : '-'}</Pill>
           </div>
         </div>
         <div className="muted" style={{ marginTop: 8 }}>
@@ -588,7 +589,7 @@ export function VersionInferencePage(props: {
             <strong>{overview?.worker.running ?? 0}</strong>
           </div>
           <div className="versionInferenceMetric">
-            <span>In-flight</span>
+            <span>进行中总数</span>
             <strong>{overview?.worker.inFlight ?? 0}</strong>
           </div>
           <div className="versionInferenceMetric">
@@ -686,7 +687,7 @@ export function VersionInferencePage(props: {
       <div className="versionInferenceColumns">
         <div className="card">
           <div className="sectionRow">
-            <div className="title">Rows（当前页）</div>
+            <div className="title">缓存列表</div>
           </div>
           <div className="versionInferenceList">
             {loading && !overview ? (
@@ -707,12 +708,12 @@ export function VersionInferencePage(props: {
                     <Pill tone={statusTone(row.status)}>{statusLabel(row.status)}</Pill>
                   </div>
                   <div className="versionInferenceItemMeta">
-                    <span>platform: {row.hostPlatform}</span>
-                    <span>services: {row.serviceCount}</span>
-                    <span>checkedAt: {formatShort(row.checkedAt ?? null)}</span>
-                    <span>updatedAt: {formatShort(row.updatedAt ?? null)}</span>
+                    <span>平台：{row.hostPlatform}</span>
+                    <span>服务数：{row.serviceCount}</span>
+                    <span>检查时间：{formatShort(row.checkedAt ?? null)}</span>
+                    <span>更新时间：{formatShort(row.updatedAt ?? null)}</span>
                   </div>
-                  {row.reason ? <div className="muted">reason: {row.reason}</div> : null}
+                  {row.reason ? <div className="muted">原因：{row.reason}</div> : null}
                   {row.progress ? (
                     <>
                       <div className="versionInferenceProgressBar">
@@ -726,63 +727,10 @@ export function VersionInferencePage(props: {
                         />
                       </div>
                       <div className="versionInferenceProgressMeta">
-                        <span>{row.progress.phase || 'running'}</span>
+                        <span>{row.progress.phase || '执行中'}</span>
                         <span>{row.progress.message || '-'}</span>
                         <span>
                           {row.progress.current}/{row.progress.total}
-                        </span>
-                        <span>{progressPercent == null ? '进行中' : `${progressPercent}%`}</span>
-                      </div>
-                    </>
-                  ) : null}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="sectionRow">
-            <div className="title">In-flight Tasks</div>
-            <span className="muted" style={{ marginLeft: 'auto' }}>
-              {overview?.tasks.length ?? 0}
-            </span>
-          </div>
-          <div className="versionInferenceList">
-            {overview?.tasks.length ? null : <div className="muted">当前没有排队或运行中的任务</div>}
-            {overview?.tasks.map((task) => {
-              const progressPercent = knownPercent(task.progress)
-              return (
-                <div key={task.key} className="versionInferenceItem">
-                  <div className="versionInferenceItemHead">
-                    <div className="versionInferenceItemTitle">
-                      <Mono>{task.imageRepo}</Mono>
-                    </div>
-                    <Pill tone={statusTone(task.status)}>{statusLabel(task.status)}</Pill>
-                  </div>
-                  <div className="versionInferenceItemMeta">
-                    <span>platform: {task.hostPlatform}</span>
-                    <span>reason: {task.reason || '-'}</span>
-                    <span>enqueued: {formatShort(task.enqueuedAt)}</span>
-                    <span>updated: {formatShort(task.updatedAt)}</span>
-                  </div>
-                  {task.progress ? (
-                    <>
-                      <div className="versionInferenceProgressBar">
-                        <div
-                          className={
-                            progressPercent == null
-                              ? 'versionInferenceProgressFill versionInferenceProgressFillIndeterminate'
-                              : 'versionInferenceProgressFill'
-                          }
-                          style={progressPercent == null ? undefined : { width: `${progressPercent}%` }}
-                        />
-                      </div>
-                      <div className="versionInferenceProgressMeta">
-                        <span>{task.progress.phase || 'running'}</span>
-                        <span>{task.progress.message || '-'}</span>
-                        <span>
-                          {task.progress.current}/{task.progress.total}
                         </span>
                         <span>{progressPercent == null ? '进行中' : `${progressPercent}%`}</span>
                       </div>
