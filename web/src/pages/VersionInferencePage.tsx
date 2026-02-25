@@ -220,6 +220,7 @@ export function VersionInferencePage(props: {
     let reconnectTimer: number | null = null
     let refreshTimer: number | null = null
     let lastEventId = 0
+    let hasOpenedOnce = false
 
     const clearReconnectTimer = () => {
       if (reconnectTimer != null) window.clearTimeout(reconnectTimer)
@@ -257,10 +258,17 @@ export function VersionInferencePage(props: {
     const connect = () => {
       if (closed) return
       const opts = lastEventId > 0 ? { afterId: lastEventId } : undefined
-      es = newVersionInferenceEventsSource(opts)
+      try {
+        es = newVersionInferenceEventsSource(opts)
+      } catch {
+        setSseStatus('reconnecting')
+        scheduleReconnect()
+        return
+      }
       setSseStatus(lastEventId > 0 ? 'reconnecting' : 'connecting')
 
       es.addEventListener('open', () => {
+        hasOpenedOnce = true
         setSseStatus('open')
         // Catch up once on subscribe so in-between updates are reflected immediately.
         scheduleRefresh(0)
@@ -276,8 +284,10 @@ export function VersionInferencePage(props: {
         setSseStatus('reconnecting')
         es?.close()
         es = null
-        // Trigger one immediate sync before reconnecting to reduce stale windows.
-        scheduleRefresh(0)
+        if (hasOpenedOnce) {
+          // Only force-sync after at least one successful stream connect to avoid error-loop hammering.
+          scheduleRefresh(0)
+        }
         scheduleReconnect()
       }
     }
