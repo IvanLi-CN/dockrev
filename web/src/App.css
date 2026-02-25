@@ -1541,6 +1541,37 @@ html[data-theme='light'] .modalOverlay {
   min-height: 40px;
 }
 
+.versionInferenceListHead {
+  align-items: flex-start;
+}
+
+.versionInferenceSortTip {
+  margin-left: auto;
+  max-width: 56ch;
+  text-align: right;
+  color: color-mix(in srgb, var(--muted2) 78%, transparent);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.versionInferenceSortTipCompact {
+  display: none;
+  margin-top: 6px;
+  color: var(--muted2);
+  font-size: 11px;
+}
+
+.versionInferenceSortTipCompact summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.versionInferenceSortTipCompact > div {
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
 .versionInferenceItem {
   border: 1px solid rgba(229, 231, 235, 0.08);
   background: var(--dockrev-surface);
@@ -1603,6 +1634,16 @@ html[data-theme='light'] .modalOverlay {
   gap: 6px 12px;
   color: var(--muted);
   font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .versionInferenceSortTip {
+    display: none;
+  }
+
+  .versionInferenceSortTipCompact {
+    display: block;
+  }
 }
 
 /* Queue */
