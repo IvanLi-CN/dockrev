@@ -191,6 +191,12 @@ type VersionInferenceTaskProgressMock = {
   current: number
   total: number
   percent: number
+  assignedCurrent?: number
+  assignedTotal?: number
+  assignedPercent?: number
+  resultCurrent?: number
+  resultTotal?: number
+  resultPercent?: number
   updatedAt: string
 }
 
@@ -1330,6 +1336,12 @@ function buildVersionInferenceRunningFixture(): Fixture {
           current: 8,
           total: 30,
           percent: 26,
+          assignedCurrent: 18,
+          assignedTotal: 30,
+          assignedPercent: 60,
+          resultCurrent: 8,
+          resultTotal: 30,
+          resultPercent: 26,
           updatedAt: now,
         },
       },
@@ -1359,6 +1371,12 @@ function buildVersionInferenceRunningFixture(): Fixture {
           current: 8,
           total: 30,
           percent: 26,
+          assignedCurrent: 18,
+          assignedTotal: 30,
+          assignedPercent: 60,
+          resultCurrent: 8,
+          resultTotal: 30,
+          resultPercent: 26,
           updatedAt: now,
         },
       },

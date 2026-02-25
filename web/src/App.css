@@ -1533,6 +1533,21 @@ html[data-theme='light'] .modalOverlay {
   gap: 8px;
 }
 
+.versionInferenceSummaryHead {
+  row-gap: 8px;
+}
+
+.versionInferenceSummaryTitle,
+.versionInferenceListHead .title {
+  overflow-wrap: normal;
+  word-break: keep-all;
+}
+
+.versionInferenceSummaryStatus {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
 .versionInferenceSortHint {
   margin-left: auto;
   width: 20px;
@@ -1641,6 +1656,7 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .versionInferenceProgressBar {
+  position: relative;
   width: 100%;
   height: 8px;
   border-radius: 999px;
@@ -1651,8 +1667,20 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .versionInferenceProgressFill {
+  position: absolute;
+  left: 0;
+  top: 0;
   height: 100%;
   border-radius: 999px;
+}
+
+.versionInferenceProgressFillAssigned {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--color-info) 56%, transparent), color-mix(in srgb, var(--color-info) 78%, var(--color-primary) 22%));
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-info) 30%, transparent);
+  opacity: 0.72;
+}
+
+.versionInferenceProgressFillResult {
   background: linear-gradient(
     90deg,
     var(--color-primary),
@@ -1666,6 +1694,16 @@ html[data-theme='light'] .modalOverlay {
   animation: progressIndeterminate 1.2s ease-in-out infinite;
 }
 
+.versionInferenceProgressFillAssigned.versionInferenceProgressFillIndeterminate {
+  animation-duration: 1.4s;
+  animation-delay: 0.06s;
+}
+
+.versionInferenceProgressFillResult.versionInferenceProgressFillIndeterminate {
+  animation-duration: 1.1s;
+  animation-delay: 0.14s;
+}
+
 .versionInferenceProgressMeta {
   display: flex;
   flex-wrap: wrap;
@@ -1675,6 +1713,16 @@ html[data-theme='light'] .modalOverlay {
 }
 
 @media (max-width: 640px) {
+  .versionInferenceSummaryStatus {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .versionInferenceSortHint,
+  .versionInferenceGcHint {
+    display: none;
+  }
+
   .versionInferenceSortHint::after {
     min-width: 0;
     width: min(88vw, 320px);

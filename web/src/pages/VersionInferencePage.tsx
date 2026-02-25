@@ -56,12 +56,55 @@ function sseStatusTone(status: 'connecting' | 'open' | 'reconnecting'): 'ok' | '
   return 'warn'
 }
 
-function knownPercent(progress?: VersionInferenceTaskProgress | null): number | null {
+type ProgressSegment = {
+  current: number
+  total: number
+  percent: number | null
+}
+
+type SegmentedProgress = {
+  assignment: ProgressSegment
+  result: ProgressSegment
+}
+
+function normalizeSegment(current: number, total: number, percent?: number): ProgressSegment {
+  const safeTotal = Number.isFinite(total) ? Math.max(0, total) : 0
+  const safeCurrent = Number.isFinite(current) ? Math.max(0, current) : 0
+  if (safeTotal <= 0) {
+    return {
+      current: safeCurrent,
+      total: safeTotal,
+      percent: Number.isFinite(percent ?? NaN) ? Math.max(0, Math.min(100, Math.round(percent ?? 0))) : null,
+    }
+  }
+  const fallbackPercent = Math.round((Math.min(safeCurrent, safeTotal) * 100) / safeTotal)
+  const normalizedPercent = Number.isFinite(percent ?? NaN) ? Math.round(percent ?? fallbackPercent) : fallbackPercent
+  return {
+    current: Math.min(safeCurrent, safeTotal),
+    total: safeTotal,
+    percent: Math.max(0, Math.min(100, normalizedPercent)),
+  }
+}
+
+function segmentedProgress(progress?: VersionInferenceTaskProgress | null): SegmentedProgress | null {
   if (!progress) return null
-  const total = Number.isFinite(progress.total) ? Math.max(0, progress.total) : 0
-  if (total <= 0) return null
-  if (!Number.isFinite(progress.percent)) return null
-  return Math.max(0, Math.min(100, Math.round(progress.percent)))
+  const result = normalizeSegment(progress.resultCurrent ?? progress.current, progress.resultTotal ?? progress.total, progress.resultPercent ?? progress.percent)
+  const assignmentRaw = normalizeSegment(
+    progress.assignedCurrent ?? progress.current,
+    progress.assignedTotal ?? progress.total,
+    progress.assignedPercent ?? progress.percent,
+  )
+  const assignment: ProgressSegment = {
+    current: Math.max(result.current, assignmentRaw.current),
+    total: Math.max(result.total, assignmentRaw.total),
+    percent:
+      assignmentRaw.percent == null
+        ? result.percent
+        : result.percent == null
+          ? assignmentRaw.percent
+          : Math.max(result.percent, assignmentRaw.percent),
+  }
+  return { assignment, result }
 }
 
 function statusCount(summary: VersionInferenceOverviewResponse['summary'] | null, key: StatusFilter): number {
@@ -288,12 +331,12 @@ export function VersionInferencePage(props: {
   return (
     <div className="page versionInferencePage">
       <div className="card">
-        <div className="sectionRow">
-          <div className="title">任务与缓存总览</div>
+        <div className="sectionRow versionInferenceSummaryHead">
+          <div className="title versionInferenceSummaryTitle">任务与缓存总览</div>
           <button type="button" className="versionInferenceSortHint versionInferenceGcHint" aria-label="GC 说明" data-tip={gcTip}>
             ?
           </button>
-          <div className="chipRow" style={{ marginLeft: 'auto' }}>
+          <div className="chipRow versionInferenceSummaryStatus">
             {overview?.gc.lastError ? <Pill tone="bad">GC 异常</Pill> : null}
             <Pill tone={sseStatusTone(sseStatus)}>{sseStatusLabel(sseStatus)}</Pill>
             <Pill tone="muted">最近更新：{formatShort(lastRefreshAt)}</Pill>
@@ -417,7 +460,9 @@ export function VersionInferencePage(props: {
           {!loading && overview && rows.length === 0 ? <div className="muted">当前筛选条件下没有数据</div> : null}
 
           {rows.map((row) => {
-            const progressPercent = knownPercent(row.progress)
+            const progress = segmentedProgress(row.progress)
+            const assignmentPercent = progress?.assignment.percent ?? null
+            const resultPercent = progress?.result.percent ?? null
             return (
               <div key={row.key} className="versionInferenceItem">
                 <div className="versionInferenceItemHead">
@@ -433,25 +478,37 @@ export function VersionInferencePage(props: {
                   <span>更新时间：{formatShort(row.updatedAt ?? null)}</span>
                 </div>
                 {row.reason ? <div className="muted">原因：{row.reason}</div> : null}
-                {row.progress ? (
+                {progress ? (
                   <>
                     <div className="versionInferenceProgressBar">
                       <div
                         className={
-                          progressPercent == null
-                            ? 'versionInferenceProgressFill versionInferenceProgressFillIndeterminate'
-                            : 'versionInferenceProgressFill'
+                          assignmentPercent == null
+                            ? 'versionInferenceProgressFill versionInferenceProgressFillAssigned versionInferenceProgressFillIndeterminate'
+                            : 'versionInferenceProgressFill versionInferenceProgressFillAssigned'
                         }
-                        style={progressPercent == null ? undefined : { width: `${progressPercent}%` }}
+                        style={assignmentPercent == null ? undefined : { width: `${assignmentPercent}%` }}
+                      />
+                      <div
+                        className={
+                          resultPercent == null
+                            ? 'versionInferenceProgressFill versionInferenceProgressFillResult versionInferenceProgressFillIndeterminate'
+                            : 'versionInferenceProgressFill versionInferenceProgressFillResult'
+                        }
+                        style={resultPercent == null ? undefined : { width: `${resultPercent}%` }}
                       />
                     </div>
                     <div className="versionInferenceProgressMeta">
-                      <span>{row.progress.phase || '执行中'}</span>
-                      <span>{row.progress.message || '-'}</span>
+                      <span>{row.progress?.phase || '执行中'}</span>
+                      <span>{row.progress?.message || '-'}</span>
                       <span>
-                        {row.progress.current}/{row.progress.total}
+                        分配 {progress.assignment.current}/{progress.assignment.total}
                       </span>
-                      <span>{progressPercent == null ? '进行中' : `${progressPercent}%`}</span>
+                      <span>
+                        有结果 {progress.result.current}/{progress.result.total}
+                      </span>
+                      <span>{assignmentPercent == null ? '分配进行中' : `分配 ${assignmentPercent}%`}</span>
+                      <span>{resultPercent == null ? '结果进行中' : `结果 ${resultPercent}%`}</span>
                     </div>
                   </>
                 ) : null}

@@ -3772,6 +3772,12 @@ async fn version_inference_overview_merges_cached_and_in_flight_without_missing_
         assert!(progress.contains_key("current"));
         assert!(progress.contains_key("total"));
         assert!(progress.contains_key("percent"));
+        assert!(progress.contains_key("assignedCurrent"));
+        assert!(progress.contains_key("assignedTotal"));
+        assert!(progress.contains_key("assignedPercent"));
+        assert!(progress.contains_key("resultCurrent"));
+        assert!(progress.contains_key("resultTotal"));
+        assert!(progress.contains_key("resultPercent"));
     }
 }
 

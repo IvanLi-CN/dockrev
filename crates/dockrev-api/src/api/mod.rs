@@ -2972,6 +2972,12 @@ fn map_task_progress_state(
         current: p.current,
         total: p.total,
         percent: p.percent,
+        assigned_current: p.assigned_current,
+        assigned_total: p.assigned_total,
+        assigned_percent: p.assigned_percent,
+        result_current: p.result_current,
+        result_total: p.result_total,
+        result_percent: p.result_percent,
         updated_at: p.updated_at,
     })
 }

@@ -1470,6 +1470,12 @@ pub struct VersionInferenceTaskProgressState {
     pub current: u32,
     pub total: u32,
     pub percent: u32,
+    pub assigned_current: u32,
+    pub assigned_total: u32,
+    pub assigned_percent: u32,
+    pub result_current: u32,
+    pub result_total: u32,
+    pub result_percent: u32,
     pub updated_at: String,
 }
 

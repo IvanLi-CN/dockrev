@@ -170,6 +170,12 @@ export type VersionInferenceTaskProgress = {
   current: number
   total: number
   percent: number
+  assignedCurrent?: number
+  assignedTotal?: number
+  assignedPercent?: number
+  resultCurrent?: number
+  resultTotal?: number
+  resultPercent?: number
   updatedAt: string
 }
 
