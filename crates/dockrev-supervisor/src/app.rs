@@ -643,6 +643,7 @@ fn render_ui(base_path: &str) -> String {
 	      const rollbackCancelBtn = document.getElementById('rollbackCancel');
 	      const rollbackConfirmBtn = document.getElementById('rollbackConfirm');
 	      let rollbackPopOpen = false;
+	      let rollbackPendingOpId = null;
 
 	      function canRollback(st) {{
 	        return !!st.opId && (st.state === 'failed' || st.state === 'rolled_back' || st.state === 'succeeded');
@@ -652,6 +653,7 @@ fn render_ui(base_path: &str) -> String {
 	        rollbackPopOpen = open;
 	        rollbackPop.hidden = !open;
 	        rollbackBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+	        if (!open) rollbackPendingOpId = null;
 	      }}
 
 	      function syncRollbackState(st) {{
@@ -820,13 +822,14 @@ fn render_ui(base_path: &str) -> String {
         if (rollbackBtn.disabled) return;
         const st = await fetchJson('self-upgrade');
         syncRollbackState(st);
-        if (!canRollback(st)) {{
-          await refresh();
-          return;
-        }}
-        rollbackOpId.textContent = st.opId || '-';
-        setRollbackPopOpen(true);
-      }};
+	        if (!canRollback(st)) {{
+	          await refresh();
+	          return;
+	        }}
+	        rollbackPendingOpId = st.opId || null;
+	        rollbackOpId.textContent = rollbackPendingOpId || '-';
+	        setRollbackPopOpen(true);
+	      }};
       document.getElementById('tabsToggle').onclick = () => {{
         if (!tabsCanExpand) return;
         tabsExpanded = !tabsExpanded;
@@ -839,6 +842,11 @@ fn render_ui(base_path: &str) -> String {
         setRollbackPopOpen(false);
       }};
       document.getElementById('rollbackConfirm').onclick = async () => {{
+        if (!rollbackPendingOpId) {{
+          setRollbackPopOpen(false);
+          await refresh();
+          return;
+        }}
         const st = await fetchJson('self-upgrade');
         syncRollbackState(st);
         if (!canRollback(st)) {{
@@ -846,10 +854,15 @@ fn render_ui(base_path: &str) -> String {
           await refresh();
           return;
         }}
+        if (!st.opId || st.opId !== rollbackPendingOpId) {{
+          setRollbackPopOpen(false);
+          await refresh();
+          return;
+        }}
         rollbackConfirmBtn.disabled = true;
         rollbackCancelBtn.disabled = true;
         try {{
-          await fetchJson('self-upgrade/rollback', {{ method: 'POST', body: JSON.stringify({{ opId: st.opId }}) }});
+          await fetchJson('self-upgrade/rollback', {{ method: 'POST', body: JSON.stringify({{ opId: rollbackPendingOpId }}) }});
           setRollbackPopOpen(false);
           await refresh();
         }} finally {{
@@ -1538,6 +1551,7 @@ mod tests {
         assert!(html.contains(r#"id="rollbackPop""#));
         assert!(html.contains(r#"id="rollbackConfirm""#));
         assert!(html.contains(r#"id="rollbackCancel""#));
+        assert!(html.contains("let rollbackPendingOpId = null;"));
         assert!(html.contains(r"document.addEventListener('keydown'"));
     }
 
@@ -1557,6 +1571,8 @@ mod tests {
         assert!(rollback_click_idx < open_pop_idx);
         assert!(open_pop_idx < confirm_click_idx);
         assert!(confirm_click_idx < rollback_post_idx);
+        assert!(html.contains("st.opId !== rollbackPendingOpId"));
+        assert!(html.contains("JSON.stringify({ opId: rollbackPendingOpId })"));
     }
 
     #[tokio::test]
