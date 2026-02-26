@@ -1,0 +1,39 @@
+---
+title: Dockrev 文档首页
+description: Dockrev 中英双语文档站中文入口。
+---
+
+# Dockrev 文档（简体中文）
+
+Dockrev 是一个自托管的 Docker/Compose 更新管理器，提供自动发现、镜像检查、更新执行、通知集成与自升级能力。
+
+## 先看这 3 件事
+
+1. 首次部署请按顺序阅读：[快速开始](/zh/quick-start) -> [部署指南](/zh/deploy) -> [配置参考](/zh/config)。
+2. 生产环境必须关闭匿名访问：`DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV=false`。
+3. 若使用 GHCR 触发自动扫描，直接跳到：[集成指南（GHCR Webhook）](/zh/integrations#github-packages-ghcr-webhook)。
+
+## 文档导航
+
+- [快速开始](/zh/quick-start)
+- [部署指南](/zh/deploy)
+- [配置参考](/zh/config)
+- [用户使用手册](/zh/user-guide)
+- [运维手册](/zh/operations)
+- [集成指南](/zh/integrations)
+- [API 参考（全量接口）](/zh/api-reference)
+- [故障排查](/zh/troubleshooting)
+- [常见问题](/zh/faq)
+- [术语表](/zh/glossary)
+
+## 典型使用路径
+
+1. 初次接入：先看 [快速开始](/zh/quick-start) 与 [部署指南](/zh/deploy)。
+2. 准备上线：按 [配置参考](/zh/config) 与 [运维手册](/zh/operations) 完成生产设置。
+3. 功能使用：按 [用户使用手册](/zh/user-guide) 执行扫描、检查、更新。
+4. 系统集成：按 [集成指南](/zh/integrations) 打通 GHCR webhook 和通知通道。
+5. 问题处理：先看 [故障排查](/zh/troubleshooting)，再看 [常见问题](/zh/faq)。
+
+## 界面预览
+
+![Overview](../assets/overview.png)

@@ -1,10 +1,14 @@
 {
   "name": "dockrev",
   "private": true,
+  "scripts": {
+    "docs:dev": "DOCS_PORT=${DOCS_PORT:-50885} bun run --cwd docs-site dev",
+    "docs:build": "bun run --cwd docs-site build",
+    "docs:preview": "DOCS_PORT=${DOCS_PORT:-50885} bun run --cwd docs-site preview"
+  },
   "devDependencies": {
     "@commitlint/cli": "^19.8.0",
     "@commitlint/config-conventional": "^19.8.0",
     "commitlint-plugin-function-rules": "^4.0.2"
   }
 }
-
