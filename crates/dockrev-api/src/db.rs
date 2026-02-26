@@ -71,10 +71,11 @@ pub struct VersionInferenceServiceTargetRow {
 }
 
 #[derive(Clone, Debug)]
-pub struct ImageVersionInferenceSnapshotRow {
+pub struct ImageDigestTagsSnapshotRow {
     pub image_repo: String,
+    pub digest: String,
     pub host_platform: String,
-    pub all_failed: bool,
+    pub snapshot_json: String,
     pub checked_at: String,
     pub updated_at: String,
 }
@@ -175,9 +176,9 @@ impl Db {
             ensure_stack_archive_columns(conn)?;
             ensure_service_archive_columns(conn)?;
             ensure_discovery_schema(conn)?;
-            ensure_version_inference_schema(conn)?;
             ensure_schema_migrations_table(conn)?;
             apply_migration_0007_remove_manual_stacks(conn)?;
+            apply_migration_0008_drop_version_inference_snapshots(conn)?;
             auto_archive_missing_discovery_projects_on_startup(conn)?;
             Ok(())
         })
@@ -1685,113 +1686,50 @@ WHERE image_repo = ?1 AND digest = ?2 AND host_platform = ?3
         .context("get image digest tags snapshot")
     }
 
-    pub async fn upsert_image_version_inference_snapshot(
+    pub async fn list_image_digest_tags_snapshots(
         &self,
-        image_repo: &str,
-        host_platform: &str,
-        snapshot_json: &str,
-        all_failed: bool,
-        checked_at: &str,
-        now: &str,
-    ) -> anyhow::Result<()> {
-        let image_repo = image_repo.to_string();
-        let host_platform = host_platform.to_string();
-        let snapshot_json = snapshot_json.to_string();
-        let checked_at = checked_at.to_string();
-        let now = now.to_string();
-        self.call(move |conn| {
-            conn.execute(
-                r#"
-INSERT INTO image_version_inference_snapshots (
-  image_repo,
-  host_platform,
-  snapshot_json,
-  all_failed,
-  checked_at,
-  updated_at
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-ON CONFLICT(image_repo, host_platform) DO UPDATE SET
-  snapshot_json = excluded.snapshot_json,
-  all_failed = excluded.all_failed,
-  checked_at = excluded.checked_at,
-  updated_at = excluded.updated_at
-"#,
-                params![
-                    image_repo,
-                    host_platform,
-                    snapshot_json,
-                    all_failed as i64,
-                    checked_at,
-                    now
-                ],
-            )?;
-            Ok(())
-        })
-        .await
-        .context("upsert image version inference snapshot")
-    }
-
-    pub async fn get_image_version_inference_snapshot(
-        &self,
-        image_repo: &str,
-        host_platform: &str,
-    ) -> anyhow::Result<Option<(String, bool, String, String)>> {
-        let image_repo = image_repo.to_string();
-        let host_platform = host_platform.to_string();
-        self.call(move |conn| {
-            Ok(conn
-                .query_row(
-                    r#"
-SELECT snapshot_json, all_failed, checked_at, updated_at
-FROM image_version_inference_snapshots
-WHERE image_repo = ?1 AND host_platform = ?2
-"#,
-                    params![image_repo, host_platform],
-                    |row| {
-                        Ok((
-                            row.get(0)?,
-                            row.get::<_, i64>(1)? != 0,
-                            row.get(2)?,
-                            row.get(3)?,
-                        ))
-                    },
-                )
-                .optional()?)
-        })
-        .await
-        .context("get image version inference snapshot")
-    }
-
-    pub async fn list_image_version_inference_snapshot_rows(
-        &self,
-    ) -> anyhow::Result<Vec<ImageVersionInferenceSnapshotRow>> {
+    ) -> anyhow::Result<Vec<ImageDigestTagsSnapshotRow>> {
         self.call(move |conn| {
             let mut stmt = conn.prepare(
                 r#"
-SELECT image_repo, host_platform, all_failed, checked_at, updated_at
-FROM image_version_inference_snapshots
-ORDER BY updated_at DESC, image_repo ASC, host_platform ASC
+SELECT image_repo, digest, host_platform, snapshot_json, checked_at, updated_at
+FROM image_digest_tags_snapshots
+ORDER BY updated_at DESC, image_repo ASC, digest ASC, host_platform ASC
 "#,
             )?;
             let rows = stmt.query_map([], |row| {
-                Ok(ImageVersionInferenceSnapshotRow {
+                Ok(ImageDigestTagsSnapshotRow {
                     image_repo: row.get(0)?,
-                    host_platform: row.get(1)?,
-                    all_failed: row.get::<_, i64>(2)? != 0,
-                    checked_at: row.get(3)?,
-                    updated_at: row.get(4)?,
+                    digest: row.get(1)?,
+                    host_platform: row.get(2)?,
+                    snapshot_json: row.get(3)?,
+                    checked_at: row.get(4)?,
+                    updated_at: row.get(5)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
         })
         .await
-        .context("list image version inference snapshot rows")
+        .context("list image digest tags snapshots")
     }
 
-    pub async fn list_image_version_inference_snapshots(
+    pub async fn delete_expired_image_digest_tags_snapshots(
         &self,
-    ) -> anyhow::Result<Vec<ImageVersionInferenceSnapshotRow>> {
-        self.list_image_version_inference_snapshot_rows().await
+        cutoff_checked_at: &str,
+    ) -> anyhow::Result<u64> {
+        let cutoff_checked_at = cutoff_checked_at.to_string();
+        self.call(move |conn| {
+            let deleted = conn.execute(
+                r#"
+DELETE FROM image_digest_tags_snapshots
+WHERE checked_at < ?1
+"#,
+                params![cutoff_checked_at],
+            )?;
+            Ok(deleted as u64)
+        })
+        .await
+        .context("delete expired image digest tags snapshots")
     }
 
     pub async fn list_version_inference_service_targets(
@@ -1817,33 +1755,6 @@ ORDER BY image_ref ASC
         })
         .await
         .context("list version inference service targets")
-    }
-
-    pub async fn delete_image_version_inference_snapshots_older_than(
-        &self,
-        cutoff_checked_at: &str,
-    ) -> anyhow::Result<u64> {
-        let cutoff_checked_at = cutoff_checked_at.to_string();
-        self.call(move |conn| {
-            let deleted = conn.execute(
-                r#"
-DELETE FROM image_version_inference_snapshots
-WHERE checked_at < ?1
-"#,
-                params![cutoff_checked_at],
-            )?;
-            Ok(deleted as u64)
-        })
-        .await
-        .context("delete image version inference snapshots older than cutoff")
-    }
-
-    pub async fn delete_expired_image_version_inference_snapshots(
-        &self,
-        cutoff_checked_at: &str,
-    ) -> anyhow::Result<u64> {
-        self.delete_image_version_inference_snapshots_older_than(cutoff_checked_at)
-            .await
     }
 
     pub async fn get_service_settings(
@@ -4126,25 +4037,6 @@ CREATE INDEX IF NOT EXISTS idx_discovered_compose_projects_stack_id ON discovere
     Ok(())
 }
 
-fn ensure_version_inference_schema(conn: &rusqlite::Connection) -> anyhow::Result<()> {
-    conn.execute_batch(
-        r#"
-CREATE TABLE IF NOT EXISTS image_version_inference_snapshots (
-  image_repo TEXT NOT NULL,
-  host_platform TEXT NOT NULL,
-  snapshot_json TEXT NOT NULL,
-  all_failed INTEGER NOT NULL DEFAULT 0,
-  checked_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY (image_repo, host_platform)
-);
-CREATE INDEX IF NOT EXISTS idx_image_version_inference_snapshots_checked_at
-ON image_version_inference_snapshots(checked_at);
-"#,
-    )?;
-    Ok(())
-}
-
 fn ensure_schema_migrations_table(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -4196,6 +4088,21 @@ fn apply_migration_0007_remove_manual_stacks(
         [],
     )?;
     tx.execute("DELETE FROM stacks", [])?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+fn apply_migration_0008_drop_version_inference_snapshots(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0008_drop_version_inference_snapshots";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute("DROP TABLE IF EXISTS image_version_inference_snapshots", [])?;
     record_migration_tx(&tx, id)?;
     tx.commit()?;
     Ok(())
@@ -4426,15 +4333,4 @@ CREATE TABLE IF NOT EXISTS image_digest_tags_snapshots (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (image_repo, digest, host_platform)
 );
-
-CREATE TABLE IF NOT EXISTS image_version_inference_snapshots (
-  image_repo TEXT NOT NULL,
-  host_platform TEXT NOT NULL,
-  snapshot_json TEXT NOT NULL,
-  all_failed INTEGER NOT NULL DEFAULT 0,
-  checked_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY (image_repo, host_platform)
-);
-CREATE INDEX IF NOT EXISTS idx_image_version_inference_snapshots_checked_at ON image_version_inference_snapshots(checked_at);
 "#;
