@@ -1202,18 +1202,13 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               <div className="kvRow">
                 <div className="label">GitHub PAT（留空=保持原值）</div>
                 <input
-                  className="input"
+                  className={ghcrPatIssue ? 'input inputError' : 'input'}
                   value={githubPackagesPat}
                   onChange={(e) =>
                     updateGhcr('ghcr.pat', (current) => ({ ...current, pat: e.target.value }))
                   }
                   placeholder="ghp_..."
                 />
-                {ghcrPatIssue ? (
-                  <div className="error" style={{ marginTop: 6 }}>
-                    {ghcrPatIssue.message}
-                  </div>
-                ) : null}
               </div>
 
               <div className="kvRow">
