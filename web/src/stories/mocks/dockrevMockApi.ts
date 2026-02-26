@@ -49,6 +49,7 @@ export type DockrevApiScenario =
   | 'overview-jobs-card-terminal-only'
   | 'overview-jobs-card-exact-five-non-terminal'
   | 'queue-mixed'
+  | 'queue-progress-smoothing'
   | 'queue-legacy-progress'
   | 'queue-long-logs'
   | 'settings-configured'
@@ -97,6 +98,7 @@ class MockEventSource extends EventTarget {
   static readonly CONNECTING = 0
   static readonly OPEN = 1
   static readonly CLOSED = 2
+  static pollIntervalMs = 4_000
 
   readonly CONNECTING = MockEventSource.CONNECTING
   readonly OPEN = MockEventSource.OPEN
@@ -122,7 +124,7 @@ class MockEventSource extends EventTarget {
     this.connect()
     this.pollTimer = window.setInterval(() => {
       this.connect()
-    }, 4_000)
+    }, MockEventSource.pollIntervalMs)
   }
 
   close() {
@@ -1682,6 +1684,28 @@ function buildOverviewJobsCardRunningProgressModes(): Fixture {
   return f
 }
 
+function buildQueueProgressSmoothing(): Fixture {
+  const f = buildQueueMixed()
+  const runningJob = f.jobs.find((job) => job.id === 'job-running')
+  if (!runningJob) return f
+  const nextProgress = {
+    phase: 'pulling',
+    message: 'updating images',
+    current: 40,
+    total: 100,
+    percent: 40,
+    plannedCurrent: 68,
+    plannedTotal: 100,
+    plannedPercent: 68,
+    currentTarget: 'worker',
+    updatedAt: nowIso(-600),
+  }
+  runningJob.progress = nextProgress
+  const runningDetail = f.jobById['job-running']
+  if (runningDetail) runningDetail.progress = { ...nextProgress }
+  return f
+}
+
 function buildQueueLongLogs(): Fixture {
   const f = buildDashboardDemo()
 
@@ -2300,6 +2324,7 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'overview-jobs-card-running-progress-modes') return buildOverviewJobsCardRunningProgressModes()
   if (scenario === 'overview-jobs-card-terminal-only') return buildOverviewJobsCardTerminalOnly()
   if (scenario === 'overview-jobs-card-exact-five-non-terminal') return buildOverviewJobsCardExactFiveNonTerminal()
+  if (scenario === 'queue-progress-smoothing') return buildQueueProgressSmoothing()
   if (scenario === 'queue-legacy-progress') return buildQueueLegacyProgress()
   if (scenario === 'queue-long-logs') return buildQueueLongLogs()
   if (scenario === 'settings-configured' || scenario === 'settings-configured-resolve-slow') return buildSettingsConfigured()
@@ -2312,11 +2337,47 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
   let ignoreSeq = 0
   let jobSeq = 0
   const digestSnapshotPendingAttempts = new Map<string, number>()
+  let jobsEventsSeq = 4_000
+  const queueProgressDemoSteps = [40, 52, 63, 74, 84, 92, 97]
+  let queueProgressDemoStep = 0
+  let queueProgressDemoDirection = 1
+
+  const advanceQueueProgressDemo = (): number | null => {
+    if (!state || scenario !== 'queue-progress-smoothing') return null
+    if (queueProgressDemoStep >= queueProgressDemoSteps.length - 1) queueProgressDemoDirection = -1
+    if (queueProgressDemoStep <= 0) queueProgressDemoDirection = 1
+    queueProgressDemoStep += queueProgressDemoDirection
+    const completedPercent = queueProgressDemoSteps[queueProgressDemoStep]
+    const plannedPercent = Math.min(100, completedPercent + 16)
+    const updatedAt = nowIso()
+
+    const patchProgress = (job: JobListItem | JobDetail | undefined) => {
+      if (!job || job.id !== 'job-running' || !job.progress) return
+      job.progress = {
+        ...job.progress,
+        phase: 'pulling',
+        message: 'updating images',
+        total: 100,
+        plannedTotal: 100,
+        current: completedPercent,
+        percent: completedPercent,
+        plannedCurrent: plannedPercent,
+        plannedPercent,
+        updatedAt,
+      }
+    }
+
+    for (const job of state.jobs) patchProgress(job)
+    patchProgress(state.jobById['job-running'])
+
+    return completedPercent
+  }
 
   globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug()
   if (typeof window !== 'undefined') {
     globalThis.EventSource = MockEventSource as unknown as typeof EventSource
   }
+  MockEventSource.pollIntervalMs = scenario === 'queue-progress-smoothing' ? 1_000 : 4_000
 
   function findService(serviceId: string) {
     if (!state) return null
@@ -2810,6 +2871,39 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       const events = f.versionInferenceEvents.filter((evt) => evt.id > afterId).slice(0, 200)
       const body = events
         .map((evt) => `id: ${evt.id}\nevent: version_inference_event\ndata: ${JSON.stringify(evt.data)}\n\n`)
+        .join('')
+      return new Response(body || ': keep-alive\n\n', {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'x-accel-buffering': 'no',
+        },
+      })
+    }
+
+    if (urlPath === '/api/jobs/events' && method === 'GET') {
+      const params = url?.searchParams ?? new URLSearchParams()
+      const afterId = Number(params.get('afterId') ?? '0') || 0
+      const events: Array<{ id: number; data: Record<string, unknown> }> = []
+      if (scenario === 'queue-progress-smoothing') {
+        const nextCompletedPercent = advanceQueueProgressDemo()
+        if (nextCompletedPercent !== null) {
+          jobsEventsSeq += 1
+          events.push({
+            id: jobsEventsSeq,
+            data: {
+              type: 'job_progress',
+              jobId: 'job-running',
+              percent: nextCompletedPercent,
+              ts: nowIso(),
+            },
+          })
+        }
+      }
+      const newEvents = events.filter((evt) => evt.id > afterId).slice(0, 200)
+      const body = newEvents
+        .map((evt) => `id: ${evt.id}\nevent: job_event\ndata: ${JSON.stringify(evt.data)}\n\n`)
         .join('')
       return new Response(body || ': keep-alive\n\n', {
         status: 200,

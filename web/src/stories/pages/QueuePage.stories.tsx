@@ -50,6 +50,22 @@ export const LegacyProgressFallback: Story = {
   },
 }
 
+export const ProgressSmoothing: Story = {
+  parameters: { dockrevApiScenario: 'queue-progress-smoothing' },
+  render: () => {
+    return (
+      <PageHarness
+        route={{ name: 'queue' }}
+        title="任务队列"
+        topbarHint="任务队列"
+        pageSubtitle="演示：running 任务会自动推送进度，观察 220ms 宽度平滑过渡"
+      >
+        {({ onTopActions }) => <QueuePage onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}
+
 export const Empty: Story = {
   parameters: { dockrevApiScenario: 'empty' },
   render: () => {
