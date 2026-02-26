@@ -46,10 +46,34 @@ description: GHCR webhook、通知与外部触发集成。
 
 > Fine-grained PAT 也可用：目标仓库需授予 `Webhooks` 仓库权限（write），并保证能读取仓库列表（至少 `Metadata` 读取权限）。
 
-### PAT 权限建议
+### PAT 权限（明确最小集）
 
-- 能列出目标 owner 的仓库
-- 能管理目标仓库 webhooks
+Dockrev 在 GHCR webhook 流程中会调用这些 GitHub API：
+
+- `GET /orgs/{owner}/repos`、`GET /users/{owner}/repos`（解析 owner/profile 到仓库列表）
+- `GET/POST/PATCH/DELETE /repos/{owner}/{repo}/hooks`（读取/创建/更新/删除 webhook）
+
+因此 token 权限请按下面二选一配置：
+
+#### 方案 A：Classic PAT（推荐，最省心）
+
+- 私有仓库：勾选 `repo` + `admin:repo_hook`
+- 仅公开仓库：勾选 `public_repo` + `admin:repo_hook`
+- 若仓库在启用了 SSO 的组织中：需要在 GitHub 对该 PAT 执行组织授权（SSO authorize）
+
+#### 方案 B：Fine-grained PAT（可用，但要按项配置）
+
+创建 token 时明确设置：
+
+1. **Resource owner**：选择目标用户/组织
+2. **Repository access**：
+   - 如果你想在 Dockrev 里用 `profile/org URL` 自动解析仓库，选 **All repositories**（推荐）
+   - 如果你只监控少数仓库，选 **Only select repositories**，并确保目标 repo 全被选中
+3. **Repository permissions**（最小集）：
+   - `Webhooks`: **Read and write**
+   - `Metadata`: **Read-only**
+
+> `Packages` 权限不是本功能的必需条件；GHCR webhook 同步本质上是“仓库 webhook 管理”。
 
 ### 验收清单（按界面逐项确认）
 

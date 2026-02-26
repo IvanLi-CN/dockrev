@@ -46,10 +46,34 @@ Use GH package events (`package.published`) to trigger Dockrev discovery automat
 
 > Fine-grained PAT also works: grant repository `Webhooks` permission (write) and ensure repo listing is allowed (at least `Metadata` read).
 
-### PAT capability requirements
+### PAT permissions (explicit minimum)
 
-- List repos for target owners
-- Manage repository webhooks on selected repos
+Dockrev uses these GitHub APIs in the GHCR webhook flow:
+
+- `GET /orgs/{owner}/repos`, `GET /users/{owner}/repos` (resolve owner/profile to repository list)
+- `GET/POST/PATCH/DELETE /repos/{owner}/{repo}/hooks` (read/create/update/delete webhooks)
+
+So configure PAT with one of the following:
+
+#### Option A: Classic PAT (recommended)
+
+- Private repositories: `repo` + `admin:repo_hook`
+- Public-only repositories: `public_repo` + `admin:repo_hook`
+- If repos are in an SSO-enforced org: authorize this PAT for that org (SSO authorize)
+
+#### Option B: Fine-grained PAT
+
+When creating the token, set:
+
+1. **Resource owner**: target user/org
+2. **Repository access**:
+   - For owner/profile URL resolution in Dockrev, use **All repositories** (recommended)
+   - For limited monitoring, use **Only select repositories** and include every target repo
+3. **Repository permissions** (minimum):
+   - `Webhooks`: **Read and write**
+   - `Metadata`: **Read-only**
+
+> `Packages` permission is not required for webhook sync itself; this feature manages repository webhooks.
 
 ### Acceptance checklist (UI verification)
 
