@@ -1133,9 +1133,6 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     {ghcrPatIssue.message}
                   </div>
                 ) : null}
-                <div className="muted" style={{ marginTop: 6 }}>
-                  解析 owner/profile 时会先自动保存 GHCR 设置，再继续解析。
-                </div>
               </div>
 
               <div className="kvRow">
