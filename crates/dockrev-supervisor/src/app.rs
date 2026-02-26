@@ -61,6 +61,7 @@ impl App {
     pub async fn new(cfg: Config) -> anyhow::Result<Self> {
         let loaded = load_or_idle(&cfg.state_path).await?;
         let mut state = loaded;
+        let mut should_store = false;
 
         // If we crashed while running, surface it as failed but keep opId/logs for recovery.
         if state.state == "running" {
@@ -77,7 +78,16 @@ impl App {
                 "ERROR",
                 "supervisor restarted; previous operation interrupted",
             );
-            retain_recent_operation_logs(&mut state, MAX_LOG_OPERATION_GROUPS);
+            should_store = true;
+        }
+
+        let log_count_before = state.logs.len();
+        retain_recent_operation_logs(&mut state, MAX_LOG_OPERATION_GROUPS);
+        if state.logs.len() != log_count_before {
+            should_store = true;
+        }
+
+        if should_store {
             store_atomic(&cfg.state_path, &state).await?;
         }
 
@@ -272,23 +282,20 @@ fn infer_operation_state(group: &OperationLogsGroup, st: &StateFile) -> String {
     {
         return st.state.clone();
     }
-    if group.logs.iter().any(|l| l.msg.contains("rolled back")) {
-        return "rolled_back".to_string();
+
+    // For historical groups, prefer the latest terminal marker in log order.
+    for line in group.logs.iter().rev() {
+        if line.msg.contains("rolled back") {
+            return "rolled_back".to_string();
+        }
+        if line.level.eq_ignore_ascii_case("ERROR") {
+            return "failed".to_string();
+        }
+        if line.msg.contains("dry-run done") || line.msg.contains("succeeded") {
+            return "succeeded".to_string();
+        }
     }
-    if group
-        .logs
-        .iter()
-        .any(|l| l.msg.contains("dry-run done") || l.msg.contains("succeeded"))
-    {
-        return "succeeded".to_string();
-    }
-    if group
-        .logs
-        .iter()
-        .any(|l| l.level.eq_ignore_ascii_case("ERROR"))
-    {
-        return "failed".to_string();
-    }
+
     "unknown".to_string()
 }
 
@@ -1361,6 +1368,50 @@ mod tests {
     }
 
     #[test]
+    fn infer_operation_state_prefers_latest_terminal_marker_for_history() {
+        let now = crate::state_store::now_rfc3339().unwrap();
+        let mut st = StateFile::idle(&now);
+        st.logs = vec![
+            test_log(
+                "2026-02-01T02:00:00Z",
+                "INFO",
+                "self-upgrade requested",
+                Some("sup_old"),
+            ),
+            test_log(
+                "2026-02-01T02:00:01Z",
+                "ERROR",
+                "pull failed once",
+                Some("sup_old"),
+            ),
+            test_log("2026-02-01T02:00:02Z", "INFO", "succeeded", Some("sup_old")),
+            test_log(
+                "2026-02-01T02:01:00Z",
+                "INFO",
+                "self-upgrade requested",
+                Some("sup_new"),
+            ),
+            test_log("2026-02-01T02:01:01Z", "INFO", "succeeded", Some("sup_new")),
+            test_log(
+                "2026-02-01T02:01:02Z",
+                "ERROR",
+                "rollback failed: boom",
+                Some("sup_new"),
+            ),
+        ];
+
+        let ops = build_response_operations(&st);
+        assert_eq!(
+            ops.iter().find(|o| o.op_id == "sup_old").unwrap().state,
+            "succeeded"
+        );
+        assert_eq!(
+            ops.iter().find(|o| o.op_id == "sup_new").unwrap().state,
+            "failed"
+        );
+    }
+
+    #[test]
     fn legacy_group_ids_stay_stable_after_retention() {
         let now = crate::state_store::now_rfc3339().unwrap();
         let mut st = StateFile::idle(&now);
@@ -1506,5 +1557,57 @@ mod tests {
         let rt = app.runtime.lock().await;
         assert_eq!(rt.state.state, "failed");
         assert!(rt.running_key.is_none());
+    }
+
+    #[tokio::test]
+    async fn app_new_trims_legacy_large_logs_on_boot() {
+        let dir = std::env::temp_dir().join(format!(
+            "dockrev-supervisor-test-{}-boottrim",
+            std::process::id()
+        ));
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+
+        let cfg = Config {
+            http_addr: "127.0.0.1:0".to_string(),
+            base_path: "/supervisor".to_string(),
+            auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
+            target_image_repo: "ghcr.io/ivanli-cn/dockrev".to_string(),
+            target_container_id: Some("ctr".to_string()),
+            target_compose_project: Some("p".to_string()),
+            target_compose_service: Some("dockrev".to_string()),
+            target_compose_files: vec!["/abs/compose.yml".to_string()],
+            docker_bin: "docker".to_string(),
+            docker_host: None,
+            compose_bin: "docker-compose".to_string(),
+            state_path: dir.join("state.json"),
+        };
+
+        let now = crate::state_store::now_rfc3339().unwrap();
+        let mut st = StateFile::idle(&now);
+        for i in 0..31 {
+            let op_id = format!("sup_boot_{i}");
+            st.logs.push(test_log(
+                &format!("2026-02-01T05:{i:02}:00Z"),
+                "INFO",
+                "self-upgrade requested",
+                Some(&op_id),
+            ));
+            st.logs.push(test_log(
+                &format!("2026-02-01T05:{i:02}:10Z"),
+                "INFO",
+                "dry-run done",
+                Some(&op_id),
+            ));
+        }
+        store_atomic(&cfg.state_path, &st).await.unwrap();
+
+        let app = App::new(cfg.clone()).await.unwrap();
+        let rt = app.runtime.lock().await;
+        assert_eq!(build_operation_groups(&rt.state.logs).len(), 30);
+        drop(rt);
+
+        let persisted = load_or_idle(&cfg.state_path).await.unwrap();
+        assert_eq!(build_operation_groups(&persisted.logs).len(), 30);
     }
 }
