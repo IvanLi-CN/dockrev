@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  ApiError,
   createWebPushSubscription,
   deleteGitHubPackagesRepo,
   deleteWebPushSubscription,
@@ -52,6 +53,44 @@ function formatBytes(n: number) {
     i++
   }
   return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
+}
+
+type SaveScope = 'backup' | 'notifications' | 'ghcr'
+type AutoSavePhase = 'idle' | 'queued' | 'saving' | 'saved' | 'error'
+type AutoSaveIssue = {
+  scope: SaveScope
+  fieldPath: string
+  reason: string
+  message: string
+  at: string
+}
+
+const SAVE_SCOPE_ORDER: SaveScope[] = ['backup', 'notifications', 'ghcr']
+const TEXT_DEBOUNCE_MS = 400
+const TOGGLE_DEBOUNCE_MS = 120
+
+function readReason(details: unknown): string | null {
+  if (!details || typeof details !== 'object') return null
+  const reason = (details as Record<string, unknown>).reason
+  return typeof reason === 'string' ? reason : null
+}
+
+function mapResolveFailure(e: unknown): string {
+  if (e instanceof ApiError) {
+    const reason = readReason(e.details)
+    if (reason === 'ghcr_pat_missing') return '请先填写 GitHub PAT'
+    if (reason === 'ghcr_pat_unsaved_or_save_failed') return 'PAT 未保存成功，无法解析，请检查网络后重试'
+    if (reason === 'ghcr_pat_invalid_or_scope_insufficient') return 'PAT 无效或权限不足，请检查 token scope'
+    if (reason === 'github_upstream_timeout') return 'GitHub 响应超时，请稍后重试'
+    if (reason === 'github_upstream_unavailable') return 'GitHub 请求失败，请稍后重试'
+  }
+  return errorMessage(e)
+}
+
+function mapScopeLabel(scope: SaveScope): string {
+  if (scope === 'backup') return '备份'
+  if (scope === 'notifications') return '通知'
+  return 'GHCR'
 }
 
 function GitHubPackagesRepoPicker({
@@ -114,8 +153,51 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [webPushEndpoint, setWebPushEndpoint] = useState<string | null>(null)
+  const [autoSavePhase, setAutoSavePhase] = useState<AutoSavePhase>('idle')
+  const [autoSaveIssue, setAutoSaveIssue] = useState<AutoSaveIssue | null>(null)
+  const [autoSaveSavingScope, setAutoSaveSavingScope] = useState<SaveScope | null>(null)
+  const [autoSaveUpdatedAt, setAutoSaveUpdatedAt] = useState<string | null>(null)
+  const [autoSaveQueuedScopes, setAutoSaveQueuedScopes] = useState<SaveScope[]>([])
+
+  const backupRef = useRef<SettingsResponse['backup'] | null>(null)
+  const notificationsRef = useRef<NotificationConfig | null>(null)
+  const ghcrRef = useRef<{ enabled: boolean; callbackUrl: string; pat: string } | null>(null)
+  const queueRef = useRef<SaveScope[]>([])
+  const queuedSetRef = useRef<Set<SaveScope>>(new Set())
+  const timersRef = useRef<Map<SaveScope, number>>(new Map())
+  const pendingFieldsRef = useRef<Map<SaveScope, Set<string>>>(new Map())
+  const inFlightScopeRef = useRef<SaveScope | null>(null)
+  const runningRef = useRef(false)
+  const failedScopesRef = useRef<Set<SaveScope>>(new Set())
+  const lastSavedHashRef = useRef<Map<SaveScope, string>>(new Map())
+  const waitersRef = useRef<
+    Array<{
+      scopes: Set<SaveScope>
+      resolve: () => void
+      reject: (error: Error) => void
+    }>
+  >([])
+
   const supervisor = useSupervisorHealth()
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
+
+  useEffect(() => {
+    backupRef.current = settings?.backup ?? null
+  }, [settings])
+
+  useEffect(() => {
+    notificationsRef.current = notifications
+  }, [notifications])
+
+  useEffect(() => {
+    ghcrRef.current = githubPackages
+      ? {
+          enabled: githubPackages.enabled,
+          callbackUrl: githubPackages.callbackUrl,
+          pat: githubPackagesPat,
+        }
+      : null
+  }, [githubPackages, githubPackagesPat])
 
   useEffect(() => {
     // Debounce to avoid firing requests on every keystroke in the filter.
@@ -125,6 +207,274 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     }, 250)
     return () => window.clearTimeout(handle)
   }, [githubPackagesTrackedReposQInput])
+
+  const syncQueuedScopesState = useCallback(() => {
+    setAutoSaveQueuedScopes([...queueRef.current])
+  }, [])
+
+  const isScopeIdle = useCallback((scope: SaveScope) => {
+    if (timersRef.current.has(scope)) return false
+    if (queuedSetRef.current.has(scope)) return false
+    if (inFlightScopeRef.current === scope) return false
+    const pending = pendingFieldsRef.current.get(scope)
+    return !pending || pending.size === 0
+  }, [])
+
+  const settleWaiters = useCallback(() => {
+    if (!waitersRef.current.length) return
+    const remain: typeof waitersRef.current = []
+    for (const waiter of waitersRef.current) {
+      const failedScope = SAVE_SCOPE_ORDER.find(
+        (scope) => waiter.scopes.has(scope) && failedScopesRef.current.has(scope),
+      )
+      if (failedScope) {
+        const issue = autoSaveIssue
+        const message =
+          issue && issue.scope === failedScope
+            ? issue.message
+            : `自动保存失败（${mapScopeLabel(failedScope)}），请修正后重试。`
+        waiter.reject(new Error(message))
+        continue
+      }
+      const allIdle = SAVE_SCOPE_ORDER.filter((scope) => waiter.scopes.has(scope)).every((scope) => isScopeIdle(scope))
+      if (allIdle) {
+        waiter.resolve()
+        continue
+      }
+      remain.push(waiter)
+    }
+    waitersRef.current = remain
+  }, [autoSaveIssue, isScopeIdle])
+
+  const buildScopePayload = useCallback((scope: SaveScope): unknown => {
+    if (scope === 'backup') return backupRef.current
+    if (scope === 'notifications') return notificationsRef.current
+    const ghcr = ghcrRef.current
+    if (!ghcr) return null
+    return {
+      enabled: ghcr.enabled,
+      callbackUrl: ghcr.callbackUrl,
+      pat: ghcr.pat || null,
+    }
+  }, [])
+
+  const persistScopePayload = useCallback(async (scope: SaveScope, payload: unknown) => {
+    if (scope === 'backup') {
+      await putSettings(payload as SettingsResponse['backup'])
+      return
+    }
+    if (scope === 'notifications') {
+      await putNotifications(payload as NotificationConfig)
+      return
+    }
+    await putGitHubPackagesSettings(
+      payload as {
+        enabled: boolean
+        callbackUrl: string
+        pat: string | null
+      },
+    )
+  }, [])
+
+  const buildAutoSaveIssue = useCallback((scope: SaveScope, fieldPath: string, e: unknown): AutoSaveIssue => {
+    let reason: string | null = null
+    if (e instanceof ApiError) reason = readReason(e.details)
+    if (!reason && scope === 'ghcr') reason = 'ghcr_pat_unsaved_or_save_failed'
+
+    const fallback = errorMessage(e)
+    let message = `自动保存失败（${mapScopeLabel(scope)}）：${fallback}`
+    if (reason === 'ghcr_pat_missing') message = '请先填写 GitHub PAT'
+    else if (reason === 'ghcr_pat_unsaved_or_save_failed') message = 'PAT 未保存成功，无法解析，请检查网络后重试'
+    else if (reason === 'ghcr_pat_invalid_or_scope_insufficient') message = 'PAT 无效或权限不足，请检查 token scope'
+    else if (reason === 'github_upstream_timeout') message = 'GitHub 响应超时，请稍后重试'
+    else if (reason === 'github_upstream_unavailable') message = 'GitHub 请求失败，请稍后重试'
+
+    return {
+      scope,
+      fieldPath,
+      reason: reason ?? 'autosave_failed',
+      message,
+      at: new Date().toISOString(),
+    }
+  }, [])
+
+  const runAutoSaveQueue = useCallback(async () => {
+    if (runningRef.current) return
+    runningRef.current = true
+
+    try {
+      while (queueRef.current.length > 0) {
+        const scope = queueRef.current.shift()!
+        queuedSetRef.current.delete(scope)
+        syncQueuedScopesState()
+
+        const pendingFields = pendingFieldsRef.current.get(scope)
+        if (!pendingFields || pendingFields.size === 0) {
+          settleWaiters()
+          continue
+        }
+
+        const payload = buildScopePayload(scope)
+        if (!payload) {
+          settleWaiters()
+          continue
+        }
+
+        const payloadHash = JSON.stringify(payload)
+        if (lastSavedHashRef.current.get(scope) === payloadHash) {
+          pendingFieldsRef.current.set(scope, new Set())
+          failedScopesRef.current.delete(scope)
+          setAutoSavePhase(queueRef.current.length > 0 ? 'queued' : 'saved')
+          setAutoSaveUpdatedAt(new Date().toISOString())
+          settleWaiters()
+          continue
+        }
+
+        const submittedFields = new Set(pendingFields)
+        pendingFieldsRef.current.set(scope, new Set())
+        inFlightScopeRef.current = scope
+        setAutoSaveSavingScope(scope)
+        setAutoSavePhase('saving')
+        setAutoSaveIssue((prev) => (prev?.scope === scope ? null : prev))
+
+        try {
+          await persistScopePayload(scope, payload)
+          failedScopesRef.current.delete(scope)
+          lastSavedHashRef.current.set(scope, payloadHash)
+          setAutoSaveUpdatedAt(new Date().toISOString())
+          setAutoSavePhase(queueRef.current.length > 0 ? 'queued' : 'saved')
+        } catch (e: unknown) {
+          const currentFields = pendingFieldsRef.current.get(scope) ?? new Set<string>()
+          for (const field of submittedFields) currentFields.add(field)
+          pendingFieldsRef.current.set(scope, currentFields)
+          failedScopesRef.current.add(scope)
+          setAutoSavePhase('error')
+          setAutoSaveIssue(buildAutoSaveIssue(scope, Array.from(submittedFields)[0] ?? '', e))
+        } finally {
+          inFlightScopeRef.current = null
+          setAutoSaveSavingScope(null)
+          settleWaiters()
+        }
+      }
+    } finally {
+      runningRef.current = false
+      settleWaiters()
+    }
+  }, [
+    buildAutoSaveIssue,
+    buildScopePayload,
+    persistScopePayload,
+    settleWaiters,
+    syncQueuedScopesState,
+  ])
+
+  const enqueueScope = useCallback(
+    (scope: SaveScope) => {
+      if (queuedSetRef.current.has(scope)) return
+      queuedSetRef.current.add(scope)
+      queueRef.current.push(scope)
+      setAutoSavePhase('queued')
+      syncQueuedScopesState()
+      void runAutoSaveQueue()
+    },
+    [runAutoSaveQueue, syncQueuedScopesState],
+  )
+
+  const markFieldDirty = useCallback(
+    (scope: SaveScope, fieldPath: string, debounceMs: number) => {
+      failedScopesRef.current.delete(scope)
+      const fields = pendingFieldsRef.current.get(scope) ?? new Set<string>()
+      fields.add(fieldPath)
+      pendingFieldsRef.current.set(scope, fields)
+
+      const existing = timersRef.current.get(scope)
+      if (typeof existing === 'number') window.clearTimeout(existing)
+      const timer = window.setTimeout(() => {
+        timersRef.current.delete(scope)
+        enqueueScope(scope)
+        settleWaiters()
+      }, debounceMs)
+      timersRef.current.set(scope, timer)
+      setAutoSavePhase('queued')
+      settleWaiters()
+    },
+    [enqueueScope, settleWaiters],
+  )
+
+  const flushAutoSave = useCallback(
+    async (scopes?: SaveScope[]) => {
+      const target = new Set(scopes ?? SAVE_SCOPE_ORDER)
+
+      for (const scope of target) {
+        const timer = timersRef.current.get(scope)
+        if (typeof timer === 'number') {
+          window.clearTimeout(timer)
+          timersRef.current.delete(scope)
+        }
+        const pendingFields = pendingFieldsRef.current.get(scope)
+        if (pendingFields && pendingFields.size > 0) enqueueScope(scope)
+      }
+
+      void runAutoSaveQueue()
+
+      const failedScope = SAVE_SCOPE_ORDER.find(
+        (scope) => target.has(scope) && failedScopesRef.current.has(scope),
+      )
+      if (failedScope) {
+        const issue = autoSaveIssue
+        const message =
+          issue && issue.scope === failedScope
+            ? issue.message
+            : `自动保存失败（${mapScopeLabel(failedScope)}），请修正后重试。`
+        throw new Error(message)
+      }
+
+      const allIdle = SAVE_SCOPE_ORDER.filter((scope) => target.has(scope)).every((scope) => isScopeIdle(scope))
+      if (allIdle) return
+
+      await new Promise<void>((resolve, reject) => {
+        waitersRef.current.push({ scopes: target, resolve, reject })
+      })
+    },
+    [autoSaveIssue, enqueueScope, isScopeIdle, runAutoSaveQueue],
+  )
+
+  const resetAutoSaveBaselines = useCallback(
+    (next: {
+      backup: SettingsResponse['backup']
+      notifications: NotificationConfig
+      ghcr: { enabled: boolean; callbackUrl: string; pat: string }
+    }) => {
+      for (const timer of timersRef.current.values()) window.clearTimeout(timer)
+      timersRef.current.clear()
+      queueRef.current = []
+      queuedSetRef.current.clear()
+      pendingFieldsRef.current.clear()
+      failedScopesRef.current.clear()
+      waitersRef.current = []
+      inFlightScopeRef.current = null
+      setAutoSaveSavingScope(null)
+      setAutoSaveIssue(null)
+      setAutoSavePhase('idle')
+      setAutoSaveUpdatedAt(null)
+      syncQueuedScopesState()
+
+      backupRef.current = next.backup
+      notificationsRef.current = next.notifications
+      ghcrRef.current = next.ghcr
+      lastSavedHashRef.current.set('backup', JSON.stringify(next.backup))
+      lastSavedHashRef.current.set('notifications', JSON.stringify(next.notifications))
+      lastSavedHashRef.current.set(
+        'ghcr',
+        JSON.stringify({
+          enabled: next.ghcr.enabled,
+          callbackUrl: next.ghcr.callbackUrl,
+          pat: next.ghcr.pat || null,
+        }),
+      )
+    },
+    [syncQueuedScopesState],
+  )
 
   const refreshTrackedRepos = useCallback(
     async (opts?: { page?: number; perPage?: number; q?: string }) => {
@@ -148,8 +498,8 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
   const refresh = useCallback(async () => {
     setError(null)
-    setSettings(await getSettings())
-    setNotifications(await getNotifications())
+    const nextSettings = await getSettings()
+    const nextNotifications = await getNotifications()
     const gh = await getGitHubPackagesSettings()
     const defaultCallbackUrl = (() => {
       if (typeof window === 'undefined') return ''
@@ -158,9 +508,19 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
       return `${resolvedBase}/api/webhooks/github-packages`
     })()
     const callbackUrl = gh.callbackUrl || defaultCallbackUrl
-    setGitHubPackages({ ...gh, callbackUrl })
-    setGitHubPackagesPat(gh.patMasked ?? '')
-  }, [])
+    const nextGhcr = { ...gh, callbackUrl }
+    const nextPat = gh.patMasked ?? ''
+
+    setSettings(nextSettings)
+    setNotifications(nextNotifications)
+    setGitHubPackages(nextGhcr)
+    setGitHubPackagesPat(nextPat)
+    resetAutoSaveBaselines({
+      backup: nextSettings.backup,
+      notifications: nextNotifications,
+      ghcr: { enabled: nextGhcr.enabled, callbackUrl: nextGhcr.callbackUrl, pat: nextPat },
+    })
+  }, [resetAutoSaveBaselines])
 
   useEffect(() => {
     void (async () => {
@@ -183,14 +543,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             setBusy(true)
             setError(null)
             try {
-              await putSettings(settings.backup)
-              await putNotifications(notifications)
-              await putGitHubPackagesSettings({
-                enabled: githubPackages.enabled,
-                callbackUrl: githubPackages.callbackUrl,
-                pat: githubPackagesPat || null,
-              })
-              await refresh()
+              await flushAutoSave()
             } catch (e: unknown) {
               setError(errorMessage(e))
             } finally {
@@ -199,10 +552,67 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
           })()
         }}
       >
-        保存设置
+        立即重试保存全部
       </Button>,
     )
-  }, [busy, githubPackages, githubPackagesPat, notifications, onTopActions, refresh, settings])
+  }, [busy, flushAutoSave, githubPackages, notifications, onTopActions, settings])
+
+  const updateBackup = useCallback(
+    (fieldPath: string, updater: (backup: SettingsResponse['backup']) => SettingsResponse['backup'], isToggle = false) => {
+      setSettings((prev) => {
+        if (!prev) return prev
+        return { ...prev, backup: updater(prev.backup) }
+      })
+      markFieldDirty('backup', fieldPath, isToggle ? TOGGLE_DEBOUNCE_MS : TEXT_DEBOUNCE_MS)
+    },
+    [markFieldDirty],
+  )
+
+  const updateNotifications = useCallback(
+    (fieldPath: string, updater: (current: NotificationConfig) => NotificationConfig, isToggle = false) => {
+      setNotifications((prev) => {
+        if (!prev) return prev
+        return updater(prev)
+      })
+      markFieldDirty('notifications', fieldPath, isToggle ? TOGGLE_DEBOUNCE_MS : TEXT_DEBOUNCE_MS)
+    },
+    [markFieldDirty],
+  )
+
+  const updateGhcr = useCallback(
+    (
+      fieldPath: string,
+      updater: (current: { enabled: boolean; callbackUrl: string; pat: string }) => {
+        enabled: boolean
+        callbackUrl: string
+        pat: string
+      },
+      isToggle = false,
+    ) => {
+      if (!githubPackages) return
+      const next = updater({
+        enabled: githubPackages.enabled,
+        callbackUrl: githubPackages.callbackUrl,
+        pat: githubPackagesPat,
+      })
+      setGitHubPackages((prev) => (prev ? { ...prev, enabled: next.enabled, callbackUrl: next.callbackUrl } : prev))
+      setGitHubPackagesPat(next.pat)
+      markFieldDirty('ghcr', fieldPath, isToggle ? TOGGLE_DEBOUNCE_MS : TEXT_DEBOUNCE_MS)
+    },
+    [githubPackages, githubPackagesPat, markFieldDirty],
+  )
+
+  useEffect(() => {
+    const timers = timersRef.current
+    return () => {
+      for (const timer of timers.values()) window.clearTimeout(timer)
+      timers.clear()
+      for (const waiter of waitersRef.current) {
+        waiter.reject(new Error('页面已离开，自动保存已取消'))
+      }
+      waitersRef.current = []
+    }
+  }, [])
 
   const canWebPush = useMemo(() => {
     return typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window
@@ -250,39 +660,57 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     ? Math.max(1, Math.ceil(githubPackagesTrackedRepos.filteredTotal / githubPackagesTrackedRepos.perPage))
     : 1
 
+  const autoSaveStatusText =
+    autoSavePhase === 'saving'
+      ? `自动保存中：${mapScopeLabel(autoSaveSavingScope ?? 'backup')}`
+      : autoSavePhase === 'queued'
+        ? autoSaveQueuedScopes.length
+          ? `自动保存排队中：${autoSaveQueuedScopes.map(mapScopeLabel).join('、')}`
+          : '自动保存排队中'
+        : autoSavePhase === 'saved'
+          ? autoSaveUpdatedAt
+            ? `已自动保存（${new Date(autoSaveUpdatedAt).toLocaleTimeString()}）`
+            : '已自动保存'
+          : autoSavePhase === 'error'
+            ? '自动保存失败'
+            : '自动保存已就绪'
+
+  const ghcrPatIssue = autoSaveIssue?.scope === 'ghcr' && autoSaveIssue.fieldPath.includes('pat') ? autoSaveIssue : null
+
   return (
     <div className="page">
+      <div className="muted" style={{ marginBottom: 10 }}>
+        {autoSaveStatusText}
+      </div>
+      {autoSaveIssue ? (
+        <div className="error" style={{ marginBottom: 10 }}>
+          {autoSaveIssue.message}
+        </div>
+      ) : null}
       <div className="twoCol">
         <div className="settingsCol">
           <div className="card">
             <div className="title">鉴权（Forward Header）</div>
-            <div className="muted">单用户：由反向代理注入 Header；本服务信任来源</div>
+            <div className="muted">单用户：由反向代理注入 Header；本服务信任来源（运行时只读）</div>
 
             <div className="kv">
               <div className="kvRow">
                 <div className="label">Header 名称</div>
-                <input
-                  className="input"
-                  value={settings.auth.forwardHeaderName}
-                  onChange={(e) => setSettings({ ...settings, auth: { ...settings.auth, forwardHeaderName: e.target.value } })}
-                />
+                <div className="mono">{settings.auth.forwardHeaderName}</div>
               </div>
 
               <div className="kvRow">
                 <div className="label">允许匿名（开发环境）</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <Switch
-                    checked={settings.auth.allowAnonymousInDev}
-                    disabled={busy}
-                    onChange={(v) => setSettings({ ...settings, auth: { ...settings.auth, allowAnonymousInDev: v } })}
-                  />
-                  <div className="muted">{settings.auth.allowAnonymousInDev ? 'on' : 'off'}</div>
-                </div>
+                <div className="muted">{settings.auth.allowAnonymousInDev ? 'on' : 'off'}</div>
               </div>
 
               <div className="kvRow">
                 <div className="label">当前用户展示</div>
                 <div className="mono">ivan</div>
+              </div>
+              <div className="muted" style={{ marginTop: 6 }}>
+                该区域由启动配置控制：`DOCKREV_AUTH_FORWARD_HEADER_NAME` /
+                `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV`，修改后需重启服务生效。
               </div>
             </div>
           </div>
@@ -365,7 +793,9 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                   <Switch
                     checked={settings.backup.enabled}
                     disabled={busy}
-                    onChange={(v) => setSettings({ ...settings, backup: { ...settings.backup, enabled: v } })}
+                    onChange={(v) =>
+                      updateBackup('backup.enabled', (backup) => ({ ...backup, enabled: v }), true)
+                    }
                   />
                   <div className="muted">{settings.backup.enabled ? 'on' : 'off'}</div>
                 </div>
@@ -376,7 +806,9 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                   <Switch
                     checked={settings.backup.requireSuccess}
                     disabled={busy}
-                    onChange={(v) => setSettings({ ...settings, backup: { ...settings.backup, requireSuccess: v } })}
+                    onChange={(v) =>
+                      updateBackup('backup.requireSuccess', (backup) => ({ ...backup, requireSuccess: v }), true)
+                    }
                   />
                   <div className="muted">{settings.backup.requireSuccess ? 'on' : 'off'}</div>
                 </div>
@@ -386,7 +818,9 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                 <input
                   className="input"
                   value={settings.backup.baseDir}
-                  onChange={(e) => setSettings({ ...settings, backup: { ...settings.backup, baseDir: e.target.value } })}
+                  onChange={(e) =>
+                    updateBackup('backup.baseDir', (backup) => ({ ...backup, baseDir: e.target.value }))
+                  }
                 />
               </div>
               <div className="kvRow">
@@ -396,10 +830,10 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     className="input"
                     value={String(settings.backup.skipTargetsOverBytes)}
                     onChange={(e) =>
-                      setSettings({
-                        ...settings,
-                        backup: { ...settings.backup, skipTargetsOverBytes: Number(e.target.value) || 0 },
-                      })
+                      updateBackup('backup.skipTargetsOverBytes', (backup) => ({
+                        ...backup,
+                        skipTargetsOverBytes: Number(e.target.value) || 0,
+                      }))
                     }
                   />
                   <div className="muted" style={{ marginTop: 6 }}>
@@ -420,7 +854,13 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                 <Switch
                   checked={notifications.email.enabled}
                   disabled={busy}
-                  onChange={(v) => setNotifications({ ...notifications, email: { ...notifications.email, enabled: v } })}
+                  onChange={(v) =>
+                    updateNotifications(
+                      'notifications.email.enabled',
+                      (current) => ({ ...current, email: { ...current.email, enabled: v } }),
+                      true,
+                    )
+                  }
                 />
               </div>
               <div className="kv">
@@ -429,7 +869,12 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                   <input
                     className="input"
                     value={notifications.email.smtpUrl ?? ''}
-                    onChange={(e) => setNotifications({ ...notifications, email: { ...notifications.email, smtpUrl: e.target.value } })}
+                    onChange={(e) =>
+                      updateNotifications('notifications.email.smtpUrl', (current) => ({
+                        ...current,
+                        email: { ...current.email, smtpUrl: e.target.value },
+                      }))
+                    }
                     placeholder="smtp://user:pass@smtp.example.com:587"
                   />
                 </div>
@@ -442,7 +887,13 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                 <Switch
                   checked={notifications.webhook.enabled}
                   disabled={busy}
-                  onChange={(v) => setNotifications({ ...notifications, webhook: { ...notifications.webhook, enabled: v } })}
+                  onChange={(v) =>
+                    updateNotifications(
+                      'notifications.webhook.enabled',
+                      (current) => ({ ...current, webhook: { ...current.webhook, enabled: v } }),
+                      true,
+                    )
+                  }
                 />
               </div>
               <div className="kv">
@@ -452,7 +903,10 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     className="input"
                     value={notifications.webhook.url ?? ''}
                     onChange={(e) =>
-                      setNotifications({ ...notifications, webhook: { ...notifications.webhook, url: e.target.value } })
+                      updateNotifications('notifications.webhook.url', (current) => ({
+                        ...current,
+                        webhook: { ...current.webhook, url: e.target.value },
+                      }))
                     }
                     placeholder="https://hooks.example.com/dockrev"
                   />
@@ -466,7 +920,13 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                 <Switch
                   checked={notifications.telegram.enabled}
                   disabled={busy}
-                  onChange={(v) => setNotifications({ ...notifications, telegram: { ...notifications.telegram, enabled: v } })}
+                  onChange={(v) =>
+                    updateNotifications(
+                      'notifications.telegram.enabled',
+                      (current) => ({ ...current, telegram: { ...current.telegram, enabled: v } }),
+                      true,
+                    )
+                  }
                 />
               </div>
               <div className="kv">
@@ -476,7 +936,10 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     className="input"
                     value={notifications.telegram.botToken ?? ''}
                     onChange={(e) =>
-                      setNotifications({ ...notifications, telegram: { ...notifications.telegram, botToken: e.target.value } })
+                      updateNotifications('notifications.telegram.botToken', (current) => ({
+                        ...current,
+                        telegram: { ...current.telegram, botToken: e.target.value },
+                      }))
                     }
                   />
                 </div>
@@ -486,7 +949,10 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     className="input"
                     value={notifications.telegram.chatId ?? ''}
                     onChange={(e) =>
-                      setNotifications({ ...notifications, telegram: { ...notifications.telegram, chatId: e.target.value } })
+                      updateNotifications('notifications.telegram.chatId', (current) => ({
+                        ...current,
+                        telegram: { ...current.telegram, chatId: e.target.value },
+                      }))
                     }
                   />
                 </div>
@@ -499,7 +965,13 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                 <Switch
                   checked={notifications.webPush.enabled}
                   disabled={busy}
-                  onChange={(v) => setNotifications({ ...notifications, webPush: { ...notifications.webPush, enabled: v } })}
+                  onChange={(v) =>
+                    updateNotifications(
+                      'notifications.webPush.enabled',
+                      (current) => ({ ...current, webPush: { ...current.webPush, enabled: v } }),
+                      true,
+                    )
+                  }
                 />
               </div>
 
@@ -510,7 +982,10 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     className="input"
                     value={notifications.webPush.vapidPublicKey ?? ''}
                     onChange={(e) =>
-                      setNotifications({ ...notifications, webPush: { ...notifications.webPush, vapidPublicKey: e.target.value } })
+                      updateNotifications('notifications.webPush.vapidPublicKey', (current) => ({
+                        ...current,
+                        webPush: { ...current.webPush, vapidPublicKey: e.target.value },
+                      }))
                     }
                   />
                 </div>
@@ -520,7 +995,10 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     className="input"
                     value={notifications.webPush.vapidPrivateKey ?? ''}
                     onChange={(e) =>
-                      setNotifications({ ...notifications, webPush: { ...notifications.webPush, vapidPrivateKey: e.target.value } })
+                      updateNotifications('notifications.webPush.vapidPrivateKey', (current) => ({
+                        ...current,
+                        webPush: { ...current.webPush, vapidPrivateKey: e.target.value },
+                      }))
                     }
                   />
                 </div>
@@ -530,7 +1008,10 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     className="input"
                     value={notifications.webPush.vapidSubject ?? ''}
                     onChange={(e) =>
-                      setNotifications({ ...notifications, webPush: { ...notifications.webPush, vapidSubject: e.target.value } })
+                      updateNotifications('notifications.webPush.vapidSubject', (current) => ({
+                        ...current,
+                        webPush: { ...current.webPush, vapidSubject: e.target.value },
+                      }))
                     }
                   />
                 </div>
@@ -621,7 +1102,9 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               <Switch
                 checked={githubPackages.enabled}
                 disabled={busy}
-                onChange={(v) => setGitHubPackages({ ...githubPackages, enabled: v })}
+                onChange={(v) =>
+                  updateGhcr('ghcr.enabled', (current) => ({ ...current, enabled: v }), true)
+                }
               />
             </div>
 
@@ -631,11 +1114,18 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                 <input
                   className="input"
                   value={githubPackagesPat}
-                  onChange={(e) => setGitHubPackagesPat(e.target.value)}
+                  onChange={(e) =>
+                    updateGhcr('ghcr.pat', (current) => ({ ...current, pat: e.target.value }))
+                  }
                   placeholder="ghp_..."
                 />
+                {ghcrPatIssue ? (
+                  <div className="error" style={{ marginTop: 6 }}>
+                    {ghcrPatIssue.message}
+                  </div>
+                ) : null}
                 <div className="muted" style={{ marginTop: 6 }}>
-                  提示：解析 profile/username 与同步 webhook 需要先“保存设置”把 PAT 写入后端。
+                  解析 owner/profile 时会先自动保存 GHCR 设置，再继续解析。
                 </div>
               </div>
 
@@ -644,7 +1134,9 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                 <input
                   className="input"
                   value={githubPackages.callbackUrl}
-                  onChange={(e) => setGitHubPackages({ ...githubPackages, callbackUrl: e.target.value })}
+                  onChange={(e) =>
+                    updateGhcr('ghcr.callbackUrl', (current) => ({ ...current, callbackUrl: e.target.value }))
+                  }
                   placeholder="https://dockrev.example.com/api/webhooks/github-packages"
                 />
               </div>
@@ -678,6 +1170,8 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                         setGitHubPackagesSyncResults(null)
                         try {
                           const input = githubPackagesNewRepo.trim()
+                          if (!input) throw new Error('请先输入 owner/repo 或 profile 链接')
+                          await flushAutoSave(['ghcr'])
                           const resolved = await resolveGitHubPackagesTarget(input)
                           if (resolved.kind === 'repo') {
                             const fullName = resolved.repos[0]?.fullName?.trim() ?? ''
@@ -720,7 +1214,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                           }
                           throw new Error(`unsupported resolve kind: ${resolved.kind}`)
                         } catch (e: unknown) {
-                          setError(errorMessage(e))
+                          setError(mapResolveFailure(e))
                         } finally {
                           setBusy(false)
                         }
