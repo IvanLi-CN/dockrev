@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-27
 - Last: 2026-02-27
 
@@ -64,10 +64,10 @@
 
 ## 里程碑（Milestones / checklist）
 
-- [ ] M1: SettingsPage 加入局部 pending 状态并接入 onClick 链路。
-- [ ] M2: App.css 增加按钮 spinner 样式与 reduced-motion 兼容。
-- [ ] M3: Storybook 新增 settings resolve 慢响应场景。
-- [ ] M4: lint/build 验证通过。
+- [x] M1: SettingsPage 加入局部 pending 状态并接入 onClick 链路。
+- [x] M2: App.css 增加按钮 spinner 样式与 reduced-motion 兼容。
+- [x] M3: Storybook 新增 settings resolve 慢响应场景。
+- [x] M4: lint/build 验证通过。
 
 ## 风险 / 假设
 
@@ -77,3 +77,6 @@
 ## 变更记录（Change log）
 
 - 2026-02-27: 新建规格，锁定“仅解析并添加按钮”的加载反馈改造范围。
+- 2026-02-27: 完成 `解析并添加` 按钮 loading 反馈改造（`ghcrResolvePending`、按钮 spinner + `解析中…`、pending 禁用 + `finally` 复位）。
+- 2026-02-27: 补充 Storybook 慢响应场景 `settings-configured-resolve-slow` 与 `ResolveLoading` story，支持稳定复现交互反馈。
+- 2026-02-27: 完成 reduced-motion 兼容修正并通过 `bun run lint`、`bun run build` 与 `codex review --base origin/main`（无 P0/P1 阻塞）。
