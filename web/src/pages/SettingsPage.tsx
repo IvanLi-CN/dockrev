@@ -557,6 +557,14 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     )
   }, [busy, flushAutoSave, githubPackages, notifications, onTopActions, settings])
 
+  useEffect(() => {
+    if (autoSavePhase !== 'saved') return
+    const handle = window.setTimeout(() => {
+      setAutoSavePhase((prev) => (prev === 'saved' ? 'idle' : prev))
+    }, 1800)
+    return () => window.clearTimeout(handle)
+  }, [autoSavePhase, autoSaveUpdatedAt])
+
   const updateBackup = useCallback(
     (fieldPath: string, updater: (backup: SettingsResponse['backup']) => SettingsResponse['backup'], isToggle = false) => {
       setSettings((prev) => {
@@ -677,16 +685,17 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
   const ghcrPatIssue = autoSaveIssue?.scope === 'ghcr' && autoSaveIssue.fieldPath.includes('pat') ? autoSaveIssue : null
 
+  const autoSaveToastClassName =
+    autoSavePhase === 'error'
+      ? 'autoSaveToast autoSaveToastBad'
+      : autoSavePhase === 'saving' || autoSavePhase === 'queued'
+        ? 'autoSaveToast autoSaveToastWarn'
+        : 'autoSaveToast autoSaveToastOk'
+
+  const showAutoSaveToast = autoSavePhase !== 'idle'
+
   return (
     <div className="page">
-      <div className="muted" style={{ marginBottom: 10 }}>
-        {autoSaveStatusText}
-      </div>
-      {autoSaveIssue ? (
-        <div className="error" style={{ marginBottom: 10 }}>
-          {autoSaveIssue.message}
-        </div>
-      ) : null}
       <div className="twoCol">
         <div className="settingsCol">
           <div className="card">
@@ -1493,9 +1502,17 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             ) : null}
 
           {error ? <div className="error">{error}</div> : null}
-        </div>
+          </div>
         </div>
       </div>
+      {showAutoSaveToast ? (
+        <div className={autoSaveToastClassName} role="status" aria-live="polite">
+          <div>{autoSaveStatusText}</div>
+          {autoSavePhase === 'error' && autoSaveIssue ? (
+            <div className="autoSaveToastDetail">{autoSaveIssue.message}</div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }

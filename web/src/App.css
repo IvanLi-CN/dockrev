@@ -2188,6 +2188,56 @@ html[data-theme='light'] .modalOverlay {
   gap: 12px;
 }
 
+.autoSaveToast {
+  position: fixed;
+  right: 20px;
+  top: 78px;
+  z-index: 80;
+  min-width: 220px;
+  max-width: min(420px, calc(100vw - 30px));
+  border-radius: 12px;
+  border: 1px solid rgba(229, 231, 235, 0.2);
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 16px 42px rgba(2, 6, 23, 0.45);
+  background: color-mix(in srgb, var(--panel) 84%, rgba(15, 23, 42, 0.66) 16%);
+}
+
+.autoSaveToastOk {
+  border-color: rgba(34, 197, 94, 0.3);
+  color: color-mix(in srgb, var(--color-success) 84%, var(--text) 16%);
+}
+
+.autoSaveToastWarn {
+  border-color: rgba(245, 158, 11, 0.32);
+  color: color-mix(in srgb, var(--color-warning) 84%, var(--text) 16%);
+}
+
+.autoSaveToastBad {
+  border-color: rgba(251, 113, 133, 0.38);
+  color: color-mix(in srgb, var(--color-error) 86%, var(--text) 14%);
+}
+
+.autoSaveToastDetail {
+  margin-top: 4px;
+  color: var(--muted2);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+@media (max-width: 700px) {
+  .autoSaveToast {
+    right: 10px;
+    top: 66px;
+    min-width: 0;
+    max-width: calc(100vw - 20px);
+  }
+}
+
 .deployWelcomeRoot {
   min-height: 100vh;
   padding: 28px 18px 44px;
