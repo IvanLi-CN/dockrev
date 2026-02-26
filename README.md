@@ -4,6 +4,18 @@ Dockrev is a self-hosted Docker/Compose update manager.
 
 MVP status: see `docs/plan/README.md`.
 
+## Documentation site
+
+Complete deployment, usage, operations, troubleshooting, and API docs live in the Rspress docs site:
+
+- Source: `docs-site/`
+- Local dev: `bun run docs:dev`
+- Local build: `bun run docs:build`
+- Local preview: `bun run docs:preview`
+- Online (GitHub Pages): published by `.github/workflows/docs-pages.yml`
+
+This README intentionally stays as a quick entrypoint.
+
 ## Tech stack (selected)
 
 Back-end (Rust):

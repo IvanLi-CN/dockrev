@@ -2,6 +2,8 @@
 
 This directory contains a minimal Docker Compose deployment with a reverse proxy:
 
+For complete production docs (deployment, operations, integrations, API reference), use the Rspress docs site in `docs-site/`.
+
 - `gateway` (nginx): routes `/` + `/api/*` to Dockrev, and `/supervisor/*` to the supervisor
 - `dockrev`: Rust backend + embedded web UI
 - `supervisor`: self-upgrade executor + console (stays available while Dockrev restarts)
