@@ -9,9 +9,10 @@ MVP status: see `docs/plan/README.md`.
 Complete deployment, usage, operations, troubleshooting, and API docs live in the Rspress docs site:
 
 - Source: `docs-site/`
-- Local dev: `bun run docs:dev`
+- Local dev: `bun run docs:dev` (default `http://127.0.0.1:50885`)
 - Local build: `bun run docs:build`
-- Local preview: `bun run docs:preview`
+- Local preview: `bun run docs:preview` (default `http://127.0.0.1:50885`)
+- Port override: `DOCS_PORT=<port> bun run docs:dev` / `DOCS_PORT=<port> bun run docs:preview`
 - Online (GitHub Pages): published by `.github/workflows/docs-pages.yml`
 
 This README intentionally stays as a quick entrypoint.
