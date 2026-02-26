@@ -2338,7 +2338,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
   let jobSeq = 0
   const digestSnapshotPendingAttempts = new Map<string, number>()
   let jobsEventsSeq = 4_000
-  const queueProgressDemoSteps = [40, 52, 63, 74, 84, 92, 97]
+  const queueProgressDemoSteps = [40, 44, 48, 52, 56, 60, 65, 70, 75, 80, 85, 90, 94, 97]
   let queueProgressDemoStep = 0
   let queueProgressDemoDirection = 1
 
@@ -2377,7 +2377,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
   if (typeof window !== 'undefined') {
     globalThis.EventSource = MockEventSource as unknown as typeof EventSource
   }
-  MockEventSource.pollIntervalMs = scenario === 'queue-progress-smoothing' ? 1_000 : 4_000
+  MockEventSource.pollIntervalMs = scenario === 'queue-progress-smoothing' ? 700 : 4_000
 
   function findService(serviceId: string) {
     if (!state) return null

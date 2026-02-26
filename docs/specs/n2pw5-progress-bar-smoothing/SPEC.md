@@ -1,4 +1,4 @@
-# Dockrev：进度条全局平滑（220ms）（#n2pw5）
+# Dockrev：进度条全局平滑（420ms）（#n2pw5）
 
 ## 状态
 
@@ -17,7 +17,7 @@
 ### Goals
 
 - 为 Queue / JobDetail / VersionInference 三处进度填充层统一加入 `width` 平滑过渡。
-- 固定平滑参数为 `220ms` + `cubic-bezier(0.22, 1, 0.36, 1)`。
+- 固定平滑参数为 `420ms` + `cubic-bezier(0.4, 0, 0.2, 1)`。
 - indeterminate（跑马）状态保持现有效果，并显式关闭 transition 冲突。
 - 在 `prefers-reduced-motion: reduce` 下关闭本次新增 transition。
 
@@ -92,7 +92,7 @@
 ## 实现里程碑（Milestones / Delivery checklist）
 
 - [x] M1: 新建 spec 并冻结验收口径。
-- [x] M2: App.css 三类进度 fill 统一 220ms 平滑过渡。
+- [x] M2: App.css 三类进度 fill 统一 420ms 平滑过渡。
 - [x] M3: indeterminate 与 reduced-motion 规则落地。
 - [x] M4: lint/build/test-storybook/Playwright 验证通过。
 - [x] M5: 快车道交付完成（push + PR + checks + review-loop 收敛）。
@@ -109,3 +109,4 @@
 - 2026-02-26: 完成 `web/src/App.css` 进度条平滑改动（三类 fill 统一 220ms easing，indeterminate 显式禁用 transition，reduced-motion 下关闭新增 transition）。
 - 2026-02-26: 本地验证通过（`bun run --cwd web lint`、`bun run --cwd web build`、`bun run --cwd web build-storybook`、`bun run --cwd web test-storybook`）并完成 Playwright 三页走查。
 - 2026-02-26: PR #94 在 CI 首轮 `Frontend (lint + Storybook)` 卡住后取消并重跑，`CI (PR)` attempt 2 与 `PR Label Gate` 均通过；review-loop 第 1 轮无 P0/P1/P2 阻塞。
+- 2026-02-26: 按反馈将平滑参数调优为 `420ms` + `cubic-bezier(0.4, 0, 0.2, 1)`，并新增 Storybook `ProgressSmoothing` 自动进度演示场景。
