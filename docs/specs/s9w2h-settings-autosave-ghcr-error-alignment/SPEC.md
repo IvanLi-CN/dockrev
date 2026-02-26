@@ -94,3 +94,8 @@
 - 2026-02-26: 根据验收反馈补充 M5（PAT 自动保存前预校验）为硬性需求，禁止“先发请求再报错”。
 - 2026-02-26: 完成 PAT 保存前预校验（格式 + 必填）与 Storybook 可视化验证，规格收口为已完成。
 - 2026-02-26: 根据交互反馈移除 PAT 行内错误文本，改为输入框高亮 + 非占位浮层提示，避免界面抖动。
+
+## 验收截图（Storybook）
+
+- PAT 缺失提示（非占位浮层）：`assets/settings-pat-missing-toast.png`
+- PAT 格式非法提示（输入框高亮 + 浮层）：`assets/settings-pat-format-invalid-toast.png`
