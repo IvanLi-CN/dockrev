@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use axum::{body::Body, http::Request};
+use axum::{body::Body, http::Request, response::IntoResponse as _};
 use http_body_util::BodyExt as _;
 use tower::ServiceExt as _;
 
@@ -5857,6 +5857,49 @@ async fn github_packages_resolve_owner_requires_pat_saved() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 400);
+    let body = response_json(resp).await;
+    assert_eq!(
+        body["error"]["details"]["reason"]
+            .as_str()
+            .unwrap_or_default(),
+        "ghcr_pat_missing"
+    );
+}
+
+#[test]
+fn github_http_status_from_error_parses_status_code() {
+    let err = anyhow::anyhow!("github http 403 Forbidden: bad credentials");
+    assert_eq!(super::github_http_status_from_error(&err), Some(403));
+}
+
+#[tokio::test]
+async fn github_owner_resolve_error_map_timeout_reason() {
+    let err = anyhow::anyhow!("upstream request timed out");
+    let api_err = super::map_github_owner_resolve_error("acme", err);
+    let resp = api_err.into_response();
+    assert_eq!(resp.status(), 500);
+    let body = response_json(resp).await;
+    assert_eq!(
+        body["error"]["details"]["reason"]
+            .as_str()
+            .unwrap_or_default(),
+        "github_upstream_timeout"
+    );
+}
+
+#[tokio::test]
+async fn github_owner_resolve_error_map_auth_reason() {
+    let err = anyhow::anyhow!("github http 401 Unauthorized: bad credentials");
+    let api_err = super::map_github_owner_resolve_error("acme", err);
+    let resp = api_err.into_response();
+    assert_eq!(resp.status(), 400);
+    let body = response_json(resp).await;
+    assert_eq!(
+        body["error"]["details"]["reason"]
+            .as_str()
+            .unwrap_or_default(),
+        "ghcr_pat_invalid_or_scope_insufficient"
+    );
 }
 
 #[test]

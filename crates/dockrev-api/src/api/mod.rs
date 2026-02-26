@@ -4199,15 +4199,16 @@ async fn resolve_github_packages_target(
                 .await
                 .map_err(map_internal)?;
             let Some(pat) = settings.pat else {
-                return Err(ApiError::invalid_argument(
-                    "pat is required before resolving owner",
-                ));
+                return Err(
+                    ApiError::invalid_argument("pat is required before resolving owner")
+                        .with_details(json!({"reason":"ghcr_pat_missing","owner":owner})),
+                );
             };
             let client = github::GitHubClient::new(&pat).map_err(map_internal)?;
             let repos = client
                 .list_owner_repos(&owner)
                 .await
-                .map_err(map_internal)?;
+                .map_err(|e| map_github_owner_resolve_error(&owner, e))?;
             // Default to "not selected", but keep existing tracked repos selected.
             let existing = state
                 .db
@@ -5174,6 +5175,61 @@ fn now_rfc3339() -> anyhow::Result<String> {
 fn map_internal(err: anyhow::Error) -> ApiError {
     tracing::error!(error = %err, "internal error");
     ApiError::internal("internal error").with_details(json!({"cause": err.to_string()}))
+}
+
+fn map_github_owner_resolve_error(owner: &str, err: anyhow::Error) -> ApiError {
+    if let Some(status) = github_http_status_from_error(&err)
+        && (status == 401 || status == 403)
+    {
+        return ApiError::invalid_argument("github pat is invalid or lacks required scopes")
+            .with_details(json!({
+                "reason":"ghcr_pat_invalid_or_scope_insufficient",
+                "owner": owner,
+                "status": status,
+                "cause": err.to_string(),
+            }));
+    }
+
+    if github_error_is_timeout(&err) {
+        return ApiError::internal("github upstream timeout").with_details(json!({
+            "reason":"github_upstream_timeout",
+            "owner": owner,
+            "cause": err.to_string(),
+        }));
+    }
+
+    ApiError::internal("github upstream unavailable").with_details(json!({
+        "reason":"github_upstream_unavailable",
+        "owner": owner,
+        "status": github_http_status_from_error(&err),
+        "cause": err.to_string(),
+    }))
+}
+
+fn github_http_status_from_error(err: &anyhow::Error) -> Option<u16> {
+    for cause in err.chain() {
+        let text = cause.to_string();
+        if let Some(rest) = text.strip_prefix("github http ") {
+            let head = rest.split(':').next()?.trim();
+            let status_token = head.split_whitespace().next()?;
+            if let Ok(status) = status_token.parse::<u16>() {
+                return Some(status);
+            }
+        }
+    }
+    None
+}
+
+fn github_error_is_timeout(err: &anyhow::Error) -> bool {
+    if err
+        .chain()
+        .filter_map(|cause| cause.downcast_ref::<reqwest::Error>())
+        .any(reqwest::Error::is_timeout)
+    {
+        return true;
+    }
+    let lower = err.to_string().to_ascii_lowercase();
+    lower.contains("timed out") || lower.contains("timeout")
 }
 
 fn merge_secret(target: &mut Option<String>, existing: Option<String>) {
