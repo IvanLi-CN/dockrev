@@ -587,10 +587,6 @@
   .versionTagsPopover {
     transition: none;
   }
-
-  .btnInlineSpinner {
-    animation: none;
-  }
 }
 
 html[data-theme='light'] .versionTagsPopover {
@@ -741,6 +737,12 @@ html[data-theme='light'] .versionTagsPopover {
 @keyframes btnInlineSpin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btnInlineSpinner {
+    animation: none;
   }
 }
 
