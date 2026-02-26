@@ -73,7 +73,6 @@ pub struct VersionInferenceServiceTargetRow {
 #[derive(Clone, Debug)]
 pub struct ImageDigestTagsSnapshotRow {
     pub image_repo: String,
-    pub digest: String,
     pub host_platform: String,
     pub snapshot_json: String,
     pub checked_at: String,
@@ -1700,7 +1699,6 @@ ORDER BY updated_at DESC, image_repo ASC, digest ASC, host_platform ASC
             let rows = stmt.query_map([], |row| {
                 Ok(ImageDigestTagsSnapshotRow {
                     image_repo: row.get(0)?,
-                    digest: row.get(1)?,
                     host_platform: row.get(2)?,
                     snapshot_json: row.get(3)?,
                     checked_at: row.get(4)?,
