@@ -22,12 +22,14 @@ function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefin
 }
 
 function Demo(props: {
+  serviceId?: string
   displayTag: string
   imageTag: string
   imageDigest?: string | null
   resolvedTag?: string | null
   resolvedTags?: string[] | null
 }) {
+  const serviceId = props.serviceId ?? 'svc-prod-web'
   const explicitDisplay = props.displayTag.trim()
   const effectiveDisplayTag = explicitDisplay || inferredTagForDisplay(props.imageTag, props.resolvedTag)
   const rawTrim = (props.imageTag ?? '').trim()
@@ -38,7 +40,7 @@ function Demo(props: {
         <div className="cellTwoLine">
           <div className="versionLine">
             <CurrentVersionPopover
-              serviceId="svc-prod-web"
+              serviceId={serviceId}
               displayTag={props.displayTag}
               imageTag={props.imageTag}
               imageDigest={props.imageDigest}
@@ -51,7 +53,7 @@ function Demo(props: {
           {showRawTag ? (
             <div>
               <CurrentVersionPopover
-                serviceId="svc-prod-web"
+                serviceId={serviceId}
                 displayTag={props.imageTag}
                 imageTag={props.imageTag}
                 imageDigest={props.imageDigest}
@@ -115,6 +117,18 @@ export const SemverTag: Story = {
     displayTag: 'v1.2.3',
     imageTag: 'v1.2.3',
     imageDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    resolvedTag: null,
+    resolvedTags: null,
+  },
+}
+
+export const PendingSnapshot: Story = {
+  parameters: { dockrevApiScenario: 'version-tags-popover-snapshot-pending' },
+  args: {
+    serviceId: 'svc-version-tags',
+    displayTag: 'v0.8.8-arm64',
+    imageTag: 'v0.8.8-arm64',
+    imageDigest: d('b', '9f'),
     resolvedTag: null,
     resolvedTags: null,
   },

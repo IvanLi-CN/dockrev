@@ -34,6 +34,7 @@ export type DockrevApiScenario =
   | 'version-inference-queue-backlog'
   | 'version-inference-stale-all-failed'
   | 'version-tags-popover-demo'
+  | 'version-tags-popover-snapshot-pending'
   | 'version-tags-popover-snapshot-missing'
   | 'multi-stack-mixed'
   | 'queue-mixed'
@@ -1700,7 +1701,13 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'version-inference-running') return buildVersionInferenceRunningFixture()
   if (scenario === 'version-inference-queue-backlog') return buildVersionInferenceQueueBacklogFixture()
   if (scenario === 'version-inference-stale-all-failed') return buildVersionInferenceStaleAllFailedFixture()
-  if (scenario === 'version-tags-popover-demo' || scenario === 'version-tags-popover-snapshot-missing') return buildVersionTagsPopoverDemo()
+  if (
+    scenario === 'version-tags-popover-demo' ||
+    scenario === 'version-tags-popover-snapshot-pending' ||
+    scenario === 'version-tags-popover-snapshot-missing'
+  ) {
+    return buildVersionTagsPopoverDemo()
+  }
   if (scenario === 'queue-mixed') return buildQueueMixed()
   if (scenario === 'queue-legacy-progress') return buildQueueLegacyProgress()
   if (scenario === 'queue-long-logs') return buildQueueLongLogs()
@@ -1713,6 +1720,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
   const state = scenario === 'error' ? null : buildFixture(scenario)
   let ignoreSeq = 0
   let jobSeq = 0
+  const digestSnapshotPendingAttempts = new Map<string, number>()
 
   globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug()
   if (typeof window !== 'undefined') {
@@ -2328,8 +2336,27 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
 
       const digest = (url?.searchParams.get('digest') ?? '').trim()
       const digestNorm = digest ? (digest.includes(':') ? digest : `sha256:${digest}`) : ''
+      const isVersionTagsDemoScenario =
+        scenario === 'version-tags-popover-demo' || scenario === 'version-tags-popover-snapshot-pending'
 
       const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
+
+      if (scenario === 'version-tags-popover-snapshot-pending') {
+        const pendingKey = `${serviceId}:${digestNorm || '<missing-digest>'}`
+        const attempt = (digestSnapshotPendingAttempts.get(pendingKey) ?? 0) + 1
+        digestSnapshotPendingAttempts.set(pendingKey, attempt)
+        // Keep pending visible for Storybook verification.
+        if (attempt <= 4) {
+          return json(
+            {
+              status: 'pending',
+              digest: digestNorm,
+              retryAfterMs: 450,
+            },
+            { status: 202 },
+          )
+        }
+      }
 
       // Keep it deterministic:
       // - `repoTags`: all registry tags for the image (superset).
@@ -2350,7 +2377,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
                   for (let i = 0; i < 40; i++) out.push(`5.2.${i}`)
                   return out
                 })()
-            : scenario === 'version-tags-popover-demo' && serviceId === 'svc-version-tags'
+            : isVersionTagsDemoScenario && serviceId === 'svc-version-tags'
               ? ['v0.8.9-arm64', 'v0.8.8-arm64', 'v0.8.8', '0.8.8', 'stable', 'latest']
               : digestNorm === `sha256:${'a'.repeat(64)}`
                 ? ['v0.1.8', '0.1.8']
@@ -2368,7 +2395,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
             ? ['5.2.1', 'v5.2.1']
           : digestNorm === d('b', '9f') && serviceId === 'svc-prod-api'
             ? ['5.2.3', 'v5.2.3', 'stable', 'latest']
-            : digestNorm === d('b', '9f') && scenario === 'version-tags-popover-demo' && serviceId === 'svc-version-tags'
+            : digestNorm === d('b', '9f') && isVersionTagsDemoScenario && serviceId === 'svc-version-tags'
               ? ['v0.8.8-arm64', 'v0.8.8', '0.8.8', 'stable', 'latest']
             : digestNorm === `sha256:${'a'.repeat(64)}`
               ? ['v0.1.8', '0.1.8']
@@ -2403,6 +2430,8 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
 
       const digest = (url?.searchParams.get('digest') ?? '').trim()
       const digestNorm = digest ? (digest.includes(':') ? digest : `sha256:${digest}`) : ''
+      const isVersionTagsDemoScenario =
+        scenario === 'version-tags-popover-demo' || scenario === 'version-tags-popover-snapshot-pending'
 
       const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
 
@@ -2425,7 +2454,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
                   for (let i = 0; i < 40; i++) out.push(`5.2.${i}`)
                   return out
                 })()
-            : scenario === 'version-tags-popover-demo' && serviceId === 'svc-version-tags'
+            : isVersionTagsDemoScenario && serviceId === 'svc-version-tags'
               ? ['v0.8.9-arm64', 'v0.8.8-arm64', 'v0.8.8', '0.8.8', 'stable', 'latest']
               : digestNorm === `sha256:${'a'.repeat(64)}`
                 ? ['v0.1.8', '0.1.8']
@@ -2443,7 +2472,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
             ? ['5.2.1', 'v5.2.1']
           : digestNorm === d('b', '9f') && serviceId === 'svc-prod-api'
             ? ['5.2.3', 'v5.2.3', 'stable', 'latest']
-            : digestNorm === d('b', '9f') && scenario === 'version-tags-popover-demo' && serviceId === 'svc-version-tags'
+            : digestNorm === d('b', '9f') && isVersionTagsDemoScenario && serviceId === 'svc-version-tags'
               ? ['v0.8.8-arm64', 'v0.8.8', '0.8.8', 'stable', 'latest']
             : digestNorm === `sha256:${'a'.repeat(64)}`
               ? ['v0.1.8', '0.1.8']

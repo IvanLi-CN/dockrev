@@ -80,6 +80,8 @@ type DigestTagsState = {
   error: string | null
 }
 
+type SnapshotFetchPhase = 'idle' | 'loading' | 'ready' | 'missing' | 'error'
+
 function moveToFront(tags: string[], tag: string): string[] {
   const t = tag.trim()
   if (!t) return tags
@@ -143,6 +145,9 @@ export function CurrentVersionPopover(props: {
   const checkedAt = digestState.key === digestKey ? digestState.checkedAt : null
   const missingSnapshot = digestState.key === digestKey ? digestState.missingSnapshot : false
   const loadError = digestState.key === digestKey ? digestState.error : null
+  const [snapshotPhase, setSnapshotPhase] = useState<SnapshotFetchPhase>('idle')
+  const snapshotPhaseRef = useRef<SnapshotFetchPhase>(snapshotPhase)
+  snapshotPhaseRef.current = snapshotPhase
   const [refreshing, setRefreshing] = useState(false)
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null)
   const [refreshError, setRefreshError] = useState<string | null>(null)
@@ -256,6 +261,7 @@ export function CurrentVersionPopover(props: {
         missingSnapshot: false,
         error: null,
       })
+      setSnapshotPhase('idle')
       window.dispatchEvent(
         new CustomEvent('dockrev:version-inference-refresh', {
           detail: { serviceId: props.serviceId },
@@ -269,7 +275,8 @@ export function CurrentVersionPopover(props: {
   }, [digestKey, props.serviceId, refreshing])
 
   useEffect(() => {
-    if (!open) return
+    const shouldPollSnapshot = open || snapshotPhaseRef.current === 'loading'
+    if (!shouldPollSnapshot) return
     if (!digestNorm) return
     // Only fetch when there's no snapshot data loaded yet. Retries should be explicit
     // (e.g. via re-pinning), not continuously driven by pinned+error state.
@@ -292,6 +299,7 @@ export function CurrentVersionPopover(props: {
           .then((data) => {
             if (!alive) return
             if (isServiceDigestTagsSnapshotPending(data)) {
+              setSnapshotPhase('loading')
               const retryAfterMs = Math.max(200, Math.min(5000, Number(data.retryAfterMs) || FETCH_DEBOUNCE_MS))
               fetchTimer.current = window.setTimeout(() => {
                 if (fetchTimer.current != null) fetchTimer.current = null
@@ -307,6 +315,7 @@ export function CurrentVersionPopover(props: {
               missingSnapshot: false,
               error: null,
             })
+            setSnapshotPhase('ready')
           })
           .catch((e: unknown) => {
             if (!alive) return
@@ -319,6 +328,7 @@ export function CurrentVersionPopover(props: {
                 missingSnapshot: true,
                 error: null,
               })
+              setSnapshotPhase('missing')
               return
             }
             setDigestState({
@@ -329,6 +339,7 @@ export function CurrentVersionPopover(props: {
               missingSnapshot: false,
               error: e instanceof Error ? e.message : String(e),
             })
+            setSnapshotPhase('error')
           })
       }
 
@@ -344,6 +355,10 @@ export function CurrentVersionPopover(props: {
       }
     }
   }, [digestKey, digestNorm, digestTags, open, pinned, props.serviceId])
+
+  useEffect(() => {
+    setSnapshotPhase('idle')
+  }, [digestKey])
 
   useLayoutEffect(() => {
     if (!open) return
@@ -622,12 +637,19 @@ export function CurrentVersionPopover(props: {
     </div>
   ) : null
 
+  const showLoadingTriggerLabel = preferSource !== 'rawTag' && Boolean(digestNorm) && snapshotPhase === 'loading'
+  const triggerClassNameBase = props.triggerClassName ?? 'versionTagsTrigger mono monoPrimary'
+  const triggerClassName = showLoadingTriggerLabel
+    ? `${triggerClassNameBase} versionTagsTriggerLoading`
+    : triggerClassNameBase
+  const triggerLabel = showLoadingTriggerLabel ? '加载中…' : (props.children ?? displayTag)
+
   return (
     <>
       <button
         ref={triggerRef}
         type="button"
-        className={props.triggerClassName ?? 'versionTagsTrigger mono monoPrimary'}
+        className={triggerClassName}
         aria-haspopup="dialog"
         aria-expanded={open}
         onPointerEnter={() => {
@@ -654,12 +676,13 @@ export function CurrentVersionPopover(props: {
               missingSnapshot: false,
               error: null,
             })
+            setSnapshotPhase('idle')
           }
           setHoverOpen(true)
           showPopover()
         }}
       >
-        {props.children ?? displayTag}
+        {triggerLabel}
       </button>
       {renderPopover ? createPortal(popoverBody, document.body) : null}
     </>

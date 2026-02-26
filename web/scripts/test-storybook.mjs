@@ -712,6 +712,98 @@ async function runInteractive({ baseUrl, browser }) {
       await page.close().catch(() => {})
     }
   }
+
+  // 8) Snapshot pending: trigger text should switch to loading and recover after snapshot is ready.
+  {
+    const page = await openStory('components-versiontagspopover--pending-snapshot')
+    try {
+      await page.evaluate(() => {
+        if (!globalThis.__DOCKREV_MOCK_DEBUG__) return
+        globalThis.__DOCKREV_MOCK_DEBUG__.digestTagsSnapshotCalls = 0
+        globalThis.__DOCKREV_MOCK_DEBUG__.digestTagsCalls = 0
+        globalThis.__DOCKREV_MOCK_DEBUG__.lastDigestTagsSnapshotUrl = null
+        globalThis.__DOCKREV_MOCK_DEBUG__.lastDigestTagsUrl = null
+      })
+
+      const trigger = page.locator('.versionLine').first().locator('.versionTagsTrigger').nth(1)
+      await trigger.waitFor({ timeout: 10_000 })
+      await trigger.click()
+
+      await page.waitForFunction(() => {
+        const line = document.querySelector('.versionLine')
+        if (!line) return false
+        const candidate = line.querySelectorAll('.versionTagsTrigger')[1]
+        return candidate?.textContent?.trim() === '加载中…'
+      }, null, { timeout: 10_000 })
+
+      await page.waitForFunction(() => {
+        const line = document.querySelector('.versionLine')
+        if (!line) return false
+        const candidate = line.querySelectorAll('.versionTagsTrigger')[1]
+        return candidate?.textContent?.trim() === 'v0.8.8-arm64'
+      }, null, { timeout: 10_000 })
+
+      const popover = page.locator(".versionTagsPopover[data-state='open']")
+      await popover.waitFor({ timeout: 10_000 })
+      await popover.getByText('快照时间').waitFor({ timeout: 10_000 })
+
+      const dbg = await page.evaluate(() => globalThis.__DOCKREV_MOCK_DEBUG__ ?? null)
+      if (!dbg) throw new Error('Missing mock debug object.')
+      if (dbg.digestTagsCalls !== 0) {
+        throw new Error(`Expected no /digest-tags calls, got ${dbg.digestTagsCalls} (last=${String(dbg.lastDigestTagsUrl)})`)
+      }
+      if (dbg.digestTagsSnapshotCalls < 2) {
+        throw new Error(`Expected at least 2 /digest-tags-snapshot calls for pending->ready, got ${dbg.digestTagsSnapshotCalls}.`)
+      }
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
+  // 9) Current version popover should follow the same pending->ready trigger transition.
+  {
+    const page = await openStory('components-currentversionpopover--pending-snapshot')
+    try {
+      await page.evaluate(() => {
+        if (!globalThis.__DOCKREV_MOCK_DEBUG__) return
+        globalThis.__DOCKREV_MOCK_DEBUG__.digestTagsSnapshotCalls = 0
+        globalThis.__DOCKREV_MOCK_DEBUG__.digestTagsCalls = 0
+        globalThis.__DOCKREV_MOCK_DEBUG__.lastDigestTagsSnapshotUrl = null
+        globalThis.__DOCKREV_MOCK_DEBUG__.lastDigestTagsUrl = null
+      })
+
+      const trigger = page.locator('.versionLine').first().locator('.versionTagsTrigger').first()
+      await trigger.waitFor({ timeout: 10_000 })
+      await trigger.click()
+
+      await page.waitForFunction(() => {
+        const triggerEl = document.querySelector('.versionLine .versionTagsTrigger')
+        return triggerEl?.textContent?.trim() === '加载中…'
+      }, null, { timeout: 10_000 })
+
+      await page.waitForFunction(() => {
+        const triggerEl = document.querySelector('.versionLine .versionTagsTrigger')
+        return triggerEl?.textContent?.trim() === 'v0.8.8-arm64'
+      }, null, { timeout: 10_000 })
+
+      const popover = page.locator(".versionTagsPopover[data-state='open']")
+      await popover.waitFor({ timeout: 10_000 })
+      await popover.getByText('快照时间').waitFor({ timeout: 10_000 })
+
+      const dbg = await page.evaluate(() => globalThis.__DOCKREV_MOCK_DEBUG__ ?? null)
+      if (!dbg) throw new Error('Missing mock debug object.')
+      if (dbg.digestTagsCalls !== 0) {
+        throw new Error(`Expected no /digest-tags calls, got ${dbg.digestTagsCalls} (last=${String(dbg.lastDigestTagsUrl)})`)
+      }
+      if (dbg.digestTagsSnapshotCalls < 2) {
+        throw new Error(
+          `Expected at least 2 /digest-tags-snapshot calls for current pending->ready, got ${dbg.digestTagsSnapshotCalls}.`,
+        )
+      }
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
 }
 
 async function main() {
