@@ -197,6 +197,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   const [githubPackagesTrackedReposPerPage, setGitHubPackagesTrackedReposPerPage] = useState(50)
   const [githubPackagesTrackedReposQInput, setGitHubPackagesTrackedReposQInput] = useState('')
   const [githubPackagesTrackedReposQ, setGitHubPackagesTrackedReposQ] = useState('')
+  const [ghcrResolvePending, setGhcrResolvePending] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [webPushEndpoint, setWebPushEndpoint] = useState<string | null>(null)
@@ -1244,8 +1245,10 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                   />
                   <Button
                     variant="ghost"
-                    disabled={busy || !githubPackagesNewRepo.trim()}
+                    disabled={busy || ghcrResolvePending || !githubPackagesNewRepo.trim()}
                     onClick={() => {
+                      if (busy || ghcrResolvePending) return
+                      setGhcrResolvePending(true)
                       void (async () => {
                         setBusy(true)
                         setError(null)
@@ -1299,11 +1302,19 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                           setError(mapResolveFailure(e))
                         } finally {
                           setBusy(false)
+                          setGhcrResolvePending(false)
                         }
                       })()
                     }}
                   >
-                    解析并添加
+                    {ghcrResolvePending ? (
+                      <span className="btnInlineLoading">
+                        <span className="btnInlineSpinner" aria-hidden="true" />
+                        <span>解析中…</span>
+                      </span>
+                    ) : (
+                      '解析并添加'
+                    )}
                   </Button>
                 </div>
               </div>

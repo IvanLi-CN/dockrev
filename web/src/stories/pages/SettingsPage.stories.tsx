@@ -28,6 +28,22 @@ export const Default: Story = {
   },
 }
 
+export const ResolveLoading: Story = {
+  parameters: { dockrevApiScenario: 'settings-configured-resolve-slow' },
+  render: () => {
+    return (
+      <PageHarness
+        route={{ name: 'settings' }}
+        title="系统设置"
+        pageSubtitle="验证 GHCR 解析并添加按钮在慢响应下的加载反馈"
+        topbarHint="系统设置"
+      >
+        {({ onTopActions }) => <SettingsPage onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}
+
 export const Error: Story = {
   parameters: { dockrevApiScenario: 'error' },
   render: () => {

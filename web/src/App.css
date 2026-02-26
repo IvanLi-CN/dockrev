@@ -587,6 +587,10 @@
   .versionTagsPopover {
     transition: none;
   }
+
+  .btnInlineSpinner {
+    animation: none;
+  }
 }
 
 html[data-theme='light'] .versionTagsPopover {
@@ -717,6 +721,27 @@ html[data-theme='light'] .versionTagsPopover {
   background: var(--dockrev-surface);
   color: var(--text);
   border-color: var(--borderColor);
+}
+
+.btnInlineLoading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btnInlineSpinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: btnInlineSpin 0.7s linear infinite;
+}
+
+@keyframes btnInlineSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .chipStatic {

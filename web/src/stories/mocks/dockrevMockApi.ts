@@ -41,6 +41,7 @@ export type DockrevApiScenario =
   | 'queue-legacy-progress'
   | 'queue-long-logs'
   | 'settings-configured'
+  | 'settings-configured-resolve-slow'
   | 'no-candidates'
   | 'empty'
   | 'error'
@@ -1711,7 +1712,7 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'queue-mixed') return buildQueueMixed()
   if (scenario === 'queue-legacy-progress') return buildQueueLegacyProgress()
   if (scenario === 'queue-long-logs') return buildQueueLongLogs()
-  if (scenario === 'settings-configured') return buildSettingsConfigured()
+  if (scenario === 'settings-configured' || scenario === 'settings-configured-resolve-slow') return buildSettingsConfigured()
   if (scenario === 'multi-stack-mixed') return buildMultiStackMixed()
   return buildDashboardDemo()
 }
@@ -1952,6 +1953,11 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       return json({ ok: true })
     }
     if (method === 'POST' && urlPath === '/api/github-packages/resolve') {
+      if (scenario === 'settings-configured-resolve-slow') {
+        await new Promise<void>((resolve) => {
+          globalThis.setTimeout(() => resolve(), 900)
+        })
+      }
       const body = typeof init?.body === 'string' ? init.body : ''
       const parsed = body ? (JSON.parse(body) as { input?: string }) : null
       const inputStr = typeof parsed?.input === 'string' ? parsed.input.trim() : ''
