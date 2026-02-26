@@ -9,11 +9,11 @@ export function PageHarness(props: {
   topbarHint?: string
   children: (ctx: {
     onTopActions: (node: ReactNode) => void
-    onComposeHint: (hint: { path?: string; profile?: string; lastScan?: string }) => void
+    onLastScanHint: (lastScan?: string) => void
   }) => ReactNode
 }) {
   const [topActions, setTopActions] = useState<ReactNode>(null)
-  const [composeHint, setComposeHint] = useState<{ path?: string; profile?: string; lastScan?: string }>({})
+  const [lastScanHint, setLastScanHint] = useState<string | undefined>(undefined)
 
   return (
     <AppShell
@@ -22,11 +22,11 @@ export function PageHarness(props: {
       pageSubtitle={props.pageSubtitle}
       topbarHint={props.topbarHint}
       topActions={topActions}
-      composeHint={composeHint}
+      lastScanHint={lastScanHint}
     >
       {props.children({
         onTopActions: setTopActions,
-        onComposeHint: setComposeHint,
+        onLastScanHint: setLastScanHint,
       })}
     </AppShell>
   )

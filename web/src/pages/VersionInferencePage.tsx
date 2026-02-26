@@ -139,10 +139,10 @@ function sortRows(rows: VersionInferenceCacheRow[]): VersionInferenceCacheRow[] 
 }
 
 export function VersionInferencePage(props: {
-  onComposeHint?: (hint: { path?: string; profile?: string; lastScan?: string }) => void
+  onLastScanHint?: (lastScan?: string) => void
   onTopActions: (node: ReactNode) => void
 }) {
-  const { onComposeHint, onTopActions } = props
+  const { onLastScanHint, onTopActions } = props
   const [overview, setOverview] = useState<VersionInferenceOverviewResponse | null>(null)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [queryInput, setQueryInput] = useState('')
@@ -157,8 +157,8 @@ export function VersionInferencePage(props: {
   const refreshRequestIdRef = useRef(0)
 
   useEffect(() => {
-    onComposeHint?.({})
-  }, [onComposeHint])
+    onLastScanHint?.(undefined)
+  }, [onLastScanHint])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {

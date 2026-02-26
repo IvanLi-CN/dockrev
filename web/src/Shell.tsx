@@ -39,15 +39,13 @@ export function AppShell(props: {
   pageSubtitle?: string
   topbarHint?: string
   topActions?: ReactNode
-  composeHint?: { path?: string; profile?: string; lastScan?: string }
+  lastScanHint?: string
   children: ReactNode
 }) {
   const active = props.route.name === 'service' ? 'services' : props.route.name === 'job' ? 'queue' : props.route.name
   const [appVersion, setAppVersion] = useState<string | null>(null)
 
-  const composePath = props.composeHint?.path
-  const profile = props.composeHint?.profile
-  const lastScan = props.composeHint?.lastScan
+  const lastScan = props.lastScanHint
 
   const nav = useMemo(
     () => [
@@ -118,20 +116,6 @@ export function AppShell(props: {
           </nav>
 
           <div className="sidebarSectionLabel" style={{ marginTop: 24 }}>
-            Compose
-          </div>
-          {composePath ? (
-            <div className="sidebarMono">
-              <Mono>{composePath}</Mono>
-            </div>
-          ) : (
-            <div className="sidebarMuted">尚未选择 stack</div>
-          )}
-          {profile ? (
-            <div className="chipStatic chipStaticSidebar" style={{ marginTop: 8 }}>{`profile: ${profile}`}</div>
-          ) : null}
-
-          <div className="sidebarSectionLabel" style={{ marginTop: 20 }}>
             最近一次扫描
           </div>
           {lastScan ? (

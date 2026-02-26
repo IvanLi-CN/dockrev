@@ -17,7 +17,7 @@ export const Default: Story = {
   render: () => {
     return (
       <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="聚焦：运行态/结果 + 发现异常 + 更新候选筛选">
-        {({ onComposeHint, onTopActions }) => <OverviewPage onComposeHint={onComposeHint} onTopActions={onTopActions} />}
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
       </PageHarness>
     )
   },
@@ -28,7 +28,7 @@ export const GuideLineLongNames: Story = {
   render: () => {
     return (
       <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="对齐回归：长 service name（最多两行）">
-        {({ onComposeHint, onTopActions }) => <OverviewPage onComposeHint={onComposeHint} onTopActions={onTopActions} />}
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
       </PageHarness>
     )
   },
@@ -39,7 +39,7 @@ export const ResolvedTag: Story = {
   render: () => {
     return (
       <PageHarness route={{ name: 'overview' }} title="概览">
-        {({ onComposeHint, onTopActions }) => <OverviewPage onComposeHint={onComposeHint} onTopActions={onTopActions} />}
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
       </PageHarness>
     )
   },
@@ -50,7 +50,7 @@ export const Empty: Story = {
   render: () => {
     return (
       <PageHarness route={{ name: 'overview' }} title="概览">
-        {({ onComposeHint, onTopActions }) => <OverviewPage onComposeHint={onComposeHint} onTopActions={onTopActions} />}
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
       </PageHarness>
     )
   },
@@ -61,7 +61,7 @@ export const Error: Story = {
   render: () => {
     return (
       <PageHarness route={{ name: 'overview' }} title="概览">
-        {({ onComposeHint, onTopActions }) => <OverviewPage onComposeHint={onComposeHint} onTopActions={onTopActions} />}
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
       </PageHarness>
     )
   },
@@ -72,7 +72,7 @@ export const NoCandidatesButHasServices: Story = {
   render: () => {
     return (
       <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：services>0 且无 candidate">
-        {({ onComposeHint, onTopActions }) => <OverviewPage onComposeHint={onComposeHint} onTopActions={onTopActions} />}
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
       </PageHarness>
     )
   },
@@ -87,7 +87,7 @@ export const MultiStackMixed: Story = {
         title="概览"
         pageSubtitle="代表性场景：多 stacks / 归档对象 / discovered projects"
       >
-        {({ onComposeHint, onTopActions }) => <OverviewPage onComposeHint={onComposeHint} onTopActions={onTopActions} />}
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
       </PageHarness>
     )
   },

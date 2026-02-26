@@ -738,10 +738,6 @@ html[data-theme='light'] .versionTagsPopover {
   width: 144px;
 }
 
-.chipStaticSidebar {
-  width: 224px;
-}
-
 .topbarRight .btnPrimary {
   width: 132px;
 }
@@ -2058,6 +2054,10 @@ html[data-theme='light'] .modalOverlay {
   font-size: 22px;
   font-weight: 750;
   color: var(--text);
+}
+
+.svcComposeCard {
+  margin-top: 12px;
 }
 
 .svcBanner {
