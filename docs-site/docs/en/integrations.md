@@ -31,10 +31,34 @@ Use GH package events (`package.published`) to trigger Dockrev discovery automat
 6. In GitHub repository settings, confirm webhook entries now point to Dockrev.
 7. Publish a GHCR package (`package.published`) and confirm discovery jobs appear in Dockrev Queue/logs.
 
+### Copy-ready minimum viable configuration (MVP)
+
+> This is the smallest configuration that actually works in production-like setups.
+
+| Item | Recommended value |
+| --- | --- |
+| Enable | ON |
+| GitHub PAT | Classic PAT: `repo` + `admin:repo_hook` (public-only repos can use `public_repo` + `admin:repo_hook`) |
+| Callback URL | `https://<your-domain>/api/webhooks/github-packages` (example: `https://dockrev.ivanli.cc/api/webhooks/github-packages`) |
+| Add Repo | Enter `owner/repo` (example: `ivanli-cn/dockrev`) then click **Resolve and Add** |
+| selected | At least 1 repository selected (`repos_selected_total > 0`) |
+| Sync webhook | Result must be `created` / `updated` / `noop` (no `error` or `conflict`) |
+
+> Fine-grained PAT also works: grant repository `Webhooks` permission (write) and ensure repo listing is allowed (at least `Metadata` read).
+
 ### PAT capability requirements
 
 - List repos for target owners
 - Manage repository webhooks on selected repos
+
+### Acceptance checklist (UI verification)
+
+1. After **Save Settings**, reload and confirm PAT is masked (`ghp_...`).
+2. After **Resolve and Add**, repo count is > 0 (not `0` anymore).
+3. After selecting repos, tracked/selected count is > 0.
+4. After webhook sync, each selected repo shows `created/updated/noop`.
+5. In GitHub `Settings -> Webhooks`, callback exists with `package` event.
+6. After publishing a GHCR package, Dockrev Queue shows a discovery job.
 
 ### Callback reachability checks
 
@@ -49,6 +73,7 @@ Use GH package events (`package.published`) to trigger Dockrev discovery automat
 - `401 invalid_signature`: webhook secret mismatch/signature failure
 - `422`: PAT missing or insufficient permission
 - `conflict`: duplicate webhook entries detected; resolve and retry
+- Repo count stays `0`: repos were not added successfully, or they were not selected.
 
 ## Notification channels
 

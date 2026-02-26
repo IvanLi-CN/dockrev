@@ -31,10 +31,34 @@ description: GHCR webhook、通知与外部触发集成。
 6. 在 GitHub 仓库的 Webhooks 页面确认已经存在回调到 Dockrev 的 webhook。
 7. 发布一次 GHCR 新包（触发 `package.published`），在 Dockrev Queue/日志中确认 discovery 被触发。
 
+### 可直接照填的最小可行配置（MVP）
+
+> 适用于你当前这类界面。以下 6 项全部满足，GHCR webhook 才会真正生效。
+
+| 配置项 | 建议值 |
+| --- | --- |
+| 启用 | 打开（ON） |
+| GitHub PAT | 推荐 classic PAT：`repo` + `admin:repo_hook`（仅公开仓库可用 `public_repo` + `admin:repo_hook`） |
+| Callback URL | `https://<your-domain>/api/webhooks/github-packages`（例如 `https://dockrev.ivanli.cc/api/webhooks/github-packages`） |
+| 添加 Repo | 输入 `owner/repo`（例如 `ivanli-cn/dockrev`）后点“解析并添加” |
+| selected | 至少勾选 1 个仓库（`repos_selected_total > 0`） |
+| 同步 webhook | 结果为 `created` / `updated` / `noop`，不能出现 `error/conflict` |
+
+> Fine-grained PAT 也可用：目标仓库需授予 `Webhooks` 仓库权限（write），并保证能读取仓库列表（至少 `Metadata` 读取权限）。
+
 ### PAT 权限建议
 
 - 能列出目标 owner 的仓库
 - 能管理目标仓库 webhooks
+
+### 验收清单（按界面逐项确认）
+
+1. 点击“保存设置”后，重新进入设置页，`GitHub PAT` 显示掩码（`ghp_...`）。
+2. “解析并添加”后，Repos 区域右上角总数大于 0（不再是 `0 个`）。
+3. 勾选 selected 后，“已跟踪”数量大于 0。
+4. “同步 webhook”后，每个选中仓库为 `created/updated/noop`。
+5. GitHub 仓库 `Settings -> Webhooks` 中出现指向 Dockrev 的 webhook（事件包含 `package`）。
+6. 发布 GHCR 新版本后，Dockrev Queue 出现 discovery 任务。
 
 ### 回调可达性检查
 
@@ -49,6 +73,7 @@ description: GHCR webhook、通知与外部触发集成。
 - `401 invalid_signature`：secret 不匹配或签名错误
 - `422`：PAT 缺失或权限不足
 - `conflict`：仓库已有重复 webhook，需确认删除旧 hook
+- 页面右上角显示 `0 个`：还没有成功添加仓库，或者添加后未勾选 selected。
 
 ## 通知通道
 
