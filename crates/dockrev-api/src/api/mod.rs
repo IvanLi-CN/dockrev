@@ -5178,16 +5178,16 @@ fn map_internal(err: anyhow::Error) -> ApiError {
 }
 
 fn map_github_owner_resolve_error(owner: &str, err: anyhow::Error) -> ApiError {
-    if let Some(status) = github_http_status_from_error(&err) {
-        if status == 401 || status == 403 {
-            return ApiError::invalid_argument("github pat is invalid or lacks required scopes")
-                .with_details(json!({
-                    "reason":"ghcr_pat_invalid_or_scope_insufficient",
-                    "owner": owner,
-                    "status": status,
-                    "cause": err.to_string(),
-                }));
-        }
+    if let Some(status) = github_http_status_from_error(&err)
+        && (status == 401 || status == 403)
+    {
+        return ApiError::invalid_argument("github pat is invalid or lacks required scopes")
+            .with_details(json!({
+                "reason":"ghcr_pat_invalid_or_scope_insufficient",
+                "owner": owner,
+                "status": status,
+                "cause": err.to_string(),
+            }));
     }
 
     if github_error_is_timeout(&err) {
