@@ -204,25 +204,41 @@ fn append_log_line(st: &mut StateFile, now: &str, level: &str, msg: impl Into<St
     });
 }
 
+fn stable_legacy_group_id(log: &LogLine) -> String {
+    let source = if !log.ts.trim().is_empty() {
+        log.ts.as_str()
+    } else if !log.msg.trim().is_empty() {
+        log.msg.as_str()
+    } else {
+        "legacy"
+    };
+    let mut out = String::with_capacity(source.len());
+    for ch in source.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push('_');
+        }
+    }
+    format!("legacy-{out}")
+}
+
 fn build_operation_groups(logs: &[LogLine]) -> Vec<OperationLogsGroup> {
     let mut groups: Vec<OperationLogsGroup> = Vec::new();
     let mut legacy_active: Option<String> = None;
-    let mut legacy_idx: usize = 0;
 
     for log in logs {
         let group_id = if let Some(op_id) = normalized_log_op_id(log) {
             legacy_active = None;
             op_id
         } else if log_boundary_starts_operation(&log.msg) {
-            legacy_idx += 1;
-            let id = format!("legacy-{legacy_idx}");
+            let id = stable_legacy_group_id(log);
             legacy_active = Some(id.clone());
             id
         } else if let Some(id) = legacy_active.clone() {
             id
         } else {
-            legacy_idx += 1;
-            let id = format!("legacy-{legacy_idx}");
+            let id = stable_legacy_group_id(log);
             legacy_active = Some(id.clone());
             id
         };
@@ -248,8 +264,13 @@ fn build_operation_groups(logs: &[LogLine]) -> Vec<OperationLogsGroup> {
 }
 
 fn infer_operation_state(group: &OperationLogsGroup, st: &StateFile) -> String {
-    if group.op_id == st.op_id && st.state == "running" {
-        return "running".to_string();
+    if group.op_id == st.op_id
+        && matches!(
+            st.state.as_str(),
+            "running" | "succeeded" | "failed" | "rolled_back"
+        )
+    {
+        return st.state.clone();
     }
     if group.logs.iter().any(|l| l.msg.contains("rolled back")) {
         return "rolled_back".to_string();
@@ -267,14 +288,6 @@ fn infer_operation_state(group: &OperationLogsGroup, st: &StateFile) -> String {
         .any(|l| l.level.eq_ignore_ascii_case("ERROR"))
     {
         return "failed".to_string();
-    }
-    if group.op_id == st.op_id
-        && matches!(
-            st.state.as_str(),
-            "running" | "succeeded" | "failed" | "rolled_back"
-        )
-    {
-        return st.state.clone();
     }
     "unknown".to_string()
 }
@@ -1246,11 +1259,11 @@ mod tests {
 
         let groups = build_operation_groups(&logs);
         assert_eq!(groups.len(), 3);
-        assert_eq!(groups[0].op_id, "legacy-1");
+        assert_eq!(groups[0].op_id, "legacy-2026_02_01t00_00_01z");
         assert_eq!(groups[0].logs.len(), 3);
         assert_eq!(groups[1].op_id, "sup_a");
         assert_eq!(groups[1].logs.len(), 2);
-        assert_eq!(groups[2].op_id, "legacy-2");
+        assert_eq!(groups[2].op_id, "legacy-2026_02_01t00_20_01z");
         assert_eq!(groups[2].logs.len(), 2);
     }
 
@@ -1313,6 +1326,65 @@ mod tests {
         assert_eq!(ops[0].op_id, "sup_live");
         assert_eq!(ops[0].state, "running");
         assert_eq!(ops[1].state, "failed");
+    }
+
+    #[test]
+    fn infer_operation_state_prefers_current_state_for_active_op() {
+        let now = crate::state_store::now_rfc3339().unwrap();
+        let mut st = StateFile::idle(&now);
+        st.state = "failed".to_string();
+        st.op_id = "sup_same".to_string();
+        st.logs = vec![
+            test_log(
+                "2026-02-01T02:00:00Z",
+                "INFO",
+                "self-upgrade requested",
+                Some("sup_same"),
+            ),
+            test_log(
+                "2026-02-01T02:00:01Z",
+                "INFO",
+                "succeeded",
+                Some("sup_same"),
+            ),
+            test_log(
+                "2026-02-01T02:00:02Z",
+                "ERROR",
+                "rollback failed: boom",
+                Some("sup_same"),
+            ),
+        ];
+
+        let ops = build_response_operations(&st);
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].state, "failed");
+    }
+
+    #[test]
+    fn legacy_group_ids_stay_stable_after_retention() {
+        let now = crate::state_store::now_rfc3339().unwrap();
+        let mut st = StateFile::idle(&now);
+        for i in 0..31 {
+            st.logs.push(test_log(
+                &format!("2026-02-01T03:{i:02}:00Z"),
+                "INFO",
+                "self-upgrade requested",
+                None,
+            ));
+            st.logs.push(test_log(
+                &format!("2026-02-01T03:{i:02}:10Z"),
+                "INFO",
+                "dry-run done",
+                None,
+            ));
+        }
+
+        let before = build_operation_groups(&st.logs);
+        let expected_first_id = before[1].op_id.clone();
+        retain_recent_operation_logs(&mut st, MAX_LOG_OPERATION_GROUPS);
+        let after = build_operation_groups(&st.logs);
+        assert_eq!(after.len(), 30);
+        assert_eq!(after[0].op_id, expected_first_id);
     }
 
     #[test]

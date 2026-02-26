@@ -51,7 +51,7 @@
 
 - `operations: OperationLogs[]`（按时间倒序，`operations[0]` 为最新）
   - `opId: string`
-  - `state: "running" | "succeeded" | "failed" | "rolledBack" | "unknown"`
+  - `state: "running" | "succeeded" | "failed" | "rolled_back" | "unknown"`
   - `startedAt: string`
   - `updatedAt: string`
   - `logs: LogLine[]`
