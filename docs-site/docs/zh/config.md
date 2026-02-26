@@ -5,6 +5,14 @@ description: Dockrev API 与 Supervisor 运行参数说明。
 
 # 配置参考
 
+## 生产必填（先配这 5 项）
+
+1. `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV=false`
+2. `DOCKREV_AUTH_FORWARD_HEADER_NAME`（与网关注入头保持一致）
+3. `DOCKREV_DB_PATH`（指向持久卷）
+4. `DOCKREV_SUPERVISOR_STATE_PATH`（指向持久卷）
+5. `DOCKREV_IMAGE_REPO`（与你实际部署的 Dockrev 镜像仓库一致）
+
 ## API 核心配置（`dockrev-api`）
 
 | 变量 | 默认值 | 说明 |
@@ -22,6 +30,11 @@ description: Dockrev API 与 Supervisor 运行参数说明。
 | `DOCKREV_DISCOVERY_INTERVAL_SECONDS` | `60` | 自动发现周期 |
 | `DOCKREV_DISCOVERY_MAX_ACTIONS` | `200` | 扫描返回动作上限 |
 
+说明：
+
+- `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV` 仅建议本地开发使用；生产必须关闭。
+- `DOCKREV_IMAGE_REPO` 配错会导致“升级 Dockrev”入口识别异常。
+
 ## 检查与重试参数
 
 | 变量 | 默认值 | 说明 |
@@ -36,6 +49,11 @@ description: Dockrev API 与 Supervisor 运行参数说明。
 - Check 并发固定为 `5`
 - Worker 启动错峰固定 `1s`
 - Registry host 并发固定 `5`
+
+调参建议：
+
+- 经常遇到 `429`：先增大 `DOCKREV_REGISTRY_RETRY_MAX_ATTEMPTS`。
+- 目标 registry 响应慢：提高 `DOCKREV_REGISTRY_RETRY_MAX_MS`（保持 >= `BASE_MS`）。
 
 ## Supervisor 配置（`dockrev-supervisor`）
 
@@ -55,3 +73,4 @@ description: Dockrev API 与 Supervisor 运行参数说明。
 - 固定 forward header 并由网关注入
 - 使用持久卷保存 DB 与 supervisor state
 - 限制 Docker socket 暴露面（可改用 docker-socket-proxy）
+- 修改配置后，执行一次 `GET /api/deploy-check/report` 做回归核验

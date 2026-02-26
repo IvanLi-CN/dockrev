@@ -12,6 +12,7 @@ description: 在本地快速启动 Dockrev 并完成第一轮扫描。
 - Docker Engine 可用
 - Docker Compose 可用（`docker-compose` 或 `docker compose`）
 - 本机可访问端口 `50883`
+- 已准备 Docker registry 凭据（私有镜像场景）
 
 ## 一键启动（最小方式）
 
@@ -28,6 +29,13 @@ docker compose up --build
 - UI: `http://127.0.0.1:50883/`
 - API health: `http://127.0.0.1:50883/api/health`
 - Supervisor: `http://127.0.0.1:50883/supervisor/`
+
+## 5 分钟验收（必须全部通过）
+
+1. `GET /api/health` 返回 `ok`。
+2. 首页能看到服务列表，不出现 401。
+3. 执行一次“立即扫描”后，Queue 中出现 discovery 任务并结束为 `success`。
+4. 对任意服务执行一次 check，任务日志中能看到 registry 请求与结果。
 
 ## 第一次验证清单
 
@@ -62,3 +70,9 @@ bun run dev
 
 - 进入 [部署指南](/deploy) 完成生产部署。
 - 进入 [配置参考](/config) 完成认证、镜像识别和重试参数配置。
+
+## 启动失败时先看这里
+
+- 容器启动失败：`docker compose logs --tail=200`
+- API 不通：确认 `50883` 未被占用（`lsof -iTCP:50883 -sTCP:LISTEN -n -P`）
+- 页面 401：检查反向代理是否注入了 `X-Forwarded-User`（或你自定义的 forward header）
