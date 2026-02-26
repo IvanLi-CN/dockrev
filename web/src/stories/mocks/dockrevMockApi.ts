@@ -2345,12 +2345,13 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         const pendingKey = `${serviceId}:${digestNorm || '<missing-digest>'}`
         const attempt = (digestSnapshotPendingAttempts.get(pendingKey) ?? 0) + 1
         digestSnapshotPendingAttempts.set(pendingKey, attempt)
-        if (attempt <= 2) {
+        // Keep pending visible for Storybook verification.
+        if (attempt <= 4) {
           return json(
             {
               status: 'pending',
               digest: digestNorm,
-              retryAfterMs: 120,
+              retryAfterMs: 450,
             },
             { status: 202 },
           )
