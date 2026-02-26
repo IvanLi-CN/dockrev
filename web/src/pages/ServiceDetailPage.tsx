@@ -693,9 +693,14 @@ export function ServiceDetailPage(props: {
     return <div className="muted">加载中…</div>
   }
 
-  const composeType = stack.compose.type.trim() || '-'
-  const composeFiles = stack.compose.composeFiles.map((item) => item.trim()).filter((item) => item.length > 0)
-  const composeEnvFile = (stack.compose.envFile ?? '').trim() || '-'
+  const rawComposeType = typeof stack.compose?.type === 'string' ? stack.compose.type.trim() : ''
+  const composeType = rawComposeType || '-'
+  const composeFilesRaw = Array.isArray(stack.compose?.composeFiles) ? stack.compose.composeFiles : []
+  const composeFiles = composeFilesRaw
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter((item) => item.length > 0)
+  const composeEnvFileRaw = typeof stack.compose?.envFile === 'string' ? stack.compose.envFile.trim() : ''
+  const composeEnvFile = composeEnvFileRaw || '-'
 
   return (
     <div className="page">

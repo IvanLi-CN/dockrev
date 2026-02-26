@@ -57,6 +57,11 @@ export const NoCandidate: Story = {
   render: render('stack-1', 'svc-a'),
 }
 
+export const ComposeFallbacks: Story = {
+  parameters: { dockrevApiScenario: 'service-detail-compose-fallbacks' },
+  render: render('stack-prod', 'svc-prod-api'),
+}
+
 export const Error: Story = {
   parameters: { dockrevApiScenario: 'error' },
   render: render('stack-prod', 'svc-prod-api'),

@@ -25,6 +25,7 @@ import type {
 export type DockrevApiScenario =
   | 'default'
   | 'dashboard-demo'
+  | 'service-detail-compose-fallbacks'
   | 'guide-line-long-names'
   | 'resolved-tag-demo'
   | 'version-inference-overview'
@@ -800,6 +801,19 @@ function buildGuideLineLongNames(): Fixture {
     )
   }
 
+  return f
+}
+
+function buildServiceDetailComposeFallbacks(): Fixture {
+  const f = buildDashboardDemo()
+  const stack = f.stackById['stack-prod']
+  if (stack) {
+    stack.compose = {
+      ...stack.compose,
+      composeFiles: [],
+      envFile: null,
+    }
+  }
   return f
 }
 
@@ -1693,6 +1707,7 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'empty') return baseEmpty()
   if (scenario === 'no-candidates') return buildNoCandidates()
   if (scenario === 'dashboard-demo') return buildDashboardDemo()
+  if (scenario === 'service-detail-compose-fallbacks') return buildServiceDetailComposeFallbacks()
   if (scenario === 'guide-line-long-names') return buildGuideLineLongNames()
   if (scenario === 'resolved-tag-demo') return buildResolvedTagDemo()
   if (scenario === 'version-inference-overview') return buildVersionInferenceOverviewFixture()
