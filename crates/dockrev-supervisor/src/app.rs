@@ -568,6 +568,11 @@ fn render_ui(base_path: &str) -> String {
       .opDot-unknown {{ background: #6b7280; }}
       .newBadge {{ color: #b45309; border: 1px solid rgba(180,83,9,0.3); background: rgba(251,191,36,0.18); border-radius: 999px; padding: 1px 6px; font-size: 11px; }}
       #tabsToggle {{ padding: 4px 10px; font-size: 12px; }}
+      .popWrap {{ position: relative; display: inline-flex; align-items: center; }}
+      .popCard {{ position: absolute; top: calc(100% + 8px); left: 0; width: min(320px, calc(100vw - 36px)); border: 1px solid rgba(0,0,0,0.18); border-radius: 12px; background: #fff; box-shadow: 0 10px 28px rgba(0,0,0,0.16); padding: 10px; z-index: 20; }}
+      .popTitle {{ margin: 0 0 6px; font-size: 13px; font-weight: 700; }}
+      .popActions {{ display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }}
+      .danger {{ border-color: #dc2626; background: #dc2626; color: #fff; }}
       .ok {{ color: #16a34a; }}
       .bad {{ color: #dc2626; }}
     </style>
@@ -585,7 +590,18 @@ fn render_ui(base_path: &str) -> String {
         <input id="tag" value="latest" />
         <button id="dry">预览（dry-run）</button>
         <button id="apply">开始升级（apply）</button>
-        <button id="rollback">回滚</button>
+        <div id="rollbackWrap" class="popWrap">
+          <button id="rollback" aria-haspopup="dialog" aria-expanded="false">回滚</button>
+          <div id="rollbackPop" class="popCard" role="dialog" aria-modal="false" hidden>
+            <div class="popTitle">确认手动回滚？</div>
+            <div class="muted">将尝试回滚到 previous digest，并可能触发容器重启。</div>
+            <div class="muted">opId: <code id="rollbackOpId">-</code></div>
+            <div class="popActions">
+              <button id="rollbackCancel">取消</button>
+              <button id="rollbackConfirm" class="danger">确认回滚</button>
+            </div>
+          </div>
+        </div>
         <button id="refresh">刷新</button>
         <a href="/" style="margin-left:auto">返回 Dockrev</a>
       </div>
@@ -613,13 +629,43 @@ fn render_ui(base_path: &str) -> String {
       let latestHasNewer = false;
       const toUrl = (p) => base.replace(/\/$/, '') + '/' + p.replace(/^\//, '');
 
-      async function fetchJson(path, init) {{
-        const resp = await fetch(toUrl(path), {{ ...init, headers: {{ 'Content-Type': 'application/json' }} }});
-        const text = await resp.text();
-        if (!resp.ok) throw new Error(`HTTP ${{resp.status}}: ${{text}}`);
-        return text ? JSON.parse(text) : null;
-      }}
+	      async function fetchJson(path, init) {{
+	        const resp = await fetch(toUrl(path), {{ ...init, headers: {{ 'Content-Type': 'application/json' }} }});
+	        const text = await resp.text();
+	        if (!resp.ok) throw new Error(`HTTP ${{resp.status}}: ${{text}}`);
+	        return text ? JSON.parse(text) : null;
+	      }}
 
+	      const rollbackWrap = document.getElementById('rollbackWrap');
+	      const rollbackBtn = document.getElementById('rollback');
+	      const rollbackPop = document.getElementById('rollbackPop');
+	      const rollbackOpId = document.getElementById('rollbackOpId');
+	      const rollbackCancelBtn = document.getElementById('rollbackCancel');
+	      const rollbackConfirmBtn = document.getElementById('rollbackConfirm');
+	      let rollbackPopOpen = false;
+	      let rollbackPendingOpId = null;
+
+	      function canRollback(st) {{
+	        return !!st.opId && (st.state === 'failed' || st.state === 'rolled_back' || st.state === 'succeeded');
+	      }}
+
+	      function setRollbackPopOpen(open) {{
+	        rollbackPopOpen = open;
+	        rollbackPop.hidden = !open;
+	        rollbackBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+	        if (!open) rollbackPendingOpId = null;
+	      }}
+
+	      function syncRollbackState(st) {{
+	        const allowed = canRollback(st);
+	        rollbackBtn.disabled = !allowed;
+	        if (!allowed) {{
+	          setRollbackPopOpen(false);
+	          rollbackOpId.textContent = '-';
+	          return;
+	        }}
+	        if (rollbackPopOpen) rollbackOpId.textContent = st.opId || '-';
+	      }}
       function statusClass(st) {{
         const s = st && st.state;
         return s === 'succeeded' ? 'ok' : (s === 'failed' || s === 'rolled_back') ? 'bad' : '';
@@ -752,10 +798,11 @@ fn render_ui(base_path: &str) -> String {
           statusEl.className = `muted ${{statusClass(st)}}`.trim();
           statusEl.textContent = renderStatusText(st);
           renderOperations(st);
-          document.getElementById('rollback').disabled = !st.opId || (st.state !== 'failed' && st.state !== 'rolled_back' && st.state !== 'succeeded');
+          syncRollbackState(st);
         }} catch (e) {{
           statusEl.className = 'muted bad';
           statusEl.textContent = `offline ${{String(e.message||e)}}`;
+          setRollbackPopOpen(false);
         }}
       }}
 
@@ -770,11 +817,19 @@ fn render_ui(base_path: &str) -> String {
         await fetchJson('self-upgrade', {{ method: 'POST', body: JSON.stringify({{ target: {{ tag }}, mode: 'apply', rollbackOnFailure: true }}) }});
         await refresh();
       }};
-      document.getElementById('rollback').onclick = async () => {{
+      document.getElementById('rollback').onclick = async (evt) => {{
+        evt.preventDefault();
+        if (rollbackBtn.disabled) return;
         const st = await fetchJson('self-upgrade');
-        await fetchJson('self-upgrade/rollback', {{ method: 'POST', body: JSON.stringify({{ opId: st.opId }}) }});
-        await refresh();
-      }};
+        syncRollbackState(st);
+	        if (!canRollback(st)) {{
+	          await refresh();
+	          return;
+	        }}
+	        rollbackPendingOpId = st.opId || null;
+	        rollbackOpId.textContent = rollbackPendingOpId || '-';
+	        setRollbackPopOpen(true);
+	      }};
       document.getElementById('tabsToggle').onclick = () => {{
         if (!tabsCanExpand) return;
         tabsExpanded = !tabsExpanded;
@@ -782,6 +837,50 @@ fn render_ui(base_path: &str) -> String {
       }};
       window.addEventListener('resize', () => {{
         requestAnimationFrame(syncTabsToggle);
+      }});
+      rollbackCancelBtn.onclick = () => {{
+        setRollbackPopOpen(false);
+      }};
+      document.getElementById('rollbackConfirm').onclick = async () => {{
+        if (!rollbackPendingOpId) {{
+          setRollbackPopOpen(false);
+          await refresh();
+          return;
+        }}
+        const st = await fetchJson('self-upgrade');
+        syncRollbackState(st);
+        if (!canRollback(st)) {{
+          setRollbackPopOpen(false);
+          await refresh();
+          return;
+        }}
+        if (!st.opId || st.opId !== rollbackPendingOpId) {{
+          setRollbackPopOpen(false);
+          await refresh();
+          return;
+        }}
+        rollbackConfirmBtn.disabled = true;
+        rollbackCancelBtn.disabled = true;
+        try {{
+          await fetchJson('self-upgrade/rollback', {{ method: 'POST', body: JSON.stringify({{ opId: rollbackPendingOpId }}) }});
+          setRollbackPopOpen(false);
+          await refresh();
+        }} finally {{
+          rollbackConfirmBtn.disabled = false;
+          rollbackCancelBtn.disabled = false;
+        }}
+      }};
+      document.addEventListener('click', (evt) => {{
+        if (!rollbackPopOpen) return;
+        const target = evt.target;
+        if (!rollbackWrap.contains(target)) setRollbackPopOpen(false);
+      }});
+      document.addEventListener('keydown', (evt) => {{
+        if (evt.key === 'Escape' && rollbackPopOpen) {{
+          evt.preventDefault();
+          setRollbackPopOpen(false);
+          rollbackBtn.focus();
+        }}
       }});
 
       refresh();
@@ -1444,6 +1543,36 @@ mod tests {
         assert!(html.contains("id=\"opTabs\""));
         assert!(html.contains("id=\"tabsToggle\""));
         assert!(html.contains("latestHasNewer"));
+    }
+
+    #[test]
+    fn render_ui_contains_rollback_popconfirm_elements() {
+        let html = render_ui("/supervisor");
+        assert!(html.contains(r#"id="rollbackPop""#));
+        assert!(html.contains(r#"id="rollbackConfirm""#));
+        assert!(html.contains(r#"id="rollbackCancel""#));
+        assert!(html.contains("let rollbackPendingOpId = null;"));
+        assert!(html.contains(r"document.addEventListener('keydown'"));
+    }
+
+    #[test]
+    fn render_ui_requires_confirm_before_rollback_post() {
+        let html = render_ui("/supervisor");
+
+        let rollback_click_idx = html
+            .find("document.getElementById('rollback').onclick = async (evt) =>")
+            .unwrap();
+        let open_pop_idx = html.find("setRollbackPopOpen(true);").unwrap();
+        let confirm_click_idx = html
+            .find("document.getElementById('rollbackConfirm').onclick = async () =>")
+            .unwrap();
+        let rollback_post_idx = html.find("fetchJson('self-upgrade/rollback'").unwrap();
+
+        assert!(rollback_click_idx < open_pop_idx);
+        assert!(open_pop_idx < confirm_click_idx);
+        assert!(confirm_click_idx < rollback_post_idx);
+        assert!(html.contains("st.opId !== rollbackPendingOpId"));
+        assert!(html.contains("JSON.stringify({ opId: rollbackPendingOpId })"));
     }
 
     #[tokio::test]
