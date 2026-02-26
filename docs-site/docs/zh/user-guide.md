@@ -12,6 +12,7 @@ description: Dockrev 核心页面与日常操作流程。
 - `Service Detail`：单服务检查/更新/版本推断
 - `Queue`：任务队列与执行进度
 - `Settings`：通知、GHCR webhook、系统设置
+- GHCR webhook 设置详解见：[集成指南 -> GitHub Packages (GHCR) Webhook](/zh/integrations#github-packages-ghcr-webhook)
 
 ![Services](../assets/services.png)
 

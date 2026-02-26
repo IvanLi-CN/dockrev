@@ -12,6 +12,7 @@ description: Daily usage flows and UI operations in Dockrev.
 - `Service Detail`: single-service check/update/version inference
 - `Queue`: job tracking and logs
 - `Settings`: notifications, GHCR webhook, system options
+- GHCR webhook setup details: [Integrations -> GitHub Packages (GHCR) webhook](/en/integrations#github-packages-ghcr-webhook)
 
 ![Services](../assets/services.png)
 
