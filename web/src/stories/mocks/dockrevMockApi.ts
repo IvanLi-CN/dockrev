@@ -1957,22 +1957,6 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       const inputStr = typeof parsed?.input === 'string' ? parsed.input.trim() : ''
       if (!inputStr) return json({ error: 'invalid input' }, { status: 400 })
       if (!f.githubPackagesSettings.patMasked) return json({ error: 'pat is required' }, { status: 400 })
-      if (inputStr.toLowerCase().includes('pat-invalid')) {
-        return json(
-          {
-            error: {
-              code: 'invalid_argument',
-              message: 'github pat is invalid or lacks required scopes',
-              details: {
-                reason: 'ghcr_pat_invalid_or_scope_insufficient',
-                owner: 'IvanLi-CN',
-                status: 403,
-              },
-            },
-          },
-          { status: 400 },
-        )
-      }
 
       const mkOwner = (owner: string): ResolveGitHubPackagesTargetResponse => ({
         kind: 'owner',

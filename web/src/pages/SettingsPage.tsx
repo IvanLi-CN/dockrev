@@ -68,6 +68,52 @@ type AutoSaveIssue = {
 const SAVE_SCOPE_ORDER: SaveScope[] = ['backup', 'notifications', 'ghcr']
 const TEXT_DEBOUNCE_MS = 400
 const TOGGLE_DEBOUNCE_MS = 120
+const PAT_MASK = '******'
+const GITHUB_PAT_PREFIXES = ['ghp_', 'github_pat_', 'gho_', 'ghu_', 'ghs_', 'ghr_']
+
+type GhcrDraft = {
+  enabled: boolean
+  callbackUrl: string
+  pat: string
+  hasPersistedPat: boolean
+}
+
+function isMaskedPat(value: string): boolean {
+  return value.trim() === PAT_MASK
+}
+
+function hasExplicitPat(value: string): boolean {
+  const trimmed = value.trim()
+  return trimmed.length > 0 && !isMaskedPat(trimmed)
+}
+
+function validateGhcrPatBeforeSave(draft: GhcrDraft): { fieldPath: string; reason: string; message: string } | null {
+  if (!draft.enabled) return null
+
+  const rawPat = draft.pat
+  const trimmedPat = rawPat.trim()
+  const explicitPat = hasExplicitPat(trimmedPat)
+
+  if (!explicitPat && !draft.hasPersistedPat) {
+    return {
+      fieldPath: 'ghcr.pat',
+      reason: 'ghcr_pat_missing',
+      message: '请先填写 GitHub PAT',
+    }
+  }
+
+  if (!explicitPat) return null
+
+  if (/\s/.test(rawPat) || !GITHUB_PAT_PREFIXES.some((prefix) => trimmedPat.startsWith(prefix))) {
+    return {
+      fieldPath: 'ghcr.pat',
+      reason: 'ghcr_pat_format_invalid',
+      message: 'PAT 格式不合法，请使用 ghp_ / github_pat_ 等 GitHub token',
+    }
+  }
+
+  return null
+}
 
 function readReason(details: unknown): string | null {
   if (!details || typeof details !== 'object') return null
@@ -79,6 +125,7 @@ function mapResolveFailure(e: unknown): string {
   if (e instanceof ApiError) {
     const reason = readReason(e.details)
     if (reason === 'ghcr_pat_missing') return '请先填写 GitHub PAT'
+    if (reason === 'ghcr_pat_format_invalid') return 'PAT 格式不合法，请使用 ghp_ / github_pat_ 等 GitHub token'
     if (reason === 'ghcr_pat_unsaved_or_save_failed') return 'PAT 未保存成功，无法解析，请检查网络后重试'
     if (reason === 'ghcr_pat_invalid_or_scope_insufficient') return 'PAT 无效或权限不足，请检查 token scope'
     if (reason === 'github_upstream_timeout') return 'GitHub 响应超时，请稍后重试'
@@ -161,7 +208,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
   const backupRef = useRef<SettingsResponse['backup'] | null>(null)
   const notificationsRef = useRef<NotificationConfig | null>(null)
-  const ghcrRef = useRef<{ enabled: boolean; callbackUrl: string; pat: string } | null>(null)
+  const ghcrRef = useRef<GhcrDraft | null>(null)
   const queueRef = useRef<SaveScope[]>([])
   const queuedSetRef = useRef<Set<SaveScope>>(new Set())
   const timersRef = useRef<Map<SaveScope, number>>(new Map())
@@ -195,6 +242,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
           enabled: githubPackages.enabled,
           callbackUrl: githubPackages.callbackUrl,
           pat: githubPackagesPat,
+          hasPersistedPat: Boolean(githubPackages.patMasked),
         }
       : null
   }, [githubPackages, githubPackagesPat])
@@ -251,10 +299,11 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     if (scope === 'notifications') return notificationsRef.current
     const ghcr = ghcrRef.current
     if (!ghcr) return null
+    const pat = ghcr.pat.trim()
     return {
       enabled: ghcr.enabled,
       callbackUrl: ghcr.callbackUrl,
-      pat: ghcr.pat || null,
+      pat: pat ? pat : null,
     }
   }, [])
 
@@ -284,6 +333,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     const fallback = errorMessage(e)
     let message = `自动保存失败（${mapScopeLabel(scope)}）：${fallback}`
     if (reason === 'ghcr_pat_missing') message = '请先填写 GitHub PAT'
+    else if (reason === 'ghcr_pat_format_invalid') message = 'PAT 格式不合法，请使用 ghp_ / github_pat_ 等 GitHub token'
     else if (reason === 'ghcr_pat_unsaved_or_save_failed') message = 'PAT 未保存成功，无法解析，请检查网络后重试'
     else if (reason === 'ghcr_pat_invalid_or_scope_insufficient') message = 'PAT 无效或权限不足，请检查 token scope'
     else if (reason === 'github_upstream_timeout') message = 'GitHub 响应超时，请稍后重试'
@@ -320,6 +370,26 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
           continue
         }
 
+        if (scope === 'ghcr') {
+          const ghcrDraft = ghcrRef.current
+          if (ghcrDraft) {
+            const precheckIssue = validateGhcrPatBeforeSave(ghcrDraft)
+            if (precheckIssue) {
+              failedScopesRef.current.add(scope)
+              setAutoSavePhase('error')
+              setAutoSaveIssue({
+                scope,
+                fieldPath: precheckIssue.fieldPath,
+                reason: precheckIssue.reason,
+                message: precheckIssue.message,
+                at: new Date().toISOString(),
+              })
+              settleWaiters()
+              continue
+            }
+          }
+        }
+
         const payloadHash = JSON.stringify(payload)
         if (lastSavedHashRef.current.get(scope) === payloadHash) {
           pendingFieldsRef.current.set(scope, new Set())
@@ -341,6 +411,12 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
           await persistScopePayload(scope, payload)
           failedScopesRef.current.delete(scope)
           lastSavedHashRef.current.set(scope, payloadHash)
+          if (scope === 'ghcr') {
+            const ghcrPayload = payload as { enabled: boolean; callbackUrl: string; pat: string | null }
+            if (ghcrPayload.pat && !isMaskedPat(ghcrPayload.pat)) {
+              setGitHubPackages((prev) => (prev ? { ...prev, patMasked: PAT_MASK } : prev))
+            }
+          }
           setAutoSaveUpdatedAt(new Date().toISOString())
           setAutoSavePhase(queueRef.current.length > 0 ? 'queued' : 'saved')
         } catch (e: unknown) {
@@ -443,7 +519,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     (next: {
       backup: SettingsResponse['backup']
       notifications: NotificationConfig
-      ghcr: { enabled: boolean; callbackUrl: string; pat: string }
+      ghcr: GhcrDraft
     }) => {
       for (const timer of timersRef.current.values()) window.clearTimeout(timer)
       timersRef.current.clear()
@@ -518,7 +594,12 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     resetAutoSaveBaselines({
       backup: nextSettings.backup,
       notifications: nextNotifications,
-      ghcr: { enabled: nextGhcr.enabled, callbackUrl: nextGhcr.callbackUrl, pat: nextPat },
+      ghcr: {
+        enabled: nextGhcr.enabled,
+        callbackUrl: nextGhcr.callbackUrl,
+        pat: nextPat,
+        hasPersistedPat: Boolean(nextGhcr.patMasked),
+      },
     })
   }, [resetAutoSaveBaselines])
 
