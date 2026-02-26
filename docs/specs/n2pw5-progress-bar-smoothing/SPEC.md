@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-02-26
 - Last: 2026-02-26
 
@@ -92,10 +92,10 @@
 ## 实现里程碑（Milestones / Delivery checklist）
 
 - [x] M1: 新建 spec 并冻结验收口径。
-- [ ] M2: App.css 三类进度 fill 统一 220ms 平滑过渡。
-- [ ] M3: indeterminate 与 reduced-motion 规则落地。
-- [ ] M4: lint/build/test-storybook/Playwright 验证通过。
-- [ ] M5: 快车道交付完成（push + PR + checks + review-loop 收敛）。
+- [x] M2: App.css 三类进度 fill 统一 220ms 平滑过渡。
+- [x] M3: indeterminate 与 reduced-motion 规则落地。
+- [x] M4: lint/build/test-storybook/Playwright 验证通过。
+- [x] M5: 快车道交付完成（push + PR + checks + review-loop 收敛）。
 
 ## 风险 / 假设
 
@@ -106,3 +106,6 @@
 ## 变更记录（Change log）
 
 - 2026-02-26: 创建规格并冻结范围、验收标准与质量门槛。
+- 2026-02-26: 完成 `web/src/App.css` 进度条平滑改动（三类 fill 统一 220ms easing，indeterminate 显式禁用 transition，reduced-motion 下关闭新增 transition）。
+- 2026-02-26: 本地验证通过（`bun run --cwd web lint`、`bun run --cwd web build`、`bun run --cwd web build-storybook`、`bun run --cwd web test-storybook`）并完成 Playwright 三页走查。
+- 2026-02-26: PR #94 在 CI 首轮 `Frontend (lint + Storybook)` 卡住后取消并重跑，`CI (PR)` attempt 2 与 `PR Label Gate` 均通过；review-loop 第 1 轮无 P0/P1/P2 阻塞。
