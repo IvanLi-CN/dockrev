@@ -47,6 +47,16 @@ struct StartKey {
     rollback_on_failure: bool,
 }
 
+const MAX_LOG_OPERATION_GROUPS: usize = 30;
+
+#[derive(Clone, Debug)]
+struct OperationLogsGroup {
+    op_id: String,
+    started_at: String,
+    updated_at: String,
+    logs: Vec<LogLine>,
+}
+
 impl App {
     pub async fn new(cfg: Config) -> anyhow::Result<Self> {
         let loaded = load_or_idle(&cfg.state_path).await?;
@@ -61,11 +71,13 @@ impl App {
                 step: "postcheck".to_string(),
                 message: "supervisor restarted; previous operation interrupted".to_string(),
             };
-            state.logs.push(LogLine {
-                ts: now,
-                level: "ERROR".to_string(),
-                msg: "supervisor restarted; previous operation interrupted".to_string(),
-            });
+            append_log_line(
+                &mut state,
+                &now,
+                "ERROR",
+                "supervisor restarted; previous operation interrupted",
+            );
+            retain_recent_operation_logs(&mut state, MAX_LOG_OPERATION_GROUPS);
             store_atomic(&cfg.state_path, &state).await?;
         }
 
@@ -130,11 +142,8 @@ impl App {
             step: "precheck".to_string(),
             message: "starting".to_string(),
         };
-        rt.state.logs.push(LogLine {
-            ts: now,
-            level: "INFO".to_string(),
-            msg: "self-upgrade requested".to_string(),
-        });
+        append_log_line(&mut rt.state, &now, "INFO", "self-upgrade requested");
+        retain_recent_operation_logs(&mut rt.state, MAX_LOG_OPERATION_GROUPS);
         rt.running_key = Some(key.clone());
 
         store_atomic(&self.cfg.state_path, &rt.state)
@@ -169,6 +178,123 @@ fn normalize_digest(input: String) -> String {
     }
 }
 
+fn log_boundary_starts_operation(msg: &str) -> bool {
+    msg.contains("self-upgrade requested")
+}
+
+fn normalized_log_op_id(log: &LogLine) -> Option<String> {
+    log.op_id
+        .as_ref()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn append_log_line(st: &mut StateFile, now: &str, level: &str, msg: impl Into<String>) {
+    let op_id = st.op_id.trim();
+    let op_id = if op_id.is_empty() {
+        None
+    } else {
+        Some(op_id.to_string())
+    };
+    st.logs.push(LogLine {
+        ts: now.to_string(),
+        level: level.to_string(),
+        msg: msg.into(),
+        op_id,
+    });
+}
+
+fn build_operation_groups(logs: &[LogLine]) -> Vec<OperationLogsGroup> {
+    let mut groups: Vec<OperationLogsGroup> = Vec::new();
+    let mut legacy_active: Option<String> = None;
+    let mut legacy_idx: usize = 0;
+
+    for log in logs {
+        let group_id = if let Some(op_id) = normalized_log_op_id(log) {
+            legacy_active = None;
+            op_id
+        } else if log_boundary_starts_operation(&log.msg) {
+            legacy_idx += 1;
+            let id = format!("legacy-{legacy_idx}");
+            legacy_active = Some(id.clone());
+            id
+        } else if let Some(id) = legacy_active.clone() {
+            id
+        } else {
+            legacy_idx += 1;
+            let id = format!("legacy-{legacy_idx}");
+            legacy_active = Some(id.clone());
+            id
+        };
+
+        let should_append = groups.last().map(|g| g.op_id.as_str()) == Some(group_id.as_str());
+        if should_append {
+            if let Some(last) = groups.last_mut() {
+                last.updated_at = log.ts.clone();
+                last.logs.push(log.clone());
+            }
+            continue;
+        }
+
+        groups.push(OperationLogsGroup {
+            op_id: group_id,
+            started_at: log.ts.clone(),
+            updated_at: log.ts.clone(),
+            logs: vec![log.clone()],
+        });
+    }
+
+    groups
+}
+
+fn infer_operation_state(group: &OperationLogsGroup, st: &StateFile) -> String {
+    if group.op_id == st.op_id && st.state == "running" {
+        return "running".to_string();
+    }
+    if group.logs.iter().any(|l| l.msg.contains("rolled back")) {
+        return "rolled_back".to_string();
+    }
+    if group
+        .logs
+        .iter()
+        .any(|l| l.msg.contains("dry-run done") || l.msg.contains("succeeded"))
+    {
+        return "succeeded".to_string();
+    }
+    if group
+        .logs
+        .iter()
+        .any(|l| l.level.eq_ignore_ascii_case("ERROR"))
+    {
+        return "failed".to_string();
+    }
+    if group.op_id == st.op_id
+        && matches!(
+            st.state.as_str(),
+            "running" | "succeeded" | "failed" | "rolled_back"
+        )
+    {
+        return st.state.clone();
+    }
+    "unknown".to_string()
+}
+
+fn retain_recent_operation_logs(st: &mut StateFile, max_groups: usize) {
+    if st.logs.is_empty() {
+        return;
+    }
+    let groups = build_operation_groups(&st.logs);
+    if groups.len() <= max_groups {
+        return;
+    }
+    let keep_from = groups.len().saturating_sub(max_groups);
+    let mut kept: Vec<LogLine> = Vec::new();
+    for group in groups.into_iter().skip(keep_from) {
+        kept.extend(group.logs.into_iter());
+    }
+    st.logs = kept;
+}
+
 async fn mark_failed_if_running(app: &App, err: anyhow::Error) {
     let now = now_rfc3339()
         .unwrap_or_else(|_| time::OffsetDateTime::now_utc().unix_timestamp().to_string());
@@ -181,12 +307,9 @@ async fn mark_failed_if_running(app: &App, err: anyhow::Error) {
             message: format!("failed: {err}"),
         };
         rt.state.updated_at = now.clone();
-        rt.state.logs.push(LogLine {
-            ts: now,
-            level: "ERROR".to_string(),
-            msg: err.to_string(),
-        });
+        append_log_line(&mut rt.state, &now, "ERROR", err.to_string());
     }
+    retain_recent_operation_logs(&mut rt.state, MAX_LOG_OPERATION_GROUPS);
     rt.running_key = None;
 
     if let Err(e) = store_atomic(&app.cfg.state_path, &rt.state).await {
@@ -236,6 +359,17 @@ struct SelfUpgradeResponse {
     updated_at: String,
     progress: Progress,
     logs: Vec<LogLine>,
+    operations: Vec<SelfUpgradeOperation>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SelfUpgradeOperation {
+    op_id: String,
+    state: String,
+    started_at: String,
+    updated_at: String,
+    logs: Vec<LogLine>,
 }
 
 #[derive(Debug, Serialize)]
@@ -251,6 +385,20 @@ struct HttpTarget {
 struct HttpPrevious {
     tag: String,
     digest: Option<String>,
+}
+
+fn build_response_operations(st: &StateFile) -> Vec<SelfUpgradeOperation> {
+    let mut operations = Vec::new();
+    for group in build_operation_groups(&st.logs).into_iter().rev() {
+        operations.push(SelfUpgradeOperation {
+            op_id: group.op_id.clone(),
+            state: infer_operation_state(&group, st),
+            started_at: group.started_at,
+            updated_at: group.updated_at,
+            logs: group.logs,
+        });
+    }
+    operations
 }
 
 async fn get_self_upgrade(
@@ -276,6 +424,7 @@ async fn get_self_upgrade(
         updated_at: st.updated_at.clone(),
         progress: st.progress.clone(),
         logs: st.logs.clone(),
+        operations: build_response_operations(st),
     }))
 }
 
@@ -344,11 +493,8 @@ async fn post_self_upgrade_rollback(
         message: "manual rollback".to_string(),
     };
     rt.state.updated_at = now.clone();
-    rt.state.logs.push(LogLine {
-        ts: now,
-        level: "WARN".to_string(),
-        msg: "manual rollback requested".to_string(),
-    });
+    append_log_line(&mut rt.state, &now, "WARN", "manual rollback requested");
+    retain_recent_operation_logs(&mut rt.state, MAX_LOG_OPERATION_GROUPS);
     store_atomic(&app.cfg.state_path, &rt.state)
         .await
         .map_err(ApiError::internal)?;
@@ -389,6 +535,19 @@ fn render_ui(base_path: &str) -> String {
       button[disabled] {{ opacity: 0.5; cursor: not-allowed; }}
       input {{ padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.18); }}
       pre {{ background: rgba(0,0,0,0.06); padding: 10px; border-radius: 10px; overflow: auto; }}
+      .tabsPanel {{ margin-top: 10px; }}
+      .opTabs {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; max-height: 40px; overflow: hidden; }}
+      .opTabs.expanded {{ max-height: none; overflow: visible; }}
+      .opTab {{ display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.14); background: rgba(255,255,255,0.7); font-size: 12px; }}
+      .opTab.active {{ border-color: rgba(37,99,235,0.45); background: rgba(37,99,235,0.12); }}
+      .opDot {{ width: 8px; height: 8px; border-radius: 999px; flex: 0 0 auto; }}
+      .opDot-running {{ background: #2563eb; }}
+      .opDot-succeeded {{ background: #16a34a; }}
+      .opDot-failed {{ background: #dc2626; }}
+      .opDot-rolled_back {{ background: #dc2626; }}
+      .opDot-unknown {{ background: #6b7280; }}
+      .newBadge {{ color: #b45309; border: 1px solid rgba(180,83,9,0.3); background: rgba(251,191,36,0.18); border-radius: 999px; padding: 1px 6px; font-size: 11px; }}
+      #tabsToggle {{ padding: 4px 10px; font-size: 12px; }}
       .ok {{ color: #16a34a; }}
       .bad {{ color: #dc2626; }}
     </style>
@@ -415,11 +574,23 @@ fn render_ui(base_path: &str) -> String {
 
     <div class="card">
       <div id="status" class="muted">loading…</div>
+      <div class="tabsPanel">
+        <div class="row" style="justify-content: space-between; gap: 8px;">
+          <div id="tabHint" class="muted">loading…</div>
+          <button id="tabsToggle" hidden>展开</button>
+        </div>
+        <div id="opTabs" class="opTabs"></div>
+      </div>
       <pre id="logs"></pre>
     </div>
 
     <script>
       const base = {base_path_json};
+      let activeOpId = null;
+      let latestOpId = null;
+      let tabsExpanded = false;
+      let tabsCanExpand = false;
+      let latestHasNewer = false;
       const toUrl = (p) => base.replace(/\/$/, '') + '/' + p.replace(/^\//, '');
 
       async function fetchJson(path, init) {{
@@ -429,30 +600,144 @@ fn render_ui(base_path: &str) -> String {
         return text ? JSON.parse(text) : null;
       }}
 
-	      async function refresh() {{
-	        const statusEl = document.getElementById('status');
-	        try {{
-	          const st = await fetchJson('self-upgrade');
-	          statusEl.className = `muted ${{statusClass(st)}}`.trim();
-	          statusEl.textContent = renderStatusText(st);
-	          document.getElementById('logs').textContent = (st.logs||[]).map(l => `[${{l.ts}}] ${{l.level}} ${{l.msg}}`).join('\n');
-	          document.getElementById('rollback').disabled = !st.opId || (st.state !== 'failed' && st.state !== 'rolled_back' && st.state !== 'succeeded');
-	        }} catch (e) {{
-	          statusEl.className = 'muted bad';
-	          statusEl.textContent = `offline ${{String(e.message||e)}}`;
-	        }}
-	      }}
+      function statusClass(st) {{
+        const s = st && st.state;
+        return s === 'succeeded' ? 'ok' : (s === 'failed' || s === 'rolled_back') ? 'bad' : '';
+      }}
 
-	      function statusClass(st) {{
-	        const s = st && st.state;
-	        return s === 'succeeded' ? 'ok' : (s === 'failed' || s === 'rolled_back') ? 'bad' : '';
-	      }}
+      function renderStatusText(st) {{
+        const target = `${{st.target?.image}}:${{st.target?.tag}}${{st.target?.digest ? '@'+st.target.digest : ''}}`;
+        const prev = `${{st.previous?.tag}}${{st.previous?.digest ? '@'+st.previous.digest : ''}}`;
+        return `${{st.state}} · opId=${{st.opId||'-'}} · step=${{st.progress?.step}} · target=${{target}} · previous=${{prev}}`;
+      }}
 
-	      function renderStatusText(st) {{
-	        const target = `${{st.target?.image}}:${{st.target?.tag}}${{st.target?.digest ? '@'+st.target.digest : ''}}`;
-	        const prev = `${{st.previous?.tag}}${{st.previous?.digest ? '@'+st.previous.digest : ''}}`;
-	        return `${{st.state}} · opId=${{st.opId||'-'}} · step=${{st.progress?.step}} · target=${{target}} · previous=${{prev}}`;
-	      }}
+      function formatLogs(logs) {{
+        return (logs || []).map(l => `[${{l.ts}}] ${{l.level}} ${{l.msg}}`).join('\n');
+      }}
+
+      function pad2(v) {{
+        return String(v).padStart(2, '0');
+      }}
+
+      function formatTabTime(ts) {{
+        const d = new Date(ts || '');
+        if (Number.isNaN(d.getTime())) return '-- --:--';
+        return `${{pad2(d.getMonth() + 1)}}-${{pad2(d.getDate())}} ${{pad2(d.getHours())}}:${{pad2(d.getMinutes())}}`;
+      }}
+
+      function formatTabLabel(opId, startedAt) {{
+        const suffix = String(opId || '-').slice(-6);
+        return `${{formatTabTime(startedAt)}} · ${{suffix}}`;
+      }}
+
+      function measureTabsOverflow(tabsEl) {{
+        const wasExpanded = tabsEl.classList.contains('expanded');
+        if (wasExpanded) tabsEl.classList.remove('expanded');
+        const overflow = tabsEl.scrollHeight > tabsEl.clientHeight + 1;
+        if (wasExpanded) tabsEl.classList.add('expanded');
+        return overflow;
+      }}
+
+      function syncTabsToggle() {{
+        const tabsEl = document.getElementById('opTabs');
+        const toggleEl = document.getElementById('tabsToggle');
+        if (!tabsEl || !toggleEl) return;
+        tabsEl.classList.toggle('expanded', tabsExpanded);
+        tabsCanExpand = measureTabsOverflow(tabsEl);
+        if (!tabsCanExpand) {{
+          tabsExpanded = false;
+          tabsEl.classList.remove('expanded');
+        }}
+        toggleEl.hidden = !tabsCanExpand;
+        toggleEl.textContent = tabsExpanded ? '收起' : '展开';
+      }}
+
+      function renderOperations(st) {{
+        const operations = Array.isArray(st.operations) ? st.operations : [];
+        const tabsEl = document.getElementById('opTabs');
+        const hintEl = document.getElementById('tabHint');
+        const logsEl = document.getElementById('logs');
+        tabsEl.textContent = '';
+
+        if (!operations.length) {{
+          activeOpId = null;
+          latestOpId = null;
+          latestHasNewer = false;
+          hintEl.textContent = '暂无分组日志';
+          logsEl.textContent = formatLogs(st.logs || []);
+          requestAnimationFrame(syncTabsToggle);
+          return;
+        }}
+
+        const previousLatest = latestOpId;
+        const nextLatest = operations[0]?.opId || null;
+        const wasViewingLatest = !activeOpId || (previousLatest && activeOpId === previousLatest);
+        if (nextLatest && wasViewingLatest) {{
+          activeOpId = nextLatest;
+        }} else if (!operations.some((op) => op.opId === activeOpId)) {{
+          activeOpId = nextLatest;
+        }}
+        if (!wasViewingLatest && previousLatest && nextLatest && previousLatest !== nextLatest) {{
+          latestHasNewer = true;
+        }}
+        latestOpId = nextLatest;
+        if (activeOpId && activeOpId === latestOpId) {{
+          latestHasNewer = false;
+        }}
+
+        for (let i = 0; i < operations.length; i += 1) {{
+          const op = operations[i];
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'opTab';
+          if (op.opId === activeOpId) {{
+            btn.classList.add('active');
+          }}
+          btn.onclick = () => {{
+            activeOpId = op.opId;
+            if (activeOpId === latestOpId) {{
+              latestHasNewer = false;
+            }}
+            renderOperations(st);
+          }};
+
+          const dot = document.createElement('span');
+          dot.className = `opDot opDot-${{op.state || 'unknown'}}`;
+          btn.appendChild(dot);
+
+          const text = document.createElement('span');
+          text.textContent = formatTabLabel(op.opId, op.startedAt);
+          btn.appendChild(text);
+
+          if (i === 0 && latestHasNewer && activeOpId !== op.opId) {{
+            const badge = document.createElement('span');
+            badge.className = 'newBadge';
+            badge.textContent = '新';
+            btn.appendChild(badge);
+          }}
+
+          tabsEl.appendChild(btn);
+        }}
+
+        const active = operations.find((op) => op.opId === activeOpId) || operations[0];
+        logsEl.textContent = formatLogs(active.logs || []);
+        hintEl.textContent = `operations: ${{operations.length}}（当前 ${{active.opId}}）`;
+        requestAnimationFrame(syncTabsToggle);
+      }}
+
+      async function refresh() {{
+        const statusEl = document.getElementById('status');
+        try {{
+          const st = await fetchJson('self-upgrade');
+          statusEl.className = `muted ${{statusClass(st)}}`.trim();
+          statusEl.textContent = renderStatusText(st);
+          renderOperations(st);
+          document.getElementById('rollback').disabled = !st.opId || (st.state !== 'failed' && st.state !== 'rolled_back' && st.state !== 'succeeded');
+        }} catch (e) {{
+          statusEl.className = 'muted bad';
+          statusEl.textContent = `offline ${{String(e.message||e)}}`;
+        }}
+      }}
 
       document.getElementById('refresh').onclick = () => refresh();
       document.getElementById('dry').onclick = async () => {{
@@ -470,6 +755,14 @@ fn render_ui(base_path: &str) -> String {
         await fetchJson('self-upgrade/rollback', {{ method: 'POST', body: JSON.stringify({{ opId: st.opId }}) }});
         await refresh();
       }};
+      document.getElementById('tabsToggle').onclick = () => {{
+        if (!tabsCanExpand) return;
+        tabsExpanded = !tabsExpanded;
+        syncTabsToggle();
+      }};
+      window.addEventListener('resize', () => {{
+        requestAnimationFrame(syncTabsToggle);
+      }});
 
       refresh();
       setInterval(refresh, 1500);
@@ -558,11 +851,7 @@ async fn run_operation(app: Arc<App>, key: StartKey) -> anyhow::Result<()> {
             message: "pulling image".to_string(),
         };
         st.updated_at = now.to_string();
-        st.logs.push(LogLine {
-            ts: now.to_string(),
-            level: "INFO".to_string(),
-            msg: format!("pull {image_ref}"),
-        });
+        append_log_line(st, now, "INFO", format!("pull {image_ref}"));
     })
     .await?;
 
@@ -573,21 +862,23 @@ async fn run_operation(app: Arc<App>, key: StartKey) -> anyhow::Result<()> {
     {
         Ok(Some(tag_ref)) => {
             update_state(&app, |st, now| {
-                st.logs.push(LogLine {
-                    ts: now.to_string(),
-                    level: "INFO".to_string(),
-                    msg: format!("best-effort pull semver tag {tag_ref}"),
-                });
+                append_log_line(
+                    st,
+                    now,
+                    "INFO",
+                    format!("best-effort pull semver tag {tag_ref}"),
+                );
             })
             .await?;
 
             if let Err(e) = docker_pull(&app.cfg, &tag_ref, Duration::from_secs(300)).await {
                 update_state(&app, |st, now| {
-                    st.logs.push(LogLine {
-                        ts: now.to_string(),
-                        level: "WARN".to_string(),
-                        msg: format!("semver tag pull failed: {tag_ref}: {e}"),
-                    });
+                    append_log_line(
+                        st,
+                        now,
+                        "WARN",
+                        format!("semver tag pull failed: {tag_ref}: {e}"),
+                    );
                 })
                 .await?;
             }
@@ -595,11 +886,7 @@ async fn run_operation(app: Arc<App>, key: StartKey) -> anyhow::Result<()> {
         Ok(None) => {}
         Err(e) => {
             update_state(&app, |st, now| {
-                st.logs.push(LogLine {
-                    ts: now.to_string(),
-                    level: "WARN".to_string(),
-                    msg: format!("semver tag pull skipped: {e}"),
-                });
+                append_log_line(st, now, "WARN", format!("semver tag pull skipped: {e}"));
             })
             .await?;
         }
@@ -613,11 +900,7 @@ async fn run_operation(app: Arc<App>, key: StartKey) -> anyhow::Result<()> {
                 message: "dry-run completed".to_string(),
             };
             st.updated_at = now.to_string();
-            st.logs.push(LogLine {
-                ts: now.to_string(),
-                level: "INFO".to_string(),
-                msg: "dry-run done".to_string(),
-            });
+            append_log_line(st, now, "INFO", "dry-run done");
         })
         .await?;
         clear_running(&app).await;
@@ -633,11 +916,7 @@ async fn run_operation(app: Arc<App>, key: StartKey) -> anyhow::Result<()> {
             message: "docker compose up".to_string(),
         };
         st.updated_at = now.to_string();
-        st.logs.push(LogLine {
-            ts: now.to_string(),
-            level: "INFO".to_string(),
-            msg: "compose up".to_string(),
-        });
+        append_log_line(st, now, "INFO", "compose up");
     })
     .await?;
 
@@ -679,11 +958,7 @@ async fn run_operation(app: Arc<App>, key: StartKey) -> anyhow::Result<()> {
             message: "ok".to_string(),
         };
         st.updated_at = now.to_string();
-        st.logs.push(LogLine {
-            ts: now.to_string(),
-            level: "INFO".to_string(),
-            msg: "succeeded".to_string(),
-        });
+        append_log_line(st, now, "INFO", "succeeded");
     })
     .await?;
 
@@ -735,11 +1010,7 @@ async fn run_rollback_only(
                 message: "rolled back".to_string(),
             };
             st.updated_at = now.to_string();
-            st.logs.push(LogLine {
-                ts: now.to_string(),
-                level: "WARN".to_string(),
-                msg: "rolled back".to_string(),
-            });
+            append_log_line(st, now, "WARN", "rolled back");
         })
         .await?;
 
@@ -755,11 +1026,7 @@ async fn run_rollback_only(
                 message: format!("rollback failed: {err}"),
             };
             st.updated_at = now.to_string();
-            st.logs.push(LogLine {
-                ts: now.to_string(),
-                level: "ERROR".to_string(),
-                msg: format!("rollback failed: {err}"),
-            });
+            append_log_line(st, now, "ERROR", format!("rollback failed: {err}"));
         })
         .await;
     }
@@ -782,11 +1049,7 @@ async fn fail_and_maybe_rollback(
             message: format!("failed: {err}"),
         };
         st.updated_at = now.to_string();
-        st.logs.push(LogLine {
-            ts: now.to_string(),
-            level: "ERROR".to_string(),
-            msg: err.to_string(),
-        });
+        append_log_line(st, now, "ERROR", err.to_string());
     })
     .await?;
 
@@ -811,6 +1074,7 @@ async fn update_state(app: &App, f: impl FnOnce(&mut StateFile, &str)) -> anyhow
     let now = now_rfc3339()?;
     let mut rt = app.runtime.lock().await;
     f(&mut rt.state, &now);
+    retain_recent_operation_logs(&mut rt.state, MAX_LOG_OPERATION_GROUPS);
     store_atomic(&app.cfg.state_path, &rt.state).await?;
     Ok(())
 }
@@ -937,6 +1201,126 @@ mod tests {
         let html = render_ui("/supervisor");
         assert!(html.contains(r".join('\n')"));
         assert!(!html.contains(r".join('\\n')"));
+    }
+
+    fn test_log(ts: &str, level: &str, msg: &str, op_id: Option<&str>) -> LogLine {
+        LogLine {
+            ts: ts.to_string(),
+            level: level.to_string(),
+            msg: msg.to_string(),
+            op_id: op_id.map(|v| v.to_string()),
+        }
+    }
+
+    #[test]
+    fn build_operation_groups_handles_legacy_and_opid_logs() {
+        let logs = vec![
+            test_log(
+                "2026-02-01T00:00:01Z",
+                "INFO",
+                "self-upgrade requested",
+                None,
+            ),
+            test_log("2026-02-01T00:00:02Z", "INFO", "pull image", None),
+            test_log("2026-02-01T00:00:03Z", "INFO", "dry-run done", None),
+            test_log(
+                "2026-02-01T00:10:01Z",
+                "INFO",
+                "self-upgrade requested",
+                Some("sup_a"),
+            ),
+            test_log(
+                "2026-02-01T00:10:02Z",
+                "ERROR",
+                "compose failed",
+                Some("sup_a"),
+            ),
+            test_log(
+                "2026-02-01T00:20:01Z",
+                "INFO",
+                "self-upgrade requested",
+                None,
+            ),
+            test_log("2026-02-01T00:20:02Z", "INFO", "pull image", None),
+        ];
+
+        let groups = build_operation_groups(&logs);
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[0].op_id, "legacy-1");
+        assert_eq!(groups[0].logs.len(), 3);
+        assert_eq!(groups[1].op_id, "sup_a");
+        assert_eq!(groups[1].logs.len(), 2);
+        assert_eq!(groups[2].op_id, "legacy-2");
+        assert_eq!(groups[2].logs.len(), 2);
+    }
+
+    #[test]
+    fn retain_recent_operation_logs_caps_groups_to_thirty() {
+        let now = crate::state_store::now_rfc3339().unwrap();
+        let mut st = StateFile::idle(&now);
+        for i in 0..35 {
+            st.logs.push(test_log(
+                &format!("2026-02-01T01:{i:02}:00Z"),
+                "INFO",
+                &format!("self-upgrade requested op{i}"),
+                None,
+            ));
+            st.logs.push(test_log(
+                &format!("2026-02-01T01:{i:02}:10Z"),
+                "INFO",
+                &format!("succeeded op{i}"),
+                None,
+            ));
+        }
+
+        retain_recent_operation_logs(&mut st, MAX_LOG_OPERATION_GROUPS);
+        let groups = build_operation_groups(&st.logs);
+        assert_eq!(groups.len(), 30);
+        assert!(groups[0].logs[0].msg.contains("op5"));
+        assert!(groups[29].logs[0].msg.contains("op34"));
+    }
+
+    #[test]
+    fn build_response_operations_returns_newest_first_with_state() {
+        let now = crate::state_store::now_rfc3339().unwrap();
+        let mut st = StateFile::idle(&now);
+        st.state = "running".to_string();
+        st.op_id = "sup_live".to_string();
+        st.logs = vec![
+            test_log(
+                "2026-02-01T02:00:00Z",
+                "INFO",
+                "self-upgrade requested",
+                None,
+            ),
+            test_log("2026-02-01T02:00:01Z", "ERROR", "compose failed", None),
+            test_log(
+                "2026-02-01T02:05:00Z",
+                "INFO",
+                "self-upgrade requested",
+                Some("sup_live"),
+            ),
+            test_log(
+                "2026-02-01T02:05:01Z",
+                "INFO",
+                "pull image",
+                Some("sup_live"),
+            ),
+        ];
+
+        let ops = build_response_operations(&st);
+        assert_eq!(ops.len(), 2);
+        assert_eq!(ops[0].op_id, "sup_live");
+        assert_eq!(ops[0].state, "running");
+        assert_eq!(ops[1].state, "failed");
+    }
+
+    #[test]
+    fn render_ui_contains_operation_tabs_markup() {
+        let html = render_ui("/supervisor");
+        assert!(html.contains("id=\"opTabs\""));
+        assert!(html.contains("id=\"tabsToggle\""));
+        assert!(html.contains("latestHasNewer"));
     }
 
     #[tokio::test]
