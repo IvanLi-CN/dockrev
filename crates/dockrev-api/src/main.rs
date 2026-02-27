@@ -22,7 +22,6 @@ mod snapshot_worker;
 mod state;
 mod ui;
 mod updater;
-mod version_inference_worker;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -93,17 +92,7 @@ async fn main() -> anyhow::Result<()> {
         db.clone(),
         registry.clone(),
     ));
-    let version_inference_worker = std::sync::Arc::new(
-        version_inference_worker::VersionInferenceWorker::new(db.clone(), registry.clone()),
-    );
-    let state = state::AppState::new(
-        config,
-        db,
-        registry,
-        runner,
-        snapshot_worker,
-        version_inference_worker,
-    );
+    let state = state::AppState::new(config, db, registry, runner, snapshot_worker);
 
     // Recover orphaned/incomplete jobs created by a previous process instance.
     // This covers cases where the container was killed or the process panicked mid-job.
@@ -121,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
     state.snapshot_worker.spawn_startup_warmup(&host_platform);
-    state.version_inference_worker.spawn_gc_task();
+    state.snapshot_worker.spawn_gc_task();
 
     backup::spawn_cleanup_task(state.clone());
     discovery::spawn_task(state.clone());

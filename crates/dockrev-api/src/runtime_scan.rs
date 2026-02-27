@@ -519,14 +519,14 @@ async fn run_runtime_scan_for_job(
                 )
                 && let Some(repo) =
                     crate::snapshot_worker::image_repo_from_image_ref(&svc.image_ref)
+                && let Some(candidate_digest) = outcome
+                    .candidate_digest
+                    .as_deref()
+                    .and_then(crate::snapshot_worker::normalize_digest)
             {
-                state
-                    .version_inference_worker
-                    .enqueue(
-                        &repo,
-                        host_platform,
-                        crate::version_inference_worker::VersionInferenceReason::NewVersion,
-                    )
+                let _ = state
+                    .snapshot_worker
+                    .enqueue(&repo, &candidate_digest, host_platform, "new_version")
                     .await;
             }
             let changed = before_digest.as_deref() != Some(runtime_digest.as_str());

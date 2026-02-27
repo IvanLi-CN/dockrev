@@ -894,17 +894,7 @@ async fn test_state_with(
         db.clone(),
         registry.clone(),
     ));
-    let version_inference_worker = Arc::new(
-        crate::version_inference_worker::VersionInferenceWorker::new(db.clone(), registry.clone()),
-    );
-    AppState::new(
-        config,
-        db,
-        registry,
-        runner,
-        snapshot_worker,
-        version_inference_worker,
-    )
+    AppState::new(config, db, registry, runner, snapshot_worker)
 }
 
 async fn test_state(db_path: &str) -> Arc<AppState> {
@@ -938,17 +928,7 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
         db.clone(),
         registry.clone(),
     ));
-    let version_inference_worker = Arc::new(
-        crate::version_inference_worker::VersionInferenceWorker::new(db.clone(), registry.clone()),
-    );
-    AppState::new(
-        config,
-        db,
-        registry,
-        runner,
-        snapshot_worker,
-        version_inference_worker,
-    )
+    AppState::new(config, db, registry, runner, snapshot_worker)
 }
 
 async fn seed_stack_from_compose(state: &Arc<AppState>, name: &str, compose_file: &str) -> String {
@@ -990,6 +970,70 @@ async fn seed_stack_from_compose(state: &Arc<AppState>, name: &str, compose_file
 
     state.db.insert_stack(&stack, &seeds, &now).await.unwrap();
     stack_id
+}
+
+async fn upsert_image_digest_snapshot_for_test(
+    state: &Arc<AppState>,
+    image_repo: &str,
+    digest: &str,
+    host_platform: &str,
+    checked_at: &str,
+    tags: Vec<String>,
+    scan: crate::api::types::ServiceDigestTagsScanSummary,
+) {
+    let snapshot = crate::api::types::ServiceDigestTagsSnapshotResponse {
+        digest: crate::snapshot_worker::normalize_digest(digest)
+            .unwrap_or_else(|| digest.to_string()),
+        tags,
+        checked_at: checked_at.to_string(),
+        scan,
+    };
+    state
+        .db
+        .upsert_image_digest_tags_snapshot(
+            image_repo,
+            &snapshot.digest,
+            host_platform,
+            &serde_json::to_string(&snapshot).unwrap(),
+            checked_at,
+            checked_at,
+        )
+        .await
+        .unwrap();
+}
+
+async fn set_single_service_check_result(
+    state: &Arc<AppState>,
+    stack_id: &str,
+    current_digest: Option<&str>,
+    candidate_tag: Option<&str>,
+    candidate_digest: Option<&str>,
+) -> String {
+    let services = state.db.list_services_for_check(stack_id).await.unwrap();
+    let service = services.first().expect("service must exist");
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            current_digest.and_then(crate::snapshot_worker::normalize_digest),
+            None,
+            None,
+            candidate_tag.map(ToString::to_string),
+            None,
+            candidate_digest.and_then(crate::snapshot_worker::normalize_digest),
+            None,
+            None,
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+    service.id.clone()
 }
 
 #[tokio::test]
@@ -2364,6 +2408,7 @@ services:
     )
     .unwrap();
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    set_single_service_check_result(&state, &stack_id, Some("sha256:new"), None, None).await;
 
     let resp = app
         .clone()
@@ -2408,41 +2453,35 @@ services:
     )
     .unwrap();
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    set_single_service_check_result(&state, &stack_id, Some("sha256:new"), None, None).await;
 
     let now = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap();
-    let snapshot = crate::version_inference_worker::VersionInferenceSnapshot {
-        checked_at: now.clone(),
-        digests: BTreeMap::new(),
-        scan: crate::version_inference_worker::VersionInferenceScanSummary {
-            semver_tags_total: 2,
-            semver_tags_considered: 2,
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:new",
+        "linux/amd64",
+        &now,
+        vec!["0.13.0".to_string(), "latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
             manifests_ok: 2,
             manifests_timeout: 0,
             manifests_error: 0,
         },
-        all_failed: false,
-    };
-    state
-        .db
-        .upsert_image_version_inference_snapshot(
-            "ghcr.io/acme/web",
-            "linux/amd64",
-            &serde_json::to_string(&snapshot).unwrap(),
-            false,
-            &now,
-            &now,
-        )
-        .await
-        .unwrap();
+    )
+    .await;
 
     let enqueued = state
-        .version_inference_worker
+        .snapshot_worker
         .enqueue(
             "ghcr.io/acme/web",
+            "sha256:new",
             "linux/amd64",
-            crate::version_inference_worker::VersionInferenceReason::NewVersion,
+            "new_version",
         )
         .await;
     assert!(enqueued);
@@ -2493,34 +2532,27 @@ services:
     )
     .unwrap();
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    set_single_service_check_result(&state, &stack_id, Some("sha256:new"), None, None).await;
 
     let now = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap();
-    let snapshot = crate::version_inference_worker::VersionInferenceSnapshot {
-        checked_at: now.clone(),
-        digests: BTreeMap::new(),
-        scan: crate::version_inference_worker::VersionInferenceScanSummary {
-            semver_tags_total: 2,
-            semver_tags_considered: 2,
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:new",
+        "linux/amd64",
+        &now,
+        Vec::new(),
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
             manifests_ok: 0,
             manifests_timeout: 0,
             manifests_error: 2,
         },
-        all_failed: true,
-    };
-    state
-        .db
-        .upsert_image_version_inference_snapshot(
-            "ghcr.io/acme/web",
-            "linux/amd64",
-            &serde_json::to_string(&snapshot).unwrap(),
-            true,
-            &now,
-            &now,
-        )
-        .await
-        .unwrap();
+    )
+    .await;
 
     let resp = app
         .clone()
@@ -2572,8 +2604,8 @@ services:
     )
     .unwrap();
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
-    let stack = state.db.get_stack(&stack_id).await.unwrap().unwrap();
-    let service_id = stack.services[0].id.clone();
+    let service_id =
+        set_single_service_check_result(&state, &stack_id, Some("sha256:new"), None, None).await;
 
     let resp = app
         .clone()
@@ -2636,30 +2668,22 @@ services:
     let now = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap();
-    let snapshot = crate::version_inference_worker::VersionInferenceSnapshot {
-        checked_at: now.clone(),
-        digests: BTreeMap::new(),
-        scan: crate::version_inference_worker::VersionInferenceScanSummary {
-            semver_tags_total: 2,
-            semver_tags_considered: 2,
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:new",
+        "linux/amd64",
+        &now,
+        vec!["5.2.0".to_string(), "latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
             manifests_ok: 2,
             manifests_timeout: 0,
             manifests_error: 0,
         },
-        all_failed: false,
-    };
-    state
-        .db
-        .upsert_image_version_inference_snapshot(
-            "ghcr.io/acme/web",
-            "linux/amd64",
-            &serde_json::to_string(&snapshot).unwrap(),
-            false,
-            &now,
-            &now,
-        )
-        .await
-        .unwrap();
+    )
+    .await;
 
     let check = serde_json::json!({
         "scope": "stack",
@@ -2832,8 +2856,8 @@ services:
     );
 
     let in_flight = state
-        .version_inference_worker
-        .in_flight_reason("ghcr.io/acme/web", "linux/amd64")
+        .snapshot_worker
+        .in_flight_reason("ghcr.io/acme/web", "sha256:new", "linux/amd64")
         .await;
     assert!(
         in_flight.is_none(),
@@ -3525,55 +3549,39 @@ services:
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap();
 
-    let ready_snapshot = crate::version_inference_worker::VersionInferenceSnapshot {
-        checked_at: now.clone(),
-        digests: BTreeMap::new(),
-        scan: crate::version_inference_worker::VersionInferenceScanSummary {
-            semver_tags_total: 2,
-            semver_tags_considered: 2,
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:web",
+        "linux/amd64",
+        &now,
+        vec!["1.2.3".to_string(), "latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
             manifests_ok: 2,
             manifests_timeout: 0,
             manifests_error: 0,
         },
-        all_failed: false,
-    };
-    state
-        .db
-        .upsert_image_version_inference_snapshot(
-            "ghcr.io/acme/web",
-            "linux/amd64",
-            &serde_json::to_string(&ready_snapshot).unwrap(),
-            false,
-            &now,
-            &now,
-        )
-        .await
-        .unwrap();
+    )
+    .await;
 
-    let failed_snapshot = crate::version_inference_worker::VersionInferenceSnapshot {
-        checked_at: now.clone(),
-        digests: BTreeMap::new(),
-        scan: crate::version_inference_worker::VersionInferenceScanSummary {
-            semver_tags_total: 2,
-            semver_tags_considered: 2,
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/worker",
+        "sha256:worker",
+        "linux/amd64",
+        &now,
+        Vec::new(),
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
             manifests_ok: 0,
             manifests_timeout: 0,
             manifests_error: 2,
         },
-        all_failed: true,
-    };
-    state
-        .db
-        .upsert_image_version_inference_snapshot(
-            "ghcr.io/acme/worker",
-            "linux/amd64",
-            &serde_json::to_string(&failed_snapshot).unwrap(),
-            true,
-            &now,
-            &now,
-        )
-        .await
-        .unwrap();
+    )
+    .await;
 
     let resp = app
         .clone()
@@ -3667,37 +3675,30 @@ async fn version_inference_overview_merges_cached_and_in_flight_without_missing_
     let now = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap();
-    let snapshot = crate::version_inference_worker::VersionInferenceSnapshot {
-        checked_at: now.clone(),
-        digests: BTreeMap::new(),
-        scan: crate::version_inference_worker::VersionInferenceScanSummary {
-            semver_tags_total: 1,
-            semver_tags_considered: 1,
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/cached",
+        "sha256:cached",
+        "linux/amd64",
+        &now,
+        vec!["1.2.3".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 1,
+            repo_tags_considered: 1,
             manifests_ok: 1,
             manifests_timeout: 0,
             manifests_error: 0,
         },
-        all_failed: false,
-    };
-    state
-        .db
-        .upsert_image_version_inference_snapshot(
-            "ghcr.io/acme/cached",
-            "linux/amd64",
-            &serde_json::to_string(&snapshot).unwrap(),
-            false,
-            &now,
-            &now,
-        )
-        .await
-        .unwrap();
+    )
+    .await;
 
     let enqueued = state
-        .version_inference_worker
+        .snapshot_worker
         .enqueue(
             "ghcr.io/acme/running",
+            "sha256:running",
             "linux/amd64",
-            crate::version_inference_worker::VersionInferenceReason::Force,
+            "force",
         )
         .await;
     assert!(enqueued);
@@ -3718,9 +3719,9 @@ async fn version_inference_overview_merges_cached_and_in_flight_without_missing_
         let body = response_json(resp).await;
 
         let tasks = body["tasks"].as_array().cloned().unwrap_or_default();
-        let has_task = tasks
-            .iter()
-            .any(|task| task["key"].as_str() == Some("ghcr.io/acme/running@linux/amd64"));
+        let has_task = tasks.iter().any(|task| {
+            task["key"].as_str() == Some("ghcr.io/acme/running@sha256:running@linux/amd64")
+        });
         let has_progress = tasks
             .iter()
             .any(|task| task["status"].as_str() == Some("running") && task["progress"].is_object());
@@ -3752,9 +3753,9 @@ async fn version_inference_overview_merges_cached_and_in_flight_without_missing_
     let running_task = body["tasks"]
         .as_array()
         .and_then(|tasks| {
-            tasks
-                .iter()
-                .find(|task| task["key"].as_str() == Some("ghcr.io/acme/running@linux/amd64"))
+            tasks.iter().find(|task| {
+                task["key"].as_str() == Some("ghcr.io/acme/running@sha256:running@linux/amd64")
+            })
         })
         .expect("in-flight task should be present");
     assert!(
@@ -3806,12 +3807,8 @@ async fn version_inference_events_stream_emits_task_enqueued() {
 
     let mut body = resp.into_body();
     let enqueued = state
-        .version_inference_worker
-        .enqueue(
-            "ghcr.io/acme/web",
-            "linux/amd64",
-            crate::version_inference_worker::VersionInferenceReason::Force,
-        )
+        .snapshot_worker
+        .enqueue("ghcr.io/acme/web", "sha256:web", "linux/amd64", "force")
         .await;
     assert!(enqueued);
 
@@ -3831,12 +3828,8 @@ async fn version_inference_events_stream_emits_resync_required_when_after_id_is_
     for i in 0..2105 {
         let image_repo = format!("ghcr.io/acme/resync-{i}");
         let enqueued = state
-            .version_inference_worker
-            .enqueue(
-                &image_repo,
-                "linux/amd64",
-                crate::version_inference_worker::VersionInferenceReason::Force,
-            )
+            .snapshot_worker
+            .enqueue(&image_repo, "sha256:resync", "linux/amd64", "force")
             .await;
         assert!(enqueued);
     }
@@ -3872,51 +3865,39 @@ async fn version_inference_gc_runs_on_start_and_deletes_expired_snapshots() {
     let old = (time::OffsetDateTime::now_utc() - time::Duration::days(40))
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap();
-    let now = time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .unwrap();
-    let snapshot = crate::version_inference_worker::VersionInferenceSnapshot {
-        checked_at: old.clone(),
-        digests: BTreeMap::new(),
-        scan: crate::version_inference_worker::VersionInferenceScanSummary {
-            semver_tags_total: 0,
-            semver_tags_considered: 0,
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/old",
+        "sha256:old",
+        "linux/amd64",
+        &old,
+        vec!["1.0.0".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 0,
+            repo_tags_considered: 0,
             manifests_ok: 0,
             manifests_timeout: 0,
             manifests_error: 0,
         },
-        all_failed: false,
-    };
-
-    state
-        .db
-        .upsert_image_version_inference_snapshot(
-            "ghcr.io/acme/old",
-            "linux/amd64",
-            &serde_json::to_string(&snapshot).unwrap(),
-            false,
-            &old,
-            &now,
-        )
-        .await
-        .unwrap();
+    )
+    .await;
 
     assert!(
         state
             .db
-            .get_image_version_inference_snapshot("ghcr.io/acme/old", "linux/amd64")
+            .get_image_digest_tags_snapshot("ghcr.io/acme/old", "sha256:old", "linux/amd64")
             .await
             .unwrap()
             .is_some()
     );
 
-    state.version_inference_worker.spawn_gc_task();
+    state.snapshot_worker.spawn_gc_task();
 
     let mut deleted = false;
     for _ in 0..80 {
         if state
             .db
-            .get_image_version_inference_snapshot("ghcr.io/acme/old", "linux/amd64")
+            .get_image_digest_tags_snapshot("ghcr.io/acme/old", "sha256:old", "linux/amd64")
             .await
             .unwrap()
             .is_none()
@@ -3931,7 +3912,7 @@ async fn version_inference_gc_runs_on_start_and_deletes_expired_snapshots() {
         "expired version inference snapshots should be deleted"
     );
 
-    let gc = state.version_inference_worker.gc_snapshot().await;
+    let gc = state.snapshot_worker.gc_status().await;
     assert!(
         gc.last_run_at.is_some(),
         "gc should record last run timestamp"
@@ -6487,6 +6468,26 @@ services:
     }
     assert!(finished, "check job did not finish in time");
 
+    let snapshot_checked_at = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    upsert_image_digest_snapshot_for_test(
+        &state_a,
+        "ghcr.io/acme/web",
+        "sha256:new",
+        "linux/amd64",
+        &snapshot_checked_at,
+        vec!["5.2".to_string(), "5.3".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+
     let resp = app_a
         .clone()
         .oneshot(
@@ -6569,6 +6570,26 @@ services:
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     assert!(finished, "runtime scan job did not finish in time");
+
+    let snapshot_checked_at = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    upsert_image_digest_snapshot_for_test(
+        &state_b,
+        "ghcr.io/acme/web",
+        "sha256:new",
+        "linux/amd64",
+        &snapshot_checked_at,
+        vec!["5.2".to_string(), "5.3".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
 
     let resp = app_b
         .clone()
@@ -6975,8 +6996,8 @@ services:
     );
 
     let in_flight = state
-        .version_inference_worker
-        .in_flight_reason("ghcr.io/acme/web", "linux/amd64")
+        .snapshot_worker
+        .in_flight_reason("ghcr.io/acme/web", "sha256:new", "linux/amd64")
         .await;
     assert!(
         in_flight.is_none(),

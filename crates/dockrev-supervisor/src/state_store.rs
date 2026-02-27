@@ -54,6 +54,8 @@ pub struct LogLine {
     pub ts: String,
     pub level: String,
     pub msg: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub op_id: Option<String>,
 }
 
 impl StateFile {
@@ -145,6 +147,7 @@ mod tests {
             ts: now.clone(),
             level: "INFO".to_string(),
             msg: "hello".to_string(),
+            op_id: Some("sup_test".to_string()),
         });
 
         store_atomic(&path, &st).await.unwrap();

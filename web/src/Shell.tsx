@@ -86,9 +86,12 @@ export function AppShell(props: {
       <div className="appShell">
         <header className="topbar">
           <div className="topbarLeft">
-            <div className="brand">
-              <img className="brandMark" src="/brand-mark.png" alt="" aria-hidden="true" />
-              Dockrev
+            <div className="topbarIdentity">
+              <div className="brand">
+                <img className="brandMark" src="/brand-mark.png" alt="" aria-hidden="true" />
+                Dockrev
+              </div>
+              {props.topbarHint ? <div className="topbarHint">{props.topbarHint}</div> : null}
             </div>
           </div>
           <div className="topbarRight">
@@ -166,6 +169,29 @@ export function AppShell(props: {
         </aside>
 
         <main className="content">
+          <div className="mobileDockrevPanel">
+            <nav className="mobileNav" aria-label="主导航">
+              {nav.map((item) => (
+                <a
+                  key={`mobile-${item.key}`}
+                  href={currentHref(item.to)}
+                  className={active === item.key ? 'mobileNavItem mobileNavItemActive' : 'mobileNavItem'}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    navigate(item.to)
+                  }}
+                >
+                  {item.label}
+                </a>
+              ))}
+            </nav>
+            <div className="mobileMeta">
+              <div className="mobileMetaRow">
+                <span className="sectionTitle">最近扫描</span>
+                <span className="mono">{lastScan ? formatShort(lastScan) : '-'}</span>
+              </div>
+            </div>
+          </div>
           <div className="pageHead">
             {props.title ? <div className="h1">{props.title}</div> : null}
             {props.pageSubtitle ? <div className="muted">{props.pageSubtitle}</div> : null}
