@@ -44,6 +44,22 @@ export const ResolveLoading: Story = {
   },
 }
 
+export const RepoPickerUx: Story = {
+  parameters: { dockrevApiScenario: 'settings-configured' },
+  render: () => {
+    return (
+      <PageHarness
+        route={{ name: 'settings' }}
+        title="系统设置"
+        pageSubtitle="验证 GHCR 仓库选择弹窗：默认最近活动排序、搜索筛选与拖动批量开关"
+        topbarHint="系统设置"
+      >
+        {({ onTopActions }) => <SettingsPage onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}
+
 export const Error: Story = {
   parameters: { dockrevApiScenario: 'error' },
   render: () => {

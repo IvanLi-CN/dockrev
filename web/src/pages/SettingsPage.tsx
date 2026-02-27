@@ -140,6 +140,57 @@ function mapScopeLabel(scope: SaveScope): string {
   return 'GHCR'
 }
 
+type RepoSelectedFilter = 'all' | 'selected' | 'unselected'
+type RepoVisibilityFilter = 'all' | 'public' | 'private'
+type RepoSortKey = 'activity_desc' | 'name_asc'
+type RepoListDensity = 'cozy' | 'compact'
+type RepoVisibility = 'public' | 'private' | 'unknown'
+type RepoPickerItem = {
+  fullName: string
+  selected: boolean
+  visibility: RepoVisibility
+  lastActivityAt: string | null
+}
+const GHCR_PICKER_LIST_DENSITY_STORAGE_KEY = 'dockrev:settings:ghcrPicker:listDensity'
+
+function normalizeRepoVisibility(raw: string | undefined): RepoVisibility {
+  if (raw === 'public') return 'public'
+  if (raw === 'private') return 'private'
+  return 'unknown'
+}
+
+function parseActivityMs(raw: string | null): number | null {
+  if (!raw) return null
+  const ms = Date.parse(raw)
+  return Number.isFinite(ms) ? ms : null
+}
+
+function formatRepoActivity(raw: string | null): string {
+  const ms = parseActivityMs(raw)
+  if (ms === null) return '活动时间未知'
+  return `最近活动 ${new Date(ms).toLocaleDateString()}`
+}
+
+function normalizeRepoListDensity(raw: string | null): RepoListDensity {
+  return raw === 'compact' ? 'compact' : 'cozy'
+}
+
+function readRepoListDensityFromStorage(): RepoListDensity {
+  try {
+    return normalizeRepoListDensity(window.localStorage.getItem(GHCR_PICKER_LIST_DENSITY_STORAGE_KEY))
+  } catch {
+    return 'cozy'
+  }
+}
+
+function writeRepoListDensityToStorage(value: RepoListDensity) {
+  try {
+    window.localStorage.setItem(GHCR_PICKER_LIST_DENSITY_STORAGE_KEY, value)
+  } catch {
+    // Ignore storage errors (quota/disabled).
+  }
+}
+
 function GitHubPackagesRepoPicker({
   initial,
   onChange,
@@ -147,37 +198,277 @@ function GitHubPackagesRepoPicker({
   initial: ResolveGitHubPackagesTargetResponse
   onChange: (repos: Array<{ fullName: string; selected: boolean }>) => void
 }) {
-  const [repos, setRepos] = useState(() => initial.repos.map((r) => ({ ...r })))
+  const [repos, setRepos] = useState<RepoPickerItem[]>(() =>
+    initial.repos.map((r) => ({
+      fullName: r.fullName,
+      selected: r.selected,
+      visibility: normalizeRepoVisibility(r.visibility),
+      lastActivityAt: r.lastActivityAt ?? null,
+    })),
+  )
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedFilter, setSelectedFilter] = useState<RepoSelectedFilter>('all')
+  const [visibilityFilter, setVisibilityFilter] = useState<RepoVisibilityFilter>('all')
+  const [sortKey, setSortKey] = useState<RepoSortKey>('activity_desc')
+  const [listDensity, setListDensity] = useState<RepoListDensity>(() => readRepoListDensityFromStorage())
+  const dragSessionRef = useRef<{
+    pointerId: number
+    targetSelected: boolean
+    touched: Set<string>
+    captureElement: HTMLButtonElement | null
+  } | null>(null)
+
+  const setRepoSelected = useCallback((fullName: string, selected: boolean) => {
+    setRepos((prev) => {
+      let changed = false
+      const next = prev.map((repo) => {
+        if (repo.fullName !== fullName || repo.selected === selected) return repo
+        changed = true
+        return { ...repo, selected }
+      })
+      return changed ? next : prev
+    })
+  }, [])
 
   useEffect(() => {
-    onChange(repos)
+    onChange(repos.map((r) => ({ fullName: r.fullName, selected: r.selected })))
   }, [repos, onChange])
 
+  const filteredRepos = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+
+    const list = repos
+      .filter((repo) => {
+        if (selectedFilter === 'selected') return repo.selected
+        if (selectedFilter === 'unselected') return !repo.selected
+        return true
+      })
+      .filter((repo) => {
+        if (visibilityFilter === 'public') return repo.visibility === 'public'
+        if (visibilityFilter === 'private') return repo.visibility === 'private'
+        return true
+      })
+      .filter((repo) => {
+        if (!query) return true
+        return repo.fullName.toLowerCase().includes(query)
+      })
+
+    list.sort((a, b) => {
+      const byName = a.fullName.localeCompare(b.fullName, undefined, { sensitivity: 'base' })
+      if (sortKey === 'name_asc') return byName
+
+      const aActivity = parseActivityMs(a.lastActivityAt)
+      const bActivity = parseActivityMs(b.lastActivityAt)
+      if (aActivity !== null && bActivity !== null && aActivity !== bActivity) return bActivity - aActivity
+      if (aActivity !== null && bActivity === null) return -1
+      if (aActivity === null && bActivity !== null) return 1
+      return byName
+    })
+
+    return list
+  }, [repos, searchQuery, selectedFilter, visibilityFilter, sortKey])
+
+  const onWindowPointerMove = useCallback(
+    (event: PointerEvent) => {
+      const drag = dragSessionRef.current
+      if (!drag || drag.pointerId !== event.pointerId) return
+      if (event.pointerType === 'mouse' && (event.buttons & 1) === 0) {
+        dragSessionRef.current = null
+        if (drag.captureElement?.hasPointerCapture(drag.pointerId)) {
+          drag.captureElement.releasePointerCapture(drag.pointerId)
+        }
+        return
+      }
+      if (event.pointerType === 'touch') event.preventDefault()
+      const target = document.elementFromPoint(event.clientX, event.clientY)
+      if (!(target instanceof HTMLElement)) return
+      const hitNode = target.closest<HTMLElement>('[data-ghcr-picker-switch="true"], [data-ghcr-picker-row="true"]')
+      const fullName = hitNode?.dataset.repoFullName
+      if (!fullName || drag.touched.has(fullName)) return
+      drag.touched.add(fullName)
+      setRepoSelected(fullName, drag.targetSelected)
+    },
+    [setRepoSelected],
+  )
+
+  const onWindowPointerEnd = useCallback(
+    function handleWindowPointerEnd(event: PointerEvent) {
+      const drag = dragSessionRef.current
+      if (!drag || drag.pointerId !== event.pointerId) return
+      dragSessionRef.current = null
+      if (drag.captureElement?.hasPointerCapture(drag.pointerId)) {
+        drag.captureElement.releasePointerCapture(drag.pointerId)
+      }
+      window.removeEventListener('pointermove', onWindowPointerMove)
+      window.removeEventListener('pointerup', handleWindowPointerEnd)
+      window.removeEventListener('pointercancel', handleWindowPointerEnd)
+    },
+    [onWindowPointerMove],
+  )
+
+  useEffect(() => {
+    return () => {
+      const drag = dragSessionRef.current
+      dragSessionRef.current = null
+      if (drag?.captureElement?.hasPointerCapture(drag.pointerId)) {
+        drag.captureElement.releasePointerCapture(drag.pointerId)
+      }
+      window.removeEventListener('pointermove', onWindowPointerMove)
+      window.removeEventListener('pointerup', onWindowPointerEnd)
+      window.removeEventListener('pointercancel', onWindowPointerEnd)
+    }
+  }, [onWindowPointerEnd, onWindowPointerMove])
+
+  const onSwitchPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>, fullName: string, selected: boolean) => {
+      if (event.pointerType === 'mouse' && event.button !== 0) return
+      event.preventDefault()
+
+      // Start a drag session where all touched switches are forced to one target state.
+      const targetSelected = !selected
+      setRepoSelected(fullName, targetSelected)
+      const captureElement = event.currentTarget
+      try {
+        captureElement.setPointerCapture(event.pointerId)
+      } catch {
+        // Some browsers/input sources may not support pointer capture for this event.
+      }
+      dragSessionRef.current = {
+        pointerId: event.pointerId,
+        targetSelected,
+        touched: new Set([fullName]),
+        captureElement,
+      }
+
+      window.addEventListener('pointermove', onWindowPointerMove)
+      window.addEventListener('pointerup', onWindowPointerEnd)
+      window.addEventListener('pointercancel', onWindowPointerEnd)
+    },
+    [onWindowPointerEnd, onWindowPointerMove, setRepoSelected],
+  )
+
+  const selectedCount = repos.filter((repo) => repo.selected).length
+  const listClassName = listDensity === 'compact' ? 'modalList ghcrPickerList ghcrPickerListCompact' : 'modalList ghcrPickerList'
+
   return (
-    <div>
+    <div className="ghcrPickerRoot">
       <div className="modalLead">
         profile <Mono>{initial.owner}</Mono> · 选择要跟踪的仓库
       </div>
-      <div className="modalList" style={{ maxHeight: 420, overflowY: 'auto' }}>
-        {repos.map((r) => (
-          <div key={r.fullName} className="modalListItem">
-            <div className="modalListLeft" style={{ minWidth: 0 }}>
-              <div className="modalListTitle">
-                <span className="mono" style={{ overflowWrap: 'anywhere' }}>
-                  {r.fullName}
-                </span>
-              </div>
-            </div>
-            <div className="modalListRight">
-              <Switch
-                checked={r.selected}
-                onChange={(v) => {
-                  setRepos((prev) => prev.map((x) => (x.fullName === r.fullName ? { ...x, selected: v } : x)))
-                }}
-              />
-            </div>
+      <div className="ghcrPickerLayout">
+        <div className="ghcrPickerControls">
+          <div className="ghcrPickerField">
+            <div className="ghcrPickerFieldLabel">搜索</div>
+            <input
+              className="input"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="搜索 owner/repo"
+            />
           </div>
-        ))}
+          <div className="ghcrPickerField">
+            <div className="ghcrPickerFieldLabel">已添加状态</div>
+            <select
+              className="select"
+              value={selectedFilter}
+              onChange={(event) => setSelectedFilter(event.target.value as RepoSelectedFilter)}
+              title="按已添加状态筛选"
+            >
+              <option value="all">全部</option>
+              <option value="selected">已添加</option>
+              <option value="unselected">未添加</option>
+            </select>
+          </div>
+          <div className="ghcrPickerField">
+            <div className="ghcrPickerFieldLabel">可见性</div>
+            <select
+              className="select"
+              value={visibilityFilter}
+              onChange={(event) => setVisibilityFilter(event.target.value as RepoVisibilityFilter)}
+              title="按可见性筛选"
+            >
+              <option value="all">全部可见性</option>
+              <option value="public">公开</option>
+              <option value="private">私有</option>
+            </select>
+          </div>
+          <div className="ghcrPickerField">
+            <div className="ghcrPickerFieldLabel">排序方式</div>
+            <select
+              className="select"
+              value={sortKey}
+              onChange={(event) => setSortKey(event.target.value as RepoSortKey)}
+              title="排序方式"
+            >
+              <option value="activity_desc">最近活动（新→旧）</option>
+              <option value="name_asc">仓库名（A→Z）</option>
+            </select>
+          </div>
+          <div className="ghcrPickerField">
+            <div className="ghcrPickerFieldLabel">右侧列表布局</div>
+            <button
+              type="button"
+              className="btn btnGhost ghcrPickerDensityButton"
+              aria-pressed={listDensity === 'compact'}
+              onClick={() => {
+                const next = listDensity === 'compact' ? 'cozy' : 'compact'
+                setListDensity(next)
+                writeRepoListDensityToStorage(next)
+              }}
+              title="切换右侧列表布局密度"
+            >
+              {listDensity === 'compact' ? '紧凑（点击切回宽松）' : '宽松（点击切到紧凑）'}
+            </button>
+          </div>
+          <div className="muted ghcrPickerSummary">
+            显示 {filteredRepos.length} / {repos.length} · 已添加 {selectedCount}
+          </div>
+        </div>
+        <div className={listClassName}>
+          {filteredRepos.length === 0 ? (
+            <div className="ghcrPickerEmpty">没有匹配的仓库</div>
+          ) : (
+            filteredRepos.map((r) => (
+              <div
+                key={r.fullName}
+                className="modalListItem"
+                data-ghcr-picker-row="true"
+                data-repo-full-name={r.fullName}
+              >
+                <div className="modalListLeft" style={{ minWidth: 0 }}>
+                  <div className="modalListTitle">
+                    <span className="mono" style={{ overflowWrap: 'anywhere' }}>
+                      {r.fullName}
+                    </span>
+                  </div>
+                  <div className="ghcrPickerMeta">
+                    <span>{r.visibility === 'private' ? '私有' : r.visibility === 'public' ? '公开' : '可见性未知'}</span>
+                    <span>{formatRepoActivity(r.lastActivityAt)}</span>
+                  </div>
+                </div>
+                <div className="modalListRight">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-label={`切换 ${r.fullName}`}
+                    aria-checked={r.selected}
+                    className={r.selected ? 'switch switchButton switchButtonChecked' : 'switch switchButton'}
+                    data-ghcr-picker-switch="true"
+                    data-repo-full-name={r.fullName}
+                    onPointerDown={(event) => onSwitchPointerDown(event, r.fullName, r.selected)}
+                    onClick={(event) => {
+                      // Pointer interactions are handled in onPointerDown to support drag paint.
+                      if (event.detail !== 0) return
+                      setRepoSelected(r.fullName, !r.selected)
+                    }}
+                  >
+                    <span className="switchSlider" />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   )
@@ -1268,7 +1559,10 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                             return
                           }
                           if (resolved.kind === 'owner') {
-                            let picked = resolved.repos.map((r) => ({ ...r }))
+                            let picked: Array<{ fullName: string; selected: boolean }> = resolved.repos.map((r) => ({
+                              fullName: r.fullName,
+                              selected: r.selected,
+                            }))
                             const ok = await confirm({
                               title: '选择要跟踪的仓库',
                               body: (
@@ -1279,6 +1573,8 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                                   }}
                                 />
                               ),
+                              cardClassName: 'ghcrPickerDialogCard',
+                              bodyClassName: 'ghcrPickerDialogBody',
                               confirmText: '确认',
                               cancelText: '取消',
                               confirmVariant: 'primary',

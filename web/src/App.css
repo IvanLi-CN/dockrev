@@ -1389,6 +1389,20 @@ html[data-theme='light'] .modalOverlay {
   padding-right: 2px;
 }
 
+.modalBody.ghcrPickerDialogBody {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding-right: 0;
+}
+
+.modalCard.ghcrPickerDialogCard {
+  width: min(920px, calc(100vw - 48px));
+  max-height: calc(100vh - 24px);
+}
+
 .modalLead {
   color: var(--text);
   font-size: 12px;
@@ -1508,6 +1522,125 @@ html[data-theme='light'] .modalOverlay {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.ghcrPickerRoot {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.ghcrPickerLayout {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.ghcrPickerControls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ghcrPickerField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ghcrPickerFieldLabel {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.ghcrPickerField .input,
+.ghcrPickerField .select {
+  width: 100%;
+}
+
+.ghcrPickerDensityButton {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.ghcrPickerList {
+  margin-top: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: min(620px, calc(100vh - 260px));
+}
+
+.ghcrPickerList.ghcrPickerListCompact {
+  gap: 7px;
+}
+
+.ghcrPickerList.ghcrPickerListCompact .modalListItem {
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+
+.ghcrPickerList.ghcrPickerListCompact .modalListTitle {
+  font-size: 11px;
+}
+
+.ghcrPickerList.ghcrPickerListCompact .ghcrPickerMeta {
+  margin-top: 4px;
+  font-size: 11px;
+  gap: 8px;
+}
+
+.ghcrPickerSummary {
+  margin-top: 2px;
+}
+
+@media (max-width: 860px) {
+  .modalCard.ghcrPickerDialogCard {
+    width: min(560px, calc(100vw - 24px));
+  }
+
+  .ghcrPickerLayout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ghcrPickerMeta {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.ghcrPickerEmpty {
+  border: 1px dashed rgba(229, 231, 235, 0.18);
+  border-radius: 12px;
+  padding: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.switchButton {
+  border: none;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.switchButton.switchButtonChecked .switchSlider {
+  background: rgba(56, 189, 248, 0.25);
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+.switchButton.switchButtonChecked .switchSlider::before {
+  transform: translateX(20px);
 }
 
 .modalActions {
