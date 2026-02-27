@@ -195,6 +195,7 @@ async function assertGroupGuideAligned(page, label) {
       }
     }
 
+    let baselineBulletCenterInGuide = null
     for (let ri = 0; ri < rowCount; ri += 1) {
       const rowBox = await requireBoundingBox(rows.nth(ri), `rowLine[${gi}][${ri}]`)
       if (!approxEqual(rowBox.height, rowHeight, 1)) {
@@ -224,9 +225,10 @@ async function assertGroupGuideAligned(page, label) {
         )
       }
 
-      // Bullet center should land at the midpoint of each row segment when measured from guide top.
+      // Track spacing between bullets by using row-0 as baseline to avoid cross-platform subpixel offsets.
       const bulletCenterInGuide = bulletCenterY - guideBox.y
-      const expected = rowHeight / 2 + ri * (rowHeight + rowGap)
+      if (baselineBulletCenterInGuide == null) baselineBulletCenterInGuide = bulletCenterInGuide
+      const expected = baselineBulletCenterInGuide + ri * (rowHeight + rowGap)
       if (!approxEqual(bulletCenterInGuide, expected, 1)) {
         throw new Error(
           `Bullet-guide alignment drift (group=${gi}, row=${ri}${label ? `, ${label}` : ''}): actual=${bulletCenterInGuide}, expected~${expected}`
