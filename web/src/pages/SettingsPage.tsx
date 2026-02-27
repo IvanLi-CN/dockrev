@@ -143,6 +143,7 @@ function mapScopeLabel(scope: SaveScope): string {
 type RepoSelectedFilter = 'all' | 'selected' | 'unselected'
 type RepoVisibilityFilter = 'all' | 'public' | 'private'
 type RepoSortKey = 'activity_desc' | 'name_asc'
+type RepoListDensity = 'cozy' | 'compact'
 type RepoVisibility = 'public' | 'private' | 'unknown'
 type RepoPickerItem = {
   fullName: string
@@ -150,6 +151,7 @@ type RepoPickerItem = {
   visibility: RepoVisibility
   lastActivityAt: string | null
 }
+const GHCR_PICKER_LIST_DENSITY_STORAGE_KEY = 'dockrev:settings:ghcrPicker:listDensity'
 
 function normalizeRepoVisibility(raw: string | undefined): RepoVisibility {
   if (raw === 'public') return 'public'
@@ -167,6 +169,26 @@ function formatRepoActivity(raw: string | null): string {
   const ms = parseActivityMs(raw)
   if (ms === null) return '活动时间未知'
   return `最近活动 ${new Date(ms).toLocaleDateString()}`
+}
+
+function normalizeRepoListDensity(raw: string | null): RepoListDensity {
+  return raw === 'compact' ? 'compact' : 'cozy'
+}
+
+function readRepoListDensityFromStorage(): RepoListDensity {
+  try {
+    return normalizeRepoListDensity(window.localStorage.getItem(GHCR_PICKER_LIST_DENSITY_STORAGE_KEY))
+  } catch {
+    return 'cozy'
+  }
+}
+
+function writeRepoListDensityToStorage(value: RepoListDensity) {
+  try {
+    window.localStorage.setItem(GHCR_PICKER_LIST_DENSITY_STORAGE_KEY, value)
+  } catch {
+    // Ignore storage errors (quota/disabled).
+  }
 }
 
 function GitHubPackagesRepoPicker({
@@ -188,6 +210,7 @@ function GitHubPackagesRepoPicker({
   const [selectedFilter, setSelectedFilter] = useState<RepoSelectedFilter>('all')
   const [visibilityFilter, setVisibilityFilter] = useState<RepoVisibilityFilter>('all')
   const [sortKey, setSortKey] = useState<RepoSortKey>('activity_desc')
+  const [listDensity, setListDensity] = useState<RepoListDensity>(() => readRepoListDensityFromStorage())
   const dragSessionRef = useRef<{
     pointerId: number
     targetSelected: boolean
@@ -325,6 +348,7 @@ function GitHubPackagesRepoPicker({
   )
 
   const selectedCount = repos.filter((repo) => repo.selected).length
+  const listClassName = listDensity === 'compact' ? 'modalList ghcrPickerList ghcrPickerListCompact' : 'modalList ghcrPickerList'
 
   return (
     <div className="ghcrPickerRoot">
@@ -380,11 +404,27 @@ function GitHubPackagesRepoPicker({
               <option value="name_asc">仓库名（A→Z）</option>
             </select>
           </div>
+          <div className="ghcrPickerField">
+            <div className="ghcrPickerFieldLabel">右侧列表布局</div>
+            <button
+              type="button"
+              className="btn btnGhost ghcrPickerDensityButton"
+              aria-pressed={listDensity === 'compact'}
+              onClick={() => {
+                const next = listDensity === 'compact' ? 'cozy' : 'compact'
+                setListDensity(next)
+                writeRepoListDensityToStorage(next)
+              }}
+              title="切换右侧列表布局密度"
+            >
+              {listDensity === 'compact' ? '紧凑（点击切回宽松）' : '宽松（点击切到紧凑）'}
+            </button>
+          </div>
           <div className="muted ghcrPickerSummary">
             显示 {filteredRepos.length} / {repos.length} · 已添加 {selectedCount}
           </div>
         </div>
-        <div className="modalList ghcrPickerList">
+        <div className={listClassName}>
           {filteredRepos.length === 0 ? (
             <div className="ghcrPickerEmpty">没有匹配的仓库</div>
           ) : (

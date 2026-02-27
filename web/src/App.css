@@ -1567,11 +1567,35 @@ html[data-theme='light'] .modalOverlay {
   width: 100%;
 }
 
+.ghcrPickerDensityButton {
+  width: 100%;
+  justify-content: flex-start;
+}
+
 .ghcrPickerList {
   margin-top: 0;
   flex: 1 1 auto;
   min-height: 0;
   max-height: min(620px, calc(100vh - 260px));
+}
+
+.ghcrPickerList.ghcrPickerListCompact {
+  gap: 7px;
+}
+
+.ghcrPickerList.ghcrPickerListCompact .modalListItem {
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+
+.ghcrPickerList.ghcrPickerListCompact .modalListTitle {
+  font-size: 11px;
+}
+
+.ghcrPickerList.ghcrPickerListCompact .ghcrPickerMeta {
+  margin-top: 4px;
+  font-size: 11px;
+  gap: 8px;
 }
 
 .ghcrPickerSummary {
