@@ -327,7 +327,7 @@ function GitHubPackagesRepoPicker({
   const selectedCount = repos.filter((repo) => repo.selected).length
 
   return (
-    <div>
+    <div className="ghcrPickerRoot">
       <div className="modalLead">
         profile <Mono>{initial.owner}</Mono> · 选择要跟踪的仓库
       </div>
@@ -371,7 +371,7 @@ function GitHubPackagesRepoPicker({
       <div className="muted ghcrPickerSummary">
         显示 {filteredRepos.length} / {repos.length} · 已添加 {selectedCount}
       </div>
-      <div className="modalList" style={{ maxHeight: 420, overflowY: 'auto' }}>
+      <div className="modalList ghcrPickerList">
         {filteredRepos.length === 0 ? (
           <div className="ghcrPickerEmpty">没有匹配的仓库</div>
         ) : (
@@ -1507,13 +1507,14 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                             const ok = await confirm({
                               title: '选择要跟踪的仓库',
                               body: (
-                                <GitHubPackagesRepoPicker
+                            <GitHubPackagesRepoPicker
                                   initial={resolved}
                                   onChange={(next) => {
                                     picked = next
                                   }}
                                 />
                               ),
+                              bodyClassName: 'ghcrPickerDialogBody',
                               confirmText: '确认',
                               cancelText: '取消',
                               confirmVariant: 'primary',

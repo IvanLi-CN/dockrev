@@ -22,6 +22,7 @@ export function ConfirmProvider(props: { children: ReactNode }) {
         <ConfirmDialog
           title={req.title}
           body={req.body}
+          bodyClassName={req.bodyClassName}
           confirmText={req.confirmText}
           cancelText={req.cancelText}
           confirmVariant={req.confirmVariant}
@@ -40,6 +41,7 @@ export function ConfirmProvider(props: { children: ReactNode }) {
 function ConfirmDialog(props: {
   title: string
   body: ReactNode
+  bodyClassName?: string
   confirmText?: string
   cancelText?: string
   confirmVariant?: ConfirmVariant
@@ -95,7 +97,7 @@ function ConfirmDialog(props: {
           <div className="modalTitle">{props.title}</div>
           {badgeText && badgeTone ? <Pill tone={badgeTone}>{badgeText}</Pill> : null}
         </div>
-        <div className="modalBody">{props.body}</div>
+        <div className={props.bodyClassName ? `modalBody ${props.bodyClassName}` : 'modalBody'}>{props.body}</div>
         <div className="modalActions">
           <button className="btn btnGhost" ref={cancelRef} onClick={() => props.onClose(false)}>
             {cancelText}
