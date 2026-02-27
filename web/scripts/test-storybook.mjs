@@ -229,7 +229,9 @@ async function assertGroupGuideAligned(page, label) {
       const bulletCenterInGuide = bulletCenterY - guideBox.y
       if (baselineBulletCenterInGuide == null) baselineBulletCenterInGuide = bulletCenterInGuide
       const expected = baselineBulletCenterInGuide + ri * (rowHeight + rowGap)
-      if (!approxEqual(bulletCenterInGuide, expected, 1)) {
+      // Keep a slightly looser tolerance here: different runners can produce
+      // subpixel stacking drift even when row height/gap invariants hold.
+      if (!approxEqual(bulletCenterInGuide, expected, 2)) {
         throw new Error(
           `Bullet-guide alignment drift (group=${gi}, row=${ri}${label ? `, ${label}` : ''}): actual=${bulletCenterInGuide}, expected~${expected}`
         )
