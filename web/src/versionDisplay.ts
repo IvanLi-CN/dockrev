@@ -31,9 +31,9 @@ export function formatCurrentTagDisplay(
 export function formatCandidateTagDisplay(
   tag: string,
   resolvedTag: string | null | undefined,
-  inferenceStatus?: string | null,
+  _inferenceStatus?: string | null,
 ): string {
-  if (isPending(inferenceStatus)) return '等待中…'
+  void _inferenceStatus
   const resolved = trimOrEmpty(resolvedTag)
   if (isStrictSemverTag(resolved)) return resolved
 

@@ -12,6 +12,10 @@ describe('versionDisplay', () => {
     expect(formatCurrentTagDisplay('latest', null)).toBe('-')
   })
 
+  test('keeps current display in pending state as waiting text', () => {
+    expect(formatCurrentTagDisplay('latest', 'v0.2.51', 'pending')).toBe('等待中…')
+  })
+
   test('prefers resolved candidate tag when it is strict semver', () => {
     expect(formatCandidateTagDisplay('latest', 'v0.2.51')).toBe('v0.2.51')
   })
@@ -19,5 +23,10 @@ describe('versionDisplay', () => {
   test('falls back to raw candidate tag when resolved tag is missing or non-semver', () => {
     expect(formatCandidateTagDisplay('latest', null)).toBe('latest')
     expect(formatCandidateTagDisplay('latest', 'stable')).toBe('latest')
+  })
+
+  test('keeps candidate visible during pending state', () => {
+    expect(formatCandidateTagDisplay('latest', 'v0.2.51', 'pending')).toBe('v0.2.51')
+    expect(formatCandidateTagDisplay('latest', null, 'pending')).toBe('latest')
   })
 })
