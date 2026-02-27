@@ -24,7 +24,7 @@ use url::Url;
 use crate::github;
 use crate::{
     backup, discovery, error::ApiError, ids, ignore, notify, preflight, registry, runtime_scan,
-    snapshot_worker, state::AppState, ui, updater, version_inference_worker,
+    snapshot_worker, state::AppState, ui, updater,
 };
 use types::*;
 
@@ -221,6 +221,14 @@ fn needs_version_inference(service: &Service) -> bool {
         .is_some_and(|c| !ignore::is_strict_semver(&c.tag))
 }
 
+const VERSION_INFERENCE_REASON_CACHE_MISS: &str = "cache_miss";
+const VERSION_INFERENCE_REASON_CACHE_STALE: &str = "cache_stale";
+const VERSION_INFERENCE_REASON_ALL_FAILED: &str = "all_failed";
+const VERSION_INFERENCE_REASON_NEW_VERSION: &str = "new_version";
+const VERSION_INFERENCE_REASON_FORCE: &str = "force";
+const VERSION_INFERENCE_REASON_RUNNING: &str = "running";
+const VERSION_INFERENCE_REASON_NOT_REQUIRED: &str = "not_required";
+
 fn checked_at_is_older_than(checked_at: &str, min_age: time::Duration) -> bool {
     let parsed =
         time::OffsetDateTime::parse(checked_at, &time::format_description::well_known::Rfc3339);
@@ -234,7 +242,7 @@ fn checked_at_is_older_than(checked_at: &str, min_age: time::Duration) -> bool {
 fn checked_at_is_stale(checked_at: &str) -> bool {
     checked_at_is_older_than(
         checked_at,
-        time::Duration::days(version_inference_worker::VERSION_INFERENCE_TTL_DAYS),
+        time::Duration::days(snapshot_worker::SNAPSHOT_CACHE_TTL_DAYS),
     )
 }
 
@@ -242,9 +250,7 @@ fn checked_at_is_retryable_all_failed(checked_at: Option<&str>) -> bool {
     checked_at.is_none_or(|ts| {
         checked_at_is_older_than(
             ts,
-            time::Duration::minutes(
-                version_inference_worker::VERSION_INFERENCE_ALL_FAILED_RETRY_MINUTES,
-            ),
+            time::Duration::minutes(snapshot_worker::SNAPSHOT_ALL_FAILED_RETRY_MINUTES),
         )
     })
 }
@@ -256,138 +262,221 @@ fn needs_version_inference_for_tags(current_tag: &str, candidate_tag: Option<&st
     candidate_tag.is_some_and(|tag| !ignore::is_strict_semver(tag))
 }
 
-fn update_service_inference_from_snapshot(
-    service: &mut Service,
-    snapshot: &version_inference_worker::VersionInferenceSnapshot,
-) {
-    if !ignore::is_strict_semver(&service.image.tag)
-        && let Some(digest) = service.image.digest.as_deref()
-    {
-        let mut tags = version_inference_worker::lookup_tags_for_digest(snapshot, digest);
-        tags.retain(|t| t != &service.image.tag);
-        service.image.resolved_tag = tags.first().cloned();
-        service.image.resolved_tags = if tags.len() > 1 { Some(tags) } else { None };
-    }
+#[derive(Clone)]
+struct DigestSnapshotCacheValue {
+    snapshot: ServiceDigestTagsSnapshotResponse,
+    checked_at: String,
+}
 
-    if let Some(candidate) = service.candidate.as_mut()
-        && !ignore::is_strict_semver(&candidate.tag)
-    {
-        let mut tags =
-            version_inference_worker::lookup_tags_for_digest(snapshot, &candidate.digest);
-        tags.retain(|t| t != &candidate.tag);
-        candidate.resolved_tag = tags.first().cloned();
+fn infer_semver_tags_from_snapshot(
+    snapshot: &ServiceDigestTagsSnapshotResponse,
+    raw_tag: &str,
+) -> Vec<String> {
+    let mut semver_tags = snapshot
+        .tags
+        .iter()
+        .filter_map(|tag| ignore::parse_version(tag).map(|v| (v, tag.clone())))
+        .collect::<Vec<_>>();
+    semver_tags.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    let raw_trim = raw_tag.trim();
+    semver_tags
+        .into_iter()
+        .map(|(_, tag)| tag)
+        .filter(|tag| tag != raw_trim)
+        .collect()
+}
+
+fn checked_at_latest(mut existing: Option<String>, candidate: Option<&str>) -> Option<String> {
+    let Some(candidate) = candidate else {
+        return existing;
+    };
+    if existing.as_deref().is_none_or(|cur| candidate > cur) {
+        existing = Some(candidate.to_string());
     }
+    existing
+}
+
+fn parse_digest_snapshot_row(
+    snapshot_json: &str,
+    checked_at: &str,
+) -> Option<DigestSnapshotCacheValue> {
+    let mut parsed =
+        serde_json::from_str::<ServiceDigestTagsSnapshotResponse>(snapshot_json).ok()?;
+    if parsed.checked_at.trim().is_empty() {
+        parsed.checked_at = checked_at.to_string();
+    }
+    Some(DigestSnapshotCacheValue {
+        snapshot: parsed,
+        checked_at: checked_at.to_string(),
+    })
 }
 
 async fn enrich_stack_with_version_inference(
     state: &Arc<AppState>,
     stack: &mut StackRecord,
 ) -> Result<(), ApiError> {
-    use std::collections::BTreeMap;
+    use std::collections::HashMap;
 
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
+    let mut snapshot_cache: HashMap<String, Option<DigestSnapshotCacheValue>> = HashMap::new();
+    let mut inflight_cache: HashMap<String, Option<String>> = HashMap::new();
 
-    let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-    for (idx, svc) in stack.services.iter_mut().enumerate() {
+    for svc in stack.services.iter_mut() {
         if !needs_version_inference(svc) {
             svc.version_inference = Some(VersionInferenceState {
                 status: "ready".to_string(),
-                reason: Some(
-                    version_inference_worker::VersionInferenceReason::NotRequired
-                        .as_str()
-                        .to_string(),
-                ),
+                reason: Some(VERSION_INFERENCE_REASON_NOT_REQUIRED.to_string()),
                 checked_at: None,
             });
             continue;
         }
+
         let Some(image_repo) = snapshot_worker::image_repo_from_image_ref(&svc.image.reference)
         else {
             svc.version_inference = Some(VersionInferenceState {
                 status: "ready".to_string(),
-                reason: Some(
-                    version_inference_worker::VersionInferenceReason::NotRequired
-                        .as_str()
-                        .to_string(),
-                ),
+                reason: Some(VERSION_INFERENCE_REASON_NOT_REQUIRED.to_string()),
                 checked_at: None,
             });
             continue;
         };
-        groups.entry(image_repo).or_default().push(idx);
-    }
 
-    for (image_repo, indices) in groups {
-        let snapshot_row = state
-            .db
-            .get_image_version_inference_snapshot(&image_repo, &host_platform)
-            .await
-            .map_err(map_internal)?;
-        let mut snapshot: Option<version_inference_worker::VersionInferenceSnapshot> = None;
-        let mut checked_at: Option<String> = None;
-        let mut all_failed = false;
-        if let Some((snapshot_json, row_all_failed, row_checked_at, _updated_at)) = snapshot_row {
-            checked_at = Some(row_checked_at.clone());
-            all_failed = row_all_failed;
-            snapshot = serde_json::from_str::<version_inference_worker::VersionInferenceSnapshot>(
-                &snapshot_json,
-            )
-            .ok();
+        let mut digest_targets: Vec<(String, bool)> = Vec::new();
+        if !ignore::is_strict_semver(&svc.image.tag)
+            && let Some(current_digest) = svc
+                .image
+                .digest
+                .as_deref()
+                .and_then(snapshot_worker::normalize_digest)
+        {
+            digest_targets.push((current_digest, false));
+        }
+        if let Some(candidate) = svc.candidate.as_ref()
+            && !ignore::is_strict_semver(&candidate.tag)
+            && let Some(candidate_digest) = snapshot_worker::normalize_digest(&candidate.digest)
+            && !digest_targets
+                .iter()
+                .any(|(digest, _)| digest == &candidate_digest)
+        {
+            digest_targets.push((candidate_digest, true));
         }
 
-        let mut pending_reason: Option<version_inference_worker::VersionInferenceReason> = None;
-        let mut ready_reason: Option<version_inference_worker::VersionInferenceReason> = None;
-        if snapshot.is_none() {
-            pending_reason = Some(version_inference_worker::VersionInferenceReason::CacheMiss);
-        } else if checked_at.as_deref().is_some_and(checked_at_is_stale) {
-            pending_reason = Some(version_inference_worker::VersionInferenceReason::CacheStale);
-        } else if all_failed {
-            ready_reason = Some(version_inference_worker::VersionInferenceReason::AllFailed);
-            if checked_at_is_retryable_all_failed(checked_at.as_deref()) {
-                pending_reason = Some(version_inference_worker::VersionInferenceReason::AllFailed);
+        if digest_targets.is_empty() {
+            svc.version_inference = Some(VersionInferenceState {
+                status: "ready".to_string(),
+                reason: Some(VERSION_INFERENCE_REASON_NOT_REQUIRED.to_string()),
+                checked_at: None,
+            });
+            continue;
+        }
+
+        let mut pending = false;
+        let mut pending_reason: Option<String> = None;
+        let mut ready_reason: Option<String> = None;
+        let mut latest_checked_at: Option<String> = None;
+
+        for (digest, for_candidate) in digest_targets {
+            let digest_key = format!("{image_repo}@{digest}@{host_platform}");
+
+            let snapshot_entry = if let Some(cached) = snapshot_cache.get(&digest_key) {
+                cached.clone()
+            } else {
+                let row = state
+                    .db
+                    .get_image_digest_tags_snapshot(&image_repo, &digest, &host_platform)
+                    .await
+                    .map_err(map_internal)?;
+                let parsed = row
+                    .as_ref()
+                    .and_then(|(snapshot_json, checked_at, _updated_at)| {
+                        parse_digest_snapshot_row(snapshot_json, checked_at)
+                    });
+                snapshot_cache.insert(digest_key.clone(), parsed.clone());
+                parsed
+            };
+
+            let mut enqueue_reason: Option<&str> = None;
+            if let Some(snapshot_entry) = snapshot_entry.as_ref() {
+                latest_checked_at =
+                    checked_at_latest(latest_checked_at, Some(snapshot_entry.checked_at.as_str()));
+                let snapshot_all_failed =
+                    snapshot_worker::snapshot_is_all_failed(&snapshot_entry.snapshot);
+                if checked_at_is_stale(&snapshot_entry.checked_at) {
+                    enqueue_reason = Some(VERSION_INFERENCE_REASON_CACHE_STALE);
+                } else if snapshot_all_failed {
+                    ready_reason
+                        .get_or_insert_with(|| VERSION_INFERENCE_REASON_ALL_FAILED.to_string());
+                    if checked_at_is_retryable_all_failed(Some(snapshot_entry.checked_at.as_str()))
+                    {
+                        enqueue_reason = Some(VERSION_INFERENCE_REASON_ALL_FAILED);
+                    }
+                }
+            } else {
+                enqueue_reason = Some(VERSION_INFERENCE_REASON_CACHE_MISS);
+            }
+
+            if let Some(reason) = enqueue_reason {
+                pending = true;
+                let _ = state
+                    .snapshot_worker
+                    .enqueue(&image_repo, &digest, &host_platform, reason)
+                    .await;
+                pending_reason.get_or_insert_with(|| reason.to_string());
+            }
+
+            let in_flight_reason = if let Some(reason) = inflight_cache.get(&digest_key) {
+                reason.clone()
+            } else {
+                let reason = state
+                    .snapshot_worker
+                    .in_flight_reason(&image_repo, &digest, &host_platform)
+                    .await;
+                inflight_cache.insert(digest_key.clone(), reason.clone());
+                reason
+            };
+            if let Some(in_flight_reason) = in_flight_reason {
+                pending = true;
+                pending_reason.get_or_insert(in_flight_reason);
+            }
+
+            if let Some(snapshot_entry) = snapshot_entry.as_ref() {
+                let tags = if for_candidate {
+                    let raw = svc
+                        .candidate
+                        .as_ref()
+                        .map(|candidate| candidate.tag.as_str())
+                        .unwrap_or_default();
+                    infer_semver_tags_from_snapshot(&snapshot_entry.snapshot, raw)
+                } else {
+                    infer_semver_tags_from_snapshot(&snapshot_entry.snapshot, &svc.image.tag)
+                };
+                let inferred_first = tags.first().cloned();
+                if for_candidate {
+                    if let Some(candidate) = svc.candidate.as_mut()
+                        && let Some(inferred) = inferred_first
+                    {
+                        candidate.resolved_tag = Some(inferred);
+                    }
+                } else if let Some(inferred) = inferred_first {
+                    svc.image.resolved_tag = Some(inferred);
+                    svc.image.resolved_tags = if tags.len() > 1 { Some(tags) } else { None };
+                }
             }
         }
 
-        if let Some(reason) = pending_reason {
-            state
-                .version_inference_worker
-                .enqueue(&image_repo, &host_platform, reason)
-                .await;
-        }
-
-        let in_flight_reason = state
-            .version_inference_worker
-            .in_flight_reason(&image_repo, &host_platform)
-            .await;
-        let in_flight = in_flight_reason.is_some();
-        let status = if in_flight { "pending" } else { "ready" };
-        let reason = if in_flight {
-            Some(
-                pending_reason
-                    .or(in_flight_reason)
-                    .unwrap_or(version_inference_worker::VersionInferenceReason::Running)
-                    .as_str()
-                    .to_string(),
-            )
+        let status = if pending { "pending" } else { "ready" };
+        let reason = if pending {
+            Some(pending_reason.unwrap_or_else(|| VERSION_INFERENCE_REASON_RUNNING.to_string()))
         } else {
-            ready_reason.map(|r| r.as_str().to_string())
+            ready_reason
         };
 
-        for idx in indices {
-            let svc = stack
-                .services
-                .get_mut(idx)
-                .ok_or_else(|| ApiError::internal("invalid service index"))?;
-            if let Some(snapshot) = snapshot.as_ref() {
-                update_service_inference_from_snapshot(svc, snapshot);
-            }
-            svc.version_inference = Some(VersionInferenceState {
-                status: status.to_string(),
-                reason: reason.clone(),
-                checked_at: checked_at.clone(),
-            });
-        }
+        svc.version_inference = Some(VersionInferenceState {
+            status: status.to_string(),
+            reason,
+            checked_at: latest_checked_at,
+        });
     }
 
     Ok(())
@@ -829,13 +918,18 @@ async fn handle_check_worker_result(
         && needs_version_inference_for_tags(&service_image_tag, outcome.candidate_tag.as_deref())
         && let Some(image_repo) =
             crate::snapshot_worker::image_repo_from_image_ref(&service_image_ref)
+        && let Some(candidate_digest) = outcome
+            .candidate_digest
+            .as_deref()
+            .and_then(snapshot_worker::normalize_digest)
     {
-        state
-            .version_inference_worker
+        let _ = state
+            .snapshot_worker
             .enqueue(
                 &image_repo,
+                &candidate_digest,
                 host_platform,
-                crate::version_inference_worker::VersionInferenceReason::NewVersion,
+                VERSION_INFERENCE_REASON_NEW_VERSION,
             )
             .await;
     }
@@ -2897,26 +2991,52 @@ async fn trigger_service_version_inference_refresh(
     else {
         return Err(ApiError::invalid_argument("invalid service image ref"));
     };
+    let mut digests: Vec<String> = Vec::new();
+    if let Some(current_digest) = service
+        .image
+        .digest
+        .as_deref()
+        .and_then(snapshot_worker::normalize_digest)
+    {
+        digests.push(current_digest);
+    }
+    if let Some(candidate_digest) = service
+        .candidate
+        .as_ref()
+        .and_then(|candidate| snapshot_worker::normalize_digest(&candidate.digest))
+        && !digests.iter().any(|digest| digest == &candidate_digest)
+    {
+        digests.push(candidate_digest);
+    }
+    if digests.is_empty() {
+        return Err(ApiError::invalid_argument("service digest is missing"));
+    }
+
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
-    let inserted = state
-        .version_inference_worker
-        .enqueue(
-            &image_repo,
-            &host_platform,
-            version_inference_worker::VersionInferenceReason::Force,
-        )
-        .await;
+    let mut inserted = false;
+    for digest in digests {
+        let enqueued = state
+            .snapshot_worker
+            .enqueue(
+                &image_repo,
+                &digest,
+                &host_platform,
+                VERSION_INFERENCE_REASON_FORCE,
+            )
+            .await;
+        inserted = inserted || enqueued;
+    }
     let reason = if inserted {
-        version_inference_worker::VersionInferenceReason::Force
+        VERSION_INFERENCE_REASON_FORCE
     } else {
-        version_inference_worker::VersionInferenceReason::Running
+        VERSION_INFERENCE_REASON_RUNNING
     };
     let resp = TriggerVersionInferenceRefreshResponse {
         status: "pending".to_string(),
         service_id,
         image_repo,
-        reason: reason.as_str().to_string(),
+        reason: reason.to_string(),
     };
     Ok((StatusCode::ACCEPTED, Json(resp)).into_response())
 }
@@ -2942,8 +3062,12 @@ struct VersionInferenceOverviewRowAccum {
     image_repo: String,
     host_platform: String,
     service_count: u32,
-    snapshot: Option<crate::db::ImageVersionInferenceSnapshotRow>,
-    task: Option<version_inference_worker::VersionInferenceTaskSnapshot>,
+    has_snapshot: bool,
+    has_stale: bool,
+    all_failed_only: bool,
+    checked_at: Option<String>,
+    updated_at: Option<String>,
+    task: Option<snapshot_worker::SnapshotTaskSnapshot>,
 }
 
 fn normalize_version_inference_status_filter(
@@ -2964,7 +3088,7 @@ fn normalize_version_inference_status_filter(
 }
 
 fn map_task_progress_state(
-    progress: Option<version_inference_worker::VersionInferenceTaskProgress>,
+    progress: Option<snapshot_worker::SnapshotTaskProgress>,
 ) -> Option<VersionInferenceTaskProgressState> {
     progress.map(|p| VersionInferenceTaskProgressState {
         phase: p.phase,
@@ -3002,22 +3126,30 @@ fn derive_overview_row_status(
         }
     }
 
-    if let Some(snapshot) = row.snapshot.as_ref() {
-        if snapshot.all_failed {
+    if row.has_snapshot {
+        if row.has_stale {
             return (
-                "all_failed".to_string(),
-                Some("all_failed".to_string()),
+                "stale".to_string(),
+                Some(VERSION_INFERENCE_REASON_CACHE_STALE.to_string()),
                 None,
             );
         }
-        if checked_at_is_stale(&snapshot.checked_at) {
-            return ("stale".to_string(), Some("cache_stale".to_string()), None);
+        if row.all_failed_only {
+            return (
+                "all_failed".to_string(),
+                Some(VERSION_INFERENCE_REASON_ALL_FAILED.to_string()),
+                None,
+            );
         }
         return ("ready".to_string(), None, None);
     }
 
     // Rows are constructed from cached snapshots and in-flight tasks only.
-    ("queued".to_string(), Some("cache_miss".to_string()), None)
+    (
+        "queued".to_string(),
+        Some(VERSION_INFERENCE_REASON_CACHE_MISS.to_string()),
+        None,
+    )
 }
 
 fn version_inference_status_rank(status: &str) -> u8 {
@@ -3046,15 +3178,14 @@ async fn get_version_inference_overview(
             .filter(|s| !s.is_empty())
             .map(|s| s.to_ascii_lowercase());
 
-    let worker_snapshot = state.version_inference_worker.worker_stats().await;
-    let gc_snapshot = state.version_inference_worker.gc_status().await;
-    let task_snapshots = state.version_inference_worker.snapshot_tasks().await;
+    let worker_snapshot = state.snapshot_worker.worker_stats().await;
+    let gc_snapshot = state.snapshot_worker.gc_status().await;
+    let task_snapshots = state.snapshot_worker.snapshot_tasks().await;
     let snapshot_rows = state
         .db
-        .list_image_version_inference_snapshots()
+        .list_image_digest_tags_snapshots()
         .await
         .map_err(map_internal)?;
-    let snapshots_total = snapshot_rows.len() as u32;
     let service_targets = state
         .db
         .list_version_inference_service_targets()
@@ -3081,46 +3212,64 @@ async fn get_version_inference_overview(
 
     for snapshot in snapshot_rows {
         let key = format!("{}@{}", snapshot.image_repo, snapshot.host_platform);
-        let entry = rows_by_key
-            .entry(key)
-            .or_insert_with(|| VersionInferenceOverviewRowAccum {
-                image_repo: snapshot.image_repo.clone(),
-                host_platform: snapshot.host_platform.clone(),
-                service_count: *service_count_by_key
-                    .get(&format!(
-                        "{}@{}",
-                        snapshot.image_repo, snapshot.host_platform
-                    ))
-                    .unwrap_or(&0),
-                snapshot: None,
-                task: None,
-            });
-        entry.snapshot = Some(snapshot);
+        let entry =
+            rows_by_key
+                .entry(key.clone())
+                .or_insert_with(|| VersionInferenceOverviewRowAccum {
+                    image_repo: snapshot.image_repo.clone(),
+                    host_platform: snapshot.host_platform.clone(),
+                    service_count: *service_count_by_key.get(&key).unwrap_or(&0),
+                    has_snapshot: false,
+                    has_stale: false,
+                    all_failed_only: true,
+                    checked_at: None,
+                    updated_at: None,
+                    task: None,
+                });
+        entry.has_snapshot = true;
+        entry.checked_at =
+            checked_at_latest(entry.checked_at.clone(), Some(snapshot.checked_at.as_str()));
+        entry.updated_at =
+            checked_at_latest(entry.updated_at.clone(), Some(snapshot.updated_at.as_str()));
+        if checked_at_is_stale(&snapshot.checked_at) {
+            entry.has_stale = true;
+        }
+        let all_failed = parse_digest_snapshot_row(&snapshot.snapshot_json, &snapshot.checked_at)
+            .is_some_and(|parsed| snapshot_worker::snapshot_is_all_failed(&parsed.snapshot));
+        entry.all_failed_only = entry.all_failed_only && all_failed;
     }
 
     for task in task_snapshots.iter() {
-        let entry = rows_by_key.entry(task.key.clone()).or_insert_with(|| {
+        let image_key = format!("{}@{}", task.image_repo, task.host_platform);
+        let entry = rows_by_key.entry(image_key.clone()).or_insert_with(|| {
             VersionInferenceOverviewRowAccum {
                 image_repo: task.image_repo.clone(),
                 host_platform: task.host_platform.clone(),
-                service_count: *service_count_by_key.get(&task.key).unwrap_or(&0),
-                snapshot: None,
+                service_count: *service_count_by_key.get(&image_key).unwrap_or(&0),
+                has_snapshot: false,
+                has_stale: false,
+                all_failed_only: false,
+                checked_at: None,
+                updated_at: Some(task.updated_at.clone()),
                 task: None,
             }
         });
-        entry.task = Some(task.clone());
+        let replace = entry.task.as_ref().is_none_or(|existing| {
+            version_inference_status_rank(&task.status)
+                < version_inference_status_rank(&existing.status)
+                || (task.status == existing.status && task.updated_at > existing.updated_at)
+        });
+        if replace {
+            entry.task = Some(task.clone());
+        }
+        entry.updated_at =
+            checked_at_latest(entry.updated_at.clone(), Some(task.updated_at.as_str()));
     }
 
     let mut all_rows = rows_by_key
         .into_values()
         .map(|row| {
             let (status, reason, progress) = derive_overview_row_status(&row);
-            let checked_at = row.snapshot.as_ref().map(|v| v.checked_at.clone());
-            let updated_at = row
-                .task
-                .as_ref()
-                .map(|v| v.updated_at.clone())
-                .or_else(|| row.snapshot.as_ref().map(|v| v.updated_at.clone()));
             VersionInferenceOverviewRow {
                 key: format!("{}@{}", row.image_repo, row.host_platform),
                 image_repo: row.image_repo,
@@ -3128,8 +3277,8 @@ async fn get_version_inference_overview(
                 status,
                 service_count: row.service_count,
                 reason,
-                checked_at,
-                updated_at,
+                checked_at: row.checked_at,
+                updated_at: row.updated_at,
                 progress,
             }
         })
@@ -3143,6 +3292,10 @@ async fn get_version_inference_overview(
             .then_with(|| a.host_platform.cmp(&b.host_platform))
     });
 
+    let snapshots_total = all_rows
+        .iter()
+        .filter(|row| row.checked_at.is_some())
+        .count() as u32;
     let mut summary = VersionInferenceOverviewSummary {
         snapshots_total,
         queued: 0,
@@ -3228,14 +3381,14 @@ async fn version_inference_events(
     let _user = require_user(&state, &headers)?;
     let mut after_id = resolve_sse_after_id(&headers, q.after_id);
     if after_id <= 0 {
-        after_id = state.version_inference_worker.latest_event_id().await;
+        after_id = state.snapshot_worker.latest_event_id().await;
     }
     let sse_state = state.clone();
 
     let stream = async_stream::stream! {
         loop {
             let batch = sse_state
-                .version_inference_worker
+                .snapshot_worker
                 .events_since(after_id, 200)
                 .await;
 
@@ -3244,7 +3397,7 @@ async fn version_inference_events(
                 && after_id < oldest_id.saturating_sub(1)
             {
                 let evt = sse_state
-                    .version_inference_worker
+                    .snapshot_worker
                     .emit_resync_required(after_id, oldest_id, batch.latest_id)
                     .await;
                 after_id = evt.id;
