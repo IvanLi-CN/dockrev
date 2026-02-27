@@ -3210,23 +3210,27 @@ html[data-theme='light'] .card {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 18%, transparent);
 }
 
-.table,
-.tableGroup {
+.table {
   gap: 6px;
+}
+
+.tableGroup {
+  gap: var(--dockrev-table-group-gap);
 }
 
 .tableHeader,
 .groupHead,
 .rowLine {
-  border: 1px solid color-mix(in srgb, var(--borderColor) 84%, transparent);
+  border: 0;
   background: color-mix(in srgb, var(--dockrev-surface) 82%, transparent);
   border-radius: 12px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--borderColor) 84%, transparent);
 }
 
 .groupHead:hover,
 .rowLine:hover {
-  border-color: color-mix(in srgb, var(--color-primary) 26%, var(--borderColor) 74%);
   background: color-mix(in srgb, var(--dockrev-surface-strong) 86%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 26%, var(--borderColor) 74%);
 }
 
 .groupTitle {
@@ -3249,7 +3253,7 @@ html[data-theme='light'] .card {
 
 .groupGuide {
   opacity: 0.72;
-  top: calc(var(--dockrev-table-group-head-height) + var(--dockrev-table-group-gap) + 2px);
+  top: calc(var(--dockrev-table-group-head-height) + var(--dockrev-table-group-gap));
 }
 
 .jobProgress,
