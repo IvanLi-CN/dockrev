@@ -22,6 +22,7 @@ export function ConfirmProvider(props: { children: ReactNode }) {
         <ConfirmDialog
           title={req.title}
           body={req.body}
+          cardClassName={req.cardClassName}
           bodyClassName={req.bodyClassName}
           confirmText={req.confirmText}
           cancelText={req.cancelText}
@@ -41,6 +42,7 @@ export function ConfirmProvider(props: { children: ReactNode }) {
 function ConfirmDialog(props: {
   title: string
   body: ReactNode
+  cardClassName?: string
   bodyClassName?: string
   confirmText?: string
   cancelText?: string
@@ -87,7 +89,7 @@ function ConfirmDialog(props: {
       }}
     >
       <div
-        className="modalCard"
+        className={props.cardClassName ? `modalCard ${props.cardClassName}` : 'modalCard'}
         role="dialog"
         aria-modal="true"
         aria-label={props.title}

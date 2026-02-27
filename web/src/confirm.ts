@@ -6,6 +6,7 @@ export type ConfirmBadgeTone = 'ok' | 'warn' | 'bad' | 'muted'
 export type ConfirmOptions = {
   title: string
   body: ReactNode
+  cardClassName?: string
   bodyClassName?: string
   confirmText?: string
   cancelText?: string

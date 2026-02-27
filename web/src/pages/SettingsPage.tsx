@@ -331,85 +331,99 @@ function GitHubPackagesRepoPicker({
       <div className="modalLead">
         profile <Mono>{initial.owner}</Mono> · 选择要跟踪的仓库
       </div>
-      <div className="ghcrPickerToolbar">
-        <input
-          className="input"
-          value={searchQuery}
-          onChange={(event) => setSearchQuery(event.target.value)}
-          placeholder="搜索 owner/repo"
-        />
-        <select
-          className="select"
-          value={selectedFilter}
-          onChange={(event) => setSelectedFilter(event.target.value as RepoSelectedFilter)}
-          title="按已添加状态筛选"
-        >
-          <option value="all">全部</option>
-          <option value="selected">已添加</option>
-          <option value="unselected">未添加</option>
-        </select>
-        <select
-          className="select"
-          value={visibilityFilter}
-          onChange={(event) => setVisibilityFilter(event.target.value as RepoVisibilityFilter)}
-          title="按可见性筛选"
-        >
-          <option value="all">全部可见性</option>
-          <option value="public">公开</option>
-          <option value="private">私有</option>
-        </select>
-        <select
-          className="select"
-          value={sortKey}
-          onChange={(event) => setSortKey(event.target.value as RepoSortKey)}
-          title="排序方式"
-        >
-          <option value="activity_desc">最近活动（新→旧）</option>
-          <option value="name_asc">仓库名（A→Z）</option>
-        </select>
-      </div>
-      <div className="muted ghcrPickerSummary">
-        显示 {filteredRepos.length} / {repos.length} · 已添加 {selectedCount}
-      </div>
-      <div className="modalList ghcrPickerList">
-        {filteredRepos.length === 0 ? (
-          <div className="ghcrPickerEmpty">没有匹配的仓库</div>
-        ) : (
-          filteredRepos.map((r) => (
-            <div key={r.fullName} className="modalListItem">
-              <div className="modalListLeft" style={{ minWidth: 0 }}>
-                <div className="modalListTitle">
-                  <span className="mono" style={{ overflowWrap: 'anywhere' }}>
-                    {r.fullName}
-                  </span>
+      <div className="ghcrPickerLayout">
+        <div className="ghcrPickerControls">
+          <div className="ghcrPickerField">
+            <div className="ghcrPickerFieldLabel">搜索</div>
+            <input
+              className="input"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="搜索 owner/repo"
+            />
+          </div>
+          <div className="ghcrPickerField">
+            <div className="ghcrPickerFieldLabel">已添加状态</div>
+            <select
+              className="select"
+              value={selectedFilter}
+              onChange={(event) => setSelectedFilter(event.target.value as RepoSelectedFilter)}
+              title="按已添加状态筛选"
+            >
+              <option value="all">全部</option>
+              <option value="selected">已添加</option>
+              <option value="unselected">未添加</option>
+            </select>
+          </div>
+          <div className="ghcrPickerField">
+            <div className="ghcrPickerFieldLabel">可见性</div>
+            <select
+              className="select"
+              value={visibilityFilter}
+              onChange={(event) => setVisibilityFilter(event.target.value as RepoVisibilityFilter)}
+              title="按可见性筛选"
+            >
+              <option value="all">全部可见性</option>
+              <option value="public">公开</option>
+              <option value="private">私有</option>
+            </select>
+          </div>
+          <div className="ghcrPickerField">
+            <div className="ghcrPickerFieldLabel">排序方式</div>
+            <select
+              className="select"
+              value={sortKey}
+              onChange={(event) => setSortKey(event.target.value as RepoSortKey)}
+              title="排序方式"
+            >
+              <option value="activity_desc">最近活动（新→旧）</option>
+              <option value="name_asc">仓库名（A→Z）</option>
+            </select>
+          </div>
+          <div className="muted ghcrPickerSummary">
+            显示 {filteredRepos.length} / {repos.length} · 已添加 {selectedCount}
+          </div>
+        </div>
+        <div className="modalList ghcrPickerList">
+          {filteredRepos.length === 0 ? (
+            <div className="ghcrPickerEmpty">没有匹配的仓库</div>
+          ) : (
+            filteredRepos.map((r) => (
+              <div key={r.fullName} className="modalListItem">
+                <div className="modalListLeft" style={{ minWidth: 0 }}>
+                  <div className="modalListTitle">
+                    <span className="mono" style={{ overflowWrap: 'anywhere' }}>
+                      {r.fullName}
+                    </span>
+                  </div>
+                  <div className="ghcrPickerMeta">
+                    <span>{r.visibility === 'private' ? '私有' : r.visibility === 'public' ? '公开' : '可见性未知'}</span>
+                    <span>{formatRepoActivity(r.lastActivityAt)}</span>
+                  </div>
                 </div>
-                <div className="ghcrPickerMeta">
-                  <span>{r.visibility === 'private' ? '私有' : r.visibility === 'public' ? '公开' : '可见性未知'}</span>
-                  <span>{formatRepoActivity(r.lastActivityAt)}</span>
+                <div className="modalListRight">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-label={`切换 ${r.fullName}`}
+                    aria-checked={r.selected}
+                    className={r.selected ? 'switch switchButton switchButtonChecked' : 'switch switchButton'}
+                    data-ghcr-picker-switch="true"
+                    data-repo-full-name={r.fullName}
+                    onPointerDown={(event) => onSwitchPointerDown(event, r.fullName, r.selected)}
+                    onClick={(event) => {
+                      // Pointer interactions are handled in onPointerDown to support drag paint.
+                      if (event.detail !== 0) return
+                      setRepoSelected(r.fullName, !r.selected)
+                    }}
+                  >
+                    <span className="switchSlider" />
+                  </button>
                 </div>
               </div>
-              <div className="modalListRight">
-                <button
-                  type="button"
-                  role="switch"
-                  aria-label={`切换 ${r.fullName}`}
-                  aria-checked={r.selected}
-                  className={r.selected ? 'switch switchButton switchButtonChecked' : 'switch switchButton'}
-                  data-ghcr-picker-switch="true"
-                  data-repo-full-name={r.fullName}
-                  onPointerDown={(event) => onSwitchPointerDown(event, r.fullName, r.selected)}
-                  onClick={(event) => {
-                    // Pointer interactions are handled in onPointerDown to support drag paint.
-                    if (event.detail !== 0) return
-                    setRepoSelected(r.fullName, !r.selected)
-                  }}
-                >
-                  <span className="switchSlider" />
-                </button>
-              </div>
-            </div>
-          ))
-        )}
+            ))
+          )}
+        </div>
       </div>
     </div>
   )
@@ -1507,13 +1521,14 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                             const ok = await confirm({
                               title: '选择要跟踪的仓库',
                               body: (
-                            <GitHubPackagesRepoPicker
+                                <GitHubPackagesRepoPicker
                                   initial={resolved}
                                   onChange={(next) => {
                                     picked = next
                                   }}
                                 />
                               ),
+                              cardClassName: 'ghcrPickerDialogCard',
                               bodyClassName: 'ghcrPickerDialogBody',
                               confirmText: '确认',
                               cancelText: '取消',
