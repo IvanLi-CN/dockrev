@@ -17,8 +17,8 @@ export const Default: Story = {
   render: () => {
     return (
       <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务">
-        {({ onComposeHint, onTopActions }) => (
-          <ServicesPage onComposeHint={onComposeHint} onTopActions={onTopActions} />
+        {({ onLastScanHint, onTopActions }) => (
+          <ServicesPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
         )}
       </PageHarness>
     )
@@ -30,8 +30,8 @@ export const GuideLineLongNames: Story = {
   render: () => {
     return (
       <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务" pageSubtitle="对齐回归：长 service name（最多两行）">
-        {({ onComposeHint, onTopActions }) => (
-          <ServicesPage onComposeHint={onComposeHint} onTopActions={onTopActions} />
+        {({ onLastScanHint, onTopActions }) => (
+          <ServicesPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
         )}
       </PageHarness>
     )
@@ -43,8 +43,8 @@ export const ResolvedTag: Story = {
   render: () => {
     return (
       <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务">
-        {({ onComposeHint, onTopActions }) => (
-          <ServicesPage onComposeHint={onComposeHint} onTopActions={onTopActions} />
+        {({ onLastScanHint, onTopActions }) => (
+          <ServicesPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
         )}
       </PageHarness>
     )
@@ -56,8 +56,8 @@ export const Empty: Story = {
   render: () => {
     return (
       <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务">
-        {({ onComposeHint, onTopActions }) => (
-          <ServicesPage onComposeHint={onComposeHint} onTopActions={onTopActions} />
+        {({ onLastScanHint, onTopActions }) => (
+          <ServicesPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
         )}
       </PageHarness>
     )
@@ -69,8 +69,8 @@ export const Error: Story = {
   render: () => {
     return (
       <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务">
-        {({ onComposeHint, onTopActions }) => (
-          <ServicesPage onComposeHint={onComposeHint} onTopActions={onTopActions} />
+        {({ onLastScanHint, onTopActions }) => (
+          <ServicesPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
         )}
       </PageHarness>
     )
@@ -87,8 +87,8 @@ export const DashboardDemo: Story = {
         topbarHint="服务"
         pageSubtitle="代表性：可更新/需确认/架构不匹配/被阻止 + 可交互"
       >
-        {({ onComposeHint, onTopActions }) => (
-          <ServicesPage onComposeHint={onComposeHint} onTopActions={onTopActions} />
+        {({ onLastScanHint, onTopActions }) => (
+          <ServicesPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
         )}
       </PageHarness>
     )

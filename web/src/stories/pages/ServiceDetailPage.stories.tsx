@@ -16,14 +16,7 @@ function render(stackId: string, serviceId: string): Story['render'] {
   return () => {
     return (
       <PageHarness route={{ name: 'service', stackId, serviceId }} title="服务详情" topbarHint="服务详情">
-        {({ onComposeHint, onTopActions }) => (
-          <ServiceDetailPage
-            stackId={stackId}
-            serviceId={serviceId}
-            onComposeHint={onComposeHint}
-            onTopActions={onTopActions}
-          />
-        )}
+        {({ onTopActions }) => <ServiceDetailPage stackId={stackId} serviceId={serviceId} onTopActions={onTopActions} />}
       </PageHarness>
     )
   }
@@ -62,6 +55,11 @@ export const Blocked: Story = {
 export const NoCandidate: Story = {
   parameters: { dockrevApiScenario: 'no-candidates' },
   render: render('stack-1', 'svc-a'),
+}
+
+export const ComposeFallbacks: Story = {
+  parameters: { dockrevApiScenario: 'service-detail-compose-fallbacks' },
+  render: render('stack-prod', 'svc-prod-api'),
 }
 
 export const Error: Story = {

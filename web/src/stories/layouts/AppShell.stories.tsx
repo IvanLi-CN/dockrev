@@ -23,7 +23,7 @@ function render(route: Route): Story['render'] {
         pageSubtitle="在 Storybook 中预览 AppShell"
         topbarHint="Compose 镜像更新 / 版本提示"
         topActions={<Button variant="primary">Action</Button>}
-        composeHint={{ path: '/srv/prod/compose.yml', profile: 'prod', lastScan: new Date().toISOString() }}
+        lastScanHint={new Date().toISOString()}
       >
         <div className="card">
           <div className="title">内容区</div>

@@ -57,7 +57,7 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
 export default function App() {
   const route = useRoute()
   const [pageActions, setPageActions] = useState<ReactNode>(null)
-  const [composeHint, setComposeHint] = useState<{ path?: string; profile?: string; lastScan?: string }>({})
+  const [lastScanHint, setLastScanHint] = useState<string | undefined>(undefined)
   const [deployWelcomeState, setDeployWelcomeState] = useState<{ loaded: boolean; neverAutoOpen: boolean }>({
     loaded: false,
     neverAutoOpen: true,
@@ -125,21 +125,21 @@ export default function App() {
       pageSubtitle={head.pageSubtitle}
       topbarHint={head.topbarHint}
       topActions={topActions}
-      composeHint={composeHint}
+      lastScanHint={lastScanHint}
     >
-      {route.name === 'overview' ? <OverviewPage onComposeHint={setComposeHint} onTopActions={setPageActions} /> : null}
+      {route.name === 'overview' ? <OverviewPage onLastScanHint={setLastScanHint} onTopActions={setPageActions} /> : null}
       {route.name === 'queue' ? <QueuePage onTopActions={setPageActions} /> : null}
       {route.name === 'job' ? <JobDetailPage jobId={route.jobId} onTopActions={setPageActions} /> : null}
-      {route.name === 'services' ? <ServicesPage onComposeHint={setComposeHint} onTopActions={setPageActions} /> : null}
+      {route.name === 'services' ? <ServicesPage onLastScanHint={setLastScanHint} onTopActions={setPageActions} /> : null}
       {route.name === 'version-inference' ? (
-        <VersionInferencePage onComposeHint={setComposeHint} onTopActions={setPageActions} />
+        <VersionInferencePage onLastScanHint={setLastScanHint} onTopActions={setPageActions} />
       ) : null}
       {route.name === 'settings' ? <SettingsPage onTopActions={setPageActions} /> : null}
       {route.name === 'service' ? (
         <ServiceDetailPage
           stackId={route.stackId}
           serviceId={route.serviceId}
-          onComposeHint={setComposeHint}
+          onLastScanHint={setLastScanHint}
           onTopActions={setPageActions}
         />
       ) : null}
