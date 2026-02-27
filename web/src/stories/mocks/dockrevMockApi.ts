@@ -1967,11 +1967,19 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       const mkOwner = (owner: string): ResolveGitHubPackagesTargetResponse => ({
         kind: 'owner',
         owner,
-        repos: ['dockrev', 'dockrev-supervisor', 'example-private'].map((r) => {
-          const fullName = `${owner}/${r}`
-          const existing = f.githubPackagesRepos.find((x) => x.fullName === fullName)
-          return { fullName, selected: existing?.selected ?? false }
-        }),
+        repos: f.githubPackagesRepos
+          .filter((repo) => repo.fullName.startsWith(`${owner}/`))
+          .slice(0, 180)
+          .map((repo, idx) => {
+            const visibility = repo.fullName.includes('private') || idx % 9 === 0 ? 'private' : 'public'
+            const lastActivityAt = idx % 13 === 0 ? null : nowIso(-(idx + 1) * 21_600_000)
+            return {
+              fullName: repo.fullName,
+              selected: repo.selected,
+              visibility,
+              lastActivityAt,
+            }
+          }),
         warnings: [],
       })
 
@@ -1985,7 +1993,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
           const resp: ResolveGitHubPackagesTargetResponse = {
             kind: 'repo',
             owner,
-            repos: [{ fullName, selected: existing?.selected ?? true }],
+            repos: [{ fullName, selected: existing?.selected ?? true, visibility: 'unknown', lastActivityAt: null }],
             warnings: [],
           }
           return json(resp)

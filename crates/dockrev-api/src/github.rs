@@ -185,6 +185,9 @@ impl GitHubClient {
                         if seen.insert(key) {
                             out.push(GitHubRepo {
                                 full_name: r.full_name,
+                                is_private: r.is_private,
+                                pushed_at: r.pushed_at,
+                                updated_at: r.updated_at,
                             });
                         }
                     }
@@ -354,11 +357,23 @@ mod tests {
 #[derive(Clone, Debug, Deserialize)]
 pub struct GitHubRepo {
     pub full_name: String,
+    #[serde(default, rename = "private")]
+    pub is_private: bool,
+    #[serde(default)]
+    pub pushed_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 struct GitHubRepoWithOwner {
     pub full_name: String,
+    #[serde(default, rename = "private")]
+    pub is_private: bool,
+    #[serde(default)]
+    pub pushed_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
     pub owner: GitHubRepoOwner,
 }
 

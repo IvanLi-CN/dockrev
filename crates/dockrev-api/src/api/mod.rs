@@ -4341,6 +4341,8 @@ async fn resolve_github_packages_target(
                 repos: vec![GitHubPackagesRepoSelection {
                     full_name: format!("{owner}/{repo}"),
                     selected,
+                    visibility: Some("unknown".to_string()),
+                    last_activity_at: None,
                 }],
                 warnings: Vec::new(),
             }))
@@ -4382,6 +4384,8 @@ async fn resolve_github_packages_target(
                     .filter_map(|r| {
                         // Avoid borrowing `full_name` across moving it into the response.
                         let full_name = r.full_name;
+                        let visibility = if r.is_private { "private" } else { "public" };
+                        let last_activity_at = r.pushed_at.or(r.updated_at);
                         let selected = {
                             let mut parts = full_name.split('/');
                             let ro = parts.next().unwrap_or_default().trim();
@@ -4394,6 +4398,8 @@ async fn resolve_github_packages_target(
                         Some(GitHubPackagesRepoSelection {
                             full_name,
                             selected,
+                            visibility: Some(visibility.to_string()),
+                            last_activity_at,
                         })
                     })
                     .collect(),

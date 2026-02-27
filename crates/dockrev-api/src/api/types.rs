@@ -894,6 +894,8 @@ pub struct ResolveGitHubPackagesTargetRequest {
 pub struct GitHubPackagesRepoSelection {
     pub full_name: String,
     pub selected: bool,
+    pub visibility: Option<String>,
+    pub last_activity_at: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -391,7 +391,12 @@ export type PutGitHubPackagesSettingsRequest = {
 export type ResolveGitHubPackagesTargetResponse = {
   kind: 'repo' | 'owner' | string
   owner: string
-  repos: Array<{ fullName: string; selected: boolean }>
+  repos: Array<{
+    fullName: string
+    selected: boolean
+    visibility?: 'public' | 'private' | 'unknown' | string
+    lastActivityAt?: string | null
+  }>
   warnings: string[]
 }
 

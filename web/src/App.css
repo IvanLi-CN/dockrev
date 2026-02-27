@@ -1514,6 +1514,58 @@ html[data-theme='light'] .modalOverlay {
   gap: 6px;
 }
 
+.ghcrPickerToolbar {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.ghcrPickerToolbar .input {
+  flex: 1 1 220px;
+  min-width: 200px;
+}
+
+.ghcrPickerSummary {
+  margin-top: 8px;
+}
+
+.ghcrPickerMeta {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.ghcrPickerEmpty {
+  border: 1px dashed rgba(229, 231, 235, 0.18);
+  border-radius: 12px;
+  padding: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.switchButton {
+  border: none;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.switchButton.switchButtonChecked .switchSlider {
+  background: rgba(56, 189, 248, 0.25);
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+.switchButton.switchButtonChecked .switchSlider::before {
+  transform: translateX(20px);
+}
+
 .modalActions {
   margin-top: 16px;
   display: flex;

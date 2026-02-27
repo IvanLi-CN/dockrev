@@ -5847,6 +5847,32 @@ async fn github_packages_resolve_owner_requires_pat_saved() {
     );
 }
 
+#[tokio::test]
+async fn github_packages_resolve_repo_returns_visibility_and_activity_fields() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/resolve")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"input":"acme/widgets"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["kind"], "repo");
+    assert_eq!(body["owner"], "acme");
+    assert_eq!(body["repos"][0]["fullName"], "acme/widgets");
+    assert_eq!(body["repos"][0]["selected"], true);
+    assert_eq!(body["repos"][0]["visibility"], "unknown");
+    assert!(body["repos"][0]["lastActivityAt"].is_null());
+}
+
 #[test]
 fn github_http_status_from_error_parses_status_code() {
     let err = anyhow::anyhow!("github http 403 Forbidden: bad credentials");
