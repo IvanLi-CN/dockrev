@@ -282,8 +282,8 @@ function GitHubPackagesRepoPicker({
       if (event.pointerType === 'touch') event.preventDefault()
       const target = document.elementFromPoint(event.clientX, event.clientY)
       if (!(target instanceof HTMLElement)) return
-      const switchNode = target.closest<HTMLElement>('[data-ghcr-picker-switch="true"]')
-      const fullName = switchNode?.dataset.repoFullName
+      const hitNode = target.closest<HTMLElement>('[data-ghcr-picker-switch="true"], [data-ghcr-picker-row="true"]')
+      const fullName = hitNode?.dataset.repoFullName
       if (!fullName || drag.touched.has(fullName)) return
       drag.touched.add(fullName)
       setRepoSelected(fullName, drag.targetSelected)
@@ -429,7 +429,12 @@ function GitHubPackagesRepoPicker({
             <div className="ghcrPickerEmpty">没有匹配的仓库</div>
           ) : (
             filteredRepos.map((r) => (
-              <div key={r.fullName} className="modalListItem">
+              <div
+                key={r.fullName}
+                className="modalListItem"
+                data-ghcr-picker-row="true"
+                data-repo-full-name={r.fullName}
+              >
                 <div className="modalListLeft" style={{ minWidth: 0 }}>
                   <div className="modalListTitle">
                     <span className="mono" style={{ overflowWrap: 'anywhere' }}>
