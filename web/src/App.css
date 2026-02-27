@@ -878,11 +878,15 @@ html[data-theme='light'] .versionTagsPopover {
   /* Table layout tokens (keep guide + row heights in sync without JS measuring). */
   --dockrev-table-font-size: 12px;
   --dockrev-table-line-height: 1.5;
+  --dockrev-table-line-height-px: calc(var(--dockrev-table-font-size) * var(--dockrev-table-line-height));
+  --dockrev-table-row-lines: 2;
   --dockrev-table-group-gap: 4px;
-  --dockrev-table-group-head-height: 2lh;
-  --dockrev-table-row-pad-y: 0.6667em; /* 8px @ 12px */
-  --dockrev-table-row-line-gap: 0.1667em; /* 2px @ 12px */
-  --dockrev-table-row-height: calc(2lh + var(--dockrev-table-row-line-gap) + (2 * var(--dockrev-table-row-pad-y)));
+  --dockrev-table-group-head-height: calc(var(--dockrev-table-row-lines) * var(--dockrev-table-line-height-px));
+  --dockrev-table-row-pad-y: calc(var(--dockrev-table-font-size) * 0.6667); /* 8px @ 12px */
+  --dockrev-table-row-line-gap: calc(var(--dockrev-table-font-size) * 0.1667); /* 2px @ 12px */
+  --dockrev-table-row-height: calc(
+    var(--dockrev-table-group-head-height) + var(--dockrev-table-row-line-gap) + (2 * var(--dockrev-table-row-pad-y))
+  );
   --dockrev-table-guide-bullet-gap: 10px;
   --dockrev-table-guide-center-x: 28px;
   --dockrev-table-guide-dot-size: 6px;
@@ -983,7 +987,7 @@ html[data-theme='light'] .versionTagsPopover {
   color: var(--text);
   min-width: 0;
   line-height: var(--dockrev-table-line-height, 1.5);
-  max-height: 2lh;
+  max-height: calc(var(--dockrev-table-line-height-px, 18px) * 2);
   overflow: hidden;
   display: -webkit-box;
   -webkit-box-orient: vertical;
