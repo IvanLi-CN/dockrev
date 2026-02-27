@@ -336,9 +336,12 @@ pub(crate) async fn scan_digest_tags_snapshot_best_effort(
     };
 
     const SNAPSHOT_DEPTH: usize = 100;
-    const MANIFEST_TIMEOUT: Duration = Duration::from_secs(4);
-    const MANIFEST_BUDGET: Duration = Duration::from_secs(12);
-    const MANIFEST_CONCURRENCY: usize = 10;
+    // The registry client already limits per-host concurrency. Keep the scan fan-out lower than
+    // that limiter so tasks do not spend most of the timeout waiting for a permit.
+    const MANIFEST_CONCURRENCY: usize = 4;
+    const MANIFEST_TIMEOUT: Duration = Duration::from_secs(12);
+    const MANIFEST_BUDGET_MIN_SECS: u64 = 20;
+    const MANIFEST_BUDGET_MAX_SECS: u64 = 90;
 
     let wanted = wanted_digest.trim().to_string();
     let repo_tags_total = repo_tags.len();
@@ -421,7 +424,11 @@ pub(crate) async fn scan_digest_tags_snapshot_best_effort(
         );
     }
 
-    let deadline = Instant::now() + MANIFEST_BUDGET;
+    // Give larger snapshots more wall-clock budget while keeping an upper bound so a single
+    // digest does not monopolize the worker forever.
+    let manifest_budget_secs = ((repo_tags_considered as u64) * 2 / MANIFEST_CONCURRENCY as u64)
+        .clamp(MANIFEST_BUDGET_MIN_SECS, MANIFEST_BUDGET_MAX_SECS);
+    let deadline = Instant::now() + Duration::from_secs(manifest_budget_secs);
     while !join_set.is_empty() {
         let next = match timeout_at(deadline, join_set.join_next()).await {
             Ok(next) => next,
