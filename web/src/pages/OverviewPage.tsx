@@ -188,10 +188,10 @@ function withCollapseDefaults(
 }
 
 export function OverviewPage(props: {
-  onComposeHint: (hint: { path?: string; profile?: string; lastScan?: string }) => void
+  onLastScanHint: (lastScan?: string) => void
   onTopActions: (node: ReactNode) => void
 }) {
-  const { onComposeHint, onTopActions } = props
+  const { onLastScanHint, onTopActions } = props
   const confirm = useConfirm()
   const [filter, setFilter] = useState<UpdateCandidateFilter>(() => readUpdateCandidateFilterFromUrl() ?? 'all')
   const [stacks, setStacks] = useState<StackListItem[]>([])
@@ -263,8 +263,7 @@ export function OverviewPage(props: {
       }),
     )
     setDetails(Object.fromEntries(results))
-    const first = results.find(([, d]) => Boolean(d))?.[1]
-    onComposeHint({ path: first?.compose.composeFiles?.[0], profile: first?.name, lastScan: maxLastScan })
+    onLastScanHint(maxLastScan)
 
     setCollapsed((prev) => {
       const next = { ...prev }
@@ -275,7 +274,7 @@ export function OverviewPage(props: {
     })
 
     if (errors.length > 0) setError(errors.join(' · '))
-  }, [onComposeHint])
+  }, [onLastScanHint])
 
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))

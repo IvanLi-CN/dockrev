@@ -97,10 +97,10 @@ function GroupGuide() {
 }
 
 export function ServicesPage(props: {
-  onComposeHint: (hint: { path?: string; profile?: string; lastScan?: string }) => void
+  onLastScanHint: (lastScan?: string) => void
   onTopActions: (node: ReactNode) => void
 }) {
-  const { onComposeHint, onTopActions } = props
+  const { onLastScanHint, onTopActions } = props
   const confirm = useConfirm()
   const [stacks, setStacks] = useState<StackListItem[]>([])
   const [details, setDetails] = useState<Record<string, StackDetail | undefined>>({})
@@ -135,12 +135,7 @@ export function ServicesPage(props: {
     )
     setDetails(Object.fromEntries(results))
 
-    const first = results.find(([, d]) => Boolean(d))?.[1]
-    onComposeHint({
-      path: first?.compose.composeFiles?.[0],
-      profile: first?.name,
-      lastScan: maxLastScan,
-    })
+    onLastScanHint(maxLastScan)
 
     setCollapsed((prev) => {
       const next = { ...prev }
@@ -163,7 +158,7 @@ export function ServicesPage(props: {
       }),
     )
     setArchivedDetails(Object.fromEntries(aResults))
-  }, [onComposeHint])
+  }, [onLastScanHint])
 
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))

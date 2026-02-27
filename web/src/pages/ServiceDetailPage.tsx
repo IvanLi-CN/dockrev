@@ -101,10 +101,10 @@ function isDockrevService(svc: Service): boolean {
 export function ServiceDetailPage(props: {
   stackId: string
   serviceId: string
-  onComposeHint: (hint: { path?: string; profile?: string; lastScan?: string }) => void
+  onLastScanHint?: (lastScan?: string) => void
   onTopActions: (node: React.ReactNode) => void
 }) {
-  const { stackId, serviceId, onComposeHint, onTopActions } = props
+  const { stackId, serviceId, onLastScanHint, onTopActions } = props
   const confirm = useConfirm()
   const [stack, setStack] = useState<StackDetail | null>(null)
   const [service, setService] = useState<Service | null>(null)
@@ -124,19 +124,15 @@ export function ServiceDetailPage(props: {
 
   const refresh = useCallback(async () => {
     setError(null)
+    onLastScanHint?.(undefined)
     const st = await getStack(stackId)
     setStack(st)
     const svc = st.services.find((s) => s.id === serviceId) ?? null
     setService(svc)
-    onComposeHint({
-      path: st.compose.composeFiles[0],
-      profile: st.name,
-      lastScan: undefined,
-    })
     setSettings(await getServiceSettings(serviceId))
     const allRules = await listIgnores()
     setRules(allRules.filter((r) => r.scope.serviceId === serviceId))
-  }, [onComposeHint, serviceId, stackId])
+  }, [onLastScanHint, serviceId, stackId])
 
   const refreshStackOnly = useCallback(async () => {
     const st = await getStack(stackId)
@@ -697,6 +693,15 @@ export function ServiceDetailPage(props: {
     return <div className="muted">加载中…</div>
   }
 
+  const rawComposeType = typeof stack.compose?.type === 'string' ? stack.compose.type.trim() : ''
+  const composeType = rawComposeType || '-'
+  const composeFilesRaw = Array.isArray(stack.compose?.composeFiles) ? stack.compose.composeFiles : []
+  const composeFiles = composeFilesRaw
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter((item) => item.length > 0)
+  const composeEnvFileRaw = typeof stack.compose?.envFile === 'string' ? stack.compose.envFile.trim() : ''
+  const composeEnvFile = composeEnvFileRaw || '-'
+
   return (
     <div className="page">
       <div className="svcTitleRow">
@@ -724,6 +729,34 @@ export function ServiceDetailPage(props: {
           })()}
           <div className="muted">
             id <Mono>{service.id}</Mono> · stack <Mono>{stack.id}</Mono>
+          </div>
+        </div>
+      </div>
+
+      <div className="card svcComposeCard">
+        <div className="title">Compose 信息</div>
+        <div className="kv">
+          <div className="kvRow">
+            <div className="muted">type</div>
+            <div className="mono">{composeType}</div>
+          </div>
+          <div className="kvRow">
+            <div className="muted">compose files</div>
+            {composeFiles.length > 0 ? (
+              <div>
+                {composeFiles.map((item, index) => (
+                  <div key={`${item}-${index}`} className="mono">
+                    {item}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mono">-</div>
+            )}
+          </div>
+          <div className="kvRow">
+            <div className="muted">env file</div>
+            <div className="mono">{composeEnvFile}</div>
           </div>
         </div>
       </div>

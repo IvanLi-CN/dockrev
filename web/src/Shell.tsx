@@ -39,15 +39,13 @@ export function AppShell(props: {
   pageSubtitle?: string
   topbarHint?: string
   topActions?: ReactNode
-  composeHint?: { path?: string; profile?: string; lastScan?: string }
+  lastScanHint?: string
   children: ReactNode
 }) {
   const active = props.route.name === 'service' ? 'services' : props.route.name === 'job' ? 'queue' : props.route.name
   const [appVersion, setAppVersion] = useState<string | null>(null)
 
-  const composePath = props.composeHint?.path
-  const profile = props.composeHint?.profile
-  const lastScan = props.composeHint?.lastScan
+  const lastScan = props.lastScanHint
 
   const nav = useMemo(
     () => [
@@ -120,19 +118,9 @@ export function AppShell(props: {
             ))}
           </nav>
 
-          <div className="sidebarSectionLabel sidebarSectionGap">Compose</div>
-          {composePath ? (
-            <div className="sidebarMono">
-              <Mono>{composePath}</Mono>
-            </div>
-          ) : (
-            <div className="sidebarMuted">尚未选择 stack</div>
-          )}
-          {profile ? (
-            <div className="chipStatic chipStaticSidebar sidebarProfileChip">{`profile: ${profile}`}</div>
-          ) : null}
-
-          <div className="sidebarSectionLabel sidebarSectionGapSmall">最近一次扫描</div>
+          <div className="sidebarSectionLabel" style={{ marginTop: 24 }}>
+            最近一次扫描
+          </div>
           {lastScan ? (
             <div className="sidebarMono">
               <Mono>{formatShort(lastScan)}</Mono>
@@ -198,16 +186,6 @@ export function AppShell(props: {
               ))}
             </nav>
             <div className="mobileMeta">
-              <div className="mobileMetaRow">
-                <span className="sectionTitle">Compose</span>
-                <span className="mono">
-                  {composePath ? composePath : '尚未选择 stack'}
-                </span>
-              </div>
-              <div className="mobileMetaRow">
-                <span className="sectionTitle">profile</span>
-                <span className="mono">{profile ? profile : '-'}</span>
-              </div>
               <div className="mobileMetaRow">
                 <span className="sectionTitle">最近扫描</span>
                 <span className="mono">{lastScan ? formatShort(lastScan) : '-'}</span>
