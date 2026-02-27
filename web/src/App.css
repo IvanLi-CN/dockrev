@@ -1,5 +1,7 @@
 .appShell {
   height: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   grid-template-rows: 64px 1fr;
   grid-template-columns: 256px 1fr;
@@ -3036,6 +3038,41 @@ html[data-theme='light'] .modalOverlay {
 
 .content {
   padding: 36px 26px 34px;
+}
+
+html[data-theme='light'] .appShell {
+  background:
+    radial-gradient(980px 360px at -20% -8%, rgba(70, 149, 229, 0.12), transparent 62%),
+    radial-gradient(820px 300px at 112% -12%, rgba(26, 144, 219, 0.1), transparent 60%),
+    linear-gradient(180deg, #f9fcff 0%, #f4f9ff 100%);
+}
+
+html[data-theme='light'] .topbar {
+  background: color-mix(in srgb, #ffffff 88%, var(--color-base-200) 12%);
+  border-bottom-color: color-mix(in srgb, var(--borderColor) 78%, transparent);
+}
+
+html[data-theme='light'] .sidebar {
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  box-shadow: inset -1px 0 0 rgba(12, 121, 207, 0.12);
+}
+
+html[data-theme='light'] .chipStatic,
+html[data-theme='light'] .chip {
+  background: color-mix(in srgb, #ffffff 93%, var(--color-primary) 7%);
+}
+
+html[data-theme='light'] .tableHeader,
+html[data-theme='light'] .groupHead,
+html[data-theme='light'] .rowLine {
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--borderColor) 74%, transparent);
+}
+
+html[data-theme='light'] .groupHead:hover,
+html[data-theme='light'] .rowLine:hover {
+  background: color-mix(in srgb, #ffffff 92%, var(--color-primary) 8%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 28%, var(--borderColor) 72%);
 }
 
 .mobileDockrevPanel {
