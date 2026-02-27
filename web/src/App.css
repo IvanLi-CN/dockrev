@@ -1404,6 +1404,7 @@ html[data-theme='light'] .modalOverlay {
 
 .modalCard.ghcrPickerDialogCard {
   width: min(920px, calc(100vw - 48px));
+  max-height: calc(100vh - 24px);
 }
 
 .modalLead {
@@ -1530,6 +1531,7 @@ html[data-theme='light'] .modalOverlay {
 .ghcrPickerRoot {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   min-height: 0;
 }
 
@@ -1538,6 +1540,7 @@ html[data-theme='light'] .modalOverlay {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
   gap: 12px;
+  flex: 1 1 auto;
   min-height: 0;
 }
 
@@ -1566,8 +1569,9 @@ html[data-theme='light'] .modalOverlay {
 
 .ghcrPickerList {
   margin-top: 0;
+  flex: 1 1 auto;
   min-height: 0;
-  max-height: 420px;
+  max-height: min(620px, calc(100vh - 260px));
 }
 
 .ghcrPickerSummary {
