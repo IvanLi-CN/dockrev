@@ -3140,6 +3140,7 @@ html[data-theme='light'] .card {
 .btn:focus-visible,
 .chip:focus-visible,
 .navItem:focus-visible,
+.mobileNavItem:focus-visible,
 .input:focus-visible,
 .select:focus-visible {
   outline: 2px solid var(--focus-ring);
