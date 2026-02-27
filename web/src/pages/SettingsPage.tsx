@@ -188,7 +188,12 @@ function GitHubPackagesRepoPicker({
   const [selectedFilter, setSelectedFilter] = useState<RepoSelectedFilter>('all')
   const [visibilityFilter, setVisibilityFilter] = useState<RepoVisibilityFilter>('all')
   const [sortKey, setSortKey] = useState<RepoSortKey>('activity_desc')
-  const dragSessionRef = useRef<{ pointerId: number; targetSelected: boolean; touched: Set<string> } | null>(null)
+  const dragSessionRef = useRef<{
+    pointerId: number
+    targetSelected: boolean
+    touched: Set<string>
+    captureElement: HTMLButtonElement | null
+  } | null>(null)
 
   const setRepoSelected = useCallback((fullName: string, selected: boolean) => {
     setRepos((prev) => {
@@ -244,6 +249,13 @@ function GitHubPackagesRepoPicker({
     (event: PointerEvent) => {
       const drag = dragSessionRef.current
       if (!drag || drag.pointerId !== event.pointerId) return
+      if (event.pointerType === 'mouse' && (event.buttons & 1) === 0) {
+        dragSessionRef.current = null
+        if (drag.captureElement?.hasPointerCapture(drag.pointerId)) {
+          drag.captureElement.releasePointerCapture(drag.pointerId)
+        }
+        return
+      }
       if (event.pointerType === 'touch') event.preventDefault()
       const target = document.elementFromPoint(event.clientX, event.clientY)
       if (!(target instanceof HTMLElement)) return
@@ -261,6 +273,9 @@ function GitHubPackagesRepoPicker({
       const drag = dragSessionRef.current
       if (!drag || drag.pointerId !== event.pointerId) return
       dragSessionRef.current = null
+      if (drag.captureElement?.hasPointerCapture(drag.pointerId)) {
+        drag.captureElement.releasePointerCapture(drag.pointerId)
+      }
       window.removeEventListener('pointermove', onWindowPointerMove)
       window.removeEventListener('pointerup', handleWindowPointerEnd)
       window.removeEventListener('pointercancel', handleWindowPointerEnd)
@@ -270,7 +285,11 @@ function GitHubPackagesRepoPicker({
 
   useEffect(() => {
     return () => {
+      const drag = dragSessionRef.current
       dragSessionRef.current = null
+      if (drag?.captureElement?.hasPointerCapture(drag.pointerId)) {
+        drag.captureElement.releasePointerCapture(drag.pointerId)
+      }
       window.removeEventListener('pointermove', onWindowPointerMove)
       window.removeEventListener('pointerup', onWindowPointerEnd)
       window.removeEventListener('pointercancel', onWindowPointerEnd)
@@ -285,10 +304,17 @@ function GitHubPackagesRepoPicker({
       // Start a drag session where all touched switches are forced to one target state.
       const targetSelected = !selected
       setRepoSelected(fullName, targetSelected)
+      const captureElement = event.currentTarget
+      try {
+        captureElement.setPointerCapture(event.pointerId)
+      } catch {
+        // Some browsers/input sources may not support pointer capture for this event.
+      }
       dragSessionRef.current = {
         pointerId: event.pointerId,
         targetSelected,
         touched: new Set([fullName]),
+        captureElement,
       }
 
       window.addEventListener('pointermove', onWindowPointerMove)
