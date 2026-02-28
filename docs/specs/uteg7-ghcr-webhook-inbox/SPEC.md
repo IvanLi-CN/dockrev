@@ -40,7 +40,7 @@
   - API：新增 `GET /api/github-packages/webhook/inbox`
   - Tests：覆盖入库语义、jobId 关联、unselected 入库、prune 行为
 - Web
-  - 路由：`/queue/ghcr-webhook-inbox`
+  - 路由：`/settings/ghcr-webhook-inbox`
   - 页面：`GhcrWebhookInboxPage`
   - GHCR Webhook 页面入口按钮
   - Storybook mock 增补该 API

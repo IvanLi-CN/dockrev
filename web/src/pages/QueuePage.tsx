@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  getGitHubPackagesWebhookOverview,
   getVersionInferenceOverview,
   listJobs,
   newJobsEventsSource,
@@ -26,26 +25,6 @@ const DEFAULT_VERSION_INFERENCE_SUMMARY: VersionInferenceSummary = {
   ready: 0,
   stale: 0,
   allFailed: 0,
-}
-
-type GhcrWebhookSummary = {
-  tracked: number
-  ok: number
-  missing: number
-  error: number
-  conflict: number
-  jobsQueued: number
-  jobsRunning: number
-}
-
-const DEFAULT_GHCR_SUMMARY: GhcrWebhookSummary = {
-  tracked: 0,
-  ok: 0,
-  missing: 0,
-  error: 0,
-  conflict: 0,
-  jobsQueued: 0,
-  jobsRunning: 0,
 }
 
 function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' {
@@ -151,7 +130,6 @@ const QUEUE_SSE_RECONNECT_MS = 3000
 const QUEUE_SSE_REFRESH_DEBOUNCE_MS = 250
 const QUEUE_SSE_FALLBACK_POLL_MS = 10_000
 const VERSION_INFERENCE_SUMMARY_POLL_MS = 15_000
-const GHCR_SUMMARY_POLL_MS = 15_000
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null
@@ -175,20 +153,6 @@ function parseVersionInferenceSummary(data: unknown): VersionInferenceSummary {
   }
 }
 
-function parseGhcrWebhookSummary(data: unknown): GhcrWebhookSummary {
-  if (!isRecord(data)) return DEFAULT_GHCR_SUMMARY
-  const summary = isRecord(data.summary) ? data.summary : {}
-  return {
-    tracked: safeCount(summary.tracked),
-    ok: safeCount(summary.ok),
-    missing: safeCount(summary.missing),
-    error: safeCount(summary.error),
-    conflict: safeCount(summary.conflict),
-    jobsQueued: safeCount(data.jobsQueued),
-    jobsRunning: safeCount(data.jobsRunning),
-  }
-}
-
 function versionInferenceTone(summary: VersionInferenceSummary): 'ok' | 'warn' | 'bad' {
   if (summary.running > 0 || summary.queued > 0) return 'warn'
   if (summary.stale > 0 || summary.allFailed > 0) return 'bad'
@@ -203,21 +167,6 @@ function versionInferenceLabel(summary: VersionInferenceSummary): string {
   return 'ready'
 }
 
-function ghcrTone(summary: GhcrWebhookSummary): 'ok' | 'warn' | 'bad' {
-  if (summary.jobsRunning > 0 || summary.jobsQueued > 0) return 'warn'
-  if (summary.error > 0 || summary.conflict > 0 || summary.missing > 0) return 'bad'
-  return 'ok'
-}
-
-function ghcrLabel(summary: GhcrWebhookSummary): string {
-  if (summary.jobsRunning > 0) return 'running'
-  if (summary.jobsQueued > 0) return 'queued'
-  if (summary.error > 0) return 'error'
-  if (summary.conflict > 0) return 'conflict'
-  if (summary.missing > 0) return 'missing'
-  return 'ok'
-}
-
 export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void }) {
   const { onTopActions } = props
   const [jobs, setJobs] = useState<JobListItem[]>([])
@@ -228,13 +177,9 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
   )
   const [versionInferenceLoaded, setVersionInferenceLoaded] = useState(false)
   const [versionInferenceError, setVersionInferenceError] = useState<string | null>(null)
-  const [ghcrSummary, setGhcrSummary] = useState<GhcrWebhookSummary>(DEFAULT_GHCR_SUMMARY)
-  const [ghcrLoaded, setGhcrLoaded] = useState(false)
-  const [ghcrError, setGhcrError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const refreshRequestIdRef = useRef(0)
   const inferenceRequestIdRef = useRef(0)
-  const ghcrRequestIdRef = useRef(0)
 
   const refresh = useCallback(async () => {
     const requestId = ++refreshRequestIdRef.current
@@ -271,28 +216,9 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
     }
   }, [])
 
-  const refreshGhcrSummary = useCallback(async () => {
-    const requestId = ++ghcrRequestIdRef.current
-    try {
-      const payload = await getGitHubPackagesWebhookOverview()
-      if (requestId !== ghcrRequestIdRef.current) return
-      setGhcrSummary(parseGhcrWebhookSummary(payload))
-      setGhcrError(null)
-      setGhcrLoaded(true)
-    } catch (e: unknown) {
-      if (requestId !== ghcrRequestIdRef.current) return
-      setGhcrError(e instanceof Error ? e.message : String(e))
-      setGhcrLoaded(true)
-    }
-  }, [])
-
   useEffect(() => {
     void refreshVersionInferenceSummary()
   }, [refreshVersionInferenceSummary])
-
-  useEffect(() => {
-    void refreshGhcrSummary()
-  }, [refreshGhcrSummary])
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -300,13 +226,6 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
     }, VERSION_INFERENCE_SUMMARY_POLL_MS)
     return () => window.clearInterval(timer)
   }, [refreshVersionInferenceSummary])
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      void refreshGhcrSummary()
-    }, GHCR_SUMMARY_POLL_MS)
-    return () => window.clearInterval(timer)
-  }, [refreshGhcrSummary])
 
   useEffect(() => {
     let closed = false
@@ -418,7 +337,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
           void (async () => {
             setBusy(true)
             try {
-              await Promise.all([refresh(), refreshVersionInferenceSummary(), refreshGhcrSummary()])
+              await Promise.all([refresh(), refreshVersionInferenceSummary()])
             } catch (e: unknown) {
               setError(e instanceof Error ? e.message : String(e))
             } finally {
@@ -430,7 +349,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
         刷新
       </Button>,
     )
-  }, [busy, onTopActions, refresh, refreshGhcrSummary, refreshVersionInferenceSummary])
+  }, [busy, onTopActions, refresh, refreshVersionInferenceSummary])
 
   const filtered = useMemo(() => {
     if (filter === 'all') return jobs
@@ -499,53 +418,6 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
             <Pill tone={versionInferenceTone(versionInferenceSummary)}>
               {versionInferenceLoaded ? versionInferenceLabel(versionInferenceSummary) : 'loading'}
             </Pill>
-          </div>
-        </button>
-
-        <button
-          type="button"
-          className="queueSummaryItem"
-          style={{ marginTop: 12 }}
-          onClick={() => navigate({ name: 'ghcr-webhooks' })}
-        >
-          <div className="queueMain">
-            <div className="queueTitle">
-              <Mono>GHCR Webhook 状态</Mono>
-            </div>
-            <div className="queueMeta">
-              <span>
-                tracked <Mono>{ghcrSummary.tracked}</Mono>
-              </span>
-              <span>
-                ok <Mono>{ghcrSummary.ok}</Mono>
-              </span>
-              <span>
-                missing <Mono>{ghcrSummary.missing}</Mono>
-              </span>
-              <span>
-                error <Mono>{ghcrSummary.error}</Mono>
-              </span>
-              <span>
-                conflict <Mono>{ghcrSummary.conflict}</Mono>
-              </span>
-              <span>
-                jobsQueued <Mono>{ghcrSummary.jobsQueued}</Mono>
-              </span>
-              <span>
-                jobsRunning <Mono>{ghcrSummary.jobsRunning}</Mono>
-              </span>
-            </div>
-            <div className="muted" style={{ marginTop: 8 }}>
-              查看 GHCR webhook 任务队列、仓库状态与巡检结果
-            </div>
-            {ghcrError ? (
-              <div className="error" style={{ marginTop: 8 }}>
-                {ghcrError}
-              </div>
-            ) : null}
-          </div>
-          <div className="queueStatus">
-            <Pill tone={ghcrTone(ghcrSummary)}>{ghcrLoaded ? ghcrLabel(ghcrSummary) : 'loading'}</Pill>
           </div>
         </button>
 

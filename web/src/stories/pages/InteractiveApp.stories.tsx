@@ -73,7 +73,7 @@ export const GhcrWebhooks: Story = {
   render: () => {
     return (
       <>
-        <LocationReset pathname="/queue/ghcr-webhooks" />
+        <LocationReset pathname="/settings/ghcr-webhooks" />
         <App />
       </>
     )
@@ -85,7 +85,7 @@ export const GhcrWebhookInbox: Story = {
   render: () => {
     return (
       <>
-        <LocationReset pathname="/queue/ghcr-webhook-inbox" />
+        <LocationReset pathname="/settings/ghcr-webhook-inbox" />
         <App />
       </>
     )

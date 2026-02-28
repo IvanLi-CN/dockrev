@@ -45,12 +45,11 @@ export function AppShell(props: {
   const active =
     props.route.name === 'service'
       ? 'services'
-      : props.route.name === 'job' ||
-          props.route.name === 'version-inference' ||
-          props.route.name === 'ghcr-webhooks' ||
-          props.route.name === 'ghcr-webhook-inbox'
+      : props.route.name === 'job' || props.route.name === 'version-inference'
         ? 'queue'
-        : props.route.name
+        : props.route.name === 'ghcr-webhooks' || props.route.name === 'ghcr-webhook-inbox'
+          ? 'settings'
+          : props.route.name
   const [appVersion, setAppVersion] = useState<string | null>(null)
 
   const lastScan = props.lastScanHint

@@ -41,7 +41,7 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
       return {
         title: 'GHCR Webhook',
         pageSubtitle: 'Webhook 注册/反注册任务与巡检状态',
-        topbarHint: 'GHCR Webhook 队列',
+        topbarHint: 'GHCR Webhook',
       }
     case 'ghcr-webhook-inbox':
       return {

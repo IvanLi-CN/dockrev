@@ -23,6 +23,7 @@ export function parseRoute(pathname: string): Route {
   if (parts.length === 2 && parts[0] === 'queue' && parts[1] === 'version-inference') {
     return { name: 'version-inference' }
   }
+  // Legacy: GHCR webhook pages used to live under /queue/*.
   if (parts.length === 2 && parts[0] === 'queue' && parts[1] === 'ghcr-webhooks') {
     return { name: 'ghcr-webhooks' }
   }
@@ -33,6 +34,12 @@ export function parseRoute(pathname: string): Route {
   if (parts.length === 1 && parts[0] === 'services') return { name: 'services' }
   // Legacy compatibility: keep old path readable after route migration.
   if (parts.length === 1 && parts[0] === 'version-inference') return { name: 'version-inference' }
+  if (parts.length === 2 && parts[0] === 'settings' && parts[1] === 'ghcr-webhooks') {
+    return { name: 'ghcr-webhooks' }
+  }
+  if (parts.length === 2 && parts[0] === 'settings' && parts[1] === 'ghcr-webhook-inbox') {
+    return { name: 'ghcr-webhook-inbox' }
+  }
   if (parts.length === 1 && parts[0] === 'deploy-check') return { name: 'deploy-check' }
   if (parts.length === 1 && parts[0] === 'settings') return { name: 'settings' }
   if (parts.length === 3 && parts[0] === 'services') {
@@ -54,9 +61,9 @@ export function href(route: Route): string {
     case 'version-inference':
       return '/queue/version-inference'
     case 'ghcr-webhooks':
-      return '/queue/ghcr-webhooks'
+      return '/settings/ghcr-webhooks'
     case 'ghcr-webhook-inbox':
-      return '/queue/ghcr-webhook-inbox'
+      return '/settings/ghcr-webhook-inbox'
     case 'deploy-check':
       return '/deploy-check'
     case 'settings':

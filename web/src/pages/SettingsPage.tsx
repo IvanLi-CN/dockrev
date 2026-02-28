@@ -1612,7 +1612,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
           <div className="card">
           <div className="title">GitHub Packages（GHCR）Webhook</div>
           <div className="muted">在 GHCR 发布新版本时自动触发 Dockrev 扫描（事件：package.published）</div>
-          <div className="muted">添加后会自动创建后台任务注册 webhook；可在更新队列 / GHCR Webhook 页面查看进度。</div>
+          <div className="muted">添加后会自动创建后台任务注册 webhook；可在 GHCR Webhook 页面查看进度与巡检状态。</div>
           {ghcrLiveProgressText ? (
             <div className="muted" style={{ marginTop: 8, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
               <span>当前 GHCR 任务：{ghcrLiveProgressText}</span>

@@ -121,8 +121,8 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
         <Button variant="ghost" disabled={busy} onClick={() => navigate({ name: 'ghcr-webhook-inbox' })}>
           推送 Inbox
         </Button>
-        <Button variant="ghost" disabled={busy} onClick={() => navigate({ name: 'queue' })}>
-          返回队列
+        <Button variant="ghost" disabled={busy} onClick={() => navigate({ name: 'settings' })}>
+          返回设置
         </Button>
         <Button
           variant="ghost"
