@@ -2898,6 +2898,7 @@ WHERE selected = 1
         .context("list github packages repos state summary")
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn insert_github_packages_delivery_if_new(
         &self,
         delivery_id: &str,
