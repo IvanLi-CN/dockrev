@@ -96,6 +96,73 @@ fn detect_semver_downgrade(svc: &crate::api::types::Service) -> Option<(String, 
     None
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct UpdateServiceSelection<'a> {
+    pub services: Vec<&'a crate::api::types::Service>,
+    pub skipped_version_anomaly: Vec<serde_json::Value>,
+}
+
+pub fn select_update_services<'a>(
+    stack: &'a StackRecord,
+    scope: &JobScope,
+    service_id: Option<&str>,
+    allow_arch_mismatch: bool,
+    update_reason: &str,
+) -> UpdateServiceSelection<'a> {
+    let mut services = match scope {
+        JobScope::All => stack.services.iter().collect::<Vec<_>>(),
+        JobScope::Stack => stack.services.iter().collect::<Vec<_>>(),
+        JobScope::Service => stack
+            .services
+            .iter()
+            .filter(|s| service_id.is_some_and(|id| id == s.id))
+            .collect::<Vec<_>>(),
+    };
+
+    // For stack/all updates, only apply to actionable candidates (UI shows others as skipped).
+    if !matches!(scope, JobScope::Service) {
+        services.retain(|svc| {
+            if svc.archived.unwrap_or(false) {
+                return false;
+            }
+            if svc.ignore.as_ref().is_some_and(|i| i.matched) {
+                return false;
+            }
+            let Some(candidate) = svc.candidate.as_ref() else {
+                return false;
+            };
+            if !allow_arch_mismatch
+                && matches!(candidate.arch_match, crate::api::types::ArchMatch::Mismatch)
+            {
+                return false;
+            }
+            true
+        });
+    }
+
+    let mut skipped_version_anomaly: Vec<serde_json::Value> = Vec::new();
+    if !update_reason.eq_ignore_ascii_case("ui") {
+        services.retain(|svc| {
+            if let Some((current_semver, candidate_semver)) = detect_semver_downgrade(svc) {
+                skipped_version_anomaly.push(json!({
+                    "serviceId": svc.id,
+                    "serviceName": svc.name,
+                    "current": current_semver,
+                    "candidate": candidate_semver,
+                    "reason": "semver_downgrade",
+                }));
+                return false;
+            }
+            true
+        });
+    }
+
+    UpdateServiceSelection {
+        services,
+        skipped_version_anomaly,
+    }
+}
+
 fn failed_summary_with_skipped_anomaly(
     reason: &str,
     skipped_version_anomaly: &[serde_json::Value],
@@ -128,56 +195,10 @@ pub async fn run_update_job(
         compose: stack.compose.clone(),
     };
 
-    let mut services = match scope {
-        JobScope::All => stack.services.iter().collect::<Vec<_>>(),
-        JobScope::Stack => stack.services.iter().collect::<Vec<_>>(),
-        JobScope::Service => stack
-            .services
-            .iter()
-            .filter(|s| service_id.is_some_and(|id| id == s.id))
-            .collect::<Vec<_>>(),
-    };
-
-    // For stack/all updates, only apply to actionable candidates (UI shows others as skipped).
-    if !matches!(scope, JobScope::Service) {
-        services.retain(|svc| {
-            if svc.archived.unwrap_or(false) {
-                return false;
-            }
-            if svc.ignore.as_ref().is_some_and(|i| i.matched) {
-                return false;
-            }
-            let Some(candidate) = svc.candidate.as_ref() else {
-                return false;
-            };
-            if !allow_arch_mismatch
-                && matches!(candidate.arch_match, crate::api::types::ArchMatch::Mismatch)
-            {
-                return false;
-            }
-            true
-        });
-    }
-
-    let skip_version_anomaly_for_automation = !update_reason.eq_ignore_ascii_case("ui");
-    let mut skipped_version_anomaly: Vec<serde_json::Value> = Vec::new();
-    if skip_version_anomaly_for_automation {
-        let mut filtered = Vec::new();
-        for svc in services {
-            if let Some((current_semver, candidate_semver)) = detect_semver_downgrade(svc) {
-                skipped_version_anomaly.push(json!({
-                    "serviceId": svc.id,
-                    "serviceName": svc.name,
-                    "current": current_semver,
-                    "candidate": candidate_semver,
-                    "reason": "semver_downgrade",
-                }));
-                continue;
-            }
-            filtered.push(svc);
-        }
-        services = filtered;
-    }
+    let selection =
+        select_update_services(stack, scope, service_id, allow_arch_mismatch, update_reason);
+    let services = selection.services;
+    let skipped_version_anomaly = selection.skipped_version_anomaly;
 
     if mode == "dry-run" {
         return Ok(UpdateOutcome {

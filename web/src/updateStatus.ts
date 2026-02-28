@@ -12,9 +12,9 @@ const STRICT_SEMVER_PATTERN =
   /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/
 
 type StrictSemver = {
-  major: number
-  minor: number
-  patch: number
+  major: string
+  minor: string
+  patch: string
   prerelease: string[]
 }
 
@@ -54,9 +54,9 @@ function parseStrictSemver(tag: string | null | undefined): StrictSemver | null 
   }
 
   return {
-    major: Number(match[1]),
-    minor: Number(match[2]),
-    patch: Number(match[3]),
+    major: match[1],
+    minor: match[2],
+    patch: match[3],
     prerelease,
   }
 }
@@ -76,9 +76,12 @@ function compareNumericToken(a: string, b: string): number {
 }
 
 function compareStrictSemver(a: StrictSemver, b: StrictSemver): number {
-  if (a.major !== b.major) return a.major - b.major
-  if (a.minor !== b.minor) return a.minor - b.minor
-  if (a.patch !== b.patch) return a.patch - b.patch
+  const majorCmp = compareNumericToken(a.major, b.major)
+  if (majorCmp !== 0) return majorCmp
+  const minorCmp = compareNumericToken(a.minor, b.minor)
+  if (minorCmp !== 0) return minorCmp
+  const patchCmp = compareNumericToken(a.patch, b.patch)
+  if (patchCmp !== 0) return patchCmp
 
   const aPre = a.prerelease
   const bPre = b.prerelease

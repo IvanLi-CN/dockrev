@@ -106,6 +106,27 @@ describe('updateStatus semver downgrade anomaly', () => {
     expect(isSemverDowngradeAnomaly(svc)).toBe(true)
   })
 
+  test('flags downgrade correctly for very large semver numeric segments', () => {
+    const svc = makeService({
+      image: {
+        ref: 'ghcr.io/acme/demo:latest',
+        tag: 'latest',
+        digest: 'sha256:current',
+        resolvedTag: 'v9007199254740993.0.0',
+        resolvedTags: ['v9007199254740993.0.0'],
+      },
+      candidate: {
+        tag: 'latest',
+        resolvedTag: 'v9007199254740992.99.99',
+        digest: 'sha256:candidate',
+        archMatch: 'match',
+        arch: ['linux/amd64'],
+      },
+    })
+
+    expect(isSemverDowngradeAnomaly(svc)).toBe(true)
+  })
+
   test('keeps backup hint when downgrade anomaly and force backup both apply', () => {
     const svc = makeService({
       settings: {
