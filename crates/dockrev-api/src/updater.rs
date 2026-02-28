@@ -96,6 +96,16 @@ fn detect_semver_downgrade(svc: &crate::api::types::Service) -> Option<(String, 
     None
 }
 
+fn failed_summary_with_skipped_anomaly(
+    reason: &str,
+    skipped_version_anomaly: &[serde_json::Value],
+) -> serde_json::Value {
+    json!({
+        "reason": reason,
+        "skippedVersionAnomaly": skipped_version_anomaly,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run_update_job(
     runner: &dyn CommandRunner,
@@ -345,7 +355,10 @@ pub async fn run_update_job(
         if post_update_container_id.is_empty() {
             return Ok(UpdateOutcome {
                 status: "failed".to_string(),
-                summary_json: json!({"reason":"container_missing_after_update"}),
+                summary_json: failed_summary_with_skipped_anomaly(
+                    "container_missing_after_update",
+                    &skipped_version_anomaly,
+                ),
             });
         }
 
@@ -403,7 +416,10 @@ pub async fn run_update_job(
                 if rollback_container_id.is_empty() {
                     return Ok(UpdateOutcome {
                         status: "failed".to_string(),
-                        summary_json: json!({"reason":"container_missing_after_rollback"}),
+                        summary_json: failed_summary_with_skipped_anomaly(
+                            "container_missing_after_rollback",
+                            &skipped_version_anomaly,
+                        ),
                     });
                 }
                 active_container_id = rollback_container_id;
@@ -418,7 +434,10 @@ pub async fn run_update_job(
                 if !ok2 {
                     return Ok(UpdateOutcome {
                         status: "failed".to_string(),
-                        summary_json: json!({"reason":"rollback_failed"}),
+                        summary_json: failed_summary_with_skipped_anomaly(
+                            "rollback_failed",
+                            &skipped_version_anomaly,
+                        ),
                     });
                 }
                 rolled_back = true;
