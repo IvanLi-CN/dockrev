@@ -23,7 +23,11 @@ import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../component
 import { useConfirm } from '../confirm'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
-import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay } from '../versionDisplay'
+import {
+  formatCandidateTagDisplay,
+  formatCurrentTagDisplay as formatTagDisplay,
+  isStrictSemverTag,
+} from '../versionDisplay'
 
 function formatShort(ts: string) {
   const d = new Date(ts)
@@ -78,6 +82,18 @@ function splitImageNameForDisplay(
 
 function isDockrevService(svc: Service): boolean {
   return isDockrevImageRef(svc.image.ref)
+}
+
+function shouldPrefetchFloatingCandidate(
+  candidateTag: string | null | undefined,
+  candidateResolvedTag: string | null | undefined,
+  candidateDigest: string | null | undefined,
+): boolean {
+  const raw = (candidateTag ?? '').trim()
+  if (raw === '-') return false
+  if (!raw || isStrictSemverTag(raw)) return false
+  if (isStrictSemverTag(candidateResolvedTag)) return false
+  return (candidateDigest ?? '').trim().length > 0
 }
 
 function StackIcon(props: { variant: 'collapsed' | 'expanded' }) {
@@ -780,6 +796,11 @@ export function ServicesPage(props: {
 		                                              serviceId={item.svc.id}
 		                                              candidateTag={candidateRawTag}
 		                                              candidateDigest={item.svc.candidate?.digest ?? null}
+		                                              prefetchOnMount={shouldPrefetchFloatingCandidate(
+		                                                candidateRawTag,
+		                                                item.svc.candidate?.resolvedTag ?? null,
+		                                                item.svc.candidate?.digest ?? null,
+		                                              )}
 		                                            >
 		                                              {candidateDisplayTag}
 		                                            </VersionTagsPopover>
@@ -920,6 +941,11 @@ export function ServicesPage(props: {
                                       serviceId={svc.id}
                                       candidateTag={candidateRawTag}
                                       candidateDigest={svc.candidate?.digest ?? null}
+                                      prefetchOnMount={shouldPrefetchFloatingCandidate(
+                                        candidateRawTag,
+                                        svc.candidate?.resolvedTag ?? null,
+                                        svc.candidate?.digest ?? null,
+                                      )}
                                     >
                                       {candidateDisplayTag}
                                     </VersionTagsPopover>
@@ -1033,13 +1059,18 @@ export function ServicesPage(props: {
 	                                                  <ArrowRightIcon className="inlineIcon" />
 	                                                </span>
 	                                                {candidateRawTag && candidateDisplayTag ? (
-	                                                  <VersionTagsPopover
-	                                                    serviceId={svc.id}
-	                                                    candidateTag={candidateRawTag}
-	                                                    candidateDigest={svc.candidate?.digest ?? null}
-	                                                  >
-	                                                    {candidateDisplayTag}
-	                                                  </VersionTagsPopover>
+		                                                  <VersionTagsPopover
+		                                                    serviceId={svc.id}
+		                                                    candidateTag={candidateRawTag}
+		                                                    candidateDigest={svc.candidate?.digest ?? null}
+		                                                    prefetchOnMount={shouldPrefetchFloatingCandidate(
+		                                                      candidateRawTag,
+		                                                      svc.candidate?.resolvedTag ?? null,
+		                                                      svc.candidate?.digest ?? null,
+		                                                    )}
+		                                                  >
+		                                                    {candidateDisplayTag}
+		                                                  </VersionTagsPopover>
 	                                                ) : (
 	                                                  <span className="mono monoPrimary">-</span>
 	                                                )}

@@ -22,7 +22,12 @@ function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefin
   return '-'
 }
 
-function Demo(props: { serviceId: string; candidateTag: string; candidateDigest: string | null }) {
+function Demo(props: {
+  serviceId: string
+  candidateTag: string
+  candidateDigest: string | null
+  prefetchOnMount?: boolean
+}) {
   const imageTag = '0.8'
   const imageDigest = props.candidateDigest
   const currentDisplayTag = inferredTagForDisplay(imageTag, null)
@@ -45,6 +50,7 @@ function Demo(props: { serviceId: string; candidateTag: string; candidateDigest:
               serviceId={props.serviceId}
               candidateTag={props.candidateTag}
               candidateDigest={props.candidateDigest}
+              prefetchOnMount={props.prefetchOnMount}
             >
               {props.candidateTag}
             </VersionTagsPopover>
@@ -113,6 +119,7 @@ export const PendingSnapshot: Story = {
     serviceId: 'svc-version-tags',
     candidateTag: 'v0.8.8-arm64',
     candidateDigest: d('b', '9f'),
+    prefetchOnMount: true,
   },
 }
 

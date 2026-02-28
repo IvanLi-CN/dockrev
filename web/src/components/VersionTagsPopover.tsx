@@ -30,9 +30,19 @@ function moveToFront(tags: string[], tag: string): string[] {
   return [tags[idx], ...tags.slice(0, idx), ...tags.slice(idx + 1)]
 }
 
+function stableJitterMs(seed: string, maxMs: number): number {
+  if (maxMs <= 0) return 0
+  let hash = 0
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0
+  }
+  return hash % (maxMs + 1)
+}
+
 const HOVER_CLOSE_DELAY_MS = 300
 const POPOVER_ANIM_MS = 160
 const FETCH_DEBOUNCE_MS = 220
+const PREFETCH_JITTER_MAX_MS = 180
 const TAGS_PREVIEW_MAX = 12
 
 type DigestTagsState = {
@@ -50,9 +60,10 @@ export function VersionTagsPopover(props: {
   serviceId: string
   candidateTag: string | null
   candidateDigest: string | null
+  prefetchOnMount?: boolean
   children: ReactNode
 }) {
-  const { serviceId, candidateTag, candidateDigest, children } = props
+  const { serviceId, candidateTag, candidateDigest, prefetchOnMount = false, children } = props
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const hoverCloseTimer = useRef<number | null>(null)
@@ -205,7 +216,7 @@ export function VersionTagsPopover(props: {
   }, [digestKey, refreshing, serviceId])
 
   useEffect(() => {
-    const shouldPollSnapshot = open || snapshotPhaseRef.current === 'loading'
+    const shouldPollSnapshot = prefetchOnMount || open || snapshotPhaseRef.current === 'loading'
     if (!shouldPollSnapshot) return
     if (!candidateTagTrim) return
 
@@ -214,9 +225,14 @@ export function VersionTagsPopover(props: {
     // Only fetch when there's no snapshot data loaded yet. Retries should be explicit
     // (e.g. via re-pinning), not continuously driven by pinned+error state.
     if (digestTags != null) return
+    if (prefetchOnMount && snapshotPhaseRef.current !== 'loading') setSnapshotPhase('loading')
 
     let alive = true
-    const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
+    const prefetchJitter =
+      prefetchOnMount && !open && !pinned
+        ? stableJitterMs(`${serviceId}:${candidateDigestNorm}`, PREFETCH_JITTER_MAX_MS)
+        : 0
+    const delay = (pinned ? 0 : FETCH_DEBOUNCE_MS) + prefetchJitter
     if (fetchTimer.current != null) {
       window.clearTimeout(fetchTimer.current)
       fetchTimer.current = null
@@ -282,16 +298,22 @@ export function VersionTagsPopover(props: {
 
     return () => {
       alive = false
-      if (fetchTimer.current === timerId) {
-        window.clearTimeout(timerId)
+      if (fetchTimer.current != null) {
+        window.clearTimeout(fetchTimer.current)
         fetchTimer.current = null
       }
     }
-  }, [candidateDigestNorm, candidateTagTrim, digestKey, digestTags, open, pinned, serviceId])
+  }, [candidateDigestNorm, candidateTagTrim, digestKey, digestTags, open, pinned, prefetchOnMount, serviceId])
 
   useEffect(() => {
-    setSnapshotPhase('idle')
-  }, [digestKey])
+    const shouldPrimeLoading =
+      prefetchOnMount &&
+      candidateTagTrim.length > 0 &&
+      candidateTagTrim !== '-' &&
+      Boolean(candidateDigestNorm) &&
+      digestTags == null
+    setSnapshotPhase(shouldPrimeLoading ? 'loading' : 'idle')
+  }, [candidateDigestNorm, candidateTagTrim, digestKey, digestTags, prefetchOnMount])
 
   const digestTagsUnique = useMemo(() => uniquePreserveOrder(digestTags), [digestTags])
   const tagsPreview = useMemo(() => {

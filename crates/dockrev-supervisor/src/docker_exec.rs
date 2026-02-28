@@ -767,12 +767,15 @@ mod tests {
     #[cfg(unix)]
     impl TempDir {
         fn new(prefix: &str) -> anyhow::Result<Self> {
+            static TEMP_DIR_SEQ: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(0);
             let nanos = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_nanos();
+            let seq = TEMP_DIR_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let path =
-                std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()));
+                std::env::temp_dir().join(format!("{prefix}-{}-{nanos}-{seq}", std::process::id()));
             std::fs::create_dir_all(&path)?;
             Ok(Self { path })
         }
