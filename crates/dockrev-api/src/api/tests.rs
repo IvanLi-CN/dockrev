@@ -882,6 +882,7 @@ async fn test_state_with(
         discovery_interval_seconds: 60,
         discovery_max_actions: 200,
         runtime_scan_interval_seconds: 600,
+        ghcr_webhook_audit_interval_seconds: 86_400,
         deploy_check_local_command_timeout_seconds: 12,
         registry_per_host_concurrency: crate::config::FIXED_REGISTRY_PER_HOST_CONCURRENCY,
         registry_retry_max_attempts: 3,
@@ -913,6 +914,7 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
         discovery_interval_seconds: 60,
         discovery_max_actions: 200,
         runtime_scan_interval_seconds: 600,
+        ghcr_webhook_audit_interval_seconds: 86_400,
         deploy_check_local_command_timeout_seconds: 12,
         registry_per_host_concurrency: crate::config::FIXED_REGISTRY_PER_HOST_CONCURRENCY,
         registry_retry_max_attempts: 3,
@@ -3961,6 +3963,51 @@ async fn recover_incomplete_jobs_marks_running_as_failed() {
 }
 
 #[tokio::test]
+async fn recover_incomplete_jobs_keeps_queued_jobs_pending() {
+    let state = test_state(":memory:").await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let job_id = ids::new_job_id();
+    state
+        .db
+        .insert_job(crate::api::types::JobListItem {
+            id: job_id.clone(),
+            r#type: crate::api::types::JobType::GitHubPackagesWebhook,
+            scope: crate::api::types::JobScope::All,
+            stack_id: None,
+            service_id: None,
+            status: "queued".to_string(),
+            created_at: now.clone(),
+            created_by: "ivan".to_string(),
+            reason: "ui".to_string(),
+            started_at: None,
+            finished_at: None,
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json: serde_json::json!({ "op": "register", "repos": ["acme/widgets"] }),
+        })
+        .await
+        .unwrap();
+
+    let recovered = state
+        .db
+        .recover_incomplete_jobs(&now, "server_restart")
+        .await
+        .unwrap();
+    assert!(
+        !recovered.iter().any(|id| id == &job_id),
+        "queued job should not be force-failed by startup recovery"
+    );
+
+    let got = state.db.get_job(&job_id).await.unwrap().unwrap();
+    assert_eq!(got.status, "queued");
+    assert!(got.started_at.is_none());
+    assert!(got.finished_at.is_none());
+}
+
+#[tokio::test]
 async fn create_ignore_then_delete() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
@@ -6219,6 +6266,289 @@ async fn github_packages_repo_selected_upsert_is_case_insensitive_and_preserves_
     assert_eq!(repos[0].repo, "Widgets");
     assert!(!repos[0].selected);
     assert_eq!(repos[0].hook_id, Some(42));
+}
+
+#[tokio::test]
+async fn github_packages_repo_selected_enqueues_register_job_when_enabled() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    let mut settings = state.db.get_github_packages_settings().await.unwrap();
+    settings.enabled = true;
+    settings.callback_url = "https://dockrev.example.com/api/webhooks/github-packages".to_string();
+    state
+        .db
+        .put_github_packages_settings(&settings, &now)
+        .await
+        .unwrap();
+    state
+        .db
+        .upsert_github_packages_repo_selected("Acme", "Widgets", false, &now)
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/repos/selected")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "fullName": "acme/widgets",
+                        "selected": true
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["ok"], true);
+    let job_id = body["jobId"].as_str().unwrap_or_default().to_string();
+    assert!(
+        !job_id.is_empty(),
+        "selected=true should enqueue a register job and return jobId"
+    );
+
+    let job = state.db.get_job(&job_id).await.unwrap().unwrap();
+    assert_eq!(job.r#type.as_str(), "github_packages_webhook");
+    assert_eq!(job.status, "queued");
+    assert!(job.started_at.is_none());
+
+    let repo = state
+        .db
+        .get_github_packages_repo("acme", "widgets")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(repo.selected);
+    assert_eq!(repo.webhook_state, "queued");
+    assert_eq!(repo.webhook_job_id.as_deref(), Some(job_id.as_str()));
+    assert_eq!(repo.last_op.as_deref(), Some("register"));
+}
+
+#[tokio::test]
+async fn github_packages_repo_delete_enqueues_unregister_job_and_keeps_row_until_worker_finishes() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .put_github_packages_repos(
+            &[(String::from("Acme"), String::from("Widgets"), true)],
+            &now,
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .set_github_packages_repo_sync_result(
+            "Acme",
+            "Widgets",
+            Some(12345),
+            Some(&now),
+            None,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/repos/delete")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "fullName": "acme/widgets"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["ok"], true);
+    let job_id = body["jobId"].as_str().unwrap_or_default().to_string();
+    assert!(!job_id.is_empty());
+
+    let job = state.db.get_job(&job_id).await.unwrap().unwrap();
+    assert_eq!(job.r#type.as_str(), "github_packages_webhook");
+    assert_eq!(job.status, "queued");
+
+    let repo = state
+        .db
+        .get_github_packages_repo("acme", "widgets")
+        .await
+        .unwrap();
+    let repo = repo.expect("row should remain until unregister worker succeeds");
+    assert_eq!(repo.webhook_state, "queued");
+    assert_eq!(repo.webhook_job_id.as_deref(), Some(job_id.as_str()));
+    assert_eq!(repo.last_op.as_deref(), Some("unregister"));
+}
+
+#[tokio::test]
+async fn github_packages_webhook_overview_reports_repo_and_job_summary() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let now = time::OffsetDateTime::now_utc();
+    let now_s = now
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let audit_older = (now - time::Duration::hours(2))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let audit_newer = (now - time::Duration::hours(1))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    state
+        .db
+        .put_github_packages_repos(
+            &[
+                (String::from("acme"), String::from("ok-repo"), true),
+                (String::from("acme"), String::from("missing-repo"), true),
+                (String::from("acme"), String::from("error-repo"), true),
+                (String::from("acme"), String::from("unselected-repo"), false),
+            ],
+            &now_s,
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .set_github_packages_repo_webhook_result(
+            "acme",
+            "ok-repo",
+            "ok",
+            Some(111),
+            Some(&now_s),
+            Some(&audit_older),
+            None,
+            None,
+            Some("register"),
+            &now_s,
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .set_github_packages_repo_webhook_result(
+            "acme",
+            "missing-repo",
+            "missing",
+            None,
+            None,
+            Some(&audit_newer),
+            Some("webhook missing"),
+            None,
+            Some("audit_all"),
+            &now_s,
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .set_github_packages_repo_webhook_result(
+            "acme",
+            "error-repo",
+            "error",
+            None,
+            None,
+            None,
+            Some("permission denied"),
+            None,
+            Some("register"),
+            &now_s,
+        )
+        .await
+        .unwrap();
+
+    let queued_job_id = ids::new_job_id();
+    state
+        .db
+        .insert_job(crate::api::types::JobListItem {
+            id: queued_job_id,
+            r#type: crate::api::types::JobType::GitHubPackagesWebhook,
+            scope: crate::api::types::JobScope::All,
+            stack_id: None,
+            service_id: None,
+            status: "queued".to_string(),
+            created_at: now_s.clone(),
+            created_by: "ivan".to_string(),
+            reason: "ui".to_string(),
+            started_at: None,
+            finished_at: None,
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json: serde_json::json!({"op":"register","repos":["acme/ok-repo"]}),
+        })
+        .await
+        .unwrap();
+
+    let running_job_id = ids::new_job_id();
+    state
+        .db
+        .insert_job(crate::api::types::JobListItem {
+            id: running_job_id.clone(),
+            r#type: crate::api::types::JobType::GitHubPackagesWebhook,
+            scope: crate::api::types::JobScope::All,
+            stack_id: None,
+            service_id: None,
+            status: "running".to_string(),
+            created_at: (now + time::Duration::seconds(1))
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap(),
+            created_by: "schedule".to_string(),
+            reason: "schedule".to_string(),
+            started_at: Some(now_s.clone()),
+            finished_at: None,
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json: serde_json::json!({"op":"audit_all","repos":[]}),
+        })
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/overview")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+
+    assert_eq!(body["summary"]["tracked"], 3);
+    assert_eq!(body["summary"]["ok"], 1);
+    assert_eq!(body["summary"]["missing"], 1);
+    assert_eq!(body["summary"]["error"], 1);
+    assert_eq!(body["summary"]["conflict"], 0);
+    assert_eq!(body["jobsQueued"], 1);
+    assert_eq!(body["jobsRunning"], 1);
+    assert_eq!(body["runningJobId"].as_str(), Some(running_job_id.as_str()));
+    assert_eq!(body["lastAuditAt"].as_str(), Some(audit_newer.as_str()));
 }
 
 #[tokio::test]

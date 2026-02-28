@@ -23,8 +23,8 @@ use url::Url;
 
 use crate::github;
 use crate::{
-    backup, discovery, error::ApiError, ids, ignore, notify, preflight, registry, runtime_scan,
-    snapshot_worker, state::AppState, ui, updater,
+    backup, discovery, error::ApiError, ghcr_webhook_jobs, ids, ignore, notify, preflight,
+    registry, runtime_scan, snapshot_worker, state::AppState, ui, updater,
 };
 use types::*;
 
@@ -122,6 +122,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/api/github-packages/resolve",
             post(resolve_github_packages_target),
+        )
+        .route(
+            "/api/github-packages/webhook/overview",
+            get(get_github_packages_webhook_overview),
         )
         .route(
             "/api/github-packages/sync",
@@ -4099,12 +4103,27 @@ async fn list_github_packages_repos(
             .map(|r| GitHubPackagesRepo {
                 full_name: format!("{}/{}", r.owner, r.repo),
                 selected: r.selected,
+                webhook_state: Some(r.webhook_state),
+                webhook_job_id: r.webhook_job_id,
                 hook_id: r.hook_id,
                 last_sync_at: r.last_sync_at,
+                last_audit_at: r.last_audit_at,
+                last_op: r.last_op,
                 last_error: r.last_error,
             })
             .collect(),
     }))
+}
+
+async fn get_github_packages_webhook_overview(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<GitHubPackagesWebhookOverviewResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let overview = ghcr_webhook_jobs::get_overview(&state)
+        .await
+        .map_err(map_internal)?;
+    Ok(Json(overview))
 }
 
 async fn set_github_packages_repo_selected(
@@ -4112,7 +4131,7 @@ async fn set_github_packages_repo_selected(
     headers: HeaderMap,
     Json(req): Json<SetGitHubPackagesRepoSelectedRequest>,
 ) -> Result<Json<SetGitHubPackagesRepoSelectedResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let user = require_user(&state, &headers)?;
     let now = now_rfc3339().map_err(map_internal)?;
 
     let mut parts = req.full_name.split('/');
@@ -4128,7 +4147,34 @@ async fn set_github_packages_repo_selected(
         .await
         .map_err(map_internal)?;
 
-    Ok(Json(SetGitHubPackagesRepoSelectedResponse { ok: true }))
+    let mut job_id: Option<String> = None;
+    if req.selected {
+        let settings = state
+            .db
+            .get_github_packages_settings()
+            .await
+            .map_err(map_internal)?;
+        let callback_ready =
+            !settings.callback_url.trim().is_empty() && Url::parse(&settings.callback_url).is_ok();
+        if settings.enabled && callback_ready {
+            let full_name = format!("{owner}/{repo}");
+            let queued = ghcr_webhook_jobs::enqueue_repo_job(
+                &state,
+                &full_name,
+                ghcr_webhook_jobs::GhcrWebhookOp::Register,
+                &user,
+                "ui",
+            )
+            .await
+            .map_err(map_internal)?;
+            job_id = Some(queued);
+        }
+    }
+
+    Ok(Json(SetGitHubPackagesRepoSelectedResponse {
+        ok: true,
+        job_id,
+    }))
 }
 
 async fn delete_github_packages_repo(
@@ -4136,7 +4182,7 @@ async fn delete_github_packages_repo(
     headers: HeaderMap,
     Json(req): Json<DeleteGitHubPackagesRepoRequest>,
 ) -> Result<Json<DeleteGitHubPackagesRepoResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let user = require_user(&state, &headers)?;
 
     let mut parts = req.full_name.split('/');
     let owner = parts.next().unwrap_or_default().trim();
@@ -4145,65 +4191,26 @@ async fn delete_github_packages_repo(
         return Err(ApiError::invalid_argument("invalid fullName"));
     }
 
-    let settings = state
+    let existing = state
         .db
-        .get_github_packages_settings()
+        .get_github_packages_repo(owner, repo)
         .await
         .map_err(map_internal)?;
-    let Some(pat) = settings.pat.clone() else {
-        return Err(ApiError::invalid_argument("pat is required"));
-    };
-    if settings.callback_url.trim().is_empty() {
-        return Err(ApiError::invalid_argument("callbackUrl is required"));
-    }
-    let _ = Url::parse(&settings.callback_url)
-        .map_err(|_| ApiError::invalid_argument("invalid callbackUrl"))?;
-
-    let client = github::GitHubClient::new(&pat).map_err(map_internal)?;
-    let hooks = client
-        .list_repo_hooks(owner, repo)
-        .await
-        .map_err(map_internal)?;
-
-    // Remove all hooks that match our callback URL + package event.
-    let mut deleted_hook_ids = Vec::new();
-    let mut delete_errors: Vec<String> = Vec::new();
-    for h in hooks {
-        let Some(url) = h.config.url.as_deref() else {
-            continue;
-        };
-        if !urls_match(url, &settings.callback_url) {
-            continue;
-        }
-        if !h.events.iter().any(|e| e == "package") {
-            continue;
-        }
-        match client.delete_repo_hook(owner, repo, h.id).await {
-            Ok(_) => deleted_hook_ids.push(h.id),
-            Err(e) => delete_errors.push(format!("hook {}: {}", h.id, e)),
-        }
+    if existing.is_none() {
+        return Err(ApiError::not_found("repo is not tracked"));
     }
 
-    if !delete_errors.is_empty() {
-        return Err(
-            ApiError::internal("failed to delete webhook").with_details(json!({
-                "repo": req.full_name,
-                "deletedHookIds": deleted_hook_ids,
-                "errors": delete_errors,
-            })),
-        );
-    }
+    let job_id = ghcr_webhook_jobs::enqueue_repo_job(
+        &state,
+        &format!("{owner}/{repo}"),
+        ghcr_webhook_jobs::GhcrWebhookOp::Unregister,
+        &user,
+        "ui",
+    )
+    .await
+    .map_err(map_internal)?;
 
-    state
-        .db
-        .delete_github_packages_repo(owner, repo)
-        .await
-        .map_err(map_internal)?;
-
-    Ok(Json(DeleteGitHubPackagesRepoResponse {
-        ok: true,
-        deleted_hook_ids,
-    }))
+    Ok(Json(DeleteGitHubPackagesRepoResponse { ok: true, job_id }))
 }
 
 async fn bulk_set_github_packages_repos_selected(
@@ -4409,6 +4416,7 @@ async fn resolve_github_packages_target(
     }
 }
 
+#[allow(dead_code)]
 fn urls_match(a: &str, b: &str) -> bool {
     let Ok(au) = Url::parse(a) else { return false };
     let Ok(bu) = Url::parse(b) else { return false };
@@ -4452,8 +4460,7 @@ async fn sync_github_packages_webhooks(
     headers: HeaderMap,
     Json(req): Json<SyncGitHubPackagesWebhooksRequest>,
 ) -> Result<Json<SyncGitHubPackagesWebhooksResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
-    let now = now_rfc3339().map_err(map_internal)?;
+    let user = require_user(&state, &headers)?;
 
     let settings = state
         .db
@@ -4466,12 +4473,6 @@ async fn sync_github_packages_webhooks(
             "github packages webhook is disabled",
         ));
     }
-    let Some(pat) = settings.pat.clone() else {
-        return Err(ApiError::invalid_argument("pat is required"));
-    };
-    let Some(secret) = settings.webhook_secret.clone() else {
-        return Err(ApiError::internal("webhook secret missing"));
-    };
     if settings.callback_url.trim().is_empty() {
         return Err(ApiError::invalid_argument("callbackUrl is required"));
     }
@@ -4496,282 +4497,51 @@ async fn sync_github_packages_webhooks(
         selected_repos.retain(|(o, r)| allow.contains(&format!("{}/{}", o, r).to_lowercase()));
     }
 
-    let client = github::GitHubClient::new(&pat).map_err(map_internal)?;
     let mut results = Vec::new();
-
-    let mut conflict_instructions =
-        std::collections::BTreeMap::<String, ResolveGitHubPackagesConflicts>::new();
-    if let Some(items) = req.resolve_conflicts {
-        for i in items {
-            let repo = i.repo.trim().to_string();
-            if repo.is_empty() {
-                return Err(ApiError::invalid_argument("invalid resolveConflicts")
-                    .with_details(json!({"error": "repo is empty"})));
-            }
-
-            if i.delete_hook_ids.contains(&i.keep_hook_id) {
-                return Err(ApiError::invalid_argument("invalid resolveConflicts").with_details(
-                    json!({"repo": repo, "error": "keepHookId must not appear in deleteHookIds"}),
-                ));
-            }
-
-            // Be tolerant of duplicate IDs while still enforcing the key safety invariant above.
-            let mut seen = std::collections::HashSet::<i64>::new();
-            let mut delete_hook_ids = Vec::with_capacity(i.delete_hook_ids.len());
-            for id in i.delete_hook_ids {
-                if seen.insert(id) {
-                    delete_hook_ids.push(id);
-                }
-            }
-
-            if conflict_instructions.contains_key(&repo) {
-                return Err(ApiError::invalid_argument("invalid resolveConflicts")
-                    .with_details(json!({"repo": repo, "error": "duplicate repo entry"})));
-            }
-
-            conflict_instructions.insert(
-                repo.clone(),
-                ResolveGitHubPackagesConflicts {
-                    repo,
-                    keep_hook_id: i.keep_hook_id,
-                    delete_hook_ids,
-                },
-            );
-        }
-    }
 
     let dry_run = req.dry_run.unwrap_or(false);
 
     for (owner, repo) in selected_repos {
         let full = format!("{owner}/{repo}");
-
-        if let Some(instr) = conflict_instructions.get(&full)
-            && !dry_run
-        {
-            for hid in &instr.delete_hook_ids {
-                let _ = client.delete_repo_hook(&owner, &repo, *hid).await;
-            }
-        }
-
-        let hooks = match client.list_repo_hooks(&owner, &repo).await {
-            Ok(v) => v,
-            Err(e) => {
-                let msg = e.to_string();
-                let _ = state
-                    .db
-                    .set_github_packages_repo_sync_result(
-                        &owner,
-                        &repo,
-                        None,
-                        None,
-                        Some(&msg),
-                        &now,
-                    )
-                    .await;
-                results.push(SyncGitHubPackagesWebhookResult {
-                    repo: full,
-                    action: "error".to_string(),
-                    hook_id: None,
-                    conflict_hooks: None,
-                    message: Some(msg),
-                });
-                continue;
-            }
-        };
-
-        let mut matches = Vec::new();
-        for h in &hooks {
-            let Some(url) = h.config.url.as_deref() else {
-                continue;
-            };
-            if urls_match(url, &settings.callback_url) && h.events.iter().any(|e| e == "package") {
-                matches.push(h);
-            }
-        }
-
-        if matches.len() > 1 {
-            let conflict_hooks = matches
-                .into_iter()
-                .map(|h| GitHubPackagesConflictHook {
-                    id: h.id,
-                    url: h.config.url.clone().unwrap_or_default(),
-                    events: h.events.clone(),
-                    active: h.active,
-                })
-                .collect::<Vec<_>>();
-            let msg = "multiple matching webhooks found".to_string();
-            let _ = state
-                .db
-                .set_github_packages_repo_sync_result(&owner, &repo, None, None, Some(&msg), &now)
-                .await;
-            results.push(SyncGitHubPackagesWebhookResult {
-                repo: full,
-                action: "conflict".to_string(),
-                hook_id: None,
-                conflict_hooks: Some(conflict_hooks),
-                message: Some(msg),
-            });
-            continue;
-        }
-
-        if matches.is_empty() {
-            if dry_run {
-                results.push(SyncGitHubPackagesWebhookResult {
-                    repo: full,
-                    action: "created".to_string(),
-                    hook_id: None,
-                    conflict_hooks: None,
-                    message: Some("dryRun: would create".to_string()),
-                });
-                continue;
-            }
-
-            let created = client
-                .create_repo_hook(
-                    &owner,
-                    &repo,
-                    &github::CreateWebhookRequest {
-                        name: "web",
-                        active: true,
-                        events: vec!["package"],
-                        config: github::CreateWebhookConfig {
-                            url: &settings.callback_url,
-                            content_type: "json",
-                            secret: &secret,
-                            insecure_ssl: "0",
-                        },
-                    },
-                )
-                .await;
-            match created {
-                Ok(h) => {
-                    let _ = state
-                        .db
-                        .set_github_packages_repo_sync_result(
-                            &owner,
-                            &repo,
-                            Some(h.id),
-                            Some(&now),
-                            None,
-                            &now,
-                        )
-                        .await;
-                    results.push(SyncGitHubPackagesWebhookResult {
-                        repo: full,
-                        action: "created".to_string(),
-                        hook_id: Some(h.id),
-                        conflict_hooks: None,
-                        message: None,
-                    });
-                }
-                Err(e) => {
-                    let msg = e.to_string();
-                    let _ = state
-                        .db
-                        .set_github_packages_repo_sync_result(
-                            &owner,
-                            &repo,
-                            None,
-                            None,
-                            Some(&msg),
-                            &now,
-                        )
-                        .await;
-                    results.push(SyncGitHubPackagesWebhookResult {
-                        repo: full,
-                        action: "error".to_string(),
-                        hook_id: None,
-                        conflict_hooks: None,
-                        message: Some(msg),
-                    });
-                }
-            }
-            continue;
-        }
-
-        let existing = matches[0];
-        // Even if the matching hook looks "good enough" (active + has `package`),
-        // we still PATCH it to ensure:
-        // - secret is set to our current secret (GitHub doesn't let us read it back to compare)
-        // - events are exactly what we want (avoid unnecessary traffic)
-
         if dry_run {
             results.push(SyncGitHubPackagesWebhookResult {
                 repo: full,
-                action: "updated".to_string(),
-                hook_id: Some(existing.id),
+                action: "queued".to_string(),
+                hook_id: None,
                 conflict_hooks: None,
-                message: Some("dryRun: would update".to_string()),
+                message: Some("dryRun: would enqueue register job".to_string()),
             });
             continue;
         }
 
-        let updated = client
-            .update_repo_hook(
-                &owner,
-                &repo,
-                existing.id,
-                &github::UpdateWebhookRequest {
-                    active: true,
-                    events: vec!["package"],
-                    config: github::UpdateWebhookConfig {
-                        url: &settings.callback_url,
-                        content_type: "json",
-                        secret: &secret,
-                        insecure_ssl: "0",
-                    },
-                },
-            )
-            .await;
-        match updated {
-            Ok(h) => {
-                let _ = state
-                    .db
-                    .set_github_packages_repo_sync_result(
-                        &owner,
-                        &repo,
-                        Some(h.id),
-                        Some(&now),
-                        None,
-                        &now,
-                    )
-                    .await;
-                results.push(SyncGitHubPackagesWebhookResult {
-                    repo: full,
-                    action: "updated".to_string(),
-                    hook_id: Some(h.id),
-                    conflict_hooks: None,
-                    message: None,
-                });
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                let _ = state
-                    .db
-                    .set_github_packages_repo_sync_result(
-                        &owner,
-                        &repo,
-                        None,
-                        None,
-                        Some(&msg),
-                        &now,
-                    )
-                    .await;
-                results.push(SyncGitHubPackagesWebhookResult {
-                    repo: full,
-                    action: "error".to_string(),
-                    hook_id: None,
-                    conflict_hooks: None,
-                    message: Some(msg),
-                });
-            }
+        let queued = ghcr_webhook_jobs::enqueue_repo_job(
+            &state,
+            &full,
+            ghcr_webhook_jobs::GhcrWebhookOp::Register,
+            &user,
+            "ui",
+        )
+        .await;
+        match queued {
+            Ok(job_id) => results.push(SyncGitHubPackagesWebhookResult {
+                repo: full,
+                action: "queued".to_string(),
+                hook_id: None,
+                conflict_hooks: None,
+                message: Some(format!("jobId={job_id}")),
+            }),
+            Err(err) => results.push(SyncGitHubPackagesWebhookResult {
+                repo: full,
+                action: "error".to_string(),
+                hook_id: None,
+                conflict_hooks: None,
+                message: Some(err.to_string()),
+            }),
         }
     }
 
     Ok(Json(SyncGitHubPackagesWebhooksResponse {
-        ok: results
-            .iter()
-            .all(|r| r.action != "error" && r.action != "conflict"),
+        ok: results.iter().all(|r| r.action != "error"),
         results,
     }))
 }

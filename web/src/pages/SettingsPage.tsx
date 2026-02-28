@@ -5,25 +5,26 @@ import {
   deleteGitHubPackagesRepo,
   deleteWebPushSubscription,
   getGitHubPackagesSettings,
+  listJobs,
   getNotifications,
   getSettings,
   listGitHubPackagesRepos,
+  newJobsEventsSource,
   putGitHubPackagesSettings,
   putNotifications,
   putSettings,
   resolveGitHubPackagesTarget,
   setGitHubPackagesRepoSelected,
-  syncGitHubPackagesWebhooks,
   testNotifications,
   apiBaseUrl,
   type GitHubPackagesSettingsResponse,
+  type JobListItem,
   type ListGitHubPackagesReposResponse,
   type ResolveGitHubPackagesTargetResponse,
-  type SyncGitHubPackagesWebhookResult,
   type NotificationConfig,
   type SettingsResponse,
 } from '../api'
-import { Button, IconButton, Mono, RefreshIcon, Switch, TrashIcon } from '../ui'
+import { Button, IconButton, Mono, Switch, TrashIcon } from '../ui'
 import { useConfirm } from '../confirm'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
@@ -173,6 +174,29 @@ function formatRepoActivity(raw: string | null): string {
 
 function normalizeRepoListDensity(raw: string | null): RepoListDensity {
   return raw === 'compact' ? 'compact' : 'cozy'
+}
+
+function normalizeWebhookState(raw: string | null | undefined): string {
+  const state = (raw ?? '').trim().toLowerCase()
+  if (!state) return 'unknown'
+  return state
+}
+
+function webhookStateLabel(state: string): string {
+  if (state === 'queued') return '排队中'
+  if (state === 'running') return '注册中'
+  if (state === 'ok') return '已注册'
+  if (state === 'missing') return '缺失'
+  if (state === 'error') return '失败'
+  if (state === 'conflict') return '冲突'
+  return '未知'
+}
+
+function webhookStateDotClass(state: string): string {
+  if (state === 'ok') return 'statusDot statusDotOk'
+  if (state === 'missing' || state === 'queued' || state === 'running') return 'statusDot statusDotWarn'
+  if (state === 'error' || state === 'conflict') return 'statusDot statusDotBad'
+  return 'statusDot statusDotWarn'
 }
 
 function readRepoListDensityFromStorage(): RepoListDensity {
@@ -482,8 +506,8 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   const [githubPackages, setGitHubPackages] = useState<GitHubPackagesSettingsResponse | null>(null)
   const [githubPackagesPat, setGitHubPackagesPat] = useState('')
   const [githubPackagesNewRepo, setGitHubPackagesNewRepo] = useState('')
-  const [githubPackagesSyncResults, setGitHubPackagesSyncResults] = useState<SyncGitHubPackagesWebhookResult[] | null>(null)
   const [githubPackagesTrackedRepos, setGitHubPackagesTrackedRepos] = useState<ListGitHubPackagesReposResponse | null>(null)
+  const [ghcrLiveJob, setGhcrLiveJob] = useState<JobListItem | null>(null)
   const [githubPackagesTrackedReposPage, setGitHubPackagesTrackedReposPage] = useState(1)
   const [githubPackagesTrackedReposPerPage, setGitHubPackagesTrackedReposPerPage] = useState(50)
   const [githubPackagesTrackedReposQInput, setGitHubPackagesTrackedReposQInput] = useState('')
@@ -849,13 +873,20 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
       const page = opts?.page ?? githubPackagesTrackedReposPage
       const perPage = opts?.perPage ?? githubPackagesTrackedReposPerPage
       const q = (opts?.q ?? githubPackagesTrackedReposQ).trim()
-      const resp = await listGitHubPackagesRepos({
-        page,
-        perPage,
-        q: q ? q : null,
-        selectedFilter: 'selected',
-      })
+      const [resp, jobs] = await Promise.all([
+        listGitHubPackagesRepos({
+          page,
+          perPage,
+          q: q ? q : null,
+          selectedFilter: 'selected',
+        }),
+        listJobs(),
+      ])
       setGitHubPackagesTrackedRepos(resp)
+      const liveJob =
+        jobs.find((job) => job.type === 'github_packages_webhook' && (job.status === 'running' || job.status === 'queued')) ??
+        null
+      setGhcrLiveJob(liveJob)
 
       // If a deletion makes the current page out-of-range, clamp to the last page.
       const maxPage = Math.max(1, Math.ceil(resp.filteredTotal / resp.perPage))
@@ -903,6 +934,95 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
   useEffect(() => {
     void refreshTrackedRepos().catch((e: unknown) => setError(errorMessage(e)))
+  }, [refreshTrackedRepos])
+
+  useEffect(() => {
+    let closed = false
+    let es: EventSource | null = null
+    let refreshTimer: number | null = null
+    let reconnectTimer: number | null = null
+    let pollTimer: number | null = null
+    let errorStreak = 0
+    let lastEventId = 0
+
+    const clearRefreshTimer = () => {
+      if (refreshTimer != null) window.clearTimeout(refreshTimer)
+      refreshTimer = null
+    }
+    const clearReconnectTimer = () => {
+      if (reconnectTimer != null) window.clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+    const stopPolling = () => {
+      if (pollTimer != null) window.clearInterval(pollTimer)
+      pollTimer = null
+    }
+
+    const scheduleRefresh = (delayMs: number) => {
+      if (refreshTimer != null) return
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = null
+        void refreshTrackedRepos().catch((e: unknown) => setError(errorMessage(e)))
+      }, delayMs)
+    }
+
+    const startPolling = () => {
+      if (pollTimer != null) return
+      pollTimer = window.setInterval(() => {
+        void refreshTrackedRepos().catch((e: unknown) => setError(errorMessage(e)))
+      }, 10_000)
+    }
+
+    const trackEventId = (evt: Event) => {
+      const idRaw = (evt as MessageEvent).lastEventId
+      if (typeof idRaw !== 'string') return
+      const parsed = Number.parseInt(idRaw, 10)
+      if (Number.isFinite(parsed) && parsed > 0) lastEventId = parsed
+    }
+
+    const connect = () => {
+      if (closed) return
+      es = newJobsEventsSource(lastEventId > 0 ? { afterId: lastEventId } : undefined)
+
+      es.addEventListener('open', () => {
+        errorStreak = 0
+        stopPolling()
+        scheduleRefresh(0)
+      })
+
+      es.addEventListener('job_event', (evt: Event) => {
+        trackEventId(evt)
+        scheduleRefresh(250)
+      })
+
+      es.addEventListener('job_events_error', () => {
+        scheduleRefresh(0)
+      })
+
+      es.onerror = () => {
+        errorStreak += 1
+        scheduleRefresh(0)
+        if (errorStreak < 3) return
+        es?.close()
+        es = null
+        startPolling()
+        if (reconnectTimer != null) return
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null
+          connect()
+        }, 3000)
+      }
+    }
+
+    connect()
+
+    return () => {
+      closed = true
+      clearRefreshTimer()
+      clearReconnectTimer()
+      stopPolling()
+      es?.close()
+    }
   }, [refreshTrackedRepos])
 
   useEffect(() => {
@@ -1057,6 +1177,21 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             : '自动保存已就绪'
 
   const ghcrPatIssue = autoSaveIssue?.scope === 'ghcr' && autoSaveIssue.fieldPath.includes('pat') ? autoSaveIssue : null
+  const ghcrLiveProgressText = (() => {
+    if (!ghcrLiveJob) return null
+    const p = ghcrLiveJob.progress
+    const parts: string[] = [`job ${ghcrLiveJob.id}`, ghcrLiveJob.status]
+    if (p) {
+      parts.push(`${p.phase}`)
+      parts.push(`${p.current}/${p.total || '-'}`)
+      if (typeof p.percent === 'number' && Number.isFinite(p.percent)) {
+        parts.push(`${Math.max(0, Math.min(100, Math.round(p.percent)))}%`)
+      }
+      if (p.currentTarget) parts.push(p.currentTarget)
+      if (p.message) parts.push(p.message)
+    }
+    return parts.join(' · ')
+  })()
 
   const autoSaveToastClassName =
     autoSavePhase === 'error'
@@ -1477,6 +1612,15 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
           <div className="card">
           <div className="title">GitHub Packages（GHCR）Webhook</div>
           <div className="muted">在 GHCR 发布新版本时自动触发 Dockrev 扫描（事件：package.published）</div>
+          <div className="muted">添加后会自动创建后台任务注册 webhook；可在更新队列 / GHCR Webhook 页面查看进度。</div>
+          {ghcrLiveProgressText ? (
+            <div className="muted" style={{ marginTop: 8, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span>当前 GHCR 任务：{ghcrLiveProgressText}</span>
+              <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhooks' })}>
+                打开 GHCR Webhook 页面
+              </Button>
+            </div>
+          ) : null}
 
           <div className="settingsSection">
             <div className="settingHead">
@@ -1543,7 +1687,6 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                       void (async () => {
                         setBusy(true)
                         setError(null)
-                        setGitHubPackagesSyncResults(null)
                         try {
                           const input = githubPackagesNewRepo.trim()
                           if (!input) throw new Error('请先输入 owner/repo 或 profile 链接')
@@ -1659,15 +1802,18 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                       flexDirection: 'column',
                       gap: 10,
                     }}
-                  >
+                    >
                     {githubPackagesTrackedRepos.repos.map((r) => {
-                      const dotClass = r.lastError
-                        ? 'statusDot statusDotBad'
-                        : r.hookId
-                          ? 'statusDot statusDotOk'
-                          : 'statusDot statusDotWarn'
+                      const state = normalizeWebhookState(r.webhookState)
+                      const dotClass = webhookStateDotClass(state)
                       const lastSync = r.lastSyncAt ? r.lastSyncAt : '-'
+                      const lastAudit = r.lastAuditAt ? r.lastAuditAt : '-'
                       const hookId = r.hookId ? String(r.hookId) : '-'
+                      const isInFlight = state === 'queued' || state === 'running'
+                      const isUnregisterInFlight = isInFlight && (r.lastOp ?? '') === 'unregister'
+                      const showRetryDelete = state === 'error' && (r.lastOp ?? '') === 'unregister'
+                      const showRetryRegister =
+                        state === 'missing' || state === 'conflict' || (state === 'error' && !showRetryDelete)
                       return (
                         <div
                           key={r.fullName}
@@ -1687,39 +1833,75 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                               </div>
                             </div>
                             <div className="muted" style={{ marginTop: 4, overflowWrap: 'anywhere' }}>
-                              hookId: {hookId} · lastSyncAt: {lastSync}
+                              状态: {webhookStateLabel(state)} · hookId: {hookId} · lastSyncAt: {lastSync} · lastAuditAt:{' '}
+                              {lastAudit}
                               {r.lastError ? ` · lastError: ${r.lastError}` : null}
                             </div>
+                            {state === 'conflict' ? (
+                              <div className="muted" style={{ marginTop: 4 }}>
+                                检测到重复 webhook，请先到 GitHub 手工删除重复项后再点“重试注册”。
+                              </div>
+                            ) : null}
                           </div>
 
                           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flex: '0 0 auto' }}>
-                            <IconButton
-                              variant="ghost"
-                              title="同步状态"
-                              disabled={busy || !githubPackages.enabled}
-                              onClick={() => {
-                                void (async () => {
-                                  setBusy(true)
-                                  setError(null)
-                                  try {
-                                    const resp = await syncGitHubPackagesWebhooks({ dryRun: false, repos: [r.fullName] })
-                                    setGitHubPackagesSyncResults(resp.results)
-                                    await refreshTrackedRepos()
-                                  } catch (e: unknown) {
-                                    setError(errorMessage(e))
-                                  } finally {
-                                    setBusy(false)
-                                  }
-                                })()
-                              }}
-                            >
-                              <RefreshIcon className="uiIcon" />
-                            </IconButton>
+                            {isInFlight && r.webhookJobId ? (
+                              <Button variant="ghost" onClick={() => navigate({ name: 'job', jobId: r.webhookJobId! })}>
+                                查看任务
+                              </Button>
+                            ) : null}
+
+                            {showRetryRegister ? (
+                              <Button
+                                variant="ghost"
+                                disabled={busy}
+                                onClick={() => {
+                                  void (async () => {
+                                    setBusy(true)
+                                    setError(null)
+                                    try {
+                                      await flushAutoSave(['ghcr'])
+                                      await setGitHubPackagesRepoSelected({ fullName: r.fullName, selected: true })
+                                      await refreshTrackedRepos()
+                                    } catch (e: unknown) {
+                                      setError(errorMessage(e))
+                                    } finally {
+                                      setBusy(false)
+                                    }
+                                  })()
+                                }}
+                              >
+                                重试注册
+                              </Button>
+                            ) : null}
+
+                            {showRetryDelete ? (
+                              <Button
+                                variant="ghost"
+                                disabled={busy}
+                                onClick={() => {
+                                  void (async () => {
+                                    setBusy(true)
+                                    setError(null)
+                                    try {
+                                      await deleteGitHubPackagesRepo({ fullName: r.fullName })
+                                      await refreshTrackedRepos()
+                                    } catch (e: unknown) {
+                                      setError(errorMessage(e))
+                                    } finally {
+                                      setBusy(false)
+                                    }
+                                  })()
+                                }}
+                              >
+                                重试删除
+                              </Button>
+                            ) : null}
 
                             <IconButton
                               variant="danger"
                               title="删除"
-                              disabled={busy}
+                              disabled={busy || isUnregisterInFlight}
                               onClick={() => {
                                 void (async () => {
                                   const ok = await confirm({
@@ -1746,8 +1928,6 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                                   setError(null)
                                   try {
                                     await deleteGitHubPackagesRepo({ fullName: r.fullName })
-                                    setGitHubPackagesSyncResults(null)
-                                    await refresh()
                                     await refreshTrackedRepos()
                                   } catch (e: unknown) {
                                     setError(errorMessage(e))
@@ -1800,86 +1980,6 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               </div>
             )}
           </div>
-
-            {githubPackagesSyncResults ? (
-              <div className="kv" style={{ marginTop: 10 }}>
-                {githubPackagesSyncResults.map((r) => (
-                  <div className="kvRow" key={`${r.repo}:${r.action}:${r.hookId ?? ''}`}>
-                    <div className="label">{r.action}</div>
-                    <div style={{ width: '100%' }}>
-                      <div className="mono">{r.repo}</div>
-                      {r.message ? <div className="muted">{r.message}</div> : null}
-                      {r.action === 'conflict' && r.conflictHooks?.length ? (
-                        <div style={{ marginTop: 6 }}>
-                          <div className="muted">发现重复 webhook（同 callback URL + package 事件）：</div>
-                          <div className="muted" style={{ marginTop: 6 }}>
-                            {r.conflictHooks.map((h) => (
-                              <div key={h.id}>
-                                hook {h.id} active={String(h.active)} events=[{h.events.join(', ')}]
-                              </div>
-                            ))}
-                          </div>
-                          <Button
-                            variant="ghost"
-                            disabled={busy}
-                            onClick={() => {
-                              void (async () => {
-                                const hooks = r.conflictHooks ?? []
-                                if (hooks.length < 2) return
-                                const keep = hooks[0]!
-                                const del = hooks.slice(1).map((h) => h.id)
-                                const ok = await confirm({
-                                  title: '处理重复 webhook',
-                                  body: (
-                                    <div>
-                                      <div className="modalLead">检测到重复 webhook：保留一个，删除其余并重试。</div>
-                                      <div className="modalKvGrid">
-                                        <div className="modalKvLabel">Repo</div>
-                                        <div className="modalKvValue">
-                                          <Mono>{r.repo}</Mono>
-                                        </div>
-                                        <div className="modalKvLabel">Keep</div>
-                                        <div className="modalKvValue">
-                                          <Mono>{String(keep.id)}</Mono>
-                                        </div>
-                                        <div className="modalKvLabel">Delete</div>
-                                        <div className="modalKvValue">{del.map(String).join(', ')}</div>
-                                      </div>
-                                    </div>
-                                  ),
-                                  confirmText: '删除并重试',
-                                  cancelText: '取消',
-                                  confirmVariant: 'danger',
-                                  badgeText: '会删除 webhook',
-                                  badgeTone: 'bad',
-                                })
-                                if (!ok) return
-                                setBusy(true)
-                                setError(null)
-                                try {
-                                  const resp = await syncGitHubPackagesWebhooks({
-                                    resolveConflicts: [{ repo: r.repo, keepHookId: keep.id, deleteHookIds: del }],
-                                    repos: [r.repo],
-                                  })
-                                  setGitHubPackagesSyncResults(resp.results)
-                                  await refresh()
-                                } catch (e: unknown) {
-                                  setError(errorMessage(e))
-                                } finally {
-                                  setBusy(false)
-                                }
-                              })()
-                            }}
-                          >
-                            删除旧的并重试
-                          </Button>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : null}
 
           {error ? <div className="error">{error}</div> : null}
           </div>

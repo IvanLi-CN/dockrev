@@ -365,8 +365,12 @@ export type GitHubPackagesTarget = {
 export type GitHubPackagesRepo = {
   fullName: string
   selected: boolean
+  webhookState?: 'unknown' | 'queued' | 'running' | 'ok' | 'missing' | 'error' | 'conflict' | string | null
+  webhookJobId?: string | null
   hookId?: number | null
   lastSyncAt?: string | null
+  lastAuditAt?: string | null
+  lastOp?: 'register' | 'unregister' | 'audit' | 'audit_all' | string | null
   lastError?: string | null
 }
 
@@ -435,6 +439,7 @@ export type SetGitHubPackagesRepoSelectedRequest = {
 
 export type SetGitHubPackagesRepoSelectedResponse = {
   ok: boolean
+  jobId?: string | null
 }
 
 export type BulkSetGitHubPackagesReposSelectedRequest = {
@@ -454,7 +459,24 @@ export type DeleteGitHubPackagesRepoRequest = {
 
 export type DeleteGitHubPackagesRepoResponse = {
   ok: boolean
-  deletedHookIds: number[]
+  jobId: string
+}
+
+export type GitHubPackagesWebhookOverviewResponse = {
+  summary: {
+    tracked: number
+    ok: number
+    missing: number
+    error: number
+    conflict: number
+    queued: number
+    running: number
+    unknown: number
+  }
+  jobsQueued: number
+  jobsRunning: number
+  runningJobId?: string | null
+  lastAuditAt?: string | null
 }
 
 export type AddGitHubPackagesTargetRequest = {
@@ -853,6 +875,11 @@ export async function listGitHubPackagesRepos(input: {
   if (input.selectedFilter && input.selectedFilter !== 'all') sp.set('selectedFilter', input.selectedFilter)
   const resp = await apiFetch(`/api/github-packages/repos?${sp.toString()}`)
   return (await resp.json()) as ListGitHubPackagesReposResponse
+}
+
+export async function getGitHubPackagesWebhookOverview(): Promise<GitHubPackagesWebhookOverviewResponse> {
+  const resp = await apiFetch('/api/github-packages/webhook/overview')
+  return (await resp.json()) as GitHubPackagesWebhookOverviewResponse
 }
 
 export async function setGitHubPackagesRepoSelected(input: SetGitHubPackagesRepoSelectedRequest) {

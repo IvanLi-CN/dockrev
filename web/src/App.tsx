@@ -10,6 +10,7 @@ import { ServicesPage } from './pages/ServicesPage'
 import { ServiceDetailPage } from './pages/ServiceDetailPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { VersionInferencePage } from './pages/VersionInferencePage'
+import { GhcrWebhookQueuePage } from './pages/GhcrWebhookQueuePage'
 import { SupervisorMisroutePage } from './pages/SupervisorMisroutePage'
 import { DeployWelcomePage } from './pages/DeployWelcomePage'
 import { useRoute } from './useRoute'
@@ -34,6 +35,12 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
         title: '版本推测',
         pageSubtitle: '镜像版本推测任务与缓存状态总览',
         topbarHint: '版本推测可观测性',
+      }
+    case 'ghcr-webhooks':
+      return {
+        title: 'GHCR Webhook',
+        pageSubtitle: 'Webhook 注册/反注册任务与巡检状态',
+        topbarHint: 'GHCR Webhook 队列',
       }
     case 'deploy-check':
       return {
@@ -134,6 +141,7 @@ export default function App() {
       {route.name === 'version-inference' ? (
         <VersionInferencePage onLastScanHint={setLastScanHint} onTopActions={setPageActions} />
       ) : null}
+      {route.name === 'ghcr-webhooks' ? <GhcrWebhookQueuePage onTopActions={setPageActions} /> : null}
       {route.name === 'settings' ? <SettingsPage onTopActions={setPageActions} /> : null}
       {route.name === 'service' ? (
         <ServiceDetailPage

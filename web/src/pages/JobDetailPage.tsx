@@ -148,7 +148,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
           try {
             const j = await refresh()
             if (closed) return
-            if (j.status !== 'running') {
+            if (j.status !== 'running' && j.status !== 'queued') {
               es?.close()
               stopPolling()
             }
@@ -171,8 +171,8 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
         const j = await refresh()
         if (closed) return
 
-        // Nothing to stream for non-running jobs.
-        if (j.status !== 'running') return
+        // Nothing to stream for terminal jobs.
+        if (j.status !== 'running' && j.status !== 'queued') return
 
         try {
           es = newJobEventsSource(jobId, { afterId: j.logsLastId })
