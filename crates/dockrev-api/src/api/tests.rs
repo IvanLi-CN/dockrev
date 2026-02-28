@@ -257,7 +257,7 @@ impl RegistryClient for PartialFailureRegistry {
             .nth(1)
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or(0);
-        if n % 2 == 0 {
+        if n.is_multiple_of(2) {
             return Err(anyhow::anyhow!("manifest fetch failed"));
         }
         Ok(ManifestInfo {
