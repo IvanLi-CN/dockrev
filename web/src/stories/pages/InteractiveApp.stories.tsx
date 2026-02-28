@@ -68,6 +68,30 @@ export const VersionInference: Story = {
   },
 }
 
+export const GhcrWebhooks: Story = {
+  parameters: { dockrevApiScenario: 'settings-configured' },
+  render: () => {
+    return (
+      <>
+        <LocationReset pathname="/queue/ghcr-webhooks" />
+        <App />
+      </>
+    )
+  },
+}
+
+export const GhcrWebhookInbox: Story = {
+  parameters: { dockrevApiScenario: 'settings-configured' },
+  render: () => {
+    return (
+      <>
+        <LocationReset pathname="/queue/ghcr-webhook-inbox" />
+        <App />
+      </>
+    )
+  },
+}
+
 export const Services: Story = {
   parameters: { dockrevApiScenario: 'multi-stack-mixed' },
   render: () => {
