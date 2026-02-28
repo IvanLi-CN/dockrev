@@ -717,7 +717,7 @@ async function runInteractive({ baseUrl, browser }) {
     }
   }
 
-  // 8) Snapshot pending: trigger text should switch to loading and recover after snapshot is ready.
+  // 8) Snapshot pending: trigger text should show loading before hover/click and recover after snapshot is ready.
   {
     const page = await openStory('components-versiontagspopover--pending-snapshot')
     try {
@@ -731,7 +731,6 @@ async function runInteractive({ baseUrl, browser }) {
 
       const trigger = page.locator('.versionLine').first().locator('.versionTagsTrigger').nth(1)
       await trigger.waitFor({ timeout: 10_000 })
-      await trigger.click()
 
       await page.waitForFunction(() => {
         const line = document.querySelector('.versionLine')
@@ -739,6 +738,8 @@ async function runInteractive({ baseUrl, browser }) {
         const candidate = line.querySelectorAll('.versionTagsTrigger')[1]
         return candidate?.textContent?.trim() === '加载中…'
       }, null, { timeout: 10_000 })
+
+      await trigger.click()
 
       await page.waitForFunction(() => {
         const line = document.querySelector('.versionLine')
