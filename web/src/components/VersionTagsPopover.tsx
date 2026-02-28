@@ -30,9 +30,19 @@ function moveToFront(tags: string[], tag: string): string[] {
   return [tags[idx], ...tags.slice(0, idx), ...tags.slice(idx + 1)]
 }
 
+function stableJitterMs(seed: string, maxMs: number): number {
+  if (maxMs <= 0) return 0
+  let hash = 0
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0
+  }
+  return hash % (maxMs + 1)
+}
+
 const HOVER_CLOSE_DELAY_MS = 300
 const POPOVER_ANIM_MS = 160
 const FETCH_DEBOUNCE_MS = 220
+const PREFETCH_JITTER_MAX_MS = 180
 const TAGS_PREVIEW_MAX = 12
 
 type DigestTagsState = {
@@ -218,7 +228,11 @@ export function VersionTagsPopover(props: {
     if (prefetchOnMount && snapshotPhaseRef.current !== 'loading') setSnapshotPhase('loading')
 
     let alive = true
-    const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
+    const prefetchJitter =
+      prefetchOnMount && !open && !pinned
+        ? stableJitterMs(`${serviceId}:${candidateDigestNorm}`, PREFETCH_JITTER_MAX_MS)
+        : 0
+    const delay = (pinned ? 0 : FETCH_DEBOUNCE_MS) + prefetchJitter
     if (fetchTimer.current != null) {
       window.clearTimeout(fetchTimer.current)
       fetchTimer.current = null
