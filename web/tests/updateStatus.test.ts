@@ -106,6 +106,21 @@ describe('updateStatus semver downgrade anomaly', () => {
     expect(isSemverDowngradeAnomaly(svc)).toBe(true)
   })
 
+  test('keeps backup hint when downgrade anomaly and force backup both apply', () => {
+    const svc = makeService({
+      settings: {
+        autoRollback: true,
+        backupTargets: {
+          bindPaths: { '/data': 'force' },
+          volumeNames: {},
+        },
+      },
+    })
+
+    expect(noteFor(svc, 'updatable')).toContain('版本异常')
+    expect(noteFor(svc, 'updatable')).toContain('备份通过后执行')
+  })
+
   test('keeps hint status semantics and shows anomaly message first', () => {
     const svc = makeService({
       candidate: {
