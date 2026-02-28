@@ -117,24 +117,32 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
 
   useEffect(() => {
     onTopActions(
-      <Button
-        variant="ghost"
-        disabled={busy}
-        onClick={() => {
-          void (async () => {
-            setBusy(true)
-            try {
-              await refresh()
-            } catch (e: unknown) {
-              setError(errorMessage(e))
-            } finally {
-              setBusy(false)
-            }
-          })()
-        }}
-      >
-        刷新
-      </Button>,
+      <>
+        <Button variant="ghost" disabled={busy} onClick={() => navigate({ name: 'ghcr-webhook-inbox' })}>
+          推送 Inbox
+        </Button>
+        <Button variant="ghost" disabled={busy} onClick={() => navigate({ name: 'queue' })}>
+          返回队列
+        </Button>
+        <Button
+          variant="ghost"
+          disabled={busy}
+          onClick={() => {
+            void (async () => {
+              setBusy(true)
+              try {
+                await refresh()
+              } catch (e: unknown) {
+                setError(errorMessage(e))
+              } finally {
+                setBusy(false)
+              }
+            })()
+          }}
+        >
+          刷新
+        </Button>
+      </>,
     )
   }, [busy, onTopActions, refresh])
 
@@ -146,14 +154,6 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
       <div className="card">
         <div className="sectionRow">
           <div className="title">GHCR Webhook 状态</div>
-          <div className="chipRow" style={{ marginLeft: 'auto' }}>
-            <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhook-inbox' })}>
-              推送 Inbox
-            </Button>
-            <Button variant="ghost" onClick={() => navigate({ name: 'queue' })}>
-              返回队列
-            </Button>
-          </div>
         </div>
 
         <div className="queueMeta" style={{ marginTop: 10 }}>

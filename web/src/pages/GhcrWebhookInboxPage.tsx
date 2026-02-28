@@ -51,25 +51,30 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
 
   useEffect(() => {
     onTopActions(
-      <Button
-        variant="ghost"
-        disabled={busy}
-        onClick={() => {
-          void (async () => {
-            setBusy(true)
-            try {
-              setError(null)
-              await refresh()
-            } catch (e: unknown) {
-              setError(errorMessage(e))
-            } finally {
-              setBusy(false)
-            }
-          })()
-        }}
-      >
-        刷新
-      </Button>,
+      <>
+        <Button variant="ghost" disabled={busy} onClick={() => navigate({ name: 'ghcr-webhooks' })}>
+          返回 GHCR Webhook
+        </Button>
+        <Button
+          variant="ghost"
+          disabled={busy}
+          onClick={() => {
+            void (async () => {
+              setBusy(true)
+              try {
+                setError(null)
+                await refresh()
+              } catch (e: unknown) {
+                setError(errorMessage(e))
+              } finally {
+                setBusy(false)
+              }
+            })()
+          }}
+        >
+          刷新
+        </Button>
+      </>,
     )
   }, [busy, onTopActions, refresh])
 
@@ -80,11 +85,6 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
       <div className="card">
         <div className="sectionRow">
           <div className="title">GHCR Webhook Inbox</div>
-          <div className="chipRow" style={{ marginLeft: 'auto' }}>
-            <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhooks' })}>
-              返回 GHCR Webhook
-            </Button>
-          </div>
         </div>
 
         <div className="muted" style={{ marginTop: 10 }}>
