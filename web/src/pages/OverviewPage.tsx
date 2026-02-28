@@ -26,7 +26,11 @@ import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../component
 import { useConfirm } from '../confirm'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
-import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay } from '../versionDisplay'
+import {
+  formatCandidateTagDisplay,
+  formatCurrentTagDisplay as formatTagDisplay,
+  isStrictSemverTag,
+} from '../versionDisplay'
 
 function formatShort(ts?: string | null) {
   if (!ts) return '-'
@@ -79,6 +83,17 @@ function getDiscoveryScanStartedAt(summary: unknown): string | null {
 
 function isDockrevService(svc: Service): boolean {
   return isDockrevImageRef(svc.image.ref)
+}
+
+function shouldPrefetchFloatingCandidate(
+  candidateTag: string | null | undefined,
+  candidateResolvedTag: string | null | undefined,
+  candidateDigest: string | null | undefined,
+): boolean {
+  const raw = (candidateTag ?? '').trim()
+  if (!raw || isStrictSemverTag(raw)) return false
+  if (isStrictSemverTag(candidateResolvedTag)) return false
+  return (candidateDigest ?? '').trim().length > 0
 }
 
 function StackIcon(props: { variant: 'collapsed' | 'expanded' }) {
@@ -836,6 +851,11 @@ export function OverviewPage(props: {
                                   serviceId={item.svc.id}
                                   candidateTag={candidateTag}
                                   candidateDigest={item.svc.candidate?.digest ?? null}
+                                  prefetchOnMount={shouldPrefetchFloatingCandidate(
+                                    candidateTag,
+                                    item.svc.candidate?.resolvedTag ?? null,
+                                    item.svc.candidate?.digest ?? null,
+                                  )}
                                 >
                                   {candidateDisplayTag}
                                 </VersionTagsPopover>
@@ -1128,6 +1148,11 @@ export function OverviewPage(props: {
 		                                              serviceId={item.svc.id}
 		                                              candidateTag={candidateTag}
 		                                              candidateDigest={item.svc.candidate?.digest ?? null}
+		                                              prefetchOnMount={shouldPrefetchFloatingCandidate(
+		                                                candidateTag,
+		                                                item.svc.candidate?.resolvedTag ?? null,
+		                                                item.svc.candidate?.digest ?? null,
+		                                              )}
 		                                            >
 		                                              {candidateDisplayTag}
 		                                            </VersionTagsPopover>
@@ -1271,6 +1296,11 @@ export function OverviewPage(props: {
                                       serviceId={svc.id}
                                       candidateTag={candidateTag}
                                       candidateDigest={svc.candidate?.digest ?? null}
+                                      prefetchOnMount={shouldPrefetchFloatingCandidate(
+                                        candidateTag,
+                                        svc.candidate?.resolvedTag ?? null,
+                                        svc.candidate?.digest ?? null,
+                                      )}
                                     >
                                       {candidateDisplayTag}
                                     </VersionTagsPopover>
@@ -1391,6 +1421,11 @@ export function OverviewPage(props: {
 	                                                  serviceId={svc.id}
 	                                                  candidateTag={svc.candidate.tag}
 	                                                  candidateDigest={svc.candidate.digest ?? null}
+	                                                  prefetchOnMount={shouldPrefetchFloatingCandidate(
+	                                                    svc.candidate.tag,
+	                                                    svc.candidate.resolvedTag ?? null,
+	                                                    svc.candidate.digest ?? null,
+	                                                  )}
 	                                                >
 	                                                  {formatCandidateTagDisplay(
 	                                                    svc.candidate.tag,

@@ -50,9 +50,10 @@ export function VersionTagsPopover(props: {
   serviceId: string
   candidateTag: string | null
   candidateDigest: string | null
+  prefetchOnMount?: boolean
   children: ReactNode
 }) {
-  const { serviceId, candidateTag, candidateDigest, children } = props
+  const { serviceId, candidateTag, candidateDigest, prefetchOnMount = false, children } = props
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const hoverCloseTimer = useRef<number | null>(null)
@@ -205,7 +206,7 @@ export function VersionTagsPopover(props: {
   }, [digestKey, refreshing, serviceId])
 
   useEffect(() => {
-    const shouldPollSnapshot = open || snapshotPhaseRef.current === 'loading'
+    const shouldPollSnapshot = prefetchOnMount || open || snapshotPhaseRef.current === 'loading'
     if (!shouldPollSnapshot) return
     if (!candidateTagTrim) return
 
@@ -214,6 +215,7 @@ export function VersionTagsPopover(props: {
     // Only fetch when there's no snapshot data loaded yet. Retries should be explicit
     // (e.g. via re-pinning), not continuously driven by pinned+error state.
     if (digestTags != null) return
+    if (prefetchOnMount && snapshotPhaseRef.current === 'idle') setSnapshotPhase('loading')
 
     let alive = true
     const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
@@ -287,7 +289,7 @@ export function VersionTagsPopover(props: {
         fetchTimer.current = null
       }
     }
-  }, [candidateDigestNorm, candidateTagTrim, digestKey, digestTags, open, pinned, serviceId])
+  }, [candidateDigestNorm, candidateTagTrim, digestKey, digestTags, open, pinned, prefetchOnMount, serviceId])
 
   useEffect(() => {
     setSnapshotPhase('idle')
