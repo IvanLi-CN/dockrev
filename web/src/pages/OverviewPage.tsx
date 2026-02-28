@@ -821,7 +821,7 @@ export function OverviewPage(props: {
                             item.svc.candidate?.digest ?? null,
                           )
                         : false
-                    const arrowLoading = inferencePending || candidatePrefetchOnMount
+                    const arrowPulse = inferencePending
                     return (
                       <div key={`${item.stackName}/${item.svc.id}`} className="modalListItem">
                         <div className="modalListLeft">
@@ -857,7 +857,7 @@ export function OverviewPage(props: {
                                 resolvedTags={item.svc.image.resolvedTags}
                                 inferenceLoading={inferencePending}
                               />
-                              <span className={arrowLoading ? 'inlineIconLoading' : undefined}>
+                              <span className={arrowPulse ? 'inlineIconLoading' : 'inlineIconMuted'}>
                                 <ArrowRightIcon className="inlineIcon" />
                               </span>
                               {candidateTag && candidateDisplayTag ? (
@@ -1127,7 +1127,7 @@ export function OverviewPage(props: {
 		                                        item.svc.candidate?.digest ?? null,
 		                                      )
 		                                    : false
-		                                const arrowLoading = inferencePending || candidatePrefetchOnMount
+		                                const arrowPulse = inferencePending
 		                                return (
 		                                  <div key={item.svc.id} className="modalListItem">
 		                                    <div className="modalListLeft">
@@ -1163,7 +1163,7 @@ export function OverviewPage(props: {
 		                                            resolvedTags={item.svc.image.resolvedTags}
 		                                            inferenceLoading={inferencePending}
 		                                          />
-		                                          <span className={arrowLoading ? 'inlineIconLoading' : undefined}>
+		                                          <span className={arrowPulse ? 'inlineIconLoading' : 'inlineIconMuted'}>
 		                                            <ArrowRightIcon className="inlineIcon" />
 		                                          </span>
 		                                          {candidateTag && candidateDisplayTag ? (
@@ -1246,7 +1246,7 @@ export function OverviewPage(props: {
 	                              svc.candidate?.digest ?? null,
 	                            )
 	                          : false
-	                      const arrowLoading = inferencePending || candidatePrefetchOnMount
+	                      const arrowPulse = inferencePending
 	                      const svcApply =
 	                        stt === 'updatable'
 	                          ? { enabled: true, title: null as string | null, note: null as string | null }
@@ -1321,7 +1321,7 @@ export function OverviewPage(props: {
                                 />
                                 {showCandidate ? (
                                   <>
-                                    <span className={arrowLoading ? 'inlineIconLoading' : undefined}>
+                                    <span className={arrowPulse ? 'inlineIconLoading' : 'inlineIconMuted'}>
                                       <ArrowRightIcon className="inlineIcon" />
                                     </span>
                                     <VersionTagsPopover
@@ -1443,8 +1443,8 @@ export function OverviewPage(props: {
                                                 inferenceLoading={inferencePending}
                                               />
 	                                              <span
-	                                                className={arrowLoading ? 'inlineIconLoading' : undefined}
-	                                                style={arrowLoading ? { margin: '0 6px' } : { opacity: 0.8, margin: '0 6px' }}
+	                                                className={arrowPulse ? 'inlineIconLoading' : 'inlineIconMuted'}
+	                                                style={arrowPulse ? { margin: '0 6px' } : { opacity: 0.8, margin: '0 6px' }}
 	                                              >
 	                                                <ArrowRightIcon className="inlineIcon" />
 	                                              </span>

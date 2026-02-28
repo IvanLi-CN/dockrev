@@ -492,6 +492,10 @@
   animation: versionTagsTriggerPulse 1.15s ease-in-out infinite;
 }
 
+.inlineIconMuted {
+  color: var(--muted2);
+}
+
 .inlineIcon path {
   fill: none;
   stroke: currentColor;

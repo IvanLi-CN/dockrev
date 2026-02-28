@@ -38,10 +38,7 @@
 
 ### 接口清单（Inventory）
 
-| 接口（Name） | 类型（Kind） | 范围（Scope） | 变更（Change） | 契约文档（Contract Doc） | 负责人（Owner） | 使用方（Consumers） | 备注（Notes） |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `formatCurrentTagDisplay` | TS helper | internal | Keep | None | web | Overview/Services/ServiceDetail | pending 仍返回 `等待中…` |
-| `formatCandidateTagDisplay` | TS helper | internal | Modify | None | web | Overview/Services/ServiceDetail | 取消 pending 早退，保留 resolved/raw 回退 |
+- None（已被 #c6j2k 覆盖）
 
 ### 契约文档（按 Kind 拆分）
 
@@ -61,15 +58,11 @@
 
 ## 实现里程碑（Milestones / Delivery checklist）
 
-- [ ] M1: `versionDisplay` helper 行为按新规则调整（仅 candidate 取消 pending 早退）。
-- [ ] M2: 单测补齐 pending 场景并保持既有回归通过。
-- [ ] M3: Web 侧 test/lint/build 全部通过。
-- [ ] M4: 提交、推送、PR 创建并使 checks 状态明确。
+- None（已被 #c6j2k 覆盖）
 
 ## 风险 / 开放问题 / 假设（Risks, Open Questions, Assumptions）
 
-- 风险：若未来将 pending 文案从 `等待中…` 改为其他文本，列表显隐依赖展示字符串比较的逻辑可能再次引发误判。
-- 假设：pending 期间保留候选可见性符合产品语义，且不会误导用户执行更新。
+- None（已被 #c6j2k 覆盖）
 
 ## 变更记录（Change log）
 
