@@ -41,6 +41,7 @@
 - `web/tests/versionDisplay.test.ts`
 - `web/src/stories/mocks/dockrevMockApi.ts`
 - `web/src/stories/pages/ServicesPage.stories.tsx`
+- `web/src/stories/pages/ServiceDetailPage.stories.tsx`
 - `web/scripts/test-storybook.mjs`
 
 ### Out of scope
