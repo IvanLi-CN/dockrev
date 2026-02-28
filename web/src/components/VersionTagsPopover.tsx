@@ -292,8 +292,14 @@ export function VersionTagsPopover(props: {
   }, [candidateDigestNorm, candidateTagTrim, digestKey, digestTags, open, pinned, prefetchOnMount, serviceId])
 
   useEffect(() => {
-    setSnapshotPhase('idle')
-  }, [digestKey])
+    const shouldPrimeLoading =
+      prefetchOnMount &&
+      candidateTagTrim.length > 0 &&
+      candidateTagTrim !== '-' &&
+      Boolean(candidateDigestNorm) &&
+      digestTags == null
+    setSnapshotPhase(shouldPrimeLoading ? 'loading' : 'idle')
+  }, [candidateDigestNorm, candidateTagTrim, digestKey, digestTags, prefetchOnMount])
 
   const digestTagsUnique = useMemo(() => uniquePreserveOrder(digestTags), [digestTags])
   const tagsPreview = useMemo(() => {

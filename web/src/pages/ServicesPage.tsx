@@ -90,6 +90,7 @@ function shouldPrefetchFloatingCandidate(
   candidateDigest: string | null | undefined,
 ): boolean {
   const raw = (candidateTag ?? '').trim()
+  if (raw === '-') return false
   if (!raw || isStrictSemverTag(raw)) return false
   if (isStrictSemverTag(candidateResolvedTag)) return false
   return (candidateDigest ?? '').trim().length > 0
