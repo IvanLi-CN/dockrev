@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已完成
 - Created: 2026-03-01
 - Last: 2026-03-01
 
@@ -102,17 +102,17 @@
 
 ## 实现里程碑（Milestones / Delivery checklist）
 
-- [ ] M1: DB 扩展与 migration（deliveries 字段 + 索引 + prune）
-- [ ] M2: Webhook 写入与 API（inbox endpoint）
-- [ ] M3: Web UI 路由/页面 + GHCR Webhook 页入口按钮 + Storybook mock
-- [ ] M4: 测试与构建回归通过
+- [x] M1: DB 扩展与 migration（deliveries 字段 + 索引 + prune）
+- [x] M2: Webhook 写入与 API（inbox endpoint）
+- [x] M3: Web UI 路由/页面 + GHCR Webhook 页入口按钮 + Storybook mock
+- [x] M4: 测试与构建回归通过
 
 ## 风险 / 开放问题 / 假设（Risks, Open Questions, Assumptions）
 
-- 假设：`received_at` 按 RFC3339(UTC) 存储，字符串比较可用于时间范围筛选与排序。
+- 假设：`received_at` 以 RFC3339(UTC) 存储，且 SQLite `julianday()` 可正确解析，用于时间范围筛选与排序。
 - 风险：高频 webhook 时每次插入都 prune 可能带来额外写放大（预计低频可接受；未来可改为后台定时清理）。
 
 ## 变更记录（Change log）
 
 - 2026-03-01: 新建规格，冻结 inbox 范围、入库条件、接口与 retention 策略。
-
+- 2026-03-01: 实现完成（PR #109）。
