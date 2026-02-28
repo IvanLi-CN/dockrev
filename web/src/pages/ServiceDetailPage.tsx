@@ -21,7 +21,7 @@ import { navigate } from '../routes'
 import { ArrowRightIcon, Button, Mono, Pill, Switch } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
-import { serviceRowStatus } from '../updateStatus'
+import { isSemverDowngradeAnomaly, serviceRowStatus } from '../updateStatus'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { useConfirm } from '../confirm'
@@ -354,6 +354,7 @@ export function ServiceDetailPage(props: {
               onClick={() => {
                 void (async () => {
 		                  if (!service || !service.candidate) return
+                    const semverDowngradeAnomaly = isSemverDowngradeAnomaly(service)
                     const currentDisplayTag = formatTagDisplay(
                       service.image.tag,
                       service.image.resolvedTag,
@@ -443,6 +444,14 @@ export function ServiceDetailPage(props: {
 	                          <div className="modalKvValue">
 	                            <Mono>{serviceRowStatus(service)}</Mono>
 	                          </div>
+                            {semverDowngradeAnomaly ? (
+                              <>
+                                <div className="modalKvLabel">版本异常</div>
+                                <div className="modalKvValue">
+                                  <Mono>⚠ 候选版本低于当前版本（仍允许手动更新）</Mono>
+                                </div>
+                              </>
+                            ) : null}
 	                          <div className="modalKvLabel">备份</div>
 	                          <div className="modalKvValue">
 	                            <Mono>inherit</Mono>
@@ -669,6 +678,11 @@ export function ServiceDetailPage(props: {
         {' · '}arch=<Mono>{service.candidate.arch.join(',')}</Mono>
       </>
     ) : null
+    const anomalyNode = isSemverDowngradeAnomaly(service) ? (
+      <>
+        {' · '}<Mono>⚠ 版本异常（候选低于当前）</Mono>
+      </>
+    ) : null
 
     return (
       <>
@@ -685,6 +699,7 @@ export function ServiceDetailPage(props: {
         </VersionTagsPopover>
         <span className="mono">{`@${shortDigest(service.candidate.digest)}`}</span>
         {archNode}
+        {anomalyNode}
       </>
     )
   }, [service])

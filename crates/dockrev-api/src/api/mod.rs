@@ -2157,6 +2157,7 @@ async fn run_update_job(
                 req.target_tag.as_deref(),
                 req.target_digest.as_deref(),
                 req.allow_arch_mismatch,
+                req.reason.as_str(),
                 Some(progress_tx),
             )
             .await;

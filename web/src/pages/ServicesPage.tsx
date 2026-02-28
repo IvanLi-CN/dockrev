@@ -18,7 +18,7 @@ import { navigate } from '../routes'
 import { ArrowRightIcon, Button, Mono, Pill, StatusRemark } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
-import { serviceRowStatus, type RowStatus } from '../updateStatus'
+import { isSemverDowngradeAnomaly, serviceRowStatus, type RowStatus } from '../updateStatus'
 import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
 import { useConfirm } from '../confirm'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
@@ -716,6 +716,9 @@ export function ServicesPage(props: {
 		                              .map((svc) => ({ svc, status: serviceRowStatus(svc) }))
 		                              .filter((x) => x.status === 'updatable' || x.status === 'hint')
 		                          : []
+                                const anomalyCount = candidateServices.filter((item) =>
+                                  isSemverDowngradeAnomaly(item.svc),
+                                ).length
 		                        const totalCandidates = g.countsAll.updatable + g.countsAll.hint
 		                        const body = (
 		                          <>
@@ -739,6 +742,11 @@ export function ServicesPage(props: {
 		                                架构不匹配 {g.countsAll.archMismatch} · 被阻止 {g.countsAll.blocked}
 		                              </div>
 		                            </div>
+                                {anomalyCount > 0 ? (
+                                  <div className="muted" style={{ marginTop: 10 }}>
+                                    ⚠ 检测到 {anomalyCount} 个版本异常（候选低于当前）；手动确认后仍可继续更新。
+                                  </div>
+                                ) : null}
 		                            <div className="modalDivider" />
 		                            <div className="modalLead">将更新的服务（预览）</div>
 		                            <div className="modalList">
