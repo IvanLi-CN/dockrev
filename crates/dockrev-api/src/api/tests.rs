@@ -3725,7 +3725,11 @@ async fn version_inference_overview_merges_cached_and_in_flight_without_missing_
         let has_progress = tasks
             .iter()
             .any(|task| task["status"].as_str() == Some("running") && task["progress"].is_object());
-        if has_task && has_progress {
+        let progress_advanced = tasks.iter().any(|task| {
+            task["status"].as_str() == Some("running")
+                && task["progress"]["assignedCurrent"].as_u64().unwrap_or(0) > 0
+        });
+        if has_task && has_progress && progress_advanced {
             observed = Some(body);
             break;
         }
@@ -3779,6 +3783,10 @@ async fn version_inference_overview_merges_cached_and_in_flight_without_missing_
         assert!(progress.contains_key("resultCurrent"));
         assert!(progress.contains_key("resultTotal"));
         assert!(progress.contains_key("resultPercent"));
+        assert!(
+            progress["assignedCurrent"].as_u64().unwrap_or(0) > 0,
+            "running task should expose advancing in-task progress"
+        );
     }
 }
 

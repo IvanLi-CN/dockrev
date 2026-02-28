@@ -110,15 +110,22 @@ export function Chip(props: { children: ReactNode; active?: boolean; onClick?: (
   )
 }
 
-export function Pill(props: { tone: 'ok' | 'warn' | 'bad' | 'muted'; children: ReactNode }) {
-  const className =
+export function Pill(props: {
+  tone: 'ok' | 'warn' | 'bad' | 'muted' | 'info'
+  children: ReactNode
+  breathing?: boolean
+}) {
+  const toneClass =
     props.tone === 'ok'
       ? 'pill pillOk'
       : props.tone === 'warn'
         ? 'pill pillWarn'
         : props.tone === 'bad'
           ? 'pill pillBad'
-          : 'pill pillMuted'
+          : props.tone === 'info'
+            ? 'pill pillInfo'
+            : 'pill pillMuted'
+  const className = props.breathing ? `${toneClass} pillBreathing` : toneClass
   return <span className={className}>{props.children}</span>
 }
 

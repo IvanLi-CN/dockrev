@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde_json::json;
@@ -545,29 +545,73 @@ impl SnapshotWorker {
 
         let (tags, scan) = match self.registry.list_tags(&img).await {
             Ok(repo_tags) => {
-                self.record_task_progress(
-                    task_key,
-                    BuildProgress {
-                        phase: "scanning".to_string(),
-                        message: format!("scanning manifests (0/{})", repo_tags.len()),
-                        current: 0,
-                        total: repo_tags.len() as u32,
-                        assigned_current: 0,
-                        assigned_total: repo_tags.len() as u32,
-                        result_current: 0,
-                        result_total: repo_tags.len() as u32,
-                    },
-                )
-                .await;
-                service_check::scan_digest_tags_snapshot_best_effort(
+                let task_key = task_key.to_string();
+                let worker = self.clone();
+                let (progress_tx, mut progress_rx) =
+                    mpsc::unbounded_channel::<service_check::SnapshotScanProgress>();
+                let progress_forwarder = tokio::spawn(async move {
+                    const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(200);
+                    let mut last_emit_at: Option<Instant> = None;
+                    let mut last_processed: Option<u32> = None;
+                    let mut last_success: Option<u32> = None;
+
+                    while let Some(progress) = progress_rx.recv().await {
+                        let processed = progress.processed.min(u32::MAX as usize) as u32;
+                        let task_total = progress.task_total.min(u32::MAX as usize) as u32;
+                        let repo_total = progress.repo_total.min(u32::MAX as usize) as u32;
+                        let success = progress.success.min(u32::MAX as usize) as u32;
+                        let timeout = progress.timeout.min(u32::MAX as usize) as u32;
+                        let error = progress.error.min(u32::MAX as usize) as u32;
+                        let done = task_total > 0 && processed >= task_total;
+                        let changed =
+                            last_processed != Some(processed) || last_success != Some(success);
+                        let interval_ok =
+                            last_emit_at.is_none_or(|at| at.elapsed() >= PROGRESS_EMIT_INTERVAL);
+
+                        if !done && (!changed || !interval_ok) {
+                            continue;
+                        }
+
+                        last_emit_at = Some(Instant::now());
+                        last_processed = Some(processed);
+                        last_success = Some(success);
+
+                        worker
+                            .record_task_progress(
+                                &task_key,
+                                BuildProgress {
+                                    phase: "scanning".to_string(),
+                                    message: format!(
+                                        "scanning manifests ({processed}/{task_total}) · repo total {repo_total} · timeout {timeout} · error {error}"
+                                    ),
+                                    current: processed,
+                                    total: task_total,
+                                    assigned_current: processed,
+                                    assigned_total: task_total,
+                                    result_current: success,
+                                    result_total: task_total,
+                                },
+                            )
+                            .await;
+                    }
+                });
+
+                let scan = service_check::scan_digest_tags_snapshot_best_effort_with_progress(
                     self.registry.clone(),
                     img,
                     host_platform,
                     &repo_tags,
                     digest,
                     &anchors,
+                    |progress| {
+                        let _ = progress_tx.send(progress);
+                    },
                 )
-                .await
+                .await;
+
+                drop(progress_tx);
+                let _ = progress_forwarder.await;
+                scan
             }
             Err(e) => {
                 tracing::warn!(
