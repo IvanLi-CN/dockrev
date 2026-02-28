@@ -644,6 +644,24 @@ async function runInteractive({ baseUrl, browser }) {
     }
   }
 
+  // 5b) Services page: inference pending + candidate snapshot pending should read as a unified loading state.
+  {
+    const page = await openStory('pages-servicespage--inference-pending-candidate-loading')
+    try {
+      await page.waitForFunction(() => {
+        const line = document.querySelector('.versionLine')
+        if (!line) return false
+        const triggers = line.querySelectorAll('.versionTagsTrigger')
+        if (triggers.length < 2) return false
+        const left = triggers[0]?.textContent?.trim()
+        const right = triggers[1]?.textContent?.trim()
+        return left === '加载中…' && right === '加载中…'
+      }, null, { timeout: 10_000 })
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
   // 6) Version popovers: must read scan-time digest-tags snapshot only (no live /digest-tags fan-out).
   {
     const page = await openStory('components-versiontagspopover--multi-tags')

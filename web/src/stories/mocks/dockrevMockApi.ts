@@ -25,6 +25,7 @@ import type {
 export type DockrevApiScenario =
   | 'default'
   | 'dashboard-demo'
+  | 'services-inference-pending-candidate-loading'
   | 'service-detail-compose-fallbacks'
   | 'guide-line-long-names'
   | 'resolved-tag-demo'
@@ -921,6 +922,59 @@ function buildResolvedTagDemo(): Fixture {
   return f
 }
 
+function buildServicesInferencePendingCandidateLoading(): Fixture {
+  const f = baseEmpty()
+  const lastCheckAt = nowIso(-60_000)
+
+  const stackId = 'stack-inference-pending'
+  const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
+
+  const service = {
+    id: 'svc-inference-pending',
+    name: 'ai-codex-vibe-monitor',
+    image: {
+      ref: 'ghcr.io/ivanli-cn/codex-vibe-monitor',
+      tag: 'latest',
+      digest: d('a', 'b1'),
+    },
+    candidate: {
+      tag: 'latest',
+      digest: d('b', '9f'),
+      archMatch: 'match',
+      arch: ['linux/amd64'],
+    },
+    versionInference: {
+      status: 'pending',
+      reason: 'mock',
+      checkedAt: nowIso(-20_000),
+    },
+    ignore: null,
+    settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} } },
+  } satisfies StackDetail['services'][number]
+
+  const detail = {
+    id: stackId,
+    name: 'ai',
+    compose: { type: 'path', composeFiles: ['/srv/ai/compose.yml'], envFile: '/srv/ai/.env' },
+    services: [service],
+  } satisfies StackDetail
+
+  f.stacks = [
+    {
+      id: stackId,
+      name: 'ai',
+      status: 'healthy',
+      services: 1,
+      updates: 1,
+      lastCheckAt,
+    } satisfies StackListItem,
+  ]
+  f.stackById = { [stackId]: detail }
+  f.serviceSettingsById = { [service.id]: service.settings }
+
+  return f
+}
+
 function buildVersionTagsPopoverDemo(): Fixture {
   const f = baseEmpty()
   const lastCheckAt = nowIso(-60_000)
@@ -1708,6 +1762,7 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'empty') return baseEmpty()
   if (scenario === 'no-candidates') return buildNoCandidates()
   if (scenario === 'dashboard-demo') return buildDashboardDemo()
+  if (scenario === 'services-inference-pending-candidate-loading') return buildServicesInferencePendingCandidateLoading()
   if (scenario === 'service-detail-compose-fallbacks') return buildServiceDetailComposeFallbacks()
   if (scenario === 'guide-line-long-names') return buildGuideLineLongNames()
   if (scenario === 'resolved-tag-demo') return buildResolvedTagDemo()
@@ -2526,12 +2581,16 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
 
       const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
 
-      if (scenario === 'version-tags-popover-snapshot-pending') {
+      if (
+        scenario === 'version-tags-popover-snapshot-pending' ||
+        scenario === 'services-inference-pending-candidate-loading'
+      ) {
         const pendingKey = `${serviceId}:${digestNorm || '<missing-digest>'}`
         const attempt = (digestSnapshotPendingAttempts.get(pendingKey) ?? 0) + 1
         digestSnapshotPendingAttempts.set(pendingKey, attempt)
         // Keep pending visible for Storybook verification.
-        if (attempt <= 4) {
+        const maxPendingAttempts = scenario === 'services-inference-pending-candidate-loading' ? 999 : 4
+        if (attempt <= maxPendingAttempts) {
           return json(
             {
               status: 'pending',

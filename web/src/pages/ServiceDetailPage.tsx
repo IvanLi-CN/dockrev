@@ -359,6 +359,7 @@ export function ServiceDetailPage(props: {
                       service.image.resolvedTag,
                       service.versionInference?.status,
                     )
+                    const inferencePending = service.versionInference?.status === 'pending'
                     const candidateDisplayTag = formatCandidateTagDisplay(
                       service.candidate.tag,
                       service.candidate.resolvedTag ?? null,
@@ -409,8 +410,12 @@ export function ServiceDetailPage(props: {
                                     imageDigest={service.image.digest ?? null}
                                     resolvedTag={service.image.resolvedTag}
                                     resolvedTags={service.image.resolvedTags}
+                                    inferenceLoading={inferencePending}
                                   />
-                                  <span style={{ opacity: 0.8, margin: '0 6px' }}>
+                                  <span
+                                    className={inferencePending ? 'inlineIconLoading' : undefined}
+                                    style={inferencePending ? { margin: '0 6px' } : { opacity: 0.8, margin: '0 6px' }}
+                                  >
                                     <ArrowRightIcon className="inlineIcon" />
                                   </span>
                                   <VersionTagsPopover
@@ -598,6 +603,7 @@ export function ServiceDetailPage(props: {
       service.image.resolvedTag,
       service.versionInference?.status,
     )
+    const inferencePending = service.versionInference?.status === 'pending'
     const currentDigestNode = service.image.digest ? (
       <span className="mono">{`@${shortDigest(service.image.digest)}`}</span>
     ) : null
@@ -610,6 +616,7 @@ export function ServiceDetailPage(props: {
         imageDigest={service.image.digest ?? null}
         resolvedTag={service.image.resolvedTag}
         resolvedTags={service.image.resolvedTags}
+        inferenceLoading={inferencePending}
       />
     )
 

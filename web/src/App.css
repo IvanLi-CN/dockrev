@@ -487,6 +487,11 @@
   color: inherit;
 }
 
+.inlineIconLoading {
+  color: var(--muted2);
+  animation: versionTagsTriggerPulse 1.15s ease-in-out infinite;
+}
+
 .inlineIcon path {
   fill: none;
   stroke: currentColor;
