@@ -5309,6 +5309,112 @@ services:
 }
 
 #[tokio::test]
+async fn webhook_update_skips_semver_downgrade_anomaly_candidates() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let svc = services.first().unwrap().clone();
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .update_service_check_result(
+            &svc.id,
+            Some("sha256:cur".to_string()),
+            Some("v0.3.1".to_string()),
+            Some(r#"["v0.3.1"]"#.to_string()),
+            Some("latest".to_string()),
+            Some("v0.2.53".to_string()),
+            Some("sha256:cand".to_string()),
+            Some("match".to_string()),
+            Some(r#"["linux/amd64"]"#.to_string()),
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let trigger = serde_json::json!({
+        "action": "update",
+        "scope": "stack",
+        "stackId": stack_id,
+        "allowArchMismatch": false,
+        "backupMode": "skip"
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/trigger")
+                .header("content-type", "application/json")
+                .header("X-Dockrev-Webhook-Secret", "secret")
+                .body(Body::from(trigger.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let job_id = triggered["jobId"].as_str().unwrap().to_string();
+
+    let job = {
+        let mut out = None;
+        for _ in 0..50 {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/api/jobs/{job_id}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), 200);
+            let job = response_json(resp).await;
+            if job["job"]["status"].as_str().unwrap() != "running" {
+                out = Some(job);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        out.expect("job did not finish in time")
+    };
+
+    let update = &job["job"]["summary"]["stacks"][0]["update"];
+    assert_eq!(update["changedServices"].as_u64(), Some(0));
+    assert_eq!(
+        update["skippedVersionAnomaly"]
+            .as_array()
+            .map(std::vec::Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        update["skippedVersionAnomaly"][0]["serviceId"].as_str(),
+        Some(svc.id.as_str())
+    );
+}
+
+#[tokio::test]
 async fn settings_and_notifications_roundtrip() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());

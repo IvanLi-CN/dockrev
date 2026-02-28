@@ -8,6 +8,16 @@ type TagSeries = {
   precision: 1 | 2 | 3
 }
 
+const STRICT_SEMVER_PATTERN =
+  /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/
+
+type StrictSemver = {
+  major: number
+  minor: number
+  patch: number
+  prerelease: string[]
+}
+
 function parseTagSeries(tag: string): TagSeries | null {
   let t = tag.trim()
   if (!t) return null
@@ -28,6 +38,82 @@ function parseTagSeries(tag: string): TagSeries | null {
     minor: parts.length >= 2 ? nums[1] : null,
     precision: parts.length as 1 | 2 | 3,
   }
+}
+
+function parseStrictSemver(tag: string | null | undefined): StrictSemver | null {
+  const trimmed = (tag ?? '').trim()
+  if (!trimmed) return null
+  const match = STRICT_SEMVER_PATTERN.exec(trimmed)
+  if (!match) return null
+
+  const prerelease = (match[4] ?? '')
+    .split('.')
+    .filter(Boolean)
+  if (prerelease.some((token) => /^\d+$/.test(token) && token.length > 1 && token.startsWith('0'))) {
+    return null
+  }
+
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+    prerelease,
+  }
+}
+
+function compareNumericToken(a: string, b: string): number {
+  const aNum = /^\d+$/.test(a)
+  const bNum = /^\d+$/.test(b)
+  if (aNum && bNum) {
+    if (a.length !== b.length) return a.length - b.length
+    if (a === b) return 0
+    return a < b ? -1 : 1
+  }
+  if (aNum) return -1
+  if (bNum) return 1
+  if (a === b) return 0
+  return a < b ? -1 : 1
+}
+
+function compareStrictSemver(a: StrictSemver, b: StrictSemver): number {
+  if (a.major !== b.major) return a.major - b.major
+  if (a.minor !== b.minor) return a.minor - b.minor
+  if (a.patch !== b.patch) return a.patch - b.patch
+
+  const aPre = a.prerelease
+  const bPre = b.prerelease
+  if (aPre.length === 0 && bPre.length === 0) return 0
+  if (aPre.length === 0) return 1
+  if (bPre.length === 0) return -1
+
+  const len = Math.max(aPre.length, bPre.length)
+  for (let i = 0; i < len; i += 1) {
+    const aTok = aPre[i]
+    const bTok = bPre[i]
+    if (aTok == null) return -1
+    if (bTok == null) return 1
+    const cmp = compareNumericToken(aTok, bTok)
+    if (cmp !== 0) return cmp
+  }
+  return 0
+}
+
+function semverBaselineForCurrent(svc: Service): StrictSemver | null {
+  return parseStrictSemver(svc.image.resolvedTag) ?? parseStrictSemver(svc.image.tag)
+}
+
+function semverBaselineForCandidate(svc: Service): StrictSemver | null {
+  const c = svc.candidate
+  if (!c) return null
+  return parseStrictSemver(c.resolvedTag) ?? parseStrictSemver(c.tag)
+}
+
+export function isSemverDowngradeAnomaly(svc: Service): boolean {
+  if (!svc.candidate) return false
+  const current = semverBaselineForCurrent(svc)
+  const candidate = semverBaselineForCandidate(svc)
+  if (!current || !candidate) return false
+  return compareStrictSemver(candidate, current) < 0
 }
 
 export function tagSeriesMatches(currentTag: string, candidateTag: string): boolean | null {
@@ -69,10 +155,12 @@ export function noteFor(svc: Service, st: RowStatus): string {
   if (st === 'blocked') return svc.ignore?.reason ?? '被阻止'
   if (st === 'archMismatch') return '仅提示，不允许更新'
   if (st === 'hint') {
+    if (isSemverDowngradeAnomaly(svc)) return '⚠ 版本异常：候选版本低于当前版本'
     if (svc.candidate?.archMatch === 'unknown') return 'arch 未知'
     return ''
   }
   if (st === 'updatable') {
+    if (isSemverDowngradeAnomaly(svc)) return '⚠ 版本异常：候选版本低于当前版本'
     const hasForceBackup =
       Object.values(svc.settings.backupTargets.bindPaths).some((v) => v === 'force') ||
       Object.values(svc.settings.backupTargets.volumeNames).some((v) => v === 'force')

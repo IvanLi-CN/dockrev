@@ -61,6 +61,41 @@ fn emit_update_progress(
     }
 }
 
+fn parse_strict_semver_tag(tag: &str) -> Option<Version> {
+    let trimmed = tag.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let normalized = trimmed.strip_prefix('v').unwrap_or(trimmed);
+    Version::parse(normalized).ok()
+}
+
+fn semver_baseline_for_current(svc: &crate::api::types::Service) -> Option<Version> {
+    svc.image
+        .resolved_tag
+        .as_deref()
+        .and_then(parse_strict_semver_tag)
+        .or_else(|| parse_strict_semver_tag(&svc.image.tag))
+}
+
+fn semver_baseline_for_candidate(svc: &crate::api::types::Service) -> Option<Version> {
+    let candidate = svc.candidate.as_ref()?;
+    candidate
+        .resolved_tag
+        .as_deref()
+        .and_then(parse_strict_semver_tag)
+        .or_else(|| parse_strict_semver_tag(&candidate.tag))
+}
+
+fn detect_semver_downgrade(svc: &crate::api::types::Service) -> Option<(String, String)> {
+    let current = semver_baseline_for_current(svc)?;
+    let candidate = semver_baseline_for_candidate(svc)?;
+    if candidate < current {
+        return Some((current.to_string(), candidate.to_string()));
+    }
+    None
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run_update_job(
     runner: &dyn CommandRunner,
@@ -72,6 +107,7 @@ pub async fn run_update_job(
     target_tag: Option<&str>,
     target_digest: Option<&str>,
     allow_arch_mismatch: bool,
+    update_reason: &str,
     progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
 ) -> anyhow::Result<UpdateOutcome> {
     let compose_cfg = ComposeRunnerConfig {
@@ -113,12 +149,33 @@ pub async fn run_update_job(
         });
     }
 
+    let skip_version_anomaly_for_automation = !update_reason.eq_ignore_ascii_case("ui");
+    let mut skipped_version_anomaly: Vec<serde_json::Value> = Vec::new();
+    if skip_version_anomaly_for_automation {
+        let mut filtered = Vec::new();
+        for svc in services {
+            if let Some((current_semver, candidate_semver)) = detect_semver_downgrade(svc) {
+                skipped_version_anomaly.push(json!({
+                    "serviceId": svc.id,
+                    "serviceName": svc.name,
+                    "current": current_semver,
+                    "candidate": candidate_semver,
+                    "reason": "semver_downgrade",
+                }));
+                continue;
+            }
+            filtered.push(svc);
+        }
+        services = filtered;
+    }
+
     if mode == "dry-run" {
         return Ok(UpdateOutcome {
             status: "success".to_string(),
             summary_json: json!({
                 "mode": "dry-run",
                 "changedServices": services.len(),
+                "skippedVersionAnomaly": skipped_version_anomaly,
             }),
         });
     }
@@ -409,6 +466,7 @@ pub async fn run_update_job(
                     "newDigests": new_images,
                     "semverPulled": semver_pulled,
                     "semverPullWarnings": semver_pull_warnings,
+                    "skippedVersionAnomaly": skipped_version_anomaly,
                 }),
             });
         }
@@ -449,6 +507,7 @@ pub async fn run_update_job(
             "newDigests": new_images,
             "semverPulled": semver_pulled,
             "semverPullWarnings": semver_pull_warnings,
+            "skippedVersionAnomaly": skipped_version_anomaly,
         }),
     })
 }
@@ -1052,6 +1111,7 @@ mod tests {
             None,
             None,
             false,
+            "ui",
             None,
         )
         .await
@@ -1107,6 +1167,7 @@ mod tests {
             None,
             None,
             false,
+            "ui",
             None,
         )
         .await
@@ -1165,6 +1226,7 @@ mod tests {
             None,
             None,
             false,
+            "ui",
             Some(tx),
         )
         .await
