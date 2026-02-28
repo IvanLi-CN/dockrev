@@ -395,6 +395,7 @@ pub enum JobType {
     Check,
     Discovery,
     RuntimeScan,
+    GitHubPackagesWebhook,
     Update,
     Rollback,
 }
@@ -405,6 +406,7 @@ impl JobType {
             Self::Check => "check",
             Self::Discovery => "discovery",
             Self::RuntimeScan => "runtime_scan",
+            Self::GitHubPackagesWebhook => "github_packages_webhook",
             Self::Update => "update",
             Self::Rollback => "rollback",
         }
@@ -415,6 +417,7 @@ impl JobType {
             "check" => Self::Check,
             "discovery" => Self::Discovery,
             "runtime_scan" => Self::RuntimeScan,
+            "github_packages_webhook" => Self::GitHubPackagesWebhook,
             "rollback" => Self::Rollback,
             _ => Self::Update,
         }
@@ -876,8 +879,12 @@ pub struct GitHubPackagesRepoDb {
     pub owner: String,
     pub repo: String,
     pub selected: bool,
+    pub webhook_state: String,
+    pub webhook_job_id: Option<String>,
     pub hook_id: Option<i64>,
     pub last_sync_at: Option<String>,
+    pub last_audit_at: Option<String>,
+    pub last_op: Option<String>,
     pub last_error: Option<String>,
     #[allow(dead_code)]
     pub updated_at: Option<String>,
@@ -922,9 +929,17 @@ pub struct GitHubPackagesRepo {
     pub full_name: String,
     pub selected: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webhook_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webhook_job_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hook_id: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_sync_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_audit_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_op: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
 }
@@ -984,6 +999,8 @@ pub struct SetGitHubPackagesRepoSelectedRequest {
 #[serde(rename_all = "camelCase")]
 pub struct SetGitHubPackagesRepoSelectedResponse {
     pub ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1096,7 +1113,32 @@ pub struct DeleteGitHubPackagesRepoRequest {
 #[serde(rename_all = "camelCase")]
 pub struct DeleteGitHubPackagesRepoResponse {
     pub ok: bool,
-    pub deleted_hook_ids: Vec<i64>,
+    pub job_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubPackagesWebhookOverviewSummary {
+    pub tracked: u32,
+    pub ok: u32,
+    pub missing: u32,
+    pub error: u32,
+    pub conflict: u32,
+    pub queued: u32,
+    pub running: u32,
+    pub unknown: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubPackagesWebhookOverviewResponse {
+    pub summary: GitHubPackagesWebhookOverviewSummary,
+    pub jobs_queued: u32,
+    pub jobs_running: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub running_job_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_audit_at: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

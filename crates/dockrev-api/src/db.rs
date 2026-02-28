@@ -175,6 +175,7 @@ impl Db {
             ensure_stack_archive_columns(conn)?;
             ensure_service_archive_columns(conn)?;
             ensure_discovery_schema(conn)?;
+            ensure_github_packages_repos_webhook_columns(conn)?;
             ensure_schema_migrations_table(conn)?;
             apply_migration_0007_remove_manual_stacks(conn)?;
             apply_migration_0008_drop_version_inference_snapshots(conn)?;
@@ -2200,8 +2201,12 @@ SELECT
   owner,
   repo,
   selected,
+  webhook_state,
+  webhook_job_id,
   hook_id,
   last_sync_at,
+  last_audit_at,
+  last_op,
   last_error,
   updated_at
 FROM github_packages_repos
@@ -2213,10 +2218,14 @@ ORDER BY owner ASC, repo ASC
                     owner: row.get(0)?,
                     repo: row.get(1)?,
                     selected: row.get::<_, i64>(2)? != 0,
-                    hook_id: row.get(3)?,
-                    last_sync_at: row.get(4)?,
-                    last_error: row.get(5)?,
-                    updated_at: row.get(6)?,
+                    webhook_state: row.get(3)?,
+                    webhook_job_id: row.get(4)?,
+                    hook_id: row.get(5)?,
+                    last_sync_at: row.get(6)?,
+                    last_audit_at: row.get(7)?,
+                    last_op: row.get(8)?,
+                    last_error: row.get(9)?,
+                    updated_at: row.get(10)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -2347,8 +2356,12 @@ SELECT
   owner,
   repo,
   selected,
+  webhook_state,
+  webhook_job_id,
   hook_id,
   last_sync_at,
+  last_audit_at,
+  last_op,
   last_error,
   updated_at
 FROM github_packages_repos
@@ -2387,10 +2400,14 @@ FROM github_packages_repos
                     owner: row.get(0)?,
                     repo: row.get(1)?,
                     selected: row.get::<_, i64>(2)? != 0,
-                    hook_id: row.get(3)?,
-                    last_sync_at: row.get(4)?,
-                    last_error: row.get(5)?,
-                    updated_at: row.get(6)?,
+                    webhook_state: row.get(3)?,
+                    webhook_job_id: row.get(4)?,
+                    hook_id: row.get(5)?,
+                    last_sync_at: row.get(6)?,
+                    last_audit_at: row.get(7)?,
+                    last_op: row.get(8)?,
+                    last_error: row.get(9)?,
+                    updated_at: row.get(10)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -2495,6 +2512,56 @@ LIMIT 1
         })
         .await
         .context("get github packages repo selected")
+    }
+
+    pub async fn get_github_packages_repo(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> anyhow::Result<Option<GitHubPackagesRepoDb>> {
+        let owner = owner.to_string();
+        let repo = repo.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT
+  owner,
+  repo,
+  selected,
+  webhook_state,
+  webhook_job_id,
+  hook_id,
+  last_sync_at,
+  last_audit_at,
+  last_op,
+  last_error,
+  updated_at
+FROM github_packages_repos
+WHERE lower(owner) = lower(?1) AND lower(repo) = lower(?2)
+LIMIT 1
+"#,
+            )?;
+            let row = stmt
+                .query_row(params![owner, repo], |row| {
+                    Ok(GitHubPackagesRepoDb {
+                        owner: row.get(0)?,
+                        repo: row.get(1)?,
+                        selected: row.get::<_, i64>(2)? != 0,
+                        webhook_state: row.get(3)?,
+                        webhook_job_id: row.get(4)?,
+                        hook_id: row.get(5)?,
+                        last_sync_at: row.get(6)?,
+                        last_audit_at: row.get(7)?,
+                        last_op: row.get(8)?,
+                        last_error: row.get(9)?,
+                        updated_at: row.get(10)?,
+                    })
+                })
+                .optional()?;
+            Ok(row)
+        })
+        .await
+        .context("get github packages repo")
     }
 
     pub async fn list_github_packages_repos_selected_by_owner(
@@ -2669,6 +2736,7 @@ ON CONFLICT(owner, repo) DO UPDATE SET
         .context("put github packages repos")
     }
 
+    #[cfg(test)]
     pub async fn set_github_packages_repo_sync_result(
         &self,
         owner: &str,
@@ -2682,24 +2750,151 @@ ON CONFLICT(owner, repo) DO UPDATE SET
         let repo = repo.to_string();
         let last_sync_at = last_sync_at.map(|s| s.to_string());
         let last_error = last_error.map(|s| s.to_string());
+        let webhook_state = if last_error.is_some() {
+            "error".to_string()
+        } else if hook_id.is_some() {
+            "ok".to_string()
+        } else {
+            "unknown".to_string()
+        };
         let now = now.to_string();
         self.call(move |conn| {
             conn.execute(
                 r#"
 UPDATE github_packages_repos
 SET
-  hook_id = ?3,
-  last_sync_at = ?4,
-  last_error = ?5,
-  updated_at = ?6
-WHERE owner = ?1 AND repo = ?2
+  webhook_state = ?3,
+  last_op = 'register',
+  webhook_job_id = NULL,
+  hook_id = ?4,
+  last_sync_at = ?5,
+  last_error = ?6,
+  updated_at = ?7
+WHERE lower(owner) = lower(?1) AND lower(repo) = lower(?2)
 "#,
-                params![owner, repo, hook_id, last_sync_at, last_error, now],
+                params![
+                    owner,
+                    repo,
+                    webhook_state,
+                    hook_id,
+                    last_sync_at,
+                    last_error,
+                    now
+                ],
             )?;
             Ok(())
         })
         .await
         .context("set github packages repo sync result")
+    }
+
+    pub async fn set_github_packages_repo_webhook_job_state(
+        &self,
+        owner: &str,
+        repo: &str,
+        webhook_state: &str,
+        webhook_job_id: Option<&str>,
+        last_op: Option<&str>,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let owner = owner.to_string();
+        let repo = repo.to_string();
+        let webhook_state = webhook_state.to_string();
+        let webhook_job_id = webhook_job_id.map(|s| s.to_string());
+        let last_op = last_op.map(|s| s.to_string());
+        let now = now.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                r#"
+UPDATE github_packages_repos
+SET
+  webhook_state = ?3,
+  webhook_job_id = ?4,
+  last_op = ?5,
+  updated_at = ?6
+WHERE lower(owner) = lower(?1) AND lower(repo) = lower(?2)
+"#,
+                params![owner, repo, webhook_state, webhook_job_id, last_op, now],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("set github packages repo webhook job state")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn set_github_packages_repo_webhook_result(
+        &self,
+        owner: &str,
+        repo: &str,
+        webhook_state: &str,
+        hook_id: Option<i64>,
+        last_sync_at: Option<&str>,
+        last_audit_at: Option<&str>,
+        last_error: Option<&str>,
+        webhook_job_id: Option<&str>,
+        last_op: Option<&str>,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let owner = owner.to_string();
+        let repo = repo.to_string();
+        let webhook_state = webhook_state.to_string();
+        let last_sync_at = last_sync_at.map(|s| s.to_string());
+        let last_audit_at = last_audit_at.map(|s| s.to_string());
+        let last_error = last_error.map(|s| s.to_string());
+        let webhook_job_id = webhook_job_id.map(|s| s.to_string());
+        let last_op = last_op.map(|s| s.to_string());
+        let now = now.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                r#"
+UPDATE github_packages_repos
+SET
+  webhook_state = ?3,
+  hook_id = ?4,
+  last_sync_at = ?5,
+  last_audit_at = ?6,
+  last_error = ?7,
+  webhook_job_id = ?8,
+  last_op = ?9,
+  updated_at = ?10
+WHERE lower(owner) = lower(?1) AND lower(repo) = lower(?2)
+"#,
+                params![
+                    owner,
+                    repo,
+                    webhook_state,
+                    hook_id,
+                    last_sync_at,
+                    last_audit_at,
+                    last_error,
+                    webhook_job_id,
+                    last_op,
+                    now
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("set github packages repo webhook result")
+    }
+
+    pub async fn list_github_packages_repos_for_job_state_summary(
+        &self,
+    ) -> anyhow::Result<Vec<(String, Option<String>)>> {
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT webhook_state, last_audit_at
+FROM github_packages_repos
+WHERE selected = 1
+"#,
+            )?;
+            let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list github packages repos state summary")
     }
 
     pub async fn insert_github_packages_delivery_if_new(
@@ -2945,6 +3140,96 @@ INSERT INTO jobs (
         .context("insert job")
     }
 
+    pub async fn claim_next_queued_job_by_type(
+        &self,
+        job_type: JobType,
+        started_at: &str,
+    ) -> anyhow::Result<Option<JobListItem>> {
+        let job_type = job_type.as_str().to_string();
+        let started_at = started_at.to_string();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let item: Option<JobListItem> = tx
+                .query_row(
+                    r#"
+SELECT
+  id,
+  type,
+  scope,
+  stack_id,
+  service_id,
+  status,
+  created_by,
+  reason,
+  created_at,
+  started_at,
+  finished_at,
+  allow_arch_mismatch,
+  backup_mode,
+  summary_json
+FROM jobs
+WHERE type = ?1 AND status = 'queued'
+ORDER BY created_at ASC, id ASC
+LIMIT 1
+"#,
+                    params![job_type],
+                    |row| {
+                        let summary_json: String = row.get(13)?;
+                        let summary: serde_json::Value = serde_json::from_str(&summary_json)
+                            .map_err(|e| {
+                                rusqlite::Error::FromSqlConversionFailure(
+                                    0,
+                                    rusqlite::types::Type::Text,
+                                    Box::new(e),
+                                )
+                            })?;
+                        Ok(JobListItem {
+                            id: row.get(0)?,
+                            r#type: JobType::from_str(&row.get::<_, String>(1)?),
+                            scope: JobScope::from_str(&row.get::<_, String>(2)?),
+                            stack_id: row.get(3)?,
+                            service_id: row.get(4)?,
+                            status: row.get(5)?,
+                            created_by: row.get(6)?,
+                            reason: row.get(7)?,
+                            created_at: row.get(8)?,
+                            started_at: row.get(9)?,
+                            finished_at: row.get(10)?,
+                            allow_arch_mismatch: row.get::<_, i64>(11)? != 0,
+                            backup_mode: row.get(12)?,
+                            summary_json: summary,
+                        })
+                    },
+                )
+                .optional()?;
+
+            let Some(mut item) = item else {
+                tx.commit()?;
+                return Ok(None);
+            };
+
+            let changed = tx.execute(
+                r#"
+UPDATE jobs
+SET status = 'running', started_at = ?2
+WHERE id = ?1 AND status = 'queued'
+"#,
+                params![item.id, started_at],
+            )?;
+            if changed == 0 {
+                tx.commit()?;
+                return Ok(None);
+            }
+
+            item.status = "running".to_string();
+            item.started_at = Some(started_at);
+            tx.commit()?;
+            Ok(Some(item))
+        })
+        .await
+        .context("claim next queued job by type")
+    }
+
     pub async fn finish_job(
         &self,
         job_id: &str,
@@ -3113,6 +3398,113 @@ LIMIT 200
         })
         .await
         .context("list jobs")
+    }
+
+    pub async fn list_jobs_by_type_and_statuses(
+        &self,
+        job_type: JobType,
+        statuses: &[&str],
+        limit: u32,
+    ) -> anyhow::Result<Vec<JobListItem>> {
+        let job_type = job_type.as_str().to_string();
+        let statuses: Vec<String> = statuses.iter().map(|s| (*s).to_string()).collect();
+        let limit = limit.max(1);
+        self.call(move |conn| {
+            if statuses.is_empty() {
+                return Ok(Vec::new());
+            }
+
+            let placeholders = std::iter::repeat_n("?", statuses.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                r#"
+SELECT
+  id,
+  type,
+  scope,
+  stack_id,
+  service_id,
+  status,
+  created_by,
+  reason,
+  created_at,
+  started_at,
+  finished_at,
+  allow_arch_mismatch,
+  backup_mode,
+  summary_json
+FROM jobs
+WHERE type = ? AND status IN ({placeholders})
+ORDER BY created_at DESC
+LIMIT ?
+"#
+            );
+
+            let mut values: Vec<rusqlite::types::Value> = Vec::new();
+            values.push(rusqlite::types::Value::from(job_type));
+            for status in &statuses {
+                values.push(rusqlite::types::Value::from(status.clone()));
+            }
+            values.push(rusqlite::types::Value::from(limit as i64));
+            let params: Vec<&dyn rusqlite::ToSql> =
+                values.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(params.as_slice(), |row| {
+                let summary_json: String = row.get(13)?;
+                let summary: serde_json::Value =
+                    serde_json::from_str(&summary_json).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?;
+                Ok(JobListItem {
+                    id: row.get(0)?,
+                    r#type: JobType::from_str(&row.get::<_, String>(1)?),
+                    scope: JobScope::from_str(&row.get::<_, String>(2)?),
+                    stack_id: row.get(3)?,
+                    service_id: row.get(4)?,
+                    status: row.get(5)?,
+                    created_by: row.get(6)?,
+                    reason: row.get(7)?,
+                    created_at: row.get(8)?,
+                    started_at: row.get(9)?,
+                    finished_at: row.get(10)?,
+                    allow_arch_mismatch: row.get::<_, i64>(11)? != 0,
+                    backup_mode: row.get(12)?,
+                    summary_json: summary,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list jobs by type and statuses")
+    }
+
+    pub async fn count_jobs_by_type_and_status(
+        &self,
+        job_type: JobType,
+        status: &str,
+    ) -> anyhow::Result<u32> {
+        let job_type = job_type.as_str().to_string();
+        let status = status.to_string();
+        self.call(move |conn| {
+            let count = conn.query_row(
+                r#"
+SELECT COUNT(*)
+FROM jobs
+WHERE type = ?1 AND status = ?2
+"#,
+                params![job_type, status],
+                |row| row.get::<_, i64>(0),
+            )?;
+            Ok(count as u32)
+        })
+        .await
+        .context("count jobs by type and status")
     }
 
     pub async fn find_latest_running_check_job(
@@ -3298,6 +3690,11 @@ LIMIT 2000
             let mut recovered: Vec<String> = Vec::new();
 
             for (job_id, status, summary_raw) in items {
+                if status == "queued" {
+                    // queued jobs are not interrupted work; keep them pending for workers.
+                    continue;
+                }
+
                 // Always leave an audit trail so operators can tell why the job ended.
                 tx.execute(
                     r#"
@@ -4014,6 +4411,55 @@ fn ensure_service_archive_columns(conn: &rusqlite::Connection) -> anyhow::Result
     Ok(())
 }
 
+fn ensure_github_packages_repos_webhook_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    #[derive(Clone)]
+    struct Col<'a> {
+        name: &'a str,
+        ddl: &'a str,
+    }
+
+    let desired = [
+        Col {
+            name: "webhook_state",
+            ddl: "ALTER TABLE github_packages_repos ADD COLUMN webhook_state TEXT NOT NULL DEFAULT 'unknown'",
+        },
+        Col {
+            name: "webhook_job_id",
+            ddl: "ALTER TABLE github_packages_repos ADD COLUMN webhook_job_id TEXT",
+        },
+        Col {
+            name: "last_audit_at",
+            ddl: "ALTER TABLE github_packages_repos ADD COLUMN last_audit_at TEXT",
+        },
+        Col {
+            name: "last_op",
+            ddl: "ALTER TABLE github_packages_repos ADD COLUMN last_op TEXT",
+        },
+    ];
+
+    let mut stmt = conn.prepare("PRAGMA table_info(github_packages_repos)")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let existing = rows.collect::<Result<Vec<_>, _>>()?;
+
+    for col in desired {
+        if existing.iter().any(|c| c == col.name) {
+            continue;
+        }
+        conn.execute_batch(col.ddl)?;
+    }
+
+    conn.execute(
+        r#"
+UPDATE github_packages_repos
+SET webhook_state = 'unknown'
+WHERE webhook_state IS NULL OR trim(webhook_state) = ''
+"#,
+        [],
+    )?;
+
+    Ok(())
+}
+
 fn ensure_discovery_schema(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -4254,8 +4700,12 @@ CREATE TABLE IF NOT EXISTS github_packages_repos (
   owner TEXT NOT NULL,
   repo TEXT NOT NULL,
   selected INTEGER NOT NULL,
+  webhook_state TEXT NOT NULL DEFAULT 'unknown',
+  webhook_job_id TEXT,
   hook_id INTEGER,
   last_sync_at TEXT,
+  last_audit_at TEXT,
+  last_op TEXT,
   last_error TEXT,
   updated_at TEXT,
   PRIMARY KEY (owner, repo)

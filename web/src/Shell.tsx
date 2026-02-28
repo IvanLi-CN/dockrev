@@ -42,7 +42,12 @@ export function AppShell(props: {
   lastScanHint?: string
   children: ReactNode
 }) {
-  const active = props.route.name === 'service' ? 'services' : props.route.name === 'job' ? 'queue' : props.route.name
+  const active =
+    props.route.name === 'service'
+      ? 'services'
+      : props.route.name === 'job' || props.route.name === 'version-inference' || props.route.name === 'ghcr-webhooks'
+        ? 'queue'
+        : props.route.name
   const [appVersion, setAppVersion] = useState<string | null>(null)
 
   const lastScan = props.lastScanHint
