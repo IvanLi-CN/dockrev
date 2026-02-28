@@ -789,10 +789,10 @@ async fn run_unregister_job(
                 || async { client.delete_repo_hook(owner, repo, hook_id).await },
             )
             .await;
-            if let Err(err) = deleted {
-                if github_http_status_from_error(&err) != Some(404) {
-                    errors.push(format!("hook {hook_id}: {err}"));
-                }
+            if let Err(err) = deleted
+                && github_http_status_from_error(&err) != Some(404)
+            {
+                errors.push(format!("hook {hook_id}: {err}"));
             }
         }
 
@@ -1132,6 +1132,7 @@ async fn mark_repo_error(
     .await;
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn mark_repo_state(
     state: &Arc<AppState>,
     owner: &str,

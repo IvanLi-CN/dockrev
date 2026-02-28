@@ -3414,8 +3414,7 @@ LIMIT 200
                 return Ok(Vec::new());
             }
 
-            let placeholders = std::iter::repeat("?")
-                .take(statuses.len())
+            let placeholders = std::iter::repeat_n("?", statuses.len())
                 .collect::<Vec<_>>()
                 .join(",");
             let sql = format!(
