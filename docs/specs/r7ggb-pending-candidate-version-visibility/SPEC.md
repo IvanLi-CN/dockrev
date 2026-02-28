@@ -2,23 +2,20 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 重新设计（#c6j2k）
 - Created: 2026-02-27
-- Last: 2026-02-27
+- Last: 2026-03-01
 
 ## 背景 / 问题陈述
 
-- 当前 `versionInference.status=pending` 时，当前版本与候选版本都会被格式化成 `等待中…`。
-- 列表页使用 `candidateDisplayTag !== currentDisplayTag` 决定是否渲染候选箭头，因此 pending 时会误判为“无候选展示”。
-- 结果是用户看不到预期的 `等待中… -> 候选版本`，只能看到等待态与 raw tag 回显，语义不完整。
+- 本规格最初用于修复：`versionInference.status=pending` 时候选版本在列表中不可见的问题。
+- 该问题的最终产品决策与实现已被 **#c6j2k** 覆盖（pending 统一为 `加载中…` + 弱化样式，且不再依赖“等待中…”文案语义）。
 
 ## 目标 / 非目标
 
 ### Goals
 
-- 保持当前版本展示规则不变：pending 时仍显示 `等待中…`。
-- 调整候选版本展示规则：pending 时仍按既有优先级展示候选值（`resolvedTag` 优先，缺失时回退 raw tag）。
-- 全站统一行为：`Services`、`Overview`、`ServiceDetail` 同步生效。
+- None（已由 #c6j2k 重新设计并接管交付）。
 
 ### Non-goals
 
@@ -30,12 +27,7 @@
 
 ### In scope
 
-- `web/src/versionDisplay.ts`
-- `web/tests/versionDisplay.test.ts`
-- 调用点回归确认（无需额外业务分支逻辑）：
-  - `web/src/pages/ServicesPage.tsx`
-  - `web/src/pages/OverviewPage.tsx`
-  - `web/src/pages/ServiceDetailPage.tsx`
+- None
 
 ### Out of scope
 
@@ -46,10 +38,7 @@
 
 ### 接口清单（Inventory）
 
-| 接口（Name） | 类型（Kind） | 范围（Scope） | 变更（Change） | 契约文档（Contract Doc） | 负责人（Owner） | 使用方（Consumers） | 备注（Notes） |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `formatCurrentTagDisplay` | TS helper | internal | Keep | None | web | Overview/Services/ServiceDetail | pending 仍返回 `等待中…` |
-| `formatCandidateTagDisplay` | TS helper | internal | Modify | None | web | Overview/Services/ServiceDetail | 取消 pending 早退，保留 resolved/raw 回退 |
+- None（已被 #c6j2k 覆盖）
 
 ### 契约文档（按 Kind 拆分）
 
@@ -57,10 +46,7 @@
 
 ## 验收标准（Acceptance Criteria）
 
-- Given `current.tag=latest`、`current.resolvedTag=v0.2.51`、`versionInference.status=pending`，When 渲染当前版本，Then 显示 `等待中…`。
-- Given `candidate.tag=latest`、`candidate.resolvedTag=v0.2.51`、`versionInference.status=pending`，When 渲染候选版本，Then 显示 `v0.2.51`。
-- Given `candidate.tag=latest`、`candidate.resolvedTag` 缺失、`versionInference.status=pending`，When 渲染候选版本，Then 回退显示 `latest`。
-- Given pending 且存在候选，When 渲染 Versions 列，Then 展示 `等待中… -> <candidateDisplayTag>`。
+- None
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
@@ -72,15 +58,11 @@
 
 ## 实现里程碑（Milestones / Delivery checklist）
 
-- [ ] M1: `versionDisplay` helper 行为按新规则调整（仅 candidate 取消 pending 早退）。
-- [ ] M2: 单测补齐 pending 场景并保持既有回归通过。
-- [ ] M3: Web 侧 test/lint/build 全部通过。
-- [ ] M4: 提交、推送、PR 创建并使 checks 状态明确。
+- None（已被 #c6j2k 覆盖）
 
 ## 风险 / 开放问题 / 假设（Risks, Open Questions, Assumptions）
 
-- 风险：若未来将 pending 文案从 `等待中…` 改为其他文本，列表显隐依赖展示字符串比较的逻辑可能再次引发误判。
-- 假设：pending 期间保留候选可见性符合产品语义，且不会误导用户执行更新。
+- None（已被 #c6j2k 覆盖）
 
 ## 变更记录（Change log）
 

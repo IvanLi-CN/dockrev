@@ -25,7 +25,7 @@ import { serviceRowStatus } from '../updateStatus'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { useConfirm } from '../confirm'
-import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay } from '../versionDisplay'
+import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, isStrictSemverTag } from '../versionDisplay'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -96,6 +96,18 @@ function splitImageNameForDisplay(
 
 function isDockrevService(svc: Service): boolean {
   return isDockrevImageRef(svc.image.ref)
+}
+
+function shouldPrefetchFloatingCandidate(
+  candidateTag: string | null | undefined,
+  candidateResolvedTag: string | null | undefined,
+  candidateDigest: string | null | undefined,
+): boolean {
+  const raw = (candidateTag ?? '').trim()
+  if (raw === '-') return false
+  if (!raw || isStrictSemverTag(raw)) return false
+  if (isStrictSemverTag(candidateResolvedTag)) return false
+  return (candidateDigest ?? '').trim().length > 0
 }
 
 export function ServiceDetailPage(props: {
@@ -351,20 +363,26 @@ export function ServiceDetailPage(props: {
                         ? '架构不匹配（仅提示，不允许更新）'
                         : undefined
               }
-              onClick={() => {
-                void (async () => {
-		                  if (!service || !service.candidate) return
-                    const currentDisplayTag = formatTagDisplay(
-                      service.image.tag,
-                      service.image.resolvedTag,
-                      service.versionInference?.status,
-                    )
-                    const candidateDisplayTag = formatCandidateTagDisplay(
-                      service.candidate.tag,
-                      service.candidate.resolvedTag ?? null,
-                      service.versionInference?.status,
-                    )
-                    const rawTagTrim = (service.image.tag ?? '').trim()
+	              onClick={() => {
+	                void (async () => {
+			                  if (!service || !service.candidate) return
+	                    const currentDisplayTag = formatTagDisplay(
+	                      service.image.tag,
+	                      service.image.resolvedTag,
+	                      service.versionInference?.status,
+	                    )
+	                    const inferencePending = service.versionInference?.status === 'pending'
+                      const candidatePrefetchOnMount = shouldPrefetchFloatingCandidate(
+                        service.candidate.tag,
+                        service.candidate.resolvedTag ?? null,
+                        service.candidate.digest ?? null,
+                      )
+	                    const candidateDisplayTag = formatCandidateTagDisplay(
+	                      service.candidate.tag,
+	                      service.candidate.resolvedTag ?? null,
+	                      service.versionInference?.status,
+	                    )
+	                    const rawTagTrim = (service.image.tag ?? '').trim()
                     const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
 	                  const ok = await confirm({
 	                    title: `确认更新服务 ${service.name}？`,
@@ -409,19 +427,24 @@ export function ServiceDetailPage(props: {
                                     imageDigest={service.image.digest ?? null}
                                     resolvedTag={service.image.resolvedTag}
                                     resolvedTags={service.image.resolvedTags}
-                                  />
-                                  <span style={{ opacity: 0.8, margin: '0 6px' }}>
-                                    <ArrowRightIcon className="inlineIcon" />
-                                  </span>
-                                  <VersionTagsPopover
-                                    serviceId={service.id}
-                                    candidateTag={service.candidate.tag}
-                                    candidateDigest={service.candidate.digest ?? null}
-                                  >
-                                    {candidateDisplayTag}
-                                  </VersionTagsPopover>
-                                </div>
-                                {showRawTag ? (
+                                    inferenceLoading={inferencePending}
+	                                  />
+	                                  <span
+	                                    className={inferencePending ? 'inlineIconLoading' : 'inlineIconMuted'}
+	                                    style={inferencePending ? { margin: '0 6px' } : { opacity: 0.8, margin: '0 6px' }}
+	                                  >
+	                                    <ArrowRightIcon className="inlineIcon" />
+	                                  </span>
+	                                  <VersionTagsPopover
+	                                    serviceId={service.id}
+	                                    candidateTag={service.candidate.tag}
+	                                    candidateDigest={service.candidate.digest ?? null}
+                                      prefetchOnMount={candidatePrefetchOnMount}
+	                                  >
+	                                    {candidateDisplayTag}
+	                                  </VersionTagsPopover>
+	                                </div>
+	                                {showRawTag ? (
                                   <div>
                                     <CurrentVersionPopover
                                       serviceId={service.id}
@@ -598,6 +621,7 @@ export function ServiceDetailPage(props: {
       service.image.resolvedTag,
       service.versionInference?.status,
     )
+    const inferencePending = service.versionInference?.status === 'pending'
     const currentDigestNode = service.image.digest ? (
       <span className="mono">{`@${shortDigest(service.image.digest)}`}</span>
     ) : null
@@ -610,6 +634,7 @@ export function ServiceDetailPage(props: {
         imageDigest={service.image.digest ?? null}
         resolvedTag={service.image.resolvedTag}
         resolvedTags={service.image.resolvedTags}
+        inferenceLoading={inferencePending}
       />
     )
 
@@ -659,33 +684,39 @@ export function ServiceDetailPage(props: {
       )
     }
 
-    const candidateDisplayTag = formatCandidateTagDisplay(
-      service.candidate.tag,
-      service.candidate.resolvedTag ?? null,
-      service.versionInference?.status,
-    )
-    const archNode = service.candidate.arch.length ? (
-      <>
-        {' · '}arch=<Mono>{service.candidate.arch.join(',')}</Mono>
-      </>
-    ) : null
+	    const candidateDisplayTag = formatCandidateTagDisplay(
+	      service.candidate.tag,
+	      service.candidate.resolvedTag ?? null,
+	      service.versionInference?.status,
+	    )
+      const candidatePrefetchOnMount = shouldPrefetchFloatingCandidate(
+        service.candidate.tag,
+        service.candidate.resolvedTag ?? null,
+        service.candidate.digest ?? null,
+      )
+	    const archNode = service.candidate.arch.length ? (
+	      <>
+	        {' · '}arch=<Mono>{service.candidate.arch.join(',')}</Mono>
+	      </>
+	    ) : null
 
     return (
       <>
         当前: {currentNode}
         {currentDigestNode}
         {rawTagNode}
-        {' \u2192 '}候选:{' '}
-        <VersionTagsPopover
-          serviceId={service.id}
-          candidateTag={service.candidate.tag}
-          candidateDigest={service.candidate.digest ?? null}
-        >
-          {candidateDisplayTag}
-        </VersionTagsPopover>
-        <span className="mono">{`@${shortDigest(service.candidate.digest)}`}</span>
-        {archNode}
-      </>
+	        {' \u2192 '}候选:{' '}
+	        <VersionTagsPopover
+	          serviceId={service.id}
+	          candidateTag={service.candidate.tag}
+	          candidateDigest={service.candidate.digest ?? null}
+            prefetchOnMount={candidatePrefetchOnMount}
+	        >
+	          {candidateDisplayTag}
+	        </VersionTagsPopover>
+	        <span className="mono">{`@${shortDigest(service.candidate.digest)}`}</span>
+	        {archNode}
+	      </>
     )
   }, [service])
 

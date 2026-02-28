@@ -801,6 +801,7 @@ export function OverviewPage(props: {
                       item.svc.image.resolvedTag,
                       item.svc.versionInference?.status,
                     )
+                    const inferencePending = item.svc.versionInference?.status === 'pending'
                     const rawTagTrim = (item.svc.image.tag ?? '').trim()
                     const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
                     const candidateTag =
@@ -812,6 +813,15 @@ export function OverviewPage(props: {
                           item.svc.versionInference?.status,
                         )
                       : null
+                    const candidatePrefetchOnMount =
+                      candidateTag && candidateDisplayTag
+                        ? shouldPrefetchFloatingCandidate(
+                            candidateTag,
+                            item.svc.candidate?.resolvedTag ?? null,
+                            item.svc.candidate?.digest ?? null,
+                          )
+                        : false
+                    const arrowPulse = inferencePending
                     return (
                       <div key={`${item.stackName}/${item.svc.id}`} className="modalListItem">
                         <div className="modalListLeft">
@@ -845,18 +855,17 @@ export function OverviewPage(props: {
                                 imageDigest={item.svc.image.digest ?? null}
                                 resolvedTag={item.svc.image.resolvedTag}
                                 resolvedTags={item.svc.image.resolvedTags}
+                                inferenceLoading={inferencePending}
                               />
-                              <ArrowRightIcon className="inlineIcon" />
+                              <span className={arrowPulse ? 'inlineIconLoading' : 'inlineIconMuted'}>
+                                <ArrowRightIcon className="inlineIcon" />
+                              </span>
                               {candidateTag && candidateDisplayTag ? (
                                 <VersionTagsPopover
                                   serviceId={item.svc.id}
                                   candidateTag={candidateTag}
                                   candidateDigest={item.svc.candidate?.digest ?? null}
-                                  prefetchOnMount={shouldPrefetchFloatingCandidate(
-                                    candidateTag,
-                                    item.svc.candidate?.resolvedTag ?? null,
-                                    item.svc.candidate?.digest ?? null,
-                                  )}
+                                  prefetchOnMount={candidatePrefetchOnMount}
                                 >
                                   {candidateDisplayTag}
                                 </VersionTagsPopover>
@@ -1098,6 +1107,7 @@ export function OverviewPage(props: {
                                       item.svc.image.resolvedTag,
                                       item.svc.versionInference?.status,
                                     )
+		                                const inferencePending = item.svc.versionInference?.status === 'pending'
 		                                const rawTagTrim = (item.svc.image.tag ?? '').trim()
 		                                const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
 		                                const candidateTag =
@@ -1109,6 +1119,15 @@ export function OverviewPage(props: {
                                       item.svc.versionInference?.status,
                                     )
 		                                  : null
+		                                const candidatePrefetchOnMount =
+		                                  candidateTag && candidateDisplayTag
+		                                    ? shouldPrefetchFloatingCandidate(
+		                                        candidateTag,
+		                                        item.svc.candidate?.resolvedTag ?? null,
+		                                        item.svc.candidate?.digest ?? null,
+		                                      )
+		                                    : false
+		                                const arrowPulse = inferencePending
 		                                return (
 		                                  <div key={item.svc.id} className="modalListItem">
 		                                    <div className="modalListLeft">
@@ -1142,18 +1161,17 @@ export function OverviewPage(props: {
 		                                            imageDigest={item.svc.image.digest ?? null}
 		                                            resolvedTag={item.svc.image.resolvedTag}
 		                                            resolvedTags={item.svc.image.resolvedTags}
+		                                            inferenceLoading={inferencePending}
 		                                          />
-		                                          <ArrowRightIcon className="inlineIcon" />
+		                                          <span className={arrowPulse ? 'inlineIconLoading' : 'inlineIconMuted'}>
+		                                            <ArrowRightIcon className="inlineIcon" />
+		                                          </span>
 		                                          {candidateTag && candidateDisplayTag ? (
 		                                            <VersionTagsPopover
 		                                              serviceId={item.svc.id}
 		                                              candidateTag={candidateTag}
 		                                              candidateDigest={item.svc.candidate?.digest ?? null}
-		                                              prefetchOnMount={shouldPrefetchFloatingCandidate(
-		                                                candidateTag,
-		                                                item.svc.candidate?.resolvedTag ?? null,
-		                                                item.svc.candidate?.digest ?? null,
-		                                              )}
+		                                              prefetchOnMount={candidatePrefetchOnMount}
 		                                            >
 		                                              {candidateDisplayTag}
 		                                            </VersionTagsPopover>
@@ -1208,6 +1226,7 @@ export function OverviewPage(props: {
                         svc.image.resolvedTag,
                         svc.versionInference?.status,
                       )
+                      const inferencePending = svc.versionInference?.status === 'pending'
                       const rawTagTrim = (svc.image.tag ?? '').trim()
                       const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
                       const candidateTag = svc.candidate?.tag && svc.candidate.tag !== '-' ? svc.candidate.tag : null
@@ -1219,6 +1238,15 @@ export function OverviewPage(props: {
                           )
 	                        : null
 	                      const showCandidate = Boolean(candidateDisplayTag && candidateDisplayTag !== currentDisplayTag)
+	                      const candidatePrefetchOnMount =
+	                        candidateTag && candidateDisplayTag
+	                          ? shouldPrefetchFloatingCandidate(
+	                              candidateTag,
+	                              svc.candidate?.resolvedTag ?? null,
+	                              svc.candidate?.digest ?? null,
+	                            )
+	                          : false
+	                      const arrowPulse = inferencePending
 	                      const svcApply =
 	                        stt === 'updatable'
 	                          ? { enabled: true, title: null as string | null, note: null as string | null }
@@ -1289,19 +1317,18 @@ export function OverviewPage(props: {
                                   imageDigest={svc.image.digest ?? null}
                                   resolvedTag={svc.image.resolvedTag}
                                   resolvedTags={svc.image.resolvedTags}
+                                  inferenceLoading={inferencePending}
                                 />
                                 {showCandidate ? (
                                   <>
-                                    <ArrowRightIcon className="inlineIcon" />
+                                    <span className={arrowPulse ? 'inlineIconLoading' : 'inlineIconMuted'}>
+                                      <ArrowRightIcon className="inlineIcon" />
+                                    </span>
                                     <VersionTagsPopover
                                       serviceId={svc.id}
                                       candidateTag={candidateTag}
                                       candidateDigest={svc.candidate?.digest ?? null}
-                                      prefetchOnMount={shouldPrefetchFloatingCandidate(
-                                        candidateTag,
-                                        svc.candidate?.resolvedTag ?? null,
-                                        svc.candidate?.digest ?? null,
-                                      )}
+                                      prefetchOnMount={candidatePrefetchOnMount}
                                     >
                                       {candidateDisplayTag}
                                     </VersionTagsPopover>
@@ -1408,13 +1435,17 @@ export function OverviewPage(props: {
                                             <div className="versionLine">
                                               <CurrentVersionPopover
                                                 serviceId={svc.id}
-                                                displayTag=""
+                                                displayTag={currentDisplayTag}
                                                 imageTag={svc.image.tag}
                                                 imageDigest={svc.image.digest ?? null}
                                                 resolvedTag={svc.image.resolvedTag}
                                                 resolvedTags={svc.image.resolvedTags}
+                                                inferenceLoading={inferencePending}
                                               />
-	                                              <span style={{ opacity: 0.8, margin: '0 6px' }}>
+	                                              <span
+	                                                className={arrowPulse ? 'inlineIconLoading' : 'inlineIconMuted'}
+	                                                style={arrowPulse ? { margin: '0 6px' } : { opacity: 0.8, margin: '0 6px' }}
+	                                              >
 	                                                <ArrowRightIcon className="inlineIcon" />
 	                                              </span>
 	                                              {svc.candidate?.tag ? (
@@ -1422,11 +1453,7 @@ export function OverviewPage(props: {
 	                                                  serviceId={svc.id}
 	                                                  candidateTag={svc.candidate.tag}
 	                                                  candidateDigest={svc.candidate.digest ?? null}
-	                                                  prefetchOnMount={shouldPrefetchFloatingCandidate(
-	                                                    svc.candidate.tag,
-	                                                    svc.candidate.resolvedTag ?? null,
-	                                                    svc.candidate.digest ?? null,
-	                                                  )}
+	                                                  prefetchOnMount={candidatePrefetchOnMount}
 	                                                >
 	                                                  {formatCandidateTagDisplay(
 	                                                    svc.candidate.tag,
