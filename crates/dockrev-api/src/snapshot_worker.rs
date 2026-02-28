@@ -584,7 +584,9 @@ impl SnapshotWorker {
                                     message: format!(
                                         "scanning manifests ({processed}/{task_total}) · repo total {repo_total} · timeout {timeout} · error {error}"
                                     ),
-                                    current: processed,
+                                    // Keep `current` aligned with successful manifest parses so
+                                    // `resultCurrent` does not get inflated by timed out/errored entries.
+                                    current: success,
                                     total: task_total,
                                     assigned_current: processed,
                                     assigned_total: task_total,
