@@ -215,7 +215,7 @@ export function VersionTagsPopover(props: {
     // Only fetch when there's no snapshot data loaded yet. Retries should be explicit
     // (e.g. via re-pinning), not continuously driven by pinned+error state.
     if (digestTags != null) return
-    if (prefetchOnMount && snapshotPhaseRef.current === 'idle') setSnapshotPhase('loading')
+    if (prefetchOnMount && snapshotPhaseRef.current !== 'loading') setSnapshotPhase('loading')
 
     let alive = true
     const delay = pinned ? 0 : FETCH_DEBOUNCE_MS
@@ -284,8 +284,8 @@ export function VersionTagsPopover(props: {
 
     return () => {
       alive = false
-      if (fetchTimer.current === timerId) {
-        window.clearTimeout(timerId)
+      if (fetchTimer.current != null) {
+        window.clearTimeout(fetchTimer.current)
         fetchTimer.current = null
       }
     }
