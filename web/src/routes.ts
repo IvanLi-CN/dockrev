@@ -6,6 +6,7 @@ export type Route =
   | { name: 'job'; jobId: string }
   | { name: 'services' }
   | { name: 'version-inference' }
+  | { name: 'ghcr-webhooks' }
   | { name: 'deploy-check' }
   | { name: 'settings' }
   | { name: 'service'; stackId: string; serviceId: string }
@@ -20,6 +21,9 @@ export function parseRoute(pathname: string): Route {
   if (parts.length === 1 && parts[0] === 'queue') return { name: 'queue' }
   if (parts.length === 2 && parts[0] === 'queue' && parts[1] === 'version-inference') {
     return { name: 'version-inference' }
+  }
+  if (parts.length === 2 && parts[0] === 'queue' && parts[1] === 'ghcr-webhooks') {
+    return { name: 'ghcr-webhooks' }
   }
   if (parts.length === 2 && parts[0] === 'queue') return { name: 'job', jobId: parts[1] }
   if (parts.length === 1 && parts[0] === 'services') return { name: 'services' }
@@ -45,6 +49,8 @@ export function href(route: Route): string {
       return '/services'
     case 'version-inference':
       return '/queue/version-inference'
+    case 'ghcr-webhooks':
+      return '/queue/ghcr-webhooks'
     case 'deploy-check':
       return '/deploy-check'
     case 'settings':

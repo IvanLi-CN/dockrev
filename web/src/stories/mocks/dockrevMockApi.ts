@@ -1801,6 +1801,129 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         reposSelectedTotal: f.githubPackagesRepos.filter((r) => r.selected).length,
       }
     }
+    const ensureGhcrRepoDefaults = (repo: GitHubPackagesRepo) => {
+      if (!repo.webhookState) repo.webhookState = 'unknown'
+      if (repo.webhookJobId === undefined) repo.webhookJobId = null
+      if (repo.lastAuditAt === undefined) repo.lastAuditAt = null
+      if (repo.lastOp === undefined) repo.lastOp = null
+      if (repo.lastError === undefined) repo.lastError = null
+      if (repo.hookId === undefined) repo.hookId = null
+      if (repo.lastSyncAt === undefined) repo.lastSyncAt = null
+      return repo
+    }
+    const newGhcrJob = (op: 'register' | 'unregister' | 'audit_all', repoFullName: string | null): JobListItem => {
+      jobSeq += 1
+      const jobId = `job-ghcr-${jobSeq}`
+      const createdAt = nowIso(-200)
+      const message = op === 'register' ? 'waiting to register webhook' : op === 'unregister' ? 'waiting to unregister webhook' : 'waiting to audit webhook drift'
+      const target = repoFullName ?? '-'
+      return {
+        id: jobId,
+        type: 'github_packages_webhook',
+        scope: 'all',
+        stackId: null,
+        serviceId: null,
+        status: 'queued',
+        createdBy: 'ivan',
+        reason: 'ui',
+        createdAt,
+        startedAt: null,
+        finishedAt: null,
+        allowArchMismatch: false,
+        backupMode: 'inherit',
+        summary: {
+          op,
+          repos: repoFullName ? [repoFullName] : [],
+          progress: {
+            phase: 'queued',
+            message,
+            current: 0,
+            total: repoFullName ? 1 : 0,
+            percent: 0,
+            plannedCurrent: 0,
+            plannedTotal: repoFullName ? 1 : 0,
+            plannedPercent: 0,
+            currentTarget: target,
+            updatedAt: createdAt,
+          },
+        },
+        progress: {
+          phase: 'queued',
+          message,
+          current: 0,
+          total: repoFullName ? 1 : 0,
+          percent: 0,
+          plannedCurrent: 0,
+          plannedTotal: repoFullName ? 1 : 0,
+          plannedPercent: 0,
+          currentTarget: target,
+          updatedAt: createdAt,
+        },
+      }
+    }
+    const insertGhcrQueuedJob = (op: 'register' | 'unregister' | 'audit_all', repoFullName: string | null): string => {
+      const job = newGhcrJob(op, repoFullName)
+      f.jobs = [job, ...f.jobs]
+      f.jobById[job.id] = {
+        ...job,
+        logs: [
+          {
+            ts: job.createdAt,
+            level: 'event',
+            msg: JSON.stringify({
+              type: 'job_enqueued',
+              jobType: 'github_packages_webhook',
+              op,
+              target: repoFullName,
+              jobId: job.id,
+              ts: job.createdAt,
+            }),
+          },
+        ],
+        logsLastId: 1,
+      }
+      return job.id
+    }
+    const buildGhcrOverview = () => {
+      const summary = {
+        tracked: 0,
+        ok: 0,
+        missing: 0,
+        error: 0,
+        conflict: 0,
+        queued: 0,
+        running: 0,
+        unknown: 0,
+      }
+      let lastAuditAt: string | null = null
+      for (const row of f.githubPackagesRepos) {
+        if (!row.selected) continue
+        ensureGhcrRepoDefaults(row)
+        summary.tracked += 1
+        const state = (row.webhookState ?? 'unknown').toLowerCase()
+        if (state === 'ok') summary.ok += 1
+        else if (state === 'missing') summary.missing += 1
+        else if (state === 'error') summary.error += 1
+        else if (state === 'conflict') summary.conflict += 1
+        else if (state === 'queued') summary.queued += 1
+        else if (state === 'running') summary.running += 1
+        else summary.unknown += 1
+        if (row.lastAuditAt && (!lastAuditAt || row.lastAuditAt > lastAuditAt)) lastAuditAt = row.lastAuditAt
+      }
+
+      const ghcrJobs = f.jobs.filter((job) => job.type === 'github_packages_webhook')
+      const jobsQueued = ghcrJobs.filter((job) => job.status === 'queued').length
+      const jobsRunning = ghcrJobs.filter((job) => job.status === 'running').length
+      const runningJobId = ghcrJobs.find((job) => job.status === 'running')?.id ?? null
+
+      return {
+        summary,
+        jobsQueued,
+        jobsRunning,
+        runningJobId,
+        lastAuditAt,
+      }
+    }
 
     // github packages (ghcr) webhook integration
     if (method === 'GET' && urlPath === '/api/github-packages/settings') {
@@ -1865,6 +1988,9 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       recomputeGithubPackagesCounts()
       return json(resp)
     }
+    if (method === 'GET' && urlPath === '/api/github-packages/webhook/overview') {
+      return json(buildGhcrOverview())
+    }
     if (method === 'POST' && urlPath === '/api/github-packages/repos/selected') {
       const parsed = parseJsonBody(init?.body) as SetGitHubPackagesRepoSelectedRequest | null
       const fullName = getString(parsed?.fullName)?.trim() ?? ''
@@ -1872,22 +1998,51 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       if (!fullName || selected === null) return json({ error: 'invalid input' }, { status: 400 })
       const row = f.githubPackagesRepos.find((r) => r.fullName === fullName)
       if (!row) {
-        f.githubPackagesRepos.push({ fullName, selected, hookId: null, lastSyncAt: null, lastError: null })
+        f.githubPackagesRepos.push(
+          ensureGhcrRepoDefaults({
+            fullName,
+            selected,
+            webhookState: selected ? 'queued' : 'unknown',
+            webhookJobId: null,
+            hookId: null,
+            lastSyncAt: null,
+            lastAuditAt: null,
+            lastOp: selected ? 'register' : null,
+            lastError: null,
+          }),
+        )
       } else {
+        ensureGhcrRepoDefaults(row)
         row.selected = selected
       }
       recomputeGithubPackagesCounts()
-      return json({ ok: true })
+      let jobId: string | null = null
+      if (selected) {
+        const target = f.githubPackagesRepos.find((r) => r.fullName === fullName)
+        if (target) {
+          target.webhookState = 'queued'
+          target.lastOp = 'register'
+          target.lastError = null
+          jobId = insertGhcrQueuedJob('register', fullName)
+          target.webhookJobId = jobId
+        }
+      }
+      return json({ ok: true, jobId })
     }
     if (method === 'POST' && urlPath === '/api/github-packages/repos/delete') {
       const parsed = parseJsonBody(init?.body) as { fullName?: unknown } | null
       const fullName = getString(parsed?.fullName)?.trim() ?? ''
       if (!fullName) return json({ error: 'invalid input' }, { status: 400 })
-      const idx = f.githubPackagesRepos.findIndex((r) => r.fullName === fullName)
-      const row = idx >= 0 ? f.githubPackagesRepos[idx] : null
-      if (idx >= 0) f.githubPackagesRepos.splice(idx, 1)
+      const row = f.githubPackagesRepos.find((r) => r.fullName === fullName)
+      if (!row) return json({ error: 'repo is not tracked' }, { status: 404 })
+      ensureGhcrRepoDefaults(row)
+      row.webhookState = 'queued'
+      row.lastOp = 'unregister'
+      row.lastError = null
+      const jobId = insertGhcrQueuedJob('unregister', fullName)
+      row.webhookJobId = jobId
       recomputeGithubPackagesCounts()
-      return json({ ok: true, deletedHookIds: row?.hookId ? [row.hookId] : [] })
+      return json({ ok: true, jobId })
     }
     if (method === 'POST' && urlPath === '/api/github-packages/repos/bulk-selected') {
       const parsed = parseJsonBody(init?.body) as BulkSetGitHubPackagesReposSelectedRequest | null
@@ -2024,15 +2179,16 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         ? new Set(parsed?.repos.map((x) => getString(x)?.trim()).filter(Boolean) as string[])
         : null
       const selected = f.githubPackagesRepos.filter((r) => r.selected && (!allow || allow.has(r.fullName)))
-      const results = selected.map((r) => ({ repo: r.fullName, action: r.hookId ? 'noop' : 'created', hookId: r.hookId ?? 7654321 }))
+      const results = selected.map((r) => {
+        ensureGhcrRepoDefaults(r)
+        r.webhookState = 'queued'
+        r.lastOp = 'register'
+        r.lastError = null
+        const jobId = insertGhcrQueuedJob('register', r.fullName)
+        r.webhookJobId = jobId
+        return { repo: r.fullName, action: 'queued', hookId: null, conflictHooks: null, message: `jobId=${jobId}` }
+      })
       const resp: SyncGitHubPackagesWebhooksResponse = { ok: true, results }
-
-      for (const it of results) {
-        const rr = f.githubPackagesRepos.find((r) => r.fullName === it.repo)
-        if (rr && !rr.hookId) rr.hookId = it.hookId ?? null
-        if (rr) rr.lastSyncAt = nowIso()
-        if (rr) rr.lastError = null
-      }
 
       return json(resp)
     }

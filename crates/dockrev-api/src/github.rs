@@ -385,6 +385,7 @@ struct GitHubRepoOwner {
 #[derive(Clone, Debug, Deserialize)]
 pub struct GitHubWebhook {
     pub id: i64,
+    #[allow(dead_code)]
     pub active: bool,
     pub events: Vec<String>,
     pub config: GitHubWebhookConfig,
