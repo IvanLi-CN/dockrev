@@ -9,10 +9,10 @@ use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 use tokio_rusqlite::Connection;
 
 use crate::api::types::{
-    BackupSettings, ComposeConfig, ComposeRef, DeployWelcomeSettings, GitHubPackagesRepoDb,
-    GitHubPackagesSettingsDb, GitHubPackagesTargetDb, IgnoreRule, IgnoreRuleMatch, IgnoreRuleScope,
-    JobListItem, JobLogLine, JobScope, JobType, NotificationSettings, ServiceSettings,
-    StackListItem, StackRecord, StackStatus,
+    BackupSettings, ComposeConfig, ComposeRef, DeployWelcomeSettings, GitHubPackagesDeliveryDb,
+    GitHubPackagesRepoDb, GitHubPackagesSettingsDb, GitHubPackagesTargetDb, IgnoreRule,
+    IgnoreRuleMatch, IgnoreRuleScope, JobListItem, JobLogLine, JobScope, JobType,
+    NotificationSettings, ServiceSettings, StackListItem, StackRecord, StackStatus,
 };
 
 #[derive(Clone, Debug)]
@@ -179,6 +179,7 @@ impl Db {
             ensure_schema_migrations_table(conn)?;
             apply_migration_0007_remove_manual_stacks(conn)?;
             apply_migration_0008_drop_version_inference_snapshots(conn)?;
+            apply_migration_0009_extend_github_packages_deliveries(conn)?;
             auto_archive_missing_discovery_projects_on_startup(conn)?;
             Ok(())
         })
@@ -2903,23 +2904,122 @@ WHERE selected = 1
         received_at: &str,
         owner: Option<&str>,
         repo: Option<&str>,
+        outcome: &str,
+        reason: Option<&str>,
+        job_id: Option<&str>,
     ) -> anyhow::Result<bool> {
         let delivery_id = delivery_id.to_string();
         let received_at = received_at.to_string();
         let owner = owner.map(|s| s.to_string());
         let repo = repo.map(|s| s.to_string());
+        let outcome = outcome.trim().to_string();
+        let reason = reason.map(|s| s.to_string());
+        let job_id = job_id.map(|s| s.to_string());
+
+        let cutoff_older_than = time::OffsetDateTime::parse(
+            received_at.as_str(),
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
+            - time::Duration::days(30);
+        let cutoff_older_than = cutoff_older_than
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_default();
         self.call(move |conn| {
             let changed = conn.execute(
                 r#"
-INSERT OR IGNORE INTO github_packages_deliveries (delivery_id, received_at, owner, repo)
-VALUES (?1, ?2, ?3, ?4)
+INSERT OR IGNORE INTO github_packages_deliveries (
+  delivery_id,
+  received_at,
+  owner,
+  repo,
+  outcome,
+  reason,
+  job_id
+)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
 "#,
-                params![delivery_id, received_at, owner, repo],
+                params![
+                    delivery_id,
+                    received_at,
+                    owner,
+                    repo,
+                    outcome,
+                    reason,
+                    job_id
+                ],
             )?;
+
+            if changed > 0 {
+                // Keep the deliveries table bounded: 30d retention and max 2000 rows.
+                if !cutoff_older_than.is_empty() {
+                    conn.execute(
+                        r#"
+DELETE FROM github_packages_deliveries
+WHERE received_at < ?1
+"#,
+                        params![cutoff_older_than],
+                    )?;
+                }
+
+                let total: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM github_packages_deliveries",
+                    [],
+                    |row| row.get(0),
+                )?;
+                if total > 2000 {
+                    conn.execute(
+                        r#"
+DELETE FROM github_packages_deliveries
+WHERE delivery_id NOT IN (
+  SELECT delivery_id
+  FROM github_packages_deliveries
+  ORDER BY received_at DESC, delivery_id DESC
+  LIMIT 2000
+)
+"#,
+                        [],
+                    )?;
+                }
+            }
             Ok(changed > 0)
         })
         .await
         .context("insert github packages delivery")
+    }
+
+    pub async fn list_github_packages_deliveries_since(
+        &self,
+        received_at_since: &str,
+        limit: u32,
+    ) -> anyhow::Result<Vec<GitHubPackagesDeliveryDb>> {
+        let received_at_since = received_at_since.to_string();
+        let limit = limit as i64;
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT delivery_id, received_at, owner, repo, outcome, reason, job_id
+FROM github_packages_deliveries
+WHERE received_at >= ?1
+ORDER BY received_at DESC, delivery_id DESC
+LIMIT ?2
+"#,
+            )?;
+            let rows = stmt.query_map(params![received_at_since, limit], |row| {
+                Ok(GitHubPackagesDeliveryDb {
+                    delivery_id: row.get(0)?,
+                    received_at: row.get(1)?,
+                    owner: row.get(2)?,
+                    repo: row.get(3)?,
+                    outcome: row.get(4)?,
+                    reason: row.get(5)?,
+                    job_id: row.get(6)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list github packages deliveries since")
     }
 
     #[cfg(test)]
@@ -2934,6 +3034,39 @@ VALUES (?1, ?2, ?3, ?4)
         })
         .await
         .context("check github packages delivery exists")
+    }
+
+    #[cfg(test)]
+    pub async fn get_github_packages_delivery(
+        &self,
+        delivery_id: &str,
+    ) -> anyhow::Result<Option<GitHubPackagesDeliveryDb>> {
+        let delivery_id = delivery_id.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    r#"
+SELECT delivery_id, received_at, owner, repo, outcome, reason, job_id
+FROM github_packages_deliveries
+WHERE delivery_id = ?1
+"#,
+                    params![delivery_id],
+                    |row| {
+                        Ok(GitHubPackagesDeliveryDb {
+                            delivery_id: row.get(0)?,
+                            received_at: row.get(1)?,
+                            owner: row.get(2)?,
+                            repo: row.get(3)?,
+                            outcome: row.get(4)?,
+                            reason: row.get(5)?,
+                            job_id: row.get(6)?,
+                        })
+                    },
+                )
+                .optional()?)
+        })
+        .await
+        .context("get github packages delivery")
     }
 
     pub async fn upsert_web_push_subscription(
@@ -4552,6 +4685,71 @@ fn apply_migration_0008_drop_version_inference_snapshots(
     Ok(())
 }
 
+fn apply_migration_0009_extend_github_packages_deliveries(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0009_extend_github_packages_deliveries";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    #[derive(Clone)]
+    struct Col<'a> {
+        name: &'a str,
+        ddl: &'a str,
+    }
+
+    let desired = [
+        Col {
+            name: "outcome",
+            ddl: "ALTER TABLE github_packages_deliveries ADD COLUMN outcome TEXT NOT NULL DEFAULT 'unknown'",
+        },
+        Col {
+            name: "reason",
+            ddl: "ALTER TABLE github_packages_deliveries ADD COLUMN reason TEXT",
+        },
+        Col {
+            name: "job_id",
+            ddl: "ALTER TABLE github_packages_deliveries ADD COLUMN job_id TEXT",
+        },
+    ];
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+    let existing: Vec<String> = {
+        let mut stmt = tx.prepare("PRAGMA table_info(github_packages_deliveries)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+
+    for col in desired {
+        if existing.iter().any(|c| c == col.name) {
+            continue;
+        }
+        tx.execute_batch(col.ddl)?;
+    }
+
+    tx.execute_batch(
+        r#"
+CREATE INDEX IF NOT EXISTS idx_github_packages_deliveries_received_at
+ON github_packages_deliveries(received_at);
+"#,
+    )?;
+
+    tx.execute(
+        r#"
+UPDATE github_packages_deliveries
+SET outcome = 'unknown'
+WHERE outcome IS NULL OR trim(outcome) = ''
+"#,
+        [],
+    )?;
+
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
 fn auto_archive_missing_discovery_projects_on_startup(
     conn: &rusqlite::Connection,
 ) -> anyhow::Result<()> {
@@ -4716,8 +4914,12 @@ CREATE TABLE IF NOT EXISTS github_packages_deliveries (
   delivery_id TEXT PRIMARY KEY NOT NULL,
   received_at TEXT NOT NULL,
   owner TEXT,
-  repo TEXT
+  repo TEXT,
+  outcome TEXT NOT NULL DEFAULT 'unknown',
+  reason TEXT,
+  job_id TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_github_packages_deliveries_received_at ON github_packages_deliveries(received_at);
 
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY NOT NULL,

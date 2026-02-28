@@ -4,6 +4,7 @@ import type {
   DiscoveredProject,
   GitHubPackagesRepo,
   GitHubPackagesSettingsResponse,
+  GitHubPackagesWebhookInboxResponse,
   IgnoreRule,
   JobDetail,
   JobListItem,
@@ -1924,6 +1925,31 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         lastAuditAt,
       }
     }
+    const buildGhcrInbox = (): GitHubPackagesWebhookInboxResponse => {
+      const jobId = f.jobs[0]?.id ?? null
+      return {
+        items: [
+          {
+            deliveryId: 'mock-delivery-1',
+            receivedAt: nowIso(-3_600_000),
+            owner: 'acme',
+            repo: 'widgets',
+            outcome: jobId ? 'triggered' : 'ignored',
+            reason: jobId ? 'scan_enqueued' : 'repo_not_selected',
+            jobId,
+          },
+          {
+            deliveryId: 'mock-delivery-2',
+            receivedAt: nowIso(-2_400_000),
+            owner: 'acme',
+            repo: 'other',
+            outcome: 'ignored',
+            reason: 'repo_not_selected',
+            jobId: null,
+          },
+        ],
+      }
+    }
 
     // github packages (ghcr) webhook integration
     if (method === 'GET' && urlPath === '/api/github-packages/settings') {
@@ -1990,6 +2016,9 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
     }
     if (method === 'GET' && urlPath === '/api/github-packages/webhook/overview') {
       return json(buildGhcrOverview())
+    }
+    if (method === 'GET' && urlPath === '/api/github-packages/webhook/inbox') {
+      return json(buildGhcrInbox())
     }
     if (method === 'POST' && urlPath === '/api/github-packages/repos/selected') {
       const parsed = parseJsonBody(init?.body) as SetGitHubPackagesRepoSelectedRequest | null

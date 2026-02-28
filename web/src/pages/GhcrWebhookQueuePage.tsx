@@ -147,6 +147,9 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
         <div className="sectionRow">
           <div className="title">GHCR Webhook 状态</div>
           <div className="chipRow" style={{ marginLeft: 'auto' }}>
+            <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhook-inbox' })}>
+              推送 Inbox
+            </Button>
             <Button variant="ghost" onClick={() => navigate({ name: 'queue' })}>
               返回队列
             </Button>

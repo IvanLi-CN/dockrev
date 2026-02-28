@@ -479,6 +479,20 @@ export type GitHubPackagesWebhookOverviewResponse = {
   lastAuditAt?: string | null
 }
 
+export type GitHubPackagesWebhookInboxItem = {
+  deliveryId: string
+  receivedAt: string
+  owner?: string | null
+  repo?: string | null
+  outcome: string
+  reason?: string | null
+  jobId?: string | null
+}
+
+export type GitHubPackagesWebhookInboxResponse = {
+  items: GitHubPackagesWebhookInboxItem[]
+}
+
 export type AddGitHubPackagesTargetRequest = {
   input: string
 }
@@ -880,6 +894,11 @@ export async function listGitHubPackagesRepos(input: {
 export async function getGitHubPackagesWebhookOverview(): Promise<GitHubPackagesWebhookOverviewResponse> {
   const resp = await apiFetch('/api/github-packages/webhook/overview')
   return (await resp.json()) as GitHubPackagesWebhookOverviewResponse
+}
+
+export async function listGitHubPackagesWebhookInbox(): Promise<GitHubPackagesWebhookInboxResponse> {
+  const resp = await apiFetch('/api/github-packages/webhook/inbox')
+  return (await resp.json()) as GitHubPackagesWebhookInboxResponse
 }
 
 export async function setGitHubPackagesRepoSelected(input: SetGitHubPackagesRepoSelectedRequest) {

@@ -1041,7 +1041,7 @@ async fn set_single_service_check_result(
 #[tokio::test]
 async fn health_ok() {
     let state = test_state(":memory:").await;
-    let app = api::router(state);
+    let app = api::router(state.clone());
 
     let resp = app
         .oneshot(
@@ -1059,7 +1059,7 @@ async fn health_ok() {
 #[tokio::test]
 async fn version_ok() {
     let state = test_state(":memory:").await;
-    let app = api::router(state);
+    let app = api::router(state.clone());
 
     let resp = app
         .oneshot(
@@ -1079,7 +1079,7 @@ async fn version_ok() {
 #[tokio::test]
 async fn unknown_api_path_is_not_swallowed_by_ui_fallback() {
     let state = test_state(":memory:").await;
-    let app = api::router(state);
+    let app = api::router(state.clone());
 
     let resp = app
         .oneshot(
@@ -1097,7 +1097,7 @@ async fn unknown_api_path_is_not_swallowed_by_ui_fallback() {
 #[tokio::test]
 async fn supervisor_paths_are_not_swallowed_by_ui_fallback() {
     let state = test_state(":memory:").await;
-    let app = api::router(state);
+    let app = api::router(state.clone());
 
     let resp = app
         .clone()
@@ -6193,7 +6193,7 @@ async fn github_packages_webhook_matches_selected_repos_case_insensitively() {
         .await
         .unwrap();
 
-    let app = api::router(state);
+    let app = api::router(state.clone());
 
     // Payload uses different casing than stored.
     let payload = serde_json::json!({
@@ -6221,12 +6221,20 @@ async fn github_packages_webhook_matches_selected_repos_case_insensitively() {
     assert_eq!(resp.status(), 200);
     let body = response_json(resp).await;
     assert_eq!(body["ok"], true);
-    assert!(
-        body["jobId"]
-            .as_str()
-            .unwrap_or_default()
-            .starts_with("dsc_")
-    );
+    let job_id = body["jobId"].as_str().unwrap_or_default().to_string();
+    assert!(job_id.starts_with("dsc_"));
+
+    let row = state
+        .db
+        .get_github_packages_delivery("case-1")
+        .await
+        .unwrap()
+        .expect("delivery should be persisted for verified package/published events");
+    assert_eq!(row.outcome, "triggered");
+    assert_eq!(row.reason.as_deref(), Some("scan_enqueued"));
+    assert_eq!(row.owner.as_deref(), Some("acme"));
+    assert_eq!(row.repo.as_deref(), Some("widgets"));
+    assert_eq!(row.job_id.as_deref(), Some(job_id.as_str()));
 }
 
 #[tokio::test]
@@ -6552,7 +6560,7 @@ async fn github_packages_webhook_overview_reports_repo_and_job_summary() {
 }
 
 #[tokio::test]
-async fn github_packages_webhook_does_not_persist_delivery_for_unselected_repo() {
+async fn github_packages_webhook_persists_delivery_for_unselected_repo_as_ignored() {
     use ring::hmac;
 
     let state = test_state(":memory:").await;
@@ -6610,10 +6618,249 @@ async fn github_packages_webhook_does_not_persist_delivery_for_unselected_repo()
     let body = response_json(resp).await;
     assert_eq!(body["ignored"], true);
     assert_eq!(body["reason"], "repo_not_selected");
+
+    let row = state
+        .db
+        .get_github_packages_delivery("unselected-1")
+        .await
+        .unwrap()
+        .expect("delivery should be persisted for verified package/published events");
+    assert_eq!(row.outcome, "ignored");
+    assert_eq!(row.reason.as_deref(), Some("repo_not_selected"));
+    assert_eq!(row.owner.as_deref(), Some("acme"));
+    assert_eq!(row.repo.as_deref(), Some("widgets"));
+    assert!(row.job_id.is_none());
+}
+
+#[tokio::test]
+async fn github_packages_webhook_inbox_lists_recent_deliveries_and_job_links() {
+    use ring::hmac;
+
+    let state = test_state(":memory:").await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .put_github_packages_settings(
+            &crate::api::types::GitHubPackagesSettingsDb {
+                enabled: true,
+                callback_url: "https://dockrev.example.com/api/webhooks/github-packages"
+                    .to_string(),
+                pat: Some("ghp_example".to_string()),
+                webhook_secret: Some("secret123".to_string()),
+                updated_at: Some(now.clone()),
+            },
+            &now,
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .put_github_packages_repos(
+            &[(String::from("acme"), String::from("widgets"), true)],
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let app = api::router(state.clone());
+
+    let sign = |body: &[u8]| {
+        let key = hmac::Key::new(hmac::HMAC_SHA256, b"secret123");
+        let tag = hmac::sign(&key, body);
+        format!("sha256={}", hex::encode(tag.as_ref()))
+    };
+
+    // Selected repo => triggered + jobId.
+    let payload = serde_json::json!({
+      "action": "published",
+      "repository": { "full_name": "acme/widgets", "owner": { "login": "acme" } }
+    });
+    let payload_bytes = payload.to_string().into_bytes();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "inbox-1")
+                .header("X-Hub-Signature-256", sign(&payload_bytes))
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    let job_id = body["jobId"].as_str().unwrap_or_default().to_string();
+    assert!(!job_id.is_empty());
+
+    // Unselected repo => ignored + persisted.
+    let payload = serde_json::json!({
+      "action": "published",
+      "repository": { "full_name": "acme/other", "owner": { "login": "acme" } }
+    });
+    let payload_bytes = payload.to_string().into_bytes();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "inbox-2")
+                .header("X-Hub-Signature-256", sign(&payload_bytes))
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["ignored"], true);
+    assert_eq!(body["reason"], "repo_not_selected");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/inbox")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    let items = body["items"].as_array().expect("items must be an array");
+    assert_eq!(items.len(), 2);
+
+    let find = |id: &str| {
+        items
+            .iter()
+            .find(|it| it["deliveryId"].as_str() == Some(id))
+            .unwrap_or_else(|| panic!("missing deliveryId {id} in inbox response"))
+    };
+
+    let it1 = find("inbox-1");
+    assert_eq!(it1["outcome"], "triggered");
+    assert_eq!(it1["reason"], "scan_enqueued");
+    assert_eq!(it1["jobId"].as_str(), Some(job_id.as_str()));
+
+    let it2 = find("inbox-2");
+    assert_eq!(it2["outcome"], "ignored");
+    assert_eq!(it2["reason"], "repo_not_selected");
+    assert!(it2["jobId"].is_null());
+}
+
+#[tokio::test]
+async fn github_packages_deliveries_prune_deletes_records_older_than_30_days() {
+    let state = test_state(":memory:").await;
+
+    let base = time::OffsetDateTime::now_utc();
+    let old_ts = (base - time::Duration::days(31))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let now_ts = base
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    state
+        .db
+        .insert_github_packages_delivery_if_new(
+            "prune-old",
+            &old_ts,
+            None,
+            None,
+            "ignored",
+            Some("test"),
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(
+        state
+            .db
+            .github_packages_delivery_exists("prune-old")
+            .await
+            .unwrap()
+    );
+
+    // Inserting a newer record triggers prune against the newer timestamp's retention window.
+    state
+        .db
+        .insert_github_packages_delivery_if_new(
+            "prune-now",
+            &now_ts,
+            None,
+            None,
+            "ignored",
+            Some("test"),
+            None,
+        )
+        .await
+        .unwrap();
+
     assert!(
         !state
             .db
-            .github_packages_delivery_exists("unselected-1")
+            .github_packages_delivery_exists("prune-old")
+            .await
+            .unwrap()
+    );
+    assert!(
+        state
+            .db
+            .github_packages_delivery_exists("prune-now")
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn github_packages_deliveries_prune_caps_table_at_2000_rows() {
+    let state = test_state(":memory:").await;
+
+    let base = time::OffsetDateTime::now_utc();
+    for i in 0..2001 {
+        let ts = (base + time::Duration::seconds(i))
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        state
+            .db
+            .insert_github_packages_delivery_if_new(
+                &format!("cap-{i}"),
+                &ts,
+                None,
+                None,
+                "ignored",
+                Some("test"),
+                None,
+            )
+            .await
+            .unwrap();
+    }
+
+    let items = state
+        .db
+        .list_github_packages_deliveries_since("2000-01-01T00:00:00Z", 5000)
+        .await
+        .unwrap();
+    assert_eq!(items.len(), 2000);
+    assert!(
+        !state
+            .db
+            .github_packages_delivery_exists("cap-0")
+            .await
+            .unwrap()
+    );
+    assert!(
+        state
+            .db
+            .github_packages_delivery_exists("cap-2000")
             .await
             .unwrap()
     );

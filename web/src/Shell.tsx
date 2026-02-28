@@ -45,7 +45,10 @@ export function AppShell(props: {
   const active =
     props.route.name === 'service'
       ? 'services'
-      : props.route.name === 'job' || props.route.name === 'version-inference' || props.route.name === 'ghcr-webhooks'
+      : props.route.name === 'job' ||
+          props.route.name === 'version-inference' ||
+          props.route.name === 'ghcr-webhooks' ||
+          props.route.name === 'ghcr-webhook-inbox'
         ? 'queue'
         : props.route.name
   const [appVersion, setAppVersion] = useState<string | null>(null)

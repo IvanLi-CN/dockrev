@@ -11,6 +11,7 @@ import { ServiceDetailPage } from './pages/ServiceDetailPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { VersionInferencePage } from './pages/VersionInferencePage'
 import { GhcrWebhookQueuePage } from './pages/GhcrWebhookQueuePage'
+import { GhcrWebhookInboxPage } from './pages/GhcrWebhookInboxPage'
 import { SupervisorMisroutePage } from './pages/SupervisorMisroutePage'
 import { DeployWelcomePage } from './pages/DeployWelcomePage'
 import { useRoute } from './useRoute'
@@ -41,6 +42,12 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
         title: 'GHCR Webhook',
         pageSubtitle: 'Webhook 注册/反注册任务与巡检状态',
         topbarHint: 'GHCR Webhook 队列',
+      }
+    case 'ghcr-webhook-inbox':
+      return {
+        title: 'GHCR Webhook Inbox',
+        pageSubtitle: '最近 7 天的 webhook 推送记录（仅记录验签通过且 package/published）',
+        topbarHint: 'GHCR Webhook Inbox',
       }
     case 'deploy-check':
       return {
@@ -142,6 +149,7 @@ export default function App() {
         <VersionInferencePage onLastScanHint={setLastScanHint} onTopActions={setPageActions} />
       ) : null}
       {route.name === 'ghcr-webhooks' ? <GhcrWebhookQueuePage onTopActions={setPageActions} /> : null}
+      {route.name === 'ghcr-webhook-inbox' ? <GhcrWebhookInboxPage onTopActions={setPageActions} /> : null}
       {route.name === 'settings' ? <SettingsPage onTopActions={setPageActions} /> : null}
       {route.name === 'service' ? (
         <ServiceDetailPage

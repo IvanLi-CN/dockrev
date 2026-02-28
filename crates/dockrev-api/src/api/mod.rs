@@ -128,6 +128,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_github_packages_webhook_overview),
         )
         .route(
+            "/api/github-packages/webhook/inbox",
+            get(list_github_packages_webhook_inbox),
+        )
+        .route(
             "/api/github-packages/sync",
             post(sync_github_packages_webhooks),
         )
@@ -4126,6 +4130,38 @@ async fn get_github_packages_webhook_overview(
     Ok(Json(overview))
 }
 
+async fn list_github_packages_webhook_inbox(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<GitHubPackagesWebhookInboxResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let cutoff = time::OffsetDateTime::now_utc() - time::Duration::days(7);
+    let cutoff = cutoff
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|e| map_internal(anyhow::anyhow!(e)))?;
+
+    let items = state
+        .db
+        .list_github_packages_deliveries_since(&cutoff, 2000)
+        .await
+        .map_err(map_internal)?;
+
+    Ok(Json(GitHubPackagesWebhookInboxResponse {
+        items: items
+            .into_iter()
+            .map(|row| GitHubPackagesWebhookInboxItem {
+                delivery_id: row.delivery_id,
+                received_at: row.received_at,
+                owner: row.owner,
+                repo: row.repo,
+                outcome: row.outcome,
+                reason: row.reason,
+                job_id: row.job_id,
+            })
+            .collect(),
+    }))
+}
+
 async fn set_github_packages_repo_selected(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -4688,21 +4724,28 @@ async fn github_packages_webhook(
         false
     };
 
-    if !should_trigger {
-        return Ok(Json(
-            json!({"ok": true, "ignored": true, "reason": "repo_not_selected"}),
-        ));
-    }
+    let received_at = now_rfc3339().map_err(map_internal)?;
+    let repo = repo_full_name.as_deref().and_then(|s| s.split('/').nth(1));
+    let (outcome, reason, job_id) = if should_trigger {
+        (
+            "triggered",
+            Some("scan_enqueued"),
+            Some(ids::new_discovery_id()),
+        )
+    } else {
+        ("ignored", Some("repo_not_selected"), None)
+    };
 
-    // Only persist delivery IDs for events that are eligible to trigger a scan. This prevents
-    // unbounded growth in the deliveries table when the webhook exists but repos are deselected.
     let is_new = state
         .db
         .insert_github_packages_delivery_if_new(
             &delivery_id,
-            &now_rfc3339().map_err(map_internal)?,
+            &received_at,
             owner.as_deref(),
-            repo_full_name.as_deref().and_then(|s| s.split('/').nth(1)),
+            repo,
+            outcome,
+            reason,
+            job_id.as_deref(),
         )
         .await
         .map_err(map_internal)?;
@@ -4712,15 +4755,20 @@ async fn github_packages_webhook(
         ));
     }
 
-    let now = now_rfc3339().map_err(map_internal)?;
-    let job_id = ids::new_discovery_id();
+    if !should_trigger {
+        return Ok(Json(
+            json!({"ok": true, "ignored": true, "reason": "repo_not_selected"}),
+        ));
+    }
+
+    let job_id = job_id.expect("job id must be set when should_trigger=true");
     let job = JobRecord::new_running(
         job_id.clone(),
         JobType::Discovery,
         JobScope::All,
         None,
         None,
-        &now,
+        &received_at,
     );
     let mut job_db = job.to_db();
     job_db.created_by = "github".to_string();
