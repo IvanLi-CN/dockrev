@@ -73,7 +73,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
     )
   }, [busy, onTopActions, refresh])
 
-  const sorted = useMemo(() => items.slice(0, 2000), [items])
+  const visible = useMemo(() => items.slice(0, 2000), [items])
 
   return (
     <div className="page">
@@ -92,8 +92,8 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
         </div>
 
         <div className="queueList" style={{ marginTop: 12 }}>
-          {sorted.length === 0 ? <div className="muted">暂无记录</div> : null}
-          {sorted.map((it) => {
+          {visible.length === 0 ? <div className="muted">暂无记录</div> : null}
+          {visible.map((it) => {
             const target = fullName(it)
             const canOpenJob = Boolean((it.jobId ?? '').trim())
             const row = (
@@ -132,7 +132,12 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
 
             if (canOpenJob) {
               return (
-                <button key={it.deliveryId} className="queueItem" onClick={() => navigate({ name: 'job', jobId: it.jobId! })}>
+                <button
+                  key={it.deliveryId}
+                  type="button"
+                  className="queueItem"
+                  onClick={() => navigate({ name: 'job', jobId: it.jobId! })}
+                >
                   {row}
                 </button>
               )
@@ -151,4 +156,3 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
     </div>
   )
 }
-

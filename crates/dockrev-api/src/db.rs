@@ -2957,7 +2957,7 @@ VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                     conn.execute(
                         r#"
 DELETE FROM github_packages_deliveries
-WHERE received_at < ?1
+WHERE julianday(received_at) < julianday(?1)
 "#,
                         params![cutoff_older_than],
                     )?;
@@ -2975,7 +2975,7 @@ DELETE FROM github_packages_deliveries
 WHERE delivery_id NOT IN (
   SELECT delivery_id
   FROM github_packages_deliveries
-  ORDER BY received_at DESC, delivery_id DESC
+  ORDER BY julianday(received_at) DESC, received_at DESC, delivery_id DESC
   LIMIT 2000
 )
 "#,
@@ -2987,6 +2987,19 @@ WHERE delivery_id NOT IN (
         })
         .await
         .context("insert github packages delivery")
+    }
+
+    pub async fn delete_github_packages_delivery(&self, delivery_id: &str) -> anyhow::Result<()> {
+        let delivery_id = delivery_id.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                "DELETE FROM github_packages_deliveries WHERE delivery_id = ?1",
+                params![delivery_id],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("delete github packages delivery")
     }
 
     pub async fn list_github_packages_deliveries_since(
@@ -3001,8 +3014,8 @@ WHERE delivery_id NOT IN (
                 r#"
 SELECT delivery_id, received_at, owner, repo, outcome, reason, job_id
 FROM github_packages_deliveries
-WHERE received_at >= ?1
-ORDER BY received_at DESC, delivery_id DESC
+WHERE julianday(received_at) >= julianday(?1)
+ORDER BY julianday(received_at) DESC, received_at DESC, delivery_id DESC
 LIMIT ?2
 "#,
             )?;

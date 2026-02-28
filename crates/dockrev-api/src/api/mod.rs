@@ -4773,7 +4773,18 @@ async fn github_packages_webhook(
     let mut job_db = job.to_db();
     job_db.created_by = "github".to_string();
     job_db.reason = "github_webhook".to_string();
-    state.db.insert_job(job_db).await.map_err(map_internal)?;
+    if let Err(err) = state.db.insert_job(job_db).await {
+        // If we fail to create the job, don't permanently de-dupe this delivery; GitHub will retry
+        // the same delivery id and we want a later attempt to still be able to enqueue the job.
+        if let Err(cleanup_err) = state.db.delete_github_packages_delivery(&delivery_id).await {
+            tracing::error!(
+                error = %cleanup_err,
+                delivery_id = %delivery_id,
+                "failed to cleanup github packages delivery after job insert failure"
+            );
+        }
+        return Err(map_internal(err));
+    }
 
     let run_state = state.clone();
     let run_job_id = job_id.clone();
