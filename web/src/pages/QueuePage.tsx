@@ -48,11 +48,12 @@ const DEFAULT_GHCR_SUMMARY: GhcrWebhookSummary = {
   jobsRunning: 0,
 }
 
-function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' {
+function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' | 'info' {
   if (status === 'success') return 'ok'
   if (status === 'rolled_back') return 'warn'
   if (status === 'failed') return 'bad'
-  if (status === 'running' || status === 'queued') return 'warn'
+  if (status === 'running') return 'info'
+  if (status === 'queued') return 'warn'
   return 'muted'
 }
 
@@ -189,8 +190,9 @@ function parseGhcrWebhookSummary(data: unknown): GhcrWebhookSummary {
   }
 }
 
-function versionInferenceTone(summary: VersionInferenceSummary): 'ok' | 'warn' | 'bad' {
-  if (summary.running > 0 || summary.queued > 0) return 'warn'
+function versionInferenceTone(summary: VersionInferenceSummary): 'ok' | 'warn' | 'bad' | 'info' {
+  if (summary.running > 0) return 'info'
+  if (summary.queued > 0) return 'warn'
   if (summary.stale > 0 || summary.allFailed > 0) return 'bad'
   return 'ok'
 }
@@ -496,7 +498,10 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
             ) : null}
           </div>
           <div className="queueStatus">
-            <Pill tone={versionInferenceTone(versionInferenceSummary)}>
+            <Pill
+              tone={versionInferenceTone(versionInferenceSummary)}
+              breathing={versionInferenceLoaded && versionInferenceLabel(versionInferenceSummary) === 'running'}
+            >
               {versionInferenceLoaded ? versionInferenceLabel(versionInferenceSummary) : 'loading'}
             </Pill>
           </div>
@@ -620,7 +625,9 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
                   ) : null}
                 </div>
                 <div className="queueStatus">
-                  <Pill tone={statusTone(j.status)}>{j.status}</Pill>
+                  <Pill tone={statusTone(j.status)} breathing={j.status === 'running'}>
+                    {j.status}
+                  </Pill>
                 </div>
               </button>
             )

@@ -3,11 +3,11 @@ import { getJob, newJobEventsSource, type JobDetail, type JobLogLine, type JobPr
 import { navigate } from '../routes'
 import { Button, Chip, Mono, Pill } from '../ui'
 
-function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' {
+function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' | 'info' {
   if (status === 'success') return 'ok'
   if (status === 'rolled_back') return 'warn'
   if (status === 'failed') return 'bad'
-  if (status === 'running') return 'warn'
+  if (status === 'running') return 'info'
   return 'muted'
 }
 
@@ -326,7 +326,11 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
           <div className="muted" style={{ marginLeft: 'auto' }}>
             job: <Mono>{jobId}</Mono>
           </div>
-          {job ? <Pill tone={statusTone(job.status)}>{job.status}</Pill> : null}
+          {job ? (
+            <Pill tone={statusTone(job.status)} breathing={job.status === 'running'}>
+              {job.status}
+            </Pill>
+          ) : null}
         </div>
 
         {job ? (

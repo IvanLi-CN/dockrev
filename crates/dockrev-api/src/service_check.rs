@@ -328,6 +328,40 @@ pub(crate) async fn scan_digest_tags_snapshot_best_effort(
     wanted_digest: &str,
     anchors: &[String],
 ) -> (Vec<String>, ServiceDigestTagsScanSummary) {
+    scan_digest_tags_snapshot_best_effort_with_progress(
+        registry,
+        img,
+        host_platform,
+        repo_tags,
+        wanted_digest,
+        anchors,
+        |_| {},
+    )
+    .await
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct SnapshotScanProgress {
+    pub processed: usize,
+    pub task_total: usize,
+    pub repo_total: usize,
+    pub success: usize,
+    pub timeout: usize,
+    pub error: usize,
+}
+
+pub(crate) async fn scan_digest_tags_snapshot_best_effort_with_progress<F>(
+    registry: Arc<dyn registry::RegistryClient>,
+    img: registry::ImageRef,
+    host_platform: &str,
+    repo_tags: &[String],
+    wanted_digest: &str,
+    anchors: &[String],
+    mut on_progress: F,
+) -> (Vec<String>, ServiceDigestTagsScanSummary)
+where
+    F: FnMut(SnapshotScanProgress),
+{
     use std::time::Duration;
 
     use tokio::{
@@ -349,7 +383,22 @@ pub(crate) async fn scan_digest_tags_snapshot_best_effort(
     let considered = pick_considered_tags_for_snapshot(repo_tags, anchors, SNAPSHOT_DEPTH);
     let repo_tags_considered = considered.len();
 
+    let mut report_progress = |processed: usize,
+                               manifests_ok: usize,
+                               manifests_timeout: usize,
+                               manifests_error: usize| {
+        on_progress(SnapshotScanProgress {
+            processed,
+            task_total: repo_tags_considered,
+            repo_total: repo_tags_total,
+            success: manifests_ok,
+            timeout: manifests_timeout,
+            error: manifests_error,
+        });
+    };
+
     if wanted.is_empty() || repo_tags_considered == 0 {
+        report_progress(0, 0, 0, 0);
         return (
             Vec::new(),
             ServiceDigestTagsScanSummary {
@@ -375,6 +424,7 @@ pub(crate) async fn scan_digest_tags_snapshot_best_effort(
     let mut manifests_error: usize = 0;
 
     let host_platform = host_platform.to_string();
+    report_progress(0, manifests_ok, manifests_timeout, manifests_error);
 
     let mut join_set: JoinSet<ScanOutcome> = JoinSet::new();
     let mut queue = considered.into_iter();
@@ -457,6 +507,8 @@ pub(crate) async fn scan_digest_tags_snapshot_best_effort(
                 manifests_error += 1;
             }
         };
+        let processed = manifests_ok + manifests_timeout + manifests_error;
+        report_progress(processed, manifests_ok, manifests_timeout, manifests_error);
 
         let Some(tag) = queue.next() else {
             continue;
@@ -477,6 +529,8 @@ pub(crate) async fn scan_digest_tags_snapshot_best_effort(
     if processed < repo_tags_considered {
         manifests_timeout += repo_tags_considered - processed;
     }
+    let processed = manifests_ok + manifests_timeout + manifests_error;
+    report_progress(processed, manifests_ok, manifests_timeout, manifests_error);
 
     let sorted = sort_tags_semver_then_lex_desc(out);
     (

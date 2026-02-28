@@ -175,8 +175,8 @@ async function assertGroupGuideAligned(page, label) {
     const guideBox = await requireBoundingBox(guide, `groupGuide[${gi}]`)
     const row0Box = await requireBoundingBox(rows.nth(0), `rowLine[${gi}][0]`)
 
-    // The guide's top should start exactly at the first row top.
-    if (!approxEqual(guideBox.y, row0Box.y, 1)) {
+    // CI runners can render fractional text metrics slightly differently than local macOS.
+    if (!approxEqual(guideBox.y, row0Box.y, 2)) {
       throw new Error(
         `Guide top misaligned (group=${gi}${label ? `, ${label}` : ''}): guide.y=${guideBox.y}, row0.y=${row0Box.y}`
       )

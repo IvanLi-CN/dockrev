@@ -38,9 +38,10 @@ function statusLabel(status: string): string {
   return status || '-'
 }
 
-function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' {
+function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'muted' | 'info' {
   if (status === 'ready') return 'ok'
-  if (status === 'queued' || status === 'running' || status === 'stale') return 'warn'
+  if (status === 'running') return 'info'
+  if (status === 'queued' || status === 'stale') return 'warn'
   if (status === 'all_failed') return 'bad'
   return 'muted'
 }
@@ -479,7 +480,9 @@ export function VersionInferencePage(props: {
                   <div className="versionInferenceItemTitle">
                     <Mono>{row.imageRepo}</Mono>
                   </div>
-                  <Pill tone={statusTone(row.status)}>{statusLabel(row.status)}</Pill>
+                  <Pill tone={statusTone(row.status)} breathing={row.status === 'running'}>
+                    {statusLabel(row.status)}
+                  </Pill>
                 </div>
                 <div className="versionInferenceItemMeta">
                   <span>平台：{row.hostPlatform}</span>
@@ -512,13 +515,13 @@ export function VersionInferencePage(props: {
                       <span>{row.progress?.phase || '执行中'}</span>
                       <span>{row.progress?.message || '-'}</span>
                       <span>
-                        分配 {progress.assignment.current}/{progress.assignment.total}
+                        任务内 {progress.assignment.current}/{progress.assignment.total}
                       </span>
                       <span>
-                        有结果 {progress.result.current}/{progress.result.total}
+                        成功解析 {progress.result.current}/{progress.result.total}
                       </span>
-                      <span>{assignmentPercent == null ? '分配进行中' : `分配 ${assignmentPercent}%`}</span>
-                      <span>{resultPercent == null ? '结果进行中' : `结果 ${resultPercent}%`}</span>
+                      <span>{assignmentPercent == null ? '任务内进行中' : `任务内 ${assignmentPercent}%`}</span>
+                      <span>{resultPercent == null ? '成功解析进行中' : `成功解析 ${resultPercent}%`}</span>
                     </div>
                   </>
                 ) : null}

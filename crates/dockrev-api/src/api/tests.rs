@@ -230,6 +230,44 @@ impl RegistryClient for SlowRegistry {
     }
 }
 
+#[derive(Clone)]
+struct PartialFailureRegistry {
+    delay: Duration,
+}
+
+#[async_trait::async_trait]
+impl RegistryClient for PartialFailureRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        let mut out = Vec::new();
+        for i in 0..24 {
+            out.push(format!("5.{i}.0"));
+        }
+        Ok(out)
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        tokio::time::sleep(self.delay).await;
+        let n = reference
+            .split('.')
+            .nth(1)
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0);
+        if n.is_multiple_of(2) {
+            return Err(anyhow::anyhow!("manifest fetch failed"));
+        }
+        Ok(ManifestInfo {
+            digest: Some(format!("sha256:{reference}")),
+            platform_digest: None,
+            arch: vec!["linux/amd64".to_string()],
+        })
+    }
+}
+
 #[derive(Clone, Default)]
 struct DigestTagsRegistry;
 
@@ -3727,7 +3765,11 @@ async fn version_inference_overview_merges_cached_and_in_flight_without_missing_
         let has_progress = tasks
             .iter()
             .any(|task| task["status"].as_str() == Some("running") && task["progress"].is_object());
-        if has_task && has_progress {
+        let progress_advanced = tasks.iter().any(|task| {
+            task["status"].as_str() == Some("running")
+                && task["progress"]["assignedCurrent"].as_u64().unwrap_or(0) > 0
+        });
+        if has_task && has_progress && progress_advanced {
             observed = Some(body);
             break;
         }
@@ -3781,7 +3823,81 @@ async fn version_inference_overview_merges_cached_and_in_flight_without_missing_
         assert!(progress.contains_key("resultCurrent"));
         assert!(progress.contains_key("resultTotal"));
         assert!(progress.contains_key("resultPercent"));
+        assert!(
+            progress["assignedCurrent"].as_u64().unwrap_or(0) > 0,
+            "running task should expose advancing in-task progress"
+        );
     }
+}
+
+#[tokio::test]
+async fn version_inference_overview_progress_keeps_success_lower_than_assignment_on_errors() {
+    let registry = Arc::new(PartialFailureRegistry {
+        delay: Duration::from_millis(140),
+    });
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let enqueued = state
+        .snapshot_worker
+        .enqueue(
+            "ghcr.io/acme/partial-failure",
+            "sha256:partial-failure",
+            "linux/amd64",
+            "force",
+        )
+        .await;
+    assert!(enqueued);
+
+    let mut observed = false;
+    for _ in 0..120 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/version-inference/overview?page=1&perPage=20")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = response_json(resp).await;
+        let maybe_progress = body["tasks"].as_array().and_then(|tasks| {
+            tasks.iter().find_map(|task| {
+                if task["key"].as_str()
+                    != Some("ghcr.io/acme/partial-failure@sha256:partial-failure@linux/amd64")
+                {
+                    return None;
+                }
+                if task["status"].as_str() != Some("running") {
+                    return None;
+                }
+                task["progress"].as_object()
+            })
+        });
+
+        if let Some(progress) = maybe_progress {
+            let assigned = progress
+                .get("assignedCurrent")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let result = progress
+                .get("resultCurrent")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            if assigned > result {
+                observed = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    assert!(
+        observed,
+        "expected running progress to show assignedCurrent > resultCurrent when manifest errors occur"
+    );
 }
 
 #[tokio::test]
