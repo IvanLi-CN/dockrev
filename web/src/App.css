@@ -2121,9 +2121,8 @@ html[data-theme='light'] .modalOverlay {
   word-break: break-all;
 }
 
-.ghcrInboxCellDelivery .mono {
-  word-break: normal;
-  overflow-wrap: anywhere;
+.ghcrInboxCellTask {
+  align-items: flex-start;
 }
 
 /* Keep inbox status/http pills optically centered (especially CJK text). */

@@ -48,6 +48,11 @@ function responseTone(status?: number | null): 'ok' | 'warn' | 'bad' | 'muted' {
   return 'muted'
 }
 
+function taskLabel(decision: string): string {
+  if (decision === 'processed') return 'Webhook 扫描任务'
+  return '无关联任务'
+}
+
 const PER_PAGE_OPTIONS = [25, 50, 100]
 
 const EMPTY_DELIVERIES: ListGitHubPackagesWebhookDeliveriesResponse = {
@@ -195,7 +200,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
         <div className="ghcrInboxSearchForm">
           <input
             className="input ghcrInboxSearch"
-            placeholder="搜索仓库 / delivery ID / reason / job ID"
+            placeholder="搜索仓库 / 原因 / 任务"
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
             onKeyDown={(event) => {
@@ -279,7 +284,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
           <div>仓库</div>
           <div>处理结果</div>
           <div>响应</div>
-          <div>投递 ID</div>
+          <div>任务</div>
         </div>
 
         {data.deliveries.length === 0 ? (
@@ -314,17 +319,20 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
                 {typeof delivery.responseStatus === 'number' ? `HTTP ${delivery.responseStatus}` : '-'}
               </Pill>
             </div>
-            <div className="ghcrInboxCell ghcrInboxCellDelivery">
-              <div>
-                <Mono>{delivery.deliveryId}</Mono>
-              </div>
+            <div className="ghcrInboxCell ghcrInboxCellTask">
               {delivery.jobId ? (
-                <button type="button" className="linkButton" onClick={() => navigate({ name: 'job', jobId: delivery.jobId! })}>
-                  查看任务 <Mono>{delivery.jobId}</Mono>
+                <button
+                  type="button"
+                  className="linkButton"
+                  title={`任务 ID: ${delivery.jobId}`}
+                  onClick={() => navigate({ name: 'job', jobId: delivery.jobId! })}
+                >
+                  {taskLabel(delivery.decision)}
                 </button>
               ) : (
-                <div className="muted">任务 -</div>
+                <div className="muted">{taskLabel(delivery.decision)}</div>
               )}
+              {delivery.jobId ? <div className="muted">状态页可查看执行细节</div> : null}
             </div>
           </div>
         ))}
