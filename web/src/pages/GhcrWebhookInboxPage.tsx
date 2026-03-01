@@ -83,20 +83,8 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
 
   return (
     <div className="page">
-      <div className="card">
-        <div className="sectionRow">
-          <div className="title">Webhook 收件箱</div>
-          <div className="chipRow" style={{ marginLeft: 'auto' }}>
-            <Button variant="ghost" onClick={() => navigate({ name: 'settings' })}>
-              返回设置
-            </Button>
-            <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhooks' })}>
-              GHCR 状态
-            </Button>
-          </div>
-        </div>
-
-        <div className="queueMeta" style={{ marginTop: 10 }}>
+      <div className="sectionRow" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+        <div className="queueMeta" style={{ marginTop: 0 }}>
           <span>
             总计 <Mono>{data.total}</Mono>
           </span>
@@ -107,48 +95,69 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
             每页 <Mono>{perPage}</Mono>
           </span>
         </div>
+        <div className="chipRow">
+          <Button variant="ghost" onClick={() => navigate({ name: 'settings' })}>
+            返回设置
+          </Button>
+          <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhooks' })}>
+            GHCR 状态
+          </Button>
+        </div>
+      </div>
 
-        <div className="queueList" style={{ marginTop: 12 }}>
-          {data.deliveries.length === 0 ? <div className="muted">暂无 webhook 触发记录</div> : null}
-          {data.deliveries.map((delivery) => (
-            <div key={delivery.deliveryId} className="queueItem" style={{ cursor: 'default' }}>
-              <div className="queueMain">
-                <div className="queueTitle">
-                  <Mono>{formatRepo(delivery)}</Mono>
-                </div>
-                <div className="queueMeta">
-                  <span>
-                    接收时间 <Mono>{formatShort(delivery.receivedAt)}</Mono>
-                  </span>
-                  <span>
-                    投递 ID <Mono>{delivery.deliveryId}</Mono>
-                  </span>
-                </div>
+      <div
+        style={{
+          border: '1px solid var(--borderColor)',
+          borderRadius: 12,
+          background: 'var(--dockrev-surface)',
+          overflow: 'hidden',
+        }}
+      >
+        {data.deliveries.length === 0 ? <div className="muted" style={{ padding: '14px 16px' }}>暂无 webhook 触发记录</div> : null}
+        {data.deliveries.map((delivery, idx) => (
+          <div
+            key={delivery.deliveryId}
+            style={{
+              padding: '12px 16px',
+              borderTop: idx === 0 ? 'none' : '1px solid var(--borderColor)',
+            }}
+          >
+            <div className="queueMain">
+              <div className="queueTitle">
+                <Mono>{formatRepo(delivery)}</Mono>
+              </div>
+              <div className="queueMeta">
+                <span>
+                  接收时间 <Mono>{formatShort(delivery.receivedAt)}</Mono>
+                </span>
+                <span>
+                  投递 ID <Mono>{delivery.deliveryId}</Mono>
+                </span>
               </div>
             </div>
-          ))}
-        </div>
-
-        <div className="formActions" style={{ marginTop: 12, justifyContent: 'space-between' }}>
-          <div className="muted">
-            第 {page} 页（每页 {perPage}）
           </div>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <Button variant="ghost" disabled={busy || page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
-              上一页
-            </Button>
-            <Button
-              variant="ghost"
-              disabled={busy || page >= maxPage}
-              onClick={() => setPage((p) => Math.min(maxPage, p + 1))}
-            >
-              下一页
-            </Button>
-          </div>
-        </div>
-
-        {error ? <div className="error">{error}</div> : null}
+        ))}
       </div>
+
+      <div className="formActions" style={{ marginTop: 12, justifyContent: 'space-between' }}>
+        <div className="muted">
+          第 {page} 页（每页 {perPage}）
+        </div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <Button variant="ghost" disabled={busy || page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+            上一页
+          </Button>
+          <Button
+            variant="ghost"
+            disabled={busy || page >= maxPage}
+            onClick={() => setPage((p) => Math.min(maxPage, p + 1))}
+          >
+            下一页
+          </Button>
+        </div>
+      </div>
+
+      {error ? <div className="error">{error}</div> : null}
     </div>
   )
 }
