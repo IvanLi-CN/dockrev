@@ -98,6 +98,9 @@ export function CurrentVersionPopover(props: {
   resolvedTag?: string | null
   resolvedTags?: string[] | null
   preferSource?: 'resolvedTag' | 'rawTag'
+  // When true, treat the current display as a loading state caused by version inference pending.
+  // This is intentionally separate from the digest snapshot pending/loading phase.
+  inferenceLoading?: boolean
   triggerClassName?: string
   children?: ReactNode
 }) {
@@ -637,12 +640,14 @@ export function CurrentVersionPopover(props: {
     </div>
   ) : null
 
-  const showLoadingTriggerLabel = preferSource !== 'rawTag' && Boolean(digestNorm) && snapshotPhase === 'loading'
+  const showSnapshotLoadingTriggerLabel = preferSource !== 'rawTag' && Boolean(digestNorm) && snapshotPhase === 'loading'
+  const showInferenceLoadingStyle = preferSource !== 'rawTag' && Boolean(props.inferenceLoading)
+  const showLoadingStyle = showSnapshotLoadingTriggerLabel || showInferenceLoadingStyle
   const triggerClassNameBase = props.triggerClassName ?? 'versionTagsTrigger mono monoPrimary'
-  const triggerClassName = showLoadingTriggerLabel
+  const triggerClassName = showLoadingStyle
     ? `${triggerClassNameBase} versionTagsTriggerLoading`
     : triggerClassNameBase
-  const triggerLabel = showLoadingTriggerLabel ? '加载中…' : (props.children ?? displayTag)
+  const triggerLabel = showSnapshotLoadingTriggerLabel ? '加载中…' : (props.children ?? displayTag)
 
   return (
     <>

@@ -67,6 +67,11 @@ export const VersionAnomalyUpdatable: Story = {
   render: render('stack-prod', 'svc-prod-api'),
 }
 
+export const InferencePendingCandidateLoading: Story = {
+  parameters: { dockrevApiScenario: 'services-inference-pending-candidate-loading' },
+  render: render('stack-inference-pending', 'svc-inference-pending'),
+}
+
 export const Error: Story = {
   parameters: { dockrevApiScenario: 'error' },
   render: render('stack-prod', 'svc-prod-api'),

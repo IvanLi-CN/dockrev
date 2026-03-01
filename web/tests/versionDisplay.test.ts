@@ -12,8 +12,8 @@ describe('versionDisplay', () => {
     expect(formatCurrentTagDisplay('latest', null)).toBe('-')
   })
 
-  test('keeps current display in pending state as waiting text', () => {
-    expect(formatCurrentTagDisplay('latest', 'v0.2.51', 'pending')).toBe('等待中…')
+  test('shows current display as loading text during pending state', () => {
+    expect(formatCurrentTagDisplay('latest', 'v0.2.51', 'pending')).toBe('加载中…')
   })
 
   test('prefers resolved candidate tag when it is strict semver', () => {

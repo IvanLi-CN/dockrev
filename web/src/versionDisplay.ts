@@ -18,7 +18,7 @@ export function formatCurrentTagDisplay(
   resolvedTag: string | null | undefined,
   inferenceStatus?: string | null,
 ): string {
-  if (isPending(inferenceStatus)) return '等待中…'
+  if (isPending(inferenceStatus)) return '加载中…'
   const resolved = trimOrEmpty(resolvedTag)
   if (isStrictSemverTag(resolved)) return resolved
 

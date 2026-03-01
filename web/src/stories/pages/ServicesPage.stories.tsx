@@ -107,3 +107,21 @@ export const VersionAnomalyBatchList: Story = {
     )
   },
 }
+
+export const InferencePendingCandidateLoading: Story = {
+  parameters: { dockrevApiScenario: 'services-inference-pending-candidate-loading' },
+  render: () => {
+    return (
+      <PageHarness
+        route={{ name: 'services' }}
+        title="服务"
+        topbarHint="服务"
+        pageSubtitle="回归：versionInference pending + candidate snapshot pending（加载中… -> 加载中…）"
+      >
+        {({ onLastScanHint, onTopActions }) => (
+          <ServicesPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
+        )}
+      </PageHarness>
+    )
+  },
+}

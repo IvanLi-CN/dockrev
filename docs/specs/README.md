@@ -29,10 +29,11 @@
 |-----:|-------|--------|------|------|-------|
 | b7rad | Dockrev：版本异常标记 + 自动路径跳过（latest 回退场景） | 已完成 | `b7rad-version-anomaly-marker-auto-skip/SPEC.md` | 2026-03-01 | fast-track |
 | xc4az | Dockrev：版本推测任务内进度修复 + running/queued 标签语义区分 | 已完成 | `xc4az-version-inference-task-progress-and-running-pill/SPEC.md` | 2026-02-28 | fast-track |
+| c6j2k | Dockrev：版本列推测 pending 统一为加载中（弱化样式对齐候选） | 已完成 | `c6j2k-inference-pending-loading/SPEC.md` | 2026-03-01 | fast-track |
 | 83jm7 | Dockrev：候选版本首屏预取加载态（修复 latest 悬浮后才加载） | 已完成 | `83jm7-prefetch-candidate-loading-before-hover/SPEC.md` | 2026-02-28 | fast-track（lint/build/storybook 回归通过） |
 | g5m9c | Dockrev：GHCR Webhook 自动任务化 + 队列可见 + SSE 进度 + 24h 巡检 | 已完成 | `g5m9c-ghcr-webhook-jobization/SPEC.md` | 2026-02-28 | backend+web+tests |
 | xu4ew | Dockrev：GHCR 仓库选择器可用性增强（排序/搜索/筛选/拖动批量切换） | 已完成 | `xu4ew-settings-ghcr-picker-ux/SPEC.md` | 2026-02-27 | fast-track |
-| r7ggb | Dockrev：pending 时候选版本可见性修复 | 待实现 | `r7ggb-pending-candidate-version-visibility/SPEC.md` | 2026-02-27 | fast-track |
+| r7ggb | Dockrev：pending 时候选版本可见性修复 | 重新设计（#c6j2k） | `r7ggb-pending-candidate-version-visibility/SPEC.md` | 2026-03-01 | superseded by #c6j2k |
 | af32v | Dockrev：UI 主题重构（UI UX Pro Max，稳健增强） | 已完成 | `af32v-ui-retheme-uipro-max/SPEC.md` | 2026-02-27 | fast-track |
 | t9x88 | Dockrev：移除侧栏 Compose 区块并迁移到服务详情页 | 已完成 | `t9x88-remove-sidebar-compose-move-to-detail/SPEC.md` | 2026-02-27 | Fast-track，PR #97 |
 | dc2gg | Dockrev：Settings GHCR「解析并添加」加载反馈优化 | 已完成 | `dc2gg-settings-ghcr-resolve-loading/SPEC.md` | 2026-02-27 | fast-track，PR #101 |
