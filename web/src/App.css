@@ -2121,6 +2121,16 @@ html[data-theme='light'] .modalOverlay {
   word-break: break-all;
 }
 
+/* Keep inbox status/http pills optically centered (especially CJK text). */
+.ghcrInboxCell .pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  line-height: 1;
+  padding: 0 12px;
+}
+
 .ghcrInboxEmpty {
   padding: 16px;
 }
