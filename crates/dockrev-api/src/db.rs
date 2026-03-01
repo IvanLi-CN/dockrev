@@ -4758,6 +4758,8 @@ CREATE TABLE IF NOT EXISTS github_packages_deliveries (
   owner TEXT,
   repo TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_github_packages_deliveries_received_delivery
+  ON github_packages_deliveries(received_at DESC, delivery_id DESC);
 
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY NOT NULL,
