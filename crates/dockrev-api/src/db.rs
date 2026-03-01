@@ -10,9 +10,10 @@ use tokio_rusqlite::Connection;
 
 use crate::api::types::{
     BackupSettings, ComposeConfig, ComposeRef, DeployWelcomeSettings, GitHubPackagesRepoDb,
-    GitHubPackagesSettingsDb, GitHubPackagesTargetDb, GitHubPackagesWebhookDeliveryDb, IgnoreRule,
-    IgnoreRuleMatch, IgnoreRuleScope, JobListItem, JobLogLine, JobScope, JobType,
-    NotificationSettings, ServiceSettings, StackListItem, StackRecord, StackStatus,
+    GitHubPackagesSettingsDb, GitHubPackagesTargetDb, GitHubPackagesWebhookDeliveryDb,
+    GitHubPackagesWebhookDeliverySummary, IgnoreRule, IgnoreRuleMatch, IgnoreRuleScope,
+    JobListItem, JobLogLine, JobScope, JobType, NotificationSettings, ServiceSettings,
+    StackListItem, StackRecord, StackStatus,
 };
 
 #[derive(Clone, Debug)]
@@ -117,6 +118,20 @@ pub struct JobEventLogRow {
     pub msg: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct GitHubPackagesWebhookDeliveryRecordInput {
+    pub delivery_id: String,
+    pub received_at: String,
+    pub owner: Option<String>,
+    pub repo: Option<String>,
+    pub event: Option<String>,
+    pub action: Option<String>,
+    pub decision: String,
+    pub reason: Option<String>,
+    pub response_status: Option<u16>,
+    pub job_id: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArchivedFilter {
     Exclude,
@@ -176,6 +191,7 @@ impl Db {
             ensure_service_archive_columns(conn)?;
             ensure_discovery_schema(conn)?;
             ensure_github_packages_repos_webhook_columns(conn)?;
+            ensure_github_packages_deliveries_columns(conn)?;
             ensure_schema_migrations_table(conn)?;
             apply_migration_0007_remove_manual_stacks(conn)?;
             apply_migration_0008_drop_version_inference_snapshots(conn)?;
@@ -2909,32 +2925,244 @@ WHERE selected = 1
         .context("count github packages deliveries total")
     }
 
+    pub async fn summarize_github_packages_deliveries(
+        &self,
+    ) -> anyhow::Result<GitHubPackagesWebhookDeliverySummary> {
+        self.call(move |conn| {
+            Ok(conn.query_row(
+                r#"
+SELECT
+  SUM(CASE WHEN decision = 'processed' THEN 1 ELSE 0 END),
+  SUM(CASE WHEN decision = 'ignored' THEN 1 ELSE 0 END),
+  SUM(CASE WHEN decision = 'rejected' THEN 1 ELSE 0 END)
+FROM github_packages_deliveries
+"#,
+                [],
+                |row| {
+                    Ok(GitHubPackagesWebhookDeliverySummary {
+                        processed: row.get::<_, Option<i64>>(0)?.unwrap_or(0) as u32,
+                        ignored: row.get::<_, Option<i64>>(1)?.unwrap_or(0) as u32,
+                        rejected: row.get::<_, Option<i64>>(2)?.unwrap_or(0) as u32,
+                    })
+                },
+            )?)
+        })
+        .await
+        .context("summarize github packages deliveries")
+    }
+
+    pub async fn count_github_packages_deliveries_filtered(
+        &self,
+        decision: Option<&str>,
+        q: Option<&str>,
+    ) -> anyhow::Result<u32> {
+        let decision = decision.map(|s| s.to_string());
+        let q_like = q.map(|s| format!("%{}%", s.trim().to_ascii_lowercase()));
+        self.call(move |conn| {
+            Ok(conn.query_row(
+                r#"
+SELECT COUNT(*)
+FROM github_packages_deliveries
+WHERE (?1 IS NULL OR decision = ?1)
+  AND (
+    ?2 IS NULL
+    OR lower(delivery_id) LIKE ?2
+    OR lower(COALESCE(owner, '')) LIKE ?2
+    OR lower(COALESCE(repo, '')) LIKE ?2
+    OR lower(COALESCE(event, '')) LIKE ?2
+    OR lower(COALESCE(action, '')) LIKE ?2
+    OR lower(COALESCE(reason, '')) LIKE ?2
+    OR lower(COALESCE(job_id, '')) LIKE ?2
+  )
+"#,
+                params![decision, q_like],
+                |row| row.get::<_, i64>(0).map(|v| v as u32),
+            )?)
+        })
+        .await
+        .context("count github packages deliveries filtered")
+    }
+
     pub async fn list_github_packages_deliveries_page(
         &self,
+        decision: Option<&str>,
+        q: Option<&str>,
         limit: u32,
         offset: u32,
     ) -> anyhow::Result<Vec<GitHubPackagesWebhookDeliveryDb>> {
+        let decision = decision.map(|s| s.to_string());
+        let q_like = q.map(|s| format!("%{}%", s.trim().to_ascii_lowercase()));
         self.call(move |conn| {
             let mut stmt = conn.prepare(
                 r#"
-SELECT delivery_id, received_at, owner, repo
+SELECT
+  delivery_id,
+  received_at,
+  first_received_at,
+  owner,
+  repo,
+  event,
+  action,
+  decision,
+  reason,
+  response_status,
+  job_id,
+  attempt_count
 FROM github_packages_deliveries
+WHERE (?1 IS NULL OR decision = ?1)
+  AND (
+    ?2 IS NULL
+    OR lower(delivery_id) LIKE ?2
+    OR lower(COALESCE(owner, '')) LIKE ?2
+    OR lower(COALESCE(repo, '')) LIKE ?2
+    OR lower(COALESCE(event, '')) LIKE ?2
+    OR lower(COALESCE(action, '')) LIKE ?2
+    OR lower(COALESCE(reason, '')) LIKE ?2
+    OR lower(COALESCE(job_id, '')) LIKE ?2
+  )
 ORDER BY received_at DESC, delivery_id DESC
-LIMIT ?1 OFFSET ?2
+LIMIT ?3 OFFSET ?4
 "#,
             )?;
-            let rows = stmt.query_map(params![limit, offset], |row| {
+            let rows = stmt.query_map(params![decision, q_like, limit, offset], |row| {
                 Ok(GitHubPackagesWebhookDeliveryDb {
                     delivery_id: row.get(0)?,
                     received_at: row.get(1)?,
-                    owner: row.get(2)?,
-                    repo: row.get(3)?,
+                    first_received_at: row.get(2)?,
+                    owner: row.get(3)?,
+                    repo: row.get(4)?,
+                    event: row.get(5)?,
+                    action: row.get(6)?,
+                    decision: row.get(7)?,
+                    reason: row.get(8)?,
+                    response_status: row
+                        .get::<_, Option<i64>>(9)?
+                        .and_then(|value| u16::try_from(value).ok()),
+                    job_id: row.get(10)?,
+                    attempt_count: row.get::<_, i64>(11)?.max(1) as u32,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
         })
         .await
         .context("list github packages deliveries page")
+    }
+
+    pub async fn record_github_packages_delivery(
+        &self,
+        input: GitHubPackagesWebhookDeliveryRecordInput,
+    ) -> anyhow::Result<u32> {
+        self.call(move |conn| {
+            let delivery_id = input.delivery_id.clone();
+            conn.execute(
+                r#"
+INSERT INTO github_packages_deliveries (
+  delivery_id,
+  received_at,
+  first_received_at,
+  owner,
+  repo,
+  event,
+  action,
+  decision,
+  reason,
+  response_status,
+  job_id,
+  attempt_count
+)
+VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1)
+ON CONFLICT(delivery_id) DO UPDATE SET
+  received_at = excluded.received_at,
+  owner = COALESCE(excluded.owner, github_packages_deliveries.owner),
+  repo = COALESCE(excluded.repo, github_packages_deliveries.repo),
+  event = COALESCE(excluded.event, github_packages_deliveries.event),
+  action = COALESCE(excluded.action, github_packages_deliveries.action),
+  decision = excluded.decision,
+  reason = excluded.reason,
+  response_status = excluded.response_status,
+  job_id = COALESCE(excluded.job_id, github_packages_deliveries.job_id),
+  attempt_count = github_packages_deliveries.attempt_count + 1
+"#,
+                params![
+                    delivery_id,
+                    input.received_at,
+                    input.owner,
+                    input.repo,
+                    input.event,
+                    input.action,
+                    input.decision,
+                    input.reason,
+                    input.response_status.map(i64::from),
+                    input.job_id
+                ],
+            )?;
+            conn.query_row(
+                "SELECT attempt_count FROM github_packages_deliveries WHERE delivery_id = ?1",
+                params![input.delivery_id],
+                |row| row.get::<_, i64>(0).map(|value| value.max(1) as u32),
+            )
+            .context("load github packages delivery attempt count")
+        })
+        .await
+        .context("record github packages delivery")
+    }
+
+    pub async fn update_github_packages_delivery_outcome(
+        &self,
+        delivery_id: &str,
+        received_at: &str,
+        owner: Option<&str>,
+        repo: Option<&str>,
+        event: Option<&str>,
+        action: Option<&str>,
+        decision: &str,
+        reason: Option<&str>,
+        response_status: Option<u16>,
+        job_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let delivery_id = delivery_id.to_string();
+        let received_at = received_at.to_string();
+        let owner = owner.map(|s| s.to_string());
+        let repo = repo.map(|s| s.to_string());
+        let event = event.map(|s| s.to_string());
+        let action = action.map(|s| s.to_string());
+        let decision = decision.to_string();
+        let reason = reason.map(|s| s.to_string());
+        let response_status = response_status.map(i64::from);
+        let job_id = job_id.map(|s| s.to_string());
+        self.call(move |conn| {
+            conn.execute(
+                r#"
+UPDATE github_packages_deliveries
+SET
+  received_at = ?2,
+  owner = COALESCE(?3, owner),
+  repo = COALESCE(?4, repo),
+  event = COALESCE(?5, event),
+  action = COALESCE(?6, action),
+  decision = ?7,
+  reason = ?8,
+  response_status = ?9,
+  job_id = COALESCE(?10, job_id)
+WHERE delivery_id = ?1
+"#,
+                params![
+                    delivery_id,
+                    received_at,
+                    owner,
+                    repo,
+                    event,
+                    action,
+                    decision,
+                    reason,
+                    response_status,
+                    job_id
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("update github packages delivery outcome")
     }
 
     pub async fn insert_github_packages_delivery_if_new(
@@ -2951,8 +3179,19 @@ LIMIT ?1 OFFSET ?2
         self.call(move |conn| {
             let changed = conn.execute(
                 r#"
-INSERT OR IGNORE INTO github_packages_deliveries (delivery_id, received_at, owner, repo)
-VALUES (?1, ?2, ?3, ?4)
+INSERT OR IGNORE INTO github_packages_deliveries (
+  delivery_id,
+  received_at,
+  first_received_at,
+  owner,
+  repo,
+  event,
+  action,
+  decision,
+  response_status,
+  attempt_count
+)
+VALUES (?1, ?2, ?2, ?3, ?4, 'package', 'published', 'processed', 200, 1)
 "#,
                 params![delivery_id, received_at, owner, repo],
             )?;
@@ -4500,6 +4739,105 @@ WHERE webhook_state IS NULL OR trim(webhook_state) = ''
     Ok(())
 }
 
+fn ensure_github_packages_deliveries_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    #[derive(Clone)]
+    struct Col<'a> {
+        name: &'a str,
+        ddl: &'a str,
+    }
+
+    let desired = [
+        Col {
+            name: "first_received_at",
+            ddl: "ALTER TABLE github_packages_deliveries ADD COLUMN first_received_at TEXT",
+        },
+        Col {
+            name: "event",
+            ddl: "ALTER TABLE github_packages_deliveries ADD COLUMN event TEXT",
+        },
+        Col {
+            name: "action",
+            ddl: "ALTER TABLE github_packages_deliveries ADD COLUMN action TEXT",
+        },
+        Col {
+            name: "decision",
+            ddl: "ALTER TABLE github_packages_deliveries ADD COLUMN decision TEXT NOT NULL DEFAULT 'processed'",
+        },
+        Col {
+            name: "reason",
+            ddl: "ALTER TABLE github_packages_deliveries ADD COLUMN reason TEXT",
+        },
+        Col {
+            name: "response_status",
+            ddl: "ALTER TABLE github_packages_deliveries ADD COLUMN response_status INTEGER",
+        },
+        Col {
+            name: "job_id",
+            ddl: "ALTER TABLE github_packages_deliveries ADD COLUMN job_id TEXT",
+        },
+        Col {
+            name: "attempt_count",
+            ddl: "ALTER TABLE github_packages_deliveries ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 1",
+        },
+    ];
+
+    let mut stmt = conn.prepare("PRAGMA table_info(github_packages_deliveries)")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let existing = rows.collect::<Result<Vec<_>, _>>()?;
+
+    for col in desired {
+        if existing.iter().any(|c| c == col.name) {
+            continue;
+        }
+        conn.execute_batch(col.ddl)?;
+    }
+
+    conn.execute_batch(
+        r#"
+CREATE INDEX IF NOT EXISTS idx_github_packages_deliveries_received_delivery
+  ON github_packages_deliveries(received_at DESC, delivery_id DESC);
+"#,
+    )?;
+
+    conn.execute(
+        r#"
+UPDATE github_packages_deliveries
+SET first_received_at = received_at
+WHERE first_received_at IS NULL OR trim(first_received_at) = ''
+"#,
+        [],
+    )?;
+
+    conn.execute(
+        r#"
+UPDATE github_packages_deliveries
+SET decision = 'processed'
+WHERE decision IS NULL OR trim(decision) = ''
+"#,
+        [],
+    )?;
+
+    conn.execute(
+        r#"
+UPDATE github_packages_deliveries
+SET response_status = 200
+WHERE response_status IS NULL AND decision = 'processed'
+"#,
+        [],
+    )?;
+
+    conn.execute(
+        r#"
+UPDATE github_packages_deliveries
+SET attempt_count = 1
+WHERE attempt_count IS NULL OR attempt_count < 1
+"#,
+        [],
+    )?;
+
+    Ok(())
+}
+
 fn ensure_discovery_schema(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -4755,8 +5093,16 @@ CREATE INDEX IF NOT EXISTS idx_github_packages_repos_selected ON github_packages
 CREATE TABLE IF NOT EXISTS github_packages_deliveries (
   delivery_id TEXT PRIMARY KEY NOT NULL,
   received_at TEXT NOT NULL,
+  first_received_at TEXT NOT NULL,
   owner TEXT,
-  repo TEXT
+  repo TEXT,
+  event TEXT,
+  action TEXT,
+  decision TEXT NOT NULL DEFAULT 'processed',
+  reason TEXT,
+  response_status INTEGER,
+  job_id TEXT,
+  attempt_count INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_github_packages_deliveries_received_delivery
   ON github_packages_deliveries(received_at DESC, delivery_id DESC);

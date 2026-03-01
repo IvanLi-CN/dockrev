@@ -482,15 +482,29 @@ export type GitHubPackagesWebhookOverviewResponse = {
 export type GitHubPackagesWebhookDelivery = {
   deliveryId: string
   receivedAt: string
+  firstReceivedAt: string
   owner?: string | null
   repo?: string | null
   fullName?: string | null
+  event?: string | null
+  action?: string | null
+  decision: 'processed' | 'ignored' | 'rejected' | string
+  reason?: string | null
+  responseStatus?: number | null
+  jobId?: string | null
+  attemptCount: number
 }
 
 export type ListGitHubPackagesWebhookDeliveriesResponse = {
   page: number
   perPage: number
   total: number
+  filteredTotal: number
+  summary: {
+    processed: number
+    ignored: number
+    rejected: number
+  }
   deliveries: GitHubPackagesWebhookDelivery[]
 }
 
@@ -900,10 +914,14 @@ export async function getGitHubPackagesWebhookOverview(): Promise<GitHubPackages
 export async function listGitHubPackagesWebhookDeliveries(input: {
   page: number
   perPage: number
+  decision?: 'all' | 'processed' | 'ignored' | 'rejected' | string | null
+  q?: string | null
 }): Promise<ListGitHubPackagesWebhookDeliveriesResponse> {
   const sp = new URLSearchParams()
   sp.set('page', String(input.page))
   sp.set('perPage', String(input.perPage))
+  if (input.decision && input.decision !== 'all') sp.set('decision', input.decision)
+  if (input.q && input.q.trim()) sp.set('q', input.q.trim())
   const resp = await apiFetch(`/api/github-packages/webhook/deliveries?${sp.toString()}`)
   return (await resp.json()) as ListGitHubPackagesWebhookDeliveriesResponse
 }

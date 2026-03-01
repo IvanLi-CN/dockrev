@@ -23,8 +23,9 @@ use url::Url;
 
 use crate::github;
 use crate::{
-    backup, discovery, error::ApiError, ghcr_webhook_jobs, ids, ignore, notify, preflight,
-    registry, runtime_scan, snapshot_worker, state::AppState, ui, updater,
+    backup, db::GitHubPackagesWebhookDeliveryRecordInput, discovery, error::ApiError,
+    ghcr_webhook_jobs, ids, ignore, notify, preflight, registry, runtime_scan, snapshot_worker,
+    state::AppState, ui, updater,
 };
 use types::*;
 
@@ -4126,6 +4127,20 @@ struct ListGitHubPackagesWebhookDeliveriesQuery {
     page: Option<u32>,
     #[serde(default)]
     per_page: Option<u32>,
+    #[serde(default)]
+    decision: Option<String>,
+    #[serde(default)]
+    q: Option<String>,
+}
+
+fn parse_delivery_decision_filter(input: Option<&str>) -> Result<Option<&'static str>, ApiError> {
+    match input.unwrap_or("all") {
+        "all" => Ok(None),
+        "processed" => Ok(Some("processed")),
+        "ignored" => Ok(Some("ignored")),
+        "rejected" => Ok(Some("rejected")),
+        _ => Err(ApiError::invalid_argument("invalid decision filter")),
+    }
 }
 
 async fn list_github_packages_webhook_deliveries(
@@ -4137,16 +4152,28 @@ async fn list_github_packages_webhook_deliveries(
 
     let page = q.page.unwrap_or(1).max(1);
     let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
+    let decision = parse_delivery_decision_filter(q.decision.as_deref())?;
+    let search = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
     let total = state
         .db
         .count_github_packages_deliveries_total()
         .await
         .map_err(map_internal)?;
+    let summary = state
+        .db
+        .summarize_github_packages_deliveries()
+        .await
+        .map_err(map_internal)?;
+    let filtered_total = state
+        .db
+        .count_github_packages_deliveries_filtered(decision, search)
+        .await
+        .map_err(map_internal)?;
     let offset = (page - 1).saturating_mul(per_page);
     let deliveries = state
         .db
-        .list_github_packages_deliveries_page(per_page, offset)
+        .list_github_packages_deliveries_page(decision, search, per_page, offset)
         .await
         .map_err(map_internal)?;
 
@@ -4154,6 +4181,8 @@ async fn list_github_packages_webhook_deliveries(
         page,
         per_page,
         total,
+        filtered_total,
+        summary,
         deliveries: deliveries
             .into_iter()
             .map(|d| {
@@ -4164,9 +4193,17 @@ async fn list_github_packages_webhook_deliveries(
                 GitHubPackagesWebhookDelivery {
                     delivery_id: d.delivery_id,
                     received_at: d.received_at,
+                    first_received_at: d.first_received_at,
                     owner: d.owner,
                     repo: d.repo,
                     full_name,
+                    event: d.event,
+                    action: d.action,
+                    decision: d.decision,
+                    reason: d.reason,
+                    response_status: d.response_status,
+                    job_id: d.job_id,
+                    attempt_count: d.attempt_count,
                 }
             })
             .collect(),
@@ -4654,21 +4691,22 @@ fn extract_owner_login(payload: &serde_json::Value) -> Option<String> {
         })
 }
 
+async fn record_github_packages_delivery(
+    state: &Arc<AppState>,
+    input: GitHubPackagesWebhookDeliveryRecordInput,
+) -> Result<u32, ApiError> {
+    state
+        .db
+        .record_github_packages_delivery(input)
+        .await
+        .map_err(map_internal)
+}
+
 async fn github_packages_webhook(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let event = headers
-        .get("X-GitHub-Event")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_default();
-    if event != "package" {
-        return Ok(Json(
-            json!({"ok": true, "ignored": true, "reason": "not_package_event"}),
-        ));
-    }
-
     let delivery_id = headers
         .get("X-GitHub-Delivery")
         .and_then(|v| v.to_str().ok())
@@ -4676,6 +4714,34 @@ async fn github_packages_webhook(
         .to_string();
     if delivery_id.is_empty() {
         return Err(ApiError::invalid_argument("missing X-GitHub-Delivery"));
+    }
+
+    let event = headers
+        .get("X-GitHub-Event")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let received_at = now_rfc3339().map_err(map_internal)?;
+    if event != "package" {
+        let _ = record_github_packages_delivery(
+            &state,
+            GitHubPackagesWebhookDeliveryRecordInput {
+                delivery_id,
+                received_at,
+                owner: None,
+                repo: None,
+                event: Some(event),
+                action: None,
+                decision: "ignored".to_string(),
+                reason: Some("not_package_event".to_string()),
+                response_status: Some(200),
+                job_id: None,
+            },
+        )
+        .await;
+        return Ok(Json(
+            json!({"ok": true, "ignored": true, "reason": "not_package_event"}),
+        ));
     }
 
     let sig = headers
@@ -4691,26 +4757,120 @@ async fn github_packages_webhook(
         .map_err(map_internal)?;
 
     if !settings.enabled {
+        let _ = record_github_packages_delivery(
+            &state,
+            GitHubPackagesWebhookDeliveryRecordInput {
+                delivery_id,
+                received_at,
+                owner: None,
+                repo: None,
+                event: Some(event),
+                action: None,
+                decision: "ignored".to_string(),
+                reason: Some("disabled".to_string()),
+                response_status: Some(200),
+                job_id: None,
+            },
+        )
+        .await;
         return Ok(Json(
             json!({"ok": true, "ignored": true, "reason": "disabled"}),
         ));
     }
 
     let Some(secret) = settings.webhook_secret else {
+        let _ = record_github_packages_delivery(
+            &state,
+            GitHubPackagesWebhookDeliveryRecordInput {
+                delivery_id,
+                received_at,
+                owner: None,
+                repo: None,
+                event: Some(event),
+                action: None,
+                decision: "rejected".to_string(),
+                reason: Some("webhook_secret_not_configured".to_string()),
+                response_status: Some(401),
+                job_id: None,
+            },
+        )
+        .await;
         return Err(ApiError::unauthorized()
             .with_details(json!({"reason":"webhook_secret_not_configured"})));
     };
     if verify_github_signature(&secret, &sig, &body).is_err() {
+        let _ = record_github_packages_delivery(
+            &state,
+            GitHubPackagesWebhookDeliveryRecordInput {
+                delivery_id,
+                received_at,
+                owner: None,
+                repo: None,
+                event: Some(event),
+                action: None,
+                decision: "rejected".to_string(),
+                reason: Some("invalid_signature".to_string()),
+                response_status: Some(401),
+                job_id: None,
+            },
+        )
+        .await;
         return Err(ApiError::unauthorized().with_details(json!({"reason":"invalid_signature"})));
     }
 
-    let payload: serde_json::Value =
-        serde_json::from_slice(&body).map_err(|_| ApiError::invalid_argument("invalid json"))?;
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            let _ = record_github_packages_delivery(
+                &state,
+                GitHubPackagesWebhookDeliveryRecordInput {
+                    delivery_id,
+                    received_at,
+                    owner: None,
+                    repo: None,
+                    event: Some(event),
+                    action: None,
+                    decision: "rejected".to_string(),
+                    reason: Some("invalid_json".to_string()),
+                    response_status: Some(400),
+                    job_id: None,
+                },
+            )
+            .await;
+            return Err(ApiError::invalid_argument("invalid json"));
+        }
+    };
     let action = payload
         .get("action")
         .and_then(|v| v.as_str())
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .to_string();
     if action != "published" {
+        let repo_full_name = extract_repo_full_name(&payload);
+        let owner = repo_full_name
+            .as_deref()
+            .and_then(|s| s.split('/').next().map(|v| v.to_string()))
+            .or_else(|| extract_owner_login(&payload));
+        let repo = repo_full_name
+            .as_deref()
+            .and_then(|s| s.split('/').nth(1))
+            .map(|v| v.to_string());
+        let _ = record_github_packages_delivery(
+            &state,
+            GitHubPackagesWebhookDeliveryRecordInput {
+                delivery_id,
+                received_at,
+                owner,
+                repo,
+                event: Some(event),
+                action: Some(action),
+                decision: "ignored".to_string(),
+                reason: Some("not_published".to_string()),
+                response_status: Some(200),
+                job_id: None,
+            },
+        )
+        .await;
         return Ok(Json(
             json!({"ok": true, "ignored": true, "reason": "not_published"}),
         ));
@@ -4721,6 +4881,10 @@ async fn github_packages_webhook(
         .as_deref()
         .and_then(|s| s.split('/').next().map(|v| v.to_string()))
         .or_else(|| extract_owner_login(&payload));
+    let repo = repo_full_name
+        .as_deref()
+        .and_then(|s| s.split('/').nth(1))
+        .map(|v| v.to_string());
 
     // NOTE: GitHub repo names are case-insensitive but case-preserving; compare in lower-case so we
     // don't mistakenly drop events due to casing differences between stored data and payloads.
@@ -4747,30 +4911,60 @@ async fn github_packages_webhook(
     };
 
     if !should_trigger {
+        let _ = record_github_packages_delivery(
+            &state,
+            GitHubPackagesWebhookDeliveryRecordInput {
+                delivery_id,
+                received_at,
+                owner,
+                repo,
+                event: Some(event),
+                action: Some(action),
+                decision: "ignored".to_string(),
+                reason: Some("repo_not_selected".to_string()),
+                response_status: Some(200),
+                job_id: None,
+            },
+        )
+        .await;
         return Ok(Json(
             json!({"ok": true, "ignored": true, "reason": "repo_not_selected"}),
         ));
     }
 
-    // Only persist delivery IDs for events that are eligible to trigger a scan. This prevents
-    // unbounded growth in the deliveries table when the webhook exists but repos are deselected.
-    let is_new = state
+    let is_new_delivery = state
         .db
         .insert_github_packages_delivery_if_new(
             &delivery_id,
-            &now_rfc3339().map_err(map_internal)?,
+            &received_at,
             owner.as_deref(),
-            repo_full_name.as_deref().and_then(|s| s.split('/').nth(1)),
+            repo.as_deref(),
         )
         .await
         .map_err(map_internal)?;
-    if !is_new {
+    if !is_new_delivery {
+        let attempt_count = record_github_packages_delivery(
+            &state,
+            GitHubPackagesWebhookDeliveryRecordInput {
+                delivery_id: delivery_id.clone(),
+                received_at: received_at.clone(),
+                owner: owner.clone(),
+                repo: repo.clone(),
+                event: Some(event.clone()),
+                action: Some(action.clone()),
+                decision: "ignored".to_string(),
+                reason: Some("duplicate_delivery".to_string()),
+                response_status: Some(200),
+                job_id: None,
+            },
+        )
+        .await?;
         return Ok(Json(
-            json!({"ok": true, "ignored": true, "reason": "duplicate_delivery"}),
+            json!({"ok": true, "ignored": true, "reason": "duplicate_delivery", "attemptCount": attempt_count}),
         ));
     }
 
-    let now = now_rfc3339().map_err(map_internal)?;
+    let now = received_at.clone();
     let job_id = ids::new_discovery_id();
     let job = JobRecord::new_running(
         job_id.clone(),
@@ -4784,6 +4978,22 @@ async fn github_packages_webhook(
     job_db.created_by = "github".to_string();
     job_db.reason = "github_webhook".to_string();
     state.db.insert_job(job_db).await.map_err(map_internal)?;
+    state
+        .db
+        .update_github_packages_delivery_outcome(
+            &delivery_id,
+            &received_at,
+            owner.as_deref(),
+            repo.as_deref(),
+            Some(event.as_str()),
+            Some(action.as_str()),
+            "processed",
+            None,
+            Some(200),
+            Some(job_id.as_str()),
+        )
+        .await
+        .map_err(map_internal)?;
 
     let run_state = state.clone();
     let run_job_id = job_id.clone();
@@ -4822,7 +5032,9 @@ async fn github_packages_webhook(
         }
     });
 
-    Ok(Json(json!({"ok": true, "jobId": job_id})))
+    Ok(Json(
+        json!({"ok": true, "jobId": job_id, "attemptCount": 1}),
+    ))
 }
 
 async fn create_web_push_subscription(

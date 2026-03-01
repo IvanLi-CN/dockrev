@@ -2013,6 +2013,132 @@ html[data-theme='light'] .modalOverlay {
   color: var(--muted2);
 }
 
+.ghcrInboxPage {
+  gap: 12px;
+}
+
+.ghcrInboxSummaryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.ghcrInboxSummaryItem {
+  border: 1px solid var(--borderColor);
+  border-radius: 12px;
+  background: var(--dockrev-surface);
+  padding: 12px;
+}
+
+.ghcrInboxSummaryValue {
+  margin-top: 8px;
+  font-size: 16px;
+  color: var(--text);
+}
+
+.ghcrInboxToolbar {
+  border: 1px solid var(--borderColor);
+  border-radius: 12px;
+  background: var(--dockrev-surface);
+  padding: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.ghcrInboxFilterRow {
+  margin-right: 4px;
+}
+
+.ghcrInboxSearchForm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 380px;
+  min-width: min(100%, 320px);
+}
+
+.ghcrInboxSearch {
+  min-width: 220px;
+  flex: 1 1 auto;
+}
+
+.ghcrInboxPager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ghcrInboxTable {
+  border: 1px solid var(--borderColor);
+  border-radius: 12px;
+  background: var(--dockrev-surface);
+  overflow: hidden;
+}
+
+.ghcrInboxTableHeader,
+.ghcrInboxRow {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1.35fr)
+    minmax(0, 1.35fr)
+    minmax(0, 1.3fr)
+    minmax(0, 1.1fr)
+    minmax(0, 0.8fr)
+    minmax(0, 1.45fr);
+}
+
+.ghcrInboxTableHeader {
+  background: var(--dockrev-surface-strong);
+  color: var(--muted);
+  font-size: 12px;
+  min-height: 40px;
+  align-items: center;
+}
+
+.ghcrInboxTableHeader > div {
+  padding: 10px 14px;
+}
+
+.ghcrInboxRow {
+  border-top: 1px solid var(--borderColor);
+  align-items: stretch;
+}
+
+.ghcrInboxCell {
+  min-width: 0;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.ghcrInboxCell .mono {
+  word-break: break-all;
+}
+
+.ghcrInboxEmpty {
+  padding: 16px;
+}
+
+.linkButton {
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+  padding: 0;
+}
+
+.linkButton:hover {
+  text-decoration: underline;
+}
+
 .queueProgressBar {
   margin-top: 6px;
   width: 100%;
@@ -3818,6 +3944,36 @@ html[data-theme='light'] .card {
   .deployWelcomeActions .btnPrimary {
     width: 100%;
     min-width: 0;
+  }
+}
+
+@media (max-width: 980px) {
+  .ghcrInboxToolbar {
+    align-items: stretch;
+  }
+
+  .ghcrInboxSearchForm {
+    flex-basis: 100%;
+  }
+
+  .ghcrInboxPager {
+    width: 100%;
+  }
+
+  .ghcrInboxTableHeader {
+    display: none;
+  }
+
+  .ghcrInboxRow {
+    grid-template-columns: 1fr;
+  }
+
+  .ghcrInboxCell {
+    padding: 10px 14px;
+  }
+
+  .ghcrInboxCell + .ghcrInboxCell {
+    border-top: 1px dashed color-mix(in srgb, var(--borderColor) 72%, transparent);
   }
 }
 

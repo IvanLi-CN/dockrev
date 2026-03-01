@@ -894,8 +894,16 @@ pub struct GitHubPackagesRepoDb {
 pub struct GitHubPackagesWebhookDeliveryDb {
     pub delivery_id: String,
     pub received_at: String,
+    pub first_received_at: String,
     pub owner: Option<String>,
     pub repo: Option<String>,
+    pub event: Option<String>,
+    pub action: Option<String>,
+    pub decision: String,
+    pub reason: Option<String>,
+    pub response_status: Option<u16>,
+    pub job_id: Option<String>,
+    pub attempt_count: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1154,12 +1162,33 @@ pub struct GitHubPackagesWebhookOverviewResponse {
 pub struct GitHubPackagesWebhookDelivery {
     pub delivery_id: String,
     pub received_at: String,
+    pub first_received_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub full_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    pub decision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_status: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+    pub attempt_count: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubPackagesWebhookDeliverySummary {
+    pub processed: u32,
+    pub ignored: u32,
+    pub rejected: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1168,6 +1197,8 @@ pub struct ListGitHubPackagesWebhookDeliveriesResponse {
     pub page: u32,
     pub per_page: u32,
     pub total: u32,
+    pub filtered_total: u32,
+    pub summary: GitHubPackagesWebhookDeliverySummary,
     pub deliveries: Vec<GitHubPackagesWebhookDelivery>,
 }
 

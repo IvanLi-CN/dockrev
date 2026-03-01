@@ -11,6 +11,7 @@
 - Settings 页 GHCR Repos 区域右侧当前展示“匹配 / 已跟踪”统计文案，不符合当前操作优先级。
 - 现有 GHCR 页面偏向“注册/反注册任务与状态”，缺少“Webhook 到达记录（delivery）”的独立视角。
 - 需要一个更直接的 Inbox 入口用于查看 webhook 触发记录，便于快速确认 GitHub 回调是否到达。
+- 第一版 Inbox 仅展示时间与 deliveryId，无法直接判断“被处理 / 被忽略 / 被拒绝”及 HTTP 响应结果，排障效率不足。
 
 ## 目标 / 非目标
 
@@ -18,13 +19,12 @@
 
 - 在 GHCR Repos 过滤行移除“匹配 / 已跟踪”统计文案。
 - 在同位置新增 `Inbox` 按钮，跳转到新的 Webhook Inbox 页面。
-- 新增后端分页 API：列出 `github_packages_deliveries` 到达记录。
-- 新增前端页面展示 `receivedAt / owner-repo / deliveryId`，支持刷新与分页。
+- 新增后端分页 API：列出 `github_packages_deliveries` 到达记录，并返回 `decision/reason/responseStatus/jobId/attemptCount`。
+- 新增前端页面展示 `receivedAt / event-action / owner-repo / decision / responseStatus / deliveryId`，支持筛选、搜索、刷新与分页。
 
 ### Non-goals
 
-- 不做 delivery 与扫描任务 `jobId` 的关联展示。
-- 不做 ignored reason / 处理结果扩展。
+- 不做 delivery 与扫描任务的“强关联追踪链路”（仅展示 `jobId` 文本，不展开跨页面追踪分析）。
 - 不改动 GHCR Webhook 状态页（注册/反注册任务语义保持不变）。
 
 ## 范围（Scope）
@@ -54,7 +54,7 @@
 
 | 接口（Name） | 类型（Kind） | 范围（Scope） | 变更（Change） | 契约文档（Contract Doc） | 负责人（Owner） | 使用方（Consumers） | 备注（Notes） |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /api/github-packages/webhook/deliveries` | HTTP API | internal | New | None | api | web settings/inbox | 分页查询 delivery 记录 |
+| `GET /api/github-packages/webhook/deliveries` | HTTP API | internal | Updated | None | api | web settings/inbox | 分页查询 delivery 记录（支持 decision/q） |
 | `listGitHubPackagesWebhookDeliveries` | TS API SDK | internal | New | None | web | `GhcrWebhookInboxPage` | 与新后端 API 对齐 |
 | `Route.name = ghcr-webhook-inbox` | Route | internal | New | None | web | Settings / App / Shell | Inbox 页面导航入口 |
 
@@ -63,8 +63,10 @@
 - Given Settings GHCR Repos 过滤行，When 页面渲染，Then 不再显示“匹配 / 已跟踪”统计文案。
 - Given Settings GHCR Repos 过滤行，When 点击 `Inbox`，Then 跳转到 `/queue/ghcr-webhook-inbox`。
 - Given delivery 表有数据，When 请求 `GET /api/github-packages/webhook/deliveries?page=1&perPage=2`，Then 返回按 `receivedAt DESC, deliveryId DESC` 排序的数据与正确分页元信息。
+- Given delivery 表有混合状态数据，When 请求 `GET /api/github-packages/webhook/deliveries?decision=ignored&q=repo_not_selected`，Then 返回过滤后的 `deliveries` 与 `filteredTotal`，并携带全量 `summary`。
 - Given delivery 表为空，When 请求列表接口，Then 返回 `total=0` 且 `deliveries=[]`。
 - Given `auth_allow_anonymous_in_dev=false` 且未提供用户头，When 请求列表接口，Then 返回 `401`。
+- Given webhook 请求被拒绝/忽略，When 打开 Inbox，Then 可直接看到 `decision`、`reason` 与 `responseStatus`。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
@@ -81,6 +83,7 @@
 - [x] M3: 前端新增 Inbox 路由与页面，并接入新 API。
 - [x] M4: Settings GHCR Repos 区域替换统计文案为 `Inbox` 按钮。
 - [x] M5: web lint/build 与 API 相关测试通过。
+- [x] M6: Inbox 重构为“Webhook delivery 日志”结构（汇总 + 筛选 + 搜索 + 响应状态）。
 
 ## 风险 / 开放问题 / 假设（Risks, Open Questions, Assumptions）
 

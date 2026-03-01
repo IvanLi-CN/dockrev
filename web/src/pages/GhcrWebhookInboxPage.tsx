@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   listGitHubPackagesWebhookDeliveries,
-  type GitHubPackagesWebhookDelivery,
   type ListGitHubPackagesWebhookDeliveriesResponse,
 } from '../api'
 import { navigate } from '../routes'
-import { Button, Mono } from '../ui'
+import { Button, Chip, Mono, Pill } from '../ui'
+
+type DeliveryFilter = 'all' | 'processed' | 'ignored' | 'rejected'
 
 function formatShort(ts?: string | null): string {
   if (!ts) return '-'
@@ -14,9 +15,9 @@ function formatShort(ts?: string | null): string {
   return d.toLocaleString()
 }
 
-function formatRepo(delivery: GitHubPackagesWebhookDelivery): string {
-  if (delivery.fullName) return delivery.fullName
-  if (delivery.owner && delivery.repo) return `${delivery.owner}/${delivery.repo}`
+function formatRepo(owner?: string | null, repo?: string | null, fullName?: string | null): string {
+  if (fullName) return fullName
+  if (owner && repo) return `${owner}/${repo}`
   return '-'
 }
 
@@ -25,17 +26,50 @@ function errorMessage(e: unknown): string {
   return String(e)
 }
 
+function decisionLabel(decision: string): string {
+  if (decision === 'processed') return '已处理'
+  if (decision === 'ignored') return '已忽略'
+  if (decision === 'rejected') return '已拒绝'
+  return decision || '未知'
+}
+
+function decisionTone(decision: string): 'ok' | 'warn' | 'bad' | 'muted' {
+  if (decision === 'processed') return 'ok'
+  if (decision === 'ignored') return 'warn'
+  if (decision === 'rejected') return 'bad'
+  return 'muted'
+}
+
+function responseTone(status?: number | null): 'ok' | 'warn' | 'bad' | 'muted' {
+  if (typeof status !== 'number') return 'muted'
+  if (status >= 500) return 'bad'
+  if (status >= 400) return 'warn'
+  if (status >= 200 && status < 300) return 'ok'
+  return 'muted'
+}
+
+const PER_PAGE_OPTIONS = [25, 50, 100]
+
 const EMPTY_DELIVERIES: ListGitHubPackagesWebhookDeliveriesResponse = {
   page: 1,
   perPage: 50,
   total: 0,
+  filteredTotal: 0,
+  summary: {
+    processed: 0,
+    ignored: 0,
+    rejected: 0,
+  },
   deliveries: [],
 }
 
 export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNode) => void }) {
   const { onTopActions } = props
   const [page, setPage] = useState(1)
-  const [perPage] = useState(50)
+  const [perPage, setPerPage] = useState(50)
+  const [filter, setFilter] = useState<DeliveryFilter>('all')
+  const [searchInput, setSearchInput] = useState('')
+  const [query, setQuery] = useState('')
   const [data, setData] = useState<ListGitHubPackagesWebhookDeliveriesResponse>(EMPTY_DELIVERIES)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -45,14 +79,19 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
     const requestId = ++refreshRequestIdRef.current
     setError(null)
     try {
-      const next = await listGitHubPackagesWebhookDeliveries({ page, perPage })
+      const next = await listGitHubPackagesWebhookDeliveries({
+        page,
+        perPage,
+        decision: filter,
+        q: query,
+      })
       if (requestId !== refreshRequestIdRef.current) return
       setData(next)
     } catch (e: unknown) {
       if (requestId !== refreshRequestIdRef.current) return
       setError(errorMessage(e))
     }
-  }, [page, perPage])
+  }, [filter, page, perPage, query])
 
   useEffect(() => {
     void refresh()
@@ -79,23 +118,151 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
     )
   }, [busy, onTopActions, refresh])
 
-  const maxPage = useMemo(() => Math.max(1, Math.ceil(data.total / perPage)), [data.total, perPage])
+  const maxPage = useMemo(() => Math.max(1, Math.ceil(data.filteredTotal / perPage)), [data.filteredTotal, perPage])
+
+  useEffect(() => {
+    if (page <= maxPage) return
+    setPage(maxPage)
+  }, [maxPage, page])
+
+  const summaryItems = useMemo(
+    () => [
+      { label: '总记录', value: data.total },
+      { label: '已处理', value: data.summary.processed },
+      { label: '已忽略', value: data.summary.ignored },
+      { label: '已拒绝', value: data.summary.rejected },
+    ],
+    [data.summary.ignored, data.summary.processed, data.summary.rejected, data.total],
+  )
 
   return (
-    <div className="page">
-      <div className="sectionRow" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-        <div className="queueMeta" style={{ marginTop: 0 }}>
-          <span>
-            总计 <Mono>{data.total}</Mono>
-          </span>
-          <span>
-            页码 <Mono>{page}</Mono>
-          </span>
-          <span>
-            每页 <Mono>{perPage}</Mono>
-          </span>
+    <div className="page ghcrInboxPage">
+      <div className="ghcrInboxSummaryGrid">
+        {summaryItems.map((item) => (
+          <div key={item.label} className="ghcrInboxSummaryItem">
+            <div className="muted">{item.label}</div>
+            <div className="ghcrInboxSummaryValue">
+              <Mono>{item.value}</Mono>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="ghcrInboxToolbar">
+        <div className="chipRow ghcrInboxFilterRow">
+          <Chip
+            active={filter === 'all'}
+            onClick={() => {
+              setFilter('all')
+              setPage(1)
+            }}
+          >
+            <span>全部</span>
+            <span className="chipCount">{data.total}</span>
+          </Chip>
+          <Chip
+            active={filter === 'processed'}
+            onClick={() => {
+              setFilter('processed')
+              setPage(1)
+            }}
+          >
+            <span>已处理</span>
+            <span className="chipCount">{data.summary.processed}</span>
+          </Chip>
+          <Chip
+            active={filter === 'ignored'}
+            onClick={() => {
+              setFilter('ignored')
+              setPage(1)
+            }}
+          >
+            <span>已忽略</span>
+            <span className="chipCount">{data.summary.ignored}</span>
+          </Chip>
+          <Chip
+            active={filter === 'rejected'}
+            onClick={() => {
+              setFilter('rejected')
+              setPage(1)
+            }}
+          >
+            <span>已拒绝</span>
+            <span className="chipCount">{data.summary.rejected}</span>
+          </Chip>
         </div>
-        <div className="chipRow">
+
+        <div className="ghcrInboxSearchForm">
+          <input
+            className="input ghcrInboxSearch"
+            placeholder="搜索仓库 / delivery ID / reason / job ID"
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter') return
+              event.preventDefault()
+              setPage(1)
+              setQuery(searchInput.trim())
+            }}
+          />
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setPage(1)
+              setQuery(searchInput.trim())
+            }}
+          >
+            搜索
+          </Button>
+          <Button
+            variant="ghost"
+            disabled={!query && !searchInput}
+            onClick={() => {
+              setSearchInput('')
+              setQuery('')
+              setPage(1)
+            }}
+          >
+            清除
+          </Button>
+        </div>
+
+        <div className="ghcrInboxPager">
+          <label className="label" htmlFor="ghcr-inbox-per-page">
+            每页
+          </label>
+          <select
+            id="ghcr-inbox-per-page"
+            className="select"
+            value={perPage}
+            onChange={(event) => {
+              const next = Number.parseInt(event.target.value, 10)
+              setPerPage(Number.isFinite(next) && next > 0 ? next : 50)
+              setPage(1)
+            }}
+          >
+            {PER_PAGE_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+          <span className="muted">
+            第 {page} / {maxPage} 页（筛选后 {data.filteredTotal} / 总计 {data.total}）
+          </span>
+          <Button variant="ghost" disabled={busy || page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
+            上一页
+          </Button>
+          <Button
+            variant="ghost"
+            disabled={busy || page >= maxPage}
+            onClick={() => setPage((value) => Math.min(maxPage, value + 1))}
+          >
+            下一页
+          </Button>
+        </div>
+
+        <div className="chipRow" style={{ marginLeft: 'auto' }}>
           <Button variant="ghost" onClick={() => navigate({ name: 'settings' })}>
             返回设置
           </Button>
@@ -105,56 +272,60 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
         </div>
       </div>
 
-      <div
-        style={{
-          border: '1px solid var(--borderColor)',
-          borderRadius: 12,
-          background: 'var(--dockrev-surface)',
-          overflow: 'hidden',
-        }}
-      >
-        {data.deliveries.length === 0 ? <div className="muted" style={{ padding: '14px 16px' }}>暂无 webhook 触发记录</div> : null}
-        {data.deliveries.map((delivery, idx) => (
-          <div
-            key={delivery.deliveryId}
-            style={{
-              padding: '12px 16px',
-              borderTop: idx === 0 ? 'none' : '1px solid var(--borderColor)',
-            }}
-          >
-            <div className="queueMain">
-              <div className="queueTitle">
-                <Mono>{formatRepo(delivery)}</Mono>
+      <div className="ghcrInboxTable" role="table" aria-label="Webhook delivery 记录">
+        <div className="ghcrInboxTableHeader" role="row">
+          <div>接收时间</div>
+          <div>事件</div>
+          <div>仓库</div>
+          <div>处理结果</div>
+          <div>响应</div>
+          <div>Delivery</div>
+        </div>
+
+        {data.deliveries.length === 0 ? (
+          <div className="ghcrInboxEmpty muted">
+            {query || filter !== 'all' ? '当前筛选条件下没有记录' : '还没有收到 GHCR Webhook 请求'}
+          </div>
+        ) : null}
+
+        {data.deliveries.map((delivery) => (
+          <div key={delivery.deliveryId} className="ghcrInboxRow" role="row">
+            <div className="ghcrInboxCell">
+              <div>{formatShort(delivery.receivedAt)}</div>
+              {delivery.attemptCount > 1 ? <div className="muted">重试 {delivery.attemptCount} 次</div> : null}
+            </div>
+            <div className="ghcrInboxCell">
+              <div>
+                <Mono>{delivery.event ?? '-'}</Mono>
+                <span className="muted"> / </span>
+                <Mono>{delivery.action ?? '-'}</Mono>
               </div>
-              <div className="queueMeta">
-                <span>
-                  接收时间 <Mono>{formatShort(delivery.receivedAt)}</Mono>
-                </span>
-                <span>
-                  投递 ID <Mono>{delivery.deliveryId}</Mono>
-                </span>
+              <div className="muted">首次接收：{formatShort(delivery.firstReceivedAt)}</div>
+            </div>
+            <div className="ghcrInboxCell">
+              <Mono>{formatRepo(delivery.owner, delivery.repo, delivery.fullName)}</Mono>
+            </div>
+            <div className="ghcrInboxCell">
+              <Pill tone={decisionTone(delivery.decision)}>{decisionLabel(delivery.decision)}</Pill>
+              {delivery.reason ? <div className="muted">{delivery.reason}</div> : null}
+            </div>
+            <div className="ghcrInboxCell">
+              <Pill tone={responseTone(delivery.responseStatus)}>
+                {typeof delivery.responseStatus === 'number' ? `HTTP ${delivery.responseStatus}` : '-'}
+              </Pill>
+            </div>
+            <div className="ghcrInboxCell">
+              <div>
+                <Mono>{delivery.deliveryId}</Mono>
               </div>
+              {delivery.jobId ? (
+                <button type="button" className="linkButton" onClick={() => navigate({ name: 'job', jobId: delivery.jobId! })}>
+                  查看任务 <Mono>{delivery.jobId}</Mono>
+                </button>
+              ) : null}
             </div>
           </div>
         ))}
-      </div>
-
-      <div className="formActions" style={{ marginTop: 12, justifyContent: 'space-between' }}>
-        <div className="muted">
-          第 {page} 页（每页 {perPage}）
-        </div>
-        <div style={{ display: 'flex', gap: 10 }}>
-          <Button variant="ghost" disabled={busy || page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
-            上一页
-          </Button>
-          <Button
-            variant="ghost"
-            disabled={busy || page >= maxPage}
-            onClick={() => setPage((p) => Math.min(maxPage, p + 1))}
-          >
-            下一页
-          </Button>
-        </div>
       </div>
 
       {error ? <div className="error">{error}</div> : null}

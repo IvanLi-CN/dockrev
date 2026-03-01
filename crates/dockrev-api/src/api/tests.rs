@@ -6195,6 +6195,25 @@ async fn github_packages_webhook_validates_signature_and_dedupes_delivery() {
         .unwrap();
     assert_eq!(resp.status(), 401);
 
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries?decision=rejected&q=d1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["filteredTotal"], 1);
+    assert_eq!(body["deliveries"][0]["deliveryId"], "d1");
+    assert_eq!(body["deliveries"][0]["decision"], "rejected");
+    assert_eq!(body["deliveries"][0]["reason"], "invalid_signature");
+    assert_eq!(body["deliveries"][0]["responseStatus"], 401);
+
     let key = hmac::Key::new(hmac::HMAC_SHA256, b"secret123");
     let tag = hmac::sign(&key, &payload_bytes);
     let sig = format!("sha256={}", hex::encode(tag.as_ref()));
@@ -6229,6 +6248,7 @@ async fn github_packages_webhook_validates_signature_and_dedupes_delivery() {
     let sig = format!("sha256={}", hex::encode(tag.as_ref()));
 
     let resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -6245,6 +6265,7 @@ async fn github_packages_webhook_validates_signature_and_dedupes_delivery() {
     let body = response_json(resp).await;
     assert_eq!(body["ignored"], true);
     assert_eq!(body["reason"], "duplicate_delivery");
+    assert_eq!(body["attemptCount"], 2);
 }
 
 #[tokio::test]
@@ -6291,6 +6312,7 @@ async fn github_packages_webhook_respects_disabled_setting() {
     let sig = format!("sha256={}", hex::encode(tag.as_ref()));
 
     let resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -6356,6 +6378,7 @@ async fn github_packages_webhook_matches_selected_repos_case_insensitively() {
     let sig = format!("sha256={}", hex::encode(tag.as_ref()));
 
     let resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -6753,9 +6776,16 @@ async fn github_packages_webhook_deliveries_lists_desc_and_paginates() {
     assert_eq!(body["page"], 1);
     assert_eq!(body["perPage"], 2);
     assert_eq!(body["total"], 3);
+    assert_eq!(body["filteredTotal"], 3);
+    assert_eq!(body["summary"]["processed"], 3);
+    assert_eq!(body["summary"]["ignored"], 0);
+    assert_eq!(body["summary"]["rejected"], 0);
     assert_eq!(body["deliveries"].as_array().map(|v| v.len()), Some(2));
     assert_eq!(body["deliveries"][0]["deliveryId"], "d3");
     assert_eq!(body["deliveries"][0]["fullName"], "acme/gamma");
+    assert_eq!(body["deliveries"][0]["decision"], "processed");
+    assert_eq!(body["deliveries"][0]["responseStatus"], 200);
+    assert_eq!(body["deliveries"][0]["attemptCount"], 1);
     assert_eq!(body["deliveries"][1]["deliveryId"], "d2");
     assert_eq!(body["deliveries"][1]["fullName"], "acme/beta");
 
@@ -6771,6 +6801,7 @@ async fn github_packages_webhook_deliveries_lists_desc_and_paginates() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = response_json(resp).await;
+    assert_eq!(body["filteredTotal"], 3);
     assert_eq!(body["deliveries"].as_array().map(|v| v.len()), Some(1));
     assert_eq!(body["deliveries"][0]["deliveryId"], "d1");
     assert_eq!(body["deliveries"][0]["fullName"], "acme/alpha");
@@ -6796,7 +6827,88 @@ async fn github_packages_webhook_deliveries_returns_empty_when_no_data() {
     assert_eq!(body["page"], 1);
     assert_eq!(body["perPage"], 50);
     assert_eq!(body["total"], 0);
+    assert_eq!(body["filteredTotal"], 0);
+    assert_eq!(body["summary"]["processed"], 0);
+    assert_eq!(body["summary"]["ignored"], 0);
+    assert_eq!(body["summary"]["rejected"], 0);
     assert_eq!(body["deliveries"].as_array().map(|v| v.len()), Some(0));
+}
+
+#[tokio::test]
+async fn github_packages_webhook_deliveries_supports_decision_and_query_filters() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    state
+        .db
+        .record_github_packages_delivery(crate::db::GitHubPackagesWebhookDeliveryRecordInput {
+            delivery_id: "d-ok".to_string(),
+            received_at: "2026-03-02T09:00:00Z".to_string(),
+            owner: Some("acme".to_string()),
+            repo: Some("alpha".to_string()),
+            event: Some("package".to_string()),
+            action: Some("published".to_string()),
+            decision: "processed".to_string(),
+            reason: None,
+            response_status: Some(200),
+            job_id: Some("dsc_ok".to_string()),
+        })
+        .await
+        .unwrap();
+    state
+        .db
+        .record_github_packages_delivery(crate::db::GitHubPackagesWebhookDeliveryRecordInput {
+            delivery_id: "d-ignore".to_string(),
+            received_at: "2026-03-02T10:00:00Z".to_string(),
+            owner: Some("acme".to_string()),
+            repo: Some("beta".to_string()),
+            event: Some("package".to_string()),
+            action: Some("published".to_string()),
+            decision: "ignored".to_string(),
+            reason: Some("repo_not_selected".to_string()),
+            response_status: Some(200),
+            job_id: None,
+        })
+        .await
+        .unwrap();
+    state
+        .db
+        .record_github_packages_delivery(crate::db::GitHubPackagesWebhookDeliveryRecordInput {
+            delivery_id: "d-reject".to_string(),
+            received_at: "2026-03-02T11:00:00Z".to_string(),
+            owner: None,
+            repo: None,
+            event: Some("package".to_string()),
+            action: None,
+            decision: "rejected".to_string(),
+            reason: Some("invalid_signature".to_string()),
+            response_status: Some(401),
+            job_id: None,
+        })
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries?decision=ignored&q=repo_not_selected")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["total"], 3);
+    assert_eq!(body["filteredTotal"], 1);
+    assert_eq!(body["summary"]["processed"], 1);
+    assert_eq!(body["summary"]["ignored"], 1);
+    assert_eq!(body["summary"]["rejected"], 1);
+    assert_eq!(body["deliveries"][0]["deliveryId"], "d-ignore");
+    assert_eq!(body["deliveries"][0]["decision"], "ignored");
+    assert_eq!(body["deliveries"][0]["reason"], "repo_not_selected");
+    assert_eq!(body["deliveries"][0]["responseStatus"], 200);
 }
 
 #[tokio::test]
@@ -6818,7 +6930,7 @@ async fn github_packages_webhook_deliveries_requires_auth_when_anonymous_disable
 }
 
 #[tokio::test]
-async fn github_packages_webhook_does_not_persist_delivery_for_unselected_repo() {
+async fn github_packages_webhook_persists_ignored_delivery_for_unselected_repo() {
     use ring::hmac;
 
     let state = test_state(":memory:").await;
@@ -6860,6 +6972,7 @@ async fn github_packages_webhook_does_not_persist_delivery_for_unselected_repo()
     let sig = format!("sha256={}", hex::encode(tag.as_ref()));
 
     let resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -6877,12 +6990,30 @@ async fn github_packages_webhook_does_not_persist_delivery_for_unselected_repo()
     assert_eq!(body["ignored"], true);
     assert_eq!(body["reason"], "repo_not_selected");
     assert!(
-        !state
+        state
             .db
             .github_packages_delivery_exists("unselected-1")
             .await
             .unwrap()
     );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries?decision=ignored")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["filteredTotal"], 1);
+    assert_eq!(body["deliveries"][0]["deliveryId"], "unselected-1");
+    assert_eq!(body["deliveries"][0]["decision"], "ignored");
+    assert_eq!(body["deliveries"][0]["reason"], "repo_not_selected");
+    assert_eq!(body["deliveries"][0]["responseStatus"], 200);
 }
 
 #[tokio::test]
