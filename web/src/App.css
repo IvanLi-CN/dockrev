@@ -1127,40 +1127,28 @@ html[data-theme='light'] .versionTagsPopover {
   white-space: nowrap;
 }
 
-.statusDot {
-  --status-dot-bg: var(--dockrev-status-dot-neutral-bg);
-  --status-dot-fg: var(--dockrev-status-dot-neutral-fg);
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--status-dot-bg);
-  color: var(--status-dot-fg);
+.statusCircleIcon {
+  width: 17px;
+  height: 17px;
+  display: block;
   flex: 0 0 auto;
-  box-shadow: 0 0 0 1px var(--dockrev-dot-ring);
+  color: var(--dockrev-status-icon-neutral);
 }
 
-.statusDotIcon {
-  width: 72%;
-  height: 72%;
-  flex: 0 0 auto;
+.statusCircleIconNeutral {
+  color: var(--dockrev-status-icon-neutral);
 }
 
-.statusDotOk {
-  --status-dot-bg: var(--color-success);
-  --status-dot-fg: var(--color-success-content);
+.statusCircleIconOk {
+  color: var(--color-success);
 }
 
-.statusDotWarn {
-  --status-dot-bg: var(--color-warning);
-  --status-dot-fg: var(--color-warning-content);
+.statusCircleIconWarn {
+  color: var(--color-warning);
 }
 
-.statusDotBad {
-  --status-dot-bg: var(--color-error);
-  --status-dot-fg: var(--color-error-content);
+.statusCircleIconBad {
+  color: var(--color-error);
 }
 
 .statusNote {
@@ -3559,11 +3547,6 @@ html[data-theme='light'] .card {
 .svcName {
   font-size: 13px;
   font-weight: 640;
-}
-
-.statusDot {
-  width: 10px;
-  height: 10px;
 }
 
 .statusLine {

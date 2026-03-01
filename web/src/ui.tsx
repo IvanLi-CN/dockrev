@@ -165,9 +165,7 @@ export function StatusRemark(props: { service: Service; status: RowStatus }) {
   return (
     <div className="statusCol">
       <div className="statusLine">
-        <span className={statusDotClass(props.status)} aria-hidden="true">
-          <Icon icon={statusIcon(props.status)} className="statusDotIcon" />
-        </span>
+        <Icon icon={statusIcon(props.status)} className={statusDotClass(props.status)} aria-hidden="true" />
         <span className="label">{statusLabel(props.status)}</span>
       </div>
       {note ? (

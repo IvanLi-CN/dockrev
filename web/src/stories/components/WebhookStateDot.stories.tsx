@@ -22,9 +22,7 @@ export const AllStates: Story = {
         <div style={{ marginTop: 12, display: 'grid', rowGap: 10 }}>
           {states.map((state) => (
             <div key={state} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span className={webhookStateDotClass(state)} aria-hidden="true">
-                <Icon icon={webhookStateIcon(state)} className="statusDotIcon" />
-              </span>
+              <Icon icon={webhookStateIcon(state)} className={webhookStateDotClass(state)} aria-hidden="true" />
               <span className="mono">{state}</span>
             </div>
           ))}

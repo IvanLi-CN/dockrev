@@ -145,11 +145,11 @@ export function serviceRowStatus(svc: Service): RowStatus {
 }
 
 export function statusDotClass(st: RowStatus): string {
-  if (st === 'updatable') return 'statusDot statusDotOk'
-  if (st === 'hint') return 'statusDot statusDotWarn'
-  if (st === 'archMismatch') return 'statusDot statusDotBad'
-  if (st === 'blocked') return 'statusDot statusDotBad'
-  return 'statusDot'
+  if (st === 'updatable') return 'statusCircleIcon statusCircleIconOk'
+  if (st === 'hint') return 'statusCircleIcon statusCircleIconWarn'
+  if (st === 'archMismatch') return 'statusCircleIcon statusCircleIconBad'
+  if (st === 'blocked') return 'statusCircleIcon statusCircleIconBad'
+  return 'statusCircleIcon statusCircleIconNeutral'
 }
 
 export function statusIcon(st: RowStatus): IconifyIcon {

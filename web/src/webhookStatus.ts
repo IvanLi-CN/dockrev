@@ -6,10 +6,11 @@ import helpCircleOutline from '@iconify-icons/mdi/help-circle-outline'
 import progressClock from '@iconify-icons/mdi/progress-clock'
 
 export function webhookStateDotClass(state: string): string {
-  if (state === 'ok') return 'statusDot statusDotOk'
-  if (state === 'missing' || state === 'queued' || state === 'running') return 'statusDot statusDotWarn'
-  if (state === 'error' || state === 'conflict') return 'statusDot statusDotBad'
-  return 'statusDot statusDotWarn'
+  if (state === 'ok') return 'statusCircleIcon statusCircleIconOk'
+  if (state === 'missing' || state === 'queued' || state === 'running')
+    return 'statusCircleIcon statusCircleIconWarn'
+  if (state === 'error' || state === 'conflict') return 'statusCircleIcon statusCircleIconBad'
+  return 'statusCircleIcon statusCircleIconWarn'
 }
 
 export function webhookStateIcon(state: string): IconifyIcon {

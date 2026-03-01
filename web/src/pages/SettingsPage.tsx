@@ -1822,9 +1822,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                         >
                           <div style={{ minWidth: 0, flex: '1 1 auto' }}>
                             <div style={{ display: 'flex', gap: 10, alignItems: 'center', minWidth: 0 }}>
-                              <span className={dotClass} aria-hidden="true">
-                                <Icon icon={webhookStateIcon(state)} className="statusDotIcon" />
-                              </span>
+                              <Icon icon={webhookStateIcon(state)} className={dotClass} aria-hidden="true" />
                               <div className="mono" style={{ overflowWrap: 'anywhere' }}>
                                 {r.fullName}
                               </div>
