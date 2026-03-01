@@ -3,6 +3,9 @@ name = "dockrev-supervisor"
 version = "0.1.0"
 edition = "2024"
 publish = false
+repository = "https://github.com/IvanLi-CN/dockrev"
+homepage = "https://github.com/IvanLi-CN"
+authors = ["Ivan Li"]
 
 [[bin]]
 name = "dockrev-supervisor"
