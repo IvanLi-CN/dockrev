@@ -1128,28 +1128,39 @@ html[data-theme='light'] .versionTagsPopover {
 }
 
 .statusDot {
+  --status-dot-bg: var(--dockrev-status-dot-neutral-bg);
+  --status-dot-fg: var(--dockrev-status-dot-neutral-fg);
   width: 12px;
   height: 12px;
   border-radius: 999px;
-  background: rgba(229, 231, 235, 0.18);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--status-dot-bg);
+  color: var(--status-dot-fg);
   flex: 0 0 auto;
   box-shadow: 0 0 0 1px var(--dockrev-dot-ring);
 }
 
-html[data-theme='light'] .statusDot {
-  background: rgba(15, 23, 42, 0.18);
+.statusDotIcon {
+  width: 72%;
+  height: 72%;
+  flex: 0 0 auto;
 }
 
 .statusDotOk {
-  background: var(--color-success);
+  --status-dot-bg: var(--color-success);
+  --status-dot-fg: var(--color-success-content);
 }
 
 .statusDotWarn {
-  background: var(--color-warning);
+  --status-dot-bg: var(--color-warning);
+  --status-dot-fg: var(--color-warning-content);
 }
 
 .statusDotBad {
-  background: var(--color-error);
+  --status-dot-bg: var(--color-error);
+  --status-dot-fg: var(--color-error-content);
 }
 
 .statusNote {

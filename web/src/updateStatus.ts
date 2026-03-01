@@ -1,3 +1,9 @@
+import type { IconifyIcon } from '@iconify/types'
+import alertCircleOutline from '@iconify-icons/mdi/alert-circle-outline'
+import checkCircle from '@iconify-icons/mdi/check-circle'
+import closeCircleOutline from '@iconify-icons/mdi/close-circle-outline'
+import helpCircleOutline from '@iconify-icons/mdi/help-circle-outline'
+import minusCircleOutline from '@iconify-icons/mdi/minus-circle-outline'
 import type { Service } from './api'
 
 export type RowStatus = 'ok' | 'updatable' | 'hint' | 'archMismatch' | 'blocked'
@@ -144,6 +150,14 @@ export function statusDotClass(st: RowStatus): string {
   if (st === 'archMismatch') return 'statusDot statusDotBad'
   if (st === 'blocked') return 'statusDot statusDotBad'
   return 'statusDot'
+}
+
+export function statusIcon(st: RowStatus): IconifyIcon {
+  if (st === 'updatable') return checkCircle
+  if (st === 'hint') return helpCircleOutline
+  if (st === 'archMismatch') return alertCircleOutline
+  if (st === 'blocked') return closeCircleOutline
+  return minusCircleOutline
 }
 
 export function statusLabel(st: RowStatus): string {

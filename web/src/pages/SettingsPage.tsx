@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Icon } from '@iconify/react'
 import {
   ApiError,
   createWebPushSubscription,
@@ -28,6 +29,7 @@ import { Button, IconButton, Mono, Switch, TrashIcon } from '../ui'
 import { useConfirm } from '../confirm'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
+import { webhookStateDotClass, webhookStateIcon } from '../webhookStatus'
 import { navigate } from '../routes'
 
 function errorMessage(e: unknown): string {
@@ -190,13 +192,6 @@ function webhookStateLabel(state: string): string {
   if (state === 'error') return '失败'
   if (state === 'conflict') return '冲突'
   return '未知'
-}
-
-function webhookStateDotClass(state: string): string {
-  if (state === 'ok') return 'statusDot statusDotOk'
-  if (state === 'missing' || state === 'queued' || state === 'running') return 'statusDot statusDotWarn'
-  if (state === 'error' || state === 'conflict') return 'statusDot statusDotBad'
-  return 'statusDot statusDotWarn'
 }
 
 function readRepoListDensityFromStorage(): RepoListDensity {
@@ -1827,7 +1822,9 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                         >
                           <div style={{ minWidth: 0, flex: '1 1 auto' }}>
                             <div style={{ display: 'flex', gap: 10, alignItems: 'center', minWidth: 0 }}>
-                              <span className={dotClass} />
+                              <span className={dotClass} aria-hidden="true">
+                                <Icon icon={webhookStateIcon(state)} className="statusDotIcon" />
+                              </span>
                               <div className="mono" style={{ overflowWrap: 'anywhere' }}>
                                 {r.fullName}
                               </div>
