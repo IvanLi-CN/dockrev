@@ -422,7 +422,7 @@ fn build_supervisor_meta(
     let developer_name = parse_first_author(package_authors)
         .or_else(|| {
             if package_repository.is_some() {
-                github_owner_from_repo(&repository).map(ToString::to_string)
+                github_owner_from_repo(&repository)
             } else {
                 None
             }
@@ -473,14 +473,15 @@ fn parse_first_author(authors: Option<&str>) -> Option<String> {
     None
 }
 
-fn github_owner_from_repo(repo: &str) -> Option<&str> {
-    let trimmed = repo.trim();
-    let without_scheme = trimmed
-        .strip_prefix("https://")
-        .or_else(|| trimmed.strip_prefix("http://"))?;
-    let without_host = without_scheme.strip_prefix("github.com/")?;
+fn github_owner_from_repo(repo: &str) -> Option<String> {
+    let normalized = normalize_github_repo_url(repo)?;
+    let without_host = normalized.strip_prefix("https://github.com/")?;
     let owner = without_host.split('/').next()?.trim();
-    if owner.is_empty() { None } else { Some(owner) }
+    if owner.is_empty() {
+        None
+    } else {
+        Some(owner.to_string())
+    }
 }
 
 fn github_owner_profile_url(repo: &str) -> Option<String> {
@@ -489,15 +490,28 @@ fn github_owner_profile_url(repo: &str) -> Option<String> {
 }
 
 fn github_release_url(repo: &str, version: &str) -> Option<String> {
-    let trimmed_repo = repo.trim();
-    if !trimmed_repo.starts_with("https://github.com/") {
-        return None;
-    }
+    let normalized_repo = normalize_github_repo_url(repo)?;
     let version = version.trim();
     if version.is_empty() {
         return None;
     }
-    Some(format!("{trimmed_repo}/releases/tag/{version}"))
+    Some(format!("{normalized_repo}/releases/tag/{version}"))
+}
+
+fn normalize_github_repo_url(repo: &str) -> Option<String> {
+    let trimmed = repo.trim().trim_end_matches('/');
+    let without_scheme = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))?;
+    let without_host = without_scheme.strip_prefix("github.com/")?;
+    let without_git = without_host.strip_suffix(".git").unwrap_or(without_host);
+    let mut parts = without_git.split('/').filter(|s| !s.trim().is_empty());
+    let owner = parts.next()?.trim();
+    let name = parts.next()?.trim();
+    if owner.is_empty() || name.is_empty() {
+        return None;
+    }
+    Some(format!("https://github.com/{owner}/{name}"))
 }
 
 async fn ui_favicon() -> impl IntoResponse {
@@ -1805,6 +1819,33 @@ mod tests {
         assert_eq!(
             meta.release_url.as_deref(),
             Some("https://github.com/acme/dockrev-fork/releases/tag/9.9.9")
+        );
+    }
+
+    #[test]
+    fn build_supervisor_meta_normalizes_github_repo_release_link() {
+        let with_dot_git = build_supervisor_meta(
+            Some("1.2.3"),
+            "0.3.0",
+            Some("https://github.com/acme/dockrev-fork.git"),
+            Some("Alice"),
+            None,
+        );
+        assert_eq!(
+            with_dot_git.release_url.as_deref(),
+            Some("https://github.com/acme/dockrev-fork/releases/tag/1.2.3")
+        );
+
+        let with_trailing_slash = build_supervisor_meta(
+            Some("1.2.3"),
+            "0.3.0",
+            Some("https://github.com/acme/dockrev-fork/"),
+            Some("Alice"),
+            None,
+        );
+        assert_eq!(
+            with_trailing_slash.release_url.as_deref(),
+            Some("https://github.com/acme/dockrev-fork/releases/tag/1.2.3")
         );
     }
 
