@@ -21,7 +21,7 @@ import { navigate } from '../routes'
 import { ArrowRightIcon, Button, Mono, Pill, Switch } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
-import { serviceRowStatus } from '../updateStatus'
+import { isSemverDowngradeAnomaly, serviceRowStatus } from '../updateStatus'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { useConfirm } from '../confirm'
@@ -363,26 +363,27 @@ export function ServiceDetailPage(props: {
                         ? '架构不匹配（仅提示，不允许更新）'
                         : undefined
               }
-	              onClick={() => {
-	                void (async () => {
-			                  if (!service || !service.candidate) return
-	                    const currentDisplayTag = formatTagDisplay(
-	                      service.image.tag,
-	                      service.image.resolvedTag,
-	                      service.versionInference?.status,
-	                    )
-	                    const inferencePending = service.versionInference?.status === 'pending'
-                      const candidatePrefetchOnMount = shouldPrefetchFloatingCandidate(
-                        service.candidate.tag,
-                        service.candidate.resolvedTag ?? null,
-                        service.candidate.digest ?? null,
-                      )
-	                    const candidateDisplayTag = formatCandidateTagDisplay(
-	                      service.candidate.tag,
-	                      service.candidate.resolvedTag ?? null,
-	                      service.versionInference?.status,
-	                    )
-	                    const rawTagTrim = (service.image.tag ?? '').trim()
+              onClick={() => {
+                void (async () => {
+                  if (!service || !service.candidate) return
+                  const semverDowngradeAnomaly = isSemverDowngradeAnomaly(service)
+                  const currentDisplayTag = formatTagDisplay(
+                    service.image.tag,
+                    service.image.resolvedTag,
+                    service.versionInference?.status,
+                  )
+                  const inferencePending = service.versionInference?.status === 'pending'
+                  const candidatePrefetchOnMount = shouldPrefetchFloatingCandidate(
+                    service.candidate.tag,
+                    service.candidate.resolvedTag ?? null,
+                    service.candidate.digest ?? null,
+                  )
+                  const candidateDisplayTag = formatCandidateTagDisplay(
+                    service.candidate.tag,
+                    service.candidate.resolvedTag ?? null,
+                    service.versionInference?.status,
+                  )
+                  const rawTagTrim = (service.image.tag ?? '').trim()
                     const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
 	                  const ok = await confirm({
 	                    title: `确认更新服务 ${service.name}？`,
@@ -466,6 +467,14 @@ export function ServiceDetailPage(props: {
 	                          <div className="modalKvValue">
 	                            <Mono>{serviceRowStatus(service)}</Mono>
 	                          </div>
+                            {semverDowngradeAnomaly ? (
+                              <>
+                                <div className="modalKvLabel">版本异常</div>
+                                <div className="modalKvValue">
+                                  <Mono>⚠ 候选版本低于当前版本（仍允许手动更新）</Mono>
+                                </div>
+                              </>
+                            ) : null}
 	                          <div className="modalKvLabel">备份</div>
 	                          <div className="modalKvValue">
 	                            <Mono>inherit</Mono>
@@ -684,22 +693,21 @@ export function ServiceDetailPage(props: {
       )
     }
 
-	    const candidateDisplayTag = formatCandidateTagDisplay(
-	      service.candidate.tag,
-	      service.candidate.resolvedTag ?? null,
-	      service.versionInference?.status,
-	    )
-      const candidatePrefetchOnMount = shouldPrefetchFloatingCandidate(
-        service.candidate.tag,
-        service.candidate.resolvedTag ?? null,
-        service.candidate.digest ?? null,
-      )
-	    const archNode = service.candidate.arch.length ? (
-	      <>
-	        {' · '}arch=<Mono>{service.candidate.arch.join(',')}</Mono>
-	      </>
-	    ) : null
-
+    const candidateDisplayTag = formatCandidateTagDisplay(
+      service.candidate.tag,
+      service.candidate.resolvedTag ?? null,
+      service.versionInference?.status,
+    )
+    const candidatePrefetchOnMount = shouldPrefetchFloatingCandidate(
+      service.candidate.tag,
+      service.candidate.resolvedTag ?? null,
+      service.candidate.digest ?? null,
+    )
+    const archNode = service.candidate.arch.length ? (
+      <>
+        {' · '}arch=<Mono>{service.candidate.arch.join(',')}</Mono>
+      </>
+    ) : null
     return (
       <>
         当前: {currentNode}
@@ -732,6 +740,19 @@ export function ServiceDetailPage(props: {
     .filter((item) => item.length > 0)
   const composeEnvFileRaw = typeof stack.compose?.envFile === 'string' ? stack.compose.envFile.trim() : ''
   const composeEnvFile = composeEnvFileRaw || '-'
+  const semverDowngradeAnomaly = isSemverDowngradeAnomaly(service)
+  const anomalyCurrentTag = formatTagDisplay(
+    service.image.tag,
+    service.image.resolvedTag,
+    service.versionInference?.status,
+  )
+  const anomalyCandidateTag = service.candidate
+    ? formatCandidateTagDisplay(
+        service.candidate.tag,
+        service.candidate.resolvedTag ?? null,
+        service.versionInference?.status,
+      )
+    : '-'
 
   return (
     <div className="page">
@@ -802,6 +823,20 @@ export function ServiceDetailPage(props: {
         </div>
         <div className="svcBannerDetail">{bannerDetail}</div>
       </div>
+
+      {semverDowngradeAnomaly ? (
+        <div className="svcAnomalyAlert" role="alert">
+          <div className="svcAnomalyAlertTitle">
+            <span className="svcAnomalyAlertIcon" aria-hidden="true">
+              ⚠
+            </span>
+            <span>版本异常：候选版本低于当前版本</span>
+          </div>
+          <div className="svcAnomalyAlertText">
+            当前 <Mono>{anomalyCurrentTag}</Mono> → 候选 <Mono>{anomalyCandidateTag}</Mono>。手动更新仍可继续，请确认这是预期降级。
+          </div>
+        </div>
+      ) : null}
 
       {isDockrevService(service) && supervisorState.status === 'offline' ? (
         <div className="muted" style={{ marginTop: 10 }}>

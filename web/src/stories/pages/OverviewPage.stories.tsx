@@ -92,3 +92,14 @@ export const MultiStackMixed: Story = {
     )
   },
 }
+
+export const VersionAnomalyBatchList: Story = {
+  parameters: { dockrevApiScenario: 'service-detail-version-anomaly' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="批量更新弹窗：版本异常服务高亮与单项提示">
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}

@@ -61,27 +61,54 @@ fn emit_update_progress(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub async fn run_update_job(
-    runner: &dyn CommandRunner,
-    compose_bin: &str,
-    stack: &StackRecord,
+fn parse_strict_semver_tag(tag: &str) -> Option<Version> {
+    let trimmed = tag.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let normalized = trimmed.strip_prefix('v').unwrap_or(trimmed);
+    Version::parse(normalized).ok()
+}
+
+fn semver_baseline_for_current(svc: &crate::api::types::Service) -> Option<Version> {
+    svc.image
+        .resolved_tag
+        .as_deref()
+        .and_then(parse_strict_semver_tag)
+        .or_else(|| parse_strict_semver_tag(&svc.image.tag))
+}
+
+fn semver_baseline_for_candidate(svc: &crate::api::types::Service) -> Option<Version> {
+    let candidate = svc.candidate.as_ref()?;
+    candidate
+        .resolved_tag
+        .as_deref()
+        .and_then(parse_strict_semver_tag)
+        .or_else(|| parse_strict_semver_tag(&candidate.tag))
+}
+
+fn detect_semver_downgrade(svc: &crate::api::types::Service) -> Option<(String, String)> {
+    let current = semver_baseline_for_current(svc)?;
+    let candidate = semver_baseline_for_candidate(svc)?;
+    if candidate < current {
+        return Some((current.to_string(), candidate.to_string()));
+    }
+    None
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct UpdateServiceSelection<'a> {
+    pub services: Vec<&'a crate::api::types::Service>,
+    pub skipped_version_anomaly: Vec<serde_json::Value>,
+}
+
+pub fn select_update_services<'a>(
+    stack: &'a StackRecord,
     scope: &JobScope,
     service_id: Option<&str>,
-    mode: &str,
-    target_tag: Option<&str>,
-    target_digest: Option<&str>,
     allow_arch_mismatch: bool,
-    progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
-) -> anyhow::Result<UpdateOutcome> {
-    let compose_cfg = ComposeRunnerConfig {
-        compose_bin: compose_bin.to_string(),
-    };
-    let compose_stack = ComposeStack {
-        project_name: sanitize_project_name(&stack.name),
-        compose: stack.compose.clone(),
-    };
-
+    update_reason: &str,
+) -> UpdateServiceSelection<'a> {
     let mut services = match scope {
         JobScope::All => stack.services.iter().collect::<Vec<_>>(),
         JobScope::Stack => stack.services.iter().collect::<Vec<_>>(),
@@ -113,12 +140,73 @@ pub async fn run_update_job(
         });
     }
 
+    let mut skipped_version_anomaly: Vec<serde_json::Value> = Vec::new();
+    if !update_reason.eq_ignore_ascii_case("ui") {
+        services.retain(|svc| {
+            if let Some((current_semver, candidate_semver)) = detect_semver_downgrade(svc) {
+                skipped_version_anomaly.push(json!({
+                    "serviceId": svc.id,
+                    "serviceName": svc.name,
+                    "current": current_semver,
+                    "candidate": candidate_semver,
+                    "reason": "semver_downgrade",
+                }));
+                return false;
+            }
+            true
+        });
+    }
+
+    UpdateServiceSelection {
+        services,
+        skipped_version_anomaly,
+    }
+}
+
+fn failed_summary_with_skipped_anomaly(
+    reason: &str,
+    skipped_version_anomaly: &[serde_json::Value],
+) -> serde_json::Value {
+    json!({
+        "reason": reason,
+        "skippedVersionAnomaly": skipped_version_anomaly,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_update_job(
+    runner: &dyn CommandRunner,
+    compose_bin: &str,
+    stack: &StackRecord,
+    scope: &JobScope,
+    service_id: Option<&str>,
+    mode: &str,
+    target_tag: Option<&str>,
+    target_digest: Option<&str>,
+    allow_arch_mismatch: bool,
+    update_reason: &str,
+    progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
+) -> anyhow::Result<UpdateOutcome> {
+    let compose_cfg = ComposeRunnerConfig {
+        compose_bin: compose_bin.to_string(),
+    };
+    let compose_stack = ComposeStack {
+        project_name: sanitize_project_name(&stack.name),
+        compose: stack.compose.clone(),
+    };
+
+    let selection =
+        select_update_services(stack, scope, service_id, allow_arch_mismatch, update_reason);
+    let services = selection.services;
+    let skipped_version_anomaly = selection.skipped_version_anomaly;
+
     if mode == "dry-run" {
         return Ok(UpdateOutcome {
             status: "success".to_string(),
             summary_json: json!({
                 "mode": "dry-run",
                 "changedServices": services.len(),
+                "skippedVersionAnomaly": skipped_version_anomaly,
             }),
         });
     }
@@ -288,7 +376,10 @@ pub async fn run_update_job(
         if post_update_container_id.is_empty() {
             return Ok(UpdateOutcome {
                 status: "failed".to_string(),
-                summary_json: json!({"reason":"container_missing_after_update"}),
+                summary_json: failed_summary_with_skipped_anomaly(
+                    "container_missing_after_update",
+                    &skipped_version_anomaly,
+                ),
             });
         }
 
@@ -346,7 +437,10 @@ pub async fn run_update_job(
                 if rollback_container_id.is_empty() {
                     return Ok(UpdateOutcome {
                         status: "failed".to_string(),
-                        summary_json: json!({"reason":"container_missing_after_rollback"}),
+                        summary_json: failed_summary_with_skipped_anomaly(
+                            "container_missing_after_rollback",
+                            &skipped_version_anomaly,
+                        ),
                     });
                 }
                 active_container_id = rollback_container_id;
@@ -361,7 +455,10 @@ pub async fn run_update_job(
                 if !ok2 {
                     return Ok(UpdateOutcome {
                         status: "failed".to_string(),
-                        summary_json: json!({"reason":"rollback_failed"}),
+                        summary_json: failed_summary_with_skipped_anomaly(
+                            "rollback_failed",
+                            &skipped_version_anomaly,
+                        ),
                     });
                 }
                 rolled_back = true;
@@ -409,6 +506,7 @@ pub async fn run_update_job(
                     "newDigests": new_images,
                     "semverPulled": semver_pulled,
                     "semverPullWarnings": semver_pull_warnings,
+                    "skippedVersionAnomaly": skipped_version_anomaly,
                 }),
             });
         }
@@ -449,6 +547,7 @@ pub async fn run_update_job(
             "newDigests": new_images,
             "semverPulled": semver_pulled,
             "semverPullWarnings": semver_pull_warnings,
+            "skippedVersionAnomaly": skipped_version_anomaly,
         }),
     })
 }
@@ -1052,6 +1151,7 @@ mod tests {
             None,
             None,
             false,
+            "ui",
             None,
         )
         .await
@@ -1107,6 +1207,7 @@ mod tests {
             None,
             None,
             false,
+            "ui",
             None,
         )
         .await
@@ -1165,6 +1266,7 @@ mod tests {
             None,
             None,
             false,
+            "ui",
             Some(tx),
         )
         .await

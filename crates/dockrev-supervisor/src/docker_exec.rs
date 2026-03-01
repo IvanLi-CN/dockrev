@@ -796,10 +796,19 @@ mod tests {
     fn install_fake_docker(script_body: &str) -> anyhow::Result<(TempDir, String)> {
         let dir = TempDir::new("dockrev-supervisor-fake-docker")?;
         let docker = dir.path().join("docker");
-        std::fs::write(&docker, script_body)?;
-        let mut perms = std::fs::metadata(&docker)?.permissions();
+        let docker_tmp = dir.path().join("docker.tmp");
+
+        {
+            use std::io::Write as _;
+            let mut file = std::fs::File::create(&docker_tmp)?;
+            file.write_all(script_body.as_bytes())?;
+            file.sync_all()?;
+        }
+
+        let mut perms = std::fs::metadata(&docker_tmp)?.permissions();
         perms.set_mode(0o755);
-        std::fs::set_permissions(&docker, perms)?;
+        std::fs::set_permissions(&docker_tmp, perms)?;
+        std::fs::rename(&docker_tmp, &docker)?;
         Ok((dir, docker.to_string_lossy().to_string()))
     }
 

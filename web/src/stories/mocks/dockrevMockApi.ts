@@ -27,6 +27,7 @@ export type DockrevApiScenario =
   | 'dashboard-demo'
   | 'services-inference-pending-candidate-loading'
   | 'service-detail-compose-fallbacks'
+  | 'service-detail-version-anomaly'
   | 'guide-line-long-names'
   | 'resolved-tag-demo'
   | 'version-inference-overview'
@@ -816,6 +817,33 @@ function buildServiceDetailComposeFallbacks(): Fixture {
       envFile: null,
     }
   }
+  return f
+}
+
+function buildServiceDetailVersionAnomaly(): Fixture {
+  const f = buildDashboardDemo()
+  const stack = f.stackById['stack-prod']
+  if (!stack) return f
+
+  stack.services = stack.services.map((svc) =>
+    svc.id === 'svc-prod-api'
+      ? {
+          ...svc,
+          image: {
+            ...svc.image,
+            tag: 'latest',
+            resolvedTag: 'v0.3.1',
+          },
+          candidate: svc.candidate
+            ? {
+                ...svc.candidate,
+                tag: 'latest',
+                resolvedTag: 'v0.2.53',
+              }
+            : svc.candidate,
+        }
+      : svc
+  )
   return f
 }
 
@@ -1764,6 +1792,7 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'dashboard-demo') return buildDashboardDemo()
   if (scenario === 'services-inference-pending-candidate-loading') return buildServicesInferencePendingCandidateLoading()
   if (scenario === 'service-detail-compose-fallbacks') return buildServiceDetailComposeFallbacks()
+  if (scenario === 'service-detail-version-anomaly') return buildServiceDetailVersionAnomaly()
   if (scenario === 'guide-line-long-names') return buildGuideLineLongNames()
   if (scenario === 'resolved-tag-demo') return buildResolvedTagDemo()
   if (scenario === 'version-inference-overview') return buildVersionInferenceOverviewFixture()

@@ -1934,9 +1934,22 @@ async fn run_update_job(
 
             let mut stack_summary = serde_json::Map::new();
             stack_summary.insert("stackId".to_string(), json!(stack_id));
+            let planned_selection = updater::select_update_services(
+                &stack,
+                &req.scope,
+                req.service_id.as_deref(),
+                req.allow_arch_mismatch,
+                req.reason.as_str(),
+            );
+            let skipped_version_anomaly = planned_selection.skipped_version_anomaly.clone();
+            let no_actionable_services_after_anomaly_skip = req.mode.as_str() == "apply"
+                && !req.reason.as_str().eq_ignore_ascii_case("ui")
+                && planned_selection.services.is_empty()
+                && !skipped_version_anomaly.is_empty();
 
             let mut backup_id_for_cleanup: Option<(String, u32)> = None;
             if req.mode.as_str() == "apply"
+                && !no_actionable_services_after_anomaly_skip
                 && backup::should_run_backup(&backup_settings, req.backup_mode.as_str())
             {
                 let backup_id = ids::new_backup_id();
@@ -2054,7 +2067,9 @@ async fn run_update_job(
             } else {
                 stack_summary.insert(
                     "backup".to_string(),
-                    if req.mode.as_str() != "apply" {
+                    if no_actionable_services_after_anomaly_skip {
+                        json!({"status":"skipped","reason":"no_actionable_services_after_anomaly_skip"})
+                    } else if req.mode.as_str() != "apply" {
                         json!({"status":"skipped","reason":"dry_run"})
                     } else {
                         json!({"status":"skipped","reason":"disabled"})
@@ -2157,6 +2172,7 @@ async fn run_update_job(
                 req.target_tag.as_deref(),
                 req.target_digest.as_deref(),
                 req.allow_arch_mismatch,
+                req.reason.as_str(),
                 Some(progress_tx),
             )
             .await;
@@ -2230,7 +2246,16 @@ async fn run_update_job(
                 }
                 Err(e) => {
                     final_status = "failed".to_string();
-                    stack_summary.insert("update".to_string(), json!({"error": e.to_string()}));
+                    let mut update_summary = json!({"error": e.to_string()});
+                    if !skipped_version_anomaly.is_empty()
+                        && let Some(obj) = update_summary.as_object_mut()
+                    {
+                        obj.insert(
+                            "skippedVersionAnomaly".to_string(),
+                            serde_json::Value::Array(skipped_version_anomaly.clone()),
+                        );
+                    }
+                    stack_summary.insert("update".to_string(), update_summary);
                     stack_summaries.push(serde_json::Value::Object(stack_summary));
                     processed_stacks = processed_stacks.saturating_add(1);
                     latest_progress = make_job_progress(
