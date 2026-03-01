@@ -279,7 +279,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
           <div>仓库</div>
           <div>处理结果</div>
           <div>响应</div>
-          <div>Delivery</div>
+          <div>投递 ID</div>
         </div>
 
         {data.deliveries.length === 0 ? (
@@ -314,7 +314,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
                 {typeof delivery.responseStatus === 'number' ? `HTTP ${delivery.responseStatus}` : '-'}
               </Pill>
             </div>
-            <div className="ghcrInboxCell">
+            <div className="ghcrInboxCell ghcrInboxCellDelivery">
               <div>
                 <Mono>{delivery.deliveryId}</Mono>
               </div>
@@ -322,7 +322,9 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
                 <button type="button" className="linkButton" onClick={() => navigate({ name: 'job', jobId: delivery.jobId! })}>
                   查看任务 <Mono>{delivery.jobId}</Mono>
                 </button>
-              ) : null}
+              ) : (
+                <div className="muted">任务 -</div>
+              )}
             </div>
           </div>
         ))}
