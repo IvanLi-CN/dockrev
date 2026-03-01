@@ -1139,6 +1139,10 @@ html[data-theme='light'] .versionTagsPopover {
   color: var(--dockrev-status-icon-neutral);
 }
 
+.statusCircleIconPrimary {
+  color: var(--color-primary);
+}
+
 .statusCircleIconOk {
   color: var(--color-success);
 }
