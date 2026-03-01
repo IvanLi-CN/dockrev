@@ -115,7 +115,7 @@ This page documents every HTTP route exposed in:
 | Method | Path | Auth | Purpose | Key status codes |
 | --- | --- | --- | --- | --- |
 | GET | `/supervisor/health` | Public | Supervisor health probe | `200` |
-| GET | `/supervisor/version` | Public | Supervisor version | `200` |
+| GET | `/supervisor/version` | Public | Supervisor metadata (`version` + `repository` + `developerName` + `developerUrl`) | `200` |
 | GET | `/supervisor/self-upgrade` | Forward Header | Read self-upgrade state | `200` `401` |
 | POST | `/supervisor/self-upgrade` | Forward Header | Start self-upgrade (dry-run/apply) | `200` `400` `401` `409` |
 | POST | `/supervisor/self-upgrade/rollback` | Forward Header | Roll back operation | `200` `400` `401` |

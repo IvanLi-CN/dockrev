@@ -115,7 +115,7 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 | 方法 | 路径 | 鉴权 | 用途 | 关键状态码 |
 | --- | --- | --- | --- | --- |
 | GET | `/supervisor/health` | 公开 | Supervisor 健康探针 | `200` |
-| GET | `/supervisor/version` | 公开 | Supervisor 版本 | `200` |
+| GET | `/supervisor/version` | 公开 | Supervisor 元信息（`version` + `repository` + `developerName` + `developerUrl`） | `200` |
 | GET | `/supervisor/self-upgrade` | Forward Header | 查询当前自升级状态 | `200` `401` |
 | POST | `/supervisor/self-upgrade` | Forward Header | 发起自升级（dry-run/apply） | `200` `400` `401` `409` |
 | POST | `/supervisor/self-upgrade/rollback` | Forward Header | 回滚当前操作 | `200` `400` `401` |

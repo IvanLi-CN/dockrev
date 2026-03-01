@@ -233,6 +233,25 @@ fn stable_legacy_group_id(log: &LogLine) -> String {
     format!("legacy-{out}")
 }
 
+fn escape_html_text(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn escape_html_attr(input: &str) -> String {
+    escape_html_text(input)
+}
+
 fn build_operation_groups(logs: &[LogLine]) -> Vec<OperationLogsGroup> {
     let mut groups: Vec<OperationLogsGroup> = Vec::new();
     let mut legacy_active: Option<String> = None;
@@ -341,15 +360,158 @@ async fn health() -> impl IntoResponse {
     Json(json!({ "ok": true }))
 }
 
+const DEFAULT_REPOSITORY_URL: &str = "https://github.com/IvanLi-CN/dockrev";
+const DEFAULT_DEVELOPER_NAME: &str = "Ivan Li";
+const DEFAULT_DEVELOPER_URL: &str = "https://github.com/IvanLi-CN";
+
+#[derive(Clone, Debug)]
+struct SupervisorMeta {
+    version: String,
+    repository: String,
+    developer_name: String,
+    developer_url: String,
+    release_url: Option<String>,
+}
+
 #[derive(Serialize)]
-struct VersionResponse<'a> {
-    version: &'a str,
+#[serde(rename_all = "camelCase")]
+struct VersionResponse {
+    version: String,
+    repository: String,
+    developer_name: String,
+    developer_url: String,
 }
 
 async fn version(State(_app): State<Arc<App>>) -> impl IntoResponse {
+    let meta = supervisor_meta();
     Json(VersionResponse {
-        version: env!("CARGO_PKG_VERSION"),
+        version: meta.version,
+        repository: meta.repository,
+        developer_name: meta.developer_name,
+        developer_url: meta.developer_url,
     })
+}
+
+fn supervisor_meta() -> SupervisorMeta {
+    let app_effective_version = std::env::var("APP_EFFECTIVE_VERSION").ok();
+    build_supervisor_meta(
+        app_effective_version.as_deref(),
+        env!("CARGO_PKG_VERSION"),
+        option_env!("CARGO_PKG_REPOSITORY"),
+        option_env!("CARGO_PKG_AUTHORS"),
+        option_env!("CARGO_PKG_HOMEPAGE"),
+    )
+}
+
+fn build_supervisor_meta(
+    app_effective_version: Option<&str>,
+    package_version: &str,
+    package_repository: Option<&str>,
+    package_authors: Option<&str>,
+    package_homepage: Option<&str>,
+) -> SupervisorMeta {
+    let version = trimmed_non_empty(app_effective_version)
+        .unwrap_or(package_version)
+        .to_string();
+
+    let package_repository = trimmed_non_empty(package_repository);
+    let repository = package_repository
+        .unwrap_or(DEFAULT_REPOSITORY_URL)
+        .to_string();
+
+    let developer_name = parse_first_author(package_authors)
+        .or_else(|| {
+            if package_repository.is_some() {
+                github_owner_from_repo(&repository)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(DEFAULT_DEVELOPER_NAME.to_string());
+
+    let developer_url = trimmed_non_empty(package_homepage)
+        .map(ToString::to_string)
+        .or_else(|| {
+            if package_repository.is_some() {
+                github_owner_profile_url(&repository)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| DEFAULT_DEVELOPER_URL.to_string());
+
+    let release_url = github_release_url(&repository, &version);
+
+    SupervisorMeta {
+        version,
+        repository,
+        developer_name,
+        developer_url,
+        release_url,
+    }
+}
+
+fn trimmed_non_empty(input: Option<&str>) -> Option<&str> {
+    input.map(str::trim).filter(|s| !s.is_empty())
+}
+
+fn parse_first_author(authors: Option<&str>) -> Option<String> {
+    let raw = trimmed_non_empty(authors)?;
+    for item in raw.split(':') {
+        let candidate = item.trim();
+        if candidate.is_empty() {
+            continue;
+        }
+        let normalized = candidate
+            .split_once('<')
+            .map(|(name, _)| name.trim())
+            .unwrap_or(candidate);
+        if !normalized.is_empty() {
+            return Some(normalized.to_string());
+        }
+    }
+    None
+}
+
+fn github_owner_from_repo(repo: &str) -> Option<String> {
+    let normalized = normalize_github_repo_url(repo)?;
+    let without_host = normalized.strip_prefix("https://github.com/")?;
+    let owner = without_host.split('/').next()?.trim();
+    if owner.is_empty() {
+        None
+    } else {
+        Some(owner.to_string())
+    }
+}
+
+fn github_owner_profile_url(repo: &str) -> Option<String> {
+    let owner = github_owner_from_repo(repo)?;
+    Some(format!("https://github.com/{owner}"))
+}
+
+fn github_release_url(repo: &str, version: &str) -> Option<String> {
+    let normalized_repo = normalize_github_repo_url(repo)?;
+    let version = version.trim();
+    if version.is_empty() {
+        return None;
+    }
+    Some(format!("{normalized_repo}/releases/tag/{version}"))
+}
+
+fn normalize_github_repo_url(repo: &str) -> Option<String> {
+    let trimmed = repo.trim().trim_end_matches('/');
+    let without_scheme = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))?;
+    let without_host = without_scheme.strip_prefix("github.com/")?;
+    let without_git = without_host.strip_suffix(".git").unwrap_or(without_host);
+    let mut parts = without_git.split('/').filter(|s| !s.trim().is_empty());
+    let owner = parts.next()?.trim();
+    let name = parts.next()?.trim();
+    if owner.is_empty() || name.is_empty() {
+        return None;
+    }
+    Some(format!("https://github.com/{owner}/{name}"))
 }
 
 async fn ui_favicon() -> impl IntoResponse {
@@ -533,10 +695,31 @@ async fn ui_index(
     headers: HeaderMap,
 ) -> Result<Html<String>, ApiError> {
     let _user = require_user(&app, &headers)?;
-    Ok(Html(render_ui(&app.cfg.base_path)))
+    let meta = supervisor_meta();
+    Ok(Html(render_ui(&app.cfg.base_path, &meta)))
 }
 
-fn render_ui(base_path: &str) -> String {
+fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
+    let version_html = if let Some(release_url) = trimmed_non_empty(meta.release_url.as_deref()) {
+        format!(
+            r#"<a href="{url}" target="_blank" rel="noopener noreferrer"><code>{value}</code></a>"#,
+            url = escape_html_attr(release_url),
+            value = escape_html_text(&meta.version)
+        )
+    } else {
+        format!("<code>{}</code>", escape_html_text(&meta.version))
+    };
+    let repository_html = format!(
+        r#"<a href="{url}" target="_blank" rel="noopener noreferrer">{value}</a>"#,
+        url = escape_html_attr(&meta.repository),
+        value = escape_html_text(&meta.repository)
+    );
+    let developer_html = format!(
+        r#"<a href="{url}" target="_blank" rel="noopener noreferrer">{value}</a>"#,
+        url = escape_html_attr(&meta.developer_url),
+        value = escape_html_text(&meta.developer_name)
+    );
+
     // Minimal, dependency-free console. Uses same-origin fetch under base_path.
     format!(
         r#"<!doctype html>
@@ -575,6 +758,9 @@ fn render_ui(base_path: &str) -> String {
       .danger {{ border-color: #dc2626; background: #dc2626; color: #fff; }}
       .ok {{ color: #16a34a; }}
       .bad {{ color: #dc2626; }}
+      .metaLine {{ margin-top: 6px; display: flex; flex-wrap: wrap; gap: 8px 16px; }}
+      .metaItem {{ color: rgba(0,0,0,0.68); font-size: 12px; }}
+      .metaItem code {{ font-size: 12px; }}
     </style>
   </head>
   <body>
@@ -583,6 +769,11 @@ fn render_ui(base_path: &str) -> String {
       <h1 style="margin:0;">Dockrev 自我升级（Supervisor）</h1>
     </div>
     <div class="muted">该页面独立于 Dockrev 生命周期；Dockrev 重启期间仍可用。</div>
+    <div class="metaLine">
+      <div class="metaItem">Supervisor 版本：{version_html}</div>
+      <div class="metaItem">开源仓库：{repository_html}</div>
+      <div class="metaItem">开发者：{developer_html}</div>
+    </div>
 
     <div class="card">
       <div class="row">
@@ -889,6 +1080,9 @@ fn render_ui(base_path: &str) -> String {
   </body>
 </html>"#,
         base_path = base_path,
+        version_html = version_html,
+        repository_html = repository_html,
+        developer_html = developer_html,
         base_path_json =
             serde_json::to_string(base_path).unwrap_or_else(|_| "\"/supervisor\"".to_string())
     )
@@ -1317,9 +1511,19 @@ mod tests {
 
     #[test]
     fn render_ui_joins_logs_with_real_newlines() {
-        let html = render_ui("/supervisor");
+        let html = render_ui("/supervisor", &test_meta());
         assert!(html.contains(r".join('\n')"));
         assert!(!html.contains(r".join('\\n')"));
+    }
+
+    fn test_meta() -> SupervisorMeta {
+        build_supervisor_meta(
+            Some("0.9.0"),
+            "0.1.0",
+            Some("https://github.com/IvanLi-CN/dockrev"),
+            Some("Ivan Li"),
+            Some("https://github.com/IvanLi-CN"),
+        )
     }
 
     fn test_log(ts: &str, level: &str, msg: &str, op_id: Option<&str>) -> LogLine {
@@ -1539,7 +1743,7 @@ mod tests {
 
     #[test]
     fn render_ui_contains_operation_tabs_markup() {
-        let html = render_ui("/supervisor");
+        let html = render_ui("/supervisor", &test_meta());
         assert!(html.contains("id=\"opTabs\""));
         assert!(html.contains("id=\"tabsToggle\""));
         assert!(html.contains("latestHasNewer"));
@@ -1547,7 +1751,7 @@ mod tests {
 
     #[test]
     fn render_ui_contains_rollback_popconfirm_elements() {
-        let html = render_ui("/supervisor");
+        let html = render_ui("/supervisor", &test_meta());
         assert!(html.contains(r#"id="rollbackPop""#));
         assert!(html.contains(r#"id="rollbackConfirm""#));
         assert!(html.contains(r#"id="rollbackCancel""#));
@@ -1557,7 +1761,7 @@ mod tests {
 
     #[test]
     fn render_ui_requires_confirm_before_rollback_post() {
-        let html = render_ui("/supervisor");
+        let html = render_ui("/supervisor", &test_meta());
 
         let rollback_click_idx = html
             .find("document.getElementById('rollback').onclick = async (evt) =>")
@@ -1573,6 +1777,76 @@ mod tests {
         assert!(confirm_click_idx < rollback_post_idx);
         assert!(html.contains("st.opId !== rollbackPendingOpId"));
         assert!(html.contains("JSON.stringify({ opId: rollbackPendingOpId })"));
+    }
+
+    #[test]
+    fn render_ui_contains_supervisor_meta_links() {
+        let html = render_ui("/supervisor", &test_meta());
+        assert!(html.contains("Supervisor 版本"));
+        assert!(html.contains("开源仓库"));
+        assert!(html.contains("开发者"));
+        assert!(html.contains("releases/tag/0.9.0"));
+        assert!(html.contains("https://github.com/IvanLi-CN/dockrev"));
+        assert!(html.contains("https://github.com/IvanLi-CN"));
+    }
+
+    #[test]
+    fn build_supervisor_meta_uses_fallbacks_when_metadata_missing() {
+        let meta = build_supervisor_meta(None, "0.3.0", None, None, None);
+        assert_eq!(meta.version, "0.3.0");
+        assert_eq!(meta.repository, DEFAULT_REPOSITORY_URL);
+        assert_eq!(meta.developer_name, DEFAULT_DEVELOPER_NAME);
+        assert_eq!(meta.developer_url, DEFAULT_DEVELOPER_URL);
+        assert_eq!(
+            meta.release_url.as_deref(),
+            Some("https://github.com/IvanLi-CN/dockrev/releases/tag/0.3.0")
+        );
+    }
+
+    #[test]
+    fn build_supervisor_meta_prefers_provided_runtime_and_package_metadata() {
+        let meta = build_supervisor_meta(
+            Some("9.9.9"),
+            "0.3.0",
+            Some("https://github.com/acme/dockrev-fork"),
+            Some("Alice <alice@example.com>:Bob"),
+            Some("https://acme.example/dev"),
+        );
+        assert_eq!(meta.version, "9.9.9");
+        assert_eq!(meta.repository, "https://github.com/acme/dockrev-fork");
+        assert_eq!(meta.developer_name, "Alice");
+        assert_eq!(meta.developer_url, "https://acme.example/dev");
+        assert_eq!(
+            meta.release_url.as_deref(),
+            Some("https://github.com/acme/dockrev-fork/releases/tag/9.9.9")
+        );
+    }
+
+    #[test]
+    fn build_supervisor_meta_normalizes_github_repo_release_link() {
+        let with_dot_git = build_supervisor_meta(
+            Some("1.2.3"),
+            "0.3.0",
+            Some("https://github.com/acme/dockrev-fork.git"),
+            Some("Alice"),
+            None,
+        );
+        assert_eq!(
+            with_dot_git.release_url.as_deref(),
+            Some("https://github.com/acme/dockrev-fork/releases/tag/1.2.3")
+        );
+
+        let with_trailing_slash = build_supervisor_meta(
+            Some("1.2.3"),
+            "0.3.0",
+            Some("https://github.com/acme/dockrev-fork/"),
+            Some("Alice"),
+            None,
+        );
+        assert_eq!(
+            with_trailing_slash.release_url.as_deref(),
+            Some("https://github.com/acme/dockrev-fork/releases/tag/1.2.3")
+        );
     }
 
     #[tokio::test]
