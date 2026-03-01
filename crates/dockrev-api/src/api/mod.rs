@@ -2165,6 +2165,11 @@ async fn run_update_job(
             let update_outcome = updater::run_update_job(
                 &logging_runner,
                 &state.config.compose_bin,
+                updater::IdempotentRetryPolicy {
+                    max_attempts: state.config.update_idempotent_retry_max_attempts,
+                    base_ms: state.config.update_idempotent_retry_base_ms,
+                    max_ms: state.config.update_idempotent_retry_max_ms,
+                },
                 &stack,
                 &req.scope,
                 req.service_id.as_deref(),
@@ -2247,6 +2252,19 @@ async fn run_update_job(
                 Err(e) => {
                     final_status = "failed".to_string();
                     let mut update_summary = json!({"error": e.to_string()});
+                    if let Some(step_failure) = e.downcast_ref::<updater::UpdateStepFailure>()
+                        && let Some(obj) = update_summary.as_object_mut()
+                    {
+                        obj.insert(
+                            "failureStep".to_string(),
+                            json!(step_failure.step.clone()),
+                        );
+                        obj.insert("retry".to_string(), json!(step_failure.retry.clone()));
+                        obj.insert(
+                            "lastError".to_string(),
+                            json!(step_failure.last_error.clone()),
+                        );
+                    }
                     if !skipped_version_anomaly.is_empty()
                         && let Some(obj) = update_summary.as_object_mut()
                     {
