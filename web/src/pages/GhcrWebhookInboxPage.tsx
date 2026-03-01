@@ -332,7 +332,6 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
               ) : (
                 <div className="muted">{taskLabel(delivery.decision)}</div>
               )}
-              {delivery.jobId ? <div className="muted">状态页可查看执行细节</div> : null}
             </div>
           </div>
         ))}
