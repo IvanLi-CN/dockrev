@@ -6073,6 +6073,15 @@ services:
 
     assert_eq!(job["job"]["status"].as_str(), Some("failed"));
     let update = &job["job"]["summary"]["stacks"][0]["update"];
+    assert_eq!(update["changedServices"].as_u64(), Some(1));
+    assert_eq!(
+        update["oldDigests"][svc.id.as_str()].as_str(),
+        Some("sha256:old")
+    );
+    assert_eq!(
+        update["newDigests"][svc.id.as_str()].as_str(),
+        Some("sha256:new")
+    );
     assert_eq!(update["failureStep"].as_str(), Some("semver_pull"));
     assert_eq!(update["retry"]["attempts"].as_u64(), Some(3));
     assert_eq!(update["retry"]["maxAttempts"].as_u64(), Some(3));

@@ -61,6 +61,7 @@ pub struct UpdateStepFailure {
     pub step: String,
     pub retry: RetrySummary,
     pub last_error: String,
+    pub partial_summary: Option<serde_json::Value>,
 }
 
 impl UpdateStepFailure {
@@ -79,7 +80,13 @@ impl UpdateStepFailure {
                 max_ms: retry_policy.max_ms,
             },
             last_error: last_error.into(),
+            partial_summary: None,
         }
+    }
+
+    fn with_partial_summary(mut self, partial_summary: serde_json::Value) -> Self {
+        self.partial_summary = Some(partial_summary);
+        self
     }
 }
 
@@ -620,7 +627,23 @@ pub async fn run_update_job(
             &mut semver_pulled_set,
             &mut semver_pull_warnings,
         )
-        .await?;
+        .await
+        .map_err(|err| {
+            let partial_summary = json!({
+                "changedServices": changed,
+                "oldDigests": old_images.clone(),
+                "newDigests": new_images.clone(),
+                "semverPulled": semver_pulled.clone(),
+                "semverPullWarnings": semver_pull_warnings.clone(),
+                "skippedVersionAnomaly": skipped_version_anomaly.clone(),
+            });
+            match err.downcast::<UpdateStepFailure>() {
+                Ok(step_failure) => {
+                    anyhow::Error::new(step_failure.with_partial_summary(partial_summary))
+                }
+                Err(err) => err,
+            }
+        })?;
 
         emit_update_progress(
             progress_events.as_ref(),

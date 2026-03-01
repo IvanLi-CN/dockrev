@@ -2255,6 +2255,13 @@ async fn run_update_job(
                     if let Some(step_failure) = e.downcast_ref::<updater::UpdateStepFailure>()
                         && let Some(obj) = update_summary.as_object_mut()
                     {
+                        if let Some(partial) = step_failure.partial_summary.as_ref()
+                            && let Some(partial_obj) = partial.as_object()
+                        {
+                            for (key, value) in partial_obj {
+                                obj.entry(key.clone()).or_insert_with(|| value.clone());
+                            }
+                        }
                         obj.insert(
                             "failureStep".to_string(),
                             json!(step_failure.step.clone()),
