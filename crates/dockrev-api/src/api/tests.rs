@@ -455,6 +455,140 @@ impl CommandRunner for FailAllRunner {
     }
 }
 
+#[derive(Clone, Default)]
+struct SemverRetryFailRunner {
+    step: Arc<std::sync::Mutex<usize>>,
+}
+
+#[async_trait::async_trait]
+impl CommandRunner for SemverRetryFailRunner {
+    async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        let mut step = self.step.lock().unwrap();
+        let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
+        let out = match *step {
+            0 => {
+                assert!(args.ends_with(&["ps", "-q", "web"]));
+                CommandOutput {
+                    status: 0,
+                    stdout: "container_old\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            1 => {
+                assert_eq!(
+                    args,
+                    vec!["inspect", "--format", "{{.Image}}", "container_old"]
+                );
+                CommandOutput {
+                    status: 0,
+                    stdout: "sha256:old\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            2 => {
+                assert!(args.ends_with(&["pull", "web"]));
+                CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }
+            }
+            3 => {
+                assert!(args.ends_with(&["up", "-d", "web"]));
+                CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }
+            }
+            4 => {
+                assert!(args.ends_with(&["ps", "-q", "web"]));
+                CommandOutput {
+                    status: 0,
+                    stdout: "container_new\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            5 => {
+                assert_eq!(
+                    args,
+                    vec![
+                        "inspect",
+                        "--format",
+                        "{{if .State.Health}}1{{else}}0{{end}}",
+                        "container_new"
+                    ]
+                );
+                CommandOutput {
+                    status: 0,
+                    stdout: "0\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            6 => {
+                assert_eq!(
+                    args,
+                    vec!["inspect", "--format", "{{.Image}}", "container_new"]
+                );
+                CommandOutput {
+                    status: 0,
+                    stdout: "sha256:new\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            7 => {
+                assert_eq!(
+                    args,
+                    vec![
+                        "image",
+                        "inspect",
+                        "--format",
+                        r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
+                        "sha256:new"
+                    ]
+                );
+                CommandOutput {
+                    status: 0,
+                    stdout: "0.7.7\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            8 => {
+                assert_eq!(
+                    args,
+                    vec![
+                        "image",
+                        "inspect",
+                        "--format",
+                        "{{json .RepoTags}}",
+                        "sha256:new"
+                    ]
+                );
+                CommandOutput {
+                    status: 0,
+                    stdout: r#"["ghcr.io/acme/web:latest"]"#.to_string(),
+                    stderr: String::new(),
+                }
+            }
+            9..=11 => {
+                assert_eq!(args, vec!["pull", "ghcr.io/acme/web:0.7.7"]);
+                CommandOutput {
+                    status: 1,
+                    stdout: String::new(),
+                    stderr: "not found".to_string(),
+                }
+            }
+            _ => CommandOutput {
+                status: 1,
+                stdout: String::new(),
+                stderr: format!("unexpected step {}", *step),
+            },
+        };
+        *step += 1;
+        Ok(out)
+    }
+}
+
 #[derive(Clone)]
 struct StatefulRegistry {
     calls: Arc<std::sync::Mutex<std::collections::BTreeMap<String, u32>>>,
@@ -940,6 +1074,9 @@ async fn test_state_with(
         registry_retry_max_attempts: 3,
         registry_retry_base_ms: 250,
         registry_retry_max_ms: 2000,
+        update_idempotent_retry_max_attempts: 3,
+        update_idempotent_retry_base_ms: 300,
+        update_idempotent_retry_max_ms: 3000,
     };
 
     let db = Db::open(&config.db_path).await.unwrap();
@@ -972,6 +1109,9 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
         registry_retry_max_attempts: 3,
         registry_retry_base_ms: 250,
         registry_retry_max_ms: 2000,
+        update_idempotent_retry_max_attempts: 3,
+        update_idempotent_retry_base_ms: 300,
+        update_idempotent_retry_max_ms: 3000,
     };
 
     let db = Db::open(&config.db_path).await.unwrap();
@@ -5831,6 +5971,128 @@ services:
     assert_eq!(
         update["skippedVersionAnomaly"][0]["serviceId"].as_str(),
         Some(svc_web.id.as_str())
+    );
+}
+
+#[tokio::test]
+async fn webhook_update_failure_summary_includes_retry_details_for_idempotent_steps() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(FakeRegistry),
+        Arc::new(SemverRetryFailRunner::default()),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let svc = services.first().unwrap().clone();
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .update_service_check_result(
+            &svc.id,
+            Some("sha256:cur".to_string()),
+            Some("v0.3.1".to_string()),
+            Some(r#"["v0.3.1"]"#.to_string()),
+            Some("latest".to_string()),
+            Some("v0.3.2".to_string()),
+            Some("sha256:cand".to_string()),
+            Some("match".to_string()),
+            Some(r#"["linux/amd64"]"#.to_string()),
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let trigger = serde_json::json!({
+        "action": "update",
+        "scope": "stack",
+        "stackId": stack_id,
+        "allowArchMismatch": false,
+        "backupMode": "skip"
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/trigger")
+                .header("content-type", "application/json")
+                .header("X-Dockrev-Webhook-Secret", "secret")
+                .body(Body::from(trigger.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let job_id = triggered["jobId"].as_str().unwrap().to_string();
+
+    let job = {
+        let mut out = None;
+        for _ in 0..300 {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/api/jobs/{job_id}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), 200);
+            let job = response_json(resp).await;
+            if job["job"]["status"].as_str().unwrap() != "running" {
+                out = Some(job);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        out.expect("job did not finish in time")
+    };
+
+    assert_eq!(job["job"]["status"].as_str(), Some("failed"));
+    let update = &job["job"]["summary"]["stacks"][0]["update"];
+    assert_eq!(update["changedServices"].as_u64(), Some(1));
+    assert_eq!(
+        update["oldDigests"][svc.id.as_str()].as_str(),
+        Some("sha256:old")
+    );
+    assert_eq!(
+        update["newDigests"][svc.id.as_str()].as_str(),
+        Some("sha256:new")
+    );
+    assert_eq!(update["failureStep"].as_str(), Some("semver_pull"));
+    assert_eq!(update["retry"]["attempts"].as_u64(), Some(3));
+    assert_eq!(update["retry"]["maxAttempts"].as_u64(), Some(3));
+    assert_eq!(update["retry"]["baseMs"].as_u64(), Some(300));
+    assert_eq!(update["retry"]["maxMs"].as_u64(), Some(3000));
+    assert!(
+        update["lastError"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("status=1"),
+        "unexpected update summary: {update}"
     );
 }
 
