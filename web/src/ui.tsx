@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
+import { Icon } from '@iconify/react'
 import type { Service } from './api'
-import { noteFor, statusDotClass, statusLabel, type RowStatus } from './updateStatus'
+import { noteFor, statusDotClass, statusIcon, statusLabel, type RowStatus } from './updateStatus'
 
 export function ArrowRightIcon(props: { className?: string }) {
   return (
@@ -164,7 +165,7 @@ export function StatusRemark(props: { service: Service; status: RowStatus }) {
   return (
     <div className="statusCol">
       <div className="statusLine">
-        <span className={statusDotClass(props.status)} aria-hidden="true" />
+        <Icon icon={statusIcon(props.status)} className={statusDotClass(props.status)} aria-hidden="true" />
         <span className="label">{statusLabel(props.status)}</span>
       </div>
       {note ? (
