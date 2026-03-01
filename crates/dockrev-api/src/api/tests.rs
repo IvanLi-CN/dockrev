@@ -971,6 +971,40 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
     AppState::new(config, db, registry, runner, snapshot_worker)
 }
 
+async fn test_state_auth_required(db_path: &str) -> Arc<AppState> {
+    let config = Config {
+        app_effective_version: "0.1.0".to_string(),
+        http_addr: "127.0.0.1:0".to_string(),
+        db_path: PathBuf::from(db_path),
+        docker_config_path: None,
+        compose_bin: "docker-compose".to_string(),
+        auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
+        auth_allow_anonymous_in_dev: false,
+        self_upgrade_url: "/supervisor/".to_string(),
+        dockrev_image_repo: "ghcr.io/ivanli-cn/dockrev".to_string(),
+        webhook_secret: Some("secret".to_string()),
+        host_platform: Some("linux/amd64".to_string()),
+        discovery_interval_seconds: 60,
+        discovery_max_actions: 200,
+        runtime_scan_interval_seconds: 600,
+        ghcr_webhook_audit_interval_seconds: 86_400,
+        deploy_check_local_command_timeout_seconds: 12,
+        registry_per_host_concurrency: crate::config::FIXED_REGISTRY_PER_HOST_CONCURRENCY,
+        registry_retry_max_attempts: 3,
+        registry_retry_base_ms: 250,
+        registry_retry_max_ms: 2000,
+    };
+
+    let db = Db::open(&config.db_path).await.unwrap();
+    let registry = Arc::new(FakeRegistry);
+    let runner = Arc::new(FakeRunner);
+    let snapshot_worker = Arc::new(crate::snapshot_worker::SnapshotWorker::new(
+        db.clone(),
+        registry.clone(),
+    ));
+    AppState::new(config, db, registry, runner, snapshot_worker)
+}
+
 async fn seed_stack_from_compose(state: &Arc<AppState>, name: &str, compose_file: &str) -> String {
     let contents = std::fs::read_to_string(compose_file).unwrap();
     let parsed = compose::parse_services(&contents).unwrap();
@@ -6665,6 +6699,122 @@ async fn github_packages_webhook_overview_reports_repo_and_job_summary() {
     assert_eq!(body["jobsRunning"], 1);
     assert_eq!(body["runningJobId"].as_str(), Some(running_job_id.as_str()));
     assert_eq!(body["lastAuditAt"].as_str(), Some(audit_newer.as_str()));
+}
+
+#[tokio::test]
+async fn github_packages_webhook_deliveries_lists_desc_and_paginates() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    state
+        .db
+        .insert_github_packages_delivery_if_new(
+            "d1",
+            "2026-03-01T00:00:00Z",
+            Some("acme"),
+            Some("alpha"),
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .insert_github_packages_delivery_if_new(
+            "d2",
+            "2026-03-01T00:00:00Z",
+            Some("acme"),
+            Some("beta"),
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .insert_github_packages_delivery_if_new(
+            "d3",
+            "2026-03-02T00:00:00Z",
+            Some("acme"),
+            Some("gamma"),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries?page=1&perPage=2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["page"], 1);
+    assert_eq!(body["perPage"], 2);
+    assert_eq!(body["total"], 3);
+    assert_eq!(body["deliveries"].as_array().map(|v| v.len()), Some(2));
+    assert_eq!(body["deliveries"][0]["deliveryId"], "d3");
+    assert_eq!(body["deliveries"][0]["fullName"], "acme/gamma");
+    assert_eq!(body["deliveries"][1]["deliveryId"], "d2");
+    assert_eq!(body["deliveries"][1]["fullName"], "acme/beta");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries?page=2&perPage=2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["deliveries"].as_array().map(|v| v.len()), Some(1));
+    assert_eq!(body["deliveries"][0]["deliveryId"], "d1");
+    assert_eq!(body["deliveries"][0]["fullName"], "acme/alpha");
+}
+
+#[tokio::test]
+async fn github_packages_webhook_deliveries_returns_empty_when_no_data() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["page"], 1);
+    assert_eq!(body["perPage"], 50);
+    assert_eq!(body["total"], 0);
+    assert_eq!(body["deliveries"].as_array().map(|v| v.len()), Some(0));
+}
+
+#[tokio::test]
+async fn github_packages_webhook_deliveries_requires_auth_when_anonymous_disabled() {
+    let state = test_state_auth_required(":memory:").await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
 }
 
 #[tokio::test]

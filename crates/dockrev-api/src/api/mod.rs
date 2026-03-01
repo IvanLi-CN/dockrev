@@ -128,6 +128,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_github_packages_webhook_overview),
         )
         .route(
+            "/api/github-packages/webhook/deliveries",
+            get(list_github_packages_webhook_deliveries),
+        )
+        .route(
             "/api/github-packages/sync",
             post(sync_github_packages_webhooks),
         )
@@ -4110,6 +4114,60 @@ async fn list_github_packages_repos(
                 last_audit_at: r.last_audit_at,
                 last_op: r.last_op,
                 last_error: r.last_error,
+            })
+            .collect(),
+    }))
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListGitHubPackagesWebhookDeliveriesQuery {
+    #[serde(default)]
+    page: Option<u32>,
+    #[serde(default)]
+    per_page: Option<u32>,
+}
+
+async fn list_github_packages_webhook_deliveries(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<ListGitHubPackagesWebhookDeliveriesQuery>,
+) -> Result<Json<ListGitHubPackagesWebhookDeliveriesResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+
+    let page = q.page.unwrap_or(1).max(1);
+    let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
+
+    let total = state
+        .db
+        .count_github_packages_deliveries_total()
+        .await
+        .map_err(map_internal)?;
+    let offset = (page - 1).saturating_mul(per_page);
+    let deliveries = state
+        .db
+        .list_github_packages_deliveries_page(per_page, offset)
+        .await
+        .map_err(map_internal)?;
+
+    Ok(Json(ListGitHubPackagesWebhookDeliveriesResponse {
+        page,
+        per_page,
+        total,
+        deliveries: deliveries
+            .into_iter()
+            .map(|d| {
+                let full_name = match (&d.owner, &d.repo) {
+                    (Some(owner), Some(repo)) => Some(format!("{owner}/{repo}")),
+                    _ => None,
+                };
+                GitHubPackagesWebhookDelivery {
+                    delivery_id: d.delivery_id,
+                    received_at: d.received_at,
+                    owner: d.owner,
+                    repo: d.repo,
+                    full_name,
+                }
             })
             .collect(),
     }))

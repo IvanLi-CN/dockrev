@@ -890,6 +890,14 @@ pub struct GitHubPackagesRepoDb {
     pub updated_at: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct GitHubPackagesWebhookDeliveryDb {
+    pub delivery_id: String,
+    pub received_at: String,
+    pub owner: Option<String>,
+    pub repo: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolveGitHubPackagesTargetRequest {
@@ -1139,6 +1147,28 @@ pub struct GitHubPackagesWebhookOverviewResponse {
     pub running_job_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_audit_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubPackagesWebhookDelivery {
+    pub delivery_id: String,
+    pub received_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListGitHubPackagesWebhookDeliveriesResponse {
+    pub page: u32,
+    pub per_page: u32,
+    pub total: u32,
+    pub deliveries: Vec<GitHubPackagesWebhookDelivery>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

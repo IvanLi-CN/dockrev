@@ -10,9 +10,9 @@ use tokio_rusqlite::Connection;
 
 use crate::api::types::{
     BackupSettings, ComposeConfig, ComposeRef, DeployWelcomeSettings, GitHubPackagesRepoDb,
-    GitHubPackagesSettingsDb, GitHubPackagesTargetDb, IgnoreRule, IgnoreRuleMatch, IgnoreRuleScope,
-    JobListItem, JobLogLine, JobScope, JobType, NotificationSettings, ServiceSettings,
-    StackListItem, StackRecord, StackStatus,
+    GitHubPackagesSettingsDb, GitHubPackagesTargetDb, GitHubPackagesWebhookDeliveryDb, IgnoreRule,
+    IgnoreRuleMatch, IgnoreRuleScope, JobListItem, JobLogLine, JobScope, JobType,
+    NotificationSettings, ServiceSettings, StackListItem, StackRecord, StackStatus,
 };
 
 #[derive(Clone, Debug)]
@@ -2895,6 +2895,46 @@ WHERE selected = 1
         })
         .await
         .context("list github packages repos state summary")
+    }
+
+    pub async fn count_github_packages_deliveries_total(&self) -> anyhow::Result<u32> {
+        self.call(move |conn| {
+            Ok(conn.query_row(
+                "SELECT COUNT(*) FROM github_packages_deliveries",
+                [],
+                |row| row.get::<_, i64>(0).map(|v| v as u32),
+            )?)
+        })
+        .await
+        .context("count github packages deliveries total")
+    }
+
+    pub async fn list_github_packages_deliveries_page(
+        &self,
+        limit: u32,
+        offset: u32,
+    ) -> anyhow::Result<Vec<GitHubPackagesWebhookDeliveryDb>> {
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT delivery_id, received_at, owner, repo
+FROM github_packages_deliveries
+ORDER BY received_at DESC, delivery_id DESC
+LIMIT ?1 OFFSET ?2
+"#,
+            )?;
+            let rows = stmt.query_map(params![limit, offset], |row| {
+                Ok(GitHubPackagesWebhookDeliveryDb {
+                    delivery_id: row.get(0)?,
+                    received_at: row.get(1)?,
+                    owner: row.get(2)?,
+                    repo: row.get(3)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list github packages deliveries page")
     }
 
     pub async fn insert_github_packages_delivery_if_new(
