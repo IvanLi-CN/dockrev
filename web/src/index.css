@@ -87,6 +87,10 @@ html[data-theme='dark'] {
   --dockrev-nav-active-bg: rgba(54, 191, 250, 0.22);
   --dockrev-accent-dot: rgba(128, 225, 255, 0.88);
   --dockrev-status-icon-neutral: rgba(232, 241, 255, 0.92);
+  --dockrev-status-icon-primary: #39baff;
+  --dockrev-status-icon-ok: #34c58a;
+  --dockrev-status-icon-warn: #f3aa2c;
+  --dockrev-status-icon-bad: #f46686;
   --dockrev-guide: rgba(136, 222, 255, 0.16);
   --dockrev-icon-stroke: rgba(232, 241, 255, 0.62);
   --borderColor: rgba(156, 192, 232, 0.23);
@@ -136,6 +140,10 @@ html[data-theme='light'] {
   --dockrev-nav-active-bg: rgba(12, 121, 207, 0.12);
   --dockrev-accent-dot: rgba(12, 121, 207, 0.72);
   --dockrev-status-icon-neutral: rgba(16, 40, 66, 0.92);
+  --dockrev-status-icon-primary: #0b71be;
+  --dockrev-status-icon-ok: #0d8a48;
+  --dockrev-status-icon-warn: #b46205;
+  --dockrev-status-icon-bad: #bd1848;
   --dockrev-guide: rgba(12, 121, 207, 0.15);
   --dockrev-icon-stroke: rgba(16, 57, 99, 0.6);
   --borderColor: rgba(14, 56, 100, 0.12);

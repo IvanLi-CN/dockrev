@@ -1140,19 +1140,19 @@ html[data-theme='light'] .versionTagsPopover {
 }
 
 .statusCircleIconPrimary {
-  color: var(--color-primary);
+  color: var(--dockrev-status-icon-primary);
 }
 
 .statusCircleIconOk {
-  color: var(--color-success);
+  color: var(--dockrev-status-icon-ok);
 }
 
 .statusCircleIconWarn {
-  color: var(--color-warning);
+  color: var(--dockrev-status-icon-warn);
 }
 
 .statusCircleIconBad {
-  color: var(--color-error);
+  color: var(--dockrev-status-icon-bad);
 }
 
 .statusNote {
