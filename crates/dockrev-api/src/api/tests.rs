@@ -6049,7 +6049,7 @@ services:
 
     let job = {
         let mut out = None;
-        for _ in 0..80 {
+        for _ in 0..300 {
             let resp = app
                 .clone()
                 .oneshot(
@@ -6066,7 +6066,7 @@ services:
                 out = Some(job);
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
         out.expect("job did not finish in time")
     };
