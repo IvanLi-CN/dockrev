@@ -43,13 +43,19 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
 
   const refresh = useCallback(async () => {
     const requestId = ++refreshRequestIdRef.current
-    const next = await listGitHubPackagesWebhookDeliveries({ page, perPage })
-    if (requestId !== refreshRequestIdRef.current) return
-    setData(next)
+    setError(null)
+    try {
+      const next = await listGitHubPackagesWebhookDeliveries({ page, perPage })
+      if (requestId !== refreshRequestIdRef.current) return
+      setData(next)
+    } catch (e: unknown) {
+      if (requestId !== refreshRequestIdRef.current) return
+      setError(errorMessage(e))
+    }
   }, [page, perPage])
 
   useEffect(() => {
-    void refresh().catch((e: unknown) => setError(errorMessage(e)))
+    void refresh()
   }, [refresh])
 
   useEffect(() => {
@@ -62,8 +68,6 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
             setBusy(true)
             try {
               await refresh()
-            } catch (e: unknown) {
-              setError(errorMessage(e))
             } finally {
               setBusy(false)
             }
