@@ -62,6 +62,11 @@ export const ComposeFallbacks: Story = {
   render: render('stack-prod', 'svc-prod-api'),
 }
 
+export const VersionAnomalyUpdatable: Story = {
+  parameters: { dockrevApiScenario: 'service-detail-version-anomaly' },
+  render: render('stack-prod', 'svc-prod-api'),
+}
+
 export const Error: Story = {
   parameters: { dockrevApiScenario: 'error' },
   render: render('stack-prod', 'svc-prod-api'),

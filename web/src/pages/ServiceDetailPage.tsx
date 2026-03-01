@@ -678,12 +678,6 @@ export function ServiceDetailPage(props: {
         {' · '}arch=<Mono>{service.candidate.arch.join(',')}</Mono>
       </>
     ) : null
-    const anomalyNode = isSemverDowngradeAnomaly(service) ? (
-      <>
-        {' · '}<Mono>⚠ 版本异常（候选低于当前）</Mono>
-      </>
-    ) : null
-
     return (
       <>
         当前: {currentNode}
@@ -699,7 +693,6 @@ export function ServiceDetailPage(props: {
         </VersionTagsPopover>
         <span className="mono">{`@${shortDigest(service.candidate.digest)}`}</span>
         {archNode}
-        {anomalyNode}
       </>
     )
   }, [service])
@@ -716,6 +709,19 @@ export function ServiceDetailPage(props: {
     .filter((item) => item.length > 0)
   const composeEnvFileRaw = typeof stack.compose?.envFile === 'string' ? stack.compose.envFile.trim() : ''
   const composeEnvFile = composeEnvFileRaw || '-'
+  const semverDowngradeAnomaly = isSemverDowngradeAnomaly(service)
+  const anomalyCurrentTag = formatTagDisplay(
+    service.image.tag,
+    service.image.resolvedTag,
+    service.versionInference?.status,
+  )
+  const anomalyCandidateTag = service.candidate
+    ? formatCandidateTagDisplay(
+        service.candidate.tag,
+        service.candidate.resolvedTag ?? null,
+        service.versionInference?.status,
+      )
+    : '-'
 
   return (
     <div className="page">
@@ -786,6 +792,20 @@ export function ServiceDetailPage(props: {
         </div>
         <div className="svcBannerDetail">{bannerDetail}</div>
       </div>
+
+      {semverDowngradeAnomaly ? (
+        <div className="svcAnomalyAlert" role="alert">
+          <div className="svcAnomalyAlertTitle">
+            <span className="svcAnomalyAlertIcon" aria-hidden="true">
+              ⚠
+            </span>
+            <span>版本异常：候选版本低于当前版本</span>
+          </div>
+          <div className="svcAnomalyAlertText">
+            当前 <Mono>{anomalyCurrentTag}</Mono> → 候选 <Mono>{anomalyCandidateTag}</Mono>。手动更新仍可继续，请确认这是预期降级。
+          </div>
+        </div>
+      ) : null}
 
       {isDockrevService(service) && supervisorState.status === 'offline' ? (
         <div className="muted" style={{ marginTop: 10 }}>

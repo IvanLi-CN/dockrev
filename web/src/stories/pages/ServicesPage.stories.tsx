@@ -94,3 +94,16 @@ export const DashboardDemo: Story = {
     )
   },
 }
+
+export const VersionAnomalyBatchList: Story = {
+  parameters: { dockrevApiScenario: 'service-detail-version-anomaly' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务" pageSubtitle="批量更新弹窗：版本异常服务高亮与单项提示">
+        {({ onLastScanHint, onTopActions }) => (
+          <ServicesPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
+        )}
+      </PageHarness>
+    )
+  },
+}

@@ -151,15 +151,36 @@ export function SectionTitle(props: { children: ReactNode }) {
   return <div className="sectionTitle">{props.children}</div>
 }
 
+function splitWarningMarker(note: string): { marker: string; content: string } | null {
+  const trimmed = note.trimStart()
+  if (!trimmed.startsWith('⚠')) return null
+  const content = trimmed.slice('⚠'.length).trimStart()
+  return { marker: '⚠', content }
+}
+
 export function StatusRemark(props: { service: Service; status: RowStatus }) {
   const note = noteFor(props.service, props.status).trim()
+  const warning = splitWarningMarker(note)
   return (
     <div className="statusCol">
       <div className="statusLine">
         <span className={statusDotClass(props.status)} aria-hidden="true" />
         <span className="label">{statusLabel(props.status)}</span>
       </div>
-      {note ? <div className="muted statusNote">{note}</div> : null}
+      {note ? (
+        <div className={`muted statusNote${warning ? ' statusNoteAnomaly' : ''}`}>
+          {warning ? (
+            <>
+              <span className="statusNoteAnomalyMarker" aria-hidden="true">
+                {warning.marker}
+              </span>{' '}
+              <span>{warning.content}</span>
+            </>
+          ) : (
+            note
+          )}
+        </div>
+      ) : null}
     </div>
   )
 }

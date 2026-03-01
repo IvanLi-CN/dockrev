@@ -767,8 +767,12 @@ export function ServicesPage(props: {
                                       item.svc.versionInference?.status,
                                     )
 		                                  : null
+                                    const semverAnomaly = isSemverDowngradeAnomaly(item.svc)
 		                                return (
-		                                  <div key={item.svc.id} className="modalListItem">
+		                                  <div
+                                      key={item.svc.id}
+                                      className={semverAnomaly ? 'modalListItem modalListItemAnomaly' : 'modalListItem'}
+                                    >
 		                                    <div className="modalListLeft">
 		                                      <div className="modalListTitle">
 		                                        <span className="mono">{item.svc.name}</span>
@@ -786,6 +790,14 @@ export function ServicesPage(props: {
 		                                          </div>
 		                                        )
 		                                      })()}
+                                      {semverAnomaly ? (
+                                        <div className="modalAnomalyNote">
+                                          <span className="modalAnomalyIcon" aria-hidden="true">
+                                            ⚠
+                                          </span>
+                                          <span>版本异常：候选版本低于当前版本</span>
+                                        </div>
+                                      ) : null}
 		                                    </div>
 		                                    <div className="modalListRight">
 		                                      <div className="cellTwoLine">
