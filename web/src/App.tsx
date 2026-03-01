@@ -45,7 +45,7 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
       }
     case 'ghcr-webhook-inbox':
       return {
-        title: 'Webhook Inbox',
+        title: 'Webhook 收件箱',
         pageSubtitle: 'Webhook 触发记录列表（delivery）',
         topbarHint: '更新队列',
       }

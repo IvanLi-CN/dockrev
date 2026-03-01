@@ -1786,7 +1786,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     <option value={200}>200/页</option>
                   </select>
                   <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhook-inbox' })}>
-                    Inbox
+                    收件箱
                   </Button>
                 </div>
 

@@ -85,7 +85,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
     <div className="page">
       <div className="card">
         <div className="sectionRow">
-          <div className="title">Webhook Inbox</div>
+          <div className="title">Webhook 收件箱</div>
           <div className="chipRow" style={{ marginLeft: 'auto' }}>
             <Button variant="ghost" onClick={() => navigate({ name: 'settings' })}>
               返回设置
@@ -98,13 +98,13 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
 
         <div className="queueMeta" style={{ marginTop: 10 }}>
           <span>
-            total <Mono>{data.total}</Mono>
+            总计 <Mono>{data.total}</Mono>
           </span>
           <span>
-            page <Mono>{page}</Mono>
+            页码 <Mono>{page}</Mono>
           </span>
           <span>
-            perPage <Mono>{perPage}</Mono>
+            每页 <Mono>{perPage}</Mono>
           </span>
         </div>
 
@@ -118,10 +118,10 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
                 </div>
                 <div className="queueMeta">
                   <span>
-                    receivedAt <Mono>{formatShort(delivery.receivedAt)}</Mono>
+                    接收时间 <Mono>{formatShort(delivery.receivedAt)}</Mono>
                   </span>
                   <span>
-                    deliveryId <Mono>{delivery.deliveryId}</Mono>
+                    投递 ID <Mono>{delivery.deliveryId}</Mono>
                   </span>
                 </div>
               </div>
