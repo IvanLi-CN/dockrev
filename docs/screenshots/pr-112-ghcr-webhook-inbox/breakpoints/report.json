@@ -1,0 +1,338 @@
+[
+  {
+    "width": 1280,
+    "viewportWidth": 1280,
+    "docScrollWidth": 1280,
+    "pageOverflowX": false,
+    "toolbarOverflowX": false,
+    "buttonMetrics": [
+      {
+        "text": "搜索",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 50,
+        "clientHeight": 30,
+        "scrollWidth": 50,
+        "scrollHeight": 30
+      },
+      {
+        "text": "清除",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 50,
+        "clientHeight": 30,
+        "scrollWidth": 50,
+        "scrollHeight": 30
+      }
+    ],
+    "ok": true
+  },
+  {
+    "width": 1200,
+    "viewportWidth": 1200,
+    "docScrollWidth": 1200,
+    "pageOverflowX": false,
+    "toolbarOverflowX": false,
+    "buttonMetrics": [
+      {
+        "text": "搜索",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 50,
+        "clientHeight": 30,
+        "scrollWidth": 50,
+        "scrollHeight": 30
+      },
+      {
+        "text": "清除",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 50,
+        "clientHeight": 30,
+        "scrollWidth": 50,
+        "scrollHeight": 30
+      }
+    ],
+    "ok": true
+  },
+  {
+    "width": 1160,
+    "viewportWidth": 1160,
+    "docScrollWidth": 1160,
+    "pageOverflowX": false,
+    "toolbarOverflowX": false,
+    "buttonMetrics": [
+      {
+        "text": "搜索",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 50,
+        "clientHeight": 30,
+        "scrollWidth": 50,
+        "scrollHeight": 30
+      },
+      {
+        "text": "清除",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 50,
+        "clientHeight": 30,
+        "scrollWidth": 50,
+        "scrollHeight": 30
+      }
+    ],
+    "ok": true
+  },
+  {
+    "width": 980,
+    "viewportWidth": 980,
+    "docScrollWidth": 980,
+    "pageOverflowX": false,
+    "toolbarOverflowX": false,
+    "buttonMetrics": [
+      {
+        "text": "搜索",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 50,
+        "clientHeight": 30,
+        "scrollWidth": 50,
+        "scrollHeight": 30
+      },
+      {
+        "text": "清除",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 50,
+        "clientHeight": 30,
+        "scrollWidth": 50,
+        "scrollHeight": 30
+      }
+    ],
+    "ok": true
+  },
+  {
+    "width": 960,
+    "viewportWidth": 960,
+    "docScrollWidth": 960,
+    "pageOverflowX": false,
+    "toolbarOverflowX": false,
+    "buttonMetrics": [
+      {
+        "text": "搜索",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 50,
+        "clientHeight": 30,
+        "scrollWidth": 50,
+        "scrollHeight": 30
+      },
+      {
+        "text": "清除",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 50,
+        "clientHeight": 30,
+        "scrollWidth": 50,
+        "scrollHeight": 30
+      }
+    ],
+    "ok": true
+  },
+  {
+    "width": 900,
+    "viewportWidth": 900,
+    "docScrollWidth": 900,
+    "pageOverflowX": false,
+    "toolbarOverflowX": false,
+    "buttonMetrics": [
+      {
+        "text": "搜索",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 50,
+        "clientHeight": 30,
+        "scrollWidth": 50,
+        "scrollHeight": 30
+      },
+      {
+        "text": "清除",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 50,
+        "clientHeight": 30,
+        "scrollWidth": 50,
+        "scrollHeight": 30
+      }
+    ],
+    "ok": true
+  },
+  {
+    "width": 860,
+    "viewportWidth": 860,
+    "docScrollWidth": 860,
+    "pageOverflowX": false,
+    "toolbarOverflowX": false,
+    "buttonMetrics": [
+      {
+        "text": "搜索",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 50,
+        "clientHeight": 30,
+        "scrollWidth": 50,
+        "scrollHeight": 30
+      },
+      {
+        "text": "清除",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 50,
+        "clientHeight": 30,
+        "scrollWidth": 50,
+        "scrollHeight": 30
+      }
+    ],
+    "ok": true
+  },
+  {
+    "width": 780,
+    "viewportWidth": 780,
+    "docScrollWidth": 780,
+    "pageOverflowX": false,
+    "toolbarOverflowX": false,
+    "buttonMetrics": [
+      {
+        "text": "搜索",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 50,
+        "clientHeight": 30,
+        "scrollWidth": 50,
+        "scrollHeight": 30
+      },
+      {
+        "text": "清除",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 50,
+        "clientHeight": 30,
+        "scrollWidth": 50,
+        "scrollHeight": 30
+      }
+    ],
+    "ok": true
+  },
+  {
+    "width": 700,
+    "viewportWidth": 700,
+    "docScrollWidth": 700,
+    "pageOverflowX": false,
+    "toolbarOverflowX": false,
+    "buttonMetrics": [
+      {
+        "text": "搜索",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 320,
+        "clientHeight": 30,
+        "scrollWidth": 320,
+        "scrollHeight": 30
+      },
+      {
+        "text": "清除",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 320,
+        "clientHeight": 30,
+        "scrollWidth": 320,
+        "scrollHeight": 30
+      }
+    ],
+    "ok": true
+  },
+  {
+    "width": 650,
+    "viewportWidth": 650,
+    "docScrollWidth": 650,
+    "pageOverflowX": false,
+    "toolbarOverflowX": false,
+    "buttonMetrics": [
+      {
+        "text": "搜索",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 295,
+        "clientHeight": 30,
+        "scrollWidth": 295,
+        "scrollHeight": 30
+      },
+      {
+        "text": "清除",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 295,
+        "clientHeight": 30,
+        "scrollWidth": 295,
+        "scrollHeight": 30
+      }
+    ],
+    "ok": true
+  },
+  {
+    "width": 640,
+    "viewportWidth": 640,
+    "docScrollWidth": 640,
+    "pageOverflowX": false,
+    "toolbarOverflowX": false,
+    "buttonMetrics": [
+      {
+        "text": "搜索",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 290,
+        "clientHeight": 30,
+        "scrollWidth": 290,
+        "scrollHeight": 30
+      },
+      {
+        "text": "清除",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 290,
+        "clientHeight": 30,
+        "scrollWidth": 290,
+        "scrollHeight": 30
+      }
+    ],
+    "ok": true
+  },
+  {
+    "width": 520,
+    "viewportWidth": 520,
+    "docScrollWidth": 520,
+    "pageOverflowX": false,
+    "toolbarOverflowX": false,
+    "buttonMetrics": [
+      {
+        "text": "搜索",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 230,
+        "clientHeight": 30,
+        "scrollWidth": 230,
+        "scrollHeight": 30
+      },
+      {
+        "text": "清除",
+        "wraps": false,
+        "horizontalOverflow": false,
+        "clientWidth": 230,
+        "clientHeight": 30,
+        "scrollWidth": 230,
+        "scrollHeight": 30
+      }
+    ],
+    "ok": true
+  }
+]

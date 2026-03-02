@@ -1125,6 +1125,43 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
     AppState::new(config, db, registry, runner, snapshot_worker)
 }
 
+async fn test_state_auth_required(db_path: &str) -> Arc<AppState> {
+    let config = Config {
+        app_effective_version: "0.1.0".to_string(),
+        http_addr: "127.0.0.1:0".to_string(),
+        db_path: PathBuf::from(db_path),
+        docker_config_path: None,
+        compose_bin: "docker-compose".to_string(),
+        auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
+        auth_allow_anonymous_in_dev: false,
+        self_upgrade_url: "/supervisor/".to_string(),
+        dockrev_image_repo: "ghcr.io/ivanli-cn/dockrev".to_string(),
+        webhook_secret: Some("secret".to_string()),
+        host_platform: Some("linux/amd64".to_string()),
+        discovery_interval_seconds: 60,
+        discovery_max_actions: 200,
+        runtime_scan_interval_seconds: 600,
+        ghcr_webhook_audit_interval_seconds: 86_400,
+        deploy_check_local_command_timeout_seconds: 12,
+        registry_per_host_concurrency: crate::config::FIXED_REGISTRY_PER_HOST_CONCURRENCY,
+        registry_retry_max_attempts: 3,
+        registry_retry_base_ms: 250,
+        registry_retry_max_ms: 2000,
+        update_idempotent_retry_max_attempts: 3,
+        update_idempotent_retry_base_ms: 300,
+        update_idempotent_retry_max_ms: 3000,
+    };
+
+    let db = Db::open(&config.db_path).await.unwrap();
+    let registry = Arc::new(FakeRegistry);
+    let runner = Arc::new(FakeRunner);
+    let snapshot_worker = Arc::new(crate::snapshot_worker::SnapshotWorker::new(
+        db.clone(),
+        registry.clone(),
+    ));
+    AppState::new(config, db, registry, runner, snapshot_worker)
+}
+
 async fn seed_stack_from_compose(state: &Arc<AppState>, name: &str, compose_file: &str) -> String {
     let contents = std::fs::read_to_string(compose_file).unwrap();
     let parsed = compose::parse_services(&contents).unwrap();
@@ -6786,6 +6823,22 @@ async fn github_packages_webhook_validates_signature_and_dedupes_delivery() {
         .unwrap();
     assert_eq!(resp.status(), 401);
 
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries?decision=rejected&q=d1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["filteredTotal"], 0);
+    assert_eq!(body["deliveries"].as_array().map(|v| v.len()), Some(0));
+
     let key = hmac::Key::new(hmac::HMAC_SHA256, b"secret123");
     let tag = hmac::sign(&key, &payload_bytes);
     let sig = format!("sha256={}", hex::encode(tag.as_ref()));
@@ -6814,12 +6867,22 @@ async fn github_packages_webhook_validates_signature_and_dedupes_delivery() {
             .starts_with("dsc_")
     );
 
-    // Same delivery id should be ignored.
+    // Same delivery id should be ignored even if repo selection changed after first processing.
+    state
+        .db
+        .put_github_packages_repos(
+            &[(String::from("acme"), String::from("widgets"), false)],
+            &now,
+        )
+        .await
+        .unwrap();
+
     let key = hmac::Key::new(hmac::HMAC_SHA256, b"secret123");
     let tag = hmac::sign(&key, &payload_bytes);
     let sig = format!("sha256={}", hex::encode(tag.as_ref()));
 
     let resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -6836,6 +6899,32 @@ async fn github_packages_webhook_validates_signature_and_dedupes_delivery() {
     let body = response_json(resp).await;
     assert_eq!(body["ignored"], true);
     assert_eq!(body["reason"], "duplicate_delivery");
+    assert_eq!(body["attemptCount"], 2);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries?q=d2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["filteredTotal"], 1);
+    assert_eq!(body["deliveries"][0]["deliveryId"], "d2");
+    assert_eq!(body["deliveries"][0]["decision"], "processed");
+    assert_eq!(body["deliveries"][0]["reason"], serde_json::Value::Null);
+    assert_eq!(body["deliveries"][0]["responseStatus"], 200);
+    assert_eq!(body["deliveries"][0]["attemptCount"], 2);
+    assert!(
+        body["deliveries"][0]["jobId"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("dsc_")
+    );
 }
 
 #[tokio::test]
@@ -6871,7 +6960,7 @@ async fn github_packages_webhook_respects_disabled_setting() {
         .await
         .unwrap();
 
-    let app = api::router(state);
+    let app = api::router(state.clone());
     let payload = serde_json::json!({
       "action": "published",
       "repository": { "full_name": "acme/widgets", "owner": { "login": "acme" } }
@@ -6882,6 +6971,7 @@ async fn github_packages_webhook_respects_disabled_setting() {
     let sig = format!("sha256={}", hex::encode(tag.as_ref()));
 
     let resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -6898,6 +6988,72 @@ async fn github_packages_webhook_respects_disabled_setting() {
     let body = response_json(resp).await;
     assert_eq!(body["ignored"], true);
     assert_eq!(body["reason"], "disabled");
+    assert!(
+        !state
+            .db
+            .github_packages_delivery_exists("disabled-1")
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn github_packages_webhook_ignores_non_package_event_without_persisting() {
+    use ring::hmac;
+
+    let state = test_state(":memory:").await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .put_github_packages_settings(
+            &crate::api::types::GitHubPackagesSettingsDb {
+                enabled: true,
+                callback_url: "https://dockrev.example.com/api/webhooks/github-packages"
+                    .to_string(),
+                pat: Some("ghp_example".to_string()),
+                webhook_secret: Some("secret123".to_string()),
+                updated_at: Some(now.clone()),
+            },
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let app = api::router(state.clone());
+    let payload = serde_json::json!({ "zen": "keep it simple" });
+    let payload_bytes = payload.to_string().into_bytes();
+    let key = hmac::Key::new(hmac::HMAC_SHA256, b"secret123");
+    let tag = hmac::sign(&key, &payload_bytes);
+    let sig = format!("sha256={}", hex::encode(tag.as_ref()));
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "ping")
+                .header("X-GitHub-Delivery", "ping-1")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["ignored"], true);
+    assert_eq!(body["reason"], "not_package_event");
+    assert!(
+        !state
+            .db
+            .github_packages_delivery_exists("ping-1")
+            .await
+            .unwrap()
+    );
 }
 
 #[tokio::test]
@@ -6947,6 +7103,7 @@ async fn github_packages_webhook_matches_selected_repos_case_insensitively() {
     let sig = format!("sha256={}", hex::encode(tag.as_ref()));
 
     let resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -7293,7 +7450,212 @@ async fn github_packages_webhook_overview_reports_repo_and_job_summary() {
 }
 
 #[tokio::test]
-async fn github_packages_webhook_does_not_persist_delivery_for_unselected_repo() {
+async fn github_packages_webhook_deliveries_lists_desc_and_paginates() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    state
+        .db
+        .insert_github_packages_delivery_if_new(
+            "d1",
+            "2026-03-01T00:00:00Z",
+            Some("acme"),
+            Some("alpha"),
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .insert_github_packages_delivery_if_new(
+            "d2",
+            "2026-03-01T00:00:00Z",
+            Some("acme"),
+            Some("beta"),
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .insert_github_packages_delivery_if_new(
+            "d3",
+            "2026-03-02T00:00:00Z",
+            Some("acme"),
+            Some("gamma"),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries?page=1&perPage=2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["page"], 1);
+    assert_eq!(body["perPage"], 2);
+    assert_eq!(body["total"], 3);
+    assert_eq!(body["filteredTotal"], 3);
+    assert_eq!(body["summary"]["processed"], 3);
+    assert_eq!(body["summary"]["ignored"], 0);
+    assert_eq!(body["summary"]["rejected"], 0);
+    assert_eq!(body["deliveries"].as_array().map(|v| v.len()), Some(2));
+    assert_eq!(body["deliveries"][0]["deliveryId"], "d3");
+    assert_eq!(body["deliveries"][0]["fullName"], "acme/gamma");
+    assert_eq!(body["deliveries"][0]["decision"], "processed");
+    assert_eq!(body["deliveries"][0]["responseStatus"], 200);
+    assert_eq!(body["deliveries"][0]["attemptCount"], 1);
+    assert_eq!(body["deliveries"][1]["deliveryId"], "d2");
+    assert_eq!(body["deliveries"][1]["fullName"], "acme/beta");
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries?page=2&perPage=2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["filteredTotal"], 3);
+    assert_eq!(body["deliveries"].as_array().map(|v| v.len()), Some(1));
+    assert_eq!(body["deliveries"][0]["deliveryId"], "d1");
+    assert_eq!(body["deliveries"][0]["fullName"], "acme/alpha");
+}
+
+#[tokio::test]
+async fn github_packages_webhook_deliveries_returns_empty_when_no_data() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["page"], 1);
+    assert_eq!(body["perPage"], 50);
+    assert_eq!(body["total"], 0);
+    assert_eq!(body["filteredTotal"], 0);
+    assert_eq!(body["summary"]["processed"], 0);
+    assert_eq!(body["summary"]["ignored"], 0);
+    assert_eq!(body["summary"]["rejected"], 0);
+    assert_eq!(body["deliveries"].as_array().map(|v| v.len()), Some(0));
+}
+
+#[tokio::test]
+async fn github_packages_webhook_deliveries_supports_decision_and_query_filters() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    state
+        .db
+        .record_github_packages_delivery(crate::db::GitHubPackagesWebhookDeliveryRecordInput {
+            delivery_id: "d-ok".to_string(),
+            received_at: "2026-03-02T09:00:00Z".to_string(),
+            owner: Some("acme".to_string()),
+            repo: Some("alpha".to_string()),
+            event: Some("package".to_string()),
+            action: Some("published".to_string()),
+            decision: "processed".to_string(),
+            reason: None,
+            response_status: Some(200),
+            job_id: Some("dsc_ok".to_string()),
+        })
+        .await
+        .unwrap();
+    state
+        .db
+        .record_github_packages_delivery(crate::db::GitHubPackagesWebhookDeliveryRecordInput {
+            delivery_id: "d-ignore".to_string(),
+            received_at: "2026-03-02T10:00:00Z".to_string(),
+            owner: Some("acme".to_string()),
+            repo: Some("beta".to_string()),
+            event: Some("package".to_string()),
+            action: Some("published".to_string()),
+            decision: "ignored".to_string(),
+            reason: Some("repo_not_selected".to_string()),
+            response_status: Some(200),
+            job_id: None,
+        })
+        .await
+        .unwrap();
+    state
+        .db
+        .record_github_packages_delivery(crate::db::GitHubPackagesWebhookDeliveryRecordInput {
+            delivery_id: "d-reject".to_string(),
+            received_at: "2026-03-02T11:00:00Z".to_string(),
+            owner: None,
+            repo: None,
+            event: Some("package".to_string()),
+            action: None,
+            decision: "rejected".to_string(),
+            reason: Some("invalid_signature".to_string()),
+            response_status: Some(401),
+            job_id: None,
+        })
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries?decision=ignored&q=repo_not_selected")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["total"], 3);
+    assert_eq!(body["filteredTotal"], 1);
+    assert_eq!(body["summary"]["processed"], 1);
+    assert_eq!(body["summary"]["ignored"], 1);
+    assert_eq!(body["summary"]["rejected"], 1);
+    assert_eq!(body["deliveries"][0]["deliveryId"], "d-ignore");
+    assert_eq!(body["deliveries"][0]["decision"], "ignored");
+    assert_eq!(body["deliveries"][0]["reason"], "repo_not_selected");
+    assert_eq!(body["deliveries"][0]["responseStatus"], 200);
+}
+
+#[tokio::test]
+async fn github_packages_webhook_deliveries_requires_auth_when_anonymous_disabled() {
+    let state = test_state_auth_required(":memory:").await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+}
+
+#[tokio::test]
+async fn github_packages_webhook_persists_ignored_delivery_for_unselected_repo() {
     use ring::hmac;
 
     let state = test_state(":memory:").await;
@@ -7335,6 +7697,7 @@ async fn github_packages_webhook_does_not_persist_delivery_for_unselected_repo()
     let sig = format!("sha256={}", hex::encode(tag.as_ref()));
 
     let resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -7352,12 +7715,30 @@ async fn github_packages_webhook_does_not_persist_delivery_for_unselected_repo()
     assert_eq!(body["ignored"], true);
     assert_eq!(body["reason"], "repo_not_selected");
     assert!(
-        !state
+        state
             .db
             .github_packages_delivery_exists("unselected-1")
             .await
             .unwrap()
     );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries?decision=ignored")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["filteredTotal"], 1);
+    assert_eq!(body["deliveries"][0]["deliveryId"], "unselected-1");
+    assert_eq!(body["deliveries"][0]["decision"], "ignored");
+    assert_eq!(body["deliveries"][0]["reason"], "repo_not_selected");
+    assert_eq!(body["deliveries"][0]["responseStatus"], 200);
 }
 
 #[tokio::test]

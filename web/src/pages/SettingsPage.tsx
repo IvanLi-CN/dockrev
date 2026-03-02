@@ -1780,9 +1780,9 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     <option value={100}>100/页</option>
                     <option value={200}>200/页</option>
                   </select>
-                  <div className="muted" style={{ marginLeft: 'auto' }}>
-                    匹配 {githubPackagesTrackedRepos.filteredTotal} / 已跟踪 {githubPackagesTrackedRepos.selectedTotal}
-                  </div>
+                  <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhook-inbox' })}>
+                    收件箱
+                  </Button>
                 </div>
 
                 {githubPackagesTrackedRepos.repos.length ? (
