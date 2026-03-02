@@ -3107,6 +3107,7 @@ ON CONFLICT(delivery_id) DO UPDATE SET
         .context("record github packages delivery")
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_github_packages_delivery_outcome(
         &self,
         delivery_id: &str,

@@ -1147,6 +1147,9 @@ async fn test_state_auth_required(db_path: &str) -> Arc<AppState> {
         registry_retry_max_attempts: 3,
         registry_retry_base_ms: 250,
         registry_retry_max_ms: 2000,
+        update_idempotent_retry_max_attempts: 3,
+        update_idempotent_retry_base_ms: 300,
+        update_idempotent_retry_max_ms: 3000,
     };
 
     let db = Db::open(&config.db_path).await.unwrap();
