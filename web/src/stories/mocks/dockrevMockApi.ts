@@ -2488,6 +2488,21 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         ],
         logsLastId: 2,
       }
+      window.setTimeout(() => {
+        const live = f.jobById[jobId]
+        if (!live || (live.status !== 'queued' && live.status !== 'running')) return
+        const finishedAt = nowIso()
+        const nextLogs = [...live.logs, { ts: finishedAt, level: 'info', msg: 'Mock job finished.' }]
+        const finalJob: JobDetail = {
+          ...live,
+          status: 'success',
+          finishedAt,
+          logs: nextLogs,
+          logsLastId: nextLogs.length,
+        }
+        f.jobById[jobId] = finalJob
+        f.jobs = f.jobs.map((row) => (row.id === jobId ? { ...row, status: 'success', finishedAt } : row))
+      }, 1400)
       return json({ jobId })
     }
 

@@ -61,15 +61,30 @@ export function GitHubIcon(props: { className?: string }) {
 export function Button(props: {
   variant?: 'primary' | 'danger' | 'ghost'
   disabled?: boolean
+  loading?: boolean
   onClick?: () => void
   children: ReactNode
   title?: string
 }) {
   const variant = props.variant ?? 'ghost'
   const className = `btn ${buttonVariantClass(variant)}`
+  const disabled = props.disabled || props.loading
   return (
-    <button className={className} disabled={props.disabled} onClick={props.onClick} title={props.title}>
-      {props.children}
+    <button
+      className={className}
+      disabled={disabled}
+      onClick={props.onClick}
+      title={props.title}
+      aria-busy={props.loading ? true : undefined}
+    >
+      {props.loading ? (
+        <span className="btnInlineLoading">
+          <span className="btnInlineSpinner" aria-hidden="true" />
+          <span>{props.children}</span>
+        </span>
+      ) : (
+        props.children
+      )}
     </button>
   )
 }
