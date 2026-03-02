@@ -1,0 +1,500 @@
+import { Icon } from '@iconify/react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  deleteGitHubPackagesRepo,
+  getGitHubPackagesWebhookOverview,
+  listGitHubPackagesRepos,
+  listJobs,
+  newJobsEventsSource,
+  setGitHubPackagesRepoSelected,
+  type GitHubPackagesRepo,
+  type GitHubPackagesWebhookOverviewResponse,
+  type JobListItem,
+} from '../api'
+import { useConfirm } from '../confirm'
+import { navigate } from '../routes'
+import { Button, Chip, Mono, Pill } from '../ui'
+import { webhookStateDotClass, webhookStateIcon } from '../webhookStatus'
+
+type RepoStateFilter = 'all' | 'ok' | 'missing' | 'error' | 'conflict' | 'queued' | 'running' | 'unknown'
+
+const REPO_FETCH_PER_PAGE = 200
+
+function errorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message
+  return String(e)
+}
+
+function normalizeWebhookState(raw: string | null | undefined): string {
+  const state = (raw ?? '').trim().toLowerCase()
+  return state || 'unknown'
+}
+
+function webhookStateLabel(state: string): string {
+  if (state === 'queued') return '排队中'
+  if (state === 'running') return '运行中'
+  if (state === 'ok') return '已注册'
+  if (state === 'missing') return '缺失'
+  if (state === 'error') return '失败'
+  if (state === 'conflict') return '冲突'
+  return '未知'
+}
+
+function webhookStateTone(state: string): 'ok' | 'warn' | 'bad' | 'muted' {
+  if (state === 'ok') return 'ok'
+  if (state === 'queued' || state === 'running' || state === 'missing') return 'warn'
+  if (state === 'error' || state === 'conflict') return 'bad'
+  return 'muted'
+}
+
+function formatShort(ts?: string | null): string {
+  if (!ts) return '-'
+  const d = new Date(ts)
+  if (Number.isNaN(d.valueOf())) return ts
+  return d.toLocaleString()
+}
+
+async function listAllTrackedRepos(): Promise<GitHubPackagesRepo[]> {
+  const rows: GitHubPackagesRepo[] = []
+  let page = 1
+  let guard = 0
+
+  while (guard < 100) {
+    guard += 1
+    const resp = await listGitHubPackagesRepos({
+      page,
+      perPage: REPO_FETCH_PER_PAGE,
+      selectedFilter: 'selected',
+    })
+    rows.push(...resp.repos)
+
+    const maxPage = Math.max(1, Math.ceil(resp.filteredTotal / resp.perPage))
+    if (resp.page >= maxPage) break
+    page = resp.page + 1
+  }
+
+  return rows
+}
+
+export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.ReactNode) => void }) {
+  const { onTopActions } = props
+  const confirm = useConfirm()
+  const [overview, setOverview] = useState<GitHubPackagesWebhookOverviewResponse | null>(null)
+  const [repos, setRepos] = useState<GitHubPackagesRepo[]>([])
+  const [jobs, setJobs] = useState<JobListItem[]>([])
+  const [filter, setFilter] = useState<RepoStateFilter>('all')
+  const [queryInput, setQueryInput] = useState('')
+  const [query, setQuery] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const refreshRequestIdRef = useRef(0)
+
+  const refresh = useCallback(async () => {
+    const requestId = ++refreshRequestIdRef.current
+    setError(null)
+    try {
+      const [nextOverview, allRepos, allJobs] = await Promise.all([
+        getGitHubPackagesWebhookOverview(),
+        listAllTrackedRepos(),
+        listJobs(),
+      ])
+      if (requestId !== refreshRequestIdRef.current) return
+      setOverview(nextOverview)
+      setRepos(allRepos)
+      setJobs(allJobs.filter((job) => job.type === 'github_packages_webhook'))
+    } catch (e: unknown) {
+      if (requestId !== refreshRequestIdRef.current) return
+      setError(errorMessage(e))
+    }
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+
+  useEffect(() => {
+    let closed = false
+    let es: EventSource | null = null
+    let refreshTimer: number | null = null
+    let pollTimer: number | null = null
+
+    const scheduleRefresh = (delayMs: number) => {
+      if (refreshTimer != null) return
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = null
+        void refresh()
+      }, delayMs)
+    }
+
+    const startPolling = () => {
+      if (pollTimer != null) return
+      pollTimer = window.setInterval(() => {
+        void refresh()
+      }, 10_000)
+    }
+
+    const connect = () => {
+      if (closed) return
+      es = newJobsEventsSource()
+      es.addEventListener('open', () => scheduleRefresh(0))
+      es.addEventListener('job_event', () => scheduleRefresh(250))
+      es.addEventListener('job_events_error', () => scheduleRefresh(0))
+      es.onerror = () => {
+        scheduleRefresh(0)
+      }
+    }
+
+    connect()
+    startPolling()
+
+    return () => {
+      closed = true
+      if (refreshTimer != null) window.clearTimeout(refreshTimer)
+      if (pollTimer != null) window.clearInterval(pollTimer)
+      es?.close()
+    }
+  }, [refresh])
+
+  useEffect(() => {
+    onTopActions(
+      <Button
+        variant="ghost"
+        disabled={busy}
+        onClick={() => {
+          void (async () => {
+            setBusy(true)
+            setError(null)
+            try {
+              await refresh()
+            } catch (e: unknown) {
+              setError(errorMessage(e))
+            } finally {
+              setBusy(false)
+            }
+          })()
+        }}
+      >
+        刷新
+      </Button>,
+    )
+  }, [busy, onTopActions, refresh])
+
+  const summary = useMemo(() => {
+    const fallback = {
+      tracked: repos.length,
+      ok: 0,
+      missing: 0,
+      error: 0,
+      conflict: 0,
+      queued: 0,
+      running: 0,
+      unknown: 0,
+    }
+    for (const repo of repos) {
+      const state = normalizeWebhookState(repo.webhookState)
+      if (state === 'ok') fallback.ok += 1
+      else if (state === 'missing') fallback.missing += 1
+      else if (state === 'error') fallback.error += 1
+      else if (state === 'conflict') fallback.conflict += 1
+      else if (state === 'queued') fallback.queued += 1
+      else if (state === 'running') fallback.running += 1
+      else fallback.unknown += 1
+    }
+    return overview?.summary ?? fallback
+  }, [overview?.summary, repos])
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return repos.filter((repo) => {
+      const state = normalizeWebhookState(repo.webhookState)
+      if (filter !== 'all' && state !== filter) return false
+      if (!q) return true
+      return (
+        repo.fullName.toLowerCase().includes(q) ||
+        state.includes(q) ||
+        (repo.lastError ?? '').toLowerCase().includes(q) ||
+        String(repo.hookId ?? '').includes(q)
+      )
+    })
+  }, [filter, query, repos])
+
+  const runningJob = useMemo(() => jobs.find((job) => job.status === 'running') ?? null, [jobs])
+
+  const filterItems = useMemo(
+    () => [
+      { key: 'all', label: '全部', count: repos.length },
+      { key: 'ok', label: '已注册', count: summary.ok },
+      { key: 'missing', label: '缺失', count: summary.missing },
+      { key: 'error', label: '失败', count: summary.error },
+      { key: 'conflict', label: '冲突', count: summary.conflict },
+      { key: 'queued', label: '排队中', count: summary.queued },
+      { key: 'running', label: '运行中', count: summary.running },
+      { key: 'unknown', label: '未知', count: summary.unknown },
+    ],
+    [repos.length, summary.conflict, summary.error, summary.missing, summary.ok, summary.queued, summary.running, summary.unknown],
+  )
+
+  return (
+    <div className="page ghcrRegistryPage">
+      <div className="ghcrRegistrySummaryGrid">
+        <div className="ghcrRegistrySummaryItem">
+          <div className="muted">Tracked Repos</div>
+          <div className="ghcrRegistrySummaryValue">
+            <Mono>{summary.tracked}</Mono>
+          </div>
+        </div>
+        <div className="ghcrRegistrySummaryItem">
+          <div className="muted">Webhook 状态</div>
+          <div className="ghcrRegistrySummaryValue">
+            <Mono>
+              ok {summary.ok} · missing {summary.missing} · error {summary.error} · conflict {summary.conflict}
+            </Mono>
+          </div>
+        </div>
+        <div className="ghcrRegistrySummaryItem">
+          <div className="muted">Job 状态</div>
+          <div className="ghcrRegistrySummaryValue">
+            <Mono>
+              queued {overview?.jobsQueued ?? 0} · running {overview?.jobsRunning ?? 0}
+            </Mono>
+          </div>
+        </div>
+        <div className="ghcrRegistrySummaryItem">
+          <div className="muted">Last Audit</div>
+          <div className="ghcrRegistrySummaryValue">
+            <Mono>{formatShort(overview?.lastAuditAt)}</Mono>
+          </div>
+        </div>
+      </div>
+
+      <div className="ghcrRegistryToolbar">
+        <div className="chipRow">
+          {filterItems.map((it) => (
+            <Chip
+              key={it.key}
+              active={filter === it.key}
+              onClick={() => setFilter(it.key as RepoStateFilter)}
+              title={`${it.label}: ${it.count}`}
+            >
+              <span>{it.label}</span>
+              <span className="chipCount">{it.count}</span>
+            </Chip>
+          ))}
+        </div>
+
+        <div className="ghcrRegistrySearchForm">
+          <input
+            className="input"
+            value={queryInput}
+            onChange={(event) => setQueryInput(event.target.value)}
+            placeholder="搜索 owner/repo、状态、hookId、错误信息"
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter') return
+              event.preventDefault()
+              setQuery(queryInput.trim())
+            }}
+          />
+          <Button variant="ghost" onClick={() => setQuery(queryInput.trim())}>
+            搜索
+          </Button>
+          <Button
+            variant="ghost"
+            disabled={!query && !queryInput}
+            onClick={() => {
+              setQueryInput('')
+              setQuery('')
+            }}
+          >
+            清除
+          </Button>
+        </div>
+
+        <div className="chipRow" style={{ marginLeft: 'auto' }}>
+          <Button variant="ghost" onClick={() => navigate({ name: 'settings' })}>
+            返回设置
+          </Button>
+          <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhooks' })}>
+            队列视图
+          </Button>
+          <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhook-inbox' })}>
+            收件箱
+          </Button>
+        </div>
+      </div>
+
+      {runningJob ? (
+        <div className="muted">
+          当前运行任务：<Mono>{runningJob.id}</Mono>
+          {runningJob.progress?.message ? ` · ${runningJob.progress.message}` : ''}
+        </div>
+      ) : null}
+
+      <div className="ghcrRegistryList">
+        {filtered.length === 0 ? (
+          <div className="ghcrRegistryEmpty muted">{query || filter !== 'all' ? '当前筛选条件下无仓库' : '暂无已跟踪仓库'}</div>
+        ) : null}
+
+        {filtered.map((repo) => {
+          const state = normalizeWebhookState(repo.webhookState)
+          const dotClass = webhookStateDotClass(state)
+          const isInFlight = state === 'queued' || state === 'running'
+          const isUnregisterInFlight = isInFlight && (repo.lastOp ?? '') === 'unregister'
+          const showRetryDelete = state === 'error' && (repo.lastOp ?? '') === 'unregister'
+          const showRetryRegister = state === 'missing' || state === 'conflict' || (state === 'error' && !showRetryDelete)
+
+          return (
+            <div key={repo.fullName} className="ghcrRegistryRow">
+              <div className="ghcrRegistryMain">
+                <div className="ghcrRegistryTitle">
+                  <Icon icon={webhookStateIcon(state)} className={dotClass} aria-hidden="true" />
+                  <Mono>{repo.fullName}</Mono>
+                  <Pill tone={webhookStateTone(state)}>{webhookStateLabel(state)}</Pill>
+                </div>
+                <div className="ghcrRegistryMeta">
+                  <span>
+                    hookId <Mono>{repo.hookId != null ? String(repo.hookId) : '-'}</Mono>
+                  </span>
+                  <span>
+                    lastOp <Mono>{repo.lastOp ?? '-'}</Mono>
+                  </span>
+                  <span>
+                    lastSyncAt <Mono>{formatShort(repo.lastSyncAt)}</Mono>
+                  </span>
+                  <span>
+                    lastAuditAt <Mono>{formatShort(repo.lastAuditAt)}</Mono>
+                  </span>
+                </div>
+                {repo.lastError ? (
+                  <div className="ghcrRegistryError">
+                    lastError <Mono>{repo.lastError}</Mono>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="ghcrRegistryActions">
+                {repo.webhookJobId ? (
+                  <Button variant="ghost" onClick={() => navigate({ name: 'job', jobId: repo.webhookJobId! })}>
+                    查看任务
+                  </Button>
+                ) : null}
+
+                {showRetryRegister ? (
+                  <Button
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => {
+                      void (async () => {
+                        setBusy(true)
+                        setError(null)
+                        try {
+                          await setGitHubPackagesRepoSelected({ fullName: repo.fullName, selected: true })
+                          await refresh()
+                        } catch (e: unknown) {
+                          setError(errorMessage(e))
+                        } finally {
+                          setBusy(false)
+                        }
+                      })()
+                    }}
+                  >
+                    重新注册
+                  </Button>
+                ) : null}
+
+                {showRetryDelete ? (
+                  <Button
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => {
+                      void (async () => {
+                        setBusy(true)
+                        setError(null)
+                        try {
+                          await deleteGitHubPackagesRepo({ fullName: repo.fullName })
+                          await refresh()
+                        } catch (e: unknown) {
+                          setError(errorMessage(e))
+                        } finally {
+                          setBusy(false)
+                        }
+                      })()
+                    }}
+                  >
+                    重试删除
+                  </Button>
+                ) : null}
+
+                <Button
+                  variant="danger"
+                  disabled={busy || isUnregisterInFlight}
+                  onClick={() => {
+                    void (async () => {
+                      const pass1 = await confirm({
+                        title: '删除跟踪仓库（步骤 1/2）',
+                        body: (
+                          <div>
+                            <div className="modalLead">将为该仓库创建反注册任务，完成后才会真正移除：</div>
+                            <div className="modalKvGrid">
+                              <div className="modalKvLabel">Repo</div>
+                              <div className="modalKvValue">
+                                <Mono>{repo.fullName}</Mono>
+                              </div>
+                            </div>
+                          </div>
+                        ),
+                        confirmText: '继续',
+                        cancelText: '取消',
+                        confirmVariant: 'danger',
+                        badgeText: '高影响',
+                        badgeTone: 'bad',
+                      })
+                      if (!pass1) return
+
+                      const pass2 = await confirm({
+                        title: '最终确认删除（步骤 2/2）',
+                        body: (
+                          <div>
+                            <div className="modalLead">请再次确认删除该仓库 webhook 跟踪：</div>
+                            <div className="modalKvGrid">
+                              <div className="modalKvLabel">Repo</div>
+                              <div className="modalKvValue">
+                                <Mono>{repo.fullName}</Mono>
+                              </div>
+                              <div className="modalKvLabel">行为</div>
+                              <div className="modalKvValue">先反注册 webhook，成功后移除记录</div>
+                            </div>
+                          </div>
+                        ),
+                        confirmText: '确认删除',
+                        cancelText: '取消',
+                        confirmVariant: 'danger',
+                        badgeText: '将删除 webhook',
+                        badgeTone: 'bad',
+                      })
+                      if (!pass2) return
+
+                      setBusy(true)
+                      setError(null)
+                      try {
+                        await deleteGitHubPackagesRepo({ fullName: repo.fullName })
+                        await refresh()
+                      } catch (e: unknown) {
+                        setError(errorMessage(e))
+                      } finally {
+                        setBusy(false)
+                      }
+                    })()
+                  }}
+                >
+                  删除
+                </Button>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {error ? <div className="error">{error}</div> : null}
+    </div>
+  )
+}

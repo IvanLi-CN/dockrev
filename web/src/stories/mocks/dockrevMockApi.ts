@@ -1728,9 +1728,50 @@ function buildSettingsConfigured(): Fixture {
     webPush: { enabled: true, vapidPublicKey: 'BBOG...mock', vapidPrivateKey: null, vapidSubject: 'mailto:ops@example.com' },
   }
   const repos: GitHubPackagesRepo[] = [
-    { fullName: 'IvanLi-CN/dockrev', selected: true, hookId: 1234567, lastSyncAt: nowIso(-60_000), lastError: null },
-    { fullName: 'IvanLi-CN/dockrev-supervisor', selected: true, hookId: null, lastSyncAt: null, lastError: null },
-    { fullName: 'IvanLi-CN/example-private', selected: true, hookId: null, lastSyncAt: null, lastError: 'permission denied (mock)' },
+    {
+      fullName: 'IvanLi-CN/dockrev',
+      selected: true,
+      webhookState: 'ok',
+      webhookJobId: null,
+      hookId: 1234567,
+      lastSyncAt: nowIso(-60_000),
+      lastAuditAt: nowIso(-1_800_000),
+      lastOp: 'register',
+      lastError: null,
+    },
+    {
+      fullName: 'IvanLi-CN/dockrev-supervisor',
+      selected: true,
+      webhookState: 'missing',
+      webhookJobId: null,
+      hookId: null,
+      lastSyncAt: null,
+      lastAuditAt: nowIso(-2_100_000),
+      lastOp: 'audit_all',
+      lastError: 'webhook not found on GitHub (mock)',
+    },
+    {
+      fullName: 'IvanLi-CN/example-private',
+      selected: true,
+      webhookState: 'error',
+      webhookJobId: null,
+      hookId: null,
+      lastSyncAt: null,
+      lastAuditAt: nowIso(-2_400_000),
+      lastOp: 'register',
+      lastError: 'permission denied (mock)',
+    },
+    {
+      fullName: 'IvanLi-CN/webhook-conflict-demo',
+      selected: true,
+      webhookState: 'conflict',
+      webhookJobId: null,
+      hookId: null,
+      lastSyncAt: null,
+      lastAuditAt: nowIso(-1_500_000),
+      lastOp: 'audit_all',
+      lastError: 'multiple matching webhooks found (mock)',
+    },
   ]
   for (let i = 1; i <= 240; i++) {
     repos.push({

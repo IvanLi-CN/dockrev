@@ -3,7 +3,6 @@ import { Icon } from '@iconify/react'
 import {
   ApiError,
   createWebPushSubscription,
-  deleteGitHubPackagesRepo,
   deleteWebPushSubscription,
   getGitHubPackagesSettings,
   listJobs,
@@ -25,7 +24,7 @@ import {
   type NotificationConfig,
   type SettingsResponse,
 } from '../api'
-import { Button, IconButton, Mono, Switch, TrashIcon } from '../ui'
+import { Button, Mono, Switch } from '../ui'
 import { useConfirm } from '../confirm'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
@@ -72,6 +71,7 @@ const SAVE_SCOPE_ORDER: SaveScope[] = ['backup', 'notifications', 'ghcr']
 const TEXT_DEBOUNCE_MS = 400
 const TOGGLE_DEBOUNCE_MS = 120
 const PAT_MASK = '******'
+const GHCR_PREVIEW_LIMIT = 6
 const GITHUB_PAT_PREFIXES = ['ghp_', 'github_pat_', 'gho_', 'ghu_', 'ghs_', 'ghr_']
 
 type GhcrDraft = {
@@ -503,10 +503,6 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   const [githubPackagesNewRepo, setGitHubPackagesNewRepo] = useState('')
   const [githubPackagesTrackedRepos, setGitHubPackagesTrackedRepos] = useState<ListGitHubPackagesReposResponse | null>(null)
   const [ghcrLiveJob, setGhcrLiveJob] = useState<JobListItem | null>(null)
-  const [githubPackagesTrackedReposPage, setGitHubPackagesTrackedReposPage] = useState(1)
-  const [githubPackagesTrackedReposPerPage, setGitHubPackagesTrackedReposPerPage] = useState(50)
-  const [githubPackagesTrackedReposQInput, setGitHubPackagesTrackedReposQInput] = useState('')
-  const [githubPackagesTrackedReposQ, setGitHubPackagesTrackedReposQ] = useState('')
   const [ghcrResolvePending, setGhcrResolvePending] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -557,15 +553,6 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
         }
       : null
   }, [githubPackages, githubPackagesPat])
-
-  useEffect(() => {
-    // Debounce to avoid firing requests on every keystroke in the filter.
-    const handle = window.setTimeout(() => {
-      setGitHubPackagesTrackedReposPage(1)
-      setGitHubPackagesTrackedReposQ(githubPackagesTrackedReposQInput)
-    }, 250)
-    return () => window.clearTimeout(handle)
-  }, [githubPackagesTrackedReposQInput])
 
   const syncQueuedScopesState = useCallback(() => {
     setAutoSaveQueuedScopes([...queueRef.current])
@@ -863,32 +850,21 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     [syncQueuedScopesState],
   )
 
-  const refreshTrackedRepos = useCallback(
-    async (opts?: { page?: number; perPage?: number; q?: string }) => {
-      const page = opts?.page ?? githubPackagesTrackedReposPage
-      const perPage = opts?.perPage ?? githubPackagesTrackedReposPerPage
-      const q = (opts?.q ?? githubPackagesTrackedReposQ).trim()
-      const [resp, jobs] = await Promise.all([
-        listGitHubPackagesRepos({
-          page,
-          perPage,
-          q: q ? q : null,
-          selectedFilter: 'selected',
-        }),
-        listJobs(),
-      ])
-      setGitHubPackagesTrackedRepos(resp)
-      const liveJob =
-        jobs.find((job) => job.type === 'github_packages_webhook' && (job.status === 'running' || job.status === 'queued')) ??
-        null
-      setGhcrLiveJob(liveJob)
-
-      // If a deletion makes the current page out-of-range, clamp to the last page.
-      const maxPage = Math.max(1, Math.ceil(resp.filteredTotal / resp.perPage))
-      if (resp.page > maxPage) setGitHubPackagesTrackedReposPage(maxPage)
-    },
-    [githubPackagesTrackedReposPage, githubPackagesTrackedReposPerPage, githubPackagesTrackedReposQ],
-  )
+  const refreshTrackedRepos = useCallback(async () => {
+    const [resp, jobs] = await Promise.all([
+      listGitHubPackagesRepos({
+        page: 1,
+        perPage: GHCR_PREVIEW_LIMIT,
+        selectedFilter: 'selected',
+      }),
+      listJobs(),
+    ])
+    setGitHubPackagesTrackedRepos(resp)
+    const liveJob =
+      jobs.find((job) => job.type === 'github_packages_webhook' && (job.status === 'running' || job.status === 'queued')) ??
+      null
+    setGhcrLiveJob(liveJob)
+  }, [])
 
   const refresh = useCallback(async () => {
     setError(null)
@@ -1151,10 +1127,6 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   if (!settings || !notifications || !githubPackages) {
     return <div className="muted">加载中…</div>
   }
-
-  const githubPackagesTrackedMaxPage = githubPackagesTrackedRepos
-    ? Math.max(1, Math.ceil(githubPackagesTrackedRepos.filteredTotal / githubPackagesTrackedRepos.perPage))
-    : 1
 
   const autoSaveStatusText =
     autoSavePhase === 'saving'
@@ -1607,12 +1579,12 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
           <div className="card">
           <div className="title">GitHub Packages（GHCR）Webhook</div>
           <div className="muted">在 GHCR 发布新版本时自动触发 Dockrev 扫描（事件：package.published）</div>
-          <div className="muted">添加后会自动创建后台任务注册 webhook；可在更新队列 / GHCR Webhook 页面查看进度。</div>
+          <div className="muted">添加后会自动创建后台任务注册 webhook；可在 GHCR 维护页查看状态并执行删除/重试。</div>
           {ghcrLiveProgressText ? (
             <div className="muted" style={{ marginTop: 8, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
               <span>当前 GHCR 任务：{ghcrLiveProgressText}</span>
-              <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhooks' })}>
-                打开 GHCR Webhook 页面
+              <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhook-registry' })}>
+                打开 GHCR 维护页
               </Button>
             </div>
           ) : null}
@@ -1757,29 +1729,17 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             {githubPackagesTrackedRepos ? (
               <div style={{ marginTop: 10 }}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
-                  <input
-                    className="input"
-                    value={githubPackagesTrackedReposQInput}
-                    onChange={(e) => setGitHubPackagesTrackedReposQInput(e.target.value)}
-                    placeholder="搜索 owner/repo"
-                    disabled={busy}
-                    style={{ flex: '1 1 260px', minWidth: 220 }}
-                  />
-                  <select
-                    className="select"
-                    value={githubPackagesTrackedReposPerPage}
-                    disabled={busy}
-                    onChange={(e) => {
-                      const next = Math.max(1, Number(e.target.value) || 50)
-                      setGitHubPackagesTrackedReposPerPage(next)
-                      setGitHubPackagesTrackedReposPage(1)
-                    }}
-                  >
-                    <option value={20}>20/页</option>
-                    <option value={50}>50/页</option>
-                    <option value={100}>100/页</option>
-                    <option value={200}>200/页</option>
-                  </select>
+                  <div className="muted">
+                    预览 {githubPackagesTrackedRepos.repos.length} / {githubPackagesTrackedRepos.filteredTotal}
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, marginLeft: 'auto' }}>
+                    <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhook-registry' })}>
+                      查看更多
+                      {githubPackagesTrackedRepos.filteredTotal > githubPackagesTrackedRepos.repos.length
+                        ? `（+${githubPackagesTrackedRepos.filteredTotal - githubPackagesTrackedRepos.repos.length}）`
+                        : ''}
+                    </Button>
+                  </div>
                   <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhook-inbox' })}>
                     收件箱
                   </Button>
@@ -1804,11 +1764,6 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                       const lastSync = r.lastSyncAt ? r.lastSyncAt : '-'
                       const lastAudit = r.lastAuditAt ? r.lastAuditAt : '-'
                       const hookId = r.hookId ? String(r.hookId) : '-'
-                      const isInFlight = state === 'queued' || state === 'running'
-                      const isUnregisterInFlight = isInFlight && (r.lastOp ?? '') === 'unregister'
-                      const showRetryDelete = state === 'error' && (r.lastOp ?? '') === 'unregister'
-                      const showRetryRegister =
-                        state === 'missing' || state === 'conflict' || (state === 'error' && !showRetryDelete)
                       return (
                         <div
                           key={r.fullName}
@@ -1838,103 +1793,6 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                               </div>
                             ) : null}
                           </div>
-
-                          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flex: '0 0 auto' }}>
-                            {isInFlight && r.webhookJobId ? (
-                              <Button variant="ghost" onClick={() => navigate({ name: 'job', jobId: r.webhookJobId! })}>
-                                查看任务
-                              </Button>
-                            ) : null}
-
-                            {showRetryRegister ? (
-                              <Button
-                                variant="ghost"
-                                disabled={busy}
-                                onClick={() => {
-                                  void (async () => {
-                                    setBusy(true)
-                                    setError(null)
-                                    try {
-                                      await flushAutoSave(['ghcr'])
-                                      await setGitHubPackagesRepoSelected({ fullName: r.fullName, selected: true })
-                                      await refreshTrackedRepos()
-                                    } catch (e: unknown) {
-                                      setError(errorMessage(e))
-                                    } finally {
-                                      setBusy(false)
-                                    }
-                                  })()
-                                }}
-                              >
-                                重试注册
-                              </Button>
-                            ) : null}
-
-                            {showRetryDelete ? (
-                              <Button
-                                variant="ghost"
-                                disabled={busy}
-                                onClick={() => {
-                                  void (async () => {
-                                    setBusy(true)
-                                    setError(null)
-                                    try {
-                                      await deleteGitHubPackagesRepo({ fullName: r.fullName })
-                                      await refreshTrackedRepos()
-                                    } catch (e: unknown) {
-                                      setError(errorMessage(e))
-                                    } finally {
-                                      setBusy(false)
-                                    }
-                                  })()
-                                }}
-                              >
-                                重试删除
-                              </Button>
-                            ) : null}
-
-                            <IconButton
-                              variant="danger"
-                              title="删除"
-                              disabled={busy || isUnregisterInFlight}
-                              onClick={() => {
-                                void (async () => {
-                                  const ok = await confirm({
-                                    title: '删除跟踪仓库',
-                                    body: (
-                                      <div>
-                                        <div className="modalLead">将反注册 webhook，并从列表中移除该仓库：</div>
-                                        <div className="modalKvGrid">
-                                          <div className="modalKvLabel">Repo</div>
-                                          <div className="modalKvValue">
-                                            <Mono>{r.fullName}</Mono>
-                                          </div>
-                                        </div>
-                                      </div>
-                                    ),
-                                    confirmText: '删除',
-                                    cancelText: '取消',
-                                    confirmVariant: 'danger',
-                                    badgeText: '将删除 webhook',
-                                    badgeTone: 'bad',
-                                  })
-                                  if (!ok) return
-                                  setBusy(true)
-                                  setError(null)
-                                  try {
-                                    await deleteGitHubPackagesRepo({ fullName: r.fullName })
-                                    await refreshTrackedRepos()
-                                  } catch (e: unknown) {
-                                    setError(errorMessage(e))
-                                  } finally {
-                                    setBusy(false)
-                                  }
-                                })()
-                              }}
-                            >
-                              <TrashIcon className="uiIcon" />
-                            </IconButton>
-                          </div>
                         </div>
                       )
                     })}
@@ -1945,29 +1803,11 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                   </div>
                 )}
 
-                <div className="formActions" style={{ marginTop: 10, justifyContent: 'space-between' }}>
-                  <div className="muted">
-                    第 {githubPackagesTrackedRepos.page} 页（每页 {githubPackagesTrackedRepos.perPage}）
+                {githubPackagesTrackedRepos.filteredTotal > githubPackagesTrackedRepos.repos.length ? (
+                  <div className="muted" style={{ marginTop: 10 }}>
+                    设置页仅展示前 {GHCR_PREVIEW_LIMIT} 条，更多仓库请点击“查看更多”进入维护页。
                   </div>
-                  <div style={{ display: 'flex', gap: 10 }}>
-                    <Button
-                      variant="ghost"
-                      disabled={busy || githubPackagesTrackedRepos.page <= 1}
-                      onClick={() => setGitHubPackagesTrackedReposPage((p) => Math.max(1, p - 1))}
-                    >
-                      上一页
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      disabled={busy || githubPackagesTrackedRepos.page >= githubPackagesTrackedMaxPage}
-                      onClick={() =>
-                        setGitHubPackagesTrackedReposPage((p) => Math.min(githubPackagesTrackedMaxPage, p + 1))
-                      }
-                    >
-                      下一页
-                    </Button>
-                  </div>
-                </div>
+                ) : null}
               </div>
             ) : (
               <div className="muted" style={{ marginTop: 10 }}>

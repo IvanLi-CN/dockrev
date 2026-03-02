@@ -50,6 +50,8 @@ export function AppShell(props: {
           props.route.name === 'ghcr-webhooks' ||
           props.route.name === 'ghcr-webhook-inbox'
         ? 'queue'
+        : props.route.name === 'ghcr-webhook-registry'
+          ? 'settings'
         : props.route.name
   const [appVersion, setAppVersion] = useState<string | null>(null)
 
