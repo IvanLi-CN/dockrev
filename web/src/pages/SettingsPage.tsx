@@ -1074,6 +1074,43 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     [githubPackages, githubPackagesPat, markFieldDirty],
   )
 
+  const openGhcrRegistry = useCallback(() => {
+    if (busy) return
+    void (async () => {
+      setBusy(true)
+      setError(null)
+      let shouldNavigate = true
+      try {
+        await flushAutoSave(['ghcr'])
+      } catch (e: unknown) {
+        const message = errorMessage(e)
+        shouldNavigate = await confirm({
+          title: 'GHCR 配置尚未保存',
+          body: (
+            <div>
+              <div className="modalLead">当前 GHCR 配置保存失败，继续进入维护页可能按旧配置执行注册任务。</div>
+              <div className="modalKvGrid">
+                <div className="modalKvLabel">错误</div>
+                <div className="modalKvValue">
+                  <Mono>{message}</Mono>
+                </div>
+              </div>
+            </div>
+          ),
+          confirmText: '仍然进入',
+          cancelText: '留在设置页',
+          confirmVariant: 'danger',
+          badgeText: '配置未保存',
+          badgeTone: 'warn',
+        })
+        if (!shouldNavigate) setError(message)
+      } finally {
+        setBusy(false)
+      }
+      if (shouldNavigate) navigate({ name: 'ghcr-webhook-registry' })
+    })()
+  }, [busy, confirm, flushAutoSave])
+
   useEffect(() => {
     const timers = timersRef.current
     return () => {
@@ -1583,7 +1620,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
           {ghcrLiveProgressText ? (
             <div className="muted" style={{ marginTop: 8, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
               <span>当前 GHCR 任务：{ghcrLiveProgressText}</span>
-              <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhook-registry' })}>
+              <Button variant="ghost" disabled={busy} onClick={openGhcrRegistry}>
                 打开 GHCR 维护页
               </Button>
             </div>
@@ -1733,7 +1770,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     预览 {githubPackagesTrackedRepos.repos.length} / {githubPackagesTrackedRepos.filteredTotal}
                   </div>
                   <div style={{ display: 'flex', gap: 10, marginLeft: 'auto' }}>
-                    <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhook-registry' })}>
+                    <Button variant="ghost" disabled={busy} onClick={openGhcrRegistry}>
                       查看更多
                       {githubPackagesTrackedRepos.filteredTotal > githubPackagesTrackedRepos.repos.length
                         ? `（+${githubPackagesTrackedRepos.filteredTotal - githubPackagesTrackedRepos.repos.length}）`
@@ -1789,7 +1826,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                             </div>
                             {state === 'conflict' ? (
                               <div className="muted" style={{ marginTop: 4 }}>
-                                检测到重复 webhook，请先到 GitHub 手工删除重复项后再点“重试注册”。
+                                检测到重复 webhook，请先到 GitHub 手工删除重复项，再到 GHCR 维护页点“重新注册”。
                               </div>
                             ) : null}
                           </div>
