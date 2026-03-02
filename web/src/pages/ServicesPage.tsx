@@ -475,16 +475,33 @@ export function ServicesPage(props: {
       setError(null)
       setNoticeJobId(null)
       try {
-        const resp = await triggerUpdate({
-          scope: input.scope,
-          stackId: input.stackId,
-          serviceId: input.serviceId,
-          targetTag: finalTarget.targetTag,
-          targetDigest: finalTarget.targetDigest ?? undefined,
-          mode: 'apply',
-          allowArchMismatch: false,
-          backupMode: 'inherit',
-        })
+        let resp: { jobId: string }
+        if (input.scope === 'service') {
+          const serviceId = (input.serviceId ?? '').trim()
+          const targetTag = (finalTarget.targetTag ?? '').trim()
+          const targetDigest = (finalTarget.targetDigest ?? '').trim()
+          if (!serviceId || !targetTag || !targetDigest) {
+            throw new Error('service update 缺少必要参数（serviceId/targetTag/targetDigest）')
+          }
+          resp = await triggerUpdate({
+            scope: 'service',
+            stackId: input.stackId,
+            serviceId,
+            targetTag,
+            targetDigest,
+            mode: 'apply',
+            allowArchMismatch: false,
+            backupMode: 'inherit',
+          })
+        } else {
+          resp = await triggerUpdate({
+            scope: 'stack',
+            stackId: input.stackId,
+            mode: 'apply',
+            allowArchMismatch: false,
+            backupMode: 'inherit',
+          })
+        }
         setNoticeJobId(resp.jobId)
       } catch (e: unknown) {
         if (e instanceof ApiError) {

@@ -2460,6 +2460,33 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       const serviceId = typeof parsed.serviceId === 'string' ? parsed.serviceId : null
       const scope = typeof parsed.scope === 'string' ? parsed.scope : 'service'
       const mode = typeof parsed.mode === 'string' ? parsed.mode : 'dry-run'
+      const targetTag = typeof parsed.targetTag === 'string' ? parsed.targetTag.trim() : ''
+      const targetDigest = typeof parsed.targetDigest === 'string' ? parsed.targetDigest.trim() : ''
+
+      if (scope === 'service' && !serviceId) {
+        return json(
+          { error: { code: 'invalid_argument', message: 'serviceId is required for scope=service' } },
+          { status: 400 },
+        )
+      }
+      if (scope === 'stack' && !stackId) {
+        return json(
+          { error: { code: 'invalid_argument', message: 'stackId is required for scope=stack' } },
+          { status: 400 },
+        )
+      }
+      if (scope === 'service' && (!targetTag || !targetDigest)) {
+        return json(
+          { error: { code: 'invalid_argument', message: 'targetTag/targetDigest is required for scope=service' } },
+          { status: 400 },
+        )
+      }
+      if (scope !== 'service' && ('targetTag' in parsed || 'targetDigest' in parsed)) {
+        return json(
+          { error: { code: 'invalid_argument', message: 'targetTag/targetDigest is only supported for scope=service' } },
+          { status: 400 },
+        )
+      }
 
       jobSeq += 1
       const jobId = `job-ui-${jobSeq}`

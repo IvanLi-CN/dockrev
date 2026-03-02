@@ -102,7 +102,7 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 | --- | --- | --- | --- | --- |
 | POST | `/api/web-push/subscriptions` | Forward Header | 创建/更新 Web Push 订阅 | `200` `400` `401` |
 | DELETE | `/api/web-push/subscriptions` | Forward Header | 删除 Web Push 订阅 | `200` `400` `401` |
-| POST | `/api/webhooks/trigger` | Webhook Secret | 外部触发 check/update 任务 | `200` `400` `401` |
+| POST | `/api/webhooks/trigger` | Webhook Secret | 外部触发 check/update 任务（`action=update` 仅支持 `all`/`stack`） | `200` `400` `401` |
 | POST | `/api/webhooks/github-packages` | GitHub Signature | 接收 GH package webhook 并触发 discovery | `200` `202` `400` `401` |
 | GET | `/api/deploy-check/report` | Forward Header | 返回部署预检报告 | `200` `401` |
 | GET | `/api/deploy-welcome` | Forward Header | 查询 deploy welcome 状态 | `200` `401` |
@@ -145,6 +145,9 @@ curl -X POST \
   -d '{"action":"update","scope":"stack","stackId":"stk_xxx","allowArchMismatch":false,"backupMode":"inherit"}' \
   http://127.0.0.1:50883/api/webhooks/trigger
 ```
+
+> 说明：`POST /api/webhooks/trigger` 会拒绝 `{"action":"update","scope":"service"}`，返回 `400 invalid_argument`。  
+> 若要更新单个 service，请改用 `POST /api/updates` 并显式携带 `targetTag` + `targetDigest`。
 
 ### 查询 supervisor 状态
 

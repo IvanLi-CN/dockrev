@@ -328,6 +328,7 @@ async function main() {
   const composeProjectRaw = `codex_${repoName}__${pathHash8}_${runId}`;
   const composeProject = sanitizeComposeProject(composeProjectRaw);
   const fixturesProject = sanitizeComposeProject(`${composeProject}_fixtures`);
+  const fixtureLockDir = "/srv/codex/.locks/dockrev-semver-fixture-codex-vibe-monitor-latest.lock";
 
   // Select remote port (avoid conflicts on shared host).
   const forcedRemotePort = env("REMOTE_HTTP_PORT");
@@ -384,6 +385,33 @@ PY
     // Clean up remote resources unless we keep on failure.
     if (!remoteRunReady) return;
     if (!ok && keepOnFailure) {
+      await ssh(
+        testboxHost,
+        sshOpts,
+        `
+set -euo pipefail
+cd ${bashQuote(remoteRun)} || exit 0
+fixture_image_ref="ghcr.io/ivanli-cn/codex-vibe-monitor:latest"
+if [[ -f .fixture_image_prev_id ]]; then
+  prev_id="$(cat .fixture_image_prev_id || true)"
+  if [[ -n "$prev_id" ]]; then
+    docker tag "$prev_id" "$fixture_image_ref" >/dev/null 2>&1 || true
+  else
+    docker image rm "$fixture_image_ref" >/dev/null 2>&1 || true
+  fi
+  rm -f .fixture_image_prev_id || true
+fi
+lock_owner="$(cat .fixture_lock_owner 2>/dev/null || true)"
+fixture_lock_dir=${bashQuote(fixtureLockDir)}
+if [[ -n "$lock_owner" && -d "$fixture_lock_dir" ]]; then
+  held_by="$(cat "$fixture_lock_dir/owner" 2>/dev/null || true)"
+  if [[ "$held_by" == "$lock_owner" ]]; then
+    rm -rf "$fixture_lock_dir" || true
+  fi
+fi
+`,
+        true,
+      );
       section("CLEANUP");
       info("DOCKREV_TEST_KEEP=1 set; keeping remote run for debugging.");
       info(`REMOTE_RUN=${remoteRun}`);
@@ -406,6 +434,24 @@ if [[ -f dockrev.pid ]]; then
   fi
 fi
 docker compose -p ${bashQuote(fixturesProject)} -f scripts/testbox/fixtures.semver-missing.yml -f .codex.caps-compat.fixtures.yml down -v --remove-orphans || true
+fixture_image_ref="ghcr.io/ivanli-cn/codex-vibe-monitor:latest"
+if [[ -f .fixture_image_prev_id ]]; then
+  prev_id="$(cat .fixture_image_prev_id || true)"
+  if [[ -n "$prev_id" ]]; then
+    docker tag "$prev_id" "$fixture_image_ref" >/dev/null 2>&1 || true
+  else
+    docker image rm "$fixture_image_ref" >/dev/null 2>&1 || true
+  fi
+  rm -f .fixture_image_prev_id || true
+fi
+lock_owner="$(cat .fixture_lock_owner 2>/dev/null || true)"
+fixture_lock_dir=${bashQuote(fixtureLockDir)}
+if [[ -n "$lock_owner" && -d "$fixture_lock_dir" ]]; then
+  held_by="$(cat "$fixture_lock_dir/owner" 2>/dev/null || true)"
+  if [[ "$held_by" == "$lock_owner" ]]; then
+    rm -rf "$fixture_lock_dir" || true
+  fi
+fi
 rm -rf ${bashQuote(remoteRun)} || true
 `,
       true,
@@ -489,8 +535,34 @@ YAML
 # - image tag is latest
 # - old code would derive semver label (e.g. 0.13.3) and try pulling :<semver> after update.
 # Force a local, mismatched starting digest so service update actually performs a pull+recreate.
+# We mutate one shared tag on testbox, so guard it with a host-global lock and restore on cleanup.
+fixture_lock_dir=${bashQuote(fixtureLockDir)}
+lock_owner=${bashQuote(runId)}
+mkdir -p "$(dirname "$fixture_lock_dir")"
+lock_wait_deadline=$(( $(date +%s) + 180 ))
+lock_ttl_seconds=1800
+while ! mkdir "$fixture_lock_dir" 2>/dev/null; do
+  now_epoch="$(date +%s)"
+  created_at="$(cat "$fixture_lock_dir/created_at" 2>/dev/null || true)"
+  if [[ "$created_at" =~ ^[0-9]+$ ]] && (( now_epoch - created_at > lock_ttl_seconds )); then
+    rm -rf "$fixture_lock_dir" >/dev/null 2>&1 || true
+    continue
+  fi
+  if [[ "$now_epoch" -ge "$lock_wait_deadline" ]]; then
+    lock_holder="$(cat "$fixture_lock_dir/owner" 2>/dev/null || true)"
+    echo "failed to acquire fixture lock (holder=\${lock_holder:-unknown})" >&2
+    exit 1
+  fi
+  sleep 1
+done
+now_epoch="$(date +%s)"
+echo "$lock_owner" > "$fixture_lock_dir/owner"
+echo "$now_epoch" > "$fixture_lock_dir/created_at"
+echo "$lock_owner" > .fixture_lock_owner
+fixture_image_ref="ghcr.io/ivanli-cn/codex-vibe-monitor:latest"
+docker image inspect --format '{{.Id}}' "$fixture_image_ref" > .fixture_image_prev_id 2>/dev/null || : > .fixture_image_prev_id
 docker pull nginx:1.27-alpine >/dev/null
-docker tag nginx:1.27-alpine ghcr.io/ivanli-cn/codex-vibe-monitor:latest
+docker tag nginx:1.27-alpine "$fixture_image_ref"
 
 services_fixtures="$(docker compose -f scripts/testbox/fixtures.semver-missing.yml config --services)"
 gen_caps "$services_fixtures" .codex.caps-compat.fixtures.yml
