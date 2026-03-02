@@ -6,6 +6,7 @@ import {
   newJobsEventsSource,
   type JobListItem,
 } from '../api'
+import { formatJobMachineName, formatJobReadableDisplay } from '../jobDisplay'
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
 
@@ -556,6 +557,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
 
         <div className="queueList">
           {filtered.map((j) => {
+            const readable = formatJobReadableDisplay(j.type, j.scope)
             const progressLabel = formatProgressLabel(j)
             const progress = getProgressMetrics(j)
             const plannedPercent = progress?.plannedPercent ?? null
@@ -571,9 +573,15 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
               >
                 <div className="queueMain">
                   <div className="queueTitle">
-                    <Mono>{j.type}</Mono> · <Mono>{j.scope}</Mono>
+                    <span className="jobReadableName">
+                      <span className={`jobTypeTag jobTypeTag-${readable.typeTone}`}>{readable.primaryLabel}</span>
+                      {readable.scopeTag ? <span className="jobScopeTag">{readable.scopeTag}</span> : null}
+                    </span>
                   </div>
                   <div className="queueMeta">
+                    <span>
+                      machine <Mono>{formatJobMachineName(j.type, j.scope)}</Mono>
+                    </span>
                     <span>
                       by <Mono>{j.createdBy}</Mono> · reason <Mono>{j.reason}</Mono>
                     </span>

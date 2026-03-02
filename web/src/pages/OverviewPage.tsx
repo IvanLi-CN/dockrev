@@ -22,6 +22,7 @@ import { ArrowRightIcon, Button, Mono, StatusRemark } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { isSemverDowngradeAnomaly, serviceRowStatus, type RowStatus } from '../updateStatus'
+import { formatJobReadableDisplay } from '../jobDisplay'
 import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
 import { useConfirm } from '../confirm'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
@@ -580,6 +581,9 @@ export function OverviewPage(props: {
       .at(0)
     return { total, running, failed, rolled, success, other, latest }
   }, [jobs])
+  const latestReadableJob = jobsSummary.latest
+    ? formatJobReadableDisplay(jobsSummary.latest.type, jobsSummary.latest.scope)
+    : null
 
   const discoverySummary = useMemo(() => {
     const active = discoveredProjects.filter((p) => p.status === 'active' && !p.archived)
@@ -960,7 +964,19 @@ export function OverviewPage(props: {
             {jobsSummary.other > 0 ? <div className="chipStatic">{`其他: ${jobsSummary.other}`}</div> : null}
           </div>
           <div className="muted" style={{ marginTop: 12 }}>
-            最近: {jobsSummary.latest ? <Mono>{`${jobsSummary.latest.status} · ${formatShort(jobsSummary.latest.createdAt)} · ${jobsSummary.latest.scope}`}</Mono> : <Mono>-</Mono>}
+            最近:{' '}
+            {jobsSummary.latest && latestReadableJob ? (
+              <span className="jobReadableName">
+                <Mono>{jobsSummary.latest.status}</Mono>
+                <span>·</span>
+                <Mono>{formatShort(jobsSummary.latest.createdAt)}</Mono>
+                <span>·</span>
+                <span className={`jobTypeTag jobTypeTag-${latestReadableJob.typeTone}`}>{latestReadableJob.primaryLabel}</span>
+                {latestReadableJob.scopeTag ? <span className="jobScopeTag">{latestReadableJob.scopeTag}</span> : null}
+              </span>
+            ) : (
+              <Mono>-</Mono>
+            )}
           </div>
         </div>
 
