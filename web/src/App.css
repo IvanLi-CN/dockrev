@@ -2084,13 +2084,18 @@ html[data-theme='light'] .modalOverlay {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 1 1 380px;
-  min-width: min(100%, 320px);
+  flex: 1 1 420px;
+  min-width: min(100%, 440px);
+}
+
+.ghcrInboxSearchForm .btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .ghcrInboxSearch {
-  min-width: 220px;
-  flex: 1 1 auto;
+  min-width: 180px;
+  flex: 1 1 260px;
 }
 
 .ghcrInboxPager {
@@ -2098,6 +2103,10 @@ html[data-theme='light'] .modalOverlay {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.ghcrInboxQuickLinks {
+  margin-left: auto;
 }
 
 .ghcrInboxTable {
@@ -4141,10 +4150,15 @@ html[data-theme='light'] .card {
 
   .ghcrInboxSearchForm {
     flex-basis: 100%;
+    min-width: 0;
   }
 
   .ghcrInboxPager {
     width: 100%;
+  }
+
+  .ghcrInboxQuickLinks {
+    margin-left: 0;
   }
 
   .ghcrInboxTableHeader {
@@ -4161,6 +4175,30 @@ html[data-theme='light'] .card {
 
   .ghcrInboxCell + .ghcrInboxCell {
     border-top: 1px dashed color-mix(in srgb, var(--borderColor) 72%, transparent);
+  }
+}
+
+@media (max-width: 1200px) {
+  .ghcrInboxSearchForm {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 700px) {
+  .ghcrInboxSearchForm {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .ghcrInboxSearch {
+    min-width: 0;
+    flex-basis: 100%;
+  }
+
+  .ghcrInboxSearchForm .btn {
+    flex: 1 1 calc(50% - 3px);
+    min-width: 0;
   }
 }
 

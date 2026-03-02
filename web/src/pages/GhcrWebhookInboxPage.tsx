@@ -294,7 +294,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
           </Button>
         </div>
 
-        <div className="chipRow" style={{ marginLeft: 'auto' }}>
+        <div className="chipRow ghcrInboxQuickLinks">
           <Button variant="ghost" onClick={() => navigate({ name: 'settings' })}>
             返回设置
           </Button>
