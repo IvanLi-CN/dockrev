@@ -142,7 +142,7 @@ curl -X POST \
 curl -X POST \
   -H 'Content-Type: application/json' \
   -H 'X-Dockrev-Webhook-Secret: change-me' \
-  -d '{"action":"update","scope":"service","serviceId":"svc_xxx"}' \
+  -d '{"action":"update","scope":"stack","stackId":"stk_xxx","allowArchMismatch":false,"backupMode":"inherit"}' \
   http://127.0.0.1:50883/api/webhooks/trigger
 ```
 

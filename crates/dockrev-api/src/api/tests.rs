@@ -2218,9 +2218,61 @@ services:
         .unwrap()
         .to_string();
 
+    let missing_tag = serde_json::json!({
+        "scope": "service",
+        "serviceId": service_id.clone(),
+        "targetDigest": expected_digest,
+        "mode": "dry-run",
+        "allowArchMismatch": false,
+        "backupMode": "inherit",
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/updates")
+                .header("content-type", "application/json")
+                .body(Body::from(missing_tag.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let body = response_json(resp).await;
+    assert_eq!(body["error"]["code"].as_str().unwrap(), "invalid_argument");
+
+    let wrong_tag = serde_json::json!({
+        "scope": "service",
+        "serviceId": service_id.clone(),
+        "targetTag": "cross-tag-not-allowed",
+        "targetDigest": expected_digest.clone(),
+        "mode": "dry-run",
+        "allowArchMismatch": false,
+        "backupMode": "inherit",
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/updates")
+                .header("content-type", "application/json")
+                .body(Body::from(wrong_tag.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let body = response_json(resp).await;
+    assert_eq!(body["error"]["code"].as_str().unwrap(), "invalid_argument");
+
     let bad = serde_json::json!({
         "scope": "service",
         "serviceId": service_id,
+        "targetTag": svc.image_tag,
         "targetDigest": "sha256:wrong",
         "mode": "dry-run",
         "allowArchMismatch": false,
@@ -2246,6 +2298,7 @@ services:
     let ok = serde_json::json!({
         "scope": "service",
         "serviceId": svc.id,
+        "targetTag": svc.image_tag,
         "targetDigest": expected_digest,
         "mode": "dry-run",
         "allowArchMismatch": false,
@@ -5660,6 +5713,52 @@ services:
     assert_eq!(job["job"]["type"].as_str().unwrap(), "update");
     assert_eq!(job["job"]["summary"]["mode"].as_str().unwrap(), "apply");
     assert!(job["job"]["finishedAt"].as_str().unwrap().len() > 10);
+}
+
+#[tokio::test]
+async fn webhook_trigger_update_rejects_service_scope() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let svc = services.first().unwrap();
+
+    let trigger = serde_json::json!({
+        "action": "update",
+        "scope": "service",
+        "serviceId": svc.id,
+        "allowArchMismatch": false,
+        "backupMode": "skip"
+    });
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/trigger")
+                .header("content-type", "application/json")
+                .header("X-Dockrev-Webhook-Secret", "secret")
+                .body(Body::from(trigger.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let body = response_json(resp).await;
+    assert_eq!(body["error"]["code"].as_str().unwrap(), "invalid_argument");
 }
 
 #[tokio::test]

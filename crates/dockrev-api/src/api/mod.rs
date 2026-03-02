@@ -1667,6 +1667,17 @@ async fn trigger_update(
 
     if req.scope == JobScope::Service
         && req
+            .target_tag
+            .as_deref()
+            .is_none_or(|t| t.trim().is_empty())
+    {
+        return Err(ApiError::invalid_argument(
+            "targetTag is required for scope=service",
+        ));
+    }
+
+    if req.scope == JobScope::Service
+        && req
             .target_digest
             .as_deref()
             .is_none_or(|d| d.trim().is_empty())
@@ -5232,6 +5243,12 @@ async fn webhook_trigger(
             Ok(Json(WebhookTriggerResponse { job_id }))
         }
         WebhookAction::Update => {
+            if scope == JobScope::Service {
+                return Err(ApiError::invalid_argument(
+                    "webhook update does not support scope=service; use /api/updates with explicit targetTag/targetDigest",
+                ));
+            }
+
             let update_req = TriggerUpdateRequest {
                 scope,
                 stack_id,

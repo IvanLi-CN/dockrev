@@ -1139,15 +1139,16 @@ export function ServicesPage(props: {
 		                                      <div className="modalDivider" />
 		                                    </>
 	                                  )
-		                                  void triggerApply({
-		                                    scope: 'service',
-		                                    stackId: g.stackId,
-		                                    serviceId: svc.id,
-		                                    targetLabel: `service:${g.stackName}/${svc.name}`,
-		                                    targetDigest: svc.candidate?.digest ?? null,
-		                                    confirmBody: body,
-		                                    confirmTitle: `确认更新服务 ${svc.name}？`,
-		                                  })
+			                                  void triggerApply({
+			                                    scope: 'service',
+			                                    stackId: g.stackId,
+			                                    serviceId: svc.id,
+			                                    targetLabel: `service:${g.stackName}/${svc.name}`,
+			                                    targetTag: svc.image.tag,
+			                                    targetDigest: svc.candidate?.digest ?? null,
+			                                    confirmBody: body,
+			                                    confirmTitle: `确认更新服务 ${svc.name}？`,
+			                                  })
 		                                }}
 	                              >
 	                                执行更新

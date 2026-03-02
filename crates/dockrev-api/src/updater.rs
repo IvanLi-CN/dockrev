@@ -614,36 +614,38 @@ pub async fn run_update_job(
             });
         }
 
-        let repo = strip_tag_and_digest(&svc.image.reference)
-            .unwrap_or_else(|| svc.image.reference.clone());
-        maybe_pull_semver_tag_for_image(
-            runner,
-            &docker_cfg,
-            idempotent_retry_policy,
-            &svc.id,
-            &repo,
-            &new_image_id,
-            &mut semver_pulled,
-            &mut semver_pulled_set,
-            &mut semver_pull_warnings,
-        )
-        .await
-        .map_err(|err| {
-            let partial_summary = json!({
-                "changedServices": changed,
-                "oldDigests": old_images.clone(),
-                "newDigests": new_images.clone(),
-                "semverPulled": semver_pulled.clone(),
-                "semverPullWarnings": semver_pull_warnings.clone(),
-                "skippedVersionAnomaly": skipped_version_anomaly.clone(),
-            });
-            match err.downcast::<UpdateStepFailure>() {
-                Ok(step_failure) => {
-                    anyhow::Error::new(step_failure.with_partial_summary(partial_summary))
+        if !matches!(scope, JobScope::Service) {
+            let repo = strip_tag_and_digest(&svc.image.reference)
+                .unwrap_or_else(|| svc.image.reference.clone());
+            maybe_pull_semver_tag_for_image(
+                runner,
+                &docker_cfg,
+                idempotent_retry_policy,
+                &svc.id,
+                &repo,
+                &new_image_id,
+                &mut semver_pulled,
+                &mut semver_pulled_set,
+                &mut semver_pull_warnings,
+            )
+            .await
+            .map_err(|err| {
+                let partial_summary = json!({
+                    "changedServices": changed,
+                    "oldDigests": old_images.clone(),
+                    "newDigests": new_images.clone(),
+                    "semverPulled": semver_pulled.clone(),
+                    "semverPullWarnings": semver_pull_warnings.clone(),
+                    "skippedVersionAnomaly": skipped_version_anomaly.clone(),
+                });
+                match err.downcast::<UpdateStepFailure>() {
+                    Ok(step_failure) => {
+                        anyhow::Error::new(step_failure.with_partial_summary(partial_summary))
+                    }
+                    Err(err) => err,
                 }
-                Err(err) => err,
-            }
-        })?;
+            })?;
+        }
 
         emit_update_progress(
             progress_events.as_ref(),
@@ -1292,28 +1294,6 @@ mod tests {
                         stderr: String::new(),
                     }
                 }
-                // docker image inspect version label (best-effort semver tag pull; empty => skip)
-                7 => {
-                    assert_eq!(spec.program, "docker");
-                    assert_eq!(
-                        spec.args,
-                        vec![
-                            "image",
-                            "inspect",
-                            "--format",
-                            r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
-                            "sha256:new"
-                        ]
-                        .into_iter()
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>()
-                    );
-                    CommandOutput {
-                        status: 0,
-                        stdout: "\n".to_string(),
-                        stderr: String::new(),
-                    }
-                }
                 _ => panic!(
                     "unexpected extra command: program={} args={:?}",
                     spec.program, spec.args
@@ -1438,7 +1418,7 @@ mod tests {
 
         assert_eq!(outcome.status, "success");
         assert_eq!(outcome.summary_json["changedServices"].as_u64().unwrap(), 1);
-        assert_eq!(*runner.step.lock().unwrap(), 8);
+        assert_eq!(*runner.step.lock().unwrap(), 7);
     }
 
     #[tokio::test]
