@@ -26,6 +26,7 @@ import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { useConfirm } from '../confirm'
 import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, isStrictSemverTag } from '../versionDisplay'
+import { resolveUpdateActionTargetKey, useUpdateActionTracker } from '../updateActionTracking'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -125,10 +126,16 @@ export function ServiceDetailPage(props: {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
+  const { beginSubmitting, endSubmitting, trackJob, isTargetBusy } = useUpdateActionTracker()
   const { state: supervisorState, check: checkSupervisor } = useSupervisorHealth()
   const supervisorErrorAt = supervisorState.status === 'offline' ? supervisorState.errorAt : undefined
   const supervisorError = supervisorState.status === 'offline' ? supervisorState.error : undefined
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
+  const applyActionKey = useMemo(
+    () => resolveUpdateActionTargetKey('service', stackId, serviceId),
+    [serviceId, stackId],
+  )
+  const applyActionBusy = applyActionKey ? isTargetBusy(applyActionKey) : false
 
   const [newRuleKind, setNewRuleKind] = useState<'exact' | 'prefix' | 'regex' | 'semver'>('regex')
   const [newRuleValue, setNewRuleValue] = useState('.*')
@@ -353,6 +360,7 @@ export function ServiceDetailPage(props: {
                 !service.candidate ||
                 service.candidate.archMatch === 'mismatch'
               }
+              loading={applyActionBusy}
               title={
                 !service
                   ? undefined
@@ -493,11 +501,11 @@ export function ServiceDetailPage(props: {
 	                    confirmVariant: 'primary',
                       // Hide the pill badge; the intent is already visible in the modal body.
                       badgeText: null,
-	                  })
+                  })
                   if (!ok) return
-                  setBusy(true)
                   setError(null)
                   setNoticeJobId(null)
+                  if (applyActionKey) beginSubmitting(applyActionKey)
                   try {
                     const resp = await triggerUpdate({
                       scope: 'service',
@@ -510,6 +518,7 @@ export function ServiceDetailPage(props: {
                       backupMode: 'inherit',
                     })
                     setNoticeJobId(resp.jobId)
+                    if (applyActionKey) trackJob(applyActionKey, resp.jobId)
                   } catch (e: unknown) {
                     if (e instanceof ApiError) {
                       if (e.status === 401) setError('需要登录/鉴权（forward header）')
@@ -521,7 +530,7 @@ export function ServiceDetailPage(props: {
                       setError(errorMessage(e))
                     }
                   } finally {
-                    setBusy(false)
+                    if (applyActionKey) endSubmitting(applyActionKey)
                   }
                 })()
               }}
@@ -584,9 +593,13 @@ export function ServiceDetailPage(props: {
       </>,
     )
   }, [
+    applyActionBusy,
+    applyActionKey,
+    beginSubmitting,
     busy,
     checkSupervisor,
     confirm,
+    endSubmitting,
     onTopActions,
     refresh,
     selfUpgradeUrl,
@@ -597,6 +610,7 @@ export function ServiceDetailPage(props: {
     supervisorErrorAt,
     supervisorError,
     supervisorState.status,
+    trackJob,
   ])
 
   const bindTargets = useMemo(() => (settings ? formatMap(settings.backupTargets.bindPaths) : []), [settings])

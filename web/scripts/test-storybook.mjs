@@ -646,6 +646,80 @@ async function runInteractive({ baseUrl, browser }) {
 
   // 5b) Services page: inference pending + candidate snapshot pending should read as a unified loading state.
   {
+    const page = await openStory('pages-servicespage--dashboard-demo')
+    try {
+      const apiRow = page.locator('.rowLine', { hasText: 'api' }).first()
+      const workerRow = page.locator('.rowLine', { hasText: 'worker' }).first()
+      const apiButton = apiRow.getByRole('button', { name: '执行更新' })
+      const workerButton = workerRow.getByRole('button', { name: '执行更新' })
+
+      await apiButton.waitFor({ timeout: 10_000 })
+      await workerButton.waitFor({ timeout: 10_000 })
+      await apiButton.click()
+
+      const modal = page.getByRole('dialog')
+      await modal.waitFor({ timeout: 10_000 })
+      await modal.getByRole('button', { name: '执行更新' }).click()
+
+      await page.waitForFunction(() => {
+        const rows = Array.from(document.querySelectorAll('.rowLine'))
+        const findButton = (keyword) => {
+          const row = rows.find((item) => item.textContent?.includes(keyword))
+          if (!row) return null
+          const buttons = Array.from(row.querySelectorAll('button'))
+          return buttons.find((btn) => btn.textContent?.includes('执行更新')) ?? null
+        }
+        const apiBtn = findButton('api')
+        const workerBtn = findButton('worker')
+        if (!apiBtn || !workerBtn) return false
+        const apiSpinning = Boolean(apiBtn.querySelector('.btnInlineSpinner'))
+        const workerSpinning = Boolean(workerBtn.querySelector('.btnInlineSpinner'))
+        return apiSpinning && !workerSpinning
+      }, null, { timeout: 10_000 })
+
+      await page.waitForFunction(() => {
+        const rows = Array.from(document.querySelectorAll('.rowLine'))
+        const apiRow = rows.find((item) => item.textContent?.includes('api'))
+        if (!apiRow) return false
+        const btn = Array.from(apiRow.querySelectorAll('button')).find((item) => item.textContent?.includes('执行更新'))
+        if (!btn) return false
+        return !btn.querySelector('.btnInlineSpinner')
+      }, null, { timeout: 10_000 })
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
+  // 5c) Overview page: all-scope apply button should show spinner during queued/running and recover at terminal state.
+  {
+    const page = await openStory('pages-overviewpage--default')
+    try {
+      const allBtn = page.getByRole('button', { name: '更新全部' })
+      await allBtn.waitFor({ timeout: 10_000 })
+      await allBtn.click()
+
+      const modal = page.getByRole('dialog')
+      await modal.waitFor({ timeout: 10_000 })
+      await modal.getByRole('button', { name: '执行更新' }).click()
+
+      await page.waitForFunction(() => {
+        const btn = Array.from(document.querySelectorAll('button')).find((item) => item.textContent?.trim() === '更新全部')
+        if (!btn) return false
+        return Boolean(btn.querySelector('.btnInlineSpinner'))
+      }, null, { timeout: 10_000 })
+
+      await page.waitForFunction(() => {
+        const btn = Array.from(document.querySelectorAll('button')).find((item) => item.textContent?.trim() === '更新全部')
+        if (!btn) return false
+        return !btn.querySelector('.btnInlineSpinner')
+      }, null, { timeout: 10_000 })
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
+  // 5d) Services page: inference pending + candidate snapshot pending should read as a unified loading state.
+  {
     const page = await openStory('pages-servicespage--inference-pending-candidate-loading')
     try {
       await page.waitForFunction(() => {

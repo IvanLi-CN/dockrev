@@ -32,6 +32,7 @@ import {
   formatCurrentTagDisplay as formatTagDisplay,
   isStrictSemverTag,
 } from '../versionDisplay'
+import { resolveUpdateActionTargetKey, useUpdateActionTracker } from '../updateActionTracking'
 
 function formatShort(ts?: string | null) {
   if (!ts) return '-'
@@ -224,8 +225,10 @@ export function OverviewPage(props: {
   const [noticeDiscoveryJobId, setNoticeDiscoveryJobId] = useState<string | null>(null)
   const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const { beginSubmitting, endSubmitting, trackJob, isTargetBusy } = useUpdateActionTracker()
   const supervisor = useSupervisorHealth()
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
+  const allApplyActionBusy = isTargetBusy('all')
 
   const lastDiscoveryScanAt = useMemo(() => {
     const candidates = jobs
@@ -696,10 +699,11 @@ export function OverviewPage(props: {
       const finalTarget = input.getTarget
         ? input.getTarget()
         : { targetTag: input.targetTag, targetDigest: input.targetDigest }
+      const targetKey = resolveUpdateActionTargetKey(input.scope, input.stackId, input.serviceId)
 
-      setBusy(true)
       setError(null)
       setNoticeJobId(null)
+      if (targetKey) beginSubmitting(targetKey)
       try {
         let resp: { jobId: string }
         if (input.scope === 'service') {
@@ -740,6 +744,7 @@ export function OverviewPage(props: {
           })
         }
         setNoticeJobId(resp.jobId)
+        if (targetKey) trackJob(targetKey, resp.jobId)
       } catch (e: unknown) {
         if (e instanceof ApiError) {
           if (e.status === 401) setError('需要登录/鉴权（forward header）')
@@ -752,10 +757,10 @@ export function OverviewPage(props: {
           setError(e instanceof Error ? e.message : String(e))
         }
       } finally {
-        setBusy(false)
+        if (targetKey) endSubmitting(targetKey)
       }
     },
-    [confirm, refresh],
+    [beginSubmitting, confirm, endSubmitting, refresh, trackJob],
   )
 
   useEffect(() => {
@@ -803,6 +808,7 @@ export function OverviewPage(props: {
         <Button
           variant="danger"
           disabled={busy || !allApply.enabled}
+          loading={allApplyActionBusy}
           title={allApply.title ?? undefined}
           onClick={() => {
             const totalCandidates = countsAll.updatable + countsAll.hint
@@ -956,6 +962,7 @@ export function OverviewPage(props: {
       </>,
     )
   }, [
+    allApplyActionBusy,
     allApply.enabled,
     allApply.title,
     allCandidates,
@@ -1100,6 +1107,7 @@ export function OverviewPage(props: {
                 : counts.hint > 0
                   ? { enabled: true, title: '存在需确认的候选；将由服务端计算是否实际变更' }
                   : { enabled: false, title: '无可更新服务' }
+            const stackApplyActionKey = resolveUpdateActionTargetKey('stack', st.id, null)
 
             return (
               <div key={st.id} className={isCollapsed ? 'tableGroup' : 'tableGroup tableGroupExpanded'}>
@@ -1131,8 +1139,9 @@ export function OverviewPage(props: {
 	                    <Button
 	                      variant="ghost"
 	                      disabled={busy || !stackApply.enabled}
-			                      title={stackApply.title ?? undefined}
-			                      onClick={() => {
+                      loading={stackApplyActionKey ? isTargetBusy(stackApplyActionKey) : false}
+	                      title={stackApply.title ?? undefined}
+	                      onClick={() => {
 			                        const totalCandidates = counts.updatable + counts.hint
 			                        const candidateServices = d.services
 			                          .filter((svc) => !svc.archived)
@@ -1339,6 +1348,7 @@ export function OverviewPage(props: {
 	                              : stt === 'archMismatch'
 	                                ? { enabled: false, title: '架构不匹配（仅提示，不允许更新）', note: null }
 	                                : { enabled: false, title: svc.ignore?.reason ?? '被阻止', note: null }
+                      const svcApplyActionKey = resolveUpdateActionTargetKey('service', null, svc.id)
                       return (
                         <div
                           key={svc.id}
@@ -1476,9 +1486,10 @@ export function OverviewPage(props: {
                                 ) : null}
                               </div>
                             ) : (
-                              <Button
-                                variant="ghost"
+	                              <Button
+	                                variant="ghost"
 		                                disabled={busy || !svcApply.enabled}
+                                loading={svcApplyActionKey ? isTargetBusy(svcApplyActionKey) : false}
 		                                title={svcApply.title ?? undefined}
 		                                onClick={() => {
 			                                  const body = (

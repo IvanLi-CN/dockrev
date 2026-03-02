@@ -28,6 +28,7 @@ import {
   formatCurrentTagDisplay as formatTagDisplay,
   isStrictSemverTag,
 } from '../versionDisplay'
+import { resolveUpdateActionTargetKey, useUpdateActionTracker } from '../updateActionTracking'
 
 function formatShort(ts: string) {
   const d = new Date(ts)
@@ -127,6 +128,7 @@ export function ServicesPage(props: {
   const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
   const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const { beginSubmitting, endSubmitting, trackJob, isTargetBusy } = useUpdateActionTracker()
   const supervisor = useSupervisorHealth()
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
 
@@ -470,10 +472,11 @@ export function ServicesPage(props: {
       const finalTarget = input.getTarget
         ? input.getTarget()
         : { targetTag: input.targetTag, targetDigest: input.targetDigest }
+      const targetKey = resolveUpdateActionTargetKey(input.scope, input.stackId, input.serviceId)
 
-      setBusy(true)
       setError(null)
       setNoticeJobId(null)
+      if (targetKey) beginSubmitting(targetKey)
       try {
         let resp: { jobId: string }
         if (input.scope === 'service') {
@@ -503,6 +506,7 @@ export function ServicesPage(props: {
           })
         }
         setNoticeJobId(resp.jobId)
+        if (targetKey) trackJob(targetKey, resp.jobId)
       } catch (e: unknown) {
         if (e instanceof ApiError) {
           if (e.status === 401) setError('需要登录/鉴权（forward header）')
@@ -515,10 +519,10 @@ export function ServicesPage(props: {
           setError(e instanceof Error ? e.message : String(e))
         }
       } finally {
-        setBusy(false)
+        if (targetKey) endSubmitting(targetKey)
       }
     },
-    [confirm, refresh],
+    [beginSubmitting, confirm, endSubmitting, refresh, trackJob],
   )
 
   const groupsAll = useMemo(() => {
@@ -694,6 +698,7 @@ export function ServicesPage(props: {
 	                : g.countsAll.hint > 0
 	                  ? { enabled: true, title: '存在需确认的候选；将由服务端计算是否实际变更' }
 	                  : { enabled: false, title: '无可更新服务' }
+              const stackApplyActionKey = resolveUpdateActionTargetKey('stack', g.stackId, null)
 	            return (
 	              <div key={g.stackId} className={isCollapsed ? 'tableGroup' : 'tableGroup tableGroupExpanded'}>
 	                {!isCollapsed ? <GroupGuide /> : null}
@@ -724,6 +729,7 @@ export function ServicesPage(props: {
 	                    <Button
 	                      variant="ghost"
 		                      disabled={busy || !stackApply.enabled}
+                      loading={stackApplyActionKey ? isTargetBusy(stackApplyActionKey) : false}
 		                      title={stackApply.title ?? undefined}
 		                      onClick={() => {
 		                        const d = details[g.stackId]
@@ -922,16 +928,17 @@ export function ServicesPage(props: {
                             )
                           : false
                       const arrowPulse = inferencePending
-                      const svcApply =
-                        status === 'updatable'
-                          ? { enabled: true, title: null as string | null }
-                          : status === 'hint'
-                            ? { enabled: true, title: '需确认候选；将由服务端计算是否实际变更' }
-                          : status === 'ok'
-                            ? { enabled: false, title: '无候选版本' }
-                              : status === 'archMismatch'
-                                ? { enabled: false, title: '架构不匹配（仅提示，不允许更新）' }
-                                : { enabled: false, title: svc.ignore?.reason ?? '被阻止' }
+	                      const svcApply =
+	                        status === 'updatable'
+	                          ? { enabled: true, title: null as string | null }
+	                          : status === 'hint'
+	                            ? { enabled: true, title: '需确认候选；将由服务端计算是否实际变更' }
+	                            : status === 'ok'
+	                              ? { enabled: false, title: '无候选版本' }
+	                              : status === 'archMismatch'
+	                                ? { enabled: false, title: '架构不匹配（仅提示，不允许更新）' }
+	                                : { enabled: false, title: svc.ignore?.reason ?? '被阻止' }
+                      const svcApplyActionKey = resolveUpdateActionTargetKey('service', null, svc.id)
                       return (
                         <div
                           key={svc.id}
@@ -1069,6 +1076,7 @@ export function ServicesPage(props: {
 	                              <Button
 	                                variant="ghost"
 		                                disabled={busy || !svcApply.enabled}
+                                loading={svcApplyActionKey ? isTargetBusy(svcApplyActionKey) : false}
 		                                title={svcApply.title ?? undefined}
 		                                onClick={() => {
 		                                  const body = (
