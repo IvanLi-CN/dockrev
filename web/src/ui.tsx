@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
 import type { Service } from './api'
 import { noteFor, statusDotClass, statusIcon, statusLabel, type RowStatus } from './updateStatus'
@@ -66,8 +66,7 @@ export function Button(props: {
   title?: string
 }) {
   const variant = props.variant ?? 'ghost'
-  const className =
-    variant === 'primary' ? 'btn btnPrimary' : variant === 'danger' ? 'btn btnDanger' : 'btn btnGhost'
+  const className = `btn ${buttonVariantClass(variant)}`
   return (
     <button className={className} disabled={props.disabled} onClick={props.onClick} title={props.title}>
       {props.children}
@@ -83,12 +82,7 @@ export function IconButton(props: {
   children: ReactNode
 }) {
   const variant = props.variant ?? 'ghost'
-  const className =
-    variant === 'primary'
-      ? 'btn btnIcon btnPrimary'
-      : variant === 'danger'
-        ? 'btn btnIcon btnDanger'
-        : 'btn btnIcon btnGhost'
+  const className = `btn btnIcon ${buttonVariantClass(variant)}`
   return (
     <button
       className={className}
@@ -98,6 +92,220 @@ export function IconButton(props: {
       aria-label={props.title}
     >
       {props.children}
+    </button>
+  )
+}
+
+const SMALL_ACTION_BUTTON_QUERY = '(max-width: 700px)'
+const ACTION_BUTTON_LONG_PRESS_MS = 480
+const ACTION_BUTTON_HINT_PERSIST_MS = 1200
+
+function buttonVariantClass(variant: 'primary' | 'danger' | 'ghost'): string {
+  return variant === 'primary' ? 'btnPrimary' : variant === 'danger' ? 'btnDanger' : 'btnGhost'
+}
+
+export function ResponsiveActionButton(props: {
+  variant?: 'primary' | 'danger' | 'ghost'
+  disabled?: boolean
+  onClick?: () => void
+  label: string
+  hint?: string
+  icon: ReactNode
+}) {
+  const variant = props.variant ?? 'ghost'
+  const hintText = props.hint?.trim() ?? ''
+  const bubbleText = hintText || props.label
+  const hasHint = hintText.length > 0
+  const rootRef = useRef<HTMLButtonElement | null>(null)
+  const [isSmallViewport, setIsSmallViewport] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return window.matchMedia(SMALL_ACTION_BUTTON_QUERY).matches
+  })
+  const [showLongPressHint, setShowLongPressHint] = useState(false)
+  const [bubbleAlign, setBubbleAlign] = useState<'center' | 'left' | 'right'>('center')
+  const [bubbleVertical, setBubbleVertical] = useState<'above' | 'below'>('above')
+  const pressTimerRef = useRef<number | null>(null)
+  const hideHintTimerRef = useRef<number | null>(null)
+  const longPressTriggeredRef = useRef(false)
+  const suppressNextClickRef = useRef(false)
+
+  const clearPressTimer = () => {
+    if (pressTimerRef.current == null) return
+    window.clearTimeout(pressTimerRef.current)
+    pressTimerRef.current = null
+  }
+
+  const clearHideHintTimer = () => {
+    if (hideHintTimerRef.current == null) return
+    window.clearTimeout(hideHintTimerRef.current)
+    hideHintTimerRef.current = null
+  }
+
+  const dismissHint = () => {
+    clearHideHintTimer()
+    setShowLongPressHint(false)
+    longPressTriggeredRef.current = false
+  }
+
+  const updateBubbleAlign = () => {
+    if (typeof window === 'undefined') return
+    const root = rootRef.current
+    const bubble = root?.querySelector<HTMLElement>('.responsiveActionBtnBubble')
+    if (!root || !bubble) return
+
+    const rootRect = root.getBoundingClientRect()
+    const bubbleRect = bubble.getBoundingClientRect()
+    const bubbleWidth = bubbleRect.width
+    const bubbleHeight = bubbleRect.height
+    const margin = 8
+    const centeredLeft = rootRect.left + rootRect.width / 2 - bubbleWidth / 2
+    const centeredRight = centeredLeft + bubbleWidth
+    const bubbleGap = 10
+    const viewportBottom = window.innerHeight - margin
+    const aboveTop = rootRect.top - bubbleGap - bubbleHeight
+    const belowBottom = rootRect.bottom + bubbleGap + bubbleHeight
+    const aboveOverflow = Math.max(0, margin - aboveTop)
+    const belowOverflow = Math.max(0, belowBottom - viewportBottom)
+
+    if (centeredLeft < margin) {
+      setBubbleAlign('left')
+    } else if (centeredRight > window.innerWidth - margin) {
+      setBubbleAlign('right')
+    } else {
+      setBubbleAlign('center')
+    }
+
+    setBubbleVertical(aboveOverflow <= belowOverflow ? 'above' : 'below')
+  }
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+    const media = window.matchMedia(SMALL_ACTION_BUTTON_QUERY)
+    const handleChange = () => {
+      const nextIsSmallViewport = media.matches
+      setIsSmallViewport(nextIsSmallViewport)
+      if (nextIsSmallViewport) return
+      if (pressTimerRef.current != null) {
+        window.clearTimeout(pressTimerRef.current)
+        pressTimerRef.current = null
+      }
+      if (hideHintTimerRef.current != null) {
+        window.clearTimeout(hideHintTimerRef.current)
+        hideHintTimerRef.current = null
+      }
+      setShowLongPressHint(false)
+      longPressTriggeredRef.current = false
+      suppressNextClickRef.current = false
+      setBubbleAlign('center')
+      setBubbleVertical('above')
+    }
+    handleChange()
+    media.addEventListener('change', handleChange)
+    return () => media.removeEventListener('change', handleChange)
+  }, [])
+
+  useEffect(() => {
+    if (!showLongPressHint) return undefined
+    const onResize = () => updateBubbleAlign()
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [showLongPressHint])
+
+  useEffect(() => {
+    return () => {
+      if (pressTimerRef.current != null) {
+        window.clearTimeout(pressTimerRef.current)
+        pressTimerRef.current = null
+      }
+      if (hideHintTimerRef.current != null) {
+        window.clearTimeout(hideHintTimerRef.current)
+        hideHintTimerRef.current = null
+      }
+    }
+  }, [])
+
+  const scheduleHintDismiss = () => {
+    clearHideHintTimer()
+    hideHintTimerRef.current = window.setTimeout(() => {
+      setShowLongPressHint(false)
+      longPressTriggeredRef.current = false
+      hideHintTimerRef.current = null
+    }, ACTION_BUTTON_HINT_PERSIST_MS)
+  }
+
+  const handlePointerDown = () => {
+    if (!isSmallViewport || props.disabled) return
+    updateBubbleAlign()
+    dismissHint()
+    suppressNextClickRef.current = false
+    clearPressTimer()
+    pressTimerRef.current = window.setTimeout(() => {
+      updateBubbleAlign()
+      longPressTriggeredRef.current = true
+      suppressNextClickRef.current = true
+      setShowLongPressHint(true)
+      pressTimerRef.current = null
+    }, ACTION_BUTTON_LONG_PRESS_MS)
+  }
+
+  const handlePointerEnd = () => {
+    if (!isSmallViewport) return
+    clearPressTimer()
+    if (!longPressTriggeredRef.current) return
+    scheduleHintDismiss()
+  }
+
+  const className = [
+    'btn',
+    'responsiveActionBtn',
+    buttonVariantClass(variant),
+    bubbleAlign === 'left'
+      ? 'responsiveActionBtnBubbleAlignLeft'
+      : bubbleAlign === 'right'
+        ? 'responsiveActionBtnBubbleAlignRight'
+        : '',
+    bubbleVertical === 'below' ? 'responsiveActionBtnBubbleBelow' : '',
+    hasHint ? 'responsiveActionBtnHasHint' : '',
+    showLongPressHint ? 'responsiveActionBtnShowBubble' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  return (
+    <button
+      ref={rootRef}
+      className={className}
+      disabled={props.disabled}
+      aria-label={props.label}
+      onPointerEnter={updateBubbleAlign}
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerEnd}
+      onPointerCancel={handlePointerEnd}
+      onPointerLeave={handlePointerEnd}
+      onFocus={updateBubbleAlign}
+      onBlur={() => {
+        setBubbleAlign('center')
+        setBubbleVertical('above')
+        dismissHint()
+      }}
+      onClick={(event) => {
+        if (suppressNextClickRef.current) {
+          event.preventDefault()
+          event.stopPropagation()
+          suppressNextClickRef.current = false
+          return
+        }
+        dismissHint()
+        props.onClick?.()
+      }}
+    >
+      <span className="responsiveActionBtnIcon" aria-hidden="true">
+        {props.icon}
+      </span>
+      <span className="responsiveActionBtnLabel">{props.label}</span>
+      <span className="responsiveActionBtnBubble" aria-hidden="true">
+        {bubbleText}
+      </span>
     </button>
   )
 }

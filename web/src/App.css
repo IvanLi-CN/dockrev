@@ -3911,6 +3911,110 @@ html[data-theme='light'] .card {
   outline-offset: 2px;
 }
 
+.responsiveActionBtn {
+  position: relative;
+  --responsive-action-bubble-anchor-left: 50%;
+  --responsive-action-bubble-anchor-right: auto;
+  --responsive-action-bubble-shift-x: -50%;
+  --responsive-action-bubble-arrow-left: 50%;
+  gap: 8px;
+  min-width: 84px;
+  padding-inline: 10px 12px;
+}
+
+.responsiveActionBtnBubbleAlignLeft {
+  --responsive-action-bubble-anchor-left: 0%;
+  --responsive-action-bubble-anchor-right: auto;
+  --responsive-action-bubble-shift-x: 0%;
+  --responsive-action-bubble-arrow-left: 16px;
+}
+
+.responsiveActionBtnBubbleAlignRight {
+  --responsive-action-bubble-anchor-left: auto;
+  --responsive-action-bubble-anchor-right: 0%;
+  --responsive-action-bubble-shift-x: 0%;
+  --responsive-action-bubble-arrow-left: calc(100% - 16px);
+}
+
+.responsiveActionBtnIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.responsiveActionBtnIcon > svg,
+.responsiveActionBtnIcon .iconify {
+  width: 16px;
+  height: 16px;
+}
+
+.responsiveActionBtnLabel {
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.responsiveActionBtnBubble {
+  position: absolute;
+  left: var(--responsive-action-bubble-anchor-left);
+  right: var(--responsive-action-bubble-anchor-right);
+  bottom: calc(100% + 10px);
+  transform: translate(var(--responsive-action-bubble-shift-x), 4px);
+  width: max-content;
+  min-width: 120px;
+  max-width: min(300px, calc(100vw - 28px));
+  padding: 8px 11px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  background: color-mix(in srgb, var(--panel2) 94%, #020814 6%);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: break-word;
+  pointer-events: none;
+  box-shadow: var(--shadow-soft);
+  opacity: 0;
+  z-index: 5;
+  transition: opacity 140ms ease;
+}
+
+.responsiveActionBtnBubbleBelow .responsiveActionBtnBubble {
+  top: calc(100% + 10px);
+  bottom: auto;
+}
+
+.responsiveActionBtnBubble::after {
+  content: '';
+  position: absolute;
+  left: var(--responsive-action-bubble-arrow-left);
+  top: 100%;
+  width: 9px;
+  height: 9px;
+  border-right: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  background: color-mix(in srgb, var(--panel2) 94%, #020814 6%);
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.responsiveActionBtnBubbleBelow .responsiveActionBtnBubble::after {
+  top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  border-top: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+}
+
+.responsiveActionBtnHasHint:hover .responsiveActionBtnBubble,
+.responsiveActionBtnHasHint:focus-visible .responsiveActionBtnBubble,
+.responsiveActionBtnShowBubble .responsiveActionBtnBubble {
+  opacity: 1;
+  transform: translate(var(--responsive-action-bubble-shift-x), 0);
+}
+
 .chipStatic,
 .chip {
   border: 1px solid color-mix(in srgb, var(--borderColor) 78%, transparent);
@@ -4390,6 +4494,26 @@ html[data-theme='light'] .card {
   }
 }
 
+@media (max-width: 1160px) {
+  .responsiveActionBtn {
+    gap: 6px;
+    min-width: 78px;
+    padding-inline: 9px 10px;
+  }
+
+  .responsiveActionBtnIcon {
+    width: 14px;
+    height: 14px;
+    flex-basis: 14px;
+  }
+
+  .responsiveActionBtnIcon > svg,
+  .responsiveActionBtnIcon .iconify {
+    width: 14px;
+    height: 14px;
+  }
+}
+
 @media (max-width: 1200px) {
   .ghcrInboxSearchForm {
     flex-basis: 100%;
@@ -4398,6 +4522,22 @@ html[data-theme='light'] .card {
 }
 
 @media (max-width: 700px) {
+  .responsiveActionBtn {
+    width: 32px;
+    min-width: 32px;
+    padding: 0;
+    gap: 0;
+  }
+
+  .responsiveActionBtnLabel {
+    display: none;
+  }
+
+  .responsiveActionBtnBubble {
+    min-width: 132px;
+    max-width: min(260px, calc(100vw - 24px));
+  }
+
   .ghcrRegistrySearchForm {
     flex-wrap: wrap;
     gap: 6px;

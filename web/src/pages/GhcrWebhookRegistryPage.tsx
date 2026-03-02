@@ -1,3 +1,5 @@
+import refreshIcon from '@iconify-icons/mdi/refresh'
+import trashCanOutline from '@iconify-icons/mdi/trash-can-outline'
 import { Icon } from '@iconify/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -13,7 +15,7 @@ import {
 } from '../api'
 import { useConfirm } from '../confirm'
 import { navigate } from '../routes'
-import { Button, Chip, Mono, Pill } from '../ui'
+import { Button, Chip, Mono, Pill, ResponsiveActionButton } from '../ui'
 import { webhookStateDotClass, webhookStateIcon } from '../webhookStatus'
 
 type RepoStateFilter = 'all' | 'ok' | 'missing' | 'error' | 'conflict' | 'queued' | 'running' | 'unknown'
@@ -434,9 +436,12 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
                 ) : null}
 
                 {showRetryRegister ? (
-                  <Button
+                  <ResponsiveActionButton
                     variant="ghost"
                     disabled={busy}
+                    label="重新注册"
+                    hint="重新触发 webhook 注册任务"
+                    icon={<Icon icon={refreshIcon} aria-hidden="true" />}
                     onClick={() => {
                       void (async () => {
                         setBusy(true)
@@ -451,15 +456,16 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
                         }
                       })()
                     }}
-                  >
-                    重新注册
-                  </Button>
+                  />
                 ) : null}
 
                 {showRetryDelete ? (
-                  <Button
+                  <ResponsiveActionButton
                     variant="ghost"
                     disabled={busy}
+                    label="重试删除"
+                    hint="重新触发反注册并删除任务"
+                    icon={<Icon icon={trashCanOutline} aria-hidden="true" />}
                     onClick={() => {
                       void (async () => {
                         setBusy(true)
@@ -474,14 +480,15 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
                         }
                       })()
                     }}
-                  >
-                    重试删除
-                  </Button>
+                  />
                 ) : null}
 
-                <Button
+                <ResponsiveActionButton
                   variant="danger"
                   disabled={busy || isUnregisterInFlight}
+                  label="删除"
+                  hint="先反注册 webhook，成功后移除记录"
+                  icon={<Icon icon={trashCanOutline} aria-hidden="true" />}
                   onClick={() => {
                     void (async () => {
                       const pass1 = await confirm({
@@ -540,9 +547,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
                       }
                     })()
                   }}
-                >
-                  删除
-                </Button>
+                />
               </div>
             </div>
           )
