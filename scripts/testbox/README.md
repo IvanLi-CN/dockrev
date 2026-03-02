@@ -12,6 +12,10 @@ Available scripts:
    - `/api/version-inference/events` pushes `version_inference_event` with monotonic ids
    - `POST /api/services/{id}/version-inference/refresh` emits `task_enqueued`
    - reconnect with `afterId` receives newer events
+3) `check-service-update-no-semver-pull.e2e.ts`
+   - uses `scope=service` update with explicit `targetTag + targetDigest`
+   - verifies update job does not issue fallback `docker pull <repo>:<semver>`
+   - verifies update summary does not include `failureStep=semver_pull`
 
 These scripts are intentionally **not wired into GitHub Actions** because they depend on SSH + a shared
 host environment and can be flaky due to network / registry rate limits.
@@ -38,6 +42,7 @@ From the repo root, run one of:
 ```bash
 bun scripts/testbox/check-job-recovery.e2e.ts
 bun scripts/testbox/check-version-inference-sse.e2e.ts
+bun scripts/testbox/check-service-update-no-semver-pull.e2e.ts
 ```
 
 Run twice to reduce false confidence:
@@ -47,6 +52,8 @@ bun scripts/testbox/check-job-recovery.e2e.ts
 bun scripts/testbox/check-job-recovery.e2e.ts
 bun scripts/testbox/check-version-inference-sse.e2e.ts
 bun scripts/testbox/check-version-inference-sse.e2e.ts
+bun scripts/testbox/check-service-update-no-semver-pull.e2e.ts
+bun scripts/testbox/check-service-update-no-semver-pull.e2e.ts
 ```
 
 ## Environment variables
@@ -72,8 +79,10 @@ bun scripts/testbox/check-version-inference-sse.e2e.ts
 - Builds and runs Dockrev on the testbox as a host process (binds to `127.0.0.1:<port>`).
 - Starts the fixture stack (`scripts/testbox/fixtures.compose.yml`) under a unique `<project>_fixtures`
   and drops capabilities (LXC quirk) so containers can start on the shared host.
+- For semver-fallback regression, uses `scripts/testbox/fixtures.semver-missing.yml` with a
+  floating tag (`latest`) to ensure service-update path is exercised.
 - Opens an SSH port-forward so the local script can call Dockrev via `http://127.0.0.1:<localPort>`
-- Runs script-specific assertions (job recovery or version inference SSE)
+- Runs script-specific assertions (job recovery / version inference SSE / service-update no semver fallback)
 - Cleans up remote containers/volumes and the remote run directory (unless `DOCKREV_TEST_KEEP=1`)
 
 ## Troubleshooting

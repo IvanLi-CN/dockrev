@@ -102,7 +102,7 @@ This page documents every HTTP route exposed in:
 | --- | --- | --- | --- | --- |
 | POST | `/api/web-push/subscriptions` | Forward Header | Create/update web push subscription | `200` `400` `401` |
 | DELETE | `/api/web-push/subscriptions` | Forward Header | Delete web push subscription | `200` `400` `401` |
-| POST | `/api/webhooks/trigger` | Webhook Secret | External trigger for check/update jobs | `200` `400` `401` |
+| POST | `/api/webhooks/trigger` | Webhook Secret | External trigger for check/update jobs (`action=update` only supports `all`/`stack`) | `200` `400` `401` |
 | POST | `/api/webhooks/github-packages` | GitHub Signature | Receive GH package webhook and enqueue discovery | `200` `202` `400` `401` |
 | GET | `/api/deploy-check/report` | Forward Header | Deployment preflight report | `200` `401` |
 | GET | `/api/deploy-welcome` | Forward Header | Get deploy welcome status | `200` `401` |
@@ -142,9 +142,12 @@ curl -X POST \
 curl -X POST \
   -H 'Content-Type: application/json' \
   -H 'X-Dockrev-Webhook-Secret: change-me' \
-  -d '{"action":"update","scope":"service","serviceId":"svc_xxx"}' \
+  -d '{"action":"update","scope":"stack","stackId":"stk_xxx","allowArchMismatch":false,"backupMode":"inherit"}' \
   http://127.0.0.1:50883/api/webhooks/trigger
 ```
+
+> Note: `POST /api/webhooks/trigger` rejects `{"action":"update","scope":"service"}` with `400 invalid_argument`.
+> Use `POST /api/updates` with explicit `targetTag` + `targetDigest` for service-level updates.
 
 ### Read supervisor state
 

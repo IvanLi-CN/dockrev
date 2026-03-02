@@ -754,16 +754,36 @@ export function newVersionInferenceEventsSource(opts?: { afterId?: number }): Ev
   return new EventSource(versionInferenceEventsUrl(opts), { withCredentials: true })
 }
 
-export async function triggerUpdate(input: {
-  scope: string
-  stackId?: string
-  serviceId?: string
-  targetTag?: string
-  targetDigest?: string
+type TriggerUpdateCommonInput = {
   mode: 'apply' | 'dry-run'
   allowArchMismatch: boolean
   backupMode: 'inherit' | 'skip' | 'force'
-}) {
+}
+
+export type TriggerUpdateInput =
+  | (TriggerUpdateCommonInput & {
+      scope: 'service'
+      serviceId: string
+      stackId?: string
+      targetTag: string
+      targetDigest: string
+    })
+  | (TriggerUpdateCommonInput & {
+      scope: 'stack'
+      stackId: string
+      serviceId?: never
+      targetTag?: never
+      targetDigest?: never
+    })
+  | (TriggerUpdateCommonInput & {
+      scope: 'all'
+      stackId?: never
+      serviceId?: never
+      targetTag?: never
+      targetDigest?: never
+    })
+
+export async function triggerUpdate(input: TriggerUpdateInput) {
   const resp = await apiFetch('/api/updates', {
     method: 'POST',
     body: JSON.stringify({ ...input, reason: 'ui' }),

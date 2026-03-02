@@ -29,6 +29,7 @@
 |-----:|-------|--------|------|------|-------|
 | gh58m | Dockrev：全站任务展示优先人可读名称 | 已完成 | `gh58m-queue-readable-task-name/SPEC.md` | 2026-03-02 | fast-track（scope/type tag 与 type 颜色区分，PR #116 补图 spec-sync） |
 | dk4dd | Dockrev：GHCR Webhook 注册维护专页（Settings 预览 + 专页维护） | 待实现 | `dk4dd-ghcr-webhook-registry-maintenance/SPEC.md` | 2026-03-02 | fast-track |
+| m3tq9 | Dockrev：Service Update 禁止版本号反推 tag，改为显式 targetTag | 已完成 | `m3tq9-service-update-explicit-target-tag/SPEC.md` | 2026-03-02 | fast-track |
 | ffgt4 | Dockrev：Supervisor 自我升级页补齐版本 / 开源仓库 / 开发者信息 | 已完成 | `ffgt4-supervisor-self-upgrade-meta/SPEC.md` | 2026-03-02 | fast-track |
 | 69hb2 | Dockrev：修复 Update Job 失败误报成功 + 幂等步骤重试 | 已完成 | `69hb2-update-job-idempotent-retry/SPEC.md` | 2026-03-01 | fast-track |
 | stt9n | Dockrev：状态点升级为 Iconify（全站） | 已完成 | `stt9n-status-dot-iconify/SPEC.md` | 2026-03-01 | fast-track |
