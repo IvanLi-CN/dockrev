@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-03-01
-- Last: 2026-03-01
+- Last: 2026-03-02
 
 ## 背景 / 问题陈述
 
@@ -20,7 +20,7 @@
 - 在 GHCR Repos 过滤行移除“匹配 / 已跟踪”统计文案。
 - 在同位置新增 `Inbox` 按钮，跳转到新的 Webhook Inbox 页面。
 - 新增后端分页 API：列出 `github_packages_deliveries` 到达记录，并返回 `decision/reason/responseStatus/jobId/attemptCount`。
-- 新增前端页面展示 `receivedAt / event-action / owner-repo / decision / responseStatus / deliveryId`，支持筛选、搜索、刷新与分页。
+- 新增前端页面展示 `receivedAt / event-action / owner-repo / decision / responseStatus / job link`，支持筛选、搜索、刷新与分页。
 
 ### Non-goals
 
@@ -66,7 +66,8 @@
 - Given delivery 表有混合状态数据，When 请求 `GET /api/github-packages/webhook/deliveries?decision=ignored&q=repo_not_selected`，Then 返回过滤后的 `deliveries` 与 `filteredTotal`，并携带全量 `summary`。
 - Given delivery 表为空，When 请求列表接口，Then 返回 `total=0` 且 `deliveries=[]`。
 - Given `auth_allow_anonymous_in_dev=false` 且未提供用户头，When 请求列表接口，Then 返回 `401`。
-- Given webhook 请求被拒绝/忽略，When 打开 Inbox，Then 可直接看到 `decision`、`reason` 与 `responseStatus`。
+- Given 签名通过后的 webhook 请求被拒绝/忽略，When 打开 Inbox，Then 可直接看到 `decision`、`reason` 与 `responseStatus`。
+- Given 已处理 delivery 发生重复投递，When 打开 Inbox，Then `attemptCount` 增加但 `decision/reason/jobId` 保持首个处理结果不被覆写。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
@@ -89,3 +90,4 @@
 
 - 假设：`received_at` 字段可稳定用于倒序分页；当时间相同以 `delivery_id` 二次排序。
 - 风险：当前仅提供“到达记录”视角，不包含任务关联，排障时可能仍需手动切换任务页面。
+- 假设：未通过签名校验的请求不入库，以避免匿名流量导致 delivery 表无界增长。
