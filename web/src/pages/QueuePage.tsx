@@ -6,6 +6,7 @@ import {
   newJobsEventsSource,
   type JobListItem,
 } from '../api'
+import { formatJobMachineName, formatJobReadableName } from '../jobDisplay'
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
 
@@ -571,9 +572,12 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
               >
                 <div className="queueMain">
                   <div className="queueTitle">
-                    <Mono>{j.type}</Mono> · <Mono>{j.scope}</Mono>
+                    <Mono>{formatJobReadableName(j.type, j.scope)}</Mono>
                   </div>
                   <div className="queueMeta">
+                    <span>
+                      machine <Mono>{formatJobMachineName(j.type, j.scope)}</Mono>
+                    </span>
                     <span>
                       by <Mono>{j.createdBy}</Mono> · reason <Mono>{j.reason}</Mono>
                     </span>

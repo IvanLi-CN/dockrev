@@ -22,6 +22,7 @@ import { ArrowRightIcon, Button, Mono, StatusRemark } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { isSemverDowngradeAnomaly, serviceRowStatus, type RowStatus } from '../updateStatus'
+import { formatJobReadableName } from '../jobDisplay'
 import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
 import { useConfirm } from '../confirm'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
@@ -960,7 +961,14 @@ export function OverviewPage(props: {
             {jobsSummary.other > 0 ? <div className="chipStatic">{`其他: ${jobsSummary.other}`}</div> : null}
           </div>
           <div className="muted" style={{ marginTop: 12 }}>
-            最近: {jobsSummary.latest ? <Mono>{`${jobsSummary.latest.status} · ${formatShort(jobsSummary.latest.createdAt)} · ${jobsSummary.latest.scope}`}</Mono> : <Mono>-</Mono>}
+            最近:{' '}
+            {jobsSummary.latest ? (
+              <Mono>
+                {`${jobsSummary.latest.status} · ${formatShort(jobsSummary.latest.createdAt)} · ${formatJobReadableName(jobsSummary.latest.type, jobsSummary.latest.scope)}`}
+              </Mono>
+            ) : (
+              <Mono>-</Mono>
+            )}
           </div>
         </div>
 

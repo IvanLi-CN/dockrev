@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getJob, newJobEventsSource, type JobDetail, type JobLogLine, type JobProgress } from '../api'
+import { formatJobMachineName, formatJobReadableName } from '../jobDisplay'
 import { navigate } from '../routes'
 import { Button, Chip, Mono, Pill } from '../ui'
 
@@ -336,7 +337,8 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
         {job ? (
           <div className="muted" style={{ marginTop: 8 }}>
             <div>
-              type <Mono>{job.type}</Mono> · scope <Mono>{job.scope}</Mono> · by <Mono>{job.createdBy}</Mono> · reason{' '}
+              task <Mono>{formatJobReadableName(job.type, job.scope)}</Mono> · machine{' '}
+              <Mono>{formatJobMachineName(job.type, job.scope)}</Mono> · by <Mono>{job.createdBy}</Mono> · reason{' '}
               <Mono>{job.reason}</Mono>
             </div>
             <div style={{ marginTop: 6 }}>
