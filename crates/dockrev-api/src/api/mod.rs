@@ -4773,22 +4773,6 @@ async fn github_packages_webhook(
         .to_string();
     let received_at = now_rfc3339().map_err(map_internal)?;
     if event != "package" {
-        let _ = record_github_packages_delivery(
-            &state,
-            GitHubPackagesWebhookDeliveryRecordInput {
-                delivery_id,
-                received_at,
-                owner: None,
-                repo: None,
-                event: Some(event),
-                action: None,
-                decision: "ignored".to_string(),
-                reason: Some("not_package_event".to_string()),
-                response_status: Some(200),
-                job_id: None,
-            },
-        )
-        .await;
         return Ok(Json(
             json!({"ok": true, "ignored": true, "reason": "not_package_event"}),
         ));
@@ -4807,64 +4791,16 @@ async fn github_packages_webhook(
         .map_err(map_internal)?;
 
     if !settings.enabled {
-        let _ = record_github_packages_delivery(
-            &state,
-            GitHubPackagesWebhookDeliveryRecordInput {
-                delivery_id,
-                received_at,
-                owner: None,
-                repo: None,
-                event: Some(event),
-                action: None,
-                decision: "ignored".to_string(),
-                reason: Some("disabled".to_string()),
-                response_status: Some(200),
-                job_id: None,
-            },
-        )
-        .await;
         return Ok(Json(
             json!({"ok": true, "ignored": true, "reason": "disabled"}),
         ));
     }
 
     let Some(secret) = settings.webhook_secret else {
-        let _ = record_github_packages_delivery(
-            &state,
-            GitHubPackagesWebhookDeliveryRecordInput {
-                delivery_id,
-                received_at,
-                owner: None,
-                repo: None,
-                event: Some(event),
-                action: None,
-                decision: "rejected".to_string(),
-                reason: Some("webhook_secret_not_configured".to_string()),
-                response_status: Some(401),
-                job_id: None,
-            },
-        )
-        .await;
         return Err(ApiError::unauthorized()
             .with_details(json!({"reason":"webhook_secret_not_configured"})));
     };
     if verify_github_signature(&secret, &sig, &body).is_err() {
-        let _ = record_github_packages_delivery(
-            &state,
-            GitHubPackagesWebhookDeliveryRecordInput {
-                delivery_id,
-                received_at,
-                owner: None,
-                repo: None,
-                event: Some(event),
-                action: None,
-                decision: "rejected".to_string(),
-                reason: Some("invalid_signature".to_string()),
-                response_status: Some(401),
-                job_id: None,
-            },
-        )
-        .await;
         return Err(ApiError::unauthorized().with_details(json!({"reason":"invalid_signature"})));
     }
 
@@ -4905,7 +4841,7 @@ async fn github_packages_webhook(
             .as_deref()
             .and_then(|s| s.split('/').nth(1))
             .map(|v| v.to_string());
-        let _ = record_github_packages_delivery(
+        record_github_packages_delivery(
             &state,
             GitHubPackagesWebhookDeliveryRecordInput {
                 delivery_id,
@@ -4920,7 +4856,7 @@ async fn github_packages_webhook(
                 job_id: None,
             },
         )
-        .await;
+        .await?;
         return Ok(Json(
             json!({"ok": true, "ignored": true, "reason": "not_published"}),
         ));
@@ -4961,7 +4897,30 @@ async fn github_packages_webhook(
     };
 
     if !should_trigger {
-        let _ = record_github_packages_delivery(
+        let delivery_exists = state
+            .db
+            .github_packages_delivery_exists(&delivery_id)
+            .await
+            .map_err(map_internal)?;
+        if delivery_exists {
+            let attempt_count = state
+                .db
+                .increment_github_packages_delivery_attempt(
+                    &delivery_id,
+                    &received_at,
+                    owner.as_deref(),
+                    repo.as_deref(),
+                    Some(event.as_str()),
+                    Some(action.as_str()),
+                )
+                .await
+                .map_err(map_internal)?;
+            return Ok(Json(
+                json!({"ok": true, "ignored": true, "reason": "duplicate_delivery", "attemptCount": attempt_count}),
+            ));
+        }
+
+        record_github_packages_delivery(
             &state,
             GitHubPackagesWebhookDeliveryRecordInput {
                 delivery_id,
@@ -4976,7 +4935,7 @@ async fn github_packages_webhook(
                 job_id: None,
             },
         )
-        .await;
+        .await?;
         return Ok(Json(
             json!({"ok": true, "ignored": true, "reason": "repo_not_selected"}),
         ));
@@ -4993,22 +4952,18 @@ async fn github_packages_webhook(
         .await
         .map_err(map_internal)?;
     if !is_new_delivery {
-        let attempt_count = record_github_packages_delivery(
-            &state,
-            GitHubPackagesWebhookDeliveryRecordInput {
-                delivery_id: delivery_id.clone(),
-                received_at: received_at.clone(),
-                owner: owner.clone(),
-                repo: repo.clone(),
-                event: Some(event.clone()),
-                action: Some(action.clone()),
-                decision: "ignored".to_string(),
-                reason: Some("duplicate_delivery".to_string()),
-                response_status: Some(200),
-                job_id: None,
-            },
-        )
-        .await?;
+        let attempt_count = state
+            .db
+            .increment_github_packages_delivery_attempt(
+                &delivery_id,
+                &received_at,
+                owner.as_deref(),
+                repo.as_deref(),
+                Some(event.as_str()),
+                Some(action.as_str()),
+            )
+            .await
+            .map_err(map_internal)?;
         return Ok(Json(
             json!({"ok": true, "ignored": true, "reason": "duplicate_delivery", "attemptCount": attempt_count}),
         ));

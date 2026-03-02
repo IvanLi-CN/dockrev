@@ -3107,6 +3107,52 @@ ON CONFLICT(delivery_id) DO UPDATE SET
         .context("record github packages delivery")
     }
 
+    pub async fn increment_github_packages_delivery_attempt(
+        &self,
+        delivery_id: &str,
+        received_at: &str,
+        owner: Option<&str>,
+        repo: Option<&str>,
+        event: Option<&str>,
+        action: Option<&str>,
+    ) -> anyhow::Result<u32> {
+        let delivery_id = delivery_id.to_string();
+        let received_at = received_at.to_string();
+        let owner = owner.map(|s| s.to_string());
+        let repo = repo.map(|s| s.to_string());
+        let event = event.map(|s| s.to_string());
+        let action = action.map(|s| s.to_string());
+        self.call(move |conn| {
+            let changed = conn.execute(
+                r#"
+UPDATE github_packages_deliveries
+SET
+  received_at = ?2,
+  owner = COALESCE(?3, owner),
+  repo = COALESCE(?4, repo),
+  event = COALESCE(?5, event),
+  action = COALESCE(?6, action),
+  attempt_count = attempt_count + 1
+WHERE delivery_id = ?1
+"#,
+                params![&delivery_id, &received_at, owner, repo, event, action],
+            )?;
+            if changed == 0 {
+                return Err(anyhow::anyhow!(
+                    "github packages delivery not found for duplicate attempt"
+                ));
+            }
+            conn.query_row(
+                "SELECT attempt_count FROM github_packages_deliveries WHERE delivery_id = ?1",
+                params![delivery_id],
+                |row| row.get::<_, i64>(0).map(|value| value.max(1) as u32),
+            )
+            .context("load github packages delivery attempt count")
+        })
+        .await
+        .context("increment github packages delivery attempt")
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn update_github_packages_delivery_outcome(
         &self,
@@ -3202,7 +3248,6 @@ VALUES (?1, ?2, ?2, ?3, ?4, 'package', 'published', 'processed', 200, 1)
         .context("insert github packages delivery")
     }
 
-    #[cfg(test)]
     pub async fn github_packages_delivery_exists(&self, delivery_id: &str) -> anyhow::Result<bool> {
         let delivery_id = delivery_id.to_string();
         self.call(move |conn| {

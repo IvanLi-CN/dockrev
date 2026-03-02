@@ -48,8 +48,8 @@ function responseTone(status?: number | null): 'ok' | 'warn' | 'bad' | 'muted' {
   return 'muted'
 }
 
-function taskLabel(decision: string): string {
-  if (decision === 'processed') return 'Webhook 扫描任务'
+function taskLabel(jobId?: string | null): string {
+  if (jobId) return '查看扫描任务'
   return '无关联任务'
 }
 
@@ -324,7 +324,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
           <div key={delivery.deliveryId} className="ghcrInboxRow" role="row">
             <div className="ghcrInboxCell">
               <div>{formatShort(delivery.receivedAt)}</div>
-              {delivery.attemptCount > 1 ? <div className="muted">重试 {delivery.attemptCount} 次</div> : null}
+              {delivery.attemptCount > 1 ? <div className="muted">尝试 {delivery.attemptCount} 次</div> : null}
             </div>
             <div className="ghcrInboxCell">
               <div>
@@ -392,10 +392,10 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
                   title={`任务 ID: ${delivery.jobId}`}
                   onClick={() => navigate({ name: 'job', jobId: delivery.jobId! })}
                 >
-                  {taskLabel(delivery.decision)}
+                  {taskLabel(delivery.jobId)}
                 </button>
               ) : (
-                <div className="muted">{taskLabel(delivery.decision)}</div>
+                <div className="muted">{taskLabel(delivery.jobId)}</div>
               )}
             </div>
           </div>

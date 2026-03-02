@@ -6836,11 +6836,8 @@ async fn github_packages_webhook_validates_signature_and_dedupes_delivery() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = response_json(resp).await;
-    assert_eq!(body["filteredTotal"], 1);
-    assert_eq!(body["deliveries"][0]["deliveryId"], "d1");
-    assert_eq!(body["deliveries"][0]["decision"], "rejected");
-    assert_eq!(body["deliveries"][0]["reason"], "invalid_signature");
-    assert_eq!(body["deliveries"][0]["responseStatus"], 401);
+    assert_eq!(body["filteredTotal"], 0);
+    assert_eq!(body["deliveries"].as_array().map(|v| v.len()), Some(0));
 
     let key = hmac::Key::new(hmac::HMAC_SHA256, b"secret123");
     let tag = hmac::sign(&key, &payload_bytes);
@@ -6870,7 +6867,16 @@ async fn github_packages_webhook_validates_signature_and_dedupes_delivery() {
             .starts_with("dsc_")
     );
 
-    // Same delivery id should be ignored.
+    // Same delivery id should be ignored even if repo selection changed after first processing.
+    state
+        .db
+        .put_github_packages_repos(
+            &[(String::from("acme"), String::from("widgets"), false)],
+            &now,
+        )
+        .await
+        .unwrap();
+
     let key = hmac::Key::new(hmac::HMAC_SHA256, b"secret123");
     let tag = hmac::sign(&key, &payload_bytes);
     let sig = format!("sha256={}", hex::encode(tag.as_ref()));
@@ -6894,6 +6900,31 @@ async fn github_packages_webhook_validates_signature_and_dedupes_delivery() {
     assert_eq!(body["ignored"], true);
     assert_eq!(body["reason"], "duplicate_delivery");
     assert_eq!(body["attemptCount"], 2);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries?q=d2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["filteredTotal"], 1);
+    assert_eq!(body["deliveries"][0]["deliveryId"], "d2");
+    assert_eq!(body["deliveries"][0]["decision"], "processed");
+    assert_eq!(body["deliveries"][0]["reason"], serde_json::Value::Null);
+    assert_eq!(body["deliveries"][0]["responseStatus"], 200);
+    assert_eq!(body["deliveries"][0]["attemptCount"], 2);
+    assert!(
+        body["deliveries"][0]["jobId"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("dsc_")
+    );
 }
 
 #[tokio::test]
@@ -6929,7 +6960,7 @@ async fn github_packages_webhook_respects_disabled_setting() {
         .await
         .unwrap();
 
-    let app = api::router(state);
+    let app = api::router(state.clone());
     let payload = serde_json::json!({
       "action": "published",
       "repository": { "full_name": "acme/widgets", "owner": { "login": "acme" } }
@@ -6957,6 +6988,72 @@ async fn github_packages_webhook_respects_disabled_setting() {
     let body = response_json(resp).await;
     assert_eq!(body["ignored"], true);
     assert_eq!(body["reason"], "disabled");
+    assert!(
+        !state
+            .db
+            .github_packages_delivery_exists("disabled-1")
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn github_packages_webhook_ignores_non_package_event_without_persisting() {
+    use ring::hmac;
+
+    let state = test_state(":memory:").await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .put_github_packages_settings(
+            &crate::api::types::GitHubPackagesSettingsDb {
+                enabled: true,
+                callback_url: "https://dockrev.example.com/api/webhooks/github-packages"
+                    .to_string(),
+                pat: Some("ghp_example".to_string()),
+                webhook_secret: Some("secret123".to_string()),
+                updated_at: Some(now.clone()),
+            },
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let app = api::router(state.clone());
+    let payload = serde_json::json!({ "zen": "keep it simple" });
+    let payload_bytes = payload.to_string().into_bytes();
+    let key = hmac::Key::new(hmac::HMAC_SHA256, b"secret123");
+    let tag = hmac::sign(&key, &payload_bytes);
+    let sig = format!("sha256={}", hex::encode(tag.as_ref()));
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "ping")
+                .header("X-GitHub-Delivery", "ping-1")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["ignored"], true);
+    assert_eq!(body["reason"], "not_package_event");
+    assert!(
+        !state
+            .db
+            .github_packages_delivery_exists("ping-1")
+            .await
+            .unwrap()
+    );
 }
 
 #[tokio::test]
