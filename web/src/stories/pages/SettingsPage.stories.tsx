@@ -67,6 +67,22 @@ export const RepoPickerUx: Story = {
   },
 }
 
+export const GhcrPreview: Story = {
+  parameters: { dockrevApiScenario: 'settings-configured' },
+  render: () => {
+    return (
+      <PageHarness
+        route={{ name: 'settings' }}
+        title="系统设置"
+        pageSubtitle="验证 GHCR Repos 区域仅预览前 6 条并通过“查看更多”进入维护页"
+        topbarHint="系统设置"
+      >
+        {({ onTopActions }) => <SettingsPage onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}
+
 export const Error: Story = {
   parameters: { dockrevApiScenario: 'error' },
   render: () => {

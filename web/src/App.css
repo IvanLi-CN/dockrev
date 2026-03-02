@@ -2373,6 +2373,186 @@ html[data-theme='light'] .modalOverlay {
   padding: 16px;
 }
 
+.ghcrRegistryPage {
+  gap: 12px;
+}
+
+.ghcrRegistrySummaryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.ghcrRegistrySummaryItem {
+  border: 1px solid var(--borderColor);
+  border-radius: 12px;
+  background: var(--dockrev-surface);
+  padding: 12px;
+}
+
+.ghcrRegistrySummaryValue {
+  margin-top: 8px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.ghcrRegistryToolbar {
+  border: 1px solid var(--borderColor);
+  border-radius: 12px;
+  background: var(--dockrev-surface);
+  padding: 12px;
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.ghcrRegistryFilterMeasureRow {
+  position: absolute;
+  inset-inline: 12px;
+  top: 12px;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.ghcrRegistryFilterSelectWrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: min(100%, 260px);
+}
+
+.ghcrRegistryFilterSelectWrap::after {
+  content: '';
+  position: absolute;
+  right: 14px;
+  bottom: 13px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--muted2);
+  border-bottom: 2px solid var(--muted2);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.ghcrRegistryFilterSelectWrap:focus-within::after {
+  border-color: var(--text);
+}
+
+.ghcrRegistryFilterSelectLabel {
+  font-size: 11px;
+  color: var(--muted2);
+  letter-spacing: 0.04em;
+}
+
+.ghcrRegistryFilterSelect {
+  min-width: min(100%, 260px);
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 34px;
+}
+
+.ghcrRegistrySearchForm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 420px;
+  min-width: min(100%, 440px);
+}
+
+.ghcrRegistrySearchForm .input {
+  min-width: 160px;
+  flex: 1 1 260px;
+}
+
+.ghcrRegistryList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ghcrRegistryRow {
+  border: 1px solid var(--borderColor);
+  border-radius: 12px;
+  background: var(--dockrev-surface);
+  padding: 12px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.ghcrRegistryMain {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.ghcrRegistryHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.ghcrRegistryTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.ghcrRegistryTitle .mono {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ghcrRegistryStatus {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: 0;
+}
+
+.ghcrRegistryMeta {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  font-size: 12px;
+  color: var(--muted2);
+}
+
+.ghcrRegistryError {
+  margin-top: 6px;
+  color: var(--color-danger);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.ghcrRegistryActions {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.ghcrRegistryEmpty {
+  border: 1px solid var(--borderColor);
+  border-radius: 12px;
+  background: var(--dockrev-surface);
+  padding: 16px;
+}
+
 .linkButton {
   border: 0;
   background: transparent;
@@ -3798,6 +3978,110 @@ html[data-theme='light'] .card {
   outline-offset: 2px;
 }
 
+.responsiveActionBtn {
+  position: relative;
+  --responsive-action-bubble-anchor-left: 50%;
+  --responsive-action-bubble-anchor-right: auto;
+  --responsive-action-bubble-shift-x: -50%;
+  --responsive-action-bubble-arrow-left: 50%;
+  gap: 8px;
+  min-width: 84px;
+  padding-inline: 10px 12px;
+}
+
+.responsiveActionBtnBubbleAlignLeft {
+  --responsive-action-bubble-anchor-left: 0%;
+  --responsive-action-bubble-anchor-right: auto;
+  --responsive-action-bubble-shift-x: 0%;
+  --responsive-action-bubble-arrow-left: 16px;
+}
+
+.responsiveActionBtnBubbleAlignRight {
+  --responsive-action-bubble-anchor-left: auto;
+  --responsive-action-bubble-anchor-right: 0%;
+  --responsive-action-bubble-shift-x: 0%;
+  --responsive-action-bubble-arrow-left: calc(100% - 16px);
+}
+
+.responsiveActionBtnIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.responsiveActionBtnIcon > svg,
+.responsiveActionBtnIcon .iconify {
+  width: 16px;
+  height: 16px;
+}
+
+.responsiveActionBtnLabel {
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.responsiveActionBtnBubble {
+  position: absolute;
+  left: var(--responsive-action-bubble-anchor-left);
+  right: var(--responsive-action-bubble-anchor-right);
+  bottom: calc(100% + 10px);
+  transform: translate(var(--responsive-action-bubble-shift-x), 4px);
+  width: max-content;
+  min-width: 120px;
+  max-width: min(300px, calc(100vw - 28px));
+  padding: 8px 11px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  background: color-mix(in srgb, var(--panel2) 94%, #020814 6%);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: break-word;
+  pointer-events: none;
+  box-shadow: var(--shadow-soft);
+  opacity: 0;
+  z-index: 5;
+  transition: opacity 140ms ease;
+}
+
+.responsiveActionBtnBubbleBelow .responsiveActionBtnBubble {
+  top: calc(100% + 10px);
+  bottom: auto;
+}
+
+.responsiveActionBtnBubble::after {
+  content: '';
+  position: absolute;
+  left: var(--responsive-action-bubble-arrow-left);
+  top: 100%;
+  width: 9px;
+  height: 9px;
+  border-right: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  background: color-mix(in srgb, var(--panel2) 94%, #020814 6%);
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.responsiveActionBtnBubbleBelow .responsiveActionBtnBubble::after {
+  top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  border-top: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+}
+
+.responsiveActionBtnHasHint:hover .responsiveActionBtnBubble,
+.responsiveActionBtnHasHint:focus-visible .responsiveActionBtnBubble,
+.responsiveActionBtnShowBubble .responsiveActionBtnBubble {
+  opacity: 1;
+  transform: translate(var(--responsive-action-bubble-shift-x), 0);
+}
+
 .chipStatic,
 .chip {
   border: 1px solid color-mix(in srgb, var(--borderColor) 78%, transparent);
@@ -4229,6 +4513,25 @@ html[data-theme='light'] .card {
     align-items: stretch;
   }
 
+  .ghcrRegistryToolbar {
+    align-items: stretch;
+  }
+
+  .ghcrRegistryFilterSelectWrap {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .ghcrRegistryFilterSelect {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .ghcrRegistrySearchForm {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+
   .ghcrInboxSearchForm {
     flex-basis: 100%;
     min-width: 0;
@@ -4240,6 +4543,14 @@ html[data-theme='light'] .card {
 
   .ghcrInboxQuickLinks {
     margin-left: 0;
+  }
+
+  .ghcrRegistryStatus {
+    width: auto;
+  }
+
+  .ghcrRegistryActions {
+    justify-content: flex-end;
   }
 
   .ghcrInboxTableHeader {
@@ -4259,6 +4570,26 @@ html[data-theme='light'] .card {
   }
 }
 
+@media (max-width: 1160px) {
+  .responsiveActionBtn {
+    gap: 6px;
+    min-width: 78px;
+    padding-inline: 9px 10px;
+  }
+
+  .responsiveActionBtnIcon {
+    width: 14px;
+    height: 14px;
+    flex-basis: 14px;
+  }
+
+  .responsiveActionBtnIcon > svg,
+  .responsiveActionBtnIcon .iconify {
+    width: 14px;
+    height: 14px;
+  }
+}
+
 @media (max-width: 1200px) {
   .ghcrInboxSearchForm {
     flex-basis: 100%;
@@ -4267,6 +4598,37 @@ html[data-theme='light'] .card {
 }
 
 @media (max-width: 700px) {
+  .responsiveActionBtn {
+    width: 32px;
+    min-width: 32px;
+    padding: 0;
+    gap: 0;
+  }
+
+  .responsiveActionBtnLabel {
+    display: none;
+  }
+
+  .responsiveActionBtnBubble {
+    min-width: 132px;
+    max-width: min(260px, calc(100vw - 24px));
+  }
+
+  .ghcrRegistrySearchForm {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .ghcrRegistrySearchForm .input {
+    min-width: 0;
+    flex-basis: 100%;
+  }
+
+  .ghcrRegistrySearchForm .btn {
+    flex: 1 1 calc(50% - 3px);
+    min-width: 0;
+  }
+
   .ghcrInboxSearchForm {
     flex-wrap: wrap;
     gap: 6px;
