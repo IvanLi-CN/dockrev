@@ -72,3 +72,4 @@
 - 2026-03-02: 创建规格，冻结“前端映射 + 全站任务展示 + 机器名保留”的实现边界。
 - 2026-03-02: 完成 `web/src/jobDisplay.ts` 映射实现；更新 Queue/JobDetail/Overview 展示；新增 `web/tests/jobDisplay.test.ts` 并通过 `bun test --cwd web`、`bun run --cwd web lint`、`bun run --cwd web build`。
 - 2026-03-02: 追加任务 `type` 彩色 badge（Queue/Overview/JobDetail 统一）；补齐 `queue-mixed` mock 的 `all/stack/service` 与多类型样例，并通过 `codex review`、`bun test --cwd web`、`bun run --cwd web lint`、`bun run --cwd web build`、`DOCKREV_TEST_STORYBOOK_PORT=50999 bun run --cwd web test-storybook`。
+- 2026-03-02: PR #116 按评审反馈补充 Queue/Overview/JobDetail 三处截图证据，确保“可读名称优先 + scope/type tag + 类型颜色区分”可视化可复核。
