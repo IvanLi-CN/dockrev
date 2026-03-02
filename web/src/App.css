@@ -2075,7 +2075,7 @@ html[data-theme='light'] .modalOverlay {
   border: 1px solid var(--borderColor);
   border-radius: 12px;
   background: var(--dockrev-surface);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .ghcrInboxTableHeader,
@@ -2096,6 +2096,8 @@ html[data-theme='light'] .modalOverlay {
   font-size: 12px;
   min-height: 40px;
   align-items: center;
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
 }
 
 .ghcrInboxTableHeader > div {
@@ -2105,6 +2107,11 @@ html[data-theme='light'] .modalOverlay {
 .ghcrInboxRow {
   border-top: 1px solid var(--borderColor);
   align-items: stretch;
+}
+
+.ghcrInboxRow:last-child {
+  border-bottom-left-radius: 12px;
+  border-bottom-right-radius: 12px;
 }
 
 .ghcrInboxCell {
@@ -2121,18 +2128,126 @@ html[data-theme='light'] .modalOverlay {
   word-break: break-all;
 }
 
+.ghcrInboxCellStatus {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+}
+
 .ghcrInboxCellTask {
   align-items: flex-start;
 }
 
-/* Keep inbox status/http pills optically centered (especially CJK text). */
 .ghcrInboxCell .pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 30px;
+  align-self: center;
+  min-height: 20px;
   line-height: 1;
-  padding: 0 12px;
+  padding: 0 8px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.ghcrInboxDecisionBadge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  max-width: 100%;
+  min-width: 0;
+  gap: 6px;
+}
+
+.ghcrInboxDecisionBadgeInteractive {
+  border: 0;
+  margin: 0;
+  padding: 0 10px 0 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.ghcrInboxReasonPreview {
+  min-width: 0;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted2);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.ghcrInboxDecisionBadgeInteractive:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 999px;
+}
+
+.ghcrInboxReasonHint {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 58%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 20%, transparent);
+  color: var(--color-warning);
+  font-size: 7px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.ghcrInboxReasonTooltip {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: -8px;
+  z-index: 3;
+  max-width: 240px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 44%, var(--borderColor) 56%);
+  background: color-mix(in srgb, var(--panel) 90%, var(--dockrev-surface-strong) 10%);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-3px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+.ghcrInboxDecisionBadgeTop .ghcrInboxReasonTooltip {
+  top: auto;
+  bottom: calc(100% + 6px);
+  transform: translateY(3px);
+}
+
+.ghcrInboxDecisionBadgeInteractive:hover .ghcrInboxReasonTooltip,
+.ghcrInboxDecisionBadgeInteractive:focus-visible .ghcrInboxReasonTooltip,
+.ghcrInboxDecisionBadgeOpen .ghcrInboxReasonTooltip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.ghcrInboxDecisionBadgeInteractive:hover .ghcrInboxReasonHint,
+.ghcrInboxDecisionBadgeOpen .ghcrInboxReasonHint {
+  border-color: color-mix(in srgb, var(--color-warning) 76%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 30%, transparent);
 }
 
 .ghcrInboxEmpty {

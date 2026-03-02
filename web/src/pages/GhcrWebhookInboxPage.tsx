@@ -78,6 +78,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
   const [data, setData] = useState<ListGitHubPackagesWebhookDeliveriesResponse>(EMPTY_DELIVERIES)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [openReasonDeliveryId, setOpenReasonDeliveryId] = useState<string | null>(null)
   const refreshRequestIdRef = useRef(0)
 
   const refresh = useCallback(async () => {
@@ -129,6 +130,32 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
     if (page <= maxPage) return
     setPage(maxPage)
   }, [maxPage, page])
+
+  useEffect(() => {
+    setOpenReasonDeliveryId(null)
+  }, [filter, page, perPage, query])
+
+  useEffect(() => {
+    if (!openReasonDeliveryId) return
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('.ghcrInboxDecisionBadgeInteractive')) return
+      setOpenReasonDeliveryId(null)
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setOpenReasonDeliveryId(null)
+    }
+
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [openReasonDeliveryId])
 
   const summaryItems = useMemo(
     () => [
@@ -293,7 +320,7 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
           </div>
         ) : null}
 
-        {data.deliveries.map((delivery) => (
+        {data.deliveries.map((delivery, index) => (
           <div key={delivery.deliveryId} className="ghcrInboxRow" role="row">
             <div className="ghcrInboxCell">
               <div>{formatShort(delivery.receivedAt)}</div>
@@ -310,11 +337,49 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
             <div className="ghcrInboxCell">
               <Mono>{formatRepo(delivery.owner, delivery.repo, delivery.fullName)}</Mono>
             </div>
-            <div className="ghcrInboxCell">
-              <Pill tone={decisionTone(delivery.decision)}>{decisionLabel(delivery.decision)}</Pill>
-              {delivery.reason ? <div className="muted">{delivery.reason}</div> : null}
+            <div className="ghcrInboxCell ghcrInboxCellStatus">
+              {delivery.reason ? (
+                (() => {
+                  const tooltipId = `ghcr-inbox-reason-${page}-${index}`
+                  const tooltipAbove = data.deliveries.length > 3 && index >= data.deliveries.length - 3
+                  const open = openReasonDeliveryId === delivery.deliveryId
+                  const decisionText = decisionLabel(delivery.decision)
+                  const className = [
+                    'ghcrInboxDecisionBadge',
+                    'ghcrInboxDecisionBadgeInteractive',
+                    tooltipAbove ? 'ghcrInboxDecisionBadgeTop' : '',
+                    open ? 'ghcrInboxDecisionBadgeOpen' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')
+                  return (
+                    <button
+                      type="button"
+                      className={className}
+                      onClick={() =>
+                        setOpenReasonDeliveryId((current) => (current === delivery.deliveryId ? null : delivery.deliveryId))
+                      }
+                      aria-expanded={open}
+                      aria-describedby={tooltipId}
+                    >
+                      <Pill tone={decisionTone(delivery.decision)}>{decisionText}</Pill>
+                      <span className="ghcrInboxReasonPreview">{delivery.reason}</span>
+                      <span className="ghcrInboxReasonHint" aria-hidden="true">
+                        !
+                      </span>
+                      <span id={tooltipId} className="ghcrInboxReasonTooltip" role="tooltip">
+                        {delivery.reason}
+                      </span>
+                    </button>
+                  )
+                })()
+              ) : (
+                <span className="ghcrInboxDecisionBadge">
+                  <Pill tone={decisionTone(delivery.decision)}>{decisionLabel(delivery.decision)}</Pill>
+                </span>
+              )}
             </div>
-            <div className="ghcrInboxCell">
+            <div className="ghcrInboxCell ghcrInboxCellStatus">
               <Pill tone={responseTone(delivery.responseStatus)}>
                 {typeof delivery.responseStatus === 'number' ? `HTTP ${delivery.responseStatus}` : '-'}
               </Pill>
