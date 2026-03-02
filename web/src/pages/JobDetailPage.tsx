@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getJob, newJobEventsSource, type JobDetail, type JobLogLine, type JobProgress } from '../api'
-import { formatJobMachineName, formatJobReadableName } from '../jobDisplay'
+import { formatJobMachineName, formatJobReadableDisplay } from '../jobDisplay'
 import { navigate } from '../routes'
 import { Button, Chip, Mono, Pill } from '../ui'
 
@@ -308,6 +308,9 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
     progress !== null && isRunning && (knownPlannedPercent === null || plannedZeroPercentWhileRunning)
   const displayedCompletedPercent = isCompletedIndeterminateRunning ? null : knownProgressPercent
   const displayedPlannedPercent = isPlannedIndeterminateRunning ? null : knownPlannedPercent
+  const readable = job
+    ? formatJobReadableDisplay(job.type, job.scope)
+    : { primaryLabel: '-', scopeTag: null, typeTone: 'default' as const }
   const plannedProgressLabel =
     displayedPlannedPercent !== null ? `${displayedPlannedPercent}%` : isRunning ? 'running' : job?.status ?? '-'
   const completedProgressLabel =
@@ -337,7 +340,8 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
         {job ? (
           <div className="muted" style={{ marginTop: 8 }}>
             <div>
-              task <Mono>{formatJobReadableName(job.type, job.scope)}</Mono> · machine{' '}
+              task <span className={`jobTypeTag jobTypeTag-${readable.typeTone}`}>{readable.primaryLabel}</span>
+              {readable.scopeTag ? <span className="jobScopeTag">{readable.scopeTag}</span> : null} · machine{' '}
               <Mono>{formatJobMachineName(job.type, job.scope)}</Mono> · by <Mono>{job.createdBy}</Mono> · reason{' '}
               <Mono>{job.reason}</Mono>
             </div>

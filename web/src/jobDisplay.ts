@@ -3,6 +3,14 @@ function normalize(value: string | null | undefined): string {
   return trimmed.length > 0 ? trimmed : '-'
 }
 
+export type JobReadableDisplay = {
+  primaryLabel: string
+  scopeTag: string | null
+  typeTone: JobTypeTone
+}
+
+export type JobTypeTone = 'check' | 'discovery' | 'runtimeScan' | 'ghcrWebhook' | 'update' | 'rollback' | 'default'
+
 export function formatJobTypeLabel(type: string): string {
   const raw = normalize(type)
   if (raw === '-') return raw
@@ -33,6 +41,17 @@ export function formatJobReadableName(type: string, scope: string): string {
   return `${typeLabel} · ${scopeLabel}`
 }
 
+export function formatJobReadableDisplay(type: string, scope: string): JobReadableDisplay {
+  const rawType = normalize(type)
+  const typeLabel = formatJobTypeLabel(type)
+  const scopeLabel = formatJobScopeLabel(scope)
+  const typeTone = resolveJobTypeTone(rawType)
+  if (typeLabel === '-' && scopeLabel === '-') return { primaryLabel: '-', scopeTag: null, typeTone: 'default' }
+  if (scopeLabel === '-') return { primaryLabel: typeLabel, scopeTag: null, typeTone }
+  if (typeLabel === '-') return { primaryLabel: scopeLabel, scopeTag: null, typeTone: 'default' }
+  return { primaryLabel: typeLabel, scopeTag: scopeLabel, typeTone }
+}
+
 export function formatJobMachineName(type: string, scope: string): string {
   const normalizedType = normalize(type)
   const normalizedScope = normalize(scope)
@@ -40,4 +59,14 @@ export function formatJobMachineName(type: string, scope: string): string {
   if (normalizedScope === '-') return normalizedType
   if (normalizedType === '-') return normalizedScope
   return `${normalizedType}.${normalizedScope}`
+}
+
+function resolveJobTypeTone(type: string): JobTypeTone {
+  if (type === 'check') return 'check'
+  if (type === 'discovery') return 'discovery'
+  if (type === 'runtime_scan') return 'runtimeScan'
+  if (type === 'github_packages_webhook') return 'ghcrWebhook'
+  if (type === 'update') return 'update'
+  if (type === 'rollback') return 'rollback'
+  return 'default'
 }
