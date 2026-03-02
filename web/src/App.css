@@ -2401,10 +2401,59 @@ html[data-theme='light'] .modalOverlay {
   border-radius: 12px;
   background: var(--dockrev-surface);
   padding: 12px;
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+}
+
+.ghcrRegistryFilterMeasureRow {
+  position: absolute;
+  inset-inline: 12px;
+  top: 12px;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.ghcrRegistryFilterSelectWrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: min(100%, 260px);
+}
+
+.ghcrRegistryFilterSelectWrap::after {
+  content: '';
+  position: absolute;
+  right: 14px;
+  bottom: 13px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--muted2);
+  border-bottom: 2px solid var(--muted2);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.ghcrRegistryFilterSelectWrap:focus-within::after {
+  border-color: var(--text);
+}
+
+.ghcrRegistryFilterSelectLabel {
+  font-size: 11px;
+  color: var(--muted2);
+  letter-spacing: 0.04em;
+}
+
+.ghcrRegistryFilterSelect {
+  min-width: min(100%, 260px);
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 34px;
 }
 
 .ghcrRegistrySearchForm {
@@ -2442,17 +2491,35 @@ html[data-theme='light'] .modalOverlay {
   flex: 1 1 auto;
 }
 
+.ghcrRegistryHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
 .ghcrRegistryTitle {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
   font-size: 12px;
   color: var(--text);
 }
 
 .ghcrRegistryTitle .mono {
-  overflow-wrap: anywhere;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ghcrRegistryStatus {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: 0;
 }
 
 .ghcrRegistryMeta {
@@ -2472,11 +2539,11 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .ghcrRegistryActions {
+  margin-top: 10px;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
-  flex: 0 0 auto;
 }
 
 .ghcrRegistryEmpty {
@@ -4450,6 +4517,16 @@ html[data-theme='light'] .card {
     align-items: stretch;
   }
 
+  .ghcrRegistryFilterSelectWrap {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .ghcrRegistryFilterSelect {
+    width: 100%;
+    min-width: 0;
+  }
+
   .ghcrRegistrySearchForm {
     flex-basis: 100%;
     min-width: 0;
@@ -4468,13 +4545,12 @@ html[data-theme='light'] .card {
     margin-left: 0;
   }
 
-  .ghcrRegistryRow {
-    flex-direction: column;
-    align-items: stretch;
+  .ghcrRegistryStatus {
+    width: auto;
   }
 
   .ghcrRegistryActions {
-    justify-content: flex-start;
+    justify-content: flex-end;
   }
 
   .ghcrInboxTableHeader {
