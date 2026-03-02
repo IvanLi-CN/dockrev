@@ -28,6 +28,13 @@ export const Default: Story = {
   },
 }
 
+export const DefaultLight: Story = {
+  ...Default,
+  globals: {
+    theme: 'light',
+  },
+}
+
 export const ResolveLoading: Story = {
   parameters: { dockrevApiScenario: 'settings-configured-resolve-slow' },
   render: () => {

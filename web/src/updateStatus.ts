@@ -1,3 +1,9 @@
+import type { IconifyIcon } from '@iconify/types'
+import alertCircleOutline from '@iconify-icons/mdi/alert-circle-outline'
+import arrowUpBoldCircle from '@iconify-icons/mdi/arrow-up-bold-circle'
+import closeCircleOutline from '@iconify-icons/mdi/close-circle-outline'
+import helpCircleOutline from '@iconify-icons/mdi/help-circle-outline'
+import minusCircleOutline from '@iconify-icons/mdi/minus-circle-outline'
 import type { Service } from './api'
 
 export type RowStatus = 'ok' | 'updatable' | 'hint' | 'archMismatch' | 'blocked'
@@ -6,6 +12,16 @@ type TagSeries = {
   major: number
   minor: number | null
   precision: 1 | 2 | 3
+}
+
+const STRICT_SEMVER_PATTERN =
+  /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/
+
+type StrictSemver = {
+  major: string
+  minor: string
+  patch: string
+  prerelease: string[]
 }
 
 function parseTagSeries(tag: string): TagSeries | null {
@@ -30,6 +46,85 @@ function parseTagSeries(tag: string): TagSeries | null {
   }
 }
 
+function parseStrictSemver(tag: string | null | undefined): StrictSemver | null {
+  const trimmed = (tag ?? '').trim()
+  if (!trimmed) return null
+  const match = STRICT_SEMVER_PATTERN.exec(trimmed)
+  if (!match) return null
+
+  const prerelease = (match[4] ?? '')
+    .split('.')
+    .filter(Boolean)
+  if (prerelease.some((token) => /^\d+$/.test(token) && token.length > 1 && token.startsWith('0'))) {
+    return null
+  }
+
+  return {
+    major: match[1],
+    minor: match[2],
+    patch: match[3],
+    prerelease,
+  }
+}
+
+function compareNumericToken(a: string, b: string): number {
+  const aNum = /^\d+$/.test(a)
+  const bNum = /^\d+$/.test(b)
+  if (aNum && bNum) {
+    if (a.length !== b.length) return a.length - b.length
+    if (a === b) return 0
+    return a < b ? -1 : 1
+  }
+  if (aNum) return -1
+  if (bNum) return 1
+  if (a === b) return 0
+  return a < b ? -1 : 1
+}
+
+function compareStrictSemver(a: StrictSemver, b: StrictSemver): number {
+  const majorCmp = compareNumericToken(a.major, b.major)
+  if (majorCmp !== 0) return majorCmp
+  const minorCmp = compareNumericToken(a.minor, b.minor)
+  if (minorCmp !== 0) return minorCmp
+  const patchCmp = compareNumericToken(a.patch, b.patch)
+  if (patchCmp !== 0) return patchCmp
+
+  const aPre = a.prerelease
+  const bPre = b.prerelease
+  if (aPre.length === 0 && bPre.length === 0) return 0
+  if (aPre.length === 0) return 1
+  if (bPre.length === 0) return -1
+
+  const len = Math.max(aPre.length, bPre.length)
+  for (let i = 0; i < len; i += 1) {
+    const aTok = aPre[i]
+    const bTok = bPre[i]
+    if (aTok == null) return -1
+    if (bTok == null) return 1
+    const cmp = compareNumericToken(aTok, bTok)
+    if (cmp !== 0) return cmp
+  }
+  return 0
+}
+
+function semverBaselineForCurrent(svc: Service): StrictSemver | null {
+  return parseStrictSemver(svc.image.resolvedTag) ?? parseStrictSemver(svc.image.tag)
+}
+
+function semverBaselineForCandidate(svc: Service): StrictSemver | null {
+  const c = svc.candidate
+  if (!c) return null
+  return parseStrictSemver(c.resolvedTag) ?? parseStrictSemver(c.tag)
+}
+
+export function isSemverDowngradeAnomaly(svc: Service): boolean {
+  if (!svc.candidate) return false
+  const current = semverBaselineForCurrent(svc)
+  const candidate = semverBaselineForCandidate(svc)
+  if (!current || !candidate) return false
+  return compareStrictSemver(candidate, current) < 0
+}
+
 export function tagSeriesMatches(currentTag: string, candidateTag: string): boolean | null {
   const cur = parseTagSeries(currentTag)
   const cand = parseTagSeries(candidateTag)
@@ -50,11 +145,19 @@ export function serviceRowStatus(svc: Service): RowStatus {
 }
 
 export function statusDotClass(st: RowStatus): string {
-  if (st === 'updatable') return 'statusDot statusDotOk'
-  if (st === 'hint') return 'statusDot statusDotWarn'
-  if (st === 'archMismatch') return 'statusDot statusDotBad'
-  if (st === 'blocked') return 'statusDot statusDotBad'
-  return 'statusDot'
+  if (st === 'updatable') return 'statusCircleIcon statusCircleIconPrimary'
+  if (st === 'hint') return 'statusCircleIcon statusCircleIconWarn'
+  if (st === 'archMismatch') return 'statusCircleIcon statusCircleIconBad'
+  if (st === 'blocked') return 'statusCircleIcon statusCircleIconBad'
+  return 'statusCircleIcon statusCircleIconNeutral'
+}
+
+export function statusIcon(st: RowStatus): IconifyIcon {
+  if (st === 'updatable') return arrowUpBoldCircle
+  if (st === 'hint') return helpCircleOutline
+  if (st === 'archMismatch') return alertCircleOutline
+  if (st === 'blocked') return closeCircleOutline
+  return minusCircleOutline
 }
 
 export function statusLabel(st: RowStatus): string {
@@ -69,6 +172,7 @@ export function noteFor(svc: Service, st: RowStatus): string {
   if (st === 'blocked') return svc.ignore?.reason ?? '被阻止'
   if (st === 'archMismatch') return '仅提示，不允许更新'
   if (st === 'hint') {
+    if (isSemverDowngradeAnomaly(svc)) return '⚠ 版本异常：候选版本低于当前版本'
     if (svc.candidate?.archMatch === 'unknown') return 'arch 未知'
     return ''
   }
@@ -76,6 +180,9 @@ export function noteFor(svc: Service, st: RowStatus): string {
     const hasForceBackup =
       Object.values(svc.settings.backupTargets.bindPaths).some((v) => v === 'force') ||
       Object.values(svc.settings.backupTargets.volumeNames).some((v) => v === 'force')
+    const semverAnomaly = isSemverDowngradeAnomaly(svc)
+    if (semverAnomaly && hasForceBackup) return '⚠ 版本异常：候选版本低于当前版本；备份通过后执行'
+    if (semverAnomaly) return '⚠ 版本异常：候选版本低于当前版本'
     // The "按当前标签序列" hint became low-value after version popovers were introduced; keep notes
     // only when there's an operator-relevant extra step.
     return hasForceBackup ? '备份通过后执行' : ''

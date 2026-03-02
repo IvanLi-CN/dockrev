@@ -796,10 +796,44 @@ mod tests {
     fn install_fake_docker(script_body: &str) -> anyhow::Result<(TempDir, String)> {
         let dir = TempDir::new("dockrev-supervisor-fake-docker")?;
         let docker = dir.path().join("docker");
-        std::fs::write(&docker, script_body)?;
-        let mut perms = std::fs::metadata(&docker)?.permissions();
+        let docker_tmp = dir.path().join("docker.tmp");
+
+        {
+            use std::io::Write as _;
+            let mut file = std::fs::File::create(&docker_tmp)?;
+            file.write_all(script_body.as_bytes())?;
+            file.sync_all()?;
+        }
+
+        let mut perms = std::fs::metadata(&docker_tmp)?.permissions();
         perms.set_mode(0o755);
-        std::fs::set_permissions(&docker, perms)?;
+        std::fs::set_permissions(&docker_tmp, perms)?;
+        std::fs::rename(&docker_tmp, &docker)?;
+
+        // GH Actions can intermittently report ETXTBSY when executing a just-written script.
+        // Probe the command once and retry briefly on that specific transient.
+        const ETXTBSY: i32 = 26;
+        let mut last_err: Option<std::io::Error> = None;
+        for _ in 0..10 {
+            match std::process::Command::new(&docker)
+                .arg("dockrev-fake-probe")
+                .output()
+            {
+                Ok(_) => {
+                    last_err = None;
+                    break;
+                }
+                Err(err) if err.raw_os_error() == Some(ETXTBSY) => {
+                    last_err = Some(err);
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
+        if let Some(err) = last_err {
+            return Err(err.into());
+        }
+
         Ok((dir, docker.to_string_lossy().to_string()))
     }
 

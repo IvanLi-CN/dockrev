@@ -27,6 +27,9 @@ pub struct Config {
     pub registry_retry_max_attempts: usize,
     pub registry_retry_base_ms: u64,
     pub registry_retry_max_ms: u64,
+    pub update_idempotent_retry_max_attempts: usize,
+    pub update_idempotent_retry_base_ms: u64,
+    pub update_idempotent_retry_max_ms: u64,
 }
 
 impl Config {
@@ -157,6 +160,44 @@ impl Config {
             ));
         }
 
+        let update_idempotent_retry_max_attempts =
+            std::env::var("DOCKREV_UPDATE_IDEMPOTENT_RETRY_MAX_ATTEMPTS")
+                .ok()
+                .and_then(|v| v.trim().parse::<usize>().ok())
+                .unwrap_or(3);
+        if update_idempotent_retry_max_attempts == 0 {
+            return Err(anyhow::anyhow!(
+                "DOCKREV_UPDATE_IDEMPOTENT_RETRY_MAX_ATTEMPTS must be >= 1"
+            ));
+        }
+
+        let update_idempotent_retry_base_ms =
+            std::env::var("DOCKREV_UPDATE_IDEMPOTENT_RETRY_BASE_MS")
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .unwrap_or(300);
+        if update_idempotent_retry_base_ms == 0 {
+            return Err(anyhow::anyhow!(
+                "DOCKREV_UPDATE_IDEMPOTENT_RETRY_BASE_MS must be >= 1"
+            ));
+        }
+
+        let update_idempotent_retry_max_ms =
+            std::env::var("DOCKREV_UPDATE_IDEMPOTENT_RETRY_MAX_MS")
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .unwrap_or(3000);
+        if update_idempotent_retry_max_ms == 0 {
+            return Err(anyhow::anyhow!(
+                "DOCKREV_UPDATE_IDEMPOTENT_RETRY_MAX_MS must be >= 1"
+            ));
+        }
+        if update_idempotent_retry_max_ms < update_idempotent_retry_base_ms {
+            return Err(anyhow::anyhow!(
+                "DOCKREV_UPDATE_IDEMPOTENT_RETRY_MAX_MS must be >= DOCKREV_UPDATE_IDEMPOTENT_RETRY_BASE_MS"
+            ));
+        }
+
         Ok(Self {
             app_effective_version,
             http_addr,
@@ -178,6 +219,9 @@ impl Config {
             registry_retry_max_attempts,
             registry_retry_base_ms,
             registry_retry_max_ms,
+            update_idempotent_retry_max_attempts,
+            update_idempotent_retry_base_ms,
+            update_idempotent_retry_max_ms,
         })
     }
 }

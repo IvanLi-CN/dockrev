@@ -27,6 +27,10 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| ffgt4 | Dockrev：Supervisor 自我升级页补齐版本 / 开源仓库 / 开发者信息 | 已完成 | `ffgt4-supervisor-self-upgrade-meta/SPEC.md` | 2026-03-02 | fast-track |
+| 69hb2 | Dockrev：修复 Update Job 失败误报成功 + 幂等步骤重试 | 已完成 | `69hb2-update-job-idempotent-retry/SPEC.md` | 2026-03-01 | fast-track |
+| stt9n | Dockrev：状态点升级为 Iconify（全站） | 已完成 | `stt9n-status-dot-iconify/SPEC.md` | 2026-03-01 | fast-track |
+| b7rad | Dockrev：版本异常标记 + 自动路径跳过（latest 回退场景） | 已完成 | `b7rad-version-anomaly-marker-auto-skip/SPEC.md` | 2026-03-01 | fast-track |
 | p7k2m | Dockrev：GHCR Repos 区域 Inbox 入口 + Webhook Delivery 记录页 | 已完成 | `p7k2m-ghcr-webhook-inbox/SPEC.md` | 2026-03-01 | fast-track（状态/响应码筛选重构） |
 | xc4az | Dockrev：版本推测任务内进度修复 + running/queued 标签语义区分 | 已完成 | `xc4az-version-inference-task-progress-and-running-pill/SPEC.md` | 2026-02-28 | fast-track |
 | c6j2k | Dockrev：版本列推测 pending 统一为加载中（弱化样式对齐候选） | 已完成 | `c6j2k-inference-pending-loading/SPEC.md` | 2026-03-01 | fast-track |

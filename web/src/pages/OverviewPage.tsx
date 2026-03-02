@@ -21,7 +21,7 @@ import { navigate } from '../routes'
 import { ArrowRightIcon, Button, Mono, StatusRemark } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
-import { serviceRowStatus, type RowStatus } from '../updateStatus'
+import { isSemverDowngradeAnomaly, serviceRowStatus, type RowStatus } from '../updateStatus'
 import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
 import { useConfirm } from '../confirm'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
@@ -774,6 +774,7 @@ export function OverviewPage(props: {
           title={allApply.title ?? undefined}
           onClick={() => {
             const totalCandidates = countsAll.updatable + countsAll.hint
+            const anomalyCount = allCandidates.filter((item) => isSemverDowngradeAnomaly(item.svc)).length
             const body = (
               <>
                 <div className="modalKvGrid">
@@ -792,6 +793,11 @@ export function OverviewPage(props: {
                     架构不匹配 {countsAll.archMismatch} · 被阻止 {countsAll.blocked}
                   </div>
                 </div>
+                {anomalyCount > 0 ? (
+                  <div className="muted" style={{ marginTop: 10 }}>
+                    ⚠ 检测到 {anomalyCount} 个版本异常（候选低于当前）；手动确认后仍可继续更新。
+                  </div>
+                ) : null}
                 <div className="modalDivider" />
                 <div className="modalLead">将更新的服务（预览）</div>
                 <div className="modalList">
@@ -813,6 +819,7 @@ export function OverviewPage(props: {
                           item.svc.versionInference?.status,
                         )
                       : null
+                    const semverAnomaly = isSemverDowngradeAnomaly(item.svc)
                     const candidatePrefetchOnMount =
                       candidateTag && candidateDisplayTag
                         ? shouldPrefetchFloatingCandidate(
@@ -823,7 +830,10 @@ export function OverviewPage(props: {
                         : false
                     const arrowPulse = inferencePending
                     return (
-                      <div key={`${item.stackName}/${item.svc.id}`} className="modalListItem">
+                      <div
+                        key={`${item.stackName}/${item.svc.id}`}
+                        className={semverAnomaly ? 'modalListItem modalListItemAnomaly' : 'modalListItem'}
+                      >
                         <div className="modalListLeft">
                           <div className="modalListTitle">
                             <span className="mono">{`${item.stackName}/${item.svc.name}`}</span>
@@ -844,6 +854,14 @@ export function OverviewPage(props: {
                               </div>
                             )
                           })()}
+                          {semverAnomaly ? (
+                            <div className="modalAnomalyNote">
+                              <span className="modalAnomalyIcon" aria-hidden="true">
+                                ⚠
+                              </span>
+                              <span>版本异常：候选版本低于当前版本</span>
+                            </div>
+                          ) : null}
                         </div>
                         <div className="modalListRight">
                           <div className="cellTwoLine">
@@ -1076,6 +1094,9 @@ export function OverviewPage(props: {
 			                          .filter((svc) => !svc.archived)
 			                          .map((svc) => ({ svc, status: serviceRowStatus(svc) }))
 			                          .filter((x) => x.status === 'updatable' || x.status === 'hint')
+                                const anomalyCount = candidateServices.filter((item) =>
+                                  isSemverDowngradeAnomaly(item.svc),
+                                ).length
 			                        const body = (
 			                          <>
 		                            <div className="modalKvGrid">
@@ -1098,6 +1119,11 @@ export function OverviewPage(props: {
 		                                架构不匹配 {counts.archMismatch} · 被阻止 {counts.blocked}
 		                              </div>
 		                            </div>
+                                {anomalyCount > 0 ? (
+                                  <div className="muted" style={{ marginTop: 10 }}>
+                                    ⚠ 检测到 {anomalyCount} 个版本异常（候选低于当前）；手动确认后仍可继续更新。
+                                  </div>
+                                ) : null}
 		                            <div className="modalDivider" />
 		                            <div className="modalLead">将更新的服务（预览）</div>
 		                            <div className="modalList">
@@ -1119,6 +1145,7 @@ export function OverviewPage(props: {
                                       item.svc.versionInference?.status,
                                     )
 		                                  : null
+                                    const semverAnomaly = isSemverDowngradeAnomaly(item.svc)
 		                                const candidatePrefetchOnMount =
 		                                  candidateTag && candidateDisplayTag
 		                                    ? shouldPrefetchFloatingCandidate(
@@ -1129,7 +1156,10 @@ export function OverviewPage(props: {
 		                                    : false
 		                                const arrowPulse = inferencePending
 		                                return (
-		                                  <div key={item.svc.id} className="modalListItem">
+		                                  <div
+                                      key={item.svc.id}
+                                      className={semverAnomaly ? 'modalListItem modalListItemAnomaly' : 'modalListItem'}
+                                    >
 		                                    <div className="modalListLeft">
 		                                      <div className="modalListTitle">
 		                                        <span className="mono">{item.svc.name}</span>
@@ -1150,6 +1180,14 @@ export function OverviewPage(props: {
 		                                          </div>
 		                                        )
 		                                      })()}
+                                      {semverAnomaly ? (
+                                        <div className="modalAnomalyNote">
+                                          <span className="modalAnomalyIcon" aria-hidden="true">
+                                            ⚠
+                                          </span>
+                                          <span>版本异常：候选版本低于当前版本</span>
+                                        </div>
+                                      ) : null}
 		                                    </div>
 		                                    <div className="modalListRight">
 		                                      <div className="cellTwoLine">

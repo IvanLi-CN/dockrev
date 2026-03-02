@@ -82,7 +82,7 @@ export const AllStatuses: Story = {
       <div className="card" style={{ width: 520 }}>
         <div className="title">状态 / 备注</div>
         <div className="muted" style={{ marginTop: 6 }}>
-          多状态对照（绿/黄/灰/红）
+          多状态对照（Iconify + 状态色）
         </div>
         <div
           style={{
@@ -115,5 +115,12 @@ export const AllStatuses: Story = {
         </div>
       </div>
     )
+  },
+}
+
+export const AllStatusesLight: Story = {
+  ...AllStatuses,
+  globals: {
+    theme: 'light',
   },
 }

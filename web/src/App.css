@@ -1127,35 +1127,44 @@ html[data-theme='light'] .versionTagsPopover {
   white-space: nowrap;
 }
 
-.statusDot {
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-  background: rgba(229, 231, 235, 0.18);
+.statusCircleIcon {
+  width: 17px;
+  height: 17px;
+  display: block;
   flex: 0 0 auto;
-  box-shadow: 0 0 0 1px var(--dockrev-dot-ring);
+  color: var(--dockrev-status-icon-neutral);
 }
 
-html[data-theme='light'] .statusDot {
-  background: rgba(15, 23, 42, 0.18);
+.statusCircleIconNeutral {
+  color: var(--dockrev-status-icon-neutral);
 }
 
-.statusDotOk {
-  background: var(--color-success);
+.statusCircleIconPrimary {
+  color: var(--dockrev-status-icon-primary);
 }
 
-.statusDotWarn {
-  background: var(--color-warning);
+.statusCircleIconOk {
+  color: var(--dockrev-status-icon-ok);
 }
 
-.statusDotBad {
-  background: var(--color-error);
+.statusCircleIconWarn {
+  color: var(--dockrev-status-icon-warn);
+}
+
+.statusCircleIconBad {
+  color: var(--dockrev-status-icon-bad);
 }
 
 .statusNote {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.statusNoteAnomalyMarker {
+  color: var(--color-warning);
+  font-weight: 700;
+  text-shadow: 0 0 8px color-mix(in srgb, var(--color-warning) 36%, transparent);
 }
 
 .groupGuide {
@@ -1540,6 +1549,11 @@ html[data-theme='light'] .modalOverlay {
   gap: 12px;
 }
 
+.modalListItemAnomaly {
+  border-color: color-mix(in srgb, var(--color-warning) 52%, rgba(229, 231, 235, 0.08));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-warning) 18%, transparent);
+}
+
 .modalListLeft {
   min-width: 0;
 }
@@ -1559,6 +1573,21 @@ html[data-theme='light'] .modalOverlay {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.modalAnomalyNote {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-warning) 82%, var(--text) 18%);
+}
+
+.modalAnomalyIcon {
+  color: var(--color-warning);
+  font-weight: 700;
+  text-shadow: 0 0 8px color-mix(in srgb, var(--color-warning) 38%, transparent);
 }
 
 .ghcrPickerRoot {
@@ -2580,6 +2609,40 @@ html[data-theme='light'] .modalOverlay {
   margin-top: 6px;
   font-size: 12px;
   color: var(--muted2);
+}
+
+.svcAnomalyAlert {
+  margin-top: 10px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 52%, rgba(229, 231, 235, 0.1));
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-warning) 18%, transparent),
+    color-mix(in srgb, var(--color-warning) 7%, transparent)
+  );
+  padding: 12px 14px;
+}
+
+.svcAnomalyAlertTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: color-mix(in srgb, var(--color-warning) 82%, var(--text) 18%);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.svcAnomalyAlertIcon {
+  color: var(--color-warning);
+  font-weight: 700;
+  text-shadow: 0 0 8px color-mix(in srgb, var(--color-warning) 42%, transparent);
+}
+
+.svcAnomalyAlertText {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.45;
 }
 
 .kv {
@@ -3743,11 +3806,6 @@ html[data-theme='light'] .card {
 .svcName {
   font-size: 13px;
   font-weight: 640;
-}
-
-.statusDot {
-  width: 10px;
-  height: 10px;
 }
 
 .statusLine {
