@@ -755,6 +755,10 @@ html[data-theme='light'] .versionTagsPopover {
   .btnInlineSpinner {
     animation: none;
   }
+
+  .ghcrSyncAllBtnIconSpinning {
+    animation: none;
+  }
 }
 
 .chipStatic {
@@ -2467,6 +2471,15 @@ html[data-theme='light'] .modalOverlay {
 .ghcrRegistrySearchForm .input {
   min-width: 160px;
   flex: 1 1 260px;
+}
+
+.ghcrSyncAllBtnIcon {
+  width: 14px;
+  height: 14px;
+}
+
+.ghcrSyncAllBtnIconSpinning {
+  animation: btnInlineSpin 0.7s linear infinite;
 }
 
 .ghcrRegistryList {

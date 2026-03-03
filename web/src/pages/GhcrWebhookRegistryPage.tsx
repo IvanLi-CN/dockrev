@@ -496,11 +496,38 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
         </div>
 
         <div className="chipRow" style={{ marginLeft: 'auto' }}>
-          <Button
+          <ResponsiveActionButton
             variant="ghost"
-            disabled={busy || !!activeSyncAllJob}
+            disabled={busy && !activeSyncAllJob}
+            label={
+              activeSyncAllJob?.status === 'running'
+                ? '全量同步中…'
+                : activeSyncAllJob?.status === 'queued'
+                  ? '全量同步排队中…'
+                  : '全部状态同步'
+            }
+            hint={
+              activeSyncAllJob
+                ? '任务进行中，点击查看任务详情'
+                : '触发全部已跟踪仓库的 webhook 状态同步任务'
+            }
+            icon={
+              <Icon
+                icon={refreshIcon}
+                className={`ghcrSyncAllBtnIcon ${
+                  activeSyncAllJob?.status === 'running' || activeSyncAllJob?.status === 'queued'
+                    ? 'ghcrSyncAllBtnIconSpinning'
+                    : ''
+                }`}
+                aria-hidden="true"
+              />
+            }
             onClick={() => {
               void (async () => {
+                if (activeSyncAllJob) {
+                  navigate({ name: 'job', jobId: activeSyncAllJob.id })
+                  return
+                }
                 setBusy(true)
                 setError(null)
                 try {
@@ -513,27 +540,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
                 }
               })()
             }}
-          >
-            {activeSyncAllJob?.status === 'running'
-              ? '全量同步中…'
-              : activeSyncAllJob?.status === 'queued'
-                ? '全量同步排队中…'
-                : '全部状态同步'}
-          </Button>
-          {activeSyncAllJob ? (
-            <Button variant="ghost" onClick={() => navigate({ name: 'job', jobId: activeSyncAllJob.id })}>
-              查看全量任务
-            </Button>
-          ) : null}
-          <Button variant="ghost" onClick={() => navigate({ name: 'settings' })}>
-            返回设置
-          </Button>
-          <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhooks' })}>
-            队列视图
-          </Button>
-          <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhook-inbox' })}>
-            收件箱
-          </Button>
+          />
         </div>
       </div>
 
@@ -634,12 +641,6 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
                       })()
                     }}
                   />
-
-                  {repo.webhookJobId ? (
-                    <Button variant="ghost" onClick={() => navigate({ name: 'job', jobId: repo.webhookJobId! })}>
-                      查看任务
-                    </Button>
-                  ) : null}
 
                   {showRetryDelete ? (
                     <ResponsiveActionButton
