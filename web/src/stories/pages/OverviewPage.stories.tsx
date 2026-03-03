@@ -23,6 +23,39 @@ export const Default: Story = {
   },
 }
 
+export const JobsCardHeavyInFlight: Story = {
+  parameters: { dockrevApiScenario: 'overview-jobs-card-heavy-inflight' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：运行态卡片优先展示 in-flight，固定 10 条">
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}
+
+export const JobsCardMixedFallback: Story = {
+  parameters: { dockrevApiScenario: 'queue-mixed' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：in-flight 不足时由其他状态补齐">
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}
+
+export const JobsCardEmpty: Story = {
+  parameters: { dockrevApiScenario: 'empty' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：无任务空态文案">
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}
+
 export const GuideLineLongNames: Story = {
   parameters: { dockrevApiScenario: 'guide-line-long-names' },
   render: () => {

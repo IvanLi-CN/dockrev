@@ -1992,6 +1992,168 @@ html[data-theme='light'] .modalOverlay {
   margin-top: 12px;
 }
 
+.overviewJobsList {
+  display: flex;
+  flex-direction: column;
+  margin-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+}
+
+.overviewJobListRow {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
+  background: transparent;
+  padding: 9px 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.overviewJobListRow:hover {
+  background: color-mix(in srgb, var(--color-info) 8%, transparent);
+}
+
+.overviewJobListRow:active {
+  background: color-mix(in srgb, var(--color-info) 14%, transparent);
+}
+
+.overviewJobListRow:last-child {
+  border-bottom: 0;
+}
+
+.overviewJobLine {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.overviewJobTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 620;
+}
+
+.overviewJobScope {
+  color: var(--muted2);
+  font-weight: 540;
+}
+
+.overviewJobTitle-check {
+  color: color-mix(in srgb, var(--color-warning) 78%, var(--text) 22%);
+}
+
+.overviewJobTitle-discovery {
+  color: color-mix(in srgb, var(--color-success) 76%, var(--text) 24%);
+}
+
+.overviewJobTitle-runtimeScan {
+  color: color-mix(in srgb, var(--color-info) 76%, var(--text) 24%);
+}
+
+.overviewJobTitle-ghcrWebhook {
+  color: color-mix(in srgb, var(--color-primary) 76%, var(--text) 24%);
+}
+
+.overviewJobTitle-update {
+  color: color-mix(in srgb, var(--color-primary) 72%, var(--text) 28%);
+}
+
+.overviewJobTitle-rollback {
+  color: color-mix(in srgb, var(--color-error) 78%, var(--text) 22%);
+}
+
+.overviewJobTitle-default {
+  color: color-mix(in srgb, var(--muted) 80%, var(--text) 20%);
+}
+
+.overviewJobLineMeta {
+  flex: 0 1 44%;
+  min-width: 140px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted2);
+  font-size: 13px;
+}
+
+.overviewJobLineMetaSep {
+  color: color-mix(in srgb, var(--muted2) 78%, transparent);
+}
+
+.overviewJobStatusTag {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 20px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 640;
+  line-height: 1.2;
+  color: var(--muted);
+  border: 1px solid color-mix(in srgb, var(--muted2) 30%, var(--borderColor) 70%);
+  background: color-mix(in srgb, var(--muted2) 10%, transparent);
+}
+
+.overviewJobStatusTag[data-status='running'] {
+  color: color-mix(in srgb, var(--color-info) 84%, var(--text) 16%);
+  border-color: color-mix(in srgb, var(--color-info) 34%, var(--borderColor) 66%);
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+}
+
+.overviewJobStatusTag[data-status='queued'] {
+  color: color-mix(in srgb, var(--color-warning) 84%, var(--text) 16%);
+  border-color: color-mix(in srgb, var(--color-warning) 34%, var(--borderColor) 66%);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+}
+
+.overviewJobStatusTag[data-status='success'] {
+  color: color-mix(in srgb, var(--color-success) 84%, var(--text) 16%);
+  border-color: color-mix(in srgb, var(--color-success) 34%, var(--borderColor) 66%);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+}
+
+.overviewJobStatusTag[data-status='failed'] {
+  color: color-mix(in srgb, var(--color-error) 84%, var(--text) 16%);
+  border-color: color-mix(in srgb, var(--color-error) 34%, var(--borderColor) 66%);
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+}
+
+@media (max-width: 640px) {
+  .overviewJobListRow {
+    padding: 10px 0;
+  }
+
+  .overviewJobLine {
+    gap: 7px;
+  }
+
+  .overviewJobTitle {
+    font-size: 13px;
+  }
+
+  .overviewJobScope {
+    display: none;
+  }
+
+  .overviewJobLineMeta {
+    flex-basis: auto;
+    min-width: 84px;
+    max-width: 36%;
+    font-size: 12px;
+  }
+}
+
 .queueItem,
 .queueSummaryItem {
   display: flex;

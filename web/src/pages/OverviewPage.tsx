@@ -23,6 +23,7 @@ import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { isSemverDowngradeAnomaly, serviceRowStatus, type RowStatus } from '../updateStatus'
 import { formatJobReadableDisplay } from '../jobDisplay'
+import { selectOverviewJobsForCard, toOverviewJobCardItem } from './overviewJobsCard'
 import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
 import { useConfirm } from '../confirm'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
@@ -39,6 +40,17 @@ function formatShort(ts?: string | null) {
   const d = new Date(ts)
   if (Number.isNaN(d.valueOf())) return ts
   return d.toLocaleString()
+}
+
+function formatCompactDateTime(ts?: string | null) {
+  if (!ts) return '-'
+  const d = new Date(ts)
+  if (Number.isNaN(d.valueOf())) return ts
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  const h = String(d.getHours()).padStart(2, '0')
+  const min = String(d.getMinutes()).padStart(2, '0')
+  return `${m}/${day} ${h}:${min}`
 }
 
 function splitImageRef(ref: string): { registry: string; name: string } {
@@ -587,6 +599,10 @@ export function OverviewPage(props: {
   const latestReadableJob = jobsSummary.latest
     ? formatJobReadableDisplay(jobsSummary.latest.type, jobsSummary.latest.scope)
     : null
+  const overviewCardJobs = useMemo(
+    () => selectOverviewJobsForCard(jobs, { maxItems: 10 }).map((job) => toOverviewJobCardItem(job)),
+    [jobs],
+  )
 
   const discoverySummary = useMemo(() => {
     const active = discoveredProjects.filter((p) => p.status === 'active' && !p.archived)
@@ -1011,6 +1027,45 @@ export function OverviewPage(props: {
               </span>
             ) : (
               <Mono>-</Mono>
+            )}
+          </div>
+          <div className="muted" style={{ marginTop: 12 }}>
+            任务列表（最多 10 条，优先排队/进行中）
+          </div>
+          <div className="overviewJobsList">
+            {overviewCardJobs.length === 0 ? (
+              <div className="muted">暂无任务</div>
+            ) : (
+              overviewCardJobs.map((job) => (
+                <button
+                  key={job.jobId}
+                  type="button"
+                  className="overviewJobListRow"
+                  onClick={() => navigate({ name: 'job', jobId: job.jobId })}
+                  title={`${job.status} · ${job.primaryLabel}${job.scopeTag ? ` ${job.scopeTag}` : ''} · ${formatShort(job.createdAt)} · by ${job.createdBy} · reason ${job.reason}`}
+                >
+                  <span className="overviewJobLine">
+                    <span className="overviewJobStatusTag" data-status={job.status}>
+                      {job.status}
+                    </span>
+                    <span className={`overviewJobTitle overviewJobTitle-${job.typeTone}`}>
+                      {job.primaryLabel}
+                      {job.scopeTag ? <span className="overviewJobScope"> · {job.scopeTag}</span> : null}
+                    </span>
+                    <span className="overviewJobLineMeta">
+                      <span>{formatCompactDateTime(job.createdAt)}</span>
+                      <span className="overviewJobLineMetaSep">·</span>
+                      <span>{job.createdBy}</span>
+                      {job.reason && job.reason !== 'ui' ? (
+                        <>
+                          <span className="overviewJobLineMetaSep">·</span>
+                          <span>{job.reason}</span>
+                        </>
+                      ) : null}
+                    </span>
+                  </span>
+                </button>
+              ))
             )}
           </div>
         </div>
