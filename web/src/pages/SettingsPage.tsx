@@ -73,6 +73,11 @@ const TOGGLE_DEBOUNCE_MS = 120
 const PAT_MASK = '******'
 const GHCR_PREVIEW_LIMIT = 6
 const GITHUB_PAT_PREFIXES = ['ghp_', 'github_pat_', 'gho_', 'ghu_', 'ghs_', 'ghr_']
+const GHCR_JOB_TYPES = new Set([
+  'github_packages_webhook',
+  'github_packages_webhook_sync_all',
+  'github_packages_webhook_sync_repo',
+])
 
 type GhcrDraft = {
   enabled: boolean
@@ -88,6 +93,11 @@ function isMaskedPat(value: string): boolean {
 function hasExplicitPat(value: string): boolean {
   const trimmed = value.trim()
   return trimmed.length > 0 && !isMaskedPat(trimmed)
+}
+
+function isGhcrLiveJob(job: JobListItem): boolean {
+  if (!GHCR_JOB_TYPES.has(job.type)) return false
+  return job.status === 'running' || job.status === 'queued'
 }
 
 function validateGhcrPatBeforeSave(draft: GhcrDraft): { fieldPath: string; reason: string; message: string } | null {
@@ -861,7 +871,8 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     ])
     setGitHubPackagesTrackedRepos(resp)
     const liveJob =
-      jobs.find((job) => job.type === 'github_packages_webhook' && (job.status === 'running' || job.status === 'queued')) ??
+      jobs.find((job) => isGhcrLiveJob(job) && job.status === 'running') ??
+      jobs.find((job) => isGhcrLiveJob(job)) ??
       null
     setGhcrLiveJob(liveJob)
   }, [])

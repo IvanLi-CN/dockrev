@@ -370,7 +370,7 @@ export type GitHubPackagesRepo = {
   hookId?: number | null
   lastSyncAt?: string | null
   lastAuditAt?: string | null
-  lastOp?: 'register' | 'unregister' | 'audit' | 'audit_all' | string | null
+  lastOp?: 'register' | 'unregister' | 'audit' | 'audit_all' | 'sync_all' | 'sync_repo' | string | null
   lastError?: string | null
 }
 
@@ -421,6 +421,13 @@ export type SyncGitHubPackagesWebhooksRequest = {
 export type SyncGitHubPackagesWebhooksResponse = {
   ok: boolean
   results: SyncGitHubPackagesWebhookResult[]
+}
+
+export type TriggerGitHubPackagesWebhookSyncResponse = {
+  ok: boolean
+  jobId: string
+  status: 'queued' | 'running' | string
+  reused: boolean
 }
 
 export type ListGitHubPackagesReposResponse = {
@@ -909,6 +916,23 @@ export async function syncGitHubPackagesWebhooks(
     body: JSON.stringify(input),
   })
   return (await resp.json()) as SyncGitHubPackagesWebhooksResponse
+}
+
+export async function triggerGitHubPackagesWebhookSyncAll(): Promise<TriggerGitHubPackagesWebhookSyncResponse> {
+  const resp = await apiFetch('/api/github-packages/webhook/sync-all', {
+    method: 'POST',
+  })
+  return (await resp.json()) as TriggerGitHubPackagesWebhookSyncResponse
+}
+
+export async function triggerGitHubPackagesWebhookSyncRepo(input: {
+  fullName: string
+}): Promise<TriggerGitHubPackagesWebhookSyncResponse> {
+  const resp = await apiFetch('/api/github-packages/webhook/sync-repo', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+  return (await resp.json()) as TriggerGitHubPackagesWebhookSyncResponse
 }
 
 export async function listGitHubPackagesRepos(input: {

@@ -94,6 +94,9 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 | POST | `/api/github-packages/targets/add` | Forward Header | 添加 target（repo/owner 输入） | `200` `400` `401` |
 | POST | `/api/github-packages/targets/remove` | Forward Header | 删除 target | `200` `400` `401` |
 | POST | `/api/github-packages/resolve` | Forward Header | 解析 repo/owner 输入并返回仓库候选 | `200` `400` `401` `422` |
+| GET | `/api/github-packages/webhook/overview` | Forward Header | GHCR webhook 状态聚合（repo + job） | `200` `401` |
+| POST | `/api/github-packages/webhook/sync-all` | Forward Header | 触发全量 webhook 状态同步（复用未完成任务） | `200` `400` `401` |
+| POST | `/api/github-packages/webhook/sync-repo` | Forward Header | 触发单仓库 webhook 状态同步（同仓库未完成任务复用） | `200` `400` `401` `404` `409` |
 | POST | `/api/github-packages/sync` | Forward Header | 与 GitHub webhook 状态同步 | `200` `400` `401` |
 
 ### 7) Web Push / Webhooks / Deploy checks

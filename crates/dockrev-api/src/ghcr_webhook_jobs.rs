@@ -1,7 +1,12 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 use anyhow::Context as _;
 use serde_json::json;
+use tokio::sync::Semaphore;
 use url::Url;
 
 use crate::{
@@ -15,6 +20,13 @@ use crate::{
 
 const WORKER_IDLE_POLL_MS: u64 = 400;
 const RETRY_MAX_ATTEMPTS: u32 = 3;
+const GHCR_SYNC_ALL_MAX_CONCURRENCY: usize = 5;
+const GHCR_SYNC_REPO_WORKERS: usize = 5;
+
+static GHCR_SYNC_ENQUEUE_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+static GHCR_SYNC_REPO_LOCKS: OnceLock<
+    tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GhcrWebhookOp {
@@ -44,8 +56,15 @@ impl GhcrWebhookOp {
 
 #[derive(Clone, Debug)]
 struct ParsedGhcrWebhookJob {
-    op: GhcrWebhookOp,
+    kind: ParsedGhcrWebhookJobKind,
     repos: Vec<(String, String)>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ParsedGhcrWebhookJobKind {
+    Legacy(GhcrWebhookOp),
+    SyncAll,
+    SyncRepo,
 }
 
 #[derive(Clone, Debug)]
@@ -67,16 +86,76 @@ struct GhcrJobCounters {
     hard_failures: u32,
 }
 
+#[derive(Clone, Debug)]
+pub struct GhcrSyncEnqueueResult {
+    pub job_id: String,
+    pub status: String,
+    pub reused: bool,
+}
+
+fn sync_enqueue_lock() -> &'static tokio::sync::Mutex<()> {
+    GHCR_SYNC_ENQUEUE_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+fn repo_sync_locks() -> &'static tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>> {
+    GHCR_SYNC_REPO_LOCKS.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()))
+}
+
+async fn lock_repo_sync(owner: &str, repo: &str) -> tokio::sync::OwnedMutexGuard<()> {
+    let key = format!("{owner}/{repo}").to_ascii_lowercase();
+    let repo_lock = {
+        let mut locks = repo_sync_locks().lock().await;
+        locks
+            .entry(key)
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    };
+    repo_lock.lock_owned().await
+}
+
+fn repo_unregistration_in_progress(webhook_state: &str, last_op: Option<&str>) -> bool {
+    matches!(webhook_state, "queued" | "running")
+        && last_op == Some(GhcrWebhookOp::Unregister.as_str())
+}
+
+fn repo_registration_in_progress(webhook_state: &str, last_op: Option<&str>) -> bool {
+    matches!(webhook_state, "queued" | "running")
+        && last_op == Some(GhcrWebhookOp::Register.as_str())
+}
+
+fn is_pending_status(status: &str) -> bool {
+    status == "queued" || status == "running"
+}
+
+fn is_legacy_register_job(job: &JobListItem) -> bool {
+    job.r#type.as_str() == JobType::GitHubPackagesWebhook.as_str()
+        && job.summary_json.get("op").and_then(|v| v.as_str())
+            == Some(GhcrWebhookOp::Register.as_str())
+}
+
 pub fn spawn_tasks(state: Arc<AppState>) {
-    let worker_state = state.clone();
-    tokio::spawn(async move {
-        run_worker_loop(worker_state).await;
-    });
+    spawn_worker_loops(&state, JobType::GitHubPackagesWebhook, 1);
+    spawn_worker_loops(&state, JobType::GitHubPackagesWebhookSyncAll, 1);
+    spawn_worker_loops(
+        &state,
+        JobType::GitHubPackagesWebhookSyncRepo,
+        GHCR_SYNC_REPO_WORKERS,
+    );
 
     let scheduler_state = state.clone();
     tokio::spawn(async move {
         run_audit_scheduler(scheduler_state).await;
     });
+}
+
+fn spawn_worker_loops(state: &Arc<AppState>, job_type: JobType, workers: usize) {
+    for _ in 0..workers.max(1) {
+        let worker_state = state.clone();
+        let worker_job_type = job_type.clone();
+        tokio::spawn(async move {
+            run_worker_loop(worker_state, worker_job_type).await;
+        });
+    }
 }
 
 pub async fn enqueue_repo_job(
@@ -86,6 +165,8 @@ pub async fn enqueue_repo_job(
     created_by: &str,
     reason: &str,
 ) -> anyhow::Result<String> {
+    let _guard = sync_enqueue_lock().lock().await;
+
     if op == GhcrWebhookOp::AuditAll {
         anyhow::bail!("audit_all must be enqueued via enqueue_audit_job");
     }
@@ -164,6 +245,213 @@ pub async fn enqueue_repo_job(
     .await;
 
     Ok(job_id)
+}
+
+pub async fn enqueue_sync_all_job(
+    state: &Arc<AppState>,
+    created_by: &str,
+    reason: &str,
+) -> anyhow::Result<GhcrSyncEnqueueResult> {
+    let _guard = sync_enqueue_lock().lock().await;
+
+    if let Some(existing) = state
+        .db
+        .find_latest_pending_job_by_type(JobType::GitHubPackagesWebhookSyncAll)
+        .await?
+    {
+        return Ok(GhcrSyncEnqueueResult {
+            job_id: existing.id,
+            status: existing.status,
+            reused: true,
+        });
+    }
+
+    let repos = state
+        .db
+        .list_github_packages_repos()
+        .await?
+        .into_iter()
+        .filter(|row| row.selected)
+        .filter(|row| !repo_unregistration_in_progress(&row.webhook_state, row.last_op.as_deref()))
+        .map(|row| format!("{}/{}", row.owner, row.repo))
+        .collect::<Vec<_>>();
+    if repos.is_empty() {
+        anyhow::bail!("no tracked repos selected");
+    }
+
+    let now = now_rfc3339();
+    let job_id = ids::new_job_id();
+    let progress = make_progress(
+        "queued",
+        "waiting to sync tracked repos".to_string(),
+        0,
+        repos.len() as u32,
+        None,
+        now.clone(),
+    );
+    let summary_json = json!({
+        "op": "sync_all",
+        "repos": repos,
+        "progress": serde_json::to_value(&progress)?,
+    });
+
+    state
+        .db
+        .insert_job(JobListItem {
+            id: job_id.clone(),
+            r#type: JobType::GitHubPackagesWebhookSyncAll,
+            scope: JobScope::All,
+            stack_id: None,
+            service_id: None,
+            status: "queued".to_string(),
+            created_at: now.clone(),
+            created_by: created_by.to_string(),
+            reason: reason.to_string(),
+            started_at: None,
+            finished_at: None,
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json,
+        })
+        .await?;
+
+    emit_job_event(
+        state,
+        &job_id,
+        &json!({
+            "type": "job_enqueued",
+            "jobType": JobType::GitHubPackagesWebhookSyncAll.as_str(),
+            "op": "sync_all",
+            "jobId": job_id,
+            "ts": now,
+        }),
+    )
+    .await;
+
+    Ok(GhcrSyncEnqueueResult {
+        job_id,
+        status: "queued".to_string(),
+        reused: false,
+    })
+}
+
+pub async fn enqueue_sync_repo_job(
+    state: &Arc<AppState>,
+    full_name: &str,
+    created_by: &str,
+    reason: &str,
+) -> anyhow::Result<GhcrSyncEnqueueResult> {
+    let (owner, repo) = parse_full_name(full_name)?;
+    let repo_key = format!("{owner}/{repo}").to_ascii_lowercase();
+
+    let _guard = sync_enqueue_lock().lock().await;
+
+    if let Some(existing) = state
+        .db
+        .find_latest_pending_job_by_type_and_service_id(
+            JobType::GitHubPackagesWebhookSyncRepo,
+            &repo_key,
+        )
+        .await?
+    {
+        return Ok(GhcrSyncEnqueueResult {
+            job_id: existing.id,
+            status: existing.status,
+            reused: true,
+        });
+    }
+
+    let tracked = state.db.get_github_packages_repo(&owner, &repo).await?;
+    let Some(tracked) = tracked else {
+        anyhow::bail!("repo is not tracked");
+    };
+    if !tracked.selected {
+        anyhow::bail!("repo is not selected");
+    }
+    if repo_unregistration_in_progress(&tracked.webhook_state, tracked.last_op.as_deref()) {
+        anyhow::bail!("repo unregister in progress");
+    }
+    if repo_registration_in_progress(&tracked.webhook_state, tracked.last_op.as_deref())
+        && let Some(existing_job_id) = tracked.webhook_job_id.as_ref()
+        && let Some(existing_job) = state.db.get_job(existing_job_id).await?
+        && is_pending_status(&existing_job.status)
+        && is_legacy_register_job(&existing_job)
+    {
+        return Ok(GhcrSyncEnqueueResult {
+            job_id: existing_job.id,
+            status: existing_job.status,
+            reused: true,
+        });
+    }
+
+    let full_name = format!("{owner}/{repo}");
+    let now = now_rfc3339();
+    let job_id = ids::new_job_id();
+    let progress = make_progress(
+        "queued",
+        "waiting to sync webhook".to_string(),
+        0,
+        1,
+        Some(full_name.clone()),
+        now.clone(),
+    );
+    let summary_json = json!({
+        "op": "sync_repo",
+        "repos": [full_name],
+        "progress": serde_json::to_value(&progress)?,
+    });
+
+    state
+        .db
+        .insert_job(JobListItem {
+            id: job_id.clone(),
+            r#type: JobType::GitHubPackagesWebhookSyncRepo,
+            scope: JobScope::All,
+            stack_id: None,
+            service_id: Some(repo_key),
+            status: "queued".to_string(),
+            created_at: now.clone(),
+            created_by: created_by.to_string(),
+            reason: reason.to_string(),
+            started_at: None,
+            finished_at: None,
+            allow_arch_mismatch: false,
+            backup_mode: "inherit".to_string(),
+            summary_json,
+        })
+        .await?;
+
+    state
+        .db
+        .set_github_packages_repo_webhook_job_state(
+            &owner,
+            &repo,
+            "queued",
+            Some(&job_id),
+            Some(GhcrWebhookOp::Register.as_str()),
+            &now,
+        )
+        .await?;
+
+    emit_job_event(
+        state,
+        &job_id,
+        &json!({
+            "type": "job_enqueued",
+            "jobType": JobType::GitHubPackagesWebhookSyncRepo.as_str(),
+            "op": "sync_repo",
+            "target": format!("{owner}/{repo}"),
+            "jobId": job_id,
+            "ts": now,
+        }),
+    )
+    .await;
+
+    Ok(GhcrSyncEnqueueResult {
+        job_id,
+        status: "queued".to_string(),
+        reused: false,
+    })
 }
 
 pub async fn enqueue_audit_job(
@@ -265,21 +553,44 @@ pub async fn get_overview(
         }
     }
 
-    let jobs_queued = state
-        .db
-        .count_jobs_by_type_and_status(JobType::GitHubPackagesWebhook, "queued")
-        .await?;
-    let jobs_running = state
-        .db
-        .count_jobs_by_type_and_status(JobType::GitHubPackagesWebhook, "running")
-        .await?;
+    let ghcr_job_types = [
+        JobType::GitHubPackagesWebhook,
+        JobType::GitHubPackagesWebhookSyncAll,
+        JobType::GitHubPackagesWebhookSyncRepo,
+    ];
 
-    let running_job_id = state
-        .db
-        .list_jobs_by_type_and_statuses(JobType::GitHubPackagesWebhook, &["running"], 1)
-        .await?
-        .first()
-        .map(|j| j.id.clone());
+    let mut jobs_queued = 0_u32;
+    let mut jobs_running = 0_u32;
+    let mut running_job: Option<JobListItem> = None;
+
+    for job_type in &ghcr_job_types {
+        jobs_queued = jobs_queued.saturating_add(
+            state
+                .db
+                .count_jobs_by_type_and_status(job_type.clone(), "queued")
+                .await?,
+        );
+        jobs_running = jobs_running.saturating_add(
+            state
+                .db
+                .count_jobs_by_type_and_status(job_type.clone(), "running")
+                .await?,
+        );
+
+        if let Some(candidate) = state
+            .db
+            .list_jobs_by_type_and_statuses(job_type.clone(), &["running"], 1)
+            .await?
+            .first()
+            .cloned()
+            && running_job
+                .as_ref()
+                .is_none_or(|current| candidate.created_at > current.created_at)
+        {
+            running_job = Some(candidate);
+        }
+    }
+    let running_job_id = running_job.map(|job| job.id);
 
     Ok(GitHubPackagesWebhookOverviewResponse {
         summary,
@@ -290,24 +601,32 @@ pub async fn get_overview(
     })
 }
 
-async fn run_worker_loop(state: Arc<AppState>) {
+async fn run_worker_loop(state: Arc<AppState>, job_type: JobType) {
     loop {
         let started_at = now_rfc3339();
         match state
             .db
-            .claim_next_queued_job_by_type(JobType::GitHubPackagesWebhook, &started_at)
+            .claim_next_queued_job_by_type(job_type.clone(), &started_at)
             .await
         {
             Ok(Some(job)) => {
                 if let Err(err) = run_claimed_job(state.clone(), job).await {
-                    tracing::error!(error = %err, "ghcr webhook job run failed");
+                    tracing::error!(
+                        error = %err,
+                        job_type = %job_type.as_str(),
+                        "ghcr webhook job run failed"
+                    );
                 }
             }
             Ok(None) => {
                 tokio::time::sleep(Duration::from_millis(WORKER_IDLE_POLL_MS)).await;
             }
             Err(err) => {
-                tracing::error!(error = %err, "ghcr webhook worker claim failed");
+                tracing::error!(
+                    error = %err,
+                    job_type = %job_type.as_str(),
+                    "ghcr webhook worker claim failed"
+                );
                 tokio::time::sleep(Duration::from_millis(WORKER_IDLE_POLL_MS)).await;
             }
         }
@@ -331,6 +650,11 @@ async fn run_claimed_job(state: Arc<AppState>, job: JobListItem) -> anyhow::Resu
     let job_id = job.id.clone();
     let started_at = job.started_at.clone().unwrap_or_else(now_rfc3339);
     let parsed = parse_job_payload(&job).context("parse ghcr webhook job payload")?;
+    let op_label = match parsed.kind {
+        ParsedGhcrWebhookJobKind::Legacy(op) => op.as_str(),
+        ParsedGhcrWebhookJobKind::SyncAll => "sync_all",
+        ParsedGhcrWebhookJobKind::SyncRepo => "sync_repo",
+    };
 
     emit_job_event(
         &state,
@@ -338,17 +662,36 @@ async fn run_claimed_job(state: Arc<AppState>, job: JobListItem) -> anyhow::Resu
         &json!({
             "type": "ghcr_webhook_job_started",
             "jobId": job_id,
-            "op": parsed.op.as_str(),
+            "op": op_label,
             "repos": parsed.repos.iter().map(|(o,r)| format!("{o}/{r}")).collect::<Vec<_>>(),
             "ts": started_at,
         }),
     )
     .await;
 
-    let counters = match parsed.op {
-        GhcrWebhookOp::Register => run_register_job(&state, &job_id, &parsed.repos).await,
-        GhcrWebhookOp::Unregister => run_unregister_job(&state, &job_id, &parsed.repos).await,
-        GhcrWebhookOp::AuditAll => run_audit_job(&state, &job_id).await,
+    let counters = match parsed.kind {
+        ParsedGhcrWebhookJobKind::Legacy(GhcrWebhookOp::Register) => {
+            run_register_job(&state, &job_id, &parsed.repos, "register", 1).await
+        }
+        ParsedGhcrWebhookJobKind::Legacy(GhcrWebhookOp::Unregister) => {
+            run_unregister_job(&state, &job_id, &parsed.repos).await
+        }
+        ParsedGhcrWebhookJobKind::Legacy(GhcrWebhookOp::AuditAll) => {
+            run_audit_job(&state, &job_id).await
+        }
+        ParsedGhcrWebhookJobKind::SyncAll => {
+            run_register_job(
+                &state,
+                &job_id,
+                &parsed.repos,
+                "sync_all",
+                GHCR_SYNC_ALL_MAX_CONCURRENCY,
+            )
+            .await
+        }
+        ParsedGhcrWebhookJobKind::SyncRepo => {
+            run_register_job(&state, &job_id, &parsed.repos, "sync_repo", 1).await
+        }
     };
 
     let finished_at = now_rfc3339();
@@ -356,7 +699,7 @@ async fn run_claimed_job(state: Arc<AppState>, job: JobListItem) -> anyhow::Resu
         "done",
         format!(
             "{} finished (ok={}, missing={}, conflict={}, error={}, deleted={})",
-            parsed.op.as_str(),
+            op_label,
             counters.ok,
             counters.missing,
             counters.conflict,
@@ -371,7 +714,7 @@ async fn run_claimed_job(state: Arc<AppState>, job: JobListItem) -> anyhow::Resu
     persist_progress(&state, &job_id, &final_progress).await;
 
     let summary = json!({
-        "op": parsed.op.as_str(),
+        "op": op_label,
         "total": counters.total,
         "ok": counters.ok,
         "missing": counters.missing,
@@ -399,7 +742,7 @@ async fn run_claimed_job(state: Arc<AppState>, job: JobListItem) -> anyhow::Resu
         &json!({
             "type": "ghcr_webhook_job_finished",
             "jobId": job_id,
-            "op": parsed.op.as_str(),
+            "op": op_label,
             "status": final_status,
             "summary": summary,
             "ts": finished_at,
@@ -414,6 +757,8 @@ async fn run_register_job(
     state: &Arc<AppState>,
     job_id: &str,
     repos: &[(String, String)],
+    phase_label: &'static str,
+    max_concurrency: usize,
 ) -> GhcrJobCounters {
     let mut counters = GhcrJobCounters {
         total: repos.len() as u32,
@@ -495,161 +840,213 @@ async fn run_register_job(
         }
     };
 
-    for (index, (owner, repo)) in repos.iter().enumerate() {
-        let current_target = format!("{owner}/{repo}");
-        let progress = make_progress(
-            "register",
-            format!("registering webhook ({}/{})", index + 1, repos.len()),
-            index as u32,
-            repos.len() as u32,
-            Some(current_target.clone()),
-            now_rfc3339(),
-        );
-        persist_progress(state, job_id, &progress).await;
+    let total = repos.len() as u32;
+    if total == 0 {
+        return counters;
+    }
+    let concurrency = max_concurrency.max(1).min(repos.len());
+    let semaphore = Arc::new(Semaphore::new(concurrency));
+    let mut tasks = tokio::task::JoinSet::new();
 
-        let _ = state
-            .db
-            .set_github_packages_repo_webhook_job_state(
-                owner,
-                repo,
-                "running",
-                Some(job_id),
-                Some(GhcrWebhookOp::Register.as_str()),
-                &now_rfc3339(),
+    for (owner, repo) in repos.iter().cloned() {
+        let state = state.clone();
+        let client = client.clone();
+        let callback_url = callback_url.clone();
+        let secret = secret.clone();
+        let semaphore = semaphore.clone();
+        let job_id = job_id.to_string();
+        tasks.spawn(async move {
+            let _permit = semaphore
+                .acquire_owned()
+                .await
+                .expect("ghcr register semaphore closed");
+            let result = run_register_repo_once(
+                &state,
+                &job_id,
+                &owner,
+                &repo,
+                &client,
+                &callback_url,
+                &secret,
             )
             .await;
+            (owner, repo, result)
+        });
+    }
 
-        let hooks_res =
-            github_call_with_retry(state, job_id, "list_hooks", &current_target, || async {
-                client.list_repo_hooks(owner, repo).await
-            })
-            .await;
-
-        let hooks = match hooks_res {
+    let mut completed = 0_u32;
+    while let Some(joined) = tasks.join_next().await {
+        let (owner, repo, item) = match joined {
             Ok(v) => v,
             Err(err) => {
+                tracing::error!(error = %err, "ghcr register task join failed");
                 counters.error = counters.error.saturating_add(1);
                 counters.hard_failures = counters.hard_failures.saturating_add(1);
-                mark_repo_error(
-                    state,
-                    owner,
-                    repo,
-                    job_id,
-                    GhcrWebhookOp::Register,
-                    &err.to_string(),
-                )
-                .await;
                 continue;
             }
         };
 
-        let mut matches = Vec::new();
-        for hook in &hooks {
-            let Some(url) = hook.config.url.as_deref() else {
-                continue;
-            };
-            if !urls_match(url, &callback_url) {
-                continue;
-            }
-            if !hook.events.iter().any(|event| event == "package") {
-                continue;
-            }
-            matches.push(hook);
-        }
+        counters.ok = counters.ok.saturating_add(item.ok);
+        counters.missing = counters.missing.saturating_add(item.missing);
+        counters.conflict = counters.conflict.saturating_add(item.conflict);
+        counters.error = counters.error.saturating_add(item.error);
+        counters.deleted = counters.deleted.saturating_add(item.deleted);
+        counters.hard_failures = counters.hard_failures.saturating_add(item.hard_failures);
 
-        if matches.len() > 1 {
-            counters.conflict = counters.conflict.saturating_add(1);
-            counters.hard_failures = counters.hard_failures.saturating_add(1);
-            let message = format!(
-                "multiple matching webhooks found ({}); remove duplicates on GitHub then retry",
-                matches.len()
+        completed = completed.saturating_add(1);
+        let progress = make_progress(
+            phase_label,
+            format!("{phase_label} ({completed}/{total})"),
+            completed,
+            total,
+            Some(format!("{owner}/{repo}")),
+            now_rfc3339(),
+        );
+        persist_progress(state, job_id, &progress).await;
+    }
+
+    counters
+}
+
+async fn run_register_repo_once(
+    state: &Arc<AppState>,
+    job_id: &str,
+    owner: &str,
+    repo: &str,
+    client: &github::GitHubClient,
+    callback_url: &str,
+    secret: &str,
+) -> GhcrJobCounters {
+    let mut counters = GhcrJobCounters::default();
+    let _repo_guard = lock_repo_sync(owner, repo).await;
+    let current_target = format!("{owner}/{repo}");
+
+    match state.db.get_github_packages_repo(owner, repo).await {
+        Ok(None) => {
+            tracing::info!(
+                target = %current_target,
+                job_id = %job_id,
+                "skip ghcr sync for repo that is no longer tracked"
             );
-            mark_repo_state(
+            return counters;
+        }
+        Ok(Some(current_repo))
+            if repo_unregistration_in_progress(
+                &current_repo.webhook_state,
+                current_repo.last_op.as_deref(),
+            ) =>
+        {
+            tracing::info!(
+                target = %current_target,
+                job_id = %job_id,
+                "skip ghcr sync while unregister job is in progress"
+            );
+            return counters;
+        }
+        Ok(Some(_)) => {}
+        Err(err) => {
+            counters.error = counters.error.saturating_add(1);
+            counters.hard_failures = counters.hard_failures.saturating_add(1);
+            mark_repo_error(
                 state,
                 owner,
                 repo,
                 job_id,
                 GhcrWebhookOp::Register,
-                "conflict",
-                None,
-                None,
-                Some(&message),
+                &err.to_string(),
             )
             .await;
+            return counters;
+        }
+    }
+
+    let _ = state
+        .db
+        .set_github_packages_repo_webhook_job_state(
+            owner,
+            repo,
+            "running",
+            Some(job_id),
+            Some(GhcrWebhookOp::Register.as_str()),
+            &now_rfc3339(),
+        )
+        .await;
+
+    let hooks_res =
+        github_call_with_retry(state, job_id, "list_hooks", &current_target, || async {
+            client.list_repo_hooks(owner, repo).await
+        })
+        .await;
+
+    let hooks = match hooks_res {
+        Ok(v) => v,
+        Err(err) => {
+            counters.error = counters.error.saturating_add(1);
+            counters.hard_failures = counters.hard_failures.saturating_add(1);
+            mark_repo_error(
+                state,
+                owner,
+                repo,
+                job_id,
+                GhcrWebhookOp::Register,
+                &err.to_string(),
+            )
+            .await;
+            return counters;
+        }
+    };
+
+    let mut matches = Vec::new();
+    for hook in &hooks {
+        let Some(url) = hook.config.url.as_deref() else {
+            continue;
+        };
+        if !urls_match(url, callback_url) {
             continue;
         }
-
-        if matches.is_empty() {
-            let created =
-                github_call_with_retry(state, job_id, "create_hook", &current_target, || async {
-                    client
-                        .create_repo_hook(
-                            owner,
-                            repo,
-                            &github::CreateWebhookRequest {
-                                name: "web",
-                                active: true,
-                                events: vec!["package"],
-                                config: github::CreateWebhookConfig {
-                                    url: &callback_url,
-                                    content_type: "json",
-                                    secret: &secret,
-                                    insecure_ssl: "0",
-                                },
-                            },
-                        )
-                        .await
-                })
-                .await;
-
-            match created {
-                Ok(hook) => {
-                    counters.ok = counters.ok.saturating_add(1);
-                    mark_repo_state(
-                        state,
-                        owner,
-                        repo,
-                        job_id,
-                        GhcrWebhookOp::Register,
-                        "ok",
-                        Some(hook.id),
-                        Some(&now_rfc3339()),
-                        None,
-                    )
-                    .await;
-                }
-                Err(err) => {
-                    counters.error = counters.error.saturating_add(1);
-                    counters.hard_failures = counters.hard_failures.saturating_add(1);
-                    mark_repo_error(
-                        state,
-                        owner,
-                        repo,
-                        job_id,
-                        GhcrWebhookOp::Register,
-                        &err.to_string(),
-                    )
-                    .await;
-                }
-            }
+        if !hook.events.iter().any(|event| event == "package") {
             continue;
         }
+        matches.push(hook);
+    }
 
-        let existing = matches[0];
-        let updated =
-            github_call_with_retry(state, job_id, "update_hook", &current_target, || async {
+    if matches.len() > 1 {
+        counters.conflict = counters.conflict.saturating_add(1);
+        counters.hard_failures = counters.hard_failures.saturating_add(1);
+        let message = format!(
+            "multiple matching webhooks found ({}); remove duplicates on GitHub then retry",
+            matches.len()
+        );
+        mark_repo_state(
+            state,
+            owner,
+            repo,
+            job_id,
+            GhcrWebhookOp::Register,
+            "conflict",
+            None,
+            None,
+            Some(&message),
+        )
+        .await;
+        return counters;
+    }
+
+    if matches.is_empty() {
+        let created =
+            github_call_with_retry(state, job_id, "create_hook", &current_target, || async {
                 client
-                    .update_repo_hook(
+                    .create_repo_hook(
                         owner,
                         repo,
-                        existing.id,
-                        &github::UpdateWebhookRequest {
+                        &github::CreateWebhookRequest {
+                            name: "web",
                             active: true,
                             events: vec!["package"],
-                            config: github::UpdateWebhookConfig {
-                                url: &callback_url,
+                            config: github::CreateWebhookConfig {
+                                url: callback_url,
                                 content_type: "json",
-                                secret: &secret,
+                                secret,
                                 insecure_ssl: "0",
                             },
                         },
@@ -658,7 +1055,7 @@ async fn run_register_job(
             })
             .await;
 
-        match updated {
+        match created {
             Ok(hook) => {
                 counters.ok = counters.ok.saturating_add(1);
                 mark_repo_state(
@@ -687,6 +1084,60 @@ async fn run_register_job(
                 )
                 .await;
             }
+        }
+        return counters;
+    }
+
+    let existing = matches[0];
+    let updated = github_call_with_retry(state, job_id, "update_hook", &current_target, || async {
+        client
+            .update_repo_hook(
+                owner,
+                repo,
+                existing.id,
+                &github::UpdateWebhookRequest {
+                    active: true,
+                    events: vec!["package"],
+                    config: github::UpdateWebhookConfig {
+                        url: callback_url,
+                        content_type: "json",
+                        secret,
+                        insecure_ssl: "0",
+                    },
+                },
+            )
+            .await
+    })
+    .await;
+
+    match updated {
+        Ok(hook) => {
+            counters.ok = counters.ok.saturating_add(1);
+            mark_repo_state(
+                state,
+                owner,
+                repo,
+                job_id,
+                GhcrWebhookOp::Register,
+                "ok",
+                Some(hook.id),
+                Some(&now_rfc3339()),
+                None,
+            )
+            .await;
+        }
+        Err(err) => {
+            counters.error = counters.error.saturating_add(1);
+            counters.hard_failures = counters.hard_failures.saturating_add(1);
+            mark_repo_error(
+                state,
+                owner,
+                repo,
+                job_id,
+                GhcrWebhookOp::Register,
+                &err.to_string(),
+            )
+            .await;
         }
     }
 
@@ -1205,13 +1656,6 @@ async fn mark_repo_state(
 }
 
 fn parse_job_payload(job: &JobListItem) -> anyhow::Result<ParsedGhcrWebhookJob> {
-    let op_raw = job
-        .summary_json
-        .get("op")
-        .and_then(|v| v.as_str())
-        .context("missing op")?;
-    let op = GhcrWebhookOp::from_str(op_raw).context("invalid op")?;
-
     let mut repos: Vec<(String, String)> = Vec::new();
     if let Some(items) = job.summary_json.get("repos").and_then(|v| v.as_array()) {
         for item in items {
@@ -1221,11 +1665,30 @@ fn parse_job_payload(job: &JobListItem) -> anyhow::Result<ParsedGhcrWebhookJob> 
         }
     }
 
-    if op != GhcrWebhookOp::AuditAll && repos.is_empty() {
+    let kind = match &job.r#type {
+        JobType::GitHubPackagesWebhook => {
+            let op_raw = job
+                .summary_json
+                .get("op")
+                .and_then(|v| v.as_str())
+                .context("missing op")?;
+            let op = GhcrWebhookOp::from_str(op_raw).context("invalid op")?;
+            ParsedGhcrWebhookJobKind::Legacy(op)
+        }
+        JobType::GitHubPackagesWebhookSyncAll => ParsedGhcrWebhookJobKind::SyncAll,
+        JobType::GitHubPackagesWebhookSyncRepo => ParsedGhcrWebhookJobKind::SyncRepo,
+        _ => anyhow::bail!("unsupported ghcr webhook job type"),
+    };
+
+    if !matches!(
+        kind,
+        ParsedGhcrWebhookJobKind::Legacy(GhcrWebhookOp::AuditAll)
+    ) && repos.is_empty()
+    {
         anyhow::bail!("webhook job has no target repos");
     }
 
-    Ok(ParsedGhcrWebhookJob { op, repos })
+    Ok(ParsedGhcrWebhookJob { kind, repos })
 }
 
 async fn github_call_with_retry<T, F, Fut>(

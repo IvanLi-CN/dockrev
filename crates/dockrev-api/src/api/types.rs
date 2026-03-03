@@ -396,6 +396,8 @@ pub enum JobType {
     Discovery,
     RuntimeScan,
     GitHubPackagesWebhook,
+    GitHubPackagesWebhookSyncAll,
+    GitHubPackagesWebhookSyncRepo,
     Update,
     Rollback,
 }
@@ -407,6 +409,8 @@ impl JobType {
             Self::Discovery => "discovery",
             Self::RuntimeScan => "runtime_scan",
             Self::GitHubPackagesWebhook => "github_packages_webhook",
+            Self::GitHubPackagesWebhookSyncAll => "github_packages_webhook_sync_all",
+            Self::GitHubPackagesWebhookSyncRepo => "github_packages_webhook_sync_repo",
             Self::Update => "update",
             Self::Rollback => "rollback",
         }
@@ -418,6 +422,8 @@ impl JobType {
             "discovery" => Self::Discovery,
             "runtime_scan" => Self::RuntimeScan,
             "github_packages_webhook" => Self::GitHubPackagesWebhook,
+            "github_packages_webhook_sync_all" => Self::GitHubPackagesWebhookSyncAll,
+            "github_packages_webhook_sync_repo" => Self::GitHubPackagesWebhookSyncRepo,
             "rollback" => Self::Rollback,
             _ => Self::Update,
         }
@@ -1117,6 +1123,30 @@ pub struct SyncGitHubPackagesWebhookResult {
 pub struct SyncGitHubPackagesWebhooksResponse {
     pub ok: bool,
     pub results: Vec<SyncGitHubPackagesWebhookResult>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerGitHubPackagesWebhookSyncAllResponse {
+    pub ok: bool,
+    pub job_id: String,
+    pub status: String,
+    pub reused: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerGitHubPackagesWebhookSyncRepoRequest {
+    pub full_name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerGitHubPackagesWebhookSyncRepoResponse {
+    pub ok: bool,
+    pub job_id: String,
+    pub status: String,
+    pub reused: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

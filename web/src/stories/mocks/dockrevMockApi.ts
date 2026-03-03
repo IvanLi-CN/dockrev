@@ -1978,15 +1978,57 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       if (repo.lastSyncAt === undefined) repo.lastSyncAt = null
       return repo
     }
-    const newGhcrJob = (op: 'register' | 'unregister' | 'audit_all', repoFullName: string | null): JobListItem => {
+    type MockGhcrOp = 'register' | 'unregister' | 'audit_all' | 'sync_all' | 'sync_repo'
+    const ghcrJobTypeByOp = (op: MockGhcrOp): string => {
+      if (op === 'sync_all') return 'github_packages_webhook_sync_all'
+      if (op === 'sync_repo') return 'github_packages_webhook_sync_repo'
+      return 'github_packages_webhook'
+    }
+    const ghcrQueuedMessage = (op: MockGhcrOp): string => {
+      if (op === 'register') return 'waiting to register webhook'
+      if (op === 'unregister') return 'waiting to unregister webhook'
+      if (op === 'sync_all') return 'waiting to sync tracked repos'
+      if (op === 'sync_repo') return 'waiting to sync repo webhook'
+      return 'waiting to audit webhook drift'
+    }
+    const isPending = (status: string): boolean => status === 'queued' || status === 'running'
+    const jobTargets = (job: JobListItem): string[] => {
+      const summary = job.summary
+      if (!summary || typeof summary !== 'object') return []
+      const repos = (summary as { repos?: unknown }).repos
+      if (!Array.isArray(repos)) return []
+      return repos.filter((v): v is string => typeof v === 'string')
+    }
+    const findPendingGhcrJob = (jobType: string, target?: string): JobListItem | null => {
+      const key = (target ?? '').trim().toLowerCase()
+      for (const job of f.jobs) {
+        if (job.type !== jobType || !isPending(job.status)) continue
+        if (!key) return job
+        const hasTarget = jobTargets(job).some((repo) => repo.trim().toLowerCase() === key)
+        if (hasTarget) return job
+      }
+      return null
+    }
+    const apiError = (status: number, code: string, message: string) =>
+      json(
+        {
+          error: {
+            code,
+            message,
+            details: null,
+          },
+        },
+        { status },
+      )
+    const newGhcrJob = (op: MockGhcrOp, repoFullNames: string[]): JobListItem => {
       jobSeq += 1
       const jobId = `job-ghcr-${jobSeq}`
       const createdAt = nowIso(-200)
-      const message = op === 'register' ? 'waiting to register webhook' : op === 'unregister' ? 'waiting to unregister webhook' : 'waiting to audit webhook drift'
-      const target = repoFullName ?? '-'
+      const message = ghcrQueuedMessage(op)
+      const target = repoFullNames[0] ?? '-'
       return {
         id: jobId,
-        type: 'github_packages_webhook',
+        type: ghcrJobTypeByOp(op),
         scope: 'all',
         stackId: null,
         serviceId: null,
@@ -2000,15 +2042,15 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         backupMode: 'inherit',
         summary: {
           op,
-          repos: repoFullName ? [repoFullName] : [],
+          repos: repoFullNames,
           progress: {
             phase: 'queued',
             message,
             current: 0,
-            total: repoFullName ? 1 : 0,
+            total: repoFullNames.length,
             percent: 0,
             plannedCurrent: 0,
-            plannedTotal: repoFullName ? 1 : 0,
+            plannedTotal: repoFullNames.length,
             plannedPercent: 0,
             currentTarget: target,
             updatedAt: createdAt,
@@ -2018,18 +2060,18 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
           phase: 'queued',
           message,
           current: 0,
-          total: repoFullName ? 1 : 0,
+          total: repoFullNames.length,
           percent: 0,
           plannedCurrent: 0,
-          plannedTotal: repoFullName ? 1 : 0,
+          plannedTotal: repoFullNames.length,
           plannedPercent: 0,
           currentTarget: target,
           updatedAt: createdAt,
         },
       }
     }
-    const insertGhcrQueuedJob = (op: 'register' | 'unregister' | 'audit_all', repoFullName: string | null): string => {
-      const job = newGhcrJob(op, repoFullName)
+    const insertGhcrQueuedJob = (op: MockGhcrOp, repoFullNames: string[]): string => {
+      const job = newGhcrJob(op, repoFullNames)
       f.jobs = [job, ...f.jobs]
       f.jobById[job.id] = {
         ...job,
@@ -2039,9 +2081,9 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
             level: 'event',
             msg: JSON.stringify({
               type: 'job_enqueued',
-              jobType: 'github_packages_webhook',
+              jobType: job.type,
               op,
-              target: repoFullName,
+              target: repoFullNames[0] ?? null,
               jobId: job.id,
               ts: job.createdAt,
             }),
@@ -2078,7 +2120,10 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         if (row.lastAuditAt && (!lastAuditAt || row.lastAuditAt > lastAuditAt)) lastAuditAt = row.lastAuditAt
       }
 
-      const ghcrJobs = f.jobs.filter((job) => job.type === 'github_packages_webhook')
+      const ghcrJobs = f.jobs.filter((job) =>
+        job.type === 'github_packages_webhook' ||
+        job.type === 'github_packages_webhook_sync_all' ||
+        job.type === 'github_packages_webhook_sync_repo')
       const jobsQueued = ghcrJobs.filter((job) => job.status === 'queued').length
       const jobsRunning = ghcrJobs.filter((job) => job.status === 'running').length
       const runningJobId = ghcrJobs.find((job) => job.status === 'running')?.id ?? null
@@ -2190,7 +2235,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
           target.webhookState = 'queued'
           target.lastOp = 'register'
           target.lastError = null
-          jobId = insertGhcrQueuedJob('register', fullName)
+          jobId = insertGhcrQueuedJob('register', [fullName])
           target.webhookJobId = jobId
         }
       }
@@ -2206,7 +2251,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       row.webhookState = 'queued'
       row.lastOp = 'unregister'
       row.lastError = null
-      const jobId = insertGhcrQueuedJob('unregister', fullName)
+      const jobId = insertGhcrQueuedJob('unregister', [fullName])
       row.webhookJobId = jobId
       recomputeGithubPackagesCounts()
       return json({ ok: true, jobId })
@@ -2340,6 +2385,55 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
 
       return json(mkOwner(inputStr))
     }
+    if (method === 'POST' && urlPath === '/api/github-packages/webhook/sync-all') {
+      const existing = findPendingGhcrJob('github_packages_webhook_sync_all')
+      if (existing) {
+        return json({ ok: true, jobId: existing.id, status: existing.status, reused: true })
+      }
+      const selected = f.githubPackagesRepos
+        .filter((r) => r.selected)
+        .filter((r) => !(r.lastOp === 'unregister' && (r.webhookState === 'queued' || r.webhookState === 'running')))
+        .map((r) => r.fullName)
+      if (selected.length === 0) return apiError(400, 'invalid_argument', 'no tracked repos selected')
+      const jobId = insertGhcrQueuedJob('sync_all', selected)
+      return json({ ok: true, jobId, status: 'queued', reused: false })
+    }
+    if (method === 'POST' && urlPath === '/api/github-packages/webhook/sync-repo') {
+      const parsed = parseJsonBody(init?.body) as { fullName?: unknown } | null
+      const fullName = getString(parsed?.fullName)?.trim() ?? ''
+      if (!fullName) return apiError(400, 'invalid_argument', 'invalid input')
+      const row = f.githubPackagesRepos.find((r) => r.fullName.toLowerCase() === fullName.toLowerCase())
+      if (!row) return apiError(404, 'not_found', 'repo is not tracked')
+      if (!row.selected) return apiError(400, 'invalid_argument', 'repo is not selected')
+      if (row.lastOp === 'unregister' && (row.webhookState === 'queued' || row.webhookState === 'running')) {
+        return apiError(409, 'conflict', 'repo unregister in progress')
+      }
+      if (row.lastOp === 'register' && (row.webhookState === 'queued' || row.webhookState === 'running') && row.webhookJobId) {
+        const legacy = f.jobs.find(
+          (job) =>
+            job.id === row.webhookJobId &&
+            job.type === 'github_packages_webhook' &&
+            isPending(job.status) &&
+            ((job.summary as { op?: unknown } | undefined)?.op === 'register'),
+        )
+        if (legacy) {
+          return json({ ok: true, jobId: legacy.id, status: legacy.status, reused: true })
+        }
+      }
+
+      const existing = findPendingGhcrJob('github_packages_webhook_sync_repo', fullName)
+      if (existing) {
+        return json({ ok: true, jobId: existing.id, status: existing.status, reused: true })
+      }
+
+      ensureGhcrRepoDefaults(row)
+      row.webhookState = 'queued'
+      row.lastOp = 'register'
+      row.lastError = null
+      const jobId = insertGhcrQueuedJob('sync_repo', [row.fullName])
+      row.webhookJobId = jobId
+      return json({ ok: true, jobId, status: 'queued', reused: false })
+    }
     if (method === 'POST' && urlPath === '/api/github-packages/sync') {
       const parsed = parseJsonBody(init?.body) as { repos?: unknown } | null
       const allow = Array.isArray(parsed?.repos)
@@ -2351,7 +2445,8 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         r.webhookState = 'queued'
         r.lastOp = 'register'
         r.lastError = null
-        const jobId = insertGhcrQueuedJob('register', r.fullName)
+        const existing = findPendingGhcrJob('github_packages_webhook_sync_repo', r.fullName)
+        const jobId = existing ? existing.id : insertGhcrQueuedJob('sync_repo', [r.fullName])
         r.webhookJobId = jobId
         return { repo: r.fullName, action: 'queued', hookId: null, conflictHooks: null, message: `jobId=${jobId}` }
       })

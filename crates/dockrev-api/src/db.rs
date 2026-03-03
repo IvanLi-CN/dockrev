@@ -3832,6 +3832,145 @@ WHERE type = ?1 AND status = ?2
         .context("count jobs by type and status")
     }
 
+    pub async fn find_latest_pending_job_by_type(
+        &self,
+        job_type: JobType,
+    ) -> anyhow::Result<Option<JobListItem>> {
+        let job_type = job_type.as_str().to_string();
+        self.call(move |conn| {
+            conn.query_row(
+                r#"
+SELECT
+  id,
+  type,
+  scope,
+  stack_id,
+  service_id,
+  status,
+  created_by,
+  reason,
+  created_at,
+  started_at,
+  finished_at,
+  allow_arch_mismatch,
+  backup_mode,
+  summary_json
+FROM jobs
+WHERE type = ?1
+  AND status IN ('queued', 'running')
+ORDER BY
+  CASE status WHEN 'running' THEN 0 ELSE 1 END,
+  created_at DESC,
+  id DESC
+LIMIT 1
+"#,
+                params![job_type],
+                |row| {
+                    let summary_json: String = row.get(13)?;
+                    let summary: serde_json::Value =
+                        serde_json::from_str(&summary_json).map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                0,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?;
+                    Ok(JobListItem {
+                        id: row.get(0)?,
+                        r#type: JobType::from_str(&row.get::<_, String>(1)?),
+                        scope: JobScope::from_str(&row.get::<_, String>(2)?),
+                        stack_id: row.get(3)?,
+                        service_id: row.get(4)?,
+                        status: row.get(5)?,
+                        created_by: row.get(6)?,
+                        reason: row.get(7)?,
+                        created_at: row.get(8)?,
+                        started_at: row.get(9)?,
+                        finished_at: row.get(10)?,
+                        allow_arch_mismatch: row.get::<_, i64>(11)? != 0,
+                        backup_mode: row.get(12)?,
+                        summary_json: summary,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+        })
+        .await
+        .context("find latest pending job by type")
+    }
+
+    pub async fn find_latest_pending_job_by_type_and_service_id(
+        &self,
+        job_type: JobType,
+        service_id: &str,
+    ) -> anyhow::Result<Option<JobListItem>> {
+        let job_type = job_type.as_str().to_string();
+        let service_id = service_id.to_string();
+        self.call(move |conn| {
+            conn.query_row(
+                r#"
+SELECT
+  id,
+  type,
+  scope,
+  stack_id,
+  service_id,
+  status,
+  created_by,
+  reason,
+  created_at,
+  started_at,
+  finished_at,
+  allow_arch_mismatch,
+  backup_mode,
+  summary_json
+FROM jobs
+WHERE type = ?1
+  AND service_id = ?2
+  AND status IN ('queued', 'running')
+ORDER BY
+  CASE status WHEN 'running' THEN 0 ELSE 1 END,
+  created_at DESC,
+  id DESC
+LIMIT 1
+"#,
+                params![job_type, service_id],
+                |row| {
+                    let summary_json: String = row.get(13)?;
+                    let summary: serde_json::Value =
+                        serde_json::from_str(&summary_json).map_err(|e| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                0,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            )
+                        })?;
+                    Ok(JobListItem {
+                        id: row.get(0)?,
+                        r#type: JobType::from_str(&row.get::<_, String>(1)?),
+                        scope: JobScope::from_str(&row.get::<_, String>(2)?),
+                        stack_id: row.get(3)?,
+                        service_id: row.get(4)?,
+                        status: row.get(5)?,
+                        created_by: row.get(6)?,
+                        reason: row.get(7)?,
+                        created_at: row.get(8)?,
+                        started_at: row.get(9)?,
+                        finished_at: row.get(10)?,
+                        allow_arch_mismatch: row.get::<_, i64>(11)? != 0,
+                        backup_mode: row.get(12)?,
+                        summary_json: summary,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+        })
+        .await
+        .context("find latest pending job by type and service id")
+    }
+
     pub async fn find_latest_running_check_job(
         &self,
         scope: &JobScope,
