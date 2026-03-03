@@ -49,7 +49,7 @@ export const JobsCardRunningProgressModes: Story = {
   parameters: { dockrevApiScenario: 'overview-jobs-card-running-progress-modes' },
   render: () => {
     return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：running 行背景进度（确定/不确定）">
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：第 1 条为 determinate（75%），流光仅在已完成区域">
         {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
       </PageHarness>
     )
