@@ -1992,6 +1992,91 @@ html[data-theme='light'] .modalOverlay {
   margin-top: 12px;
 }
 
+.overviewJobsList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.overviewJobItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  border: 1px solid rgba(229, 231, 235, 0.08);
+  background: var(--dockrev-surface);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.overviewJobItem:hover {
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+.overviewJobMain {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.overviewJobStatus {
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.overviewJobStatusTag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 20px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 640;
+  line-height: 1.2;
+  color: var(--muted);
+  border: 1px solid color-mix(in srgb, var(--muted2) 30%, var(--borderColor) 70%);
+  background: color-mix(in srgb, var(--muted2) 10%, transparent);
+}
+
+.overviewJobStatusTag[data-status='running'] {
+  color: color-mix(in srgb, var(--color-info) 84%, var(--text) 16%);
+  border-color: color-mix(in srgb, var(--color-info) 34%, var(--borderColor) 66%);
+  background: color-mix(in srgb, var(--color-info) 12%, transparent);
+}
+
+.overviewJobStatusTag[data-status='queued'] {
+  color: color-mix(in srgb, var(--color-warning) 84%, var(--text) 16%);
+  border-color: color-mix(in srgb, var(--color-warning) 34%, var(--borderColor) 66%);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+}
+
+.overviewJobStatusTag[data-status='success'] {
+  color: color-mix(in srgb, var(--color-success) 84%, var(--text) 16%);
+  border-color: color-mix(in srgb, var(--color-success) 34%, var(--borderColor) 66%);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+}
+
+.overviewJobStatusTag[data-status='failed'] {
+  color: color-mix(in srgb, var(--color-error) 84%, var(--text) 16%);
+  border-color: color-mix(in srgb, var(--color-error) 34%, var(--borderColor) 66%);
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+}
+
+@media (max-width: 640px) {
+  .overviewJobItem {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .overviewJobStatus {
+    align-self: flex-start;
+  }
+}
+
 .queueItem,
 .queueSummaryItem {
   display: flex;

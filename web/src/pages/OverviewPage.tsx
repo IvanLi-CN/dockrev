@@ -23,6 +23,7 @@ import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { isSemverDowngradeAnomaly, serviceRowStatus, type RowStatus } from '../updateStatus'
 import { formatJobReadableDisplay } from '../jobDisplay'
+import { selectOverviewJobsForCard, toOverviewJobCardItem } from './overviewJobsCard'
 import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
 import { useConfirm } from '../confirm'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
@@ -587,6 +588,10 @@ export function OverviewPage(props: {
   const latestReadableJob = jobsSummary.latest
     ? formatJobReadableDisplay(jobsSummary.latest.type, jobsSummary.latest.scope)
     : null
+  const overviewCardJobs = useMemo(
+    () => selectOverviewJobsForCard(jobs, { maxItems: 10 }).map((job) => toOverviewJobCardItem(job)),
+    [jobs],
+  )
 
   const discoverySummary = useMemo(() => {
     const active = discoveredProjects.filter((p) => p.status === 'active' && !p.archived)
@@ -1011,6 +1016,48 @@ export function OverviewPage(props: {
               </span>
             ) : (
               <Mono>-</Mono>
+            )}
+          </div>
+          <div className="muted" style={{ marginTop: 12 }}>
+            任务列表（最多 10 条，优先排队/进行中）
+          </div>
+          <div className="overviewJobsList">
+            {overviewCardJobs.length === 0 ? (
+              <div className="muted">暂无任务</div>
+            ) : (
+              overviewCardJobs.map((job) => (
+                <button
+                  key={job.jobId}
+                  type="button"
+                  className="overviewJobItem"
+                  onClick={() => navigate({ name: 'job', jobId: job.jobId })}
+                >
+                  <div className="overviewJobMain">
+                    <div className="queueTitle">
+                      <span className="jobReadableName">
+                        <span className={`jobTypeTag jobTypeTag-${job.typeTone}`}>{job.primaryLabel}</span>
+                        {job.scopeTag ? <span className="jobScopeTag">{job.scopeTag}</span> : null}
+                      </span>
+                    </div>
+                    <div className="queueMeta">
+                      <span>
+                        status <Mono>{job.status}</Mono>
+                      </span>
+                      <span>
+                        created <Mono>{formatShort(job.createdAt)}</Mono>
+                      </span>
+                      <span>
+                        by <Mono>{job.createdBy}</Mono> · reason <Mono>{job.reason}</Mono>
+                      </span>
+                    </div>
+                  </div>
+                  <div className="overviewJobStatus">
+                    <span className="overviewJobStatusTag" data-status={job.status}>
+                      {job.status}
+                    </span>
+                  </div>
+                </button>
+              ))
             )}
           </div>
         </div>

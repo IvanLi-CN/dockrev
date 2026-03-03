@@ -40,6 +40,7 @@ export type DockrevApiScenario =
   | 'version-tags-popover-snapshot-pending'
   | 'version-tags-popover-snapshot-missing'
   | 'multi-stack-mixed'
+  | 'overview-jobs-card-heavy-inflight'
   | 'queue-mixed'
   | 'queue-legacy-progress'
   | 'queue-long-logs'
@@ -1288,6 +1289,78 @@ function buildQueueMixed(): Fixture {
   return f
 }
 
+function buildOverviewJobsCardHeavyInFlight(): Fixture {
+  const f = buildDashboardDemo()
+
+  const makeJob = (input: Partial<JobListItem> & Pick<JobListItem, 'id' | 'status'>): JobListItem => {
+    const base: JobListItem = {
+      id: input.id,
+      type: input.type ?? 'update',
+      scope: input.scope ?? 'service',
+      stackId: input.stackId !== undefined ? input.stackId : 'stack-prod',
+      serviceId: input.serviceId !== undefined ? input.serviceId : 'svc-prod-api',
+      status: input.status,
+      createdBy: input.createdBy ?? 'ivan',
+      reason: input.reason ?? 'ui',
+      createdAt: input.createdAt ?? nowIso(-120_000),
+      startedAt: input.startedAt ?? nowIso(-110_000),
+      finishedAt: input.finishedAt ?? nowIso(-10_000),
+      allowArchMismatch: input.allowArchMismatch ?? false,
+      backupMode: input.backupMode ?? 'inherit',
+      summary: input.summary ?? {},
+      progress: input.progress ?? null,
+    }
+    return base
+  }
+
+  const jobs: JobListItem[] = []
+  for (let i = 0; i < 12; i += 1) {
+    const status = i % 2 === 0 ? 'running' : 'queued'
+    jobs.push(
+      makeJob({
+        id: `overview-inflight-${String(i + 1).padStart(2, '0')}`,
+        status,
+        createdAt: nowIso(-(10_000 + i * 1_000)),
+        startedAt: status === 'running' ? nowIso(-(9_000 + i * 1_000)) : null,
+        finishedAt: null,
+      }),
+    )
+  }
+
+  jobs.push(
+    makeJob({
+      id: 'overview-fallback-success',
+      status: 'success',
+      createdAt: nowIso(-500),
+      startedAt: nowIso(-2_000),
+      finishedAt: nowIso(-1_000),
+    }),
+  )
+  jobs.push(
+    makeJob({
+      id: 'overview-fallback-failed',
+      status: 'failed',
+      createdAt: nowIso(-1_500),
+      startedAt: nowIso(-3_000),
+      finishedAt: nowIso(-2_500),
+    }),
+  )
+
+  f.jobs = jobs
+  f.jobById = Object.fromEntries(
+    jobs.map((j) => [
+      j.id,
+      {
+        ...j,
+        logs: [{ ts: nowIso(-900), level: 'info', msg: `job ${j.id} ready` }],
+        logsLastId: 1,
+      } satisfies JobDetail,
+    ]),
+  )
+
+  return f
+}
+
 function buildQueueLongLogs(): Fixture {
   const f = buildDashboardDemo()
 
@@ -1892,6 +1965,7 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
     return buildVersionTagsPopoverDemo()
   }
   if (scenario === 'queue-mixed') return buildQueueMixed()
+  if (scenario === 'overview-jobs-card-heavy-inflight') return buildOverviewJobsCardHeavyInFlight()
   if (scenario === 'queue-legacy-progress') return buildQueueLegacyProgress()
   if (scenario === 'queue-long-logs') return buildQueueLongLogs()
   if (scenario === 'settings-configured' || scenario === 'settings-configured-resolve-slow') return buildSettingsConfigured()
