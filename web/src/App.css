@@ -2071,6 +2071,7 @@ html[data-theme='light'] .modalOverlay {
 
 .overviewJobListRow[data-progress-mode='determinate'] .overviewJobProgressBgShimmer {
   opacity: 0.42;
+  clip-path: inset(0 calc(100% - var(--overview-row-progress, 0%)) 0 0);
   background: linear-gradient(
     90deg,
     transparent 0%,
