@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
+import eyeOffOutline from '@iconify-icons/mdi/eye-off-outline'
+import eyeOutline from '@iconify-icons/mdi/eye-outline'
 import {
   ApiError,
   createWebPushSubscription,
@@ -82,6 +84,7 @@ const SAVE_SCOPE_ORDER: SaveScope[] = ['backup', 'notifications', 'ghcr']
 const TEXT_DEBOUNCE_MS = 400
 const TOGGLE_DEBOUNCE_MS = 120
 const PAT_MASK = '******'
+const TELEGRAM_BOT_TOKEN_MASK = '••••••••••••••••'
 const GHCR_PREVIEW_LIMIT = 6
 const GITHUB_PAT_PREFIXES = ['ghp_', 'github_pat_', 'gho_', 'ghu_', 'ghs_', 'ghr_']
 
@@ -99,6 +102,41 @@ function isMaskedPat(value: string): boolean {
 function hasExplicitPat(value: string): boolean {
   const trimmed = value.trim()
   return trimmed.length > 0 && !isMaskedPat(trimmed)
+}
+
+function isMaskedTelegramBotToken(value: string): boolean {
+  return value === TELEGRAM_BOT_TOKEN_MASK || value === PAT_MASK
+}
+
+function normalizeNotificationsForUi(input: NotificationConfig): NotificationConfig {
+  const rawBotToken = input.telegram.botToken ?? ''
+  const hasExplicitBotToken = rawBotToken.trim().length > 0 && !isMaskedTelegramBotToken(rawBotToken)
+  const botTokenConfigured = input.telegram.botTokenConfigured ?? hasExplicitBotToken
+  const botToken = hasExplicitBotToken ? rawBotToken : botTokenConfigured ? TELEGRAM_BOT_TOKEN_MASK : null
+  return {
+    ...input,
+    telegram: {
+      ...input.telegram,
+      botToken,
+      botTokenConfigured,
+    },
+  }
+}
+
+function normalizeNotificationsForSave(input: NotificationConfig): NotificationConfig {
+  const botTokenRaw = input.telegram.botToken ?? ''
+  const botToken =
+    isMaskedTelegramBotToken(botTokenRaw) || botTokenRaw.trim().length === 0 ? null : botTokenRaw
+  const chatIdRaw = input.telegram.chatId ?? ''
+  const chatId = chatIdRaw.trim().length === 0 ? '' : chatIdRaw.trim()
+  return {
+    ...input,
+    telegram: {
+      ...input.telegram,
+      botToken,
+      chatId,
+    },
+  }
 }
 
 function validateGhcrPatBeforeSave(draft: GhcrDraft): { fieldPath: string; reason: string; message: string } | null {
@@ -509,6 +547,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   const confirm = useConfirm()
   const [settings, setSettings] = useState<SettingsResponse | null>(null)
   const [notifications, setNotifications] = useState<NotificationConfig | null>(null)
+  const [telegramBotTokenVisible, setTelegramBotTokenVisible] = useState(false)
   const [githubPackages, setGitHubPackages] = useState<GitHubPackagesSettingsResponse | null>(null)
   const [githubPackagesPat, setGitHubPackagesPat] = useState('')
   const [githubPackagesNewRepo, setGitHubPackagesNewRepo] = useState('')
@@ -608,7 +647,10 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
       if (!settingsRef.current) return null
       return buildSettingsSavePayload(settingsRef.current)
     }
-    if (scope === 'notifications') return notificationsRef.current
+    if (scope === 'notifications') {
+      if (!notificationsRef.current) return null
+      return normalizeNotificationsForSave(notificationsRef.current)
+    }
     const ghcr = ghcrRef.current
     if (!ghcr) return null
     const pat = ghcr.pat.trim()
@@ -851,7 +893,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
       notificationsRef.current = next.notifications
       ghcrRef.current = next.ghcr
       lastSavedHashRef.current.set('backup', JSON.stringify(buildSettingsSavePayload(next.settings)))
-      lastSavedHashRef.current.set('notifications', JSON.stringify(next.notifications))
+      lastSavedHashRef.current.set('notifications', JSON.stringify(normalizeNotificationsForSave(next.notifications)))
       lastSavedHashRef.current.set(
         'ghcr',
         JSON.stringify({
@@ -883,7 +925,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   const refresh = useCallback(async () => {
     setError(null)
     const nextSettings = await getSettings()
-    const nextNotifications = await getNotifications()
+    const nextNotifications = normalizeNotificationsForUi(await getNotifications())
     const gh = await getGitHubPackagesSettings()
     const defaultCallbackUrl = (() => {
       if (typeof window === 'undefined') return ''
@@ -897,6 +939,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
     setSettings(nextSettings)
     setNotifications(nextNotifications)
+    setTelegramBotTokenVisible(false)
     setGitHubPackages(nextGhcr)
     setGitHubPackagesPat(nextPat)
     resetAutoSaveBaselines({
@@ -1079,6 +1122,37 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     },
     [markFieldDirty],
   )
+
+  const clearTelegramBotTokenMaskForEdit = useCallback(() => {
+    setNotifications((prev) => {
+      if (!prev) return prev
+      const botToken = prev.telegram.botToken ?? ''
+      if (!isMaskedTelegramBotToken(botToken)) return prev
+      return {
+        ...prev,
+        telegram: {
+          ...prev.telegram,
+          botToken: '',
+        },
+      }
+    })
+  }, [])
+
+  const restoreTelegramBotTokenMaskIfNeeded = useCallback(() => {
+    setNotifications((prev) => {
+      if (!prev) return prev
+      const botToken = prev.telegram.botToken ?? ''
+      if (botToken.trim().length > 0) return prev
+      if (!prev.telegram.botTokenConfigured) return prev
+      return {
+        ...prev,
+        telegram: {
+          ...prev.telegram,
+          botToken: TELEGRAM_BOT_TOKEN_MASK,
+        },
+      }
+    })
+  }, [])
 
   const updateGhcr = useCallback(
     (
@@ -1534,16 +1608,38 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               <div className="kv">
                 <div className="kvRow">
                   <div className="label">Bot token</div>
-                  <input
-                    className="input"
-                    value={notifications.telegram.botToken ?? ''}
-                    onChange={(e) =>
-                      updateNotifications('notifications.telegram.botToken', (current) => ({
-                        ...current,
-                        telegram: { ...current.telegram, botToken: e.target.value },
-                      }))
-                    }
-                  />
+                  <div className="inputWithAction">
+                    <input
+                      className="input"
+                      type={telegramBotTokenVisible ? 'text' : 'password'}
+                      autoComplete="new-password"
+                      value={notifications.telegram.botToken ?? ''}
+                      onFocus={clearTelegramBotTokenMaskForEdit}
+                      onBlur={restoreTelegramBotTokenMaskIfNeeded}
+                      onChange={(e) =>
+                        updateNotifications('notifications.telegram.botToken', (current) => ({
+                          ...current,
+                          telegram: {
+                            ...current.telegram,
+                            botToken: e.target.value,
+                            botTokenConfigured:
+                              e.target.value.trim().length > 0
+                                ? true
+                                : (current.telegram.botTokenConfigured ?? false),
+                          },
+                        }))
+                      }
+                    />
+                    <button
+                      type="button"
+                      className="inputActionBtn"
+                      aria-label={telegramBotTokenVisible ? '隐藏 Bot token' : '显示 Bot token'}
+                      title={telegramBotTokenVisible ? '隐藏 Bot token' : '显示 Bot token'}
+                      onClick={() => setTelegramBotTokenVisible((prev) => !prev)}
+                    >
+                      <Icon icon={telegramBotTokenVisible ? eyeOffOutline : eyeOutline} aria-hidden="true" />
+                    </button>
+                  </div>
                 </div>
                 <div className="kvRow">
                   <div className="label">Chat id</div>

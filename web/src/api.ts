@@ -380,7 +380,7 @@ export type DeployWelcomeResponse = {
 export type NotificationConfig = {
   email: { enabled: boolean; smtpUrl?: string | null }
   webhook: { enabled: boolean; url?: string | null }
-  telegram: { enabled: boolean; botToken?: string | null; chatId?: string | null }
+  telegram: { enabled: boolean; botToken?: string | null; botTokenConfigured?: boolean; chatId?: string | null }
   webPush: {
     enabled: boolean
     vapidPublicKey?: string | null

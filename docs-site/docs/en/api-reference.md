@@ -75,7 +75,7 @@ This page documents every HTTP route exposed in:
 | DELETE | `/api/ignores` | Forward Header | Delete ignore rule | `200` `400` `401` |
 | GET | `/api/services/{service_id}/settings` | Forward Header | Get service settings | `200` `404` `401` |
 | PUT | `/api/services/{service_id}/settings` | Forward Header | Update service settings | `200` `400` `404` `401` |
-| GET | `/api/notifications` | Forward Header | Read notification settings (masked secrets) | `200` `401` |
+| GET | `/api/notifications` | Forward Header | Read notification settings (`botToken` omitted; `botTokenConfigured` + plain `chatId`) | `200` `401` |
 | PUT | `/api/notifications` | Forward Header | Update notification settings | `200` `400` `401` |
 | POST | `/api/notifications/test` | Forward Header | Send test notification | `200` `400` `401` |
 | GET | `/api/settings` | Forward Header | Get system settings | `200` `401` |

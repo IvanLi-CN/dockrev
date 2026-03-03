@@ -4111,7 +4111,7 @@ async fn put_notifications(
     merge_secret(&mut merged.email_smtp_url, existing.email_smtp_url);
     merge_secret(&mut merged.webhook_url, existing.webhook_url);
     merge_secret(&mut merged.telegram_bot_token, existing.telegram_bot_token);
-    merge_secret(&mut merged.telegram_chat_id, existing.telegram_chat_id);
+    merge_telegram_chat_id(&mut merged.telegram_chat_id, existing.telegram_chat_id);
     merge_secret(
         &mut merged.webpush_vapid_private_key,
         existing.webpush_vapid_private_key,
@@ -5695,9 +5695,32 @@ fn github_error_is_timeout(err: &anyhow::Error) -> bool {
 fn merge_secret(target: &mut Option<String>, existing: Option<String>) {
     let keep = match target.as_deref() {
         None => true,
-        Some(v) => v == "******" || v.trim().is_empty(),
+        Some(v) => {
+            let trimmed = v.trim();
+            is_mask_literal(trimmed) || trimmed.is_empty()
+        }
     };
     if keep {
         *target = existing;
     }
+}
+
+fn merge_telegram_chat_id(target: &mut Option<String>, existing: Option<String>) {
+    match target.take() {
+        None => *target = existing,
+        Some(value) => {
+            let trimmed = value.trim();
+            if is_mask_literal(trimmed) {
+                *target = existing;
+            } else if trimmed.is_empty() {
+                *target = None;
+            } else {
+                *target = Some(trimmed.to_string());
+            }
+        }
+    }
+}
+
+fn is_mask_literal(value: &str) -> bool {
+    value == "******" || value == "••••••••••••••••"
 }
