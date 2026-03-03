@@ -17,6 +17,7 @@
 ### Goals
 
 - 在概览页“运行态与结果”卡片新增可点击任务列表。
+- 列表项采用单行紧凑列表（非卡片样式），避免占用过高垂直空间。
 - 列表规则固定为：优先 `queued/running`，不足时按创建时间倒序由其他状态补齐。
 - 总展示数量上限固定 10 条。
 - 点击任意任务条目可直接跳转到任务详情页（`/queue/<jobId>`）。
@@ -59,6 +60,7 @@
 - Given jobs 总数 < 10，When 打开概览页，Then 显示全部任务且不卡死。
 - Given 同 `createdAt` 的任务，When 渲染卡片列表，Then 使用 `id` 倒序作为稳定次级排序。
 - Given 点击卡片中的任务项，When 触发跳转，Then 进入 `/queue/<jobId>` 并可查看任务详情。
+- Given 任务列表渲染，When 查看任一条目，Then 条目以单行显示并在内容过长时省略。
 - 空态显示“暂无任务”。
 - `bun test --cwd web`、`bun run --cwd web lint`、`bun run --cwd web build`、`DOCKREV_TEST_STORYBOOK_PORT=50999 bun run --cwd web test-storybook` 通过。
 
@@ -74,3 +76,4 @@
 - 2026-03-03: 完成 `web/src/pages/overviewJobsCard.ts` 选择器与 `OverviewPage` 接入；新增概览卡片任务列表样式与状态标记，点击任务可跳转详情页。
 - 2026-03-03: 新增 `web/tests/overviewJobsCard.test.ts`，覆盖 in-flight 优先、补齐、上限、空数据、同时间戳稳定排序；新增 Storybook 概览卡片场景（in-flight 堆积 / mixed fallback / empty）。
 - 2026-03-03: 验证通过 `bun test --cwd web`、`bun run --cwd web lint`、`bun run --cwd web build`、`DOCKREV_TEST_STORYBOOK_PORT=50999 bun run --cwd web test-storybook`；review-loop 无阻断项。
+- 2026-03-03: 根据评审反馈将任务行改为单行列表样式（移除条目卡片化），保留状态色标、点击跳转与排序/补齐逻辑。
