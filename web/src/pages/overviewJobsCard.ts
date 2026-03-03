@@ -16,7 +16,9 @@ export type OverviewJobCardItem = {
   typeTone: JobTypeTone
 }
 
-const IN_FLIGHT_STATUSES = new Set(['queued', 'running'])
+const TERMINAL_STATUSES = new Set(['success', 'failed', 'rolled_back'])
+const BASE_VISIBLE_ITEMS = 5
+const MAX_NON_TERMINAL_ITEMS = 10
 
 function compareJobsByCreatedAtDesc(lhs: JobListItem, rhs: JobListItem): number {
   const tsCmp = String(rhs.createdAt ?? '').localeCompare(String(lhs.createdAt ?? ''))
@@ -25,30 +27,23 @@ function compareJobsByCreatedAtDesc(lhs: JobListItem, rhs: JobListItem): number 
 }
 
 export function selectOverviewJobsForCard(jobs: JobListItem[], options?: OverviewJobsCardOptions): JobListItem[] {
-  const maxItemsRaw = options?.maxItems ?? 10
+  const maxItemsRaw = options?.maxItems ?? MAX_NON_TERMINAL_ITEMS
   const maxItems = Math.max(0, Math.floor(maxItemsRaw))
   if (maxItems === 0 || jobs.length === 0) return []
 
   const sorted = [...jobs].sort(compareJobsByCreatedAtDesc)
+  const nonTerminalJobs = sorted.filter((job) => !TERMINAL_STATUSES.has(job.status))
+  const terminalJobs = sorted.filter((job) => TERMINAL_STATUSES.has(job.status))
 
-  const selected: JobListItem[] = []
-  const selectedIds = new Set<string>()
+  const baseVisibleItems = Math.min(BASE_VISIBLE_ITEMS, maxItems)
+  const maxNonTerminalItems = Math.min(MAX_NON_TERMINAL_ITEMS, maxItems)
 
-  for (const job of sorted) {
-    if (!IN_FLIGHT_STATUSES.has(job.status)) continue
-    selected.push(job)
-    selectedIds.add(job.id)
-    if (selected.length >= maxItems) return selected
-  }
+  if (nonTerminalJobs.length === 0) return terminalJobs.slice(0, baseVisibleItems)
+  if (nonTerminalJobs.length > BASE_VISIBLE_ITEMS) return nonTerminalJobs.slice(0, maxNonTerminalItems)
 
-  for (const job of sorted) {
-    if (selectedIds.has(job.id)) continue
-    selected.push(job)
-    selectedIds.add(job.id)
-    if (selected.length >= maxItems) break
-  }
-
-  return selected
+  const nonTerminalSelected = nonTerminalJobs.slice(0, baseVisibleItems)
+  const terminalFillCount = Math.max(0, baseVisibleItems - nonTerminalSelected.length)
+  return [...nonTerminalSelected, ...terminalJobs.slice(0, terminalFillCount)]
 }
 
 export function toOverviewJobCardItem(job: JobListItem): OverviewJobCardItem {

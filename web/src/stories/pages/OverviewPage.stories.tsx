@@ -27,7 +27,18 @@ export const JobsCardHeavyInFlight: Story = {
   parameters: { dockrevApiScenario: 'overview-jobs-card-heavy-inflight' },
   render: () => {
     return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：运行态卡片优先展示 in-flight，固定 10 条">
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：未终止任务 >5 时，最多展示 10 条未终止">
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}
+
+export const JobsCardTerminalOnly: Story = {
+  parameters: { dockrevApiScenario: 'overview-jobs-card-terminal-only' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：未终止任务=0 时，仅展示最多 5 条终止状态任务">
         {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
       </PageHarness>
     )
@@ -38,7 +49,18 @@ export const JobsCardMixedFallback: Story = {
   parameters: { dockrevApiScenario: 'queue-mixed' },
   render: () => {
     return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：in-flight 不足时由其他状态补齐">
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：未终止任务不足 5 条时由终止状态补齐到 5 条">
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}
+
+export const JobsCardExactFiveNonTerminal: Story = {
+  parameters: { dockrevApiScenario: 'overview-jobs-card-exact-five-non-terminal' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：未终止任务=5 时只显示 5 条未终止任务，不补终止状态">
         {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
       </PageHarness>
     )
