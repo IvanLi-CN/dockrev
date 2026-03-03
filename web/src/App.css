@@ -1995,39 +1995,56 @@ html[data-theme='light'] .modalOverlay {
 .overviewJobsList {
   display: flex;
   flex-direction: column;
-  gap: 8px;
   margin-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
 }
 
-.overviewJobItem {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+.overviewJobListRow {
+  display: block;
   width: 100%;
-  border: 1px solid rgba(229, 231, 235, 0.08);
-  background: var(--dockrev-surface);
-  border-radius: 10px;
-  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
+  background: transparent;
+  padding: 9px 0;
   cursor: pointer;
   text-align: left;
 }
 
-.overviewJobItem:hover {
-  border-color: rgba(56, 189, 248, 0.35);
+.overviewJobListRow:hover {
+  background: color-mix(in srgb, var(--color-info) 8%, transparent);
 }
 
-.overviewJobMain {
-  flex: 1 1 auto;
+.overviewJobListRow:active {
+  background: color-mix(in srgb, var(--color-info) 14%, transparent);
+}
+
+.overviewJobListRow:last-child {
+  border-bottom: 0;
+}
+
+.overviewJobLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
+  white-space: nowrap;
 }
 
-.overviewJobStatus {
+.overviewJobLine .jobTypeTag,
+.overviewJobLine .jobScopeTag {
   flex: 0 0 auto;
-  align-self: center;
+}
+
+.overviewJobLineMeta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted2);
+  font-size: 12px;
 }
 
 .overviewJobStatusTag {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2067,13 +2084,20 @@ html[data-theme='light'] .modalOverlay {
 }
 
 @media (max-width: 640px) {
-  .overviewJobItem {
-    align-items: flex-start;
-    flex-direction: column;
+  .overviewJobListRow {
+    padding: 10px 0;
   }
 
-  .overviewJobStatus {
-    align-self: flex-start;
+  .overviewJobLine {
+    gap: 5px;
+  }
+
+  .overviewJobLineMeta {
+    font-size: 11px;
+  }
+
+  .overviewJobLine .jobScopeTag {
+    display: none;
   }
 }
 

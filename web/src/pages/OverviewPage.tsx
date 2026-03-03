@@ -1029,33 +1029,18 @@ export function OverviewPage(props: {
                 <button
                   key={job.jobId}
                   type="button"
-                  className="overviewJobItem"
+                  className="overviewJobListRow"
                   onClick={() => navigate({ name: 'job', jobId: job.jobId })}
+                  title={`${job.status} · ${job.primaryLabel}${job.scopeTag ? ` ${job.scopeTag}` : ''} · ${formatShort(job.createdAt)} · by ${job.createdBy} · reason ${job.reason}`}
                 >
-                  <div className="overviewJobMain">
-                    <div className="queueTitle">
-                      <span className="jobReadableName">
-                        <span className={`jobTypeTag jobTypeTag-${job.typeTone}`}>{job.primaryLabel}</span>
-                        {job.scopeTag ? <span className="jobScopeTag">{job.scopeTag}</span> : null}
-                      </span>
-                    </div>
-                    <div className="queueMeta">
-                      <span>
-                        status <Mono>{job.status}</Mono>
-                      </span>
-                      <span>
-                        created <Mono>{formatShort(job.createdAt)}</Mono>
-                      </span>
-                      <span>
-                        by <Mono>{job.createdBy}</Mono> · reason <Mono>{job.reason}</Mono>
-                      </span>
-                    </div>
-                  </div>
-                  <div className="overviewJobStatus">
+                  <span className="overviewJobLine">
                     <span className="overviewJobStatusTag" data-status={job.status}>
                       {job.status}
                     </span>
-                  </div>
+                    <span className={`jobTypeTag jobTypeTag-${job.typeTone}`}>{job.primaryLabel}</span>
+                    {job.scopeTag ? <span className="jobScopeTag">{job.scopeTag}</span> : null}
+                    <span className="overviewJobLineMeta">{`created ${formatShort(job.createdAt)} · by ${job.createdBy} · reason ${job.reason}`}</span>
+                  </span>
                 </button>
               ))
             )}
