@@ -3,6 +3,48 @@ import { OverviewPage } from '../../pages/OverviewPage'
 import { PageHarness } from '../mocks/PageHarness'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 
+const jobsCardOnlyScopeCss = `
+.appShell {
+  display: block !important;
+  min-height: 0 !important;
+  height: auto !important;
+}
+
+.topbar,
+.sidebar,
+.mobileDockrevPanel,
+.pageHead {
+  display: none !important;
+}
+
+.content {
+  padding: 0 !important;
+  overflow: visible !important;
+}
+
+.page {
+  gap: 0 !important;
+}
+
+.overviewJobsCardStoryFocusFrame {
+  width: min(100%, 760px);
+  margin: 18px;
+}
+
+.overviewJobsCardStoryFocusFrame-actual {
+  width: min(100%, 560px);
+}
+
+.twoCol {
+  display: block !important;
+}
+
+.twoCol > .card:not(:first-of-type),
+.overviewIndent {
+  display: none !important;
+}
+`
+
 const meta: Meta<typeof OverviewPage> = {
   title: 'Pages/OverviewPage',
   component: OverviewPage,
@@ -61,6 +103,59 @@ export const JobsCardExactFiveNonTerminal: Story = {
   render: () => {
     return (
       <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：未终止任务=5 时只显示 5 条未终止任务，不补终止状态">
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}
+
+export const JobsCardRunningProgressModes: Story = {
+  parameters: { dockrevApiScenario: 'overview-jobs-card-running-progress-modes' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：第 1 条为 determinate（75%），流光仅在已完成区域">
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}
+
+export const JobsCardRunningProgressOnly: Story = {
+  parameters: { dockrevApiScenario: 'overview-jobs-card-running-progress-modes', layout: 'fullscreen' },
+  decorators: [
+    (Story) => (
+      <div className="overviewJobsCardStoryFocus">
+        <style>{jobsCardOnlyScopeCss}</style>
+        <div className="overviewJobsCardStoryFocusFrame">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="单卡聚焦：运行态与结果（仅卡片）">
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}
+
+export const JobsCardRunningProgressOnlyActualWidth: Story = {
+  parameters: { dockrevApiScenario: 'overview-jobs-card-running-progress-modes', layout: 'fullscreen' },
+  decorators: [
+    (Story) => (
+      <div className="overviewJobsCardStoryFocus">
+        <style>{jobsCardOnlyScopeCss}</style>
+        <div className="overviewJobsCardStoryFocusFrame overviewJobsCardStoryFocusFrame-actual">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="单卡聚焦：运行态与结果（接近真实宽度）">
         {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
       </PageHarness>
     )

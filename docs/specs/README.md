@@ -27,6 +27,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| b5tcx | Dockrev：概览卡片运行任务整行背景进度条（慢速流光） | 已完成 | `b5tcx-overview-running-row-progress-bg/SPEC.md` | 2026-03-03 | fast-track（overview running 行 subtle 背景进度 + 慢速流光） |
 | ttq9u | Dockrev：Supervisor 自升级 dry-run/apply 按钮运行态修复（禁用 + spin） | 已完成 | `ttq9u-supervisor-self-upgrade-running-buttons/SPEC.md` | 2026-03-03 | fast-track（running 禁用 dry/apply，按 request.mode 显示 spinner） |
 | rxcb6 | Dockrev：Telegram 群组支持与 Bot Token 脱敏改造 | 已完成 | `rxcb6-telegram-group-token-mask/SPEC.md` | 2026-03-03 | fast-track（群组 chatId 明文 + token 不回传 + 圆点掩码 + review-loop 收敛） |
 | xg3dj | Dockrev：概览卡片任务列表增强（运行中/排队展示 + 补齐 + 直达详情） | 已完成 | `xg3dj-overview-card-job-list/SPEC.md` | 2026-03-03 | fast-track（5/10 动态上限 + jobs SSE 实时刷新 + 点击直达详情） |

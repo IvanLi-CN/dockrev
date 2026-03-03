@@ -14,16 +14,43 @@ export type OverviewJobCardItem = {
   primaryLabel: string
   scopeTag: string | null
   typeTone: JobTypeTone
+  progressMode: OverviewJobProgressMode
+  progressPercent: number | null
 }
 
 const TERMINAL_STATUSES = new Set(['success', 'failed', 'rolled_back'])
 const BASE_VISIBLE_ITEMS = 5
 const MAX_NON_TERMINAL_ITEMS = 10
 
+export type OverviewJobProgressMode = 'none' | 'determinate' | 'indeterminate'
+
+type OverviewJobProgressVisual = {
+  progressMode: OverviewJobProgressMode
+  progressPercent: number | null
+}
+
 function compareJobsByCreatedAtDesc(lhs: JobListItem, rhs: JobListItem): number {
   const tsCmp = String(rhs.createdAt ?? '').localeCompare(String(lhs.createdAt ?? ''))
   if (tsCmp !== 0) return tsCmp
   return rhs.id.localeCompare(lhs.id)
+}
+
+function clampPercent(input: number): number {
+  return Math.max(0, Math.min(100, Math.round(input)))
+}
+
+export function getOverviewJobProgressVisual(job: JobListItem): OverviewJobProgressVisual {
+  if (job.status !== 'running') return { progressMode: 'none', progressPercent: null }
+  const p = job.progress
+  if (!p) return { progressMode: 'indeterminate', progressPercent: null }
+  const total = Number.isFinite(p.total) ? Math.max(0, p.total) : 0
+  if (total <= 0 || !Number.isFinite(p.percent)) return { progressMode: 'indeterminate', progressPercent: null }
+
+  const percent = clampPercent(p.percent)
+  const currentRaw = Number.isFinite(p.current) ? Math.max(0, p.current) : 0
+  const current = Math.min(currentRaw, total || currentRaw)
+  if (percent === 0 && current < total) return { progressMode: 'indeterminate', progressPercent: null }
+  return { progressMode: 'determinate', progressPercent: percent }
 }
 
 export function selectOverviewJobsForCard(jobs: JobListItem[], options?: OverviewJobsCardOptions): JobListItem[] {
@@ -48,6 +75,7 @@ export function selectOverviewJobsForCard(jobs: JobListItem[], options?: Overvie
 
 export function toOverviewJobCardItem(job: JobListItem): OverviewJobCardItem {
   const readable = formatJobReadableDisplay(job.type, job.scope)
+  const visual = getOverviewJobProgressVisual(job)
   return {
     jobId: job.id,
     status: job.status,
@@ -57,5 +85,7 @@ export function toOverviewJobCardItem(job: JobListItem): OverviewJobCardItem {
     primaryLabel: readable.primaryLabel,
     scopeTag: readable.scopeTag,
     typeTone: readable.typeTone,
+    progressMode: visual.progressMode,
+    progressPercent: visual.progressPercent,
   }
 }

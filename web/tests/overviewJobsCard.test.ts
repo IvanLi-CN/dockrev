@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
-import type { JobListItem } from '../src/api'
-import { selectOverviewJobsForCard } from '../src/pages/overviewJobsCard'
+import type { JobListItem, JobProgress } from '../src/api'
+import { selectOverviewJobsForCard, toOverviewJobCardItem } from '../src/pages/overviewJobsCard'
 
 function makeJob(input: {
   id: string
@@ -9,6 +9,7 @@ function makeJob(input: {
   createdAt: string
   type?: string
   scope?: string
+  progress?: JobProgress | null
 }): JobListItem {
   return {
     id: input.id,
@@ -25,7 +26,7 @@ function makeJob(input: {
     allowArchMismatch: false,
     backupMode: 'inherit',
     summary: {},
-    progress: null,
+    progress: input.progress ?? null,
   }
 }
 
@@ -148,5 +149,121 @@ describe('selectOverviewJobsForCard', () => {
     const selected = selectOverviewJobsForCard(jobs, { maxItems: 0 })
 
     expect(selected).toEqual([])
+  })
+})
+
+describe('toOverviewJobCardItem progress visual mapping', () => {
+  test('maps running jobs with determinate progress', () => {
+    const job = makeJob({
+      id: 'running-determinate',
+      status: 'running',
+      createdAt: '2026-03-03T10:00:00.000Z',
+      progress: {
+        phase: 'apply',
+        message: 'updating',
+        current: 2,
+        total: 5,
+        percent: 40,
+        plannedCurrent: 4,
+        plannedTotal: 5,
+        plannedPercent: 80,
+        currentTarget: 'api',
+        updatedAt: '2026-03-03T10:00:10.000Z',
+      },
+    })
+
+    const mapped = toOverviewJobCardItem(job)
+
+    expect(mapped.progressMode).toBe('determinate')
+    expect(mapped.progressPercent).toBe(40)
+  })
+
+  test('maps running jobs without progress as indeterminate', () => {
+    const job = makeJob({
+      id: 'running-no-progress',
+      status: 'running',
+      createdAt: '2026-03-03T10:00:00.000Z',
+      progress: null,
+    })
+
+    const mapped = toOverviewJobCardItem(job)
+
+    expect(mapped.progressMode).toBe('indeterminate')
+    expect(mapped.progressPercent).toBeNull()
+  })
+
+  test('treats running zero-percent while unfinished as indeterminate', () => {
+    const job = makeJob({
+      id: 'running-zero-unfinished',
+      status: 'running',
+      createdAt: '2026-03-03T10:00:00.000Z',
+      progress: {
+        phase: 'apply',
+        message: 'starting',
+        current: 0,
+        total: 6,
+        percent: 0,
+        plannedCurrent: 0,
+        plannedTotal: 6,
+        plannedPercent: 0,
+        currentTarget: 'worker',
+        updatedAt: '2026-03-03T10:00:10.000Z',
+      },
+    })
+
+    const mapped = toOverviewJobCardItem(job)
+
+    expect(mapped.progressMode).toBe('indeterminate')
+    expect(mapped.progressPercent).toBeNull()
+  })
+
+  test('clamps determinate percent into 0..100', () => {
+    const job = makeJob({
+      id: 'running-over-100',
+      status: 'running',
+      createdAt: '2026-03-03T10:00:00.000Z',
+      progress: {
+        phase: 'done',
+        message: 'finished',
+        current: 4,
+        total: 4,
+        percent: 143,
+        plannedCurrent: 4,
+        plannedTotal: 4,
+        plannedPercent: 143,
+        currentTarget: null,
+        updatedAt: '2026-03-03T10:00:10.000Z',
+      },
+    })
+
+    const mapped = toOverviewJobCardItem(job)
+
+    expect(mapped.progressMode).toBe('determinate')
+    expect(mapped.progressPercent).toBe(100)
+  })
+
+  test('maps non-running jobs to no progress background', () => {
+    const job = makeJob({
+      id: 'success-1',
+      status: 'success',
+      createdAt: '2026-03-03T10:00:00.000Z',
+      progress: {
+        phase: 'done',
+        message: 'finished',
+        current: 6,
+        total: 6,
+        percent: 100,
+        plannedCurrent: 6,
+        plannedTotal: 6,
+        plannedPercent: 100,
+        currentTarget: null,
+        updatedAt: '2026-03-03T10:00:10.000Z',
+      },
+    })
+
+    const mapped = toOverviewJobCardItem(job)
+
+    expect(mapped.progressMode).toBe('none')
+    expect(mapped.progressPercent).toBeNull()
   })
 })
