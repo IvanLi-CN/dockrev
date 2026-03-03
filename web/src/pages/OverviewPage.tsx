@@ -1129,9 +1129,6 @@ export function OverviewPage(props: {
             <div className="chipStatic">{`成功: ${jobsSummary.success}`}</div>
             {jobsSummary.other > 0 ? <div className="chipStatic">{`其他: ${jobsSummary.other}`}</div> : null}
           </div>
-          <div className="muted" style={{ marginTop: 12 }}>
-            任务列表（未终止优先：0 条时最多 5 条，1-5 条补齐到 5 条，大于 5 条时最多 10 条）
-          </div>
           <div className="overviewJobsList">
             {overviewCardJobs.length === 0 ? (
               <div className="muted">暂无任务</div>
