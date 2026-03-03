@@ -84,3 +84,4 @@
 
 - 2026-03-03: 创建规格并完成实现：self-upgrade 响应新增 `request`，supervisor 页面在 running 时禁用 dry/apply 且按 mode 显示 spinner，补齐测试与 API 文档同步。
 - 2026-03-03: review-loop 修正回滚态一致性：手动回滚进入 running 时清空 `request`，并在前端以 `progress.step !== rollback` 保护 dry/apply spinner 显示。
+- 2026-03-03: review-loop 补强契约一致性：`GET /supervisor/self-upgrade` 仅在 `running` 暴露 `request`；轮询异常时保留上次已知运行态，避免按钮被错误放开。

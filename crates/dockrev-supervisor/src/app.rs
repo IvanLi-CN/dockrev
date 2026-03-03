@@ -599,13 +599,18 @@ async fn get_self_upgrade(
     let _user = require_user(&app, &headers)?;
     let rt = app.runtime.lock().await;
     let st = &rt.state;
+    let request = if st.state == "running" {
+        st.request.as_ref().map(|req| HttpRequestParams {
+            mode: req.mode.clone(),
+            rollback_on_failure: req.rollback_on_failure,
+        })
+    } else {
+        None
+    };
     Ok(Json(SelfUpgradeResponse {
         state: st.state.clone(),
         op_id: st.op_id.clone(),
-        request: st.request.as_ref().map(|req| HttpRequestParams {
-            mode: req.mode.clone(),
-            rollback_on_failure: req.rollback_on_failure,
-        }),
+        request,
         target: HttpTarget {
             image: app.cfg.target_image_repo.clone(),
             tag: st.target.tag.clone(),
@@ -838,6 +843,7 @@ fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       let tabsExpanded = false;
       let tabsCanExpand = false;
       let latestHasNewer = false;
+      let lastKnownSelfUpgradeState = null;
       const toUrl = (p) => base.replace(/\/$/, '') + '/' + p.replace(/^\//, '');
 
 	      async function fetchJson(path, init) {{
@@ -1022,6 +1028,7 @@ fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         const statusEl = document.getElementById('status');
         try {{
           const st = await fetchJson('self-upgrade');
+          lastKnownSelfUpgradeState = st;
           statusEl.className = `muted ${{statusClass(st)}}`.trim();
           statusEl.textContent = renderStatusText(st);
           syncUpgradeActionState(st);
@@ -1030,7 +1037,7 @@ fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         }} catch (e) {{
           statusEl.className = 'muted bad';
           statusEl.textContent = `offline ${{String(e.message||e)}}`;
-          syncUpgradeActionState(null);
+          if (lastKnownSelfUpgradeState) syncUpgradeActionState(lastKnownSelfUpgradeState);
           setRollbackPopOpen(false);
         }}
       }}
@@ -1802,6 +1809,9 @@ mod tests {
         assert!(html.contains("mode === 'dry-run'"));
         assert!(html.contains("mode === 'apply'"));
         assert!(html.contains("st?.progress?.step !== 'rollback'"));
+        assert!(html.contains(
+            "if (lastKnownSelfUpgradeState) syncUpgradeActionState(lastKnownSelfUpgradeState);"
+        ));
         assert!(html.contains("setRunningButton(dryBtn"));
         assert!(html.contains("setRunningButton(applyBtn"));
     }
@@ -1868,6 +1878,66 @@ mod tests {
 
         let value = serde_json::to_value(resp).unwrap();
         assert!(value.get("request").is_none());
+    }
+
+    #[tokio::test]
+    async fn get_self_upgrade_returns_request_only_while_running() {
+        let dir = std::env::temp_dir().join(format!(
+            "dockrev-supervisor-test-{}-request-visibility",
+            std::process::id()
+        ));
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+
+        let app = Arc::new(
+            App::new(Config {
+                http_addr: "127.0.0.1:0".to_string(),
+                base_path: "/supervisor".to_string(),
+                auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
+                target_image_repo: "ghcr.io/ivanli-cn/dockrev".to_string(),
+                target_container_id: Some("ctr".to_string()),
+                target_compose_project: Some("p".to_string()),
+                target_compose_service: Some("dockrev".to_string()),
+                target_compose_files: vec!["/abs/compose.yml".to_string()],
+                docker_bin: "docker".to_string(),
+                docker_host: None,
+                compose_bin: "docker-compose".to_string(),
+                state_path: dir.join("state.json"),
+            })
+            .await
+            .unwrap(),
+        );
+
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Forwarded-User", "ops".parse().unwrap());
+
+        {
+            let mut rt = app.runtime.lock().await;
+            rt.state.state = "succeeded".to_string();
+            rt.state.request = Some(RequestParams {
+                mode: "apply".to_string(),
+                rollback_on_failure: true,
+            });
+        }
+        let Json(done_resp) = get_self_upgrade(State(app.clone()), headers.clone())
+            .await
+            .unwrap();
+        assert!(done_resp.request.is_none());
+
+        {
+            let mut rt = app.runtime.lock().await;
+            rt.state.state = "running".to_string();
+            rt.state.request = Some(RequestParams {
+                mode: "dry-run".to_string(),
+                rollback_on_failure: false,
+            });
+        }
+        let Json(running_resp) = get_self_upgrade(State(app.clone()), headers).await.unwrap();
+        let req = running_resp
+            .request
+            .expect("running response should expose request");
+        assert_eq!(req.mode, "dry-run");
+        assert!(!req.rollback_on_failure);
     }
 
     #[test]
