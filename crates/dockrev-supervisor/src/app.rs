@@ -683,6 +683,7 @@ async fn post_self_upgrade_rollback(
     // Spawn rollback-only path by reusing current target runtime discovery.
     let now = now_rfc3339().map_err(ApiError::internal)?;
     rt.state.state = "running".to_string();
+    rt.state.request = None;
     rt.state.progress = Progress {
         step: "rollback".to_string(),
         message: "manual rollback".to_string(),
@@ -885,11 +886,12 @@ fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
 
       function syncUpgradeActionState(st) {{
         const running = !!st && st.state === 'running';
+        const runningUpgrade = running && st?.progress?.step !== 'rollback';
         const mode = st?.request?.mode;
         dryBtn.disabled = running;
         applyBtn.disabled = running;
-        setRunningButton(dryBtn, running && mode === 'dry-run');
-        setRunningButton(applyBtn, running && mode === 'apply');
+        setRunningButton(dryBtn, runningUpgrade && mode === 'dry-run');
+        setRunningButton(applyBtn, runningUpgrade && mode === 'apply');
       }}
       function statusClass(st) {{
         const s = st && st.state;
@@ -1799,6 +1801,7 @@ mod tests {
         assert!(html.contains("button.btnRunning::before"));
         assert!(html.contains("mode === 'dry-run'"));
         assert!(html.contains("mode === 'apply'"));
+        assert!(html.contains("st?.progress?.step !== 'rollback'"));
         assert!(html.contains("setRunningButton(dryBtn"));
         assert!(html.contains("setRunningButton(applyBtn"));
     }
@@ -2130,5 +2133,62 @@ mod tests {
 
         let persisted = load_or_idle(&cfg.state_path).await.unwrap();
         assert_eq!(build_operation_groups(&persisted.logs).len(), 30);
+    }
+
+    #[tokio::test]
+    async fn post_self_upgrade_rollback_clears_request_for_running_rollback() {
+        let dir = std::env::temp_dir().join(format!(
+            "dockrev-supervisor-test-{}-rollback-request",
+            std::process::id()
+        ));
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+
+        let app = Arc::new(
+            App::new(Config {
+                http_addr: "127.0.0.1:0".to_string(),
+                base_path: "/supervisor".to_string(),
+                auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
+                target_image_repo: "ghcr.io/ivanli-cn/dockrev".to_string(),
+                target_container_id: Some("ctr".to_string()),
+                target_compose_project: Some("p".to_string()),
+                target_compose_service: Some("dockrev".to_string()),
+                target_compose_files: vec!["/abs/compose.yml".to_string()],
+                docker_bin: "docker".to_string(),
+                docker_host: None,
+                compose_bin: "docker-compose".to_string(),
+                state_path: dir.join("state.json"),
+            })
+            .await
+            .unwrap(),
+        );
+
+        {
+            let mut rt = app.runtime.lock().await;
+            rt.state.state = "failed".to_string();
+            rt.state.op_id = "sup_test".to_string();
+            rt.state.request = Some(RequestParams {
+                mode: "apply".to_string(),
+                rollback_on_failure: true,
+            });
+            rt.state.previous.tag = "prev".to_string();
+            rt.state.previous.digest = Some("sha256:abc".to_string());
+        }
+
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Forwarded-User", "ops".parse().unwrap());
+
+        let result = post_self_upgrade_rollback(
+            State(app.clone()),
+            headers,
+            Json(RollbackRequest {
+                op_id: "sup_test".to_string(),
+            }),
+        )
+        .await;
+        assert!(result.is_ok());
+
+        let rt = app.runtime.lock().await;
+        assert!(rt.state.request.is_none());
     }
 }
