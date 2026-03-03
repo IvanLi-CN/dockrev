@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import {
   triggerDiscoveryScan,
   listDiscoveryProjects,
@@ -10,6 +10,7 @@ import {
   triggerRuntimeScan,
   triggerUpdate,
   newJobEventsSource,
+  newJobsEventsSource,
   ApiError,
   type DiscoveredProject,
   type JobListItem,
@@ -22,7 +23,6 @@ import { ArrowRightIcon, Button, Mono, StatusRemark } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { isSemverDowngradeAnomaly, serviceRowStatus, type RowStatus } from '../updateStatus'
-import { formatJobReadableDisplay } from '../jobDisplay'
 import { selectOverviewJobsForCard, toOverviewJobCardItem } from './overviewJobsCard'
 import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
 import { useConfirm } from '../confirm'
@@ -138,6 +138,10 @@ function GroupGuide() {
 
 const UPDATE_CANDIDATE_FILTER_QUERY_KEY = 'updates'
 const UPDATE_CANDIDATE_COLLAPSED_STORAGE_PREFIX = 'dockrev:overview:updateCandidates:collapsed:v1:'
+const OVERVIEW_JOBS_SSE_REFRESH_DEBOUNCE_MS = 180
+const OVERVIEW_JOBS_SSE_FALLBACK_POLL_MS = 5000
+const OVERVIEW_JOBS_SSE_ERROR_THRESHOLD = 3
+const OVERVIEW_JOBS_SSE_RECONNECT_MS = 1500
 const UPDATE_CANDIDATE_FILTERS: UpdateCandidateFilter[] = [
   'all',
   'updatable',
@@ -237,6 +241,7 @@ export function OverviewPage(props: {
   const [noticeDiscoveryJobId, setNoticeDiscoveryJobId] = useState<string | null>(null)
   const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const jobsRefreshErrorRef = useRef<string | null>(null)
   const { beginSubmitting, endSubmitting, trackJob, isTargetBusy } = useUpdateActionTracker()
   const supervisor = useSupervisorHealth()
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
@@ -311,6 +316,122 @@ export function OverviewPage(props: {
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
   }, [refresh])
+
+  useEffect(() => {
+    let closed = false
+    let es: EventSource | null = null
+    let errorStreak = 0
+    let lastEventId = 0
+    let refreshRequestId = 0
+    let refreshTimer: number | null = null
+    let pollTimer: number | null = null
+    let reconnectTimer: number | null = null
+
+    const refreshJobs = async () => {
+      const requestId = ++refreshRequestId
+      try {
+        const next = await listJobs()
+        if (requestId !== refreshRequestId) return
+        if (!closed) {
+          setJobs(next)
+          const previousJobsError = jobsRefreshErrorRef.current
+          jobsRefreshErrorRef.current = null
+          if (previousJobsError) {
+            setError((prev) => (prev === previousJobsError ? null : prev))
+          }
+        }
+      } catch (e: unknown) {
+        if (requestId !== refreshRequestId) return
+        if (!closed) {
+          const message = e instanceof Error ? e.message : String(e)
+          jobsRefreshErrorRef.current = message
+          setError(message)
+        }
+      }
+    }
+
+    const clearRefreshTimer = () => {
+      if (refreshTimer != null) window.clearTimeout(refreshTimer)
+      refreshTimer = null
+    }
+
+    const scheduleRefresh = (delayMs: number) => {
+      if (refreshTimer != null) return
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = null
+        void refreshJobs()
+      }, delayMs)
+    }
+
+    const stopPolling = () => {
+      if (pollTimer != null) window.clearInterval(pollTimer)
+      pollTimer = null
+    }
+
+    const startPolling = () => {
+      if (pollTimer != null) return
+      pollTimer = window.setInterval(() => {
+        void refreshJobs()
+      }, OVERVIEW_JOBS_SSE_FALLBACK_POLL_MS)
+    }
+
+    const clearReconnectTimer = () => {
+      if (reconnectTimer != null) window.clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+
+    const trackEventId = (evt: Event) => {
+      const idRaw = (evt as MessageEvent).lastEventId
+      if (typeof idRaw !== 'string') return
+      const parsed = Number.parseInt(idRaw, 10)
+      if (Number.isFinite(parsed) && parsed > 0) lastEventId = parsed
+    }
+
+    const connect = () => {
+      if (closed) return
+      const opts = lastEventId > 0 ? { afterId: lastEventId } : undefined
+      es = newJobsEventsSource(opts)
+
+      es.addEventListener('open', () => {
+        errorStreak = 0
+        stopPolling()
+        scheduleRefresh(0)
+      })
+
+      es.addEventListener('job_event', (evt: Event) => {
+        trackEventId(evt)
+        scheduleRefresh(OVERVIEW_JOBS_SSE_REFRESH_DEBOUNCE_MS)
+      })
+
+      es.addEventListener('job_events_error', () => {
+        scheduleRefresh(0)
+      })
+
+      es.onerror = () => {
+        errorStreak += 1
+        scheduleRefresh(0)
+        if (errorStreak < OVERVIEW_JOBS_SSE_ERROR_THRESHOLD) return
+        es?.close()
+        es = null
+        startPolling()
+        if (reconnectTimer != null) return
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null
+          connect()
+        }, OVERVIEW_JOBS_SSE_RECONNECT_MS)
+      }
+    }
+
+    connect()
+
+    return () => {
+      closed = true
+      clearRefreshTimer()
+      clearReconnectTimer()
+      stopPolling()
+      es?.close()
+    }
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -591,14 +712,8 @@ export function OverviewPage(props: {
     const rolled = jobs.filter((j) => j.status === 'rolled_back').length
     const success = jobs.filter((j) => j.status === 'success').length
     const other = total - running - failed - rolled - success
-    const latest = [...jobs]
-      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
-      .at(0)
-    return { total, running, failed, rolled, success, other, latest }
+    return { total, running, failed, rolled, success, other }
   }, [jobs])
-  const latestReadableJob = jobsSummary.latest
-    ? formatJobReadableDisplay(jobsSummary.latest.type, jobsSummary.latest.scope)
-    : null
   const overviewCardJobs = useMemo(
     () => selectOverviewJobsForCard(jobs, { maxItems: 10 }).map((job) => toOverviewJobCardItem(job)),
     [jobs],
@@ -1013,24 +1128,6 @@ export function OverviewPage(props: {
             <div className="chipStatic">{`回滚: ${jobsSummary.rolled}`}</div>
             <div className="chipStatic">{`成功: ${jobsSummary.success}`}</div>
             {jobsSummary.other > 0 ? <div className="chipStatic">{`其他: ${jobsSummary.other}`}</div> : null}
-          </div>
-          <div className="muted" style={{ marginTop: 12 }}>
-            最近:{' '}
-            {jobsSummary.latest && latestReadableJob ? (
-              <span className="jobReadableName">
-                <Mono>{jobsSummary.latest.status}</Mono>
-                <span>·</span>
-                <Mono>{formatShort(jobsSummary.latest.createdAt)}</Mono>
-                <span>·</span>
-                <span className={`jobTypeTag jobTypeTag-${latestReadableJob.typeTone}`}>{latestReadableJob.primaryLabel}</span>
-                {latestReadableJob.scopeTag ? <span className="jobScopeTag">{latestReadableJob.scopeTag}</span> : null}
-              </span>
-            ) : (
-              <Mono>-</Mono>
-            )}
-          </div>
-          <div className="muted" style={{ marginTop: 12 }}>
-            任务列表（最多 10 条，优先排队/进行中）
           </div>
           <div className="overviewJobsList">
             {overviewCardJobs.length === 0 ? (

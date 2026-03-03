@@ -31,55 +31,100 @@ function makeJob(input: {
 }
 
 describe('selectOverviewJobsForCard', () => {
-  test('shows only latest 10 in-flight jobs when queued/running >= 10', () => {
-    const inFlight = Array.from({ length: 12 }, (_, idx) =>
-      makeJob({
-        id: `inflight-${idx}`,
-        status: idx % 2 === 0 ? 'queued' : 'running',
-        createdAt: `2026-03-03T10:${String(59 - idx).padStart(2, '0')}:00.000Z`,
-      }),
-    )
-    const fallback = [
-      makeJob({ id: 'fallback-new', status: 'success', createdAt: '2026-03-03T11:59:00.000Z' }),
-      makeJob({ id: 'fallback-old', status: 'failed', createdAt: '2026-03-03T09:59:00.000Z' }),
+  test('shows only latest 5 terminal jobs when no non-terminal jobs', () => {
+    const terminal = [
+      makeJob({ id: 'success-1', status: 'success', createdAt: '2026-03-03T10:15:00.000Z' }),
+      makeJob({ id: 'failed-2', status: 'failed', createdAt: '2026-03-03T10:14:00.000Z' }),
+      makeJob({ id: 'rolled-3', status: 'rolled_back', createdAt: '2026-03-03T10:13:00.000Z' }),
+      makeJob({ id: 'success-4', status: 'success', createdAt: '2026-03-03T10:12:00.000Z' }),
+      makeJob({ id: 'failed-5', status: 'failed', createdAt: '2026-03-03T10:11:00.000Z' }),
+      makeJob({ id: 'success-6', status: 'success', createdAt: '2026-03-03T10:10:00.000Z' }),
     ]
 
-    const selected = selectOverviewJobsForCard([...inFlight, ...fallback], { maxItems: 10 })
+    const selected = selectOverviewJobsForCard(terminal, { maxItems: 10 })
 
-    expect(selected).toHaveLength(10)
-    expect(selected.every((job) => job.status === 'queued' || job.status === 'running')).toBe(true)
-    expect(selected.map((job) => job.id)).toEqual(inFlight.slice(0, 10).map((job) => job.id))
+    expect(selected).toHaveLength(5)
+    expect(selected.every((job) => ['success', 'failed', 'rolled_back'].includes(job.status))).toBe(true)
+    expect(selected.map((job) => job.id)).toEqual(['success-1', 'failed-2', 'rolled-3', 'success-4', 'failed-5'])
   })
 
-  test('fills with fallback jobs when in-flight jobs are not enough', () => {
+  test('fills to 5 with terminal jobs when non-terminal count is 1..4', () => {
     const jobs = [
-      makeJob({ id: 'run-2', status: 'running', createdAt: '2026-03-03T10:12:00.000Z' }),
-      makeJob({ id: 'success-3', status: 'success', createdAt: '2026-03-03T10:10:00.000Z' }),
-      makeJob({ id: 'queue-1', status: 'queued', createdAt: '2026-03-03T10:11:00.000Z' }),
-      makeJob({ id: 'failed-4', status: 'failed', createdAt: '2026-03-03T10:09:00.000Z' }),
-      makeJob({ id: 'rolled-5', status: 'rolled_back', createdAt: '2026-03-03T10:08:00.000Z' }),
-    ]
-
-    const selected = selectOverviewJobsForCard(jobs, { maxItems: 4 })
-
-    expect(selected.map((job) => `${job.id}:${job.status}`)).toEqual([
-      'run-2:running',
-      'queue-1:queued',
-      'success-3:success',
-      'failed-4:failed',
-    ])
-  })
-
-  test('returns all available jobs when total count is smaller than max limit', () => {
-    const jobs = [
-      makeJob({ id: 'queued-a', status: 'queued', createdAt: '2026-03-03T10:03:00.000Z' }),
-      makeJob({ id: 'success-b', status: 'success', createdAt: '2026-03-03T10:02:00.000Z' }),
-      makeJob({ id: 'running-c', status: 'running', createdAt: '2026-03-03T10:01:00.000Z' }),
+      makeJob({ id: 'paused-1', status: 'paused', createdAt: '2026-03-03T10:12:00.000Z' }),
+      makeJob({ id: 'running-2', status: 'running', createdAt: '2026-03-03T10:11:00.000Z' }),
+      makeJob({ id: 'queued-3', status: 'queued', createdAt: '2026-03-03T10:10:00.000Z' }),
+      makeJob({ id: 'success-4', status: 'success', createdAt: '2026-03-03T10:09:00.000Z' }),
+      makeJob({ id: 'failed-5', status: 'failed', createdAt: '2026-03-03T10:08:00.000Z' }),
+      makeJob({ id: 'rolled-6', status: 'rolled_back', createdAt: '2026-03-03T10:07:00.000Z' }),
     ]
 
     const selected = selectOverviewJobsForCard(jobs, { maxItems: 10 })
 
-    expect(selected.map((job) => job.id)).toEqual(['queued-a', 'running-c', 'success-b'])
+    expect(selected.map((job) => `${job.id}:${job.status}`)).toEqual([
+      'paused-1:paused',
+      'running-2:running',
+      'queued-3:queued',
+      'success-4:success',
+      'failed-5:failed',
+    ])
+  })
+
+  test('shows exactly 5 non-terminal jobs when non-terminal count is 5', () => {
+    const jobs = [
+      makeJob({ id: 'queued-1', status: 'queued', createdAt: '2026-03-03T10:15:00.000Z' }),
+      makeJob({ id: 'running-2', status: 'running', createdAt: '2026-03-03T10:14:00.000Z' }),
+      makeJob({ id: 'retrying-3', status: 'retrying', createdAt: '2026-03-03T10:13:00.000Z' }),
+      makeJob({ id: 'pending-4', status: 'pending', createdAt: '2026-03-03T10:12:00.000Z' }),
+      makeJob({ id: 'starting-5', status: 'starting', createdAt: '2026-03-03T10:11:00.000Z' }),
+      makeJob({ id: 'success-6', status: 'success', createdAt: '2026-03-03T10:16:00.000Z' }),
+      makeJob({ id: 'failed-7', status: 'failed', createdAt: '2026-03-03T10:10:00.000Z' }),
+    ]
+
+    const selected = selectOverviewJobsForCard(jobs, { maxItems: 10 })
+
+    expect(selected).toHaveLength(5)
+    expect(selected.every((job) => !['success', 'failed', 'rolled_back'].includes(job.status))).toBe(true)
+    expect(selected.map((job) => job.id)).toEqual(['queued-1', 'running-2', 'retrying-3', 'pending-4', 'starting-5'])
+  })
+
+  test('shows all non-terminal jobs when non-terminal count is in 6..10', () => {
+    const nonTerminal = Array.from({ length: 7 }, (_, idx) =>
+      makeJob({
+        id: `active-${idx + 1}`,
+        status: idx % 2 === 0 ? 'running' : 'queued',
+        createdAt: `2026-03-03T10:${String(20 - idx).padStart(2, '0')}:00.000Z`,
+      }),
+    )
+    const terminals = [
+      makeJob({ id: 'success-1', status: 'success', createdAt: '2026-03-03T10:30:00.000Z' }),
+      makeJob({ id: 'failed-2', status: 'failed', createdAt: '2026-03-03T10:29:00.000Z' }),
+    ]
+
+    const selected = selectOverviewJobsForCard([...nonTerminal, ...terminals], { maxItems: 10 })
+
+    expect(selected).toHaveLength(7)
+    expect(selected.every((job) => !['success', 'failed', 'rolled_back'].includes(job.status))).toBe(true)
+    expect(selected.map((job) => job.id)).toEqual(nonTerminal.map((job) => job.id))
+  })
+
+  test('shows latest 10 non-terminal jobs when non-terminal count is greater than 10', () => {
+    const nonTerminal = Array.from({ length: 12 }, (_, idx) =>
+      makeJob({
+        id: `active-${idx + 1}`,
+        status: idx % 3 === 0 ? 'running' : idx % 3 === 1 ? 'queued' : 'pending',
+        createdAt: `2026-03-03T10:${String(59 - idx).padStart(2, '0')}:00.000Z`,
+      }),
+    )
+    const terminals = [
+      makeJob({ id: 'success-1', status: 'success', createdAt: '2026-03-03T11:59:00.000Z' }),
+      makeJob({ id: 'failed-2', status: 'failed', createdAt: '2026-03-03T11:58:00.000Z' }),
+    ]
+
+    const selected = selectOverviewJobsForCard([...nonTerminal, ...terminals], { maxItems: 10 })
+
+    expect(selected).toHaveLength(10)
+    expect(selected.every((job) => !['success', 'failed', 'rolled_back'].includes(job.status))).toBe(true)
+    expect(selected.map((job) => job.id)).toEqual(nonTerminal.slice(0, 10).map((job) => job.id))
   })
 
   test('uses id descending as tie-breaker when createdAt is equal', () => {
@@ -93,16 +138,9 @@ describe('selectOverviewJobsForCard', () => {
       makeJob({ id: 'success-b', status: 'success', createdAt }),
     ]
 
-    const selected = selectOverviewJobsForCard(jobs, { maxItems: 6 })
+    const selected = selectOverviewJobsForCard(jobs, { maxItems: 10 })
 
-    expect(selected.map((job) => job.id)).toEqual([
-      'queued-c',
-      'queued-b',
-      'queued-a',
-      'success-c',
-      'success-b',
-      'success-a',
-    ])
+    expect(selected.map((job) => job.id)).toEqual(['queued-c', 'queued-b', 'queued-a', 'success-c', 'success-b'])
   })
 
   test('returns empty list when maxItems is zero', () => {
