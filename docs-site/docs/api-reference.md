@@ -122,6 +122,8 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 | GET | `/supervisor/favicon.png` | 公开 | UI favicon | `200` |
 | GET | `/supervisor/` | 公开 | Supervisor UI 页面 | `200` |
 
+- `GET /supervisor/self-upgrade` 在 `state=running` 时会返回可选字段 `request`（`mode` + `rollbackOnFailure`），用于页面恢复当前运行按钮状态；空闲/历史状态下该字段可缺省。
+
 ---
 
 ## 示例请求
