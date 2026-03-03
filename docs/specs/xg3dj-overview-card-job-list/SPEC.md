@@ -59,7 +59,7 @@
 - Given jobs 中未终止任务数量为 0，When 打开概览页，Then 卡片最多显示 5 条终止状态任务。
 - Given jobs 中未终止任务数量 `1<=n<=5`，When 打开概览页，Then 先显示全部未终止任务，再补齐终止状态到 5 条。
 - Given jobs 中未终止任务数量 `n>5`，When 打开概览页，Then 仅显示最新 10 条未终止任务（不再补终止状态）。
-- Given jobs 总数 < 10，When 打开概览页，Then 显示全部任务且不卡死。
+- Given jobs 中未终止任务数量 `1<=n<=5` 且终止任务不足 `5-n`，When 打开概览页，Then 显示全部可用任务且不卡死。
 - Given 同 `createdAt` 的任务，When 渲染卡片列表，Then 使用 `id` 倒序作为稳定次级排序。
 - Given `/api/jobs/events` 推送任务事件，When 概览页已打开，Then 任务列表与计数在短延迟内自动更新，无需手动点击刷新。
 - Given 点击卡片中的任务项，When 触发跳转，Then 进入 `/queue/<jobId>` 并可查看任务详情。

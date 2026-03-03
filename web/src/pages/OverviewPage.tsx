@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   triggerDiscoveryScan,
   listDiscoveryProjects,
@@ -241,6 +241,7 @@ export function OverviewPage(props: {
   const [noticeDiscoveryJobId, setNoticeDiscoveryJobId] = useState<string | null>(null)
   const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const jobsRefreshErrorRef = useRef<string | null>(null)
   const { beginSubmitting, endSubmitting, trackJob, isTargetBusy } = useUpdateActionTracker()
   const supervisor = useSupervisorHealth()
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
@@ -321,16 +322,31 @@ export function OverviewPage(props: {
     let es: EventSource | null = null
     let errorStreak = 0
     let lastEventId = 0
+    let refreshRequestId = 0
     let refreshTimer: number | null = null
     let pollTimer: number | null = null
     let reconnectTimer: number | null = null
 
     const refreshJobs = async () => {
+      const requestId = ++refreshRequestId
       try {
         const next = await listJobs()
-        if (!closed) setJobs(next)
+        if (requestId !== refreshRequestId) return
+        if (!closed) {
+          setJobs(next)
+          const previousJobsError = jobsRefreshErrorRef.current
+          jobsRefreshErrorRef.current = null
+          if (previousJobsError) {
+            setError((prev) => (prev === previousJobsError ? null : prev))
+          }
+        }
       } catch (e: unknown) {
-        if (!closed) setError(e instanceof Error ? e.message : String(e))
+        if (requestId !== refreshRequestId) return
+        if (!closed) {
+          const message = e instanceof Error ? e.message : String(e)
+          jobsRefreshErrorRef.current = message
+          setError(message)
+        }
       }
     }
 
