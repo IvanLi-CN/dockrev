@@ -45,6 +45,8 @@ export type DockrevApiScenario =
   | 'version-tags-popover-snapshot-missing'
   | 'multi-stack-mixed'
   | 'overview-jobs-card-heavy-inflight'
+  | 'overview-jobs-card-terminal-only'
+  | 'overview-jobs-card-exact-five-non-terminal'
   | 'queue-mixed'
   | 'queue-legacy-progress'
   | 'queue-long-logs'
@@ -1461,6 +1463,105 @@ function buildOverviewJobsCardHeavyInFlight(): Fixture {
   return f
 }
 
+function buildOverviewJobsCardTerminalOnly(): Fixture {
+  const f = buildDashboardDemo()
+
+  const makeJob = (input: Partial<JobListItem> & Pick<JobListItem, 'id' | 'status'>): JobListItem => {
+    const base: JobListItem = {
+      id: input.id,
+      type: input.type ?? 'update',
+      scope: input.scope ?? 'service',
+      stackId: input.stackId !== undefined ? input.stackId : 'stack-prod',
+      serviceId: input.serviceId !== undefined ? input.serviceId : 'svc-prod-api',
+      status: input.status,
+      createdBy: input.createdBy ?? 'ivan',
+      reason: input.reason ?? 'ui',
+      createdAt: input.createdAt ?? nowIso(-120_000),
+      startedAt: input.startedAt ?? nowIso(-110_000),
+      finishedAt: input.finishedAt ?? nowIso(-10_000),
+      allowArchMismatch: input.allowArchMismatch ?? false,
+      backupMode: input.backupMode ?? 'inherit',
+      summary: input.summary ?? {},
+      progress: input.progress ?? null,
+    }
+    return base
+  }
+
+  const terminalStatuses = ['success', 'failed', 'rolled_back', 'success', 'failed', 'success', 'rolled_back']
+  const jobs = terminalStatuses.map((status, idx) =>
+    makeJob({
+      id: `overview-terminal-${String(idx + 1).padStart(2, '0')}`,
+      status,
+      createdAt: nowIso(-(20_000 + idx * 1_000)),
+      startedAt: nowIso(-(19_000 + idx * 1_000)),
+      finishedAt: nowIso(-(18_000 + idx * 1_000)),
+    }),
+  )
+
+  f.jobs = jobs
+  f.jobById = Object.fromEntries(
+    jobs.map((j) => [
+      j.id,
+      {
+        ...j,
+        logs: [{ ts: nowIso(-900), level: 'info', msg: `job ${j.id} ready` }],
+        logsLastId: 1,
+      } satisfies JobDetail,
+    ]),
+  )
+
+  return f
+}
+
+function buildOverviewJobsCardExactFiveNonTerminal(): Fixture {
+  const f = buildDashboardDemo()
+
+  const makeJob = (input: Partial<JobListItem> & Pick<JobListItem, 'id' | 'status'>): JobListItem => {
+    const base: JobListItem = {
+      id: input.id,
+      type: input.type ?? 'update',
+      scope: input.scope ?? 'service',
+      stackId: input.stackId !== undefined ? input.stackId : 'stack-prod',
+      serviceId: input.serviceId !== undefined ? input.serviceId : 'svc-prod-api',
+      status: input.status,
+      createdBy: input.createdBy ?? 'ivan',
+      reason: input.reason ?? 'ui',
+      createdAt: input.createdAt ?? nowIso(-120_000),
+      startedAt: input.startedAt ?? nowIso(-110_000),
+      finishedAt: input.finishedAt ?? nowIso(-10_000),
+      allowArchMismatch: input.allowArchMismatch ?? false,
+      backupMode: input.backupMode ?? 'inherit',
+      summary: input.summary ?? {},
+      progress: input.progress ?? null,
+    }
+    return base
+  }
+
+  const jobs: JobListItem[] = [
+    makeJob({ id: 'overview-exact-5-nt-1', status: 'running', createdAt: nowIso(-20_000), finishedAt: null }),
+    makeJob({ id: 'overview-exact-5-nt-2', status: 'queued', createdAt: nowIso(-21_000), startedAt: null, finishedAt: null }),
+    makeJob({ id: 'overview-exact-5-nt-3', status: 'pending', createdAt: nowIso(-22_000), startedAt: null, finishedAt: null }),
+    makeJob({ id: 'overview-exact-5-nt-4', status: 'starting', createdAt: nowIso(-23_000), startedAt: null, finishedAt: null }),
+    makeJob({ id: 'overview-exact-5-nt-5', status: 'paused', createdAt: nowIso(-24_000), finishedAt: null }),
+    makeJob({ id: 'overview-exact-5-terminal-1', status: 'success', createdAt: nowIso(-5_000) }),
+    makeJob({ id: 'overview-exact-5-terminal-2', status: 'failed', createdAt: nowIso(-6_000) }),
+  ]
+
+  f.jobs = jobs
+  f.jobById = Object.fromEntries(
+    jobs.map((j) => [
+      j.id,
+      {
+        ...j,
+        logs: [{ ts: nowIso(-900), level: 'info', msg: `job ${j.id} ready` }],
+        logsLastId: 1,
+      } satisfies JobDetail,
+    ]),
+  )
+
+  return f
+}
+
 function buildQueueLongLogs(): Fixture {
   const f = buildDashboardDemo()
 
@@ -2076,6 +2177,8 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   }
   if (scenario === 'queue-mixed') return buildQueueMixed()
   if (scenario === 'overview-jobs-card-heavy-inflight') return buildOverviewJobsCardHeavyInFlight()
+  if (scenario === 'overview-jobs-card-terminal-only') return buildOverviewJobsCardTerminalOnly()
+  if (scenario === 'overview-jobs-card-exact-five-non-terminal') return buildOverviewJobsCardExactFiveNonTerminal()
   if (scenario === 'queue-legacy-progress') return buildQueueLegacyProgress()
   if (scenario === 'queue-long-logs') return buildQueueLongLogs()
   if (scenario === 'settings-configured' || scenario === 'settings-configured-resolve-slow') return buildSettingsConfigured()
