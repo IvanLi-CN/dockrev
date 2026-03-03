@@ -85,6 +85,7 @@ const TEXT_DEBOUNCE_MS = 400
 const TOGGLE_DEBOUNCE_MS = 120
 const PAT_MASK = '******'
 const TELEGRAM_BOT_TOKEN_MASK = '••••••••••••••••'
+const TELEGRAM_BOT_TOKEN_PATTERN = /^\d{5,}:[A-Za-z0-9_-]{8,}$/
 const GHCR_PREVIEW_LIMIT = 6
 const GITHUB_PAT_PREFIXES = ['ghp_', 'github_pat_', 'gho_', 'ghu_', 'ghs_', 'ghr_']
 
@@ -137,6 +138,24 @@ function normalizeNotificationsForSave(input: NotificationConfig): NotificationC
       chatId,
     },
   }
+}
+
+function validateNotificationsBeforeSave(
+  input: NotificationConfig,
+): { fieldPath: string; reason: string; message: string } | null {
+  const rawBotToken = input.telegram.botToken ?? ''
+  const trimmedBotToken = rawBotToken.trim()
+  if (trimmedBotToken.length === 0 || isMaskedTelegramBotToken(trimmedBotToken)) return null
+
+  if (/\s/.test(rawBotToken) || !TELEGRAM_BOT_TOKEN_PATTERN.test(trimmedBotToken)) {
+    return {
+      fieldPath: 'notifications.telegram.botToken',
+      reason: 'telegram_bot_token_invalid',
+      message: 'Bot token 格式不合法，请填写形如 123456:AA... 的 Telegram Bot token',
+    }
+  }
+
+  return null
 }
 
 function validateGhcrPatBeforeSave(draft: GhcrDraft): { fieldPath: string; reason: string; message: string } | null {
@@ -548,6 +567,8 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   const [settings, setSettings] = useState<SettingsResponse | null>(null)
   const [notifications, setNotifications] = useState<NotificationConfig | null>(null)
   const [telegramBotTokenVisible, setTelegramBotTokenVisible] = useState(false)
+  const [telegramBotTokenTouched, setTelegramBotTokenTouched] = useState(false)
+  const [telegramBotTokenFocused, setTelegramBotTokenFocused] = useState(false)
   const [githubPackages, setGitHubPackages] = useState<GitHubPackagesSettingsResponse | null>(null)
   const [githubPackagesPat, setGitHubPackagesPat] = useState('')
   const [githubPackagesNewRepo, setGitHubPackagesNewRepo] = useState('')
@@ -690,6 +711,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     else if (reason === 'ghcr_pat_format_invalid') message = 'PAT 格式不合法，请使用 ghp_ / github_pat_ 等 GitHub token'
     else if (reason === 'ghcr_pat_unsaved_or_save_failed') message = 'PAT 未保存成功，无法解析，请检查网络后重试'
     else if (reason === 'ghcr_pat_invalid_or_scope_insufficient') message = 'PAT 无效或权限不足，请检查 token scope'
+    else if (reason === 'telegram_bot_token_invalid') message = 'Bot token 格式不合法，请填写形如 123456:AA... 的 Telegram Bot token'
     else if (reason === 'github_upstream_timeout') message = 'GitHub 响应超时，请稍后重试'
     else if (reason === 'github_upstream_unavailable') message = 'GitHub 请求失败，请稍后重试'
 
@@ -728,6 +750,26 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
           const ghcrDraft = ghcrRef.current
           if (ghcrDraft) {
             const precheckIssue = validateGhcrPatBeforeSave(ghcrDraft)
+            if (precheckIssue) {
+              failedScopesRef.current.add(scope)
+              setAutoSavePhase('error')
+              setAutoSaveIssue({
+                scope,
+                fieldPath: precheckIssue.fieldPath,
+                reason: precheckIssue.reason,
+                message: precheckIssue.message,
+                at: new Date().toISOString(),
+              })
+              settleWaiters()
+              continue
+            }
+          }
+        }
+
+        if (scope === 'notifications') {
+          const currentNotifications = notificationsRef.current
+          if (currentNotifications) {
+            const precheckIssue = validateNotificationsBeforeSave(currentNotifications)
             if (precheckIssue) {
               failedScopesRef.current.add(scope)
               setAutoSavePhase('error')
@@ -940,6 +982,8 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     setSettings(nextSettings)
     setNotifications(nextNotifications)
     setTelegramBotTokenVisible(false)
+    setTelegramBotTokenTouched(false)
+    setTelegramBotTokenFocused(false)
     setGitHubPackages(nextGhcr)
     setGitHubPackagesPat(nextPat)
     resetAutoSaveBaselines({
@@ -1284,6 +1328,13 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             : '自动保存已就绪'
 
   const ghcrPatIssue = autoSaveIssue?.scope === 'ghcr' && autoSaveIssue.fieldPath.includes('pat') ? autoSaveIssue : null
+  const telegramBotTokenIssue =
+    autoSaveIssue?.scope === 'notifications' && autoSaveIssue.fieldPath === 'notifications.telegram.botToken'
+      ? autoSaveIssue
+      : null
+  const showTelegramBotTokenEye =
+    telegramBotTokenFocused && telegramBotTokenTouched && (notifications.telegram.botToken ?? '').trim().length > 0
+  const telegramBotTokenInputClassName = telegramBotTokenIssue ? 'input inputError' : 'input'
   const ghcrLiveProgressText = (() => {
     if (!ghcrLiveJob) return null
     const p = ghcrLiveJob.progress
@@ -1608,15 +1659,23 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               <div className="kv">
                 <div className="kvRow">
                   <div className="label">Bot token</div>
-                  <div className="inputWithAction">
+                  <div className={showTelegramBotTokenEye ? 'inputWithAction' : undefined}>
                     <input
-                      className="input"
+                      className={telegramBotTokenInputClassName}
                       type={telegramBotTokenVisible ? 'text' : 'password'}
                       autoComplete="new-password"
                       value={notifications.telegram.botToken ?? ''}
-                      onFocus={clearTelegramBotTokenMaskForEdit}
-                      onBlur={restoreTelegramBotTokenMaskIfNeeded}
-                      onChange={(e) =>
+                      onFocus={() => {
+                        setTelegramBotTokenFocused(true)
+                        clearTelegramBotTokenMaskForEdit()
+                      }}
+                      onBlur={() => {
+                        setTelegramBotTokenFocused(false)
+                        setTelegramBotTokenVisible(false)
+                        restoreTelegramBotTokenMaskIfNeeded()
+                      }}
+                      onChange={(e) => {
+                        setTelegramBotTokenTouched(true)
                         updateNotifications('notifications.telegram.botToken', (current) => ({
                           ...current,
                           telegram: {
@@ -1628,17 +1687,19 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                                 : (current.telegram.botTokenConfigured ?? false),
                           },
                         }))
-                      }
+                      }}
                     />
-                    <button
-                      type="button"
-                      className="inputActionBtn"
-                      aria-label={telegramBotTokenVisible ? '隐藏 Bot token' : '显示 Bot token'}
-                      title={telegramBotTokenVisible ? '隐藏 Bot token' : '显示 Bot token'}
-                      onClick={() => setTelegramBotTokenVisible((prev) => !prev)}
-                    >
-                      <Icon icon={telegramBotTokenVisible ? eyeOffOutline : eyeOutline} aria-hidden="true" />
-                    </button>
+                    {showTelegramBotTokenEye ? (
+                      <button
+                        type="button"
+                        className="inputActionBtn"
+                        aria-label={telegramBotTokenVisible ? '隐藏 Bot token' : '显示 Bot token'}
+                        title={telegramBotTokenVisible ? '隐藏 Bot token' : '显示 Bot token'}
+                        onClick={() => setTelegramBotTokenVisible((prev) => !prev)}
+                      >
+                        <Icon icon={telegramBotTokenVisible ? eyeOffOutline : eyeOutline} aria-hidden="true" />
+                      </button>
+                    ) : null}
                   </div>
                 </div>
                 <div className="kvRow">

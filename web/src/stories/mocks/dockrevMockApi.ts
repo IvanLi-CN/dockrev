@@ -341,6 +341,12 @@ function isMaskLiteral(value: string): boolean {
   return value === '******' || value === '••••••••••••••••'
 }
 
+const TELEGRAM_BOT_TOKEN_PATTERN = /^\d{5,}:[A-Za-z0-9_-]{8,}$/
+
+function isValidTelegramBotToken(value: string): boolean {
+  return TELEGRAM_BOT_TOKEN_PATTERN.test(value) && !/\s/.test(value)
+}
+
 function hashString(input: string): number {
   let h = 0
   for (let i = 0; i < input.length; i += 1) {
@@ -3006,6 +3012,18 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
           typeof telegramBotToken === 'string' &&
           telegramBotTokenTrimmed.length > 0 &&
           !isMaskLiteral(telegramBotTokenTrimmed)
+        if (shouldReplaceTelegramToken && !isValidTelegramBotToken(telegramBotTokenTrimmed)) {
+          return json(
+            {
+              error: {
+                code: 'invalid_argument',
+                message: 'invalid telegram bot token',
+                details: { reason: 'telegram_bot_token_invalid' },
+              },
+            },
+            { status: 400 },
+          )
+        }
         const telegramChatIdRaw = telegram ? getString(telegram.chatId) : null
         const telegramChatIdTrimmed = typeof telegramChatIdRaw === 'string' ? telegramChatIdRaw.trim() : null
         const hasExistingTelegramToken = (f.notifications.telegram.botToken ?? '').trim().length > 0
