@@ -390,7 +390,7 @@ function buildResourceSsePayload(
   scenario: DockrevApiScenario,
 ): string {
   const snapshot = samples[samples.length - 1] ?? null
-  if (!snapshot) return ': keep-alive\\n\\n'
+  if (!snapshot) return ': keep-alive\n\n'
 
   const tick: ServiceResourceSample = {
     ...snapshot,
@@ -404,16 +404,16 @@ function buildResourceSsePayload(
   }
 
   const events: string[] = []
-  events.push(`id: 1\\nevent: resource_usage_snapshot\\ndata: ${JSON.stringify({ serviceId, sample: snapshot })}\\n\\n`)
+  events.push(`id: 1\nevent: resource_usage_snapshot\ndata: ${JSON.stringify({ serviceId, sample: snapshot })}\n\n`)
 
   if (scenario === 'service-detail-resource-monitor-stream-error') {
     events.push(
-      `id: 2\\nevent: resource_usage_error\\ndata: ${JSON.stringify({ serviceId, error: 'runtime_stats_unavailable' })}\\n\\n`,
+      `id: 2\nevent: resource_usage_error\ndata: ${JSON.stringify({ serviceId, error: 'runtime_stats_unavailable' })}\n\n`,
     )
     return events.join('')
   }
 
-  events.push(`id: 2\\nevent: resource_usage_tick\\ndata: ${JSON.stringify({ serviceId, sample: tick })}\\n\\n`)
+  events.push(`id: 2\nevent: resource_usage_tick\ndata: ${JSON.stringify({ serviceId, sample: tick })}\n\n`)
   return events.join('')
 }
 
@@ -3144,7 +3144,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
 
       const samples = buildResourceHistorySamples(serviceId, 60 * 60)
       const body = buildResourceSsePayload(serviceId, samples, scenario)
-      return new Response(body || ': keep-alive\\n\\n', {
+      return new Response(body || ': keep-alive\n\n', {
         status: 200,
         headers: {
           'Content-Type': 'text/event-stream',

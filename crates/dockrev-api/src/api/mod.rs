@@ -3608,17 +3608,34 @@ async fn service_resource_usage_events(
     }
 
     let mut subscription = state.resource_hub.subscribe(&service_id).await;
-    let initial = state
-        .resource_hub
-        .sample_once(&service_id)
-        .await
-        .map_err(map_internal)?;
+    let (initial, initial_error) = match state.resource_hub.sample_once(&service_id).await {
+        Ok(sample) => (sample, None),
+        Err(err) => {
+            tracing::warn!(
+                service_id = %service_id,
+                error = %err,
+                "resource monitor initial snapshot failed"
+            );
+            (None, Some(err.to_string()))
+        }
+    };
     let stream_service_id = service_id.clone();
 
     let stream = async_stream::stream! {
         let mut event_id: u64 = 0;
-        match initial {
-            Some(sample) => {
+        if let Some(error) = initial_error {
+            event_id = event_id.saturating_add(1);
+            let data = json!({
+                "serviceId": stream_service_id.clone(),
+                "error": error,
+            });
+            yield Ok::<Event, Infallible>(
+                Event::default()
+                    .id(event_id.to_string())
+                    .event("resource_usage_error")
+                    .data(data.to_string()),
+            );
+        } else if let Some(sample) = initial {
                 event_id = event_id.saturating_add(1);
                 let data = json!({
                     "serviceId": stream_service_id.clone(),
@@ -3630,20 +3647,18 @@ async fn service_resource_usage_events(
                         .event("resource_usage_snapshot")
                         .data(data.to_string()),
                 );
-            }
-            None => {
-                event_id = event_id.saturating_add(1);
-                let data = json!({
-                    "serviceId": stream_service_id.clone(),
-                    "error": "runtime_stats_unavailable",
-                });
-                yield Ok::<Event, Infallible>(
-                    Event::default()
-                        .id(event_id.to_string())
-                        .event("resource_usage_error")
-                        .data(data.to_string()),
-                );
-            }
+        } else {
+            event_id = event_id.saturating_add(1);
+            let data = json!({
+                "serviceId": stream_service_id.clone(),
+                "error": "runtime_stats_unavailable",
+            });
+            yield Ok::<Event, Infallible>(
+                Event::default()
+                    .id(event_id.to_string())
+                    .event("resource_usage_error")
+                    .data(data.to_string()),
+            );
         }
 
         loop {

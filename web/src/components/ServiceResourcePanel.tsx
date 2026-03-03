@@ -65,19 +65,54 @@ function parseSampleTs(sample: ServiceResourceSample): number | null {
   return Number.isFinite(ts) ? ts : null
 }
 
-function trimSamplesToWindow(samples: ServiceResourceSample[], windowSeconds: number): ServiceResourceSample[] {
+function compareSamplesByTime(a: ServiceResourceSample, b: ServiceResourceSample): number {
+  const ta = parseSampleTs(a) ?? 0
+  const tb = parseSampleTs(b) ?? 0
+  return ta - tb
+}
+
+function trimSortedSamples(samples: ServiceResourceSample[], windowSeconds: number): ServiceResourceSample[] {
   if (!samples.length) return []
-  const normalized = [...samples].sort((a, b) => {
-    const ta = parseSampleTs(a) ?? 0
-    const tb = parseSampleTs(b) ?? 0
-    return ta - tb
-  })
-  const latestTs = parseSampleTs(normalized[normalized.length - 1]) ?? Date.now()
+  const latestTs = parseSampleTs(samples[samples.length - 1]) ?? Date.now()
   const cutoff = latestTs - windowSeconds * 1000
-  return normalized.filter((sample) => {
+  return samples.filter((sample) => {
     const ts = parseSampleTs(sample)
     return ts === null || ts >= cutoff
   })
+}
+
+function trimSamplesToWindow(samples: ServiceResourceSample[], windowSeconds: number): ServiceResourceSample[] {
+  if (!samples.length) return []
+  const sorted = [...samples].sort(compareSamplesByTime)
+  return trimSortedSamples(sorted, windowSeconds)
+}
+
+function appendSampleToSorted(samples: ServiceResourceSample[], sample: ServiceResourceSample): ServiceResourceSample[] {
+  if (!samples.length) return [sample]
+
+  const next = [...samples]
+  const last = next[next.length - 1]
+  if (last && last.sampledAt === sample.sampledAt) {
+    next[next.length - 1] = sample
+    return next
+  }
+
+  const sampleTs = parseSampleTs(sample)
+  const lastTs = last ? parseSampleTs(last) : null
+  if (sampleTs != null && lastTs != null && sampleTs >= lastTs) {
+    next.push(sample)
+    return next
+  }
+
+  const existingIndex = next.findIndex((item) => item.sampledAt === sample.sampledAt)
+  if (existingIndex >= 0) {
+    next[existingIndex] = sample
+    return next
+  }
+
+  next.push(sample)
+  next.sort(compareSamplesByTime)
+  return next
 }
 
 function formatBytes(bytes: number | null | undefined): string {
@@ -372,14 +407,8 @@ export function ServiceResourcePanel(props: { serviceId: string }) {
 
     const appendSample = (sample: ServiceResourceSample) => {
       setSamples((prev) => {
-        const next = [...prev]
-        const last = next[next.length - 1]
-        if (last && last.sampledAt === sample.sampledAt) {
-          next[next.length - 1] = sample
-        } else {
-          next.push(sample)
-        }
-        return trimSamplesToWindow(next, windowSecondsRef.current)
+        const next = appendSampleToSorted(prev, sample)
+        return trimSortedSamples(next, windowSecondsRef.current)
       })
     }
 
@@ -409,6 +438,7 @@ export function ServiceResourcePanel(props: { serviceId: string }) {
         const sample = (parsed as { sample?: ServiceResourceSample }).sample
         if (!sample || typeof sample !== 'object') return
         appendSample(sample)
+        setStreamError(null)
       } catch {
         // Ignore malformed payloads to keep stream alive.
       }

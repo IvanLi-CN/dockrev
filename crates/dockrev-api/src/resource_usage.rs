@@ -249,6 +249,13 @@ pub fn spawn_history_sampler(db: Db, runner: Arc<dyn CommandRunner>) {
                 }
             };
 
+            if last_gc.elapsed() >= Duration::from_secs(60 * 60) {
+                if let Err(e) = gc_history(&db).await {
+                    tracing::warn!(error = %e, "resource monitor history gc failed");
+                }
+                last_gc = Instant::now();
+            }
+
             if !settings.enabled {
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 continue;
@@ -258,13 +265,6 @@ pub fn spawn_history_sampler(db: Db, runner: Arc<dyn CommandRunner>) {
                 normalize_sample_interval_seconds(settings.sample_interval_seconds);
             if let Err(e) = sample_history_once(&db, runner.as_ref()).await {
                 tracing::warn!(error = %e, "resource monitor history sampling failed");
-            }
-
-            if last_gc.elapsed() >= Duration::from_secs(60 * 60) {
-                if let Err(e) = gc_history(&db).await {
-                    tracing::warn!(error = %e, "resource monitor history gc failed");
-                }
-                last_gc = Instant::now();
             }
 
             tokio::time::sleep(Duration::from_secs(interval_seconds)).await;
@@ -305,9 +305,17 @@ async fn sample_history_once(db: &Db, runner: &dyn CommandRunner) -> anyhow::Res
     let mut rows = Vec::<ServiceResourceSampleInput>::new();
 
     for (project, project_targets) in by_project {
-        let aggregates = collect_project_service_aggregates(runner, &project)
-            .await
-            .with_context(|| format!("collect stats for compose project {project}"))?;
+        let aggregates = match collect_project_service_aggregates(runner, &project).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(
+                    project = %project,
+                    error = %e,
+                    "resource monitor history sampling skipped project"
+                );
+                continue;
+            }
+        };
 
         for target in &project_targets {
             let Some(sample) = aggregates.get(&target.service_name) else {

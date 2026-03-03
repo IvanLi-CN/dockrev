@@ -6561,6 +6561,47 @@ services:
 }
 
 #[tokio::test]
+async fn resource_usage_events_emits_error_when_initial_snapshot_fails() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FailAllRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!(
+        "/tmp/dockrev-resource-events-initial-fail-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: nginx:1.27
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let service_id = services[0].id.clone();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/resource-usage/events"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let mut body = resp.into_body();
+    let evt = wait_for_sse_event(&mut body, "resource_usage_error", Duration::from_secs(2)).await;
+    let data: serde_json::Value = serde_json::from_str(&evt.data).unwrap();
+    assert_eq!(data["serviceId"].as_str(), Some(service_id.as_str()));
+    assert!(!data["error"].as_str().unwrap_or_default().is_empty());
+}
+
+#[tokio::test]
 async fn deploy_welcome_roundtrip() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
