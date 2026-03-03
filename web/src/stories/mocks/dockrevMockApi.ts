@@ -324,6 +324,29 @@ function getBoolean(v: unknown): boolean | null {
   return typeof v === 'boolean' ? v : null
 }
 
+function toNotificationsResponse(input: NotificationConfig): NotificationConfig {
+  const botTokenRaw = input.telegram.botToken ?? ''
+  const botTokenConfigured = input.telegram.botTokenConfigured ?? botTokenRaw.trim().length > 0
+  return {
+    ...input,
+    telegram: {
+      ...input.telegram,
+      botToken: null,
+      botTokenConfigured,
+    },
+  }
+}
+
+function isMaskLiteral(value: string): boolean {
+  return value === '******' || value === '••••••••••••••••'
+}
+
+const TELEGRAM_BOT_TOKEN_PATTERN = /^\d{5,}:[A-Za-z0-9_-]{8,}$/
+
+function isValidTelegramBotToken(value: string): boolean {
+  return TELEGRAM_BOT_TOKEN_PATTERN.test(value) && !/\s/.test(value)
+}
+
 function hashString(input: string): number {
   let h = 0
   for (let i = 0; i < input.length; i += 1) {
@@ -447,7 +470,7 @@ function makeDefaultNotifications(): NotificationConfig {
   return {
     email: { enabled: false, smtpUrl: null },
     webhook: { enabled: false, url: null },
-    telegram: { enabled: false, botToken: null, chatId: null },
+    telegram: { enabled: false, botToken: null, botTokenConfigured: false, chatId: null },
     webPush: { enabled: false, vapidPublicKey: null, vapidPrivateKey: null, vapidSubject: null },
   }
 }
@@ -1998,7 +2021,7 @@ function buildSettingsConfigured(): Fixture {
   f.notifications = {
     email: { enabled: true, smtpUrl: 'smtp://user:pass@mail.example.com:587/?to=a@example.com&from=Dockrev%20<noreply@example.com>' },
     webhook: { enabled: true, url: 'https://hooks.example.com/dockrev' },
-    telegram: { enabled: true, botToken: '123:bot-token', chatId: '987654' },
+    telegram: { enabled: true, botToken: '123:bot-token', botTokenConfigured: true, chatId: '-1009876543210' },
     webPush: { enabled: true, vapidPublicKey: 'BBOG...mock', vapidPrivateKey: null, vapidSubject: 'mailto:ops@example.com' },
   }
   const repos: GitHubPackagesRepo[] = [
@@ -2973,7 +2996,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
     }
 
     // notifications
-    if (method === 'GET' && urlPath === '/api/notifications') return json(f.notifications)
+    if (method === 'GET' && urlPath === '/api/notifications') return json(toNotificationsResponse(f.notifications))
     if (method === 'PUT' && urlPath === '/api/notifications') {
       const parsed = parseJsonBody(init?.body)
       if (isRecord(parsed)) {
@@ -2982,6 +3005,36 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         const webhook = isRecord(parsed.webhook) ? parsed.webhook : null
         const telegram = isRecord(parsed.telegram) ? parsed.telegram : null
         const webPush = isRecord(parsed.webPush) ? parsed.webPush : null
+        const telegramHasBotToken = telegram ? Object.prototype.hasOwnProperty.call(telegram, 'botToken') : false
+        const telegramBotToken = telegramHasBotToken ? getString(telegram?.botToken) : null
+        const telegramBotTokenTrimmed = typeof telegramBotToken === 'string' ? telegramBotToken.trim() : ''
+        const shouldReplaceTelegramToken =
+          typeof telegramBotToken === 'string' &&
+          telegramBotTokenTrimmed.length > 0 &&
+          !isMaskLiteral(telegramBotTokenTrimmed)
+        if (shouldReplaceTelegramToken && !isValidTelegramBotToken(telegramBotTokenTrimmed)) {
+          return json(
+            {
+              error: {
+                code: 'invalid_argument',
+                message: 'invalid telegram bot token',
+                details: { reason: 'telegram_bot_token_invalid' },
+              },
+            },
+            { status: 400 },
+          )
+        }
+        const telegramChatIdRaw = telegram ? getString(telegram.chatId) : null
+        const telegramChatIdTrimmed = typeof telegramChatIdRaw === 'string' ? telegramChatIdRaw.trim() : null
+        const hasExistingTelegramToken = (f.notifications.telegram.botToken ?? '').trim().length > 0
+        const nextTelegramChatId =
+          typeof telegramChatIdTrimmed === 'string'
+            ? isMaskLiteral(telegramChatIdTrimmed)
+              ? f.notifications.telegram.chatId
+              : telegramChatIdTrimmed.length > 0
+                ? telegramChatIdTrimmed
+                : null
+            : f.notifications.telegram.chatId
         f.notifications = {
           email: {
             enabled: (email && getBoolean(email.enabled)) ?? f.notifications.email.enabled,
@@ -2993,8 +3046,10 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
           },
           telegram: {
             enabled: (telegram && getBoolean(telegram.enabled)) ?? f.notifications.telegram.enabled,
-            botToken: (telegram && getString(telegram.botToken)) ?? f.notifications.telegram.botToken,
-            chatId: (telegram && getString(telegram.chatId)) ?? f.notifications.telegram.chatId,
+            botToken: shouldReplaceTelegramToken ? telegramBotToken : f.notifications.telegram.botToken,
+            botTokenConfigured:
+              shouldReplaceTelegramToken ? true : (f.notifications.telegram.botTokenConfigured ?? hasExistingTelegramToken),
+            chatId: nextTelegramChatId,
           },
           webPush: {
             enabled: (webPush && getBoolean(webPush.enabled)) ?? f.notifications.webPush.enabled,

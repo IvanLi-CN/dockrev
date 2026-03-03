@@ -1325,6 +1325,42 @@ html[data-theme='light'] .input {
   background: rgba(15, 23, 42, 0.03);
 }
 
+.inputWithAction {
+  position: relative;
+  width: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.inputWithAction .input {
+  padding-right: 44px;
+}
+
+.inputActionBtn {
+  position: absolute;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.inputActionBtn:hover {
+  color: var(--text);
+  background: rgba(148, 163, 184, 0.14);
+}
+
+.inputActionBtn:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, 0.5);
+  outline-offset: 1px;
+}
+
 .inputError {
   border-color: rgba(251, 113, 133, 0.52);
   box-shadow: 0 0 0 1px rgba(251, 113, 133, 0.3);

@@ -750,8 +750,9 @@ impl NotificationConfig {
             },
             telegram: TelegramNotification {
                 enabled: db.telegram_enabled,
-                bot_token: mask_if_some(db.telegram_bot_token),
-                chat_id: mask_if_some(db.telegram_chat_id),
+                bot_token: None,
+                bot_token_configured: is_non_empty(db.telegram_bot_token.as_deref()),
+                chat_id: db.telegram_chat_id,
             },
             web_push: WebPushNotification {
                 enabled: db.webpush_enabled,
@@ -801,6 +802,8 @@ pub struct TelegramNotification {
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bot_token: Option<String>,
+    #[serde(default)]
+    pub bot_token_configured: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_id: Option<String>,
 }
@@ -1425,6 +1428,10 @@ pub struct PutDeployWelcomeResponse {
 
 fn mask_if_some(input: Option<String>) -> Option<String> {
     input.map(|_| "******".to_string())
+}
+
+fn is_non_empty(input: Option<&str>) -> bool {
+    input.map(|value| !value.trim().is_empty()).unwrap_or(false)
 }
 
 fn default_true() -> bool {

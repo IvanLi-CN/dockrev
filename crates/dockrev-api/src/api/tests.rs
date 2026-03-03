@@ -6401,7 +6401,11 @@ async fn settings_and_notifications_roundtrip() {
     let put = serde_json::json!({
         "email": { "enabled": false },
         "webhook": { "enabled": true, "url": "https://example.com/hook" },
-        "telegram": { "enabled": false },
+        "telegram": {
+            "enabled": true,
+            "botToken": "123456:telegram-bot-token",
+            "chatId": "-1001234567890"
+        },
         "webPush": { "enabled": false }
     });
     let resp = app
@@ -6432,6 +6436,118 @@ async fn settings_and_notifications_roundtrip() {
     let conf = response_json(resp).await;
     assert!(conf["webhook"]["enabled"].as_bool().unwrap());
     assert_eq!(conf["webhook"]["url"].as_str().unwrap(), "******");
+    assert_eq!(conf["telegram"]["botToken"].as_str(), None);
+    assert_eq!(conf["telegram"]["botTokenConfigured"].as_bool(), Some(true));
+    assert_eq!(conf["telegram"]["chatId"].as_str(), Some("-1001234567890"));
+
+    let put = serde_json::json!({
+        "email": { "enabled": false },
+        "webhook": { "enabled": true, "url": "******" },
+        "telegram": { "enabled": true, "chatId": "  -10055667788  " },
+        "webPush": { "enabled": false }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/notifications")
+                .header("content-type", "application/json")
+                .body(Body::from(put.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let db_conf = state.db.get_notification_settings().await.unwrap();
+    assert_eq!(
+        db_conf.telegram_bot_token.as_deref(),
+        Some("123456:telegram-bot-token")
+    );
+    assert_eq!(db_conf.telegram_chat_id.as_deref(), Some("-10055667788"));
+
+    let put = serde_json::json!({
+        "email": { "enabled": false },
+        "webhook": { "enabled": true, "url": "******" },
+        "telegram": { "enabled": true, "chatId": "******" },
+        "webPush": { "enabled": false }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/notifications")
+                .header("content-type", "application/json")
+                .body(Body::from(put.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let db_conf = state.db.get_notification_settings().await.unwrap();
+    assert_eq!(db_conf.telegram_chat_id.as_deref(), Some("-10055667788"));
+
+    let put = serde_json::json!({
+        "email": { "enabled": false },
+        "webhook": { "enabled": true, "url": "******" },
+        "telegram": { "enabled": true },
+        "webPush": { "enabled": false }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/notifications")
+                .header("content-type", "application/json")
+                .body(Body::from(put.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let db_conf = state.db.get_notification_settings().await.unwrap();
+    assert_eq!(db_conf.telegram_chat_id.as_deref(), Some("-10055667788"));
+
+    let put = serde_json::json!({
+        "email": { "enabled": false },
+        "webhook": { "enabled": true, "url": "******" },
+        "telegram": { "enabled": true, "chatId": "   " },
+        "webPush": { "enabled": false }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/notifications")
+                .header("content-type", "application/json")
+                .body(Body::from(put.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let db_conf = state.db.get_notification_settings().await.unwrap();
+    assert_eq!(db_conf.telegram_chat_id, None);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/notifications")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let conf = response_json(resp).await;
+    assert_eq!(conf["telegram"]["botToken"].as_str(), None);
+    assert_eq!(conf["telegram"]["botTokenConfigured"].as_bool(), Some(true));
+    assert!(conf["telegram"]["chatId"].is_null());
 }
 
 #[tokio::test]
