@@ -1,5 +1,6 @@
 use std::{
-    collections::HashMap,
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
     sync::{Arc, OnceLock},
     time::Duration,
 };
@@ -22,11 +23,10 @@ const WORKER_IDLE_POLL_MS: u64 = 400;
 const RETRY_MAX_ATTEMPTS: u32 = 3;
 const GHCR_SYNC_ALL_MAX_CONCURRENCY: usize = 5;
 const GHCR_SYNC_REPO_WORKERS: usize = 5;
+const GHCR_SYNC_REPO_LOCK_STRIPES: usize = 128;
 
 static GHCR_SYNC_ENQUEUE_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-static GHCR_SYNC_REPO_LOCKS: OnceLock<
-    tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-> = OnceLock::new();
+static GHCR_SYNC_REPO_LOCKS: OnceLock<Vec<Arc<tokio::sync::Mutex<()>>>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GhcrWebhookOp {
@@ -97,19 +97,25 @@ fn sync_enqueue_lock() -> &'static tokio::sync::Mutex<()> {
     GHCR_SYNC_ENQUEUE_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
-fn repo_sync_locks() -> &'static tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>> {
-    GHCR_SYNC_REPO_LOCKS.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()))
+fn repo_sync_locks() -> &'static [Arc<tokio::sync::Mutex<()>>] {
+    GHCR_SYNC_REPO_LOCKS
+        .get_or_init(|| {
+            (0..GHCR_SYNC_REPO_LOCK_STRIPES)
+                .map(|_| Arc::new(tokio::sync::Mutex::new(())))
+                .collect()
+        })
+        .as_slice()
+}
+
+fn repo_sync_lock_index(key: &str) -> usize {
+    let mut hasher = DefaultHasher::new();
+    key.hash(&mut hasher);
+    (hasher.finish() as usize) % GHCR_SYNC_REPO_LOCK_STRIPES
 }
 
 async fn lock_repo_sync(owner: &str, repo: &str) -> tokio::sync::OwnedMutexGuard<()> {
     let key = format!("{owner}/{repo}").to_ascii_lowercase();
-    let repo_lock = {
-        let mut locks = repo_sync_locks().lock().await;
-        locks
-            .entry(key)
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-            .clone()
-    };
+    let repo_lock = repo_sync_locks()[repo_sync_lock_index(&key)].clone();
     repo_lock.lock_owned().await
 }
 
@@ -1210,6 +1216,7 @@ async fn run_unregister_job(
             now_rfc3339(),
         );
         persist_progress(state, job_id, &progress).await;
+        let _repo_guard = lock_repo_sync(owner, repo).await;
 
         let _ = state
             .db
