@@ -122,6 +122,8 @@ This page documents every HTTP route exposed in:
 | GET | `/supervisor/favicon.png` | Public | UI favicon | `200` |
 | GET | `/supervisor/` | Public | Supervisor web UI | `200` |
 
+- `GET /supervisor/self-upgrade` now includes an optional `request` object (`mode` + `rollbackOnFailure`) while `state=running`, so the UI can restore which action button is actively running after refresh. The field may be omitted for idle/legacy states.
+
 ---
 
 ## Request examples

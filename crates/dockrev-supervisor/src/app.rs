@@ -535,6 +535,8 @@ fn require_user(app: &App, headers: &HeaderMap) -> Result<String, ApiError> {
 struct SelfUpgradeResponse {
     state: String,
     op_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request: Option<HttpRequestParams>,
     target: HttpTarget,
     previous: HttpPrevious,
     started_at: String,
@@ -552,6 +554,13 @@ struct SelfUpgradeOperation {
     started_at: String,
     updated_at: String,
     logs: Vec<LogLine>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HttpRequestParams {
+    mode: String,
+    rollback_on_failure: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -593,6 +602,10 @@ async fn get_self_upgrade(
     Ok(Json(SelfUpgradeResponse {
         state: st.state.clone(),
         op_id: st.op_id.clone(),
+        request: st.request.as_ref().map(|req| HttpRequestParams {
+            mode: req.mode.clone(),
+            rollback_on_failure: req.rollback_on_failure,
+        }),
         target: HttpTarget {
             image: app.cfg.target_image_repo.clone(),
             tag: st.target.tag.clone(),
@@ -736,6 +749,8 @@ fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       .muted {{ color: rgba(0,0,0,0.62); font-size: 12px; }}
       button {{ padding: 8px 12px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.18); background: white; cursor: pointer; }}
       button[disabled] {{ opacity: 0.5; cursor: not-allowed; }}
+      button.btnRunning {{ display: inline-flex; align-items: center; gap: 8px; }}
+      button.btnRunning::before {{ content: ''; width: 12px; height: 12px; border-radius: 999px; border: 2px solid rgba(0,0,0,0.22); border-top-color: rgba(0,0,0,0.72); animation: supervisorButtonSpin 0.8s linear infinite; }}
       input {{ padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.18); }}
       pre {{ background: rgba(0,0,0,0.06); padding: 10px; border-radius: 10px; overflow: auto; }}
       .tabsPanel {{ margin-top: 10px; }}
@@ -761,6 +776,10 @@ fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       .metaLine {{ margin-top: 6px; display: flex; flex-wrap: wrap; gap: 8px 16px; }}
       .metaItem {{ color: rgba(0,0,0,0.68); font-size: 12px; }}
       .metaItem code {{ font-size: 12px; }}
+      @keyframes supervisorButtonSpin {{ from {{ transform: rotate(0deg); }} to {{ transform: rotate(360deg); }} }}
+      @media (prefers-reduced-motion: reduce) {{
+        button.btnRunning::before {{ animation: none; }}
+      }}
     </style>
   </head>
   <body>
@@ -828,6 +847,8 @@ fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
 	      }}
 
 	      const rollbackWrap = document.getElementById('rollbackWrap');
+	      const dryBtn = document.getElementById('dry');
+	      const applyBtn = document.getElementById('apply');
 	      const rollbackBtn = document.getElementById('rollback');
 	      const rollbackPop = document.getElementById('rollbackPop');
 	      const rollbackOpId = document.getElementById('rollbackOpId');
@@ -857,6 +878,19 @@ fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
 	        }}
 	        if (rollbackPopOpen) rollbackOpId.textContent = st.opId || '-';
 	      }}
+      function setRunningButton(button, running) {{
+        button.classList.toggle('btnRunning', running);
+        button.setAttribute('aria-busy', running ? 'true' : 'false');
+      }}
+
+      function syncUpgradeActionState(st) {{
+        const running = !!st && st.state === 'running';
+        const mode = st?.request?.mode;
+        dryBtn.disabled = running;
+        applyBtn.disabled = running;
+        setRunningButton(dryBtn, running && mode === 'dry-run');
+        setRunningButton(applyBtn, running && mode === 'apply');
+      }}
       function statusClass(st) {{
         const s = st && st.state;
         return s === 'succeeded' ? 'ok' : (s === 'failed' || s === 'rolled_back') ? 'bad' : '';
@@ -988,22 +1022,24 @@ fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           const st = await fetchJson('self-upgrade');
           statusEl.className = `muted ${{statusClass(st)}}`.trim();
           statusEl.textContent = renderStatusText(st);
+          syncUpgradeActionState(st);
           renderOperations(st);
           syncRollbackState(st);
         }} catch (e) {{
           statusEl.className = 'muted bad';
           statusEl.textContent = `offline ${{String(e.message||e)}}`;
+          syncUpgradeActionState(null);
           setRollbackPopOpen(false);
         }}
       }}
 
       document.getElementById('refresh').onclick = () => refresh();
-      document.getElementById('dry').onclick = async () => {{
+      dryBtn.onclick = async () => {{
         const tag = document.getElementById('tag').value || 'latest';
         await fetchJson('self-upgrade', {{ method: 'POST', body: JSON.stringify({{ target: {{ tag }}, mode: 'dry-run', rollbackOnFailure: true }}) }});
         await refresh();
       }};
-      document.getElementById('apply').onclick = async () => {{
+      applyBtn.onclick = async () => {{
         const tag = document.getElementById('tag').value || 'latest';
         await fetchJson('self-upgrade', {{ method: 'POST', body: JSON.stringify({{ target: {{ tag }}, mode: 'apply', rollbackOnFailure: true }}) }});
         await refresh();
@@ -1747,6 +1783,88 @@ mod tests {
         assert!(html.contains("id=\"opTabs\""));
         assert!(html.contains("id=\"tabsToggle\""));
         assert!(html.contains("latestHasNewer"));
+    }
+
+    #[test]
+    fn render_ui_disables_dry_and_apply_during_running_operation() {
+        let html = render_ui("/supervisor", &test_meta());
+        assert!(html.contains("function syncUpgradeActionState(st)"));
+        assert!(html.contains("dryBtn.disabled = running;"));
+        assert!(html.contains("applyBtn.disabled = running;"));
+    }
+
+    #[test]
+    fn render_ui_shows_mode_specific_spinner_for_running_operation() {
+        let html = render_ui("/supervisor", &test_meta());
+        assert!(html.contains("button.btnRunning::before"));
+        assert!(html.contains("mode === 'dry-run'"));
+        assert!(html.contains("mode === 'apply'"));
+        assert!(html.contains("setRunningButton(dryBtn"));
+        assert!(html.contains("setRunningButton(applyBtn"));
+    }
+
+    #[test]
+    fn self_upgrade_response_serializes_request_mode_when_present() {
+        let now = "2026-03-03T13:23:00Z";
+        let resp = SelfUpgradeResponse {
+            state: "running".to_string(),
+            op_id: "sup_test".to_string(),
+            request: Some(HttpRequestParams {
+                mode: "apply".to_string(),
+                rollback_on_failure: true,
+            }),
+            target: HttpTarget {
+                image: "ghcr.io/ivanli-cn/dockrev".to_string(),
+                tag: "latest".to_string(),
+                digest: None,
+            },
+            previous: HttpPrevious {
+                tag: "prev".to_string(),
+                digest: None,
+            },
+            started_at: now.to_string(),
+            updated_at: now.to_string(),
+            progress: Progress {
+                step: "apply".to_string(),
+                message: "docker compose up".to_string(),
+            },
+            logs: Vec::new(),
+            operations: Vec::new(),
+        };
+
+        let value = serde_json::to_value(resp).unwrap();
+        assert_eq!(value["request"]["mode"], "apply");
+        assert_eq!(value["request"]["rollbackOnFailure"], true);
+    }
+
+    #[test]
+    fn self_upgrade_response_omits_request_when_absent() {
+        let now = "2026-03-03T13:23:00Z";
+        let resp = SelfUpgradeResponse {
+            state: "idle".to_string(),
+            op_id: String::new(),
+            request: None,
+            target: HttpTarget {
+                image: "ghcr.io/ivanli-cn/dockrev".to_string(),
+                tag: "latest".to_string(),
+                digest: None,
+            },
+            previous: HttpPrevious {
+                tag: "unknown".to_string(),
+                digest: None,
+            },
+            started_at: now.to_string(),
+            updated_at: now.to_string(),
+            progress: Progress {
+                step: "done".to_string(),
+                message: "idle".to_string(),
+            },
+            logs: Vec::new(),
+            operations: Vec::new(),
+        };
+
+        let value = serde_json::to_value(resp).unwrap();
+        assert!(value.get("request").is_none());
     }
 
     #[test]
