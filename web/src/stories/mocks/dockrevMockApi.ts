@@ -45,6 +45,7 @@ export type DockrevApiScenario =
   | 'version-tags-popover-snapshot-missing'
   | 'multi-stack-mixed'
   | 'overview-jobs-card-heavy-inflight'
+  | 'overview-jobs-card-running-progress-modes'
   | 'queue-mixed'
   | 'queue-legacy-progress'
   | 'queue-long-logs'
@@ -1461,6 +1462,102 @@ function buildOverviewJobsCardHeavyInFlight(): Fixture {
   return f
 }
 
+function buildOverviewJobsCardRunningProgressModes(): Fixture {
+  const f = buildDashboardDemo()
+
+  const makeJob = (input: Partial<JobListItem> & Pick<JobListItem, 'id' | 'status'>): JobListItem => {
+    const base: JobListItem = {
+      id: input.id,
+      type: input.type ?? 'update',
+      scope: input.scope ?? 'service',
+      stackId: input.stackId !== undefined ? input.stackId : 'stack-prod',
+      serviceId: input.serviceId !== undefined ? input.serviceId : 'svc-prod-api',
+      status: input.status,
+      createdBy: input.createdBy ?? 'ivan',
+      reason: input.reason ?? 'ui',
+      createdAt: input.createdAt ?? nowIso(-120_000),
+      startedAt: input.startedAt ?? nowIso(-110_000),
+      finishedAt: input.finishedAt ?? nowIso(-10_000),
+      allowArchMismatch: input.allowArchMismatch ?? false,
+      backupMode: input.backupMode ?? 'inherit',
+      summary: input.summary ?? {},
+      progress: input.progress ?? null,
+    }
+    return base
+  }
+
+  const jobs: JobListItem[] = [
+    makeJob({
+      id: 'overview-running-determinate',
+      status: 'running',
+      createdAt: nowIso(-30_000),
+      startedAt: nowIso(-28_000),
+      finishedAt: null,
+      progress: {
+        phase: 'apply',
+        message: 'updating services',
+        current: 3,
+        total: 8,
+        percent: 38,
+        plannedCurrent: 5,
+        plannedTotal: 8,
+        plannedPercent: 63,
+        currentTarget: 'worker',
+        updatedAt: nowIso(-800),
+      },
+    }),
+    makeJob({
+      id: 'overview-running-indeterminate',
+      status: 'running',
+      createdAt: nowIso(-25_000),
+      startedAt: nowIso(-24_000),
+      finishedAt: null,
+      progress: {
+        phase: 'prepare',
+        message: 'waiting service metadata',
+        current: 0,
+        total: 0,
+        percent: 0,
+        plannedCurrent: null,
+        plannedTotal: null,
+        plannedPercent: null,
+        currentTarget: null,
+        updatedAt: nowIso(-1_200),
+      },
+    }),
+    makeJob({
+      id: 'overview-queued',
+      status: 'queued',
+      createdAt: nowIso(-22_000),
+      startedAt: null,
+      finishedAt: null,
+      progress: null,
+    }),
+    makeJob({
+      id: 'overview-success',
+      status: 'success',
+      createdAt: nowIso(-60_000),
+      startedAt: nowIso(-58_000),
+      finishedAt: nowIso(-40_000),
+      progress: null,
+    }),
+  ]
+
+  f.jobs = jobs
+  f.jobById = Object.fromEntries(
+    jobs.map((j) => [
+      j.id,
+      {
+        ...j,
+        logs: [{ ts: nowIso(-900), level: 'info', msg: `job ${j.id} ready` }],
+        logsLastId: 1,
+      } satisfies JobDetail,
+    ]),
+  )
+
+  return f
+}
+
 function buildQueueLongLogs(): Fixture {
   const f = buildDashboardDemo()
 
@@ -2076,6 +2173,7 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   }
   if (scenario === 'queue-mixed') return buildQueueMixed()
   if (scenario === 'overview-jobs-card-heavy-inflight') return buildOverviewJobsCardHeavyInFlight()
+  if (scenario === 'overview-jobs-card-running-progress-modes') return buildOverviewJobsCardRunningProgressModes()
   if (scenario === 'queue-legacy-progress') return buildQueueLegacyProgress()
   if (scenario === 'queue-long-logs') return buildQueueLongLogs()
   if (scenario === 'settings-configured' || scenario === 'settings-configured-resolve-slow') return buildSettingsConfigured()

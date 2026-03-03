@@ -45,6 +45,17 @@ export const JobsCardMixedFallback: Story = {
   },
 }
 
+export const JobsCardRunningProgressModes: Story = {
+  parameters: { dockrevApiScenario: 'overview-jobs-card-running-progress-modes' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：running 行背景进度（确定/不确定）">
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+}
+
 export const JobsCardEmpty: Story = {
   parameters: { dockrevApiScenario: 'empty' },
   render: () => {

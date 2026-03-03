@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import {
   triggerDiscoveryScan,
   listDiscoveryProjects,
@@ -1041,9 +1041,25 @@ export function OverviewPage(props: {
                   key={job.jobId}
                   type="button"
                   className="overviewJobListRow"
+                  data-progress-mode={job.progressMode}
+                  style={
+                    (job.progressMode === 'determinate' && job.progressPercent !== null
+                      ? { '--overview-row-progress': `${job.progressPercent}%` }
+                      : undefined) as CSSProperties | undefined
+                  }
                   onClick={() => navigate({ name: 'job', jobId: job.jobId })}
-                  title={`${job.status} · ${job.primaryLabel}${job.scopeTag ? ` ${job.scopeTag}` : ''} · ${formatShort(job.createdAt)} · by ${job.createdBy} · reason ${job.reason}`}
+                  title={`${job.status} · ${job.primaryLabel}${job.scopeTag ? ` ${job.scopeTag}` : ''} · ${formatShort(job.createdAt)} · by ${job.createdBy} · reason ${job.reason}${
+                    job.progressMode === 'determinate' && job.progressPercent !== null
+                      ? ` · progress ${job.progressPercent}%`
+                      : job.progressMode === 'indeterminate'
+                        ? ' · progress running'
+                        : ''
+                  }`}
                 >
+                  <span className="overviewJobProgressBg" aria-hidden="true">
+                    <span className="overviewJobProgressBgFill" />
+                    <span className="overviewJobProgressBgShimmer" />
+                  </span>
                   <span className="overviewJobLine">
                     <span className="overviewJobStatusTag" data-status={job.status}>
                       {job.status}

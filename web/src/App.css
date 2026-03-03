@@ -2001,11 +2001,14 @@ html[data-theme='light'] .modalOverlay {
 
 .overviewJobListRow {
   display: block;
+  position: relative;
+  isolation: isolate;
   width: 100%;
   border: 0;
   border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
   background: transparent;
   padding: 9px 0;
+  overflow: hidden;
   cursor: pointer;
   text-align: left;
 }
@@ -2022,8 +2025,86 @@ html[data-theme='light'] .modalOverlay {
   border-bottom: 0;
 }
 
+.overviewJobProgressBg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.overviewJobProgressBgFill {
+  position: absolute;
+  inset: 0;
+  opacity: 0.22;
+}
+
+.overviewJobProgressBgShimmer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 34%;
+  opacity: 0;
+  transform: translateX(-118%);
+  animation: overviewRowProgressShimmer 3.9s ease-in-out infinite;
+  will-change: transform;
+}
+
+.overviewJobListRow[data-progress-mode='determinate'] .overviewJobProgressBg {
+  opacity: 1;
+}
+
+.overviewJobListRow[data-progress-mode='determinate'] .overviewJobProgressBgFill {
+  width: var(--overview-row-progress, 0%);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-info) 13%, transparent),
+    color-mix(in srgb, var(--color-info) 21%, transparent)
+  );
+}
+
+.overviewJobListRow[data-progress-mode='determinate'] .overviewJobProgressBgShimmer {
+  opacity: 0.42;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--color-info) 24%, white 6%) 52%,
+    transparent 100%
+  );
+}
+
+.overviewJobListRow[data-progress-mode='indeterminate'] .overviewJobProgressBg {
+  opacity: 1;
+}
+
+.overviewJobListRow[data-progress-mode='indeterminate'] .overviewJobProgressBgFill {
+  width: 100%;
+  opacity: 0.2;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--color-info) 9%, transparent), transparent),
+    repeating-linear-gradient(
+      110deg,
+      color-mix(in srgb, var(--color-info) 9%, transparent) 0 12px,
+      transparent 12px 22px
+    );
+}
+
+.overviewJobListRow[data-progress-mode='indeterminate'] .overviewJobProgressBgShimmer {
+  opacity: 0.34;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--color-info) 18%, white 3%) 52%,
+    transparent 100%
+  );
+}
+
 .overviewJobLine {
   display: flex;
+  position: relative;
+  z-index: 1;
   align-items: center;
   gap: 10px;
   min-width: 0;
@@ -2794,6 +2875,15 @@ html[data-theme='light'] .modalOverlay {
   }
   100% {
     transform: translateX(260%);
+  }
+}
+
+@keyframes overviewRowProgressShimmer {
+  0% {
+    transform: translateX(-118%);
+  }
+  100% {
+    transform: translateX(318%);
   }
 }
 
@@ -5027,6 +5117,12 @@ html[data-theme='light'] .card {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .overviewJobProgressBgShimmer {
+    animation: none;
+    transform: none;
+    opacity: 0;
+  }
+
   .page > .card,
   .queueItem,
   .versionInferenceItem {
