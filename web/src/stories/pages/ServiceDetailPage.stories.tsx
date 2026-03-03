@@ -72,6 +72,21 @@ export const InferencePendingCandidateLoading: Story = {
   render: render('stack-inference-pending', 'svc-inference-pending'),
 }
 
+export const ResourceMonitorDisabled: Story = {
+  parameters: { dockrevApiScenario: 'service-detail-resource-monitor-disabled' },
+  render: render('stack-prod', 'svc-prod-api'),
+}
+
+export const ResourceMonitorEmpty: Story = {
+  parameters: { dockrevApiScenario: 'service-detail-resource-monitor-empty' },
+  render: render('stack-prod', 'svc-prod-api'),
+}
+
+export const ResourceMonitorStreamError: Story = {
+  parameters: { dockrevApiScenario: 'service-detail-resource-monitor-stream-error' },
+  render: render('stack-prod', 'svc-prod-api'),
+}
+
 export const Error: Story = {
   parameters: { dockrevApiScenario: 'error' },
   render: render('stack-prod', 'svc-prod-api'),

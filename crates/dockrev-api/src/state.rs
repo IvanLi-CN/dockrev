@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    config::Config, db::Db, registry::RegistryClient, runner::CommandRunner,
-    snapshot_worker::SnapshotWorker,
+    config::Config, db::Db, registry::RegistryClient, resource_usage::RealtimeSamplerHub,
+    runner::CommandRunner, snapshot_worker::SnapshotWorker,
 };
 
 #[derive(Clone)]
@@ -12,6 +12,7 @@ pub struct AppState {
     pub registry: Arc<dyn RegistryClient>,
     pub runner: Arc<dyn CommandRunner>,
     pub snapshot_worker: Arc<SnapshotWorker>,
+    pub resource_hub: Arc<RealtimeSamplerHub>,
 }
 
 impl AppState {
@@ -21,6 +22,7 @@ impl AppState {
         registry: Arc<dyn RegistryClient>,
         runner: Arc<dyn CommandRunner>,
         snapshot_worker: Arc<SnapshotWorker>,
+        resource_hub: Arc<RealtimeSamplerHub>,
     ) -> Arc<Self> {
         Arc::new(Self {
             config,
@@ -28,6 +30,7 @@ impl AppState {
             registry,
             runner,
             snapshot_worker,
+            resource_hub,
         })
     }
 }
