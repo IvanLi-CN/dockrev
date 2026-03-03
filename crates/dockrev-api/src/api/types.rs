@@ -1244,6 +1244,7 @@ pub struct WebhookTriggerResponse {
 #[serde(rename_all = "camelCase")]
 pub struct SettingsResponse {
     pub backup: BackupSettings,
+    pub resource_monitor: ResourceMonitorSettings,
     pub auth: AuthSettings,
 }
 
@@ -1258,6 +1259,8 @@ pub struct AuthSettings {
 #[serde(rename_all = "camelCase")]
 pub struct PutSettingsRequest {
     pub backup: BackupSettings,
+    #[serde(default)]
+    pub resource_monitor: Option<PutResourceMonitorSettings>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1271,8 +1274,53 @@ pub struct BackupSettings {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ResourceMonitorSettings {
+    pub enabled: bool,
+    pub sample_interval_seconds: u64,
+    pub retention_days: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PutResourceMonitorSettings {
+    pub enabled: bool,
+    pub sample_interval_seconds: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PutSettingsResponse {
     pub ok: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceResourceSample {
+    pub sampled_at: String,
+    pub cpu_percent: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mem_used_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mem_limit_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub net_rx_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub net_tx_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_read_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_write_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pids: Option<u64>,
+    pub container_count: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceResourceHistoryResponse {
+    pub service_id: String,
+    pub window: String,
+    pub samples: Vec<ServiceResourceSample>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

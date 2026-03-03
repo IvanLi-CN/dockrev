@@ -22,6 +22,7 @@ import {
   type ListGitHubPackagesReposResponse,
   type ResolveGitHubPackagesTargetResponse,
   type NotificationConfig,
+  type PutSettingsInput,
   type SettingsResponse,
 } from '../api'
 import { Button, Mono, Switch } from '../ui'
@@ -55,6 +56,16 @@ function formatBytes(n: number) {
     i++
   }
   return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
+}
+
+function buildSettingsSavePayload(settings: SettingsResponse): PutSettingsInput {
+  return {
+    backup: settings.backup,
+    resourceMonitor: {
+      enabled: settings.resourceMonitor.enabled,
+      sampleIntervalSeconds: settings.resourceMonitor.sampleIntervalSeconds,
+    },
+  }
 }
 
 type SaveScope = 'backup' | 'notifications' | 'ghcr'
@@ -138,7 +149,7 @@ function mapResolveFailure(e: unknown): string {
 }
 
 function mapScopeLabel(scope: SaveScope): string {
-  if (scope === 'backup') return '备份'
+  if (scope === 'backup') return '系统设置'
   if (scope === 'notifications') return '通知'
   return 'GHCR'
 }
@@ -513,7 +524,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   const [autoSaveUpdatedAt, setAutoSaveUpdatedAt] = useState<string | null>(null)
   const [autoSaveQueuedScopes, setAutoSaveQueuedScopes] = useState<SaveScope[]>([])
 
-  const backupRef = useRef<SettingsResponse['backup'] | null>(null)
+  const settingsRef = useRef<SettingsResponse | null>(null)
   const notificationsRef = useRef<NotificationConfig | null>(null)
   const ghcrRef = useRef<GhcrDraft | null>(null)
   const queueRef = useRef<SaveScope[]>([])
@@ -536,7 +547,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
 
   useEffect(() => {
-    backupRef.current = settings?.backup ?? null
+    settingsRef.current = settings
   }, [settings])
 
   useEffect(() => {
@@ -593,7 +604,10 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   }, [autoSaveIssue, isScopeIdle])
 
   const buildScopePayload = useCallback((scope: SaveScope): unknown => {
-    if (scope === 'backup') return backupRef.current
+    if (scope === 'backup') {
+      if (!settingsRef.current) return null
+      return buildSettingsSavePayload(settingsRef.current)
+    }
     if (scope === 'notifications') return notificationsRef.current
     const ghcr = ghcrRef.current
     if (!ghcr) return null
@@ -607,7 +621,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
   const persistScopePayload = useCallback(async (scope: SaveScope, payload: unknown) => {
     if (scope === 'backup') {
-      await putSettings(payload as SettingsResponse['backup'])
+      await putSettings(payload as PutSettingsInput)
       return
     }
     if (scope === 'notifications') {
@@ -815,7 +829,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
   const resetAutoSaveBaselines = useCallback(
     (next: {
-      backup: SettingsResponse['backup']
+      settings: SettingsResponse
       notifications: NotificationConfig
       ghcr: GhcrDraft
     }) => {
@@ -833,10 +847,10 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
       setAutoSaveUpdatedAt(null)
       syncQueuedScopesState()
 
-      backupRef.current = next.backup
+      settingsRef.current = next.settings
       notificationsRef.current = next.notifications
       ghcrRef.current = next.ghcr
-      lastSavedHashRef.current.set('backup', JSON.stringify(next.backup))
+      lastSavedHashRef.current.set('backup', JSON.stringify(buildSettingsSavePayload(next.settings)))
       lastSavedHashRef.current.set('notifications', JSON.stringify(next.notifications))
       lastSavedHashRef.current.set(
         'ghcr',
@@ -886,7 +900,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     setGitHubPackages(nextGhcr)
     setGitHubPackagesPat(nextPat)
     resetAutoSaveBaselines({
-      backup: nextSettings.backup,
+      settings: nextSettings,
       notifications: nextNotifications,
       ghcr: {
         enabled: nextGhcr.enabled,
@@ -1034,6 +1048,21 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
       setSettings((prev) => {
         if (!prev) return prev
         return { ...prev, backup: updater(prev.backup) }
+      })
+      markFieldDirty('backup', fieldPath, isToggle ? TOGGLE_DEBOUNCE_MS : TEXT_DEBOUNCE_MS)
+    },
+    [markFieldDirty],
+  )
+
+  const updateResourceMonitor = useCallback(
+    (
+      fieldPath: string,
+      updater: (current: SettingsResponse['resourceMonitor']) => SettingsResponse['resourceMonitor'],
+      isToggle = false,
+    ) => {
+      setSettings((prev) => {
+        if (!prev) return prev
+        return { ...prev, resourceMonitor: updater(prev.resourceMonitor) }
       })
       markFieldDirty('backup', fieldPath, isToggle ? TOGGLE_DEBOUNCE_MS : TEXT_DEBOUNCE_MS)
     },
@@ -1361,6 +1390,58 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     当前：{formatBytes(settings.backup.skipTargetsOverBytes)}
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="title">资源监控</div>
+            <div className="muted">控制服务详情页历史采样与 1s 实时 SSE 推送。</div>
+
+            <div className="kv">
+              <div className="kvRow">
+                <div className="label">启用资源监控</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Switch
+                    checked={settings.resourceMonitor.enabled}
+                    disabled={busy}
+                    onChange={(value) =>
+                      updateResourceMonitor(
+                        'settings.resourceMonitor.enabled',
+                        (current) => ({ ...current, enabled: value }),
+                        true,
+                      )
+                    }
+                  />
+                  <div className="muted">{settings.resourceMonitor.enabled ? 'on' : 'off'}</div>
+                </div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">历史采样频率</div>
+                <select
+                  className="input"
+                  value={String(settings.resourceMonitor.sampleIntervalSeconds)}
+                  disabled={busy || !settings.resourceMonitor.enabled}
+                  onChange={(event) => {
+                    const next = Number(event.target.value)
+                    if (![10, 30, 60, 300].includes(next)) return
+                    updateResourceMonitor('settings.resourceMonitor.sampleIntervalSeconds', (current) => ({
+                      ...current,
+                      sampleIntervalSeconds: next as 10 | 30 | 60 | 300,
+                    }))
+                  }}
+                >
+                  <option value="10">10 秒</option>
+                  <option value="30">30 秒</option>
+                  <option value="60">60 秒</option>
+                  <option value="300">300 秒</option>
+                </select>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">历史保留</div>
+                <div className="muted">{settings.resourceMonitor.retentionDays} 天（固定）</div>
               </div>
             </div>
           </div>

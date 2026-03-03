@@ -15,6 +15,7 @@ import type {
   AddGitHubPackagesTargetRequest,
   RemoveGitHubPackagesTargetRequest,
   ResolveGitHubPackagesTargetResponse,
+  ServiceResourceSample,
   ServiceSettings,
   SettingsResponse,
   StackDetail,
@@ -28,6 +29,9 @@ export type DockrevApiScenario =
   | 'services-inference-pending-candidate-loading'
   | 'service-detail-compose-fallbacks'
   | 'service-detail-version-anomaly'
+  | 'service-detail-resource-monitor-disabled'
+  | 'service-detail-resource-monitor-empty'
+  | 'service-detail-resource-monitor-stream-error'
   | 'guide-line-long-names'
   | 'resolved-tag-demo'
   | 'version-inference-overview'
@@ -318,6 +322,101 @@ function getBoolean(v: unknown): boolean | null {
   return typeof v === 'boolean' ? v : null
 }
 
+function hashString(input: string): number {
+  let h = 0
+  for (let i = 0; i < input.length; i += 1) {
+    h = Math.imul(31, h) + input.charCodeAt(i)
+    h |= 0
+  }
+  return Math.abs(h)
+}
+
+function parseResourceWindow(windowRaw: string | null): { window: '15m' | '1h' | '6h'; seconds: number } {
+  if (windowRaw === '15m') return { window: '15m', seconds: 15 * 60 }
+  if (windowRaw === '6h') return { window: '6h', seconds: 6 * 60 * 60 }
+  return { window: '1h', seconds: 60 * 60 }
+}
+
+function buildResourceHistorySamples(serviceId: string, seconds: number): ServiceResourceSample[] {
+  const stepSeconds = 30
+  const points = Math.max(8, Math.floor(seconds / stepSeconds))
+  const seed = hashString(serviceId)
+  const baseCpu = 8 + (seed % 28)
+  const baseMem = (220 + (seed % 420)) * 1024 * 1024
+  const memWave = (24 + (seed % 96)) * 1024 * 1024
+  const basePids = 8 + (seed % 26)
+  const containerCount = 1 + (seed % 2)
+  let netRx = (18 + (seed % 40)) * 1024 * 1024
+  let netTx = (12 + (seed % 36)) * 1024 * 1024
+  let blockRead = (40 + (seed % 50)) * 1024 * 1024
+  let blockWrite = (28 + (seed % 44)) * 1024 * 1024
+  const now = Date.now()
+  const start = now - points * stepSeconds * 1000
+  const out: ServiceResourceSample[] = []
+
+  for (let i = 0; i <= points; i += 1) {
+    const t = start + i * stepSeconds * 1000
+    const rad = i / 5 + (seed % 7)
+    const cpu = Math.max(0, Math.min(100, baseCpu + Math.sin(rad) * 9 + Math.cos(rad / 2) * 5))
+    const memUsed = Math.max(64 * 1024 * 1024, Math.round(baseMem + Math.sin(rad / 2) * memWave))
+    const memLimit = 1024 * 1024 * 1024
+    const pids = Math.max(1, Math.round(basePids + Math.sin(rad / 1.4) * 4))
+
+    netRx += Math.round((0.35 + Math.max(0, Math.sin(rad))) * 650 * 1024)
+    netTx += Math.round((0.28 + Math.max(0, Math.cos(rad / 1.3))) * 520 * 1024)
+    blockRead += Math.round((0.2 + Math.max(0, Math.sin(rad / 1.1))) * 380 * 1024)
+    blockWrite += Math.round((0.16 + Math.max(0, Math.cos(rad / 1.6))) * 260 * 1024)
+
+    out.push({
+      sampledAt: new Date(t).toISOString(),
+      cpuPercent: Number(cpu.toFixed(2)),
+      memUsedBytes: memUsed,
+      memLimitBytes: memLimit,
+      netRxBytes: netRx,
+      netTxBytes: netTx,
+      blockReadBytes: blockRead,
+      blockWriteBytes: blockWrite,
+      pids,
+      containerCount,
+    })
+  }
+
+  return out
+}
+
+function buildResourceSsePayload(
+  serviceId: string,
+  samples: ServiceResourceSample[],
+  scenario: DockrevApiScenario,
+): string {
+  const snapshot = samples[samples.length - 1] ?? null
+  if (!snapshot) return ': keep-alive\\n\\n'
+
+  const tick: ServiceResourceSample = {
+    ...snapshot,
+    sampledAt: new Date().toISOString(),
+    cpuPercent: Number((snapshot.cpuPercent + 1.2).toFixed(2)),
+    netRxBytes: (snapshot.netRxBytes ?? 0) + 300_000,
+    netTxBytes: (snapshot.netTxBytes ?? 0) + 250_000,
+    blockReadBytes: (snapshot.blockReadBytes ?? 0) + 160_000,
+    blockWriteBytes: (snapshot.blockWriteBytes ?? 0) + 120_000,
+    pids: (snapshot.pids ?? 0) + 1,
+  }
+
+  const events: string[] = []
+  events.push(`id: 1\\nevent: resource_usage_snapshot\\ndata: ${JSON.stringify({ serviceId, sample: snapshot })}\\n\\n`)
+
+  if (scenario === 'service-detail-resource-monitor-stream-error') {
+    events.push(
+      `id: 2\\nevent: resource_usage_error\\ndata: ${JSON.stringify({ serviceId, error: 'runtime_stats_unavailable' })}\\n\\n`,
+    )
+    return events.join('')
+  }
+
+  events.push(`id: 2\\nevent: resource_usage_tick\\ndata: ${JSON.stringify({ serviceId, sample: tick })}\\n\\n`)
+  return events.join('')
+}
+
 function nowIso(offsetMs = 0) {
   return new Date(Date.now() + offsetMs).toISOString()
 }
@@ -337,6 +436,7 @@ function makeMockDebug(): MockDebug {
 function makeDefaultSettings(): SettingsResponse {
   return {
     backup: { enabled: true, requireSuccess: true, baseDir: '/var/lib/dockrev/backup', skipTargetsOverBytes: 104857600 },
+    resourceMonitor: { enabled: true, sampleIntervalSeconds: 30, retentionDays: 30 },
     auth: { forwardHeaderName: 'X-Forwarded-User', allowAnonymousInDev: true },
   }
 }
@@ -1949,6 +2049,16 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'services-inference-pending-candidate-loading') return buildServicesInferencePendingCandidateLoading()
   if (scenario === 'service-detail-compose-fallbacks') return buildServiceDetailComposeFallbacks()
   if (scenario === 'service-detail-version-anomaly') return buildServiceDetailVersionAnomaly()
+  if (scenario === 'service-detail-resource-monitor-disabled') {
+    const fixture = buildDashboardDemo()
+    fixture.settings.resourceMonitor = {
+      ...fixture.settings.resourceMonitor,
+      enabled: false,
+    }
+    return fixture
+  }
+  if (scenario === 'service-detail-resource-monitor-empty') return buildDashboardDemo()
+  if (scenario === 'service-detail-resource-monitor-stream-error') return buildDashboardDemo()
   if (scenario === 'guide-line-long-names') return buildGuideLineLongNames()
   if (scenario === 'resolved-tag-demo') return buildResolvedTagDemo()
   if (scenario === 'version-inference-overview') return buildVersionInferenceOverviewFixture()
@@ -2712,6 +2822,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       const parsed = parseJsonBody(init?.body)
       const rec = isRecord(parsed) ? parsed : null
       const backup = rec && isRecord(rec.backup) ? rec.backup : null
+      const resourceMonitor = rec && isRecord(rec.resourceMonitor) ? rec.resourceMonitor : null
       if (backup) {
         const enabled = getBoolean(backup.enabled)
         const requireSuccess = getBoolean(backup.requireSuccess)
@@ -2722,6 +2833,22 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
           requireSuccess: requireSuccess ?? f.settings.backup.requireSuccess,
           baseDir: baseDir ?? f.settings.backup.baseDir,
           skipTargetsOverBytes: skipTargetsOverBytes ?? f.settings.backup.skipTargetsOverBytes,
+        }
+      }
+      if (resourceMonitor) {
+        const enabled = getBoolean(resourceMonitor.enabled)
+        const interval = typeof resourceMonitor.sampleIntervalSeconds === 'number'
+          ? resourceMonitor.sampleIntervalSeconds
+          : null
+        const normalizedInterval =
+          interval === 10 || interval === 30 || interval === 60 || interval === 300
+            ? (interval as 10 | 30 | 60 | 300)
+            : f.settings.resourceMonitor.sampleIntervalSeconds
+
+        f.settings.resourceMonitor = {
+          ...f.settings.resourceMonitor,
+          enabled: enabled ?? f.settings.resourceMonitor.enabled,
+          sampleIntervalSeconds: normalizedInterval,
         }
       }
       return json({ ok: true })
@@ -2960,6 +3087,69 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
           manifestsOk: digestNorm ? repoTags.length : 0,
           manifestsTimeout: 0,
           manifestsError: 0,
+        },
+      })
+    }
+
+    if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/resource-usage/history')) {
+      const parts = urlPath.split('/').filter(Boolean)
+      const serviceId = decodeURIComponent(parts[2] ?? '')
+      const found = findService(serviceId)
+      if (!found) return json({ error: 'not found' }, { status: 404 })
+
+      if (!f.settings.resourceMonitor.enabled) {
+        return json(
+          {
+            error: {
+              code: 'conflict',
+              message: 'resource monitor disabled',
+              details: { reason: 'resource_monitor_disabled' },
+            },
+          },
+          { status: 409 },
+        )
+      }
+
+      const parsedWindow = parseResourceWindow(url?.searchParams.get('window') ?? null)
+      const samples =
+        scenario === 'service-detail-resource-monitor-empty'
+          ? []
+          : buildResourceHistorySamples(serviceId, parsedWindow.seconds)
+
+      return json({
+        serviceId,
+        window: parsedWindow.window,
+        samples,
+      })
+    }
+
+    if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/resource-usage/events')) {
+      const parts = urlPath.split('/').filter(Boolean)
+      const serviceId = decodeURIComponent(parts[2] ?? '')
+      const found = findService(serviceId)
+      if (!found) return json({ error: 'not found' }, { status: 404 })
+
+      if (!f.settings.resourceMonitor.enabled) {
+        return json(
+          {
+            error: {
+              code: 'conflict',
+              message: 'resource monitor disabled',
+              details: { reason: 'resource_monitor_disabled' },
+            },
+          },
+          { status: 409 },
+        )
+      }
+
+      const samples = buildResourceHistorySamples(serviceId, 60 * 60)
+      const body = buildResourceSsePayload(serviceId, samples, scenario)
+      return new Response(body || ': keep-alive\\n\\n', {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'x-accel-buffering': 'no',
         },
       })
     }

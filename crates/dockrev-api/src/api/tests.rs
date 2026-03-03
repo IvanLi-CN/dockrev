@@ -1084,7 +1084,11 @@ async fn test_state_with(
         db.clone(),
         registry.clone(),
     ));
-    AppState::new(config, db, registry, runner, snapshot_worker)
+    let resource_hub = Arc::new(crate::resource_usage::RealtimeSamplerHub::new(
+        db.clone(),
+        runner.clone(),
+    ));
+    AppState::new(config, db, registry, runner, snapshot_worker, resource_hub)
 }
 
 async fn test_state(db_path: &str) -> Arc<AppState> {
@@ -1122,7 +1126,11 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
         db.clone(),
         registry.clone(),
     ));
-    AppState::new(config, db, registry, runner, snapshot_worker)
+    let resource_hub = Arc::new(crate::resource_usage::RealtimeSamplerHub::new(
+        db.clone(),
+        runner.clone(),
+    ));
+    AppState::new(config, db, registry, runner, snapshot_worker, resource_hub)
 }
 
 async fn test_state_auth_required(db_path: &str) -> Arc<AppState> {
@@ -1159,7 +1167,11 @@ async fn test_state_auth_required(db_path: &str) -> Arc<AppState> {
         db.clone(),
         registry.clone(),
     ));
-    AppState::new(config, db, registry, runner, snapshot_worker)
+    let resource_hub = Arc::new(crate::resource_usage::RealtimeSamplerHub::new(
+        db.clone(),
+        runner.clone(),
+    ));
+    AppState::new(config, db, registry, runner, snapshot_worker, resource_hub)
 }
 
 async fn seed_stack_from_compose(state: &Arc<AppState>, name: &str, compose_file: &str) -> String {
@@ -6250,7 +6262,17 @@ async fn settings_and_notifications_roundtrip() {
     assert_eq!(resp.status(), 200);
     let settings = response_json(resp).await;
     assert!(settings["backup"].is_object());
+    assert!(settings["resourceMonitor"].is_object());
     assert!(settings["auth"].is_object());
+    assert_eq!(settings["resourceMonitor"]["enabled"].as_bool(), Some(true));
+    assert_eq!(
+        settings["resourceMonitor"]["sampleIntervalSeconds"].as_u64(),
+        Some(30)
+    );
+    assert_eq!(
+        settings["resourceMonitor"]["retentionDays"].as_u64(),
+        Some(30)
+    );
 
     let put = serde_json::json!({
         "backup": {
@@ -6258,6 +6280,10 @@ async fn settings_and_notifications_roundtrip() {
             "requireSuccess": true,
             "baseDir": "/tmp/dockrev-backups",
             "skipTargetsOverBytes": 123
+        },
+        "resourceMonitor": {
+            "enabled": false,
+            "sampleIntervalSeconds": 60
         }
     });
     let resp = app
@@ -6289,6 +6315,73 @@ async fn settings_and_notifications_roundtrip() {
     assert_eq!(
         settings["backup"]["skipTargetsOverBytes"].as_u64().unwrap(),
         123
+    );
+    assert_eq!(
+        settings["resourceMonitor"]["enabled"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        settings["resourceMonitor"]["sampleIntervalSeconds"].as_u64(),
+        Some(60)
+    );
+    assert_eq!(
+        settings["resourceMonitor"]["retentionDays"].as_u64(),
+        Some(30)
+    );
+
+    let invalid = serde_json::json!({
+        "backup": settings["backup"],
+        "resourceMonitor": {
+            "enabled": true,
+            "sampleIntervalSeconds": 7
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(invalid.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/services/svc-test/resource-usage/history?window=1h")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    let payload = response_json(resp).await;
+    assert_eq!(
+        payload["error"]["details"]["reason"].as_str(),
+        Some("resource_monitor_disabled")
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/services/svc-test/resource-usage/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    let payload = response_json(resp).await;
+    assert_eq!(
+        payload["error"]["details"]["reason"].as_str(),
+        Some("resource_monitor_disabled")
     );
 
     let resp = app
@@ -6339,6 +6432,132 @@ async fn settings_and_notifications_roundtrip() {
     let conf = response_json(resp).await;
     assert!(conf["webhook"]["enabled"].as_bool().unwrap());
     assert_eq!(conf["webhook"]["url"].as_str().unwrap(), "******");
+}
+
+#[tokio::test]
+async fn resource_usage_history_returns_samples_for_window() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-resource-history-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: nginx:1.27
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let service_id = services[0].id.clone();
+
+    let now = time::OffsetDateTime::now_utc();
+    let sampled_at_1 = (now - time::Duration::minutes(20))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let sampled_at_2 = (now - time::Duration::minutes(5))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    state
+        .db
+        .insert_service_resource_samples(&[
+            crate::db::ServiceResourceSampleInput {
+                service_id: service_id.clone(),
+                sampled_at: sampled_at_1,
+                cpu_percent: 12.5,
+                mem_used_bytes: Some(128 * 1024 * 1024),
+                mem_limit_bytes: Some(1024 * 1024 * 1024),
+                net_rx_bytes: Some(5_000_000),
+                net_tx_bytes: Some(2_500_000),
+                block_read_bytes: Some(1_300_000),
+                block_write_bytes: Some(900_000),
+                pids: Some(8),
+                container_count: 1,
+            },
+            crate::db::ServiceResourceSampleInput {
+                service_id: service_id.clone(),
+                sampled_at: sampled_at_2,
+                cpu_percent: 18.0,
+                mem_used_bytes: Some(156 * 1024 * 1024),
+                mem_limit_bytes: Some(1024 * 1024 * 1024),
+                net_rx_bytes: Some(8_000_000),
+                net_tx_bytes: Some(4_800_000),
+                block_read_bytes: Some(2_300_000),
+                block_write_bytes: Some(1_700_000),
+                pids: Some(11),
+                container_count: 1,
+            },
+        ])
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{service_id}/resource-usage/history?window=1h"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let payload = response_json(resp).await;
+    assert_eq!(payload["serviceId"].as_str(), Some(service_id.as_str()));
+    assert_eq!(payload["window"].as_str(), Some("1h"));
+    let samples = payload["samples"].as_array().unwrap();
+    assert_eq!(samples.len(), 2);
+    assert_eq!(samples[0]["containerCount"].as_u64(), Some(1));
+    assert_eq!(samples[1]["cpuPercent"].as_f64(), Some(18.0));
+}
+
+#[tokio::test]
+async fn resource_usage_events_emits_error_when_runtime_stats_unavailable() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-resource-events-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: nginx:1.27
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let service_id = services[0].id.clone();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/resource-usage/events"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("text/event-stream")
+    );
+
+    let mut body = resp.into_body();
+    let evt = wait_for_sse_event(&mut body, "resource_usage_error", Duration::from_secs(2)).await;
+    let data: serde_json::Value = serde_json::from_str(&evt.data).unwrap();
+    assert_eq!(data["serviceId"].as_str(), Some(service_id.as_str()));
+    assert_eq!(data["error"].as_str(), Some("runtime_stats_unavailable"));
 }
 
 #[tokio::test]

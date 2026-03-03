@@ -12,8 +12,8 @@ use crate::api::types::{
     BackupSettings, ComposeConfig, ComposeRef, DeployWelcomeSettings, GitHubPackagesRepoDb,
     GitHubPackagesSettingsDb, GitHubPackagesTargetDb, GitHubPackagesWebhookDeliveryDb,
     GitHubPackagesWebhookDeliverySummary, IgnoreRule, IgnoreRuleMatch, IgnoreRuleScope,
-    JobListItem, JobLogLine, JobScope, JobType, NotificationSettings, ServiceSettings,
-    StackListItem, StackRecord, StackStatus,
+    JobListItem, JobLogLine, JobScope, JobType, NotificationSettings, ResourceMonitorSettings,
+    ServiceResourceSample, ServiceSettings, StackListItem, StackRecord, StackStatus,
 };
 
 #[derive(Clone, Debug)]
@@ -78,6 +78,28 @@ pub struct ImageDigestTagsSnapshotRow {
     pub snapshot_json: String,
     pub checked_at: String,
     pub updated_at: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct ServiceResourceSampleInput {
+    pub service_id: String,
+    pub sampled_at: String,
+    pub cpu_percent: f64,
+    pub mem_used_bytes: Option<u64>,
+    pub mem_limit_bytes: Option<u64>,
+    pub net_rx_bytes: Option<u64>,
+    pub net_tx_bytes: Option<u64>,
+    pub block_read_bytes: Option<u64>,
+    pub block_write_bytes: Option<u64>,
+    pub pids: Option<u64>,
+    pub container_count: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct ServiceResourceTarget {
+    pub service_id: String,
+    pub service_name: String,
+    pub compose_project: String,
 }
 
 #[derive(Clone, Debug)]
@@ -187,6 +209,7 @@ impl Db {
             ensure_service_columns(conn)?;
             ensure_notification_columns(conn)?;
             ensure_settings_deploy_welcome_columns(conn)?;
+            ensure_settings_resource_monitor_columns(conn)?;
             ensure_stack_archive_columns(conn)?;
             ensure_service_archive_columns(conn)?;
             ensure_discovery_schema(conn)?;
@@ -214,9 +237,11 @@ INSERT OR IGNORE INTO settings (
   backup_require_success,
   backup_base_dir,
   backup_skip_targets_over_bytes,
+  resource_monitor_enabled,
+  resource_sample_interval_seconds,
   deploy_welcome_never_auto_open,
   deploy_welcome_updated_at
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
 "#,
                 params![
                     "default",
@@ -224,6 +249,8 @@ INSERT OR IGNORE INTO settings (
                     1i64,
                     "/data/backups",
                     104857600i64,
+                    1i64,
+                    30i64,
                     0i64,
                     Option::<String>::None
                 ],
@@ -3343,6 +3370,30 @@ WHERE id = 'default'
         .context("get backup settings")
     }
 
+    pub async fn get_resource_monitor_settings(&self) -> anyhow::Result<ResourceMonitorSettings> {
+        self.call(|conn| {
+            Ok(conn.query_row(
+                r#"
+SELECT resource_monitor_enabled, resource_sample_interval_seconds
+FROM settings
+WHERE id = 'default'
+"#,
+                [],
+                |row| {
+                    let raw_interval = row.get::<_, i64>(1)? as u64;
+                    Ok(ResourceMonitorSettings {
+                        enabled: row.get::<_, i64>(0)? != 0,
+                        sample_interval_seconds:
+                            crate::resource_usage::normalize_sample_interval_seconds(raw_interval),
+                        retention_days: 30,
+                    })
+                },
+            )?)
+        })
+        .await
+        .context("get resource monitor settings")
+    }
+
     pub async fn get_deploy_welcome_settings(&self) -> anyhow::Result<DeployWelcomeSettings> {
         self.call(|conn| {
             Ok(conn.query_row(
@@ -3388,12 +3439,14 @@ WHERE id = 'default'
         .context("put deploy welcome settings")
     }
 
-    pub async fn put_backup_settings(
+    pub async fn put_settings(
         &self,
         backup: &BackupSettings,
+        resource_monitor: &ResourceMonitorSettings,
         now: &str,
     ) -> anyhow::Result<()> {
         let backup = backup.clone();
+        let resource_monitor = resource_monitor.clone();
         let now = now.to_string();
         self.call(move |conn| {
             conn.execute(
@@ -3404,7 +3457,9 @@ SET
   backup_require_success = ?2,
   backup_base_dir = ?3,
   backup_skip_targets_over_bytes = ?4,
-  updated_at = ?5
+  resource_monitor_enabled = ?5,
+  resource_sample_interval_seconds = ?6,
+  updated_at = ?7
 WHERE id = 'default'
 "#,
                 params![
@@ -3412,13 +3467,219 @@ WHERE id = 'default'
                     backup.require_success as i64,
                     backup.base_dir,
                     backup.skip_targets_over_bytes as i64,
+                    resource_monitor.enabled as i64,
+                    resource_monitor.sample_interval_seconds as i64,
                     now
                 ],
             )?;
             Ok(())
         })
         .await
-        .context("put backup settings")
+        .context("put settings")
+    }
+
+    pub async fn list_service_resource_targets(
+        &self,
+    ) -> anyhow::Result<Vec<ServiceResourceTarget>> {
+        self.call(|conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT
+  sv.id,
+  sv.name,
+  (
+    SELECT d.project
+    FROM discovered_compose_projects d
+    WHERE
+      d.stack_id = sv.stack_id
+      AND d.archived = 0
+      AND d.status != 'missing'
+    ORDER BY d.last_scan_at DESC
+    LIMIT 1
+  ) AS compose_project
+FROM services sv
+JOIN stacks st ON st.id = sv.stack_id
+WHERE st.archived = 0 AND sv.archived = 0
+ORDER BY sv.stack_id ASC, sv.name ASC
+"#,
+            )?;
+            let rows = stmt.query_map([], |row| {
+                let compose_project: Option<String> = row.get(2)?;
+                let service_id: String = row.get(0)?;
+                let service_name: String = row.get(1)?;
+                Ok(compose_project.map(|project| ServiceResourceTarget {
+                    service_id,
+                    service_name,
+                    compose_project: project,
+                }))
+            })?;
+            let mut out = Vec::new();
+            for row in rows {
+                if let Some(item) = row? {
+                    out.push(item);
+                }
+            }
+            Ok(out)
+        })
+        .await
+        .context("list service resource targets")
+    }
+
+    pub async fn get_service_resource_target(
+        &self,
+        service_id: &str,
+    ) -> anyhow::Result<Option<ServiceResourceTarget>> {
+        let service_id = service_id.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    r#"
+SELECT
+  sv.id,
+  sv.name,
+  (
+    SELECT d.project
+    FROM discovered_compose_projects d
+    WHERE
+      d.stack_id = sv.stack_id
+      AND d.archived = 0
+      AND d.status != 'missing'
+    ORDER BY d.last_scan_at DESC
+    LIMIT 1
+  ) AS compose_project
+FROM services sv
+JOIN stacks st ON st.id = sv.stack_id
+WHERE sv.id = ?1 AND st.archived = 0 AND sv.archived = 0
+"#,
+                    params![service_id],
+                    |row| {
+                        let compose_project: Option<String> = row.get(2)?;
+                        let service_id: String = row.get(0)?;
+                        let service_name: String = row.get(1)?;
+                        Ok(compose_project.map(|project| ServiceResourceTarget {
+                            service_id,
+                            service_name,
+                            compose_project: project,
+                        }))
+                    },
+                )
+                .optional()?
+                .flatten())
+        })
+        .await
+        .context("get service resource target")
+    }
+
+    pub async fn insert_service_resource_samples(
+        &self,
+        rows: &[ServiceResourceSampleInput],
+    ) -> anyhow::Result<usize> {
+        let rows = rows.to_vec();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let mut inserted = 0usize;
+            for row in rows {
+                tx.execute(
+                    r#"
+INSERT INTO service_resource_samples (
+  service_id,
+  sampled_at,
+  cpu_percent,
+  mem_used_bytes,
+  mem_limit_bytes,
+  net_rx_bytes,
+  net_tx_bytes,
+  block_read_bytes,
+  block_write_bytes,
+  pids,
+  container_count
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+"#,
+                    params![
+                        row.service_id,
+                        row.sampled_at,
+                        row.cpu_percent,
+                        row.mem_used_bytes.map(|v| v as i64),
+                        row.mem_limit_bytes.map(|v| v as i64),
+                        row.net_rx_bytes.map(|v| v as i64),
+                        row.net_tx_bytes.map(|v| v as i64),
+                        row.block_read_bytes.map(|v| v as i64),
+                        row.block_write_bytes.map(|v| v as i64),
+                        row.pids.map(|v| v as i64),
+                        row.container_count as i64,
+                    ],
+                )?;
+                inserted = inserted.saturating_add(1);
+            }
+            tx.commit()?;
+            Ok(inserted)
+        })
+        .await
+        .context("insert service resource samples")
+    }
+
+    pub async fn list_service_resource_samples_since(
+        &self,
+        service_id: &str,
+        since: &str,
+    ) -> anyhow::Result<Vec<ServiceResourceSample>> {
+        let service_id = service_id.to_string();
+        let since = since.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT
+  sampled_at,
+  cpu_percent,
+  mem_used_bytes,
+  mem_limit_bytes,
+  net_rx_bytes,
+  net_tx_bytes,
+  block_read_bytes,
+  block_write_bytes,
+  pids,
+  container_count
+FROM service_resource_samples
+WHERE service_id = ?1 AND sampled_at >= ?2
+ORDER BY sampled_at ASC
+"#,
+            )?;
+            let rows = stmt.query_map(params![service_id, since], |row| {
+                Ok(ServiceResourceSample {
+                    sampled_at: row.get(0)?,
+                    cpu_percent: row.get(1)?,
+                    mem_used_bytes: row.get::<_, Option<i64>>(2)?.map(|v| v as u64),
+                    mem_limit_bytes: row.get::<_, Option<i64>>(3)?.map(|v| v as u64),
+                    net_rx_bytes: row.get::<_, Option<i64>>(4)?.map(|v| v as u64),
+                    net_tx_bytes: row.get::<_, Option<i64>>(5)?.map(|v| v as u64),
+                    block_read_bytes: row.get::<_, Option<i64>>(6)?.map(|v| v as u64),
+                    block_write_bytes: row.get::<_, Option<i64>>(7)?.map(|v| v as u64),
+                    pids: row.get::<_, Option<i64>>(8)?.map(|v| v as u64),
+                    container_count: row.get::<_, i64>(9)? as u32,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list service resource samples since")
+    }
+
+    pub async fn delete_expired_service_resource_samples(
+        &self,
+        older_than: &str,
+    ) -> anyhow::Result<u64> {
+        let older_than = older_than.to_string();
+        self.call(move |conn| {
+            Ok(conn.execute(
+                r#"
+DELETE FROM service_resource_samples
+WHERE sampled_at < ?1
+"#,
+                params![older_than],
+            )? as u64)
+        })
+        .await
+        .context("delete expired service resource samples")
     }
 
     pub async fn insert_job(&self, job: JobListItem) -> anyhow::Result<()> {
@@ -4664,6 +4925,47 @@ fn ensure_settings_deploy_welcome_columns(conn: &rusqlite::Connection) -> anyhow
     Ok(())
 }
 
+fn ensure_settings_resource_monitor_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    #[derive(Clone)]
+    struct Col<'a> {
+        name: &'a str,
+        ddl: &'a str,
+    }
+
+    let desired = [
+        Col {
+            name: "resource_monitor_enabled",
+            ddl: "ALTER TABLE settings ADD COLUMN resource_monitor_enabled INTEGER NOT NULL DEFAULT 1",
+        },
+        Col {
+            name: "resource_sample_interval_seconds",
+            ddl: "ALTER TABLE settings ADD COLUMN resource_sample_interval_seconds INTEGER NOT NULL DEFAULT 30",
+        },
+    ];
+
+    let mut stmt = conn.prepare("PRAGMA table_info(settings)")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let existing = rows.collect::<Result<Vec<_>, _>>()?;
+
+    for col in desired {
+        if existing.iter().any(|c| c == col.name) {
+            continue;
+        }
+        conn.execute_batch(col.ddl)?;
+    }
+
+    conn.execute(
+        r#"
+UPDATE settings
+SET resource_sample_interval_seconds = 30
+WHERE resource_sample_interval_seconds NOT IN (10, 30, 60, 300)
+"#,
+        [],
+    )?;
+
+    Ok(())
+}
+
 fn ensure_stack_archive_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     #[derive(Clone)]
     struct Col<'a> {
@@ -5074,6 +5376,8 @@ CREATE TABLE IF NOT EXISTS settings (
   backup_require_success INTEGER NOT NULL,
   backup_base_dir TEXT NOT NULL,
   backup_skip_targets_over_bytes INTEGER NOT NULL,
+  resource_monitor_enabled INTEGER NOT NULL DEFAULT 1,
+  resource_sample_interval_seconds INTEGER NOT NULL DEFAULT 30,
   deploy_welcome_never_auto_open INTEGER NOT NULL DEFAULT 0,
   deploy_welcome_updated_at TEXT,
   updated_at TEXT
@@ -5215,4 +5519,23 @@ CREATE TABLE IF NOT EXISTS image_digest_tags_snapshots (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (image_repo, digest, host_platform)
 );
+
+CREATE TABLE IF NOT EXISTS service_resource_samples (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  sampled_at TEXT NOT NULL,
+  cpu_percent REAL NOT NULL,
+  mem_used_bytes INTEGER,
+  mem_limit_bytes INTEGER,
+  net_rx_bytes INTEGER,
+  net_tx_bytes INTEGER,
+  block_read_bytes INTEGER,
+  block_write_bytes INTEGER,
+  pids INTEGER,
+  container_count INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_service_resource_samples_service_time
+  ON service_resource_samples(service_id, sampled_at);
+CREATE INDEX IF NOT EXISTS idx_service_resource_samples_sampled_at
+  ON service_resource_samples(sampled_at);
 "#;
