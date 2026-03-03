@@ -97,12 +97,13 @@ impl RealtimeSamplerHub {
         let entry = {
             let mut map = self.samplers.lock().await;
             if let Some(existing) = map.get(&service_id) {
+                existing.subscribers.fetch_add(1, Ordering::SeqCst);
                 existing.clone()
             } else {
                 let (tx, _rx) = broadcast::channel(64);
                 let created = Arc::new(SamplerEntry {
                     tx,
-                    subscribers: Arc::new(AtomicUsize::new(0)),
+                    subscribers: Arc::new(AtomicUsize::new(1)),
                 });
                 map.insert(service_id.clone(), created.clone());
                 self.spawn_sampler_task(service_id.clone(), created.clone());
@@ -110,7 +111,6 @@ impl RealtimeSamplerHub {
             }
         };
 
-        entry.subscribers.fetch_add(1, Ordering::SeqCst);
         RealtimeSubscription {
             receiver: entry.tx.subscribe(),
             _guard: SubscriptionGuard {
@@ -147,7 +147,16 @@ impl RealtimeSamplerHub {
                 if subs == 0 {
                     match idle_since {
                         None => idle_since = Some(Instant::now()),
-                        Some(t) if t.elapsed() >= Duration::from_secs(10) => break,
+                        Some(t) if t.elapsed() >= Duration::from_secs(10) => {
+                            let removed = {
+                                let mut map = samplers.lock().await;
+                                try_remove_idle_sampler_entry(&mut map, &service_id, &entry)
+                            };
+                            if removed {
+                                break;
+                            }
+                            idle_since = None;
+                        }
                         _ => {}
                     }
                     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -207,15 +216,23 @@ impl RealtimeSamplerHub {
 
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
-
-            let mut map = samplers.lock().await;
-            if let Some(existing) = map.get(&service_id)
-                && Arc::ptr_eq(existing, &entry)
-            {
-                map.remove(&service_id);
-            }
         });
     }
+}
+
+fn try_remove_idle_sampler_entry(
+    map: &mut BTreeMap<String, Arc<SamplerEntry>>,
+    service_id: &str,
+    entry: &Arc<SamplerEntry>,
+) -> bool {
+    if let Some(existing) = map.get(service_id)
+        && Arc::ptr_eq(existing, entry)
+        && entry.subscribers.load(Ordering::SeqCst) == 0
+    {
+        map.remove(service_id);
+        return true;
+    }
+    false
 }
 
 pub fn spawn_history_sampler(db: Db, runner: Arc<dyn CommandRunner>) {
@@ -638,4 +655,37 @@ fn parse_size_to_bytes(input: &str) -> Option<u64> {
 
 fn now_rfc3339() -> anyhow::Result<String> {
     Ok(time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_entry(subscribers: usize) -> Arc<SamplerEntry> {
+        let (tx, _rx) = broadcast::channel(4);
+        Arc::new(SamplerEntry {
+            tx,
+            subscribers: Arc::new(AtomicUsize::new(subscribers)),
+        })
+    }
+
+    #[test]
+    fn try_remove_idle_sampler_entry_removes_when_subscribers_is_zero() {
+        let mut map = BTreeMap::new();
+        let entry = make_entry(0);
+        map.insert("svc".to_string(), entry.clone());
+
+        assert!(try_remove_idle_sampler_entry(&mut map, "svc", &entry));
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn try_remove_idle_sampler_entry_keeps_entry_when_subscribers_exist() {
+        let mut map = BTreeMap::new();
+        let entry = make_entry(1);
+        map.insert("svc".to_string(), entry.clone());
+
+        assert!(!try_remove_idle_sampler_entry(&mut map, "svc", &entry));
+        assert!(map.contains_key("svc"));
+    }
 }
