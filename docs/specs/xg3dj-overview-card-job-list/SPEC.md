@@ -77,3 +77,4 @@
 - 2026-03-03: 新增 `web/tests/overviewJobsCard.test.ts`，覆盖 in-flight 优先、补齐、上限、空数据、同时间戳稳定排序；新增 Storybook 概览卡片场景（in-flight 堆积 / mixed fallback / empty）。
 - 2026-03-03: 验证通过 `bun test --cwd web`、`bun run --cwd web lint`、`bun run --cwd web build`、`DOCKREV_TEST_STORYBOOK_PORT=50999 bun run --cwd web test-storybook`；review-loop 无阻断项。
 - 2026-03-03: 根据评审反馈将任务行改为单行列表样式（移除条目卡片化），保留状态色标、点击跳转与排序/补齐逻辑。
+- 2026-03-03: 优化单行列表排版：减少胶囊数量，改为“状态 + 任务标题 + 紧凑元信息”三段式，并对长文本做单行截断，提升扫描效率与整洁度。

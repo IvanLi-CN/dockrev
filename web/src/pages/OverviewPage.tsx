@@ -42,6 +42,17 @@ function formatShort(ts?: string | null) {
   return d.toLocaleString()
 }
 
+function formatCompactDateTime(ts?: string | null) {
+  if (!ts) return '-'
+  const d = new Date(ts)
+  if (Number.isNaN(d.valueOf())) return ts
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  const h = String(d.getHours()).padStart(2, '0')
+  const min = String(d.getMinutes()).padStart(2, '0')
+  return `${m}/${day} ${h}:${min}`
+}
+
 function splitImageRef(ref: string): { registry: string; name: string } {
   const s = ref.trim()
   const withoutDigest = s.includes('@') ? s.split('@', 1)[0] : s
@@ -1037,9 +1048,21 @@ export function OverviewPage(props: {
                     <span className="overviewJobStatusTag" data-status={job.status}>
                       {job.status}
                     </span>
-                    <span className={`jobTypeTag jobTypeTag-${job.typeTone}`}>{job.primaryLabel}</span>
-                    {job.scopeTag ? <span className="jobScopeTag">{job.scopeTag}</span> : null}
-                    <span className="overviewJobLineMeta">{`created ${formatShort(job.createdAt)} · by ${job.createdBy} · reason ${job.reason}`}</span>
+                    <span className={`overviewJobTitle overviewJobTitle-${job.typeTone}`}>
+                      {job.primaryLabel}
+                      {job.scopeTag ? <span className="overviewJobScope"> · {job.scopeTag}</span> : null}
+                    </span>
+                    <span className="overviewJobLineMeta">
+                      <span>{formatCompactDateTime(job.createdAt)}</span>
+                      <span className="overviewJobLineMetaSep">·</span>
+                      <span>{job.createdBy}</span>
+                      {job.reason && job.reason !== 'ui' ? (
+                        <>
+                          <span className="overviewJobLineMetaSep">·</span>
+                          <span>{job.reason}</span>
+                        </>
+                      ) : null}
+                    </span>
                   </span>
                 </button>
               ))
