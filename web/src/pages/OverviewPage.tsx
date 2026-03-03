@@ -1036,52 +1036,65 @@ export function OverviewPage(props: {
             {overviewCardJobs.length === 0 ? (
               <div className="muted">暂无任务</div>
             ) : (
-              overviewCardJobs.map((job) => (
-                <button
-                  key={job.jobId}
-                  type="button"
-                  className="overviewJobListRow"
-                  data-progress-mode={job.progressMode}
-                  style={
-                    (job.progressMode === 'determinate' && job.progressPercent !== null
-                      ? { '--overview-row-progress': `${job.progressPercent}%` }
-                      : undefined) as CSSProperties | undefined
-                  }
-                  onClick={() => navigate({ name: 'job', jobId: job.jobId })}
-                  title={`${job.status} · ${job.primaryLabel}${job.scopeTag ? ` ${job.scopeTag}` : ''} · ${formatShort(job.createdAt)} · by ${job.createdBy} · reason ${job.reason}${
-                    job.progressMode === 'determinate' && job.progressPercent !== null
-                      ? ` · progress ${job.progressPercent}%`
-                      : job.progressMode === 'indeterminate'
-                        ? ' · progress running'
-                        : ''
-                  }`}
-                >
-                  <span className="overviewJobProgressBg" aria-hidden="true">
-                    <span className="overviewJobProgressBgFill" />
-                    <span className="overviewJobProgressBgShimmer" />
-                  </span>
-                  <span className="overviewJobLine">
-                    <span className="overviewJobStatusTag" data-status={job.status}>
-                      {job.status}
+              overviewCardJobs.map((job) => {
+                const progressTitle =
+                  job.progressMode === 'determinate' && job.progressPercent !== null
+                    ? ` · progress ${job.progressPercent}%`
+                    : job.progressMode === 'indeterminate'
+                      ? ' · progress running'
+                      : ''
+                const title = `${job.status} · ${job.primaryLabel}${job.scopeTag ? ` ${job.scopeTag}` : ''} · ${formatShort(job.createdAt)} · by ${job.createdBy} · reason ${job.reason}${progressTitle}`
+                const ariaLabel = `${job.status}，${job.primaryLabel}${job.scopeTag ? ` ${job.scopeTag}` : ''}，创建时间 ${formatShort(job.createdAt)}，创建人 ${job.createdBy}，来源 ${job.reason}${
+                  job.progressMode === 'determinate' && job.progressPercent !== null
+                    ? `，进度 ${job.progressPercent}%`
+                    : job.progressMode === 'indeterminate'
+                      ? '，进度运行中'
+                      : ''
+                }`
+                return (
+                  <button
+                    key={job.jobId}
+                    type="button"
+                    className="overviewJobListRow"
+                    data-progress-mode={job.progressMode}
+                    style={
+                      (job.progressMode === 'determinate' && job.progressPercent !== null
+                        ? { '--overview-row-progress': `${job.progressPercent}%` }
+                        : undefined) as CSSProperties | undefined
+                    }
+                    onClick={() => navigate({ name: 'job', jobId: job.jobId })}
+                    title={title}
+                    aria-label={ariaLabel}
+                  >
+                    {job.progressMode !== 'none' ? (
+                      <span className="overviewJobProgressBg" aria-hidden="true">
+                        <span className="overviewJobProgressBgFill" />
+                        <span className="overviewJobProgressBgShimmer" />
+                      </span>
+                    ) : null}
+                    <span className="overviewJobLine">
+                      <span className="overviewJobStatusTag" data-status={job.status}>
+                        {job.status}
+                      </span>
+                      <span className={`overviewJobTitle overviewJobTitle-${job.typeTone}`}>
+                        {job.primaryLabel}
+                        {job.scopeTag ? <span className="overviewJobScope"> · {job.scopeTag}</span> : null}
+                      </span>
+                      <span className="overviewJobLineMeta">
+                        <span>{formatCompactDateTime(job.createdAt)}</span>
+                        <span className="overviewJobLineMetaSep">·</span>
+                        <span>{job.createdBy}</span>
+                        {job.reason && job.reason !== 'ui' ? (
+                          <>
+                            <span className="overviewJobLineMetaSep">·</span>
+                            <span>{job.reason}</span>
+                          </>
+                        ) : null}
+                      </span>
                     </span>
-                    <span className={`overviewJobTitle overviewJobTitle-${job.typeTone}`}>
-                      {job.primaryLabel}
-                      {job.scopeTag ? <span className="overviewJobScope"> · {job.scopeTag}</span> : null}
-                    </span>
-                    <span className="overviewJobLineMeta">
-                      <span>{formatCompactDateTime(job.createdAt)}</span>
-                      <span className="overviewJobLineMetaSep">·</span>
-                      <span>{job.createdBy}</span>
-                      {job.reason && job.reason !== 'ui' ? (
-                        <>
-                          <span className="overviewJobLineMetaSep">·</span>
-                          <span>{job.reason}</span>
-                        </>
-                      ) : null}
-                    </span>
-                  </span>
-                </button>
-              ))
+                  </button>
+                )
+              })
             )}
           </div>
         </div>

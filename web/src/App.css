@@ -2048,12 +2048,16 @@ html[data-theme='light'] .modalOverlay {
   width: 34%;
   opacity: 0;
   transform: translateX(-118%);
-  animation: overviewRowProgressShimmer 3.9s ease-in-out infinite;
-  will-change: transform;
 }
 
 .overviewJobListRow[data-progress-mode='determinate'] .overviewJobProgressBg {
   opacity: 1;
+}
+
+.overviewJobListRow[data-progress-mode='determinate'] .overviewJobProgressBgShimmer,
+.overviewJobListRow[data-progress-mode='indeterminate'] .overviewJobProgressBgShimmer {
+  animation: overviewRowProgressShimmer 3.9s ease-in-out infinite;
+  will-change: transform;
 }
 
 .overviewJobListRow[data-progress-mode='determinate'] .overviewJobProgressBgFill {

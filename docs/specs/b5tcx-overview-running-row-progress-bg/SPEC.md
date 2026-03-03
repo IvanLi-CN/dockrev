@@ -102,6 +102,8 @@
 
 - 2026-03-03: 创建规格，冻结“仅概览卡片 running 行背景进度 + 慢速流光 + 低存在感”的边界。
 - 2026-03-03: 完成 `OverviewPage` 背景进度层接线与标题补充（含 `determinate/indeterminate` 数据驱动）。
+- 2026-03-03: 补充 `OverviewPage` 任务行 `aria-label` 进度语义（determinate 百分比 / indeterminate running）。
 - 2026-03-03: 完成 `App.css` 慢速流光视觉与 `prefers-reduced-motion` 兜底。
+- 2026-03-03: 修复 Storybook 场景构造器对显式 `null` 时间戳的吞并（保留 running/queued 的 `startedAt/finishedAt=null`）。
 - 2026-03-03: 补充 `overviewJobsCard` 进度映射逻辑与单测；新增 Storybook 概览场景回归。
 - 2026-03-03: 验证通过 `bun test --cwd web`、`bun run --cwd web lint`、`bun run --cwd web build`、`DOCKREV_TEST_STORYBOOK_PORT=50999 bun run --cwd web test-storybook`。
