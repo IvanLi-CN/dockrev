@@ -100,3 +100,4 @@ Dockrev 的发布流程原本只支持可选 `channel:prerelease`：
 
 - 2026-03-04: 创建规格并完成实现：发布 channel 改为显式必选（`stable|rc`），CI gate / release-intent / release workflow / README 同步更新，远端 labels 完成迁移。
 - 2026-03-04: 增加 `release-channel-contract-check.sh` 并接入 `CI (PR)` / `CI (main)` 的 Lint & Checks，覆盖 stable/rc/缺失/冲突/未知通道矩阵与 release.yml 关键分支不变量。
+- 2026-03-04: 强化门禁可信性与稳定性：`label-gate.yml` 改为 `pull_request_target` 并固定检出 `base.sha` 执行 gate 脚本；contract-check 增加 trusted-workflow 不变量与 mock API 启动重试。
