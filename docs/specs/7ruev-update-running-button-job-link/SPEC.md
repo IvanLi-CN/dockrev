@@ -85,6 +85,7 @@
 ## 变更记录（Change log）
 
 - 2026-03-04：实现“更新中按钮可点击跳任务详情”，并补充 storybook 自动回归。
+- 2026-03-04：review-loop 修复活跃态按钮禁用判断与 tracker 轮询竞态覆盖问题。
 
 ## 参考（References）
 
