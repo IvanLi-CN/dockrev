@@ -1,16 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
-import alertCircleOutline from '@iconify-icons/mdi/alert-circle-outline'
-import bellOutline from '@iconify-icons/mdi/bell-outline'
-import checkCircleOutline from '@iconify-icons/mdi/check-circle-outline'
-import closeCircleOutline from '@iconify-icons/mdi/close-circle-outline'
 import eyeOffOutline from '@iconify-icons/mdi/eye-off-outline'
 import eyeOutline from '@iconify-icons/mdi/eye-outline'
-import emailOutline from '@iconify-icons/mdi/email-outline'
-import linkVariant from '@iconify-icons/mdi/link-variant'
-import progressClock from '@iconify-icons/mdi/progress-clock'
-import sendCircleOutline from '@iconify-icons/mdi/send-circle-outline'
-import telegram from '@iconify-icons/mdi/telegram'
 import {
   ApiError,
   createWebPushSubscription,
@@ -37,6 +28,10 @@ import {
   type PutSettingsInput,
   type SettingsResponse,
 } from '../api'
+import {
+  NotificationChannelCard,
+  type NotificationChannelTestState,
+} from '../components/NotificationChannelCard'
 import { Button, Mono, Switch } from '../ui'
 import { useConfirm } from '../confirm'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
@@ -103,6 +98,12 @@ const GHCR_JOB_TYPES = new Set([
   'github_packages_webhook_sync_all',
   'github_packages_webhook_sync_repo',
 ])
+const NOTIFICATION_CHANNEL_LABEL: Record<NotificationTestChannel, string> = {
+  email: 'Email',
+  webhook: 'Webhook',
+  telegram: 'Telegram',
+  webPush: 'Web Push',
+}
 
 type GhcrDraft = {
   enabled: boolean
@@ -230,34 +231,6 @@ function mapScopeLabel(scope: SaveScope): string {
   if (scope === 'notifications') return '通知'
   return 'GHCR'
 }
-
-type NotificationTestBubbleStepTone = 'running' | 'success' | 'error' | 'info'
-
-type NotificationTestBubbleStep = {
-  tone: NotificationTestBubbleStepTone
-  text: string
-}
-
-type NotificationChannelTestState = {
-  phase: 'running' | 'success' | 'error'
-  steps: NotificationTestBubbleStep[]
-  updatedAt: string
-  errorDetail?: string
-}
-
-const NOTIFICATION_CHANNEL_LABEL: Record<NotificationTestChannel, string> = {
-  email: 'Email',
-  webhook: 'Webhook',
-  telegram: 'Telegram',
-  webPush: 'Web Push',
-}
-
-const NOTIFICATION_CHANNEL_ICON = {
-  email: emailOutline,
-  webhook: linkVariant,
-  telegram,
-  webPush: bellOutline,
-} as const
 
 function runningTestState(channel: NotificationTestChannel): NotificationChannelTestState {
   const label = NOTIFICATION_CHANNEL_LABEL[channel]
@@ -650,74 +623,6 @@ function GitHubPackagesRepoPicker({
           )}
         </div>
       </div>
-    </div>
-  )
-}
-
-function NotificationChannelTestControl(props: {
-  channel: NotificationTestChannel
-  state: NotificationChannelTestState | undefined
-  running: boolean
-  onRun: (channel: NotificationTestChannel) => void
-}) {
-  const label = NOTIFICATION_CHANNEL_LABEL[props.channel]
-
-  return (
-    <div className="notificationTestActionWrap" data-notification-test-wrap={props.channel}>
-      <button
-        type="button"
-        className={`btn btnGhost notificationTestBtn${props.running ? ' notificationTestBtnRunning' : ''}`}
-        onClick={() => props.onRun(props.channel)}
-        disabled={props.running}
-        aria-label={`测试 ${label} 通道`}
-        title={`测试 ${label} 通道`}
-        data-notification-test-channel={props.channel}
-      >
-        <span className="notificationTestBtnInner">
-          <Icon icon={NOTIFICATION_CHANNEL_ICON[props.channel]} className="notificationTestBtnIcon" aria-hidden="true" />
-          <span>测试</span>
-        </span>
-      </button>
-
-      {props.state ? (
-        <div
-          className={`notificationTestBubble notificationTestBubble${props.state.phase === 'error' ? 'Bad' : props.state.phase === 'success' ? 'Ok' : 'Info'}`}
-          role="status"
-          aria-live="polite"
-          data-notification-test-bubble={props.channel}
-        >
-          <div className="notificationTestBubbleTitle">
-            <Icon icon={sendCircleOutline} aria-hidden="true" />
-            <span>{label} 测试</span>
-          </div>
-          <div className="notificationTestBubbleSteps">
-            {props.state.steps.map((step, index) => {
-              const icon =
-                step.tone === 'success'
-                  ? checkCircleOutline
-                  : step.tone === 'error'
-                    ? closeCircleOutline
-                    : step.tone === 'running'
-                      ? progressClock
-                      : alertCircleOutline
-              return (
-                <div
-                  key={`${props.channel}-${index}-${step.text}`}
-                  className={`notificationTestBubbleStep notificationTestBubbleStep${step.tone === 'running' ? 'Running' : step.tone === 'success' ? 'Ok' : step.tone === 'error' ? 'Bad' : 'Info'}`}
-                >
-                  <Icon
-                    icon={icon}
-                    className={step.tone === 'running' ? 'notificationTestBubbleStepIconSpin' : undefined}
-                    aria-hidden="true"
-                  />
-                  <span>{step.text}</span>
-                </div>
-              )
-            })}
-          </div>
-          {props.state.errorDetail ? <div className="notificationTestBubbleError">{props.state.errorDetail}</div> : null}
-        </div>
-      ) : null}
     </div>
   )
 }
@@ -1780,237 +1685,198 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             <div className="title">通知</div>
             <div className="muted">事件：发现更新 / 版本提示 / 更新成功 / 更新失败 / 备份失败</div>
 
-            <div className="settingsSection">
-              <div className="settingHead">
-                <div className="sectionTitle">Email</div>
-                <div className="notificationChannelHeadActions">
-                  <NotificationChannelTestControl
-                    channel="email"
-                    state={notificationTestStates.email}
-                    running={Boolean(notificationTestRunning.email)}
-                    onRun={runNotificationChannelTest}
-                  />
-                  <Switch
-                    checked={notifications.email.enabled}
-                    disabled={busy}
-                    onChange={(v) =>
-                      updateNotifications(
-                        'notifications.email.enabled',
-                        (current) => ({ ...current, email: { ...current.email, enabled: v } }),
-                        true,
-                      )
-                    }
-                  />
-                </div>
+            <NotificationChannelCard
+              channel="email"
+              title="Email"
+              enabled={notifications.email.enabled}
+              busy={busy}
+              testState={notificationTestStates.email}
+              testRunning={Boolean(notificationTestRunning.email)}
+              onRunTest={runNotificationChannelTest}
+              onToggleEnabled={(v) =>
+                updateNotifications(
+                  'notifications.email.enabled',
+                  (current) => ({ ...current, email: { ...current.email, enabled: v } }),
+                  true,
+                )
+              }
+            >
+              <div className="kvRow">
+                <div className="label">SMTP URL</div>
+                <input
+                  className="input"
+                  value={notifications.email.smtpUrl ?? ''}
+                  onChange={(e) =>
+                    updateNotifications('notifications.email.smtpUrl', (current) => ({
+                      ...current,
+                      email: { ...current.email, smtpUrl: e.target.value },
+                    }))
+                  }
+                  placeholder="smtp://user:pass@smtp.example.com:587"
+                />
               </div>
-              <div className="kv">
-                <div className="kvRow">
-                  <div className="label">SMTP URL</div>
-                  <input
-                    className="input"
-                    value={notifications.email.smtpUrl ?? ''}
-                    onChange={(e) =>
-                      updateNotifications('notifications.email.smtpUrl', (current) => ({
-                        ...current,
-                        email: { ...current.email, smtpUrl: e.target.value },
-                      }))
-                    }
-                    placeholder="smtp://user:pass@smtp.example.com:587"
-                  />
-                </div>
-              </div>
-            </div>
+            </NotificationChannelCard>
 
-            <div className="settingsSection">
-              <div className="settingHead">
-                <div className="sectionTitle">Webhook</div>
-                <div className="notificationChannelHeadActions">
-                  <NotificationChannelTestControl
-                    channel="webhook"
-                    state={notificationTestStates.webhook}
-                    running={Boolean(notificationTestRunning.webhook)}
-                    onRun={runNotificationChannelTest}
-                  />
-                  <Switch
-                    checked={notifications.webhook.enabled}
-                    disabled={busy}
-                    onChange={(v) =>
-                      updateNotifications(
-                        'notifications.webhook.enabled',
-                        (current) => ({ ...current, webhook: { ...current.webhook, enabled: v } }),
-                        true,
-                      )
-                    }
-                  />
-                </div>
+            <NotificationChannelCard
+              channel="webhook"
+              title="Webhook"
+              enabled={notifications.webhook.enabled}
+              busy={busy}
+              testState={notificationTestStates.webhook}
+              testRunning={Boolean(notificationTestRunning.webhook)}
+              onRunTest={runNotificationChannelTest}
+              onToggleEnabled={(v) =>
+                updateNotifications(
+                  'notifications.webhook.enabled',
+                  (current) => ({ ...current, webhook: { ...current.webhook, enabled: v } }),
+                  true,
+                )
+              }
+            >
+              <div className="kvRow">
+                <div className="label">URL</div>
+                <input
+                  className="input"
+                  value={notifications.webhook.url ?? ''}
+                  onChange={(e) =>
+                    updateNotifications('notifications.webhook.url', (current) => ({
+                      ...current,
+                      webhook: { ...current.webhook, url: e.target.value },
+                    }))
+                  }
+                  placeholder="https://hooks.example.com/dockrev"
+                />
               </div>
-              <div className="kv">
-                <div className="kvRow">
-                  <div className="label">URL</div>
-                  <input
-                    className="input"
-                    value={notifications.webhook.url ?? ''}
-                    onChange={(e) =>
-                      updateNotifications('notifications.webhook.url', (current) => ({
-                        ...current,
-                        webhook: { ...current.webhook, url: e.target.value },
-                      }))
-                    }
-                    placeholder="https://hooks.example.com/dockrev"
-                  />
-                </div>
-              </div>
-            </div>
+            </NotificationChannelCard>
 
-            <div className="settingsSection">
-              <div className="settingHead">
-                <div className="sectionTitle">Telegram</div>
-                <div className="notificationChannelHeadActions">
-                  <NotificationChannelTestControl
-                    channel="telegram"
-                    state={notificationTestStates.telegram}
-                    running={Boolean(notificationTestRunning.telegram)}
-                    onRun={runNotificationChannelTest}
-                  />
-                  <Switch
-                    checked={notifications.telegram.enabled}
-                    disabled={busy}
-                    onChange={(v) =>
-                      updateNotifications(
-                        'notifications.telegram.enabled',
-                        (current) => ({ ...current, telegram: { ...current.telegram, enabled: v } }),
-                        true,
-                      )
-                    }
-                  />
-                </div>
-              </div>
-              <div className="kv">
-                <div className="kvRow">
-                  <div className="label">Bot token</div>
-                  <div className={showTelegramBotTokenEye ? 'inputWithAction' : undefined}>
-                    <input
-                      className={telegramBotTokenInputClassName}
-                      type={telegramBotTokenVisible ? 'text' : 'password'}
-                      autoComplete="new-password"
-                      value={notifications.telegram.botToken ?? ''}
-                      onFocus={() => {
-                        setTelegramBotTokenFocused(true)
-                        clearTelegramBotTokenMaskForEdit()
-                      }}
-                      onBlur={() => {
-                        setTelegramBotTokenFocused(false)
-                        setTelegramBotTokenVisible(false)
-                        restoreTelegramBotTokenMaskIfNeeded()
-                      }}
-                      onChange={(e) => {
-                        setTelegramBotTokenTouched(true)
-                        updateNotifications('notifications.telegram.botToken', (current) => ({
-                          ...current,
-                          telegram: {
-                            ...current.telegram,
-                            botToken: e.target.value,
-                            botTokenConfigured:
-                              e.target.value.trim().length > 0
-                                ? true
-                                : (current.telegram.botTokenConfigured ?? false),
-                          },
-                        }))
-                      }}
-                    />
-                    {showTelegramBotTokenEye ? (
-                      <button
-                        type="button"
-                        className="inputActionBtn"
-                        aria-label={telegramBotTokenVisible ? '隐藏 Bot token' : '显示 Bot token'}
-                        title={telegramBotTokenVisible ? '隐藏 Bot token' : '显示 Bot token'}
-                        onClick={() => setTelegramBotTokenVisible((prev) => !prev)}
-                      >
-                        <Icon icon={telegramBotTokenVisible ? eyeOffOutline : eyeOutline} aria-hidden="true" />
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="kvRow">
-                  <div className="label">Chat id</div>
+            <NotificationChannelCard
+              channel="telegram"
+              title="Telegram"
+              enabled={notifications.telegram.enabled}
+              busy={busy}
+              testState={notificationTestStates.telegram}
+              testRunning={Boolean(notificationTestRunning.telegram)}
+              onRunTest={runNotificationChannelTest}
+              onToggleEnabled={(v) =>
+                updateNotifications(
+                  'notifications.telegram.enabled',
+                  (current) => ({ ...current, telegram: { ...current.telegram, enabled: v } }),
+                  true,
+                )
+              }
+            >
+              <div className="kvRow">
+                <div className="label">Bot token</div>
+                <div className={showTelegramBotTokenEye ? 'inputWithAction' : undefined}>
                   <input
-                    className="input"
-                    value={notifications.telegram.chatId ?? ''}
-                    onChange={(e) =>
-                      updateNotifications('notifications.telegram.chatId', (current) => ({
+                    className={telegramBotTokenInputClassName}
+                    type={telegramBotTokenVisible ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    value={notifications.telegram.botToken ?? ''}
+                    onFocus={() => {
+                      setTelegramBotTokenFocused(true)
+                      clearTelegramBotTokenMaskForEdit()
+                    }}
+                    onBlur={() => {
+                      setTelegramBotTokenFocused(false)
+                      setTelegramBotTokenVisible(false)
+                      restoreTelegramBotTokenMaskIfNeeded()
+                    }}
+                    onChange={(e) => {
+                      setTelegramBotTokenTouched(true)
+                      updateNotifications('notifications.telegram.botToken', (current) => ({
                         ...current,
-                        telegram: { ...current.telegram, chatId: e.target.value },
+                        telegram: {
+                          ...current.telegram,
+                          botToken: e.target.value,
+                          botTokenConfigured:
+                            e.target.value.trim().length > 0 ? true : (current.telegram.botTokenConfigured ?? false),
+                        },
                       }))
-                    }
+                    }}
                   />
+                  {showTelegramBotTokenEye ? (
+                    <button
+                      type="button"
+                      className="inputActionBtn"
+                      aria-label={telegramBotTokenVisible ? '隐藏 Bot token' : '显示 Bot token'}
+                      title={telegramBotTokenVisible ? '隐藏 Bot token' : '显示 Bot token'}
+                      onClick={() => setTelegramBotTokenVisible((prev) => !prev)}
+                    >
+                      <Icon icon={telegramBotTokenVisible ? eyeOffOutline : eyeOutline} aria-hidden="true" />
+                    </button>
+                  ) : null}
                 </div>
               </div>
-            </div>
+              <div className="kvRow">
+                <div className="label">Chat id</div>
+                <input
+                  className="input"
+                  value={notifications.telegram.chatId ?? ''}
+                  onChange={(e) =>
+                    updateNotifications('notifications.telegram.chatId', (current) => ({
+                      ...current,
+                      telegram: { ...current.telegram, chatId: e.target.value },
+                    }))
+                  }
+                />
+              </div>
+            </NotificationChannelCard>
 
-            <div className="settingsSection">
-              <div className="settingHead">
-                <div className="sectionTitle">Web Push（Chrome / VAPID）</div>
-                <div className="notificationChannelHeadActions">
-                  <NotificationChannelTestControl
-                    channel="webPush"
-                    state={notificationTestStates.webPush}
-                    running={Boolean(notificationTestRunning.webPush)}
-                    onRun={runNotificationChannelTest}
-                  />
-                  <Switch
-                    checked={notifications.webPush.enabled}
-                    disabled={busy}
-                    onChange={(v) =>
-                      updateNotifications(
-                        'notifications.webPush.enabled',
-                        (current) => ({ ...current, webPush: { ...current.webPush, enabled: v } }),
-                        true,
-                      )
-                    }
-                  />
-                </div>
+            <NotificationChannelCard
+              channel="webPush"
+              title="Web Push（Chrome / VAPID）"
+              enabled={notifications.webPush.enabled}
+              busy={busy}
+              testState={notificationTestStates.webPush}
+              testRunning={Boolean(notificationTestRunning.webPush)}
+              onRunTest={runNotificationChannelTest}
+              onToggleEnabled={(v) =>
+                updateNotifications(
+                  'notifications.webPush.enabled',
+                  (current) => ({ ...current, webPush: { ...current.webPush, enabled: v } }),
+                  true,
+                )
+              }
+            >
+              <div className="kvRow">
+                <div className="label">Public Key</div>
+                <input
+                  className="input"
+                  value={notifications.webPush.vapidPublicKey ?? ''}
+                  onChange={(e) =>
+                    updateNotifications('notifications.webPush.vapidPublicKey', (current) => ({
+                      ...current,
+                      webPush: { ...current.webPush, vapidPublicKey: e.target.value },
+                    }))
+                  }
+                />
               </div>
-
-              <div className="kv">
-                <div className="kvRow">
-                  <div className="label">Public Key</div>
-                  <input
-                    className="input"
-                    value={notifications.webPush.vapidPublicKey ?? ''}
-                    onChange={(e) =>
-                      updateNotifications('notifications.webPush.vapidPublicKey', (current) => ({
-                        ...current,
-                        webPush: { ...current.webPush, vapidPublicKey: e.target.value },
-                      }))
-                    }
-                  />
-                </div>
-                <div className="kvRow">
-                  <div className="label">Private Key（留空=保持原值）</div>
-                  <input
-                    className="input"
-                    value={notifications.webPush.vapidPrivateKey ?? ''}
-                    onChange={(e) =>
-                      updateNotifications('notifications.webPush.vapidPrivateKey', (current) => ({
-                        ...current,
-                        webPush: { ...current.webPush, vapidPrivateKey: e.target.value },
-                      }))
-                    }
-                  />
-                </div>
-                <div className="kvRow">
-                  <div className="label">Subject</div>
-                  <input
-                    className="input"
-                    value={notifications.webPush.vapidSubject ?? ''}
-                    onChange={(e) =>
-                      updateNotifications('notifications.webPush.vapidSubject', (current) => ({
-                        ...current,
-                        webPush: { ...current.webPush, vapidSubject: e.target.value },
-                      }))
-                    }
-                  />
-                </div>
+              <div className="kvRow">
+                <div className="label">Private Key（留空=保持原值）</div>
+                <input
+                  className="input"
+                  value={notifications.webPush.vapidPrivateKey ?? ''}
+                  onChange={(e) =>
+                    updateNotifications('notifications.webPush.vapidPrivateKey', (current) => ({
+                      ...current,
+                      webPush: { ...current.webPush, vapidPrivateKey: e.target.value },
+                    }))
+                  }
+                />
+              </div>
+              <div className="kvRow">
+                <div className="label">Subject</div>
+                <input
+                  className="input"
+                  value={notifications.webPush.vapidSubject ?? ''}
+                  onChange={(e) =>
+                    updateNotifications('notifications.webPush.vapidSubject', (current) => ({
+                      ...current,
+                      webPush: { ...current.webPush, vapidSubject: e.target.value },
+                    }))
+                  }
+                />
               </div>
 
               <div className="formActions" style={{ marginTop: 10 }}>
@@ -2060,7 +1926,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                   endpoint <Mono>{webPushEndpoint.slice(0, 40)}…</Mono>
                 </div>
               ) : null}
-            </div>
+            </NotificationChannelCard>
 
             {error ? <div className="error">{error}</div> : null}
           </div>
