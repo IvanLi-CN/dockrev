@@ -41,6 +41,11 @@ if [[ "${latest_gate_count}" -lt 2 ]]; then
   exit 1
 fi
 
+echo "[contract-check] trusted label-gate workflow invariants"
+search_regex "^\\s*pull_request_target:" .github/workflows/label-gate.yml
+search_regex "ref:\\s*\\$\\{\\{\\s*github\\.event\\.pull_request\\.base\\.sha\\s*\\}\\}" .github/workflows/label-gate.yml
+search_regex "run:\\s*bash\\s+\\./\\.github/scripts/label-gate\\.sh" .github/workflows/label-gate.yml
+
 tmp_dir="$(mktemp -d)"
 server_pid=""
 cleanup() {
@@ -52,7 +57,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-api_port="$(
+pick_free_port() {
   python3 - <<'PY'
 import socket
 
@@ -61,7 +66,7 @@ sock.bind(("127.0.0.1", 0))
 print(sock.getsockname()[1])
 sock.close()
 PY
-)"
+}
 
 cat >"${tmp_dir}/mock_github_api.py" <<'PY'
 #!/usr/bin/env python3
@@ -104,6 +109,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
+        if path == "/health":
+            return self._json({"ok": True})
         parts = [part for part in path.split("/") if part]
         if len(parts) >= 6 and parts[0] == "repos" and parts[3] == "commits" and parts[5] == "pulls":
             sha = parts[4]
@@ -125,9 +132,46 @@ if __name__ == "__main__":
     server.serve_forever()
 PY
 
-MOCK_PORT="${api_port}" python3 "${tmp_dir}/mock_github_api.py" >"${tmp_dir}/mock.log" 2>&1 &
-server_pid="$!"
-sleep 0.2
+wait_mock_server_ready() {
+  for _ in $(seq 1 40); do
+    if ! kill -0 "${server_pid}" >/dev/null 2>&1; then
+      return 1
+    fi
+    if curl -sSf "http://127.0.0.1:${api_port}/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+start_mock_server() {
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    api_port="$(pick_free_port)"
+    : >"${tmp_dir}/mock.log"
+    MOCK_PORT="${api_port}" python3 "${tmp_dir}/mock_github_api.py" >"${tmp_dir}/mock.log" 2>&1 &
+    server_pid="$!"
+    if wait_mock_server_ready; then
+      return 0
+    fi
+    kill "${server_pid}" >/dev/null 2>&1 || true
+    wait "${server_pid}" 2>/dev/null || true
+    server_pid=""
+    if [[ "${attempt}" -lt 5 ]]; then
+      sleep 0.1
+    fi
+  done
+  return 1
+}
+
+if ! start_mock_server; then
+  echo "[contract-check] mock api server did not become ready in time" >&2
+  if [[ -s "${tmp_dir}/mock.log" ]]; then
+    cat "${tmp_dir}/mock.log" >&2 || true
+  fi
+  exit 1
+fi
 
 run_label_gate() {
   local pr_number="$1"
