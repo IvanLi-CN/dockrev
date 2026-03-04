@@ -242,10 +242,13 @@ export function OverviewPage(props: {
   const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const jobsRefreshErrorRef = useRef<string | null>(null)
-  const { beginSubmitting, endSubmitting, trackJob, isTargetBusy } = useUpdateActionTracker()
+  const { beginSubmitting, endSubmitting, trackJob, isTargetBusy, getActiveJobByTarget, isTargetSubmitting } =
+    useUpdateActionTracker()
   const supervisor = useSupervisorHealth()
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
   const allApplyActionBusy = isTargetBusy('all')
+  const allApplyActiveJob = getActiveJobByTarget('all')
+  const allApplySubmitting = isTargetSubmitting('all')
 
   const lastDiscoveryScanAt = useMemo(() => {
     const candidates = jobs
@@ -875,7 +878,7 @@ export function OverviewPage(props: {
           })
         }
         setNoticeJobId(resp.jobId)
-        if (targetKey) trackJob(targetKey, resp.jobId)
+        if (targetKey) trackJob(targetKey, resp.jobId, 'queued')
       } catch (e: unknown) {
         if (e instanceof ApiError) {
           if (e.status === 401) setError('需要登录/鉴权（forward header）')
@@ -938,10 +941,15 @@ export function OverviewPage(props: {
         </Button>
         <Button
           variant="danger"
-          disabled={busy || !allApply.enabled}
+          disabled={!allApply.enabled || (busy && !allApplyActiveJob) || (allApplySubmitting && !allApplyActiveJob)}
           loading={allApplyActionBusy}
-          title={allApply.title ?? undefined}
+          loadingClickable={Boolean(allApplyActiveJob)}
+          title={allApplyActiveJob ? '任务进行中，点击查看任务详情' : (allApply.title ?? undefined)}
           onClick={() => {
+            if (allApplyActiveJob) {
+              navigate({ name: 'job', jobId: allApplyActiveJob.jobId })
+              return
+            }
             const totalCandidates = countsAll.updatable + countsAll.hint
             const anomalyCount = allCandidates.filter((item) => isSemverDowngradeAnomaly(item.svc)).length
             const body = (
@@ -1088,13 +1096,21 @@ export function OverviewPage(props: {
             void triggerApply({ scope: 'all', targetLabel: '全部服务', confirmBody: body, confirmTitle: '确认更新全部服务？' })
           }}
         >
-          更新全部
+          {allApplyActiveJob?.status === 'queued'
+            ? '排队中…'
+            : allApplyActiveJob
+              ? '更新中…'
+              : allApplySubmitting
+                ? '提交中…'
+                : '更新全部'}
         </Button>
       </>,
     )
   }, [
+    allApplyActiveJob,
     allApplyActionBusy,
     allApply.enabled,
+    allApplySubmitting,
     allApply.title,
     allCandidates,
     busy,
@@ -1289,6 +1305,8 @@ export function OverviewPage(props: {
                   ? { enabled: true, title: '存在需确认的候选；将由服务端计算是否实际变更' }
                   : { enabled: false, title: '无可更新服务' }
             const stackApplyActionKey = resolveUpdateActionTargetKey('stack', st.id, null)
+            const stackApplyActiveJob = stackApplyActionKey ? getActiveJobByTarget(stackApplyActionKey) : null
+            const stackApplySubmitting = stackApplyActionKey ? isTargetSubmitting(stackApplyActionKey) : false
 
             return (
               <div key={st.id} className={isCollapsed ? 'tableGroup' : 'tableGroup tableGroupExpanded'}>
@@ -1319,10 +1337,17 @@ export function OverviewPage(props: {
                   >
 	                    <Button
 	                      variant="ghost"
-	                      disabled={busy || !stackApply.enabled}
+	                      disabled={
+                          !stackApply.enabled || (busy && !stackApplyActiveJob) || (stackApplySubmitting && !stackApplyActiveJob)
+                        }
                       loading={stackApplyActionKey ? isTargetBusy(stackApplyActionKey) : false}
-	                      title={stackApply.title ?? undefined}
+                      loadingClickable={Boolean(stackApplyActiveJob)}
+	                      title={stackApplyActiveJob ? '任务进行中，点击查看任务详情' : (stackApply.title ?? undefined)}
 	                      onClick={() => {
+                          if (stackApplyActiveJob) {
+                            navigate({ name: 'job', jobId: stackApplyActiveJob.jobId })
+                            return
+                          }
 			                        const totalCandidates = counts.updatable + counts.hint
 			                        const candidateServices = d.services
 			                          .filter((svc) => !svc.archived)
@@ -1485,7 +1510,13 @@ export function OverviewPage(props: {
 	                        })
 	                      }}
 	                    >
-	                      更新此 stack
+                        {stackApplyActiveJob?.status === 'queued'
+                          ? '排队中…'
+                          : stackApplyActiveJob
+                            ? '更新中…'
+                            : stackApplySubmitting
+                              ? '提交中…'
+                              : '更新此 stack'}
 	                    </Button>
                   </div>
                 </div>
@@ -1519,17 +1550,19 @@ export function OverviewPage(props: {
 	                            )
 	                          : false
 	                      const arrowPulse = inferencePending
-	                      const svcApply =
-	                        stt === 'updatable'
-	                          ? { enabled: true, title: null as string | null, note: null as string | null }
-	                          : stt === 'hint'
-	                            ? { enabled: true, title: '需确认候选；将由服务端计算是否实际变更', note: '需确认' }
-	                            : stt === 'ok'
-	                              ? { enabled: false, title: '无候选版本', note: null }
-	                              : stt === 'archMismatch'
-	                                ? { enabled: false, title: '架构不匹配（仅提示，不允许更新）', note: null }
-	                                : { enabled: false, title: svc.ignore?.reason ?? '被阻止', note: null }
+                      const svcApply =
+                        stt === 'updatable'
+                          ? { enabled: true, title: null as string | null, note: null as string | null }
+                          : stt === 'hint'
+                            ? { enabled: true, title: '需确认候选；将由服务端计算是否实际变更', note: '需确认' }
+                            : stt === 'ok'
+                              ? { enabled: false, title: '无候选版本', note: null }
+                              : stt === 'archMismatch'
+                                ? { enabled: false, title: '架构不匹配（仅提示，不允许更新）', note: null }
+                                : { enabled: false, title: svc.ignore?.reason ?? '被阻止', note: null }
                       const svcApplyActionKey = resolveUpdateActionTargetKey('service', null, svc.id)
+                      const svcApplyActiveJob = svcApplyActionKey ? getActiveJobByTarget(svcApplyActionKey) : null
+                      const svcApplySubmitting = svcApplyActionKey ? isTargetSubmitting(svcApplyActionKey) : false
                       return (
                         <div
                           key={svc.id}
@@ -1669,10 +1702,15 @@ export function OverviewPage(props: {
                             ) : (
 	                              <Button
 	                                variant="ghost"
-		                                disabled={busy || !svcApply.enabled}
+		                                disabled={!svcApply.enabled || (busy && !svcApplyActiveJob) || (svcApplySubmitting && !svcApplyActiveJob)}
                                 loading={svcApplyActionKey ? isTargetBusy(svcApplyActionKey) : false}
-		                                title={svcApply.title ?? undefined}
+                                loadingClickable={Boolean(svcApplyActiveJob)}
+		                                title={svcApplyActiveJob ? '任务进行中，点击查看任务详情' : (svcApply.title ?? undefined)}
 		                                onClick={() => {
+                                          if (svcApplyActiveJob) {
+                                            navigate({ name: 'job', jobId: svcApplyActiveJob.jobId })
+                                            return
+                                          }
 			                                  const body = (
 			                                    <>
 		                                      <div className="modalLead">将对该服务执行更新（apply）。</div>
@@ -1786,7 +1824,13 @@ export function OverviewPage(props: {
 		                                  })
 	                                }}
                               >
-                                执行更新
+                                {svcApplyActiveJob?.status === 'queued'
+                                  ? '排队中…'
+                                  : svcApplyActiveJob
+                                    ? '更新中…'
+                                    : svcApplySubmitting
+                                      ? '提交中…'
+                                      : '执行更新'}
                               </Button>
                             )}
                           </div>

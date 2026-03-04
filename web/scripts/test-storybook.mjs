@@ -663,11 +663,13 @@ async function runInteractive({ baseUrl, browser }) {
 
       await page.waitForFunction(() => {
         const rows = Array.from(document.querySelectorAll('.rowLine'))
+        const matchesAction = (text) =>
+          ['执行更新', '更新中…', '排队中…', '提交中…'].some((label) => text?.includes(label))
         const findButton = (keyword) => {
           const row = rows.find((item) => item.textContent?.includes(keyword))
           if (!row) return null
           const buttons = Array.from(row.querySelectorAll('button'))
-          return buttons.find((btn) => btn.textContent?.includes('执行更新')) ?? null
+          return buttons.find((btn) => matchesAction(btn.textContent ?? '')) ?? null
         }
         const apiBtn = findButton('api')
         const workerBtn = findButton('worker')
@@ -681,7 +683,34 @@ async function runInteractive({ baseUrl, browser }) {
         const rows = Array.from(document.querySelectorAll('.rowLine'))
         const apiRow = rows.find((item) => item.textContent?.includes('api'))
         if (!apiRow) return false
-        const btn = Array.from(apiRow.querySelectorAll('button')).find((item) => item.textContent?.includes('执行更新'))
+        const btn = Array.from(apiRow.querySelectorAll('button')).find((item) =>
+          ['更新中…', '排队中…'].some((label) => item.textContent?.includes(label))
+        )
+        if (!btn) return false
+        return Boolean(btn.querySelector('.btnInlineSpinner')) && !btn.hasAttribute('disabled')
+      }, null, { timeout: 10_000 })
+
+      const jumped = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('.rowLine'))
+        const apiRow = rows.find((item) => item.textContent?.includes('api'))
+        if (!apiRow) return false
+        const btn = Array.from(apiRow.querySelectorAll('button')).find((item) =>
+          ['更新中…', '排队中…'].some((label) => item.textContent?.includes(label))
+        )
+        if (!btn) return false
+        btn.click()
+        return true
+      })
+      if (!jumped) throw new Error('Expected active api update button to be clickable for job detail navigation.')
+      await page.waitForFunction(() => window.location.hash.startsWith('#/queue/job-ui-'), null, { timeout: 10_000 })
+
+      await page.waitForFunction(() => {
+        const rows = Array.from(document.querySelectorAll('.rowLine'))
+        const apiRow = rows.find((item) => item.textContent?.includes('api'))
+        if (!apiRow) return false
+        const btn = Array.from(apiRow.querySelectorAll('button')).find((item) =>
+          ['执行更新', '更新中…', '排队中…', '提交中…'].some((label) => item.textContent?.includes(label))
+        )
         if (!btn) return false
         return !btn.querySelector('.btnInlineSpinner')
       }, null, { timeout: 10_000 })
@@ -703,13 +732,36 @@ async function runInteractive({ baseUrl, browser }) {
       await modal.getByRole('button', { name: '执行更新' }).click()
 
       await page.waitForFunction(() => {
-        const btn = Array.from(document.querySelectorAll('button')).find((item) => item.textContent?.trim() === '更新全部')
+        const btn = Array.from(document.querySelectorAll('button')).find((item) =>
+          ['更新全部', '更新中…', '排队中…', '提交中…'].includes(item.textContent?.trim() ?? '')
+        )
         if (!btn) return false
         return Boolean(btn.querySelector('.btnInlineSpinner'))
       }, null, { timeout: 10_000 })
 
       await page.waitForFunction(() => {
-        const btn = Array.from(document.querySelectorAll('button')).find((item) => item.textContent?.trim() === '更新全部')
+        const btn = Array.from(document.querySelectorAll('button')).find((item) =>
+          ['更新中…', '排队中…'].includes(item.textContent?.trim() ?? '')
+        )
+        if (!btn) return false
+        return Boolean(btn.querySelector('.btnInlineSpinner')) && !btn.hasAttribute('disabled')
+      }, null, { timeout: 10_000 })
+
+      const jumped = await page.evaluate(() => {
+        const btn = Array.from(document.querySelectorAll('button')).find((item) =>
+          ['更新中…', '排队中…'].includes(item.textContent?.trim() ?? '')
+        )
+        if (!btn) return false
+        btn.click()
+        return true
+      })
+      if (!jumped) throw new Error('Expected active all-scope update button to be clickable for job detail navigation.')
+      await page.waitForFunction(() => window.location.hash.startsWith('#/queue/job-ui-'), null, { timeout: 10_000 })
+
+      await page.waitForFunction(() => {
+        const btn = Array.from(document.querySelectorAll('button')).find((item) =>
+          ['更新全部', '更新中…', '排队中…', '提交中…'].includes(item.textContent?.trim() ?? '')
+        )
         if (!btn) return false
         return !btn.querySelector('.btnInlineSpinner')
       }, null, { timeout: 10_000 })
@@ -718,7 +770,50 @@ async function runInteractive({ baseUrl, browser }) {
     }
   }
 
-  // 5d) Services page: inference pending + candidate snapshot pending should read as a unified loading state.
+  // 5d) Service detail page: active apply button should be clickable and jump to job detail.
+  {
+    const page = await openStory('pages-servicedetailpage--updatable')
+    try {
+      const applyBtn = page.getByRole('button', { name: '执行更新' })
+      await applyBtn.waitFor({ timeout: 10_000 })
+      await applyBtn.click()
+
+      const modal = page.getByRole('dialog')
+      await modal.waitFor({ timeout: 10_000 })
+      await modal.getByRole('button', { name: '执行更新' }).click()
+
+      await page.waitForFunction(() => {
+        const btn = Array.from(document.querySelectorAll('button')).find((item) =>
+          ['执行更新', '更新中…', '排队中…', '提交中…'].includes(item.textContent?.trim() ?? '')
+        )
+        if (!btn) return false
+        return Boolean(btn.querySelector('.btnInlineSpinner'))
+      }, null, { timeout: 10_000 })
+
+      await page.waitForFunction(() => {
+        const btn = Array.from(document.querySelectorAll('button')).find((item) =>
+          ['更新中…', '排队中…'].includes(item.textContent?.trim() ?? '')
+        )
+        if (!btn) return false
+        return Boolean(btn.querySelector('.btnInlineSpinner')) && !btn.hasAttribute('disabled')
+      }, null, { timeout: 10_000 })
+
+      const jumped = await page.evaluate(() => {
+        const btn = Array.from(document.querySelectorAll('button')).find((item) =>
+          ['更新中…', '排队中…'].includes(item.textContent?.trim() ?? '')
+        )
+        if (!btn) return false
+        btn.click()
+        return true
+      })
+      if (!jumped) throw new Error('Expected active service-detail update button to be clickable for job detail navigation.')
+      await page.waitForFunction(() => window.location.hash.startsWith('#/queue/job-ui-'), null, { timeout: 10_000 })
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
+  // 5e) Services page: inference pending + candidate snapshot pending should read as a unified loading state.
   {
     const page = await openStory('pages-servicespage--inference-pending-candidate-loading')
     try {
@@ -736,7 +831,7 @@ async function runInteractive({ baseUrl, browser }) {
     }
   }
 
-  // 5c) Service detail page: should follow the same unified loading semantics.
+  // 5f) Service detail page: should follow the same unified loading semantics.
   {
     const page = await openStory('pages-servicedetailpage--inference-pending-candidate-loading')
     try {

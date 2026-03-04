@@ -62,13 +62,14 @@ export function Button(props: {
   variant?: 'primary' | 'danger' | 'ghost'
   disabled?: boolean
   loading?: boolean
+  loadingClickable?: boolean
   onClick?: () => void
   children: ReactNode
   title?: string
 }) {
   const variant = props.variant ?? 'ghost'
   const className = `btn ${buttonVariantClass(variant)}`
-  const disabled = props.disabled || props.loading
+  const disabled = props.disabled || (props.loading && !props.loadingClickable)
   return (
     <button
       className={className}

@@ -5,6 +5,12 @@ const UPDATE_JOB_POLL_INTERVAL_MS = 1200
 const UPDATE_JOB_MAX_ERRORS = 3
 
 export type UpdateActionTargetKey = 'all' | `stack:${string}` | `service:${string}`
+export type UpdateActionJobStatus = 'queued' | 'running' | string
+
+export type ActiveUpdateJob = {
+  jobId: string
+  status: UpdateActionJobStatus
+}
 
 export function resolveUpdateActionTargetKey(
   scope: string,
@@ -29,18 +35,18 @@ export function isUpdateJobActiveStatus(status: string): boolean {
 
 export function useUpdateActionTracker() {
   const [submittingCounts, setSubmittingCounts] = useState<Record<string, number>>({})
-  const [runningByTarget, setRunningByTarget] = useState<Record<string, string>>({})
-  const runningByTargetRef = useRef(new Map<UpdateActionTargetKey, string>())
+  const [activeByTarget, setActiveByTarget] = useState<Record<string, ActiveUpdateJob>>({})
+  const activeByTargetRef = useRef(new Map<UpdateActionTargetKey, ActiveUpdateJob>())
   const pollJobRef = useRef<(target: UpdateActionTargetKey, jobId: string) => Promise<void> | void>(() => {})
   const timersRef = useRef(new Map<string, number>())
   const errorCountsRef = useRef(new Map<string, number>())
   const unmountedRef = useRef(false)
 
-  const publishRunning = useCallback(() => {
+  const publishActive = useCallback(() => {
     if (unmountedRef.current) return
-    const next: Record<string, string> = {}
-    for (const [target, jobId] of runningByTargetRef.current.entries()) next[target] = jobId
-    setRunningByTarget(next)
+    const next: Record<string, ActiveUpdateJob> = {}
+    for (const [target, job] of activeByTargetRef.current.entries()) next[target] = job
+    setActiveByTarget(next)
   }, [])
 
   const clearJobTimer = useCallback((jobId: string) => {
@@ -52,20 +58,21 @@ export function useUpdateActionTracker() {
 
   const clearRunningJob = useCallback(
     (target: UpdateActionTargetKey, jobId: string) => {
-      const current = runningByTargetRef.current.get(target)
-      if (current !== jobId) return
-      runningByTargetRef.current.delete(target)
+      const current = activeByTargetRef.current.get(target)
+      if (!current || current.jobId !== jobId) return
+      activeByTargetRef.current.delete(target)
       errorCountsRef.current.delete(jobId)
       clearJobTimer(jobId)
-      publishRunning()
+      publishActive()
     },
-    [clearJobTimer, publishRunning],
+    [clearJobTimer, publishActive],
   )
 
   const pollJob = useCallback(
     async (target: UpdateActionTargetKey, jobId: string) => {
       if (unmountedRef.current) return
-      if (runningByTargetRef.current.get(target) !== jobId) {
+      const tracked = activeByTargetRef.current.get(target)
+      if (!tracked || tracked.jobId !== jobId) {
         clearJobTimer(jobId)
         return
       }
@@ -76,6 +83,10 @@ export function useUpdateActionTracker() {
         if (!isUpdateJobActiveStatus(job.status)) {
           clearRunningJob(target, jobId)
           return
+        }
+        if (tracked.status !== job.status) {
+          activeByTargetRef.current.set(target, { jobId, status: job.status })
+          publishActive()
         }
       } catch {
         const errors = (errorCountsRef.current.get(jobId) ?? 0) + 1
@@ -91,7 +102,7 @@ export function useUpdateActionTracker() {
       }, UPDATE_JOB_POLL_INTERVAL_MS)
       timersRef.current.set(jobId, timer)
     },
-    [clearJobTimer, clearRunningJob],
+    [clearJobTimer, clearRunningJob, publishActive],
   )
 
   useEffect(() => {
@@ -126,29 +137,43 @@ export function useUpdateActionTracker() {
   }, [])
 
   const trackJob = useCallback(
-    (target: UpdateActionTargetKey, jobId: string) => {
-      const previousJobId = runningByTargetRef.current.get(target)
-      if (previousJobId && previousJobId !== jobId) {
-        clearJobTimer(previousJobId)
-        errorCountsRef.current.delete(previousJobId)
+    (target: UpdateActionTargetKey, jobId: string, status: UpdateActionJobStatus = 'queued') => {
+      const previous = activeByTargetRef.current.get(target)
+      if (previous && previous.jobId !== jobId) {
+        clearJobTimer(previous.jobId)
+        errorCountsRef.current.delete(previous.jobId)
       }
-      runningByTargetRef.current.set(target, jobId)
+      activeByTargetRef.current.set(target, { jobId, status })
       errorCountsRef.current.delete(jobId)
       clearJobTimer(jobId)
-      publishRunning()
+      publishActive()
       const timer = window.setTimeout(() => {
         void pollJobRef.current(target, jobId)
       }, 0)
       timersRef.current.set(jobId, timer)
     },
-    [clearJobTimer, publishRunning],
+    [clearJobTimer, publishActive],
   )
 
   const isTargetBusy = useCallback(
     (target: UpdateActionTargetKey): boolean => {
-      return Boolean((submittingCounts[target] ?? 0) > 0 || runningByTarget[target] != null)
+      return Boolean((submittingCounts[target] ?? 0) > 0 || activeByTarget[target] != null)
     },
-    [runningByTarget, submittingCounts],
+    [activeByTarget, submittingCounts],
+  )
+
+  const getActiveJobByTarget = useCallback(
+    (target: UpdateActionTargetKey): ActiveUpdateJob | null => {
+      return activeByTarget[target] ?? null
+    },
+    [activeByTarget],
+  )
+
+  const isTargetSubmitting = useCallback(
+    (target: UpdateActionTargetKey): boolean => {
+      return (submittingCounts[target] ?? 0) > 0
+    },
+    [submittingCounts],
   )
 
   return {
@@ -156,5 +181,7 @@ export function useUpdateActionTracker() {
     endSubmitting,
     trackJob,
     isTargetBusy,
+    getActiveJobByTarget,
+    isTargetSubmitting,
   }
 }

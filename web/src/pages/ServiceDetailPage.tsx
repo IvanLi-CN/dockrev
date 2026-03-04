@@ -127,7 +127,8 @@ export function ServiceDetailPage(props: {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
-  const { beginSubmitting, endSubmitting, trackJob, isTargetBusy } = useUpdateActionTracker()
+  const { beginSubmitting, endSubmitting, trackJob, isTargetBusy, getActiveJobByTarget, isTargetSubmitting } =
+    useUpdateActionTracker()
   const { state: supervisorState, check: checkSupervisor } = useSupervisorHealth()
   const supervisorErrorAt = supervisorState.status === 'offline' ? supervisorState.errorAt : undefined
   const supervisorError = supervisorState.status === 'offline' ? supervisorState.error : undefined
@@ -137,6 +138,8 @@ export function ServiceDetailPage(props: {
     [serviceId, stackId],
   )
   const applyActionBusy = applyActionKey ? isTargetBusy(applyActionKey) : false
+  const applyActiveJob = applyActionKey ? getActiveJobByTarget(applyActionKey) : null
+  const applySubmitting = applyActionKey ? isTargetSubmitting(applyActionKey) : false
 
   const [newRuleKind, setNewRuleKind] = useState<'exact' | 'prefix' | 'regex' | 'semver'>('regex')
   const [newRuleValue, setNewRuleValue] = useState('.*')
@@ -355,26 +358,37 @@ export function ServiceDetailPage(props: {
             <Button
               variant="primary"
               disabled={
-                busy ||
-                !service ||
-                service.ignore?.matched ||
-                !service.candidate ||
-                service.candidate.archMatch === 'mismatch'
+                applySubmitting && !applyActiveJob
+                  ? true
+                  : applyActiveJob
+                    ? false
+                    : busy ||
+                      !service ||
+                      service.ignore?.matched ||
+                      !service.candidate ||
+                      service.candidate.archMatch === 'mismatch'
               }
               loading={applyActionBusy}
+              loadingClickable={Boolean(applyActiveJob)}
               title={
-                !service
-                  ? undefined
-                  : service.ignore?.matched
-                    ? service.ignore.reason ?? '被阻止'
-                    : !service.candidate
-                      ? '无候选版本'
-                      : service.candidate.archMatch === 'mismatch'
-                        ? '架构不匹配（仅提示，不允许更新）'
-                        : undefined
+                applyActiveJob
+                  ? '任务进行中，点击查看任务详情'
+                  : !service
+                    ? undefined
+                    : service.ignore?.matched
+                      ? service.ignore.reason ?? '被阻止'
+                      : !service.candidate
+                        ? '无候选版本'
+                        : service.candidate.archMatch === 'mismatch'
+                          ? '架构不匹配（仅提示，不允许更新）'
+                          : undefined
               }
               onClick={() => {
                 void (async () => {
+                  if (applyActiveJob) {
+                    navigate({ name: 'job', jobId: applyActiveJob.jobId })
+                    return
+                  }
                   if (!service || !service.candidate) return
                   const semverDowngradeAnomaly = isSemverDowngradeAnomaly(service)
                   const currentDisplayTag = formatTagDisplay(
@@ -519,7 +533,7 @@ export function ServiceDetailPage(props: {
                       backupMode: 'inherit',
                     })
                     setNoticeJobId(resp.jobId)
-                    if (applyActionKey) trackJob(applyActionKey, resp.jobId)
+                    if (applyActionKey) trackJob(applyActionKey, resp.jobId, 'queued')
                   } catch (e: unknown) {
                     if (e instanceof ApiError) {
                       if (e.status === 401) setError('需要登录/鉴权（forward header）')
@@ -536,7 +550,13 @@ export function ServiceDetailPage(props: {
                 })()
               }}
             >
-              执行更新
+              {applyActiveJob?.status === 'queued'
+                ? '排队中…'
+                : applyActiveJob
+                  ? '更新中…'
+                  : applySubmitting
+                    ? '提交中…'
+                    : '执行更新'}
             </Button>
           </>
         )}
@@ -594,8 +614,10 @@ export function ServiceDetailPage(props: {
       </>,
     )
   }, [
+    applyActiveJob,
     applyActionBusy,
     applyActionKey,
+    applySubmitting,
     beginSubmitting,
     busy,
     checkSupervisor,
