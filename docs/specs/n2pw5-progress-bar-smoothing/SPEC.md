@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-02-26
-- Last: 2026-02-26
+- Last: 2026-03-04
 
 ## 背景 / 问题陈述
 
@@ -32,6 +32,8 @@
 ### In scope
 
 - `web/src/App.css`
+- `web/src/stories/mocks/dockrevMockApi.ts`
+- `web/src/stories/pages/QueuePage.stories.tsx`
 - `docs/specs/README.md`
 - `docs/specs/n2pw5-progress-bar-smoothing/SPEC.md`
 
@@ -110,3 +112,4 @@
 - 2026-02-26: 本地验证通过（`bun run --cwd web lint`、`bun run --cwd web build`、`bun run --cwd web build-storybook`、`bun run --cwd web test-storybook`）并完成 Playwright 三页走查。
 - 2026-02-26: PR #94 在 CI 首轮 `Frontend (lint + Storybook)` 卡住后取消并重跑，`CI (PR)` attempt 2 与 `PR Label Gate` 均通过；review-loop 第 1 轮无 P0/P1/P2 阻塞。
 - 2026-02-26: 按反馈将平滑参数调优为 `420ms` + `cubic-bezier(0.4, 0, 0.2, 1)`，并新增 Storybook `ProgressSmoothing` 自动进度演示场景。
+- 2026-03-04: review-loop 第 2 轮修复：为 `queueProgressFillIndeterminate` 添加高优先级 `transition: none` 覆盖，并将 mock `/api/jobs/events` 限定在 `queue-progress-smoothing` 场景；本地再次验证 `lint/build/build-storybook/test-storybook` 全通过。
