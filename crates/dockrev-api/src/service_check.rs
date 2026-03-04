@@ -272,28 +272,25 @@ fn sort_tags_semver_then_lex_desc(tags: Vec<String>) -> Vec<String> {
     out
 }
 
-fn pick_considered_tags_for_snapshot(
-    repo_tags: &[String],
-    anchors: &[String],
-    depth: usize,
-) -> Vec<String> {
+const SNAPSHOT_CONSIDERED_MAX: usize = 40;
+const SNAPSHOT_NON_PARSEABLE_FALLBACK_TOPK: usize = 20;
+
+fn pick_considered_tags_for_snapshot(repo_tags: &[String], anchors: &[String]) -> Vec<String> {
     use std::collections::HashSet;
 
-    let repo_tags_total = repo_tags.len();
-    if repo_tags_total == 0 || depth == 0 {
+    if repo_tags.is_empty() {
         return Vec::new();
     }
 
     let repo_set: HashSet<&str> = repo_tags.iter().map(|t| t.as_str()).collect();
 
-    let sorted = sort_tags_semver_then_lex_desc(repo_tags.to_vec());
-
     let mut out: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
 
-    // Always try to include anchors if they exist in the repo tag set.
+    // Always include anchor tags first (when present in repo tags) so digest snapshots remain
+    // stable for current/candidate references even if they are non-semver labels.
     for a in anchors {
-        if out.len() >= depth {
+        if out.len() >= SNAPSHOT_CONSIDERED_MAX {
             break;
         }
         let t = a.trim();
@@ -308,12 +305,39 @@ fn pick_considered_tags_for_snapshot(
         }
     }
 
-    for t in sorted {
-        if out.len() >= depth {
-            break;
+    if out.len() >= SNAPSHOT_CONSIDERED_MAX {
+        return out;
+    }
+
+    let mut parseable_tags: Vec<(semver::Version, String)> = Vec::new();
+    let mut non_parseable_tags: Vec<String> = Vec::new();
+    for tag in repo_tags {
+        if seen.contains(tag) {
+            continue;
         }
-        if seen.insert(t.clone()) {
-            out.push(t);
+        if let Some(v) = ignore::parse_version(tag) {
+            parseable_tags.push((v, tag.clone()));
+        } else {
+            non_parseable_tags.push(tag.clone());
+        }
+    }
+
+    parseable_tags.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    for (_v, tag) in parseable_tags {
+        if out.len() >= SNAPSHOT_CONSIDERED_MAX {
+            return out;
+        }
+        if seen.insert(tag.clone()) {
+            out.push(tag);
+        }
+    }
+
+    non_parseable_tags.sort_by(|a, b| b.cmp(a));
+    let max_non_parseable =
+        SNAPSHOT_NON_PARSEABLE_FALLBACK_TOPK.min(SNAPSHOT_CONSIDERED_MAX.saturating_sub(out.len()));
+    for tag in non_parseable_tags.into_iter().take(max_non_parseable) {
+        if seen.insert(tag.clone()) {
+            out.push(tag);
         }
     }
 
@@ -369,7 +393,6 @@ where
         time::{Instant, timeout, timeout_at},
     };
 
-    const SNAPSHOT_DEPTH: usize = 100;
     // The registry client already limits per-host concurrency. Keep the scan fan-out lower than
     // that limiter so tasks do not spend most of the timeout waiting for a permit.
     const MANIFEST_CONCURRENCY: usize = 4;
@@ -380,7 +403,7 @@ where
     let wanted = wanted_digest.trim().to_string();
     let repo_tags_total = repo_tags.len();
 
-    let considered = pick_considered_tags_for_snapshot(repo_tags, anchors, SNAPSHOT_DEPTH);
+    let considered = pick_considered_tags_for_snapshot(repo_tags, anchors);
     let repo_tags_considered = considered.len();
 
     let mut report_progress = |processed: usize,
@@ -620,4 +643,57 @@ async fn persist_digest_tags_snapshots_best_effort(
         .delete_service_digest_tags_snapshots_except(service_id, &allowed_digests)
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pick_considered_tags_for_snapshot;
+
+    #[test]
+    fn anchors_are_kept_even_if_non_parseable() {
+        let repo_tags = vec![
+            "1.0.2".to_string(),
+            "latest".to_string(),
+            "legacy-1".to_string(),
+            "1.0.1".to_string(),
+        ];
+        let anchors = vec!["legacy-1".to_string()];
+
+        let considered = pick_considered_tags_for_snapshot(&repo_tags, &anchors);
+
+        assert_eq!(considered.first().map(String::as_str), Some("legacy-1"));
+        assert!(considered.contains(&"legacy-1".to_string()));
+    }
+
+    #[test]
+    fn considered_tags_are_capped_to_40() {
+        let repo_tags = (0..100).map(|i| format!("1.0.{i}")).collect::<Vec<_>>();
+
+        let considered = pick_considered_tags_for_snapshot(&repo_tags, &[]);
+
+        assert_eq!(considered.len(), 40);
+        assert_eq!(considered.first().map(String::as_str), Some("1.0.99"));
+        assert_eq!(considered.last().map(String::as_str), Some("1.0.60"));
+    }
+
+    #[test]
+    fn fallback_non_parseable_topk_applies_when_parseable_insufficient() {
+        let mut repo_tags = vec![
+            "1.0.0".to_string(),
+            "1.0.1".to_string(),
+            "1.0.2".to_string(),
+        ];
+        repo_tags.extend((0..25).map(|i| format!("n{i:02}")));
+
+        let considered = pick_considered_tags_for_snapshot(&repo_tags, &[]);
+
+        assert_eq!(considered.len(), 23);
+        assert_eq!(&considered[..3], ["1.0.2", "1.0.1", "1.0.0"]);
+        assert_eq!(considered[3], "n24");
+        assert_eq!(
+            considered.last().map(String::as_str),
+            Some("n05"),
+            "fallback should include only top 20 non-parseable tags"
+        );
+    }
 }

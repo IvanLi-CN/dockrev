@@ -1652,7 +1652,7 @@ services:
     assert_eq!(tags.len(), 1);
     assert_eq!(tags[0].as_str().unwrap(), "legacy-1");
     assert_eq!(body["scan"]["repoTagsTotal"].as_u64().unwrap(), 131);
-    assert_eq!(body["scan"]["repoTagsConsidered"].as_u64().unwrap(), 100);
+    assert_eq!(body["scan"]["repoTagsConsidered"].as_u64().unwrap(), 40);
 }
 
 #[tokio::test]
@@ -1898,13 +1898,13 @@ services:
     assert!(body["checkedAt"].as_str().is_some_and(|s| !s.is_empty()));
 
     let tags = body["tags"].as_array().unwrap();
-    assert_eq!(tags.len(), 50);
+    assert_eq!(tags.len(), 40);
     assert_eq!(tags[0].as_str().unwrap(), "1.0.49");
-    assert_eq!(tags[49].as_str().unwrap(), "1.0.0");
+    assert_eq!(tags[39].as_str().unwrap(), "1.0.10");
 
     assert_eq!(body["scan"]["repoTagsTotal"].as_u64().unwrap(), 50);
-    assert_eq!(body["scan"]["repoTagsConsidered"].as_u64().unwrap(), 50);
-    assert_eq!(body["scan"]["manifestsOk"].as_u64().unwrap(), 50);
+    assert_eq!(body["scan"]["repoTagsConsidered"].as_u64().unwrap(), 40);
+    assert_eq!(body["scan"]["manifestsOk"].as_u64().unwrap(), 40);
     assert_eq!(body["scan"]["manifestsTimeout"].as_u64().unwrap(), 0);
     assert_eq!(body["scan"]["manifestsError"].as_u64().unwrap(), 0);
 }
