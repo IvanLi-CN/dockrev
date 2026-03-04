@@ -757,6 +757,10 @@ html[data-theme='light'] .versionTagsPopover {
   .btnInlineSpinner {
     animation: none;
   }
+
+  .ghcrSyncAllBtnIconSpinning {
+    animation: none;
+  }
 }
 
 .chipStatic {
@@ -2757,6 +2761,15 @@ html[data-theme='light'] .modalOverlay {
   flex: 1 1 260px;
 }
 
+.ghcrSyncAllBtnIcon {
+  width: 14px;
+  height: 14px;
+}
+
+.ghcrSyncAllBtnIconSpinning {
+  animation: btnInlineSpin 0.7s linear infinite;
+}
+
 .ghcrRegistryList {
   display: flex;
   flex-direction: column;
@@ -4496,6 +4509,7 @@ html[data-theme='light'] .card {
   --responsive-action-bubble-anchor-right: auto;
   --responsive-action-bubble-shift-x: -50%;
   --responsive-action-bubble-arrow-left: 50%;
+  --responsive-action-bubble-offset-x: 0px;
   gap: 8px;
   min-width: 84px;
   padding-inline: 10px 12px;
@@ -4540,7 +4554,7 @@ html[data-theme='light'] .card {
   left: var(--responsive-action-bubble-anchor-left);
   right: var(--responsive-action-bubble-anchor-right);
   bottom: calc(100% + 10px);
-  transform: translate(var(--responsive-action-bubble-shift-x), 4px);
+  transform: translate(calc(var(--responsive-action-bubble-shift-x) + var(--responsive-action-bubble-offset-x)), 4px);
   width: max-content;
   min-width: 120px;
   max-width: min(300px, calc(100vw - 28px));
@@ -4591,7 +4605,7 @@ html[data-theme='light'] .card {
 .responsiveActionBtnHasHint:focus-visible .responsiveActionBtnBubble,
 .responsiveActionBtnShowBubble .responsiveActionBtnBubble {
   opacity: 1;
-  transform: translate(var(--responsive-action-bubble-shift-x), 0);
+  transform: translate(calc(var(--responsive-action-bubble-shift-x) + var(--responsive-action-bubble-offset-x)), 0);
 }
 
 .chipStatic,

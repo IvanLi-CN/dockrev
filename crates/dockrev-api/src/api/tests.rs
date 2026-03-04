@@ -7776,6 +7776,557 @@ async fn github_packages_repo_delete_enqueues_unregister_job_and_keeps_row_until
 }
 
 #[tokio::test]
+async fn github_packages_webhook_sync_all_enqueues_and_reuses_pending_job() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    let mut settings = state.db.get_github_packages_settings().await.unwrap();
+    settings.enabled = true;
+    settings.callback_url = "https://dockrev.example.com/api/webhooks/github-packages".to_string();
+    state
+        .db
+        .put_github_packages_settings(&settings, &now)
+        .await
+        .unwrap();
+    state
+        .db
+        .put_github_packages_repos(
+            &[
+                (String::from("acme"), String::from("widgets"), true),
+                (String::from("acme"), String::from("worker"), true),
+            ],
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let first = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/webhook/sync-all")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status(), 200);
+    let first_body = response_json(first).await;
+    assert_eq!(first_body["ok"], true);
+    assert_eq!(first_body["reused"], false);
+    assert_eq!(first_body["status"], "queued");
+    let first_job_id = first_body["jobId"].as_str().unwrap_or_default().to_string();
+    assert!(!first_job_id.is_empty());
+
+    let first_job = state.db.get_job(&first_job_id).await.unwrap().unwrap();
+    assert_eq!(
+        first_job.r#type.as_str(),
+        "github_packages_webhook_sync_all"
+    );
+    assert_eq!(first_job.status, "queued");
+    assert_eq!(first_job.summary_json["op"], "sync_all");
+    assert_eq!(
+        first_job.summary_json["repos"].as_array().map(|v| v.len()),
+        Some(2)
+    );
+
+    let second = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/webhook/sync-all")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.status(), 200);
+    let second_body = response_json(second).await;
+    assert_eq!(second_body["ok"], true);
+    assert_eq!(second_body["reused"], true);
+    assert_eq!(second_body["jobId"], first_job_id);
+    assert_eq!(second_body["status"], "queued");
+}
+
+#[tokio::test]
+async fn github_packages_webhook_sync_repo_enqueues_and_dedupes_by_repo() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    let mut settings = state.db.get_github_packages_settings().await.unwrap();
+    settings.enabled = true;
+    settings.callback_url = "https://dockrev.example.com/api/webhooks/github-packages".to_string();
+    state
+        .db
+        .put_github_packages_settings(&settings, &now)
+        .await
+        .unwrap();
+    state
+        .db
+        .put_github_packages_repos(
+            &[
+                (String::from("acme"), String::from("widgets"), true),
+                (String::from("acme"), String::from("worker"), true),
+            ],
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let first = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/webhook/sync-repo")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "fullName": "acme/widgets" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status(), 200);
+    let first_body = response_json(first).await;
+    assert_eq!(first_body["ok"], true);
+    assert_eq!(first_body["reused"], false);
+    let first_job_id = first_body["jobId"].as_str().unwrap_or_default().to_string();
+    assert!(!first_job_id.is_empty());
+
+    let first_job = state.db.get_job(&first_job_id).await.unwrap().unwrap();
+    assert_eq!(
+        first_job.r#type.as_str(),
+        "github_packages_webhook_sync_repo"
+    );
+    assert_eq!(first_job.status, "queued");
+    assert_eq!(first_job.service_id.as_deref(), Some("acme/widgets"));
+
+    let second = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/webhook/sync-repo")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "fullName": "acme/widgets" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.status(), 200);
+    let second_body = response_json(second).await;
+    assert_eq!(second_body["ok"], true);
+    assert_eq!(second_body["reused"], true);
+    assert_eq!(second_body["jobId"], first_job_id);
+
+    let third = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/webhook/sync-repo")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "fullName": "acme/worker" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(third.status(), 200);
+    let third_body = response_json(third).await;
+    assert_eq!(third_body["ok"], true);
+    assert_eq!(third_body["reused"], false);
+    let third_job_id = third_body["jobId"].as_str().unwrap_or_default().to_string();
+    assert!(!third_job_id.is_empty());
+    assert_ne!(third_job_id, first_job_id);
+}
+
+#[tokio::test]
+async fn github_packages_webhook_sync_all_returns_400_when_no_selected_repos() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let mut settings = state.db.get_github_packages_settings().await.unwrap();
+    settings.enabled = true;
+    settings.callback_url = "https://dockrev.example.com/api/webhooks/github-packages".to_string();
+    state
+        .db
+        .put_github_packages_settings(&settings, &now)
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/webhook/sync-all")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let body = response_json(resp).await;
+    assert_eq!(body["error"]["code"], "invalid_argument");
+    assert_eq!(body["error"]["message"], "no tracked repos selected");
+}
+
+#[tokio::test]
+async fn github_packages_webhook_sync_repo_returns_404_for_untracked_repo() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let mut settings = state.db.get_github_packages_settings().await.unwrap();
+    settings.enabled = true;
+    settings.callback_url = "https://dockrev.example.com/api/webhooks/github-packages".to_string();
+    state
+        .db
+        .put_github_packages_settings(&settings, &now)
+        .await
+        .unwrap();
+    state
+        .db
+        .put_github_packages_repos(
+            &[(String::from("acme"), String::from("widgets"), true)],
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/webhook/sync-repo")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "fullName": "acme/worker" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+    let body = response_json(resp).await;
+    assert_eq!(body["error"]["code"], "not_found");
+    assert_eq!(body["error"]["message"], "repo is not tracked");
+}
+
+#[tokio::test]
+async fn github_packages_webhook_sync_repo_returns_400_for_invalid_full_name() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let mut settings = state.db.get_github_packages_settings().await.unwrap();
+    settings.enabled = true;
+    settings.callback_url = "https://dockrev.example.com/api/webhooks/github-packages".to_string();
+    state
+        .db
+        .put_github_packages_settings(&settings, &now)
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/webhook/sync-repo")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "fullName": "invalid-full-name" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let body = response_json(resp).await;
+    assert_eq!(body["error"]["code"], "invalid_argument");
+    assert_eq!(body["error"]["message"], "invalid fullName");
+}
+
+#[tokio::test]
+async fn github_packages_webhook_sync_repo_returns_409_when_unregister_in_progress() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let mut settings = state.db.get_github_packages_settings().await.unwrap();
+    settings.enabled = true;
+    settings.callback_url = "https://dockrev.example.com/api/webhooks/github-packages".to_string();
+    state
+        .db
+        .put_github_packages_settings(&settings, &now)
+        .await
+        .unwrap();
+    state
+        .db
+        .put_github_packages_repos(
+            &[(String::from("acme"), String::from("widgets"), true)],
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let delete = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/repos/delete")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "fullName": "acme/widgets" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(delete.status(), 200);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/webhook/sync-repo")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "fullName": "acme/widgets" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    let body = response_json(resp).await;
+    assert_eq!(body["error"]["code"], "conflict");
+    assert_eq!(body["error"]["message"], "repo unregister in progress");
+}
+
+#[tokio::test]
+async fn github_packages_webhook_sync_repo_reuses_pending_legacy_register_job() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let mut settings = state.db.get_github_packages_settings().await.unwrap();
+    settings.enabled = true;
+    settings.callback_url = "https://dockrev.example.com/api/webhooks/github-packages".to_string();
+    state
+        .db
+        .put_github_packages_settings(&settings, &now)
+        .await
+        .unwrap();
+    state
+        .db
+        .upsert_github_packages_repo_selected("acme", "widgets", false, &now)
+        .await
+        .unwrap();
+
+    let selected = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/repos/selected")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "fullName": "acme/widgets", "selected": true }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(selected.status(), 200);
+    let selected_body = response_json(selected).await;
+    let legacy_job_id = selected_body["jobId"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(!legacy_job_id.is_empty());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/webhook/sync-repo")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "fullName": "acme/widgets" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["reused"], true);
+    assert_eq!(body["jobId"], legacy_job_id);
+    assert_eq!(body["status"], "queued");
+}
+
+#[tokio::test]
+async fn github_packages_webhook_sync_all_ignores_repos_with_unregister_pending() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let mut settings = state.db.get_github_packages_settings().await.unwrap();
+    settings.enabled = true;
+    settings.callback_url = "https://dockrev.example.com/api/webhooks/github-packages".to_string();
+    state
+        .db
+        .put_github_packages_settings(&settings, &now)
+        .await
+        .unwrap();
+    state
+        .db
+        .put_github_packages_repos(
+            &[
+                (String::from("acme"), String::from("widgets"), true),
+                (String::from("acme"), String::from("worker"), true),
+            ],
+            &now,
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .set_github_packages_repo_webhook_job_state(
+            "acme",
+            "widgets",
+            "queued",
+            Some("job_unregister_demo"),
+            Some("unregister"),
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/webhook/sync-all")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["reused"], false);
+    let job_id = body["jobId"].as_str().unwrap_or_default().to_string();
+    assert!(!job_id.is_empty());
+
+    let job = state.db.get_job(&job_id).await.unwrap().unwrap();
+    let repos = job.summary_json["repos"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(repos.len(), 1);
+    assert_eq!(repos[0].as_str(), Some("acme/worker"));
+}
+
+#[tokio::test]
+async fn github_packages_webhook_sync_repo_can_enqueue_while_sync_all_pending() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let mut settings = state.db.get_github_packages_settings().await.unwrap();
+    settings.enabled = true;
+    settings.callback_url = "https://dockrev.example.com/api/webhooks/github-packages".to_string();
+    state
+        .db
+        .put_github_packages_settings(&settings, &now)
+        .await
+        .unwrap();
+    state
+        .db
+        .put_github_packages_repos(
+            &[(String::from("acme"), String::from("widgets"), true)],
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let full = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/webhook/sync-all")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(full.status(), 200);
+    let full_body = response_json(full).await;
+    let full_job_id = full_body["jobId"].as_str().unwrap_or_default().to_string();
+    assert!(!full_job_id.is_empty());
+
+    let repo = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/github-packages/webhook/sync-repo")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "fullName": "acme/widgets" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(repo.status(), 200);
+    let repo_body = response_json(repo).await;
+    assert_eq!(repo_body["reused"], false);
+    let repo_job_id = repo_body["jobId"].as_str().unwrap_or_default().to_string();
+    assert!(!repo_job_id.is_empty());
+    assert_ne!(repo_job_id, full_job_id);
+}
+
+#[tokio::test]
 async fn github_packages_webhook_overview_reports_repo_and_job_summary() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());

@@ -8,7 +8,8 @@ import {
   listGitHubPackagesRepos,
   listJobs,
   newJobsEventsSource,
-  setGitHubPackagesRepoSelected,
+  triggerGitHubPackagesWebhookSyncAll,
+  triggerGitHubPackagesWebhookSyncRepo,
   type GitHubPackagesRepo,
   type GitHubPackagesWebhookOverviewResponse,
   type JobListItem,
@@ -23,6 +24,34 @@ type RepoStateFilter = 'all' | 'ok' | 'missing' | 'error' | 'conflict' | 'queued
 const REPO_FETCH_PER_PAGE = 200
 const MAX_REPO_FETCH_PAGES = 100
 const JOBS_REFRESH_INTERVAL_MS = 30_000
+const GHCR_JOB_TYPES = new Set([
+  'github_packages_webhook',
+  'github_packages_webhook_sync_all',
+  'github_packages_webhook_sync_repo',
+])
+
+function isGhcrJobType(type: string): boolean {
+  return GHCR_JOB_TYPES.has(type)
+}
+
+function normalizeRepoKey(fullName: string): string {
+  return fullName.trim().toLowerCase()
+}
+
+function readJobRepoTargets(job: JobListItem): string[] {
+  const summary = job.summary
+  if (!summary || typeof summary !== 'object') return []
+  const repos = (summary as { repos?: unknown }).repos
+  if (!Array.isArray(repos)) return []
+  return repos.filter((v): v is string => typeof v === 'string').map((v) => v.trim()).filter((v) => v.length > 0)
+}
+
+function readJobOp(job: JobListItem): string {
+  const summary = job.summary
+  if (!summary || typeof summary !== 'object') return ''
+  const op = (summary as { op?: unknown }).op
+  return typeof op === 'string' ? op : ''
+}
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -119,7 +148,7 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
           : null,
       )
       if (allJobs) {
-        setJobs(allJobs.filter((job) => job.type === 'github_packages_webhook'))
+        setJobs(allJobs.filter((job) => isGhcrJobType(job.type)))
         lastJobsRefreshAtRef.current = Date.now()
       }
     } catch (e: unknown) {
@@ -278,6 +307,46 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
 
   const runningJob = useMemo(() => jobs.find((job) => job.status === 'running') ?? null, [jobs])
 
+  const activeSyncAllJob = useMemo(() => {
+    const running = jobs.find((job) => job.type === 'github_packages_webhook_sync_all' && job.status === 'running')
+    if (running) return running
+    return jobs.find((job) => job.type === 'github_packages_webhook_sync_all' && job.status === 'queued') ?? null
+  }, [jobs])
+
+  const activeSyncRepoJobs = useMemo(() => {
+    const map = new Map<string, JobListItem>()
+    const score = (job: JobListItem) => {
+      const runningBoost = job.status === 'running' ? 1_000_000_000_000_000 : 0
+      return runningBoost + Date.parse(job.createdAt || '')
+    }
+    for (const job of jobs) {
+      if (job.type !== 'github_packages_webhook_sync_repo') continue
+      if (job.status !== 'queued' && job.status !== 'running') continue
+      const targets = readJobRepoTargets(job)
+      const key = normalizeRepoKey(targets[0] ?? '')
+      if (!key) continue
+      const existing = map.get(key)
+      if (!existing || score(job) > score(existing)) {
+        map.set(key, job)
+      }
+    }
+    return map
+  }, [jobs])
+
+  const activeLegacyRegisterJobs = useMemo(() => {
+    const map = new Map<string, JobListItem>()
+    for (const job of jobs) {
+      if (job.type !== 'github_packages_webhook') continue
+      if (job.status !== 'queued' && job.status !== 'running') continue
+      if (readJobOp(job) !== 'register') continue
+      const targets = readJobRepoTargets(job)
+      const key = normalizeRepoKey(targets[0] ?? '')
+      if (!key || map.has(key)) continue
+      map.set(key, job)
+    }
+    return map
+  }, [jobs])
+
   const filterItems = useMemo(
     () => [
       { key: 'all', label: '全部', count: repos.length },
@@ -427,15 +496,51 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
         </div>
 
         <div className="chipRow" style={{ marginLeft: 'auto' }}>
-          <Button variant="ghost" onClick={() => navigate({ name: 'settings' })}>
-            返回设置
-          </Button>
-          <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhooks' })}>
-            队列视图
-          </Button>
-          <Button variant="ghost" onClick={() => navigate({ name: 'ghcr-webhook-inbox' })}>
-            收件箱
-          </Button>
+          <ResponsiveActionButton
+            variant="ghost"
+            disabled={busy && !activeSyncAllJob}
+            label={
+              activeSyncAllJob?.status === 'running'
+                ? '全量同步中…'
+                : activeSyncAllJob?.status === 'queued'
+                  ? '全量同步排队中…'
+                  : '全部状态同步'
+            }
+            hint={
+              activeSyncAllJob
+                ? '任务进行中，点击查看任务详情'
+                : '触发全部已跟踪仓库的 webhook 状态同步任务'
+            }
+            icon={
+              <Icon
+                icon={refreshIcon}
+                className={`ghcrSyncAllBtnIcon ${
+                  activeSyncAllJob?.status === 'running' || activeSyncAllJob?.status === 'queued'
+                    ? 'ghcrSyncAllBtnIconSpinning'
+                    : ''
+                }`}
+                aria-hidden="true"
+              />
+            }
+            onClick={() => {
+              void (async () => {
+                if (activeSyncAllJob) {
+                  navigate({ name: 'job', jobId: activeSyncAllJob.id })
+                  return
+                }
+                setBusy(true)
+                setError(null)
+                try {
+                  await triggerGitHubPackagesWebhookSyncAll()
+                  await refresh({ forceJobs: true })
+                } catch (e: unknown) {
+                  setError(errorMessage(e))
+                } finally {
+                  setBusy(false)
+                }
+              })()
+            }}
+          />
         </div>
       </div>
 
@@ -458,7 +563,11 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
           const isInFlight = state === 'queued' || state === 'running'
           const isUnregisterInFlight = isInFlight && (repo.lastOp ?? '') === 'unregister'
           const showRetryDelete = state === 'error' && (repo.lastOp ?? '') === 'unregister'
-          const showRetryRegister = state === 'missing' || state === 'conflict' || (state === 'error' && !showRetryDelete)
+          const repoSyncJob = activeSyncRepoJobs.get(normalizeRepoKey(repo.fullName)) ?? null
+          const repoLegacyRegisterJob = activeLegacyRegisterJobs.get(normalizeRepoKey(repo.fullName)) ?? null
+          const repoPendingJob = repoSyncJob ?? repoLegacyRegisterJob
+          const repoPending = repoPendingJob?.status === 'queued' || repoPendingJob?.status === 'running'
+          const syncBlockedByDelete = isUnregisterInFlight
 
           return (
             <div key={repo.fullName} className="ghcrRegistryRow">
@@ -493,35 +602,45 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
                 ) : null}
 
                 <div className="ghcrRegistryActions">
-                  {repo.webhookJobId ? (
-                    <Button variant="ghost" onClick={() => navigate({ name: 'job', jobId: repo.webhookJobId! })}>
-                      查看任务
-                    </Button>
-                  ) : null}
-
-                  {showRetryRegister ? (
-                    <ResponsiveActionButton
-                      variant="ghost"
-                      disabled={busy}
-                      label="重新注册"
-                      hint="重新触发 webhook 注册任务"
-                      icon={<Icon icon={refreshIcon} aria-hidden="true" />}
-                      onClick={() => {
-                        void (async () => {
-                          setBusy(true)
-                          setError(null)
-                          try {
-                            await setGitHubPackagesRepoSelected({ fullName: repo.fullName, selected: true })
-                            await refresh({ forceJobs: true })
-                          } catch (e: unknown) {
-                            setError(errorMessage(e))
-                          } finally {
-                            setBusy(false)
-                          }
-                        })()
-                      }}
-                    />
-                  ) : null}
+                  <ResponsiveActionButton
+                    variant="ghost"
+                    disabled={syncBlockedByDelete || (busy && !repoPending)}
+                    label={
+                      syncBlockedByDelete
+                        ? '删除中…'
+                        : repoPendingJob?.status === 'running'
+                        ? '同步中…'
+                        : repoPendingJob?.status === 'queued'
+                          ? '排队中…'
+                          : '同步状态'
+                    }
+                    hint={
+                      syncBlockedByDelete
+                        ? '反注册删除任务进行中，完成后可再次同步'
+                        : repoPending
+                          ? '任务进行中，点击查看任务详情'
+                          : '触发该仓库 webhook 状态同步任务'
+                    }
+                    icon={<Icon icon={refreshIcon} aria-hidden="true" />}
+                    onClick={() => {
+                      void (async () => {
+                        if (repoPendingJob) {
+                          navigate({ name: 'job', jobId: repoPendingJob.id })
+                          return
+                        }
+                        setBusy(true)
+                        setError(null)
+                        try {
+                          await triggerGitHubPackagesWebhookSyncRepo({ fullName: repo.fullName })
+                          await refresh({ forceJobs: true })
+                        } catch (e: unknown) {
+                          setError(errorMessage(e))
+                        } finally {
+                          setBusy(false)
+                        }
+                      })()
+                    }}
+                  />
 
                   {showRetryDelete ? (
                     <ResponsiveActionButton

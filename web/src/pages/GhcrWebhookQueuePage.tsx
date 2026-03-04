@@ -5,7 +5,7 @@ import {
   listGitHubPackagesRepos,
   listJobs,
   newJobsEventsSource,
-  setGitHubPackagesRepoSelected,
+  triggerGitHubPackagesWebhookSyncRepo,
   type GitHubPackagesRepo,
   type GitHubPackagesWebhookOverviewResponse,
   type JobListItem,
@@ -13,6 +13,16 @@ import {
 import { useConfirm } from '../confirm'
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
+
+const GHCR_JOB_TYPES = new Set([
+  'github_packages_webhook',
+  'github_packages_webhook_sync_all',
+  'github_packages_webhook_sync_repo',
+])
+
+function isGhcrJobType(type: string): boolean {
+  return GHCR_JOB_TYPES.has(type)
+}
 
 function normalizeWebhookState(raw: string | null | undefined): string {
   const state = (raw ?? '').trim().toLowerCase()
@@ -75,7 +85,7 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
     if (requestId !== refreshRequestIdRef.current) return
     setOverview(nextOverview)
     setRepos(repoResp.repos)
-    setJobs(allJobs.filter((job) => job.type === 'github_packages_webhook'))
+    setJobs(allJobs.filter((job) => isGhcrJobType(job.type)))
   }, [])
 
   useEffect(() => {
@@ -232,7 +242,7 @@ export function GhcrWebhookQueuePage(props: { onTopActions: (node: React.ReactNo
                             setBusy(true)
                             setError(null)
                             try {
-                              await setGitHubPackagesRepoSelected({ fullName: repo.fullName, selected: true })
+                              await triggerGitHubPackagesWebhookSyncRepo({ fullName: repo.fullName })
                               await refresh()
                             } catch (e: unknown) {
                               setError(errorMessage(e))

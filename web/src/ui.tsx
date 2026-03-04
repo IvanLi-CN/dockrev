@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
 import type { Service } from './api'
 import { noteFor, statusDotClass, statusIcon, statusLabel, type RowStatus } from './updateStatus'
@@ -114,6 +114,9 @@ export function IconButton(props: {
 const SMALL_ACTION_BUTTON_QUERY = '(max-width: 700px)'
 const ACTION_BUTTON_LONG_PRESS_MS = 480
 const ACTION_BUTTON_HINT_PERSIST_MS = 1200
+type ResponsiveActionBubbleStyle = CSSProperties & {
+  '--responsive-action-bubble-offset-x'?: string
+}
 
 function buttonVariantClass(variant: 'primary' | 'danger' | 'ghost'): string {
   return variant === 'primary' ? 'btnPrimary' : variant === 'danger' ? 'btnDanger' : 'btnGhost'
@@ -139,6 +142,7 @@ export function ResponsiveActionButton(props: {
   const [showLongPressHint, setShowLongPressHint] = useState(false)
   const [bubbleAlign, setBubbleAlign] = useState<'center' | 'left' | 'right'>('center')
   const [bubbleVertical, setBubbleVertical] = useState<'above' | 'below'>('above')
+  const [bubbleOffsetX, setBubbleOffsetX] = useState(0)
   const pressTimerRef = useRef<number | null>(null)
   const hideHintTimerRef = useRef<number | null>(null)
   const longPressTriggeredRef = useRef(false)
@@ -172,23 +176,46 @@ export function ResponsiveActionButton(props: {
     const bubbleRect = bubble.getBoundingClientRect()
     const bubbleWidth = bubbleRect.width
     const bubbleHeight = bubbleRect.height
+    if (bubbleWidth <= 0 || bubbleHeight <= 0) {
+      setBubbleAlign('center')
+      setBubbleOffsetX(0)
+      return
+    }
     const margin = 8
-    const centeredLeft = rootRect.left + rootRect.width / 2 - bubbleWidth / 2
-    const centeredRight = centeredLeft + bubbleWidth
+    const viewportRight = window.innerWidth - margin
     const bubbleGap = 10
     const viewportBottom = window.innerHeight - margin
     const aboveTop = rootRect.top - bubbleGap - bubbleHeight
     const belowBottom = rootRect.bottom + bubbleGap + bubbleHeight
     const aboveOverflow = Math.max(0, margin - aboveTop)
     const belowOverflow = Math.max(0, belowBottom - viewportBottom)
-
-    if (centeredLeft < margin) {
-      setBubbleAlign('left')
-    } else if (centeredRight > window.innerWidth - margin) {
-      setBubbleAlign('right')
-    } else {
-      setBubbleAlign('center')
+    const candidates: Array<{ align: 'center' | 'left' | 'right'; left: number }> = [
+      { align: 'center', left: rootRect.left + rootRect.width / 2 - bubbleWidth / 2 },
+      { align: 'left', left: rootRect.left },
+      { align: 'right', left: rootRect.right - bubbleWidth },
+    ]
+    const overflowScore = (left: number) => {
+      const right = left + bubbleWidth
+      return Math.max(0, margin - left) + Math.max(0, right - viewportRight)
     }
+    let best = candidates[0]
+    let bestScore = overflowScore(best.left)
+    for (const candidate of candidates.slice(1)) {
+      const score = overflowScore(candidate.left)
+      if (score < bestScore) {
+        best = candidate
+        bestScore = score
+      }
+    }
+    const bestRight = best.left + bubbleWidth
+    let offsetX = 0
+    if (best.left < margin) {
+      offsetX = margin - best.left
+    } else if (bestRight > viewportRight) {
+      offsetX = viewportRight - bestRight
+    }
+    setBubbleAlign(best.align)
+    setBubbleOffsetX(offsetX)
 
     setBubbleVertical(aboveOverflow <= belowOverflow ? 'above' : 'below')
   }
@@ -213,6 +240,7 @@ export function ResponsiveActionButton(props: {
       suppressNextClickRef.current = false
       setBubbleAlign('center')
       setBubbleVertical('above')
+      setBubbleOffsetX(0)
     }
     handleChange()
     media.addEventListener('change', handleChange)
@@ -285,11 +313,15 @@ export function ResponsiveActionButton(props: {
   ]
     .filter(Boolean)
     .join(' ')
+  const bubbleStyle: ResponsiveActionBubbleStyle = {
+    '--responsive-action-bubble-offset-x': `${bubbleOffsetX}px`,
+  }
 
   return (
     <button
       ref={rootRef}
       className={className}
+      style={bubbleStyle}
       disabled={props.disabled}
       aria-label={props.label}
       onPointerEnter={updateBubbleAlign}
@@ -301,6 +333,7 @@ export function ResponsiveActionButton(props: {
       onBlur={() => {
         setBubbleAlign('center')
         setBubbleVertical('above')
+        setBubbleOffsetX(0)
         dismissHint()
       }}
       onClick={(event) => {

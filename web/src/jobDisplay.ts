@@ -18,6 +18,8 @@ export function formatJobTypeLabel(type: string): string {
   if (raw === 'discovery') return '发现扫描'
   if (raw === 'runtime_scan') return '运行时扫描'
   if (raw === 'github_packages_webhook') return 'GHCR Webhook'
+  if (raw === 'github_packages_webhook_sync_all') return 'GHCR 全量同步'
+  if (raw === 'github_packages_webhook_sync_repo') return 'GHCR 单仓库同步'
   if (raw === 'update') return '更新任务'
   if (raw === 'rollback') return '回滚任务'
   return raw
@@ -66,6 +68,8 @@ function resolveJobTypeTone(type: string): JobTypeTone {
   if (type === 'discovery') return 'discovery'
   if (type === 'runtime_scan') return 'runtimeScan'
   if (type === 'github_packages_webhook') return 'ghcrWebhook'
+  if (type === 'github_packages_webhook_sync_all') return 'ghcrWebhook'
+  if (type === 'github_packages_webhook_sync_repo') return 'ghcrWebhook'
   if (type === 'update') return 'update'
   if (type === 'rollback') return 'rollback'
   return 'default'

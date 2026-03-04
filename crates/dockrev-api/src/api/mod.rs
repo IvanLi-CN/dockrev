@@ -138,6 +138,14 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_github_packages_webhook_overview),
         )
         .route(
+            "/api/github-packages/webhook/sync-all",
+            post(trigger_github_packages_webhook_sync_all),
+        )
+        .route(
+            "/api/github-packages/webhook/sync-repo",
+            post(trigger_github_packages_webhook_sync_repo),
+        )
+        .route(
             "/api/github-packages/webhook/deliveries",
             get(list_github_packages_webhook_deliveries),
         )
@@ -4493,6 +4501,67 @@ async fn get_github_packages_webhook_overview(
     Ok(Json(overview))
 }
 
+async fn trigger_github_packages_webhook_sync_all(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<TriggerGitHubPackagesWebhookSyncAllResponse>, ApiError> {
+    let user = require_user(&state, &headers)?;
+    ensure_github_packages_sync_ready(&state).await?;
+
+    let queued = ghcr_webhook_jobs::enqueue_sync_all_job(&state, &user, "ui")
+        .await
+        .map_err(map_ghcr_sync_enqueue_error)?;
+    Ok(Json(TriggerGitHubPackagesWebhookSyncAllResponse {
+        ok: true,
+        job_id: queued.job_id,
+        status: queued.status,
+        reused: queued.reused,
+    }))
+}
+
+async fn trigger_github_packages_webhook_sync_repo(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<TriggerGitHubPackagesWebhookSyncRepoRequest>,
+) -> Result<Json<TriggerGitHubPackagesWebhookSyncRepoResponse>, ApiError> {
+    let user = require_user(&state, &headers)?;
+    ensure_github_packages_sync_ready(&state).await?;
+
+    let full_name = req.full_name.trim();
+    if full_name.is_empty() {
+        return Err(ApiError::invalid_argument("fullName is required"));
+    }
+
+    let queued = ghcr_webhook_jobs::enqueue_sync_repo_job(&state, full_name, &user, "ui")
+        .await
+        .map_err(map_ghcr_sync_enqueue_error)?;
+    Ok(Json(TriggerGitHubPackagesWebhookSyncRepoResponse {
+        ok: true,
+        job_id: queued.job_id,
+        status: queued.status,
+        reused: queued.reused,
+    }))
+}
+
+async fn ensure_github_packages_sync_ready(state: &Arc<AppState>) -> Result<(), ApiError> {
+    let settings = state
+        .db
+        .get_github_packages_settings()
+        .await
+        .map_err(map_internal)?;
+    if !settings.enabled {
+        return Err(ApiError::invalid_argument(
+            "github packages webhook is disabled",
+        ));
+    }
+    if settings.callback_url.trim().is_empty() {
+        return Err(ApiError::invalid_argument("callbackUrl is required"));
+    }
+    let _ = Url::parse(&settings.callback_url)
+        .map_err(|_| ApiError::invalid_argument("invalid callbackUrl"))?;
+    Ok(())
+}
+
 async fn set_github_packages_repo_selected(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -4828,23 +4897,7 @@ async fn sync_github_packages_webhooks(
     Json(req): Json<SyncGitHubPackagesWebhooksRequest>,
 ) -> Result<Json<SyncGitHubPackagesWebhooksResponse>, ApiError> {
     let user = require_user(&state, &headers)?;
-
-    let settings = state
-        .db
-        .get_github_packages_settings()
-        .await
-        .map_err(map_internal)?;
-
-    if !settings.enabled {
-        return Err(ApiError::invalid_argument(
-            "github packages webhook is disabled",
-        ));
-    }
-    if settings.callback_url.trim().is_empty() {
-        return Err(ApiError::invalid_argument("callbackUrl is required"));
-    }
-    let _ = Url::parse(&settings.callback_url)
-        .map_err(|_| ApiError::invalid_argument("invalid callbackUrl"))?;
+    ensure_github_packages_sync_ready(&state).await?;
 
     let mut selected_repos: Vec<(String, String)> = state
         .db
@@ -4876,26 +4929,23 @@ async fn sync_github_packages_webhooks(
                 action: "queued".to_string(),
                 hook_id: None,
                 conflict_hooks: None,
-                message: Some("dryRun: would enqueue register job".to_string()),
+                message: Some("dryRun: would enqueue sync_repo job".to_string()),
             });
             continue;
         }
 
-        let queued = ghcr_webhook_jobs::enqueue_repo_job(
-            &state,
-            &full,
-            ghcr_webhook_jobs::GhcrWebhookOp::Register,
-            &user,
-            "ui",
-        )
-        .await;
+        let queued = ghcr_webhook_jobs::enqueue_sync_repo_job(&state, &full, &user, "ui").await;
         match queued {
-            Ok(job_id) => results.push(SyncGitHubPackagesWebhookResult {
+            Ok(enqueued) => results.push(SyncGitHubPackagesWebhookResult {
                 repo: full,
                 action: "queued".to_string(),
                 hook_id: None,
                 conflict_hooks: None,
-                message: Some(format!("jobId={job_id}")),
+                message: Some(format!(
+                    "jobId={}{}",
+                    enqueued.job_id,
+                    if enqueued.reused { " (reused)" } else { "" }
+                )),
             }),
             Err(err) => results.push(SyncGitHubPackagesWebhookResult {
                 repo: full,
@@ -5635,6 +5685,25 @@ fn now_rfc3339() -> anyhow::Result<String> {
 fn map_internal(err: anyhow::Error) -> ApiError {
     tracing::error!(error = %err, "internal error");
     ApiError::internal("internal error").with_details(json!({"cause": err.to_string()}))
+}
+
+fn map_ghcr_sync_enqueue_error(err: anyhow::Error) -> ApiError {
+    for cause in err.chain() {
+        match cause.to_string().as_str() {
+            "invalid fullName" => return ApiError::invalid_argument("invalid fullName"),
+            "no tracked repos selected" => {
+                return ApiError::invalid_argument("no tracked repos selected");
+            }
+            "repo is not selected" => return ApiError::invalid_argument("repo is not selected"),
+            "repo is not tracked" => return ApiError::not_found("repo is not tracked"),
+            "repo unregister in progress" => {
+                return ApiError::conflict("repo unregister in progress");
+            }
+            _ => {}
+        }
+    }
+
+    map_internal(err)
 }
 
 fn map_github_owner_resolve_error(owner: &str, err: anyhow::Error) -> ApiError {
