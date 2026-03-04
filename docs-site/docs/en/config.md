@@ -33,7 +33,7 @@ description: Runtime configuration reference for Dockrev API and Supervisor.
 
 Fixed scheduler behavior:
 
-- Check worker concurrency: `5`
+- Check worker concurrency: `7`
 - Worker start stagger: `1s`
 - Registry per-host concurrency: `5`
 

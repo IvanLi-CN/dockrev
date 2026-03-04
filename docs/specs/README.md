@@ -28,6 +28,7 @@
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
 | mzqkx | Dockrev：发布流程补齐 Channel 显式选择（PR + Label） | 已完成 | `mzqkx-release-channel-selection/SPEC.md` | 2026-03-04 | fast-track（channel 契约改为 required stable/rc） |
+| dvxvx | Dockrev：检查更新并行提升到 7（registry per-host 维持 5） | 已完成 | `dvxvx-check-parallelism-7-registry-5/SPEC.md` | 2026-03-04 | fast-track（check=7, registry=5） |
 | fmcxc | Dockrev：版本推测扫描提速（保守过滤） | 已完成 | `fmcxc-snapshot-scan-conservative-filter/SPEC.md` | 2026-03-04 | fast-track |
 | b5tcx | Dockrev：概览卡片运行任务整行背景进度条（慢速流光） | 已完成 | `b5tcx-overview-running-row-progress-bg/SPEC.md` | 2026-03-03 | fast-track（overview running 行 subtle 背景进度 + 慢速流光） |
 | ttq9u | Dockrev：Supervisor 自升级 dry-run/apply 按钮运行态修复（禁用 + spin） | 已完成 | `ttq9u-supervisor-self-upgrade-running-buttons/SPEC.md` | 2026-03-03 | fast-track（running 禁用 dry/apply，按 request.mode 显示 spinner） |

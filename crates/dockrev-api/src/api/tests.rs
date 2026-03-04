@@ -3,7 +3,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -958,19 +958,31 @@ impl StrictSemverDriftRegistry {
 #[derive(Clone)]
 struct StaggeredCheckRegistry {
     delay: Duration,
+    hold_until_in_flight: Option<usize>,
     in_flight: Arc<AtomicUsize>,
     max_in_flight: Arc<AtomicUsize>,
     started_at: Arc<std::sync::Mutex<Vec<std::time::Instant>>>,
+    peak_reached: Arc<AtomicBool>,
+    peak_notify: Arc<tokio::sync::Notify>,
 }
 
 impl StaggeredCheckRegistry {
     fn new(delay: Duration) -> Self {
         Self {
             delay,
+            hold_until_in_flight: None,
             in_flight: Arc::new(AtomicUsize::new(0)),
             max_in_flight: Arc::new(AtomicUsize::new(0)),
             started_at: Arc::new(std::sync::Mutex::new(Vec::new())),
+            peak_reached: Arc::new(AtomicBool::new(false)),
+            peak_notify: Arc::new(tokio::sync::Notify::new()),
         }
+    }
+
+    fn with_peak_gate(delay: Duration, target_in_flight: usize) -> Self {
+        let mut registry = Self::new(delay);
+        registry.hold_until_in_flight = Some(target_in_flight.max(1));
+        registry
     }
 
     fn max_in_flight(&self) -> usize {
@@ -1011,7 +1023,17 @@ impl RegistryClient for StaggeredCheckRegistry {
             }
         }
 
-        tokio::time::sleep(self.delay).await;
+        if let Some(target_in_flight) = self.hold_until_in_flight {
+            if current >= target_in_flight && !self.peak_reached.swap(true, Ordering::SeqCst) {
+                self.peak_notify.notify_waiters();
+            }
+            let notified = self.peak_notify.notified();
+            if !self.peak_reached.load(Ordering::SeqCst) {
+                let _ = tokio::time::timeout(self.delay, notified).await;
+            }
+        } else {
+            tokio::time::sleep(self.delay).await;
+        }
         self.in_flight.fetch_sub(1, Ordering::SeqCst);
 
         Ok(ManifestInfo {
@@ -2504,7 +2526,10 @@ services:
 
 #[tokio::test]
 async fn check_uses_fixed_parallelism_stagger_and_dual_progress() {
-    let registry = Arc::new(StaggeredCheckRegistry::new(Duration::from_millis(2200)));
+    let registry = Arc::new(StaggeredCheckRegistry::with_peak_gate(
+        Duration::from_secs(8),
+        crate::config::FIXED_CHECK_PARALLELISM,
+    ));
     let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
     let state = test_state_with(":memory:", registry.clone(), runner).await;
     let app = api::router(state.clone());
@@ -2515,17 +2540,21 @@ async fn check_uses_fixed_parallelism_stagger_and_dual_progress() {
         r#"
 services:
   web1:
-    image: ghcr.io/acme/web:5.2
+    image: ghcr.io/acme/web1:5.2
   web2:
-    image: ghcr.io/acme/web:5.2
+    image: ghcr.io/acme/web2:5.2
   web3:
-    image: ghcr.io/acme/web:5.2
+    image: ghcr.io/acme/web3:5.2
   web4:
-    image: ghcr.io/acme/web:5.2
+    image: ghcr.io/acme/web4:5.2
   web5:
-    image: ghcr.io/acme/web:5.2
+    image: ghcr.io/acme/web5:5.2
   web6:
-    image: ghcr.io/acme/web:5.2
+    image: ghcr.io/acme/web6:5.2
+  web7:
+    image: ghcr.io/acme/web7:5.2
+  web8:
+    image: ghcr.io/acme/web8:5.2
 "#,
     )
     .unwrap();
@@ -2554,7 +2583,7 @@ services:
 
     let mut finished = false;
     let mut saw_split_progress = false;
-    for _ in 0..400 {
+    for _ in 0..500 {
         let resp = app
             .clone()
             .oneshot(
@@ -2589,12 +2618,14 @@ services:
 
     let max_in_flight = registry.max_in_flight();
     assert!(
-        max_in_flight <= 5,
-        "max in-flight should be capped at 5, got {max_in_flight}"
+        max_in_flight <= crate::config::FIXED_CHECK_PARALLELISM,
+        "max in-flight should be capped at {}, got {max_in_flight}",
+        crate::config::FIXED_CHECK_PARALLELISM
     );
     assert!(
-        max_in_flight >= 2,
-        "check should run with observable concurrency"
+        max_in_flight == crate::config::FIXED_CHECK_PARALLELISM,
+        "max in-flight should reach fixed parallelism {}, got {max_in_flight}",
+        crate::config::FIXED_CHECK_PARALLELISM
     );
 
     let starts = registry.started_at();
