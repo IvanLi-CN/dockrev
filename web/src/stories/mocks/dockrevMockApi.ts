@@ -2882,24 +2882,22 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       })
     }
 
-    if (urlPath === '/api/jobs/events' && method === 'GET') {
+    if (urlPath === '/api/jobs/events' && method === 'GET' && scenario === 'queue-progress-smoothing') {
       const params = url?.searchParams ?? new URLSearchParams()
       const afterId = Number(params.get('afterId') ?? '0') || 0
       const events: Array<{ id: number; data: Record<string, unknown> }> = []
-      if (scenario === 'queue-progress-smoothing') {
-        const nextCompletedPercent = advanceQueueProgressDemo()
-        if (nextCompletedPercent !== null) {
-          jobsEventsSeq += 1
-          events.push({
-            id: jobsEventsSeq,
-            data: {
-              type: 'job_progress',
-              jobId: 'job-running',
-              percent: nextCompletedPercent,
-              ts: nowIso(),
-            },
-          })
-        }
+      const nextCompletedPercent = advanceQueueProgressDemo()
+      if (nextCompletedPercent !== null) {
+        jobsEventsSeq += 1
+        events.push({
+          id: jobsEventsSeq,
+          data: {
+            type: 'job_progress',
+            jobId: 'job-running',
+            percent: nextCompletedPercent,
+            ts: nowIso(),
+          },
+        })
       }
       const newEvents = events.filter((evt) => evt.id > afterId).slice(0, 200)
       const body = newEvents
