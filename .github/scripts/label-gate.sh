@@ -47,7 +47,8 @@ allowed = {
 }
 
 allowed_channels = {
-    "channel:prerelease",
+    "channel:stable",
+    "channel:rc",
 }
 
 labels = json.loads(os.environ["labels_json"])
@@ -74,8 +75,11 @@ if unknown_type:
 if unknown_channel:
     fail(f"Unknown channel label(s): {', '.join(unknown_channel)}")
 
+if len(allowed_channels_present) == 0:
+    fail("Missing channel label: PR must have exactly one channel label")
+
 if len(allowed_channels_present) > 1:
-    fail(f"Conflicting channel labels: {', '.join(allowed_channels_present)} (must be at most one)")
+    fail(f"Conflicting channel labels: {', '.join(allowed_channels_present)} (must be exactly one)")
 
 if len(allowed_present) == 0:
     fail("Missing intent label: PR must have exactly one intent label")
@@ -84,7 +88,7 @@ if len(allowed_present) > 1:
     fail(f"Conflicting intent labels: {', '.join(allowed_present)} (must be exactly one)")
 
 intent = allowed_present[0]
-release_channel = "prerelease" if "channel:prerelease" in allowed_channels_present else "stable"
+release_channel = "rc" if "channel:rc" in allowed_channels_present else "stable"
 
 if intent in ("type:docs", "type:skip"):
     bump_level = ""

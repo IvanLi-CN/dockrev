@@ -22,7 +22,7 @@ if [[ -z "${token}" ]]; then
 fi
 
 allowed_labels=("type:docs" "type:skip" "type:patch" "type:minor" "type:major")
-allowed_channels=("channel:prerelease")
+allowed_channels=("channel:stable" "channel:rc")
 
 conservative_skip() {
   local reason="$1"
@@ -141,7 +141,8 @@ allowed = {
 }
 
 allowed_channels = {
-    "channel:prerelease",
+    "channel:stable",
+    "channel:rc",
 }
 
 labels = json.loads(os.environ["labels_json"])
@@ -170,7 +171,7 @@ if unknown_channel:
     print(f"reason=unknown_channel_label({','.join(unknown_channel)})")
     sys.exit(0)
 
-if len(present_channel) > 1:
+if len(present_channel) != 1:
     print("should_release=false")
     print("bump_level=")
     print("release_intent_label=")
@@ -178,7 +179,7 @@ if len(present_channel) > 1:
     print(f"reason=invalid_channel_label_count({len(present_channel)})")
     sys.exit(0)
 
-release_channel = "prerelease" if present_channel == ["channel:prerelease"] else "stable"
+release_channel = "rc" if present_channel == ["channel:rc"] else "stable"
 
 if len(present) != 1:
     print("should_release=false")

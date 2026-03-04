@@ -76,6 +76,9 @@ jobs:
       - name: Cargo check
         run: cargo check --workspace --locked --all-targets --all-features
 
+      - name: Release channel contract check
+        run: bash ./.github/scripts/release-channel-contract-check.sh
+
   unit-tests:
     name: Backend Tests
     runs-on: ubuntu-latest

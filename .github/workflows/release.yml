@@ -62,7 +62,7 @@ jobs:
         run: bash ./.github/scripts/compute-version.sh
 
       - name: Apply prerelease suffix (rc)
-        if: ${{ steps.intent.outputs.should_release == 'true' && steps.intent.outputs.release_channel == 'prerelease' }}
+        if: ${{ steps.intent.outputs.should_release == 'true' && steps.intent.outputs.release_channel == 'rc' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -465,13 +465,13 @@ jobs:
           {
             echo "dockrev_tags<<EOF"
             echo "${dockrev_image}:${APP_EFFECTIVE_VERSION}"
-            if [[ "${RELEASE_CHANNEL}" != "prerelease" ]]; then
+            if [[ "${RELEASE_CHANNEL}" != "rc" ]]; then
               echo "${dockrev_image}:latest"
             fi
             echo "EOF"
             echo "supervisor_tags<<EOF"
             echo "${supervisor_image}:${APP_EFFECTIVE_VERSION}"
-            if [[ "${RELEASE_CHANNEL}" != "prerelease" ]]; then
+            if [[ "${RELEASE_CHANNEL}" != "rc" ]]; then
               echo "${supervisor_image}:latest"
             fi
             echo "EOF"
@@ -675,7 +675,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TAG }}
-          prerelease: ${{ env.RELEASE_CHANNEL == 'prerelease' }}
+          prerelease: ${{ env.RELEASE_CHANNEL == 'rc' }}
           generateReleaseNotes: true
           allowUpdates: true
           replacesArtifacts: true
