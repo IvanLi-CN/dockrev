@@ -2589,8 +2589,8 @@ services:
 
     let max_in_flight = registry.max_in_flight();
     assert!(
-        max_in_flight <= 5,
-        "max in-flight should be capped at 5, got {max_in_flight}"
+        max_in_flight <= 7,
+        "max in-flight should be capped at 7, got {max_in_flight}"
     );
     assert!(
         max_in_flight >= 2,

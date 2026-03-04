@@ -46,7 +46,7 @@ description: Dockrev API 与 Supervisor 运行参数说明。
 
 固定策略（非环境变量）：
 
-- Check 并发固定为 `5`
+- Check 并发固定为 `7`
 - Worker 启动错峰固定 `1s`
 - Registry host 并发固定 `5`
 

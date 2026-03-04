@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use axum::http::HeaderName;
 
-pub const FIXED_CHECK_PARALLELISM: usize = 5;
+pub const FIXED_CHECK_PARALLELISM: usize = 7;
 pub const FIXED_REGISTRY_PER_HOST_CONCURRENCY: usize = 5;
 
 #[derive(Clone)]
