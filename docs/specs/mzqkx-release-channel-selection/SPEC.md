@@ -78,6 +78,7 @@ Dockrev 的发布流程原本只支持可选 `channel:prerelease`：
 
 ### Testing
 
+- `bash .github/scripts/release-channel-contract-check.sh`
 - `bash -n .github/scripts/label-gate.sh .github/scripts/release-intent.sh .github/scripts/compute-version.sh`
 - `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/label-gate.yml"); YAML.load_file(".github/workflows/release.yml")'`
 - 针对 `label-gate`/`release-intent` 的最小样例逻辑检查（stable/rc/缺失/冲突/未知）。
@@ -98,3 +99,4 @@ Dockrev 的发布流程原本只支持可选 `channel:prerelease`：
 ## 变更记录（Change log）
 
 - 2026-03-04: 创建规格并完成实现：发布 channel 改为显式必选（`stable|rc`），CI gate / release-intent / release workflow / README 同步更新，远端 labels 完成迁移。
+- 2026-03-04: 增加 `release-channel-contract-check.sh` 并接入 `CI (PR)` / `CI (main)` 的 Lint & Checks，覆盖 stable/rc/缺失/冲突/未知通道矩阵与 release.yml 关键分支不变量。
