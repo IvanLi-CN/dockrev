@@ -19,7 +19,7 @@ jobs:
     name: Release intent label gate
     runs-on: ubuntu-latest
     steps:
-      - name: Validate release intent label (exactly one)
+      - name: Validate release intent + channel labels (exactly one each)
         uses: actions/github-script@v7
         with:
           github-token: ${{ github.token }}
@@ -33,7 +33,8 @@ jobs:
             ]);
 
             const allowedChannels = new Set([
-              "channel:prerelease",
+              "channel:stable",
+              "channel:rc",
             ]);
 
             const labels = (context.payload.pull_request?.labels ?? [])
@@ -61,8 +62,13 @@ jobs:
             }
 
             const channelUnique = Array.from(new Set(channelLike));
+            if (channelUnique.length === 0) {
+              core.setFailed("Missing channel label: PR must have exactly one channel label");
+              return;
+            }
+
             if (channelUnique.length > 1) {
-              core.setFailed(`Conflicting channel labels: ${channelUnique.sort().join(", ")} (must be at most one)`);
+              core.setFailed(`Conflicting channel labels: ${channelUnique.sort().join(", ")} (must be exactly one)`);
               return;
             }
 
