@@ -9,6 +9,7 @@ import type {
   JobListItem,
   ListGitHubPackagesReposResponse,
   NotificationConfig,
+  NotificationTestChannel,
   BulkSetGitHubPackagesReposSelectedRequest,
   PutGitHubPackagesSettingsRequest,
   SetGitHubPackagesRepoSelectedRequest,
@@ -54,6 +55,7 @@ export type DockrevApiScenario =
   | 'queue-long-logs'
   | 'settings-configured'
   | 'settings-configured-resolve-slow'
+  | 'settings-notification-channel-errors'
   | 'no-candidates'
   | 'empty'
   | 'error'
@@ -348,6 +350,39 @@ const TELEGRAM_BOT_TOKEN_PATTERN = /^\d{5,}:[A-Za-z0-9_-]{8,}$/
 
 function isValidTelegramBotToken(value: string): boolean {
   return TELEGRAM_BOT_TOKEN_PATTERN.test(value) && !/\s/.test(value)
+}
+
+function isNotificationTestChannel(v: string): v is NotificationTestChannel {
+  return v === 'email' || v === 'webhook' || v === 'telegram' || v === 'webPush'
+}
+
+function mockNotificationChannelResult(
+  notifications: NotificationConfig,
+  channel: NotificationTestChannel,
+): { ok: boolean; error?: string } {
+  if (channel === 'email') {
+    const smtpUrl = (notifications.email.smtpUrl ?? '').trim()
+    if (!smtpUrl) return { ok: false, error: 'email.smtpUrl missing' }
+    return { ok: true }
+  }
+
+  if (channel === 'webhook') {
+    const url = (notifications.webhook.url ?? '').trim()
+    if (!url) return { ok: false, error: 'webhook.url missing' }
+    return { ok: true }
+  }
+
+  if (channel === 'telegram') {
+    const botToken = (notifications.telegram.botToken ?? '').trim()
+    if (!botToken) return { ok: false, error: 'telegram.botToken missing' }
+    const chatId = (notifications.telegram.chatId ?? '').trim()
+    if (!chatId) return { ok: false, error: 'telegram.chatId missing' }
+    return { ok: true }
+  }
+
+  const privateKey = (notifications.webPush.vapidPrivateKey ?? '').trim()
+  if (!privateKey) return { ok: false, error: 'webPush.vapidPrivateKey missing' }
+  return { ok: true }
 }
 
 function hashString(input: string): number {
@@ -2216,6 +2251,17 @@ function buildSettingsConfigured(): Fixture {
   return f
 }
 
+function buildSettingsNotificationChannelErrors(): Fixture {
+  const f = buildSettingsConfigured()
+  f.notifications = {
+    email: { enabled: false, smtpUrl: null },
+    webhook: { enabled: false, url: null },
+    telegram: { enabled: false, botToken: null, botTokenConfigured: false, chatId: null },
+    webPush: { enabled: false, vapidPublicKey: 'BBOG...mock', vapidPrivateKey: null, vapidSubject: null },
+  }
+  return f
+}
+
 function buildMultiStackMixed(): Fixture {
   const f = buildDashboardDemo()
 
@@ -2328,6 +2374,7 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'queue-legacy-progress') return buildQueueLegacyProgress()
   if (scenario === 'queue-long-logs') return buildQueueLongLogs()
   if (scenario === 'settings-configured' || scenario === 'settings-configured-resolve-slow') return buildSettingsConfigured()
+  if (scenario === 'settings-notification-channel-errors') return buildSettingsNotificationChannelErrors()
   if (scenario === 'multi-stack-mixed') return buildMultiStackMixed()
   return buildDashboardDemo()
 }
@@ -3346,7 +3393,39 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       }
       return json({ ok: true })
     }
-    if (method === 'POST' && urlPath === '/api/notifications/test') return json({ ok: true, results: {} })
+    if (method === 'POST' && urlPath === '/api/notifications/test') {
+      const parsed = parseJsonBody(init?.body)
+      const rec = isRecord(parsed) ? parsed : {}
+      const hasChannelField = Object.prototype.hasOwnProperty.call(rec, 'channel')
+      const rawChannel = getString(rec.channel)
+      if (hasChannelField && rec.channel != null && (!rawChannel || !isNotificationTestChannel(rawChannel))) {
+        return json(
+          {
+            error: {
+              code: 'invalid_argument',
+              message: 'invalid notification test channel',
+              details: { reason: 'invalid_notification_test_channel' },
+            },
+          },
+          { status: 400 },
+        )
+      }
+      const channels: NotificationTestChannel[] = []
+      if (rawChannel && isNotificationTestChannel(rawChannel)) {
+        channels.push(rawChannel)
+      } else {
+        if (f.notifications.email.enabled) channels.push('email')
+        if (f.notifications.webhook.enabled) channels.push('webhook')
+        if (f.notifications.telegram.enabled) channels.push('telegram')
+        if (f.notifications.webPush.enabled) channels.push('webPush')
+      }
+
+      const results = channels.reduce<Record<string, { ok: boolean; error?: string }>>((acc, channel) => {
+        acc[channel] = mockNotificationChannelResult(f.notifications, channel)
+        return acc
+      }, {})
+      return json({ ok: true, results })
+    }
 
     // web push
     if (method === 'POST' && urlPath === '/api/web-push/subscriptions') return json({ ok: true })

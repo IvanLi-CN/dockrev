@@ -837,6 +837,8 @@ pub struct PutNotificationsResponse {
 pub struct TestNotificationsRequest {
     #[serde(default)]
     pub message: Option<String>,
+    #[serde(default)]
+    pub channel: Option<NotificationTestChannel>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -844,6 +846,15 @@ pub struct TestNotificationsRequest {
 pub struct TestNotificationsResponse {
     pub ok: bool,
     pub results: Value,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum NotificationTestChannel {
+    Email,
+    Webhook,
+    Telegram,
+    WebPush,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

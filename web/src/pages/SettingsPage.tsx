@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
+import alertCircleOutline from '@iconify-icons/mdi/alert-circle-outline'
+import bellOutline from '@iconify-icons/mdi/bell-outline'
+import checkCircleOutline from '@iconify-icons/mdi/check-circle-outline'
+import closeCircleOutline from '@iconify-icons/mdi/close-circle-outline'
 import eyeOffOutline from '@iconify-icons/mdi/eye-off-outline'
 import eyeOutline from '@iconify-icons/mdi/eye-outline'
+import emailOutline from '@iconify-icons/mdi/email-outline'
+import linkVariant from '@iconify-icons/mdi/link-variant'
+import progressClock from '@iconify-icons/mdi/progress-clock'
+import sendCircleOutline from '@iconify-icons/mdi/send-circle-outline'
+import telegram from '@iconify-icons/mdi/telegram'
 import {
   ApiError,
   createWebPushSubscription,
@@ -22,6 +31,7 @@ import {
   type GitHubPackagesSettingsResponse,
   type JobListItem,
   type ListGitHubPackagesReposResponse,
+  type NotificationTestChannel,
   type ResolveGitHubPackagesTargetResponse,
   type NotificationConfig,
   type PutSettingsInput,
@@ -219,6 +229,79 @@ function mapScopeLabel(scope: SaveScope): string {
   if (scope === 'backup') return '系统设置'
   if (scope === 'notifications') return '通知'
   return 'GHCR'
+}
+
+type NotificationTestBubbleStepTone = 'running' | 'success' | 'error' | 'info'
+
+type NotificationTestBubbleStep = {
+  tone: NotificationTestBubbleStepTone
+  text: string
+}
+
+type NotificationChannelTestState = {
+  phase: 'running' | 'success' | 'error'
+  steps: NotificationTestBubbleStep[]
+  updatedAt: string
+  errorDetail?: string
+}
+
+const NOTIFICATION_CHANNEL_LABEL: Record<NotificationTestChannel, string> = {
+  email: 'Email',
+  webhook: 'Webhook',
+  telegram: 'Telegram',
+  webPush: 'Web Push',
+}
+
+const NOTIFICATION_CHANNEL_ICON = {
+  email: emailOutline,
+  webhook: linkVariant,
+  telegram,
+  webPush: bellOutline,
+} as const
+
+function runningTestState(channel: NotificationTestChannel): NotificationChannelTestState {
+  const label = NOTIFICATION_CHANNEL_LABEL[channel]
+  return {
+    phase: 'running',
+    steps: [
+      { tone: 'running', text: `正在发送 ${label} 测试消息` },
+      { tone: 'info', text: '等待渠道响应' },
+    ],
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+function successTestState(channel: NotificationTestChannel): NotificationChannelTestState {
+  const label = NOTIFICATION_CHANNEL_LABEL[channel]
+  return {
+    phase: 'success',
+    steps: [
+      { tone: 'success', text: `${label} 测试请求已发送` },
+      { tone: 'success', text: `${label} 渠道返回成功` },
+    ],
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+function errorTestState(
+  channel: NotificationTestChannel,
+  detail: string,
+  options?: { requestSent?: boolean },
+): NotificationChannelTestState {
+  const label = NOTIFICATION_CHANNEL_LABEL[channel]
+  const requestSent = options?.requestSent ?? true
+  return {
+    phase: 'error',
+    steps: [
+      requestSent
+        ? { tone: 'success', text: `${label} 测试请求已发出` }
+        : { tone: 'error', text: `${label} 测试请求发送失败` },
+      { tone: 'error', text: `${label} 渠道测试失败` },
+      { tone: 'error', text: '查看详细错误信息' },
+    ],
+    updatedAt: new Date().toISOString(),
+    errorDetail: detail,
+  }
 }
 
 type RepoSelectedFilter = 'all' | 'selected' | 'unselected'
@@ -571,6 +654,74 @@ function GitHubPackagesRepoPicker({
   )
 }
 
+function NotificationChannelTestControl(props: {
+  channel: NotificationTestChannel
+  state: NotificationChannelTestState | undefined
+  running: boolean
+  onRun: (channel: NotificationTestChannel) => void
+}) {
+  const label = NOTIFICATION_CHANNEL_LABEL[props.channel]
+
+  return (
+    <div className="notificationTestActionWrap" data-notification-test-wrap={props.channel}>
+      <button
+        type="button"
+        className={`btn btnGhost notificationTestBtn${props.running ? ' notificationTestBtnRunning' : ''}`}
+        onClick={() => props.onRun(props.channel)}
+        disabled={props.running}
+        aria-label={`测试 ${label} 通道`}
+        title={`测试 ${label} 通道`}
+        data-notification-test-channel={props.channel}
+      >
+        <span className="notificationTestBtnInner">
+          <Icon icon={NOTIFICATION_CHANNEL_ICON[props.channel]} className="notificationTestBtnIcon" aria-hidden="true" />
+          <span>测试</span>
+        </span>
+      </button>
+
+      {props.state ? (
+        <div
+          className={`notificationTestBubble notificationTestBubble${props.state.phase === 'error' ? 'Bad' : props.state.phase === 'success' ? 'Ok' : 'Info'}`}
+          role="status"
+          aria-live="polite"
+          data-notification-test-bubble={props.channel}
+        >
+          <div className="notificationTestBubbleTitle">
+            <Icon icon={sendCircleOutline} aria-hidden="true" />
+            <span>{label} 测试</span>
+          </div>
+          <div className="notificationTestBubbleSteps">
+            {props.state.steps.map((step, index) => {
+              const icon =
+                step.tone === 'success'
+                  ? checkCircleOutline
+                  : step.tone === 'error'
+                    ? closeCircleOutline
+                    : step.tone === 'running'
+                      ? progressClock
+                      : alertCircleOutline
+              return (
+                <div
+                  key={`${props.channel}-${index}-${step.text}`}
+                  className={`notificationTestBubbleStep notificationTestBubbleStep${step.tone === 'running' ? 'Running' : step.tone === 'success' ? 'Ok' : step.tone === 'error' ? 'Bad' : 'Info'}`}
+                >
+                  <Icon
+                    icon={icon}
+                    className={step.tone === 'running' ? 'notificationTestBubbleStepIconSpin' : undefined}
+                    aria-hidden="true"
+                  />
+                  <span>{step.text}</span>
+                </div>
+              )
+            })}
+          </div>
+          {props.state.errorDetail ? <div className="notificationTestBubbleError">{props.state.errorDetail}</div> : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => void }) {
   const { onTopActions } = props
   const confirm = useConfirm()
@@ -593,6 +744,12 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   const [autoSaveSavingScope, setAutoSaveSavingScope] = useState<SaveScope | null>(null)
   const [autoSaveUpdatedAt, setAutoSaveUpdatedAt] = useState<string | null>(null)
   const [autoSaveQueuedScopes, setAutoSaveQueuedScopes] = useState<SaveScope[]>([])
+  const [notificationTestStates, setNotificationTestStates] = useState<
+    Partial<Record<NotificationTestChannel, NotificationChannelTestState>>
+  >({})
+  const [notificationTestRunning, setNotificationTestRunning] = useState<
+    Partial<Record<NotificationTestChannel, boolean>>
+  >({})
 
   const settingsRef = useRef<SettingsResponse | null>(null)
   const notificationsRef = useRef<NotificationConfig | null>(null)
@@ -997,6 +1154,8 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     setTelegramBotTokenFocused(false)
     setGitHubPackages(nextGhcr)
     setGitHubPackagesPat(nextPat)
+    setNotificationTestStates({})
+    setNotificationTestRunning({})
     resetAutoSaveBaselines({
       settings: nextSettings,
       notifications: nextNotifications,
@@ -1283,6 +1442,41 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
   const canWebPush = useMemo(() => {
     return typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window
+  }, [])
+
+  const runNotificationChannelTest = useCallback((channel: NotificationTestChannel) => {
+    void (async () => {
+      setNotificationTestRunning((prev) => ({ ...prev, [channel]: true }))
+      setNotificationTestStates((prev) => ({ ...prev, [channel]: runningTestState(channel) }))
+      let requestSent = false
+      try {
+        const response = await testNotifications({
+          message: 'dockrev: test notification',
+          channel,
+        })
+        requestSent = true
+        const channelResult = response.results[channel]
+        if (!channelResult) {
+          throw new Error(`${NOTIFICATION_CHANNEL_LABEL[channel]} 未返回测试结果`)
+        }
+        if (channelResult.ok) {
+          setNotificationTestStates((prev) => ({ ...prev, [channel]: successTestState(channel) }))
+          return
+        }
+        const detail = (channelResult.error ?? '').trim() || '未知错误'
+        setNotificationTestStates((prev) => ({
+          ...prev,
+          [channel]: errorTestState(channel, detail),
+        }))
+      } catch (e: unknown) {
+        setNotificationTestStates((prev) => ({
+          ...prev,
+          [channel]: errorTestState(channel, errorMessage(e), { requestSent }),
+        }))
+      } finally {
+        setNotificationTestRunning((prev) => ({ ...prev, [channel]: false }))
+      }
+    })()
   }, [])
 
   async function ensureSubscription() {
@@ -1589,17 +1783,25 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             <div className="settingsSection">
               <div className="settingHead">
                 <div className="sectionTitle">Email</div>
-                <Switch
-                  checked={notifications.email.enabled}
-                  disabled={busy}
-                  onChange={(v) =>
-                    updateNotifications(
-                      'notifications.email.enabled',
-                      (current) => ({ ...current, email: { ...current.email, enabled: v } }),
-                      true,
-                    )
-                  }
-                />
+                <div className="notificationChannelHeadActions">
+                  <NotificationChannelTestControl
+                    channel="email"
+                    state={notificationTestStates.email}
+                    running={Boolean(notificationTestRunning.email)}
+                    onRun={runNotificationChannelTest}
+                  />
+                  <Switch
+                    checked={notifications.email.enabled}
+                    disabled={busy}
+                    onChange={(v) =>
+                      updateNotifications(
+                        'notifications.email.enabled',
+                        (current) => ({ ...current, email: { ...current.email, enabled: v } }),
+                        true,
+                      )
+                    }
+                  />
+                </div>
               </div>
               <div className="kv">
                 <div className="kvRow">
@@ -1622,17 +1824,25 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             <div className="settingsSection">
               <div className="settingHead">
                 <div className="sectionTitle">Webhook</div>
-                <Switch
-                  checked={notifications.webhook.enabled}
-                  disabled={busy}
-                  onChange={(v) =>
-                    updateNotifications(
-                      'notifications.webhook.enabled',
-                      (current) => ({ ...current, webhook: { ...current.webhook, enabled: v } }),
-                      true,
-                    )
-                  }
-                />
+                <div className="notificationChannelHeadActions">
+                  <NotificationChannelTestControl
+                    channel="webhook"
+                    state={notificationTestStates.webhook}
+                    running={Boolean(notificationTestRunning.webhook)}
+                    onRun={runNotificationChannelTest}
+                  />
+                  <Switch
+                    checked={notifications.webhook.enabled}
+                    disabled={busy}
+                    onChange={(v) =>
+                      updateNotifications(
+                        'notifications.webhook.enabled',
+                        (current) => ({ ...current, webhook: { ...current.webhook, enabled: v } }),
+                        true,
+                      )
+                    }
+                  />
+                </div>
               </div>
               <div className="kv">
                 <div className="kvRow">
@@ -1655,17 +1865,25 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             <div className="settingsSection">
               <div className="settingHead">
                 <div className="sectionTitle">Telegram</div>
-                <Switch
-                  checked={notifications.telegram.enabled}
-                  disabled={busy}
-                  onChange={(v) =>
-                    updateNotifications(
-                      'notifications.telegram.enabled',
-                      (current) => ({ ...current, telegram: { ...current.telegram, enabled: v } }),
-                      true,
-                    )
-                  }
-                />
+                <div className="notificationChannelHeadActions">
+                  <NotificationChannelTestControl
+                    channel="telegram"
+                    state={notificationTestStates.telegram}
+                    running={Boolean(notificationTestRunning.telegram)}
+                    onRun={runNotificationChannelTest}
+                  />
+                  <Switch
+                    checked={notifications.telegram.enabled}
+                    disabled={busy}
+                    onChange={(v) =>
+                      updateNotifications(
+                        'notifications.telegram.enabled',
+                        (current) => ({ ...current, telegram: { ...current.telegram, enabled: v } }),
+                        true,
+                      )
+                    }
+                  />
+                </div>
               </div>
               <div className="kv">
                 <div className="kvRow">
@@ -1732,17 +1950,25 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             <div className="settingsSection">
               <div className="settingHead">
                 <div className="sectionTitle">Web Push（Chrome / VAPID）</div>
-                <Switch
-                  checked={notifications.webPush.enabled}
-                  disabled={busy}
-                  onChange={(v) =>
-                    updateNotifications(
-                      'notifications.webPush.enabled',
-                      (current) => ({ ...current, webPush: { ...current.webPush, enabled: v } }),
-                      true,
-                    )
-                  }
-                />
+                <div className="notificationChannelHeadActions">
+                  <NotificationChannelTestControl
+                    channel="webPush"
+                    state={notificationTestStates.webPush}
+                    running={Boolean(notificationTestRunning.webPush)}
+                    onRun={runNotificationChannelTest}
+                  />
+                  <Switch
+                    checked={notifications.webPush.enabled}
+                    disabled={busy}
+                    onChange={(v) =>
+                      updateNotifications(
+                        'notifications.webPush.enabled',
+                        (current) => ({ ...current, webPush: { ...current.webPush, enabled: v } }),
+                        true,
+                      )
+                    }
+                  />
+                </div>
               </div>
 
               <div className="kv">
@@ -1788,25 +2014,6 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               </div>
 
               <div className="formActions" style={{ marginTop: 10 }}>
-                <Button
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={() => {
-                    void (async () => {
-                      setBusy(true)
-                      setError(null)
-                      try {
-                        await testNotifications('dockrev: test notification')
-                      } catch (e: unknown) {
-                        setError(errorMessage(e))
-                      } finally {
-                        setBusy(false)
-                      }
-                    })()
-                  }}
-                >
-                  发送测试通知
-                </Button>
                 <Button
                   variant="ghost"
                   disabled={busy || !canWebPush}

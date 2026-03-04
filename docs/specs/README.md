@@ -27,6 +27,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| gr3cs | Dockrev：通知渠道独立测试按钮与气泡结果可视化 | 已完成 | `gr3cs-notification-channel-test-bubbles/SPEC.md` | 2026-03-04 | fast-track（分渠道测试 + 常驻步骤气泡） |
 | mzqkx | Dockrev：发布流程补齐 Channel 显式选择（PR + Label） | 已完成 | `mzqkx-release-channel-selection/SPEC.md` | 2026-03-04 | fast-track（channel 契约改为 required stable/rc） |
 | fmcxc | Dockrev：版本推测扫描提速（保守过滤） | 已完成 | `fmcxc-snapshot-scan-conservative-filter/SPEC.md` | 2026-03-04 | fast-track |
 | b5tcx | Dockrev：概览卡片运行任务整行背景进度条（慢速流光） | 已完成 | `b5tcx-overview-running-row-progress-bg/SPEC.md` | 2026-03-03 | fast-track（overview running 行 subtle 背景进度 + 慢速流光） |
