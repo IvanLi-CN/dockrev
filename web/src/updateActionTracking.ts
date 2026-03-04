@@ -79,12 +79,17 @@ export function useUpdateActionTracker() {
 
       try {
         const job = await getJob(jobId)
+        const latest = activeByTargetRef.current.get(target)
+        if (!latest || latest.jobId !== jobId) {
+          clearJobTimer(jobId)
+          return
+        }
         errorCountsRef.current.delete(jobId)
         if (!isUpdateJobActiveStatus(job.status)) {
           clearRunningJob(target, jobId)
           return
         }
-        if (tracked.status !== job.status) {
+        if (latest.status !== job.status) {
           activeByTargetRef.current.set(target, { jobId, status: job.status })
           publishActive()
         }

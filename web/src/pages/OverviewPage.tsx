@@ -941,7 +941,11 @@ export function OverviewPage(props: {
         </Button>
         <Button
           variant="danger"
-          disabled={!allApply.enabled || (busy && !allApplyActiveJob) || (allApplySubmitting && !allApplyActiveJob)}
+          disabled={
+            allApplyActiveJob
+              ? false
+              : !allApply.enabled || busy || allApplySubmitting
+          }
           loading={allApplyActionBusy}
           loadingClickable={Boolean(allApplyActiveJob)}
           title={allApplyActiveJob ? '任务进行中，点击查看任务详情' : (allApply.title ?? undefined)}
@@ -1335,15 +1339,17 @@ export function OverviewPage(props: {
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={(e) => e.stopPropagation()}
                   >
-	                    <Button
-	                      variant="ghost"
-	                      disabled={
-                          !stackApply.enabled || (busy && !stackApplyActiveJob) || (stackApplySubmitting && !stackApplyActiveJob)
-                        }
+                    <Button
+                      variant="ghost"
+                      disabled={
+                        stackApplyActiveJob
+                          ? false
+                          : !stackApply.enabled || busy || stackApplySubmitting
+                      }
                       loading={stackApplyActionKey ? isTargetBusy(stackApplyActionKey) : false}
                       loadingClickable={Boolean(stackApplyActiveJob)}
-	                      title={stackApplyActiveJob ? '任务进行中，点击查看任务详情' : (stackApply.title ?? undefined)}
-	                      onClick={() => {
+                      title={stackApplyActiveJob ? '任务进行中，点击查看任务详情' : (stackApply.title ?? undefined)}
+                      onClick={() => {
                           if (stackApplyActiveJob) {
                             navigate({ name: 'job', jobId: stackApplyActiveJob.jobId })
                             return
@@ -1700,13 +1706,17 @@ export function OverviewPage(props: {
                                 ) : null}
                               </div>
                             ) : (
-	                              <Button
-	                                variant="ghost"
-		                                disabled={!svcApply.enabled || (busy && !svcApplyActiveJob) || (svcApplySubmitting && !svcApplyActiveJob)}
+                              <Button
+                                variant="ghost"
+                                disabled={
+                                  svcApplyActiveJob
+                                    ? false
+                                    : !svcApply.enabled || busy || svcApplySubmitting
+                                }
                                 loading={svcApplyActionKey ? isTargetBusy(svcApplyActionKey) : false}
                                 loadingClickable={Boolean(svcApplyActiveJob)}
-		                                title={svcApplyActiveJob ? '任务进行中，点击查看任务详情' : (svcApply.title ?? undefined)}
-		                                onClick={() => {
+                                title={svcApplyActiveJob ? '任务进行中，点击查看任务详情' : (svcApply.title ?? undefined)}
+                                onClick={() => {
                                           if (svcApplyActiveJob) {
                                             navigate({ name: 'job', jobId: svcApplyActiveJob.jobId })
                                             return
