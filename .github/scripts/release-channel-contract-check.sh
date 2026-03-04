@@ -8,10 +8,34 @@ echo "[contract-check] syntax + workflow yaml parse"
 bash -n .github/scripts/label-gate.sh .github/scripts/release-intent.sh .github/scripts/compute-version.sh
 ruby -e 'require "yaml"; YAML.load_file(".github/workflows/label-gate.yml"); YAML.load_file(".github/workflows/release.yml")'
 
+has_rg() {
+  command -v rg >/dev/null 2>&1
+}
+
+search_regex() {
+  local pattern="$1"
+  local file="$2"
+  if has_rg; then
+    rg -q -- "${pattern}" "${file}"
+  else
+    grep -Eq -- "${pattern}" "${file}"
+  fi
+}
+
+count_fixed_lines() {
+  local needle="$1"
+  local file="$2"
+  if has_rg; then
+    rg -n -F -- "${needle}" "${file}" | wc -l | tr -d ' '
+  else
+    grep -n -F -- "${needle}" "${file}" | wc -l | tr -d ' '
+  fi
+}
+
 echo "[contract-check] release workflow rc gating invariants"
-rg -q "steps\\.intent\\.outputs\\.release_channel == 'rc'" .github/workflows/release.yml
-rg -q "prerelease: \\$\\{\\{ env.RELEASE_CHANNEL == 'rc' \\}\\}" .github/workflows/release.yml
-latest_gate_count="$(rg -n -F 'if [[ "${RELEASE_CHANNEL}" != "rc" ]]; then' .github/workflows/release.yml | wc -l | tr -d ' ')"
+search_regex "steps\\.intent\\.outputs\\.release_channel == 'rc'" .github/workflows/release.yml
+search_regex "prerelease: \\$\\{\\{ env.RELEASE_CHANNEL == 'rc' \\}\\}" .github/workflows/release.yml
+latest_gate_count="$(count_fixed_lines 'if [[ "${RELEASE_CHANNEL}" != "rc" ]]; then' .github/workflows/release.yml)"
 if [[ "${latest_gate_count}" -lt 2 ]]; then
   echo "[contract-check] expected >=2 latest gates, got ${latest_gate_count}" >&2
   exit 1
