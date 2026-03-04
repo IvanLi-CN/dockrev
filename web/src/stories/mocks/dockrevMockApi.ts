@@ -15,6 +15,7 @@ import type {
   AddGitHubPackagesTargetRequest,
   RemoveGitHubPackagesTargetRequest,
   ResolveGitHubPackagesTargetResponse,
+  ServiceResourceSample,
   ServiceSettings,
   SettingsResponse,
   StackDetail,
@@ -28,6 +29,9 @@ export type DockrevApiScenario =
   | 'services-inference-pending-candidate-loading'
   | 'service-detail-compose-fallbacks'
   | 'service-detail-version-anomaly'
+  | 'service-detail-resource-monitor-disabled'
+  | 'service-detail-resource-monitor-empty'
+  | 'service-detail-resource-monitor-stream-error'
   | 'guide-line-long-names'
   | 'resolved-tag-demo'
   | 'version-inference-overview'
@@ -40,7 +44,12 @@ export type DockrevApiScenario =
   | 'version-tags-popover-snapshot-pending'
   | 'version-tags-popover-snapshot-missing'
   | 'multi-stack-mixed'
+  | 'overview-jobs-card-heavy-inflight'
+  | 'overview-jobs-card-running-progress-modes'
+  | 'overview-jobs-card-terminal-only'
+  | 'overview-jobs-card-exact-five-non-terminal'
   | 'queue-mixed'
+  | 'queue-progress-smoothing'
   | 'queue-legacy-progress'
   | 'queue-long-logs'
   | 'settings-configured'
@@ -89,6 +98,7 @@ class MockEventSource extends EventTarget {
   static readonly CONNECTING = 0
   static readonly OPEN = 1
   static readonly CLOSED = 2
+  static pollIntervalMs = 4_000
 
   readonly CONNECTING = MockEventSource.CONNECTING
   readonly OPEN = MockEventSource.OPEN
@@ -114,7 +124,7 @@ class MockEventSource extends EventTarget {
     this.connect()
     this.pollTimer = window.setInterval(() => {
       this.connect()
-    }, 4_000)
+    }, MockEventSource.pollIntervalMs)
   }
 
   close() {
@@ -317,6 +327,124 @@ function getBoolean(v: unknown): boolean | null {
   return typeof v === 'boolean' ? v : null
 }
 
+function toNotificationsResponse(input: NotificationConfig): NotificationConfig {
+  const botTokenRaw = input.telegram.botToken ?? ''
+  const botTokenConfigured = input.telegram.botTokenConfigured ?? botTokenRaw.trim().length > 0
+  return {
+    ...input,
+    telegram: {
+      ...input.telegram,
+      botToken: null,
+      botTokenConfigured,
+    },
+  }
+}
+
+function isMaskLiteral(value: string): boolean {
+  return value === '******' || value === '••••••••••••••••'
+}
+
+const TELEGRAM_BOT_TOKEN_PATTERN = /^\d{5,}:[A-Za-z0-9_-]{8,}$/
+
+function isValidTelegramBotToken(value: string): boolean {
+  return TELEGRAM_BOT_TOKEN_PATTERN.test(value) && !/\s/.test(value)
+}
+
+function hashString(input: string): number {
+  let h = 0
+  for (let i = 0; i < input.length; i += 1) {
+    h = Math.imul(31, h) + input.charCodeAt(i)
+    h |= 0
+  }
+  return Math.abs(h)
+}
+
+function parseResourceWindow(windowRaw: string | null): { window: '15m' | '1h' | '6h'; seconds: number } {
+  if (windowRaw === '15m') return { window: '15m', seconds: 15 * 60 }
+  if (windowRaw === '6h') return { window: '6h', seconds: 6 * 60 * 60 }
+  return { window: '1h', seconds: 60 * 60 }
+}
+
+function buildResourceHistorySamples(serviceId: string, seconds: number): ServiceResourceSample[] {
+  const stepSeconds = 30
+  const points = Math.max(8, Math.floor(seconds / stepSeconds))
+  const seed = hashString(serviceId)
+  const baseCpu = 8 + (seed % 28)
+  const baseMem = (220 + (seed % 420)) * 1024 * 1024
+  const memWave = (24 + (seed % 96)) * 1024 * 1024
+  const basePids = 8 + (seed % 26)
+  const containerCount = 1 + (seed % 2)
+  let netRx = (18 + (seed % 40)) * 1024 * 1024
+  let netTx = (12 + (seed % 36)) * 1024 * 1024
+  let blockRead = (40 + (seed % 50)) * 1024 * 1024
+  let blockWrite = (28 + (seed % 44)) * 1024 * 1024
+  const now = Date.now()
+  const start = now - points * stepSeconds * 1000
+  const out: ServiceResourceSample[] = []
+
+  for (let i = 0; i <= points; i += 1) {
+    const t = start + i * stepSeconds * 1000
+    const rad = i / 5 + (seed % 7)
+    const cpu = Math.max(0, Math.min(100, baseCpu + Math.sin(rad) * 9 + Math.cos(rad / 2) * 5))
+    const memUsed = Math.max(64 * 1024 * 1024, Math.round(baseMem + Math.sin(rad / 2) * memWave))
+    const memLimit = 1024 * 1024 * 1024
+    const pids = Math.max(1, Math.round(basePids + Math.sin(rad / 1.4) * 4))
+
+    netRx += Math.round((0.35 + Math.max(0, Math.sin(rad))) * 650 * 1024)
+    netTx += Math.round((0.28 + Math.max(0, Math.cos(rad / 1.3))) * 520 * 1024)
+    blockRead += Math.round((0.2 + Math.max(0, Math.sin(rad / 1.1))) * 380 * 1024)
+    blockWrite += Math.round((0.16 + Math.max(0, Math.cos(rad / 1.6))) * 260 * 1024)
+
+    out.push({
+      sampledAt: new Date(t).toISOString(),
+      cpuPercent: Number(cpu.toFixed(2)),
+      memUsedBytes: memUsed,
+      memLimitBytes: memLimit,
+      netRxBytes: netRx,
+      netTxBytes: netTx,
+      blockReadBytes: blockRead,
+      blockWriteBytes: blockWrite,
+      pids,
+      containerCount,
+    })
+  }
+
+  return out
+}
+
+function buildResourceSsePayload(
+  serviceId: string,
+  samples: ServiceResourceSample[],
+  scenario: DockrevApiScenario,
+): string {
+  const snapshot = samples[samples.length - 1] ?? null
+  if (!snapshot) return ': keep-alive\n\n'
+
+  const tick: ServiceResourceSample = {
+    ...snapshot,
+    sampledAt: new Date().toISOString(),
+    cpuPercent: Number((snapshot.cpuPercent + 1.2).toFixed(2)),
+    netRxBytes: (snapshot.netRxBytes ?? 0) + 300_000,
+    netTxBytes: (snapshot.netTxBytes ?? 0) + 250_000,
+    blockReadBytes: (snapshot.blockReadBytes ?? 0) + 160_000,
+    blockWriteBytes: (snapshot.blockWriteBytes ?? 0) + 120_000,
+    pids: (snapshot.pids ?? 0) + 1,
+  }
+
+  const events: string[] = []
+  events.push(`id: 1\nevent: resource_usage_snapshot\ndata: ${JSON.stringify({ serviceId, sample: snapshot })}\n\n`)
+
+  if (scenario === 'service-detail-resource-monitor-stream-error') {
+    events.push(
+      `id: 2\nevent: resource_usage_error\ndata: ${JSON.stringify({ serviceId, error: 'runtime_stats_unavailable' })}\n\n`,
+    )
+    return events.join('')
+  }
+
+  events.push(`id: 2\nevent: resource_usage_tick\ndata: ${JSON.stringify({ serviceId, sample: tick })}\n\n`)
+  return events.join('')
+}
+
 function nowIso(offsetMs = 0) {
   return new Date(Date.now() + offsetMs).toISOString()
 }
@@ -336,6 +464,7 @@ function makeMockDebug(): MockDebug {
 function makeDefaultSettings(): SettingsResponse {
   return {
     backup: { enabled: true, requireSuccess: true, baseDir: '/var/lib/dockrev/backup', skipTargetsOverBytes: 104857600 },
+    resourceMonitor: { enabled: true, sampleIntervalSeconds: 30, retentionDays: 30 },
     auth: { forwardHeaderName: 'X-Forwarded-User', allowAnonymousInDev: true },
   }
 }
@@ -344,7 +473,7 @@ function makeDefaultNotifications(): NotificationConfig {
   return {
     email: { enabled: false, smtpUrl: null },
     webhook: { enabled: false, url: null },
-    telegram: { enabled: false, botToken: null, chatId: null },
+    telegram: { enabled: false, botToken: null, botTokenConfigured: false, chatId: null },
     webPush: { enabled: false, vapidPublicKey: null, vapidPrivateKey: null, vapidSubject: null },
   }
 }
@@ -1060,8 +1189,8 @@ function buildQueueMixed(): Fixture {
       createdBy: input.createdBy ?? 'ivan',
       reason: input.reason ?? 'ui',
       createdAt: input.createdAt ?? nowIso(-120_000),
-      startedAt: input.startedAt ?? nowIso(-110_000),
-      finishedAt: input.finishedAt ?? nowIso(-10_000),
+      startedAt: input.startedAt !== undefined ? input.startedAt : nowIso(-110_000),
+      finishedAt: input.finishedAt !== undefined ? input.finishedAt : nowIso(-10_000),
       allowArchMismatch: input.allowArchMismatch ?? false,
       backupMode: input.backupMode ?? 'inherit',
       summary: input.summary ?? {},
@@ -1285,6 +1414,295 @@ function buildQueueMixed(): Fixture {
     },
   ]
 
+  return f
+}
+
+function buildOverviewJobsCardHeavyInFlight(): Fixture {
+  const f = buildDashboardDemo()
+
+  const makeJob = (input: Partial<JobListItem> & Pick<JobListItem, 'id' | 'status'>): JobListItem => {
+    const base: JobListItem = {
+      id: input.id,
+      type: input.type ?? 'update',
+      scope: input.scope ?? 'service',
+      stackId: input.stackId !== undefined ? input.stackId : 'stack-prod',
+      serviceId: input.serviceId !== undefined ? input.serviceId : 'svc-prod-api',
+      status: input.status,
+      createdBy: input.createdBy ?? 'ivan',
+      reason: input.reason ?? 'ui',
+      createdAt: input.createdAt ?? nowIso(-120_000),
+      startedAt: input.startedAt ?? nowIso(-110_000),
+      finishedAt: input.finishedAt ?? nowIso(-10_000),
+      allowArchMismatch: input.allowArchMismatch ?? false,
+      backupMode: input.backupMode ?? 'inherit',
+      summary: input.summary ?? {},
+      progress: input.progress ?? null,
+    }
+    return base
+  }
+
+  const jobs: JobListItem[] = []
+  for (let i = 0; i < 12; i += 1) {
+    const status = i % 2 === 0 ? 'running' : 'queued'
+    jobs.push(
+      makeJob({
+        id: `overview-inflight-${String(i + 1).padStart(2, '0')}`,
+        status,
+        createdAt: nowIso(-(10_000 + i * 1_000)),
+        startedAt: status === 'running' ? nowIso(-(9_000 + i * 1_000)) : null,
+        finishedAt: null,
+      }),
+    )
+  }
+
+  jobs.push(
+    makeJob({
+      id: 'overview-fallback-success',
+      status: 'success',
+      createdAt: nowIso(-500),
+      startedAt: nowIso(-2_000),
+      finishedAt: nowIso(-1_000),
+    }),
+  )
+  jobs.push(
+    makeJob({
+      id: 'overview-fallback-failed',
+      status: 'failed',
+      createdAt: nowIso(-1_500),
+      startedAt: nowIso(-3_000),
+      finishedAt: nowIso(-2_500),
+    }),
+  )
+
+  f.jobs = jobs
+  f.jobById = Object.fromEntries(
+    jobs.map((j) => [
+      j.id,
+      {
+        ...j,
+        logs: [{ ts: nowIso(-900), level: 'info', msg: `job ${j.id} ready` }],
+        logsLastId: 1,
+      } satisfies JobDetail,
+    ]),
+  )
+
+  return f
+}
+
+function buildOverviewJobsCardTerminalOnly(): Fixture {
+  const f = buildDashboardDemo()
+
+  const makeJob = (input: Partial<JobListItem> & Pick<JobListItem, 'id' | 'status'>): JobListItem => {
+    const base: JobListItem = {
+      id: input.id,
+      type: input.type ?? 'update',
+      scope: input.scope ?? 'service',
+      stackId: input.stackId !== undefined ? input.stackId : 'stack-prod',
+      serviceId: input.serviceId !== undefined ? input.serviceId : 'svc-prod-api',
+      status: input.status,
+      createdBy: input.createdBy ?? 'ivan',
+      reason: input.reason ?? 'ui',
+      createdAt: input.createdAt ?? nowIso(-120_000),
+      startedAt: input.startedAt ?? nowIso(-110_000),
+      finishedAt: input.finishedAt ?? nowIso(-10_000),
+      allowArchMismatch: input.allowArchMismatch ?? false,
+      backupMode: input.backupMode ?? 'inherit',
+      summary: input.summary ?? {},
+      progress: input.progress ?? null,
+    }
+    return base
+  }
+
+  const terminalStatuses = ['success', 'failed', 'rolled_back', 'success', 'failed', 'success', 'rolled_back']
+  const jobs = terminalStatuses.map((status, idx) =>
+    makeJob({
+      id: `overview-terminal-${String(idx + 1).padStart(2, '0')}`,
+      status,
+      createdAt: nowIso(-(20_000 + idx * 1_000)),
+      startedAt: nowIso(-(19_000 + idx * 1_000)),
+      finishedAt: nowIso(-(18_000 + idx * 1_000)),
+    }),
+  )
+
+  f.jobs = jobs
+  f.jobById = Object.fromEntries(
+    jobs.map((j) => [
+      j.id,
+      {
+        ...j,
+        logs: [{ ts: nowIso(-900), level: 'info', msg: `job ${j.id} ready` }],
+        logsLastId: 1,
+      } satisfies JobDetail,
+    ]),
+  )
+
+  return f
+}
+
+function buildOverviewJobsCardExactFiveNonTerminal(): Fixture {
+  const f = buildDashboardDemo()
+
+  const makeJob = (input: Partial<JobListItem> & Pick<JobListItem, 'id' | 'status'>): JobListItem => {
+    const base: JobListItem = {
+      id: input.id,
+      type: input.type ?? 'update',
+      scope: input.scope ?? 'service',
+      stackId: input.stackId !== undefined ? input.stackId : 'stack-prod',
+      serviceId: input.serviceId !== undefined ? input.serviceId : 'svc-prod-api',
+      status: input.status,
+      createdBy: input.createdBy ?? 'ivan',
+      reason: input.reason ?? 'ui',
+      createdAt: input.createdAt ?? nowIso(-120_000),
+      startedAt: input.startedAt ?? nowIso(-110_000),
+      finishedAt: input.finishedAt ?? nowIso(-10_000),
+      allowArchMismatch: input.allowArchMismatch ?? false,
+      backupMode: input.backupMode ?? 'inherit',
+      summary: input.summary ?? {},
+      progress: input.progress ?? null,
+    }
+    return base
+  }
+
+  const jobs: JobListItem[] = [
+    makeJob({ id: 'overview-exact-5-nt-1', status: 'running', createdAt: nowIso(-20_000), finishedAt: null }),
+    makeJob({ id: 'overview-exact-5-nt-2', status: 'queued', createdAt: nowIso(-21_000), startedAt: null, finishedAt: null }),
+    makeJob({ id: 'overview-exact-5-nt-3', status: 'pending', createdAt: nowIso(-22_000), startedAt: null, finishedAt: null }),
+    makeJob({ id: 'overview-exact-5-nt-4', status: 'starting', createdAt: nowIso(-23_000), startedAt: null, finishedAt: null }),
+    makeJob({ id: 'overview-exact-5-nt-5', status: 'paused', createdAt: nowIso(-24_000), finishedAt: null }),
+    makeJob({ id: 'overview-exact-5-terminal-1', status: 'success', createdAt: nowIso(-5_000) }),
+    makeJob({ id: 'overview-exact-5-terminal-2', status: 'failed', createdAt: nowIso(-6_000) }),
+  ]
+
+  f.jobs = jobs
+  f.jobById = Object.fromEntries(
+    jobs.map((j) => [
+      j.id,
+      {
+        ...j,
+        logs: [{ ts: nowIso(-900), level: 'info', msg: `job ${j.id} ready` }],
+        logsLastId: 1,
+      } satisfies JobDetail,
+    ]),
+  )
+
+  return f
+}
+
+function buildOverviewJobsCardRunningProgressModes(): Fixture {
+  const f = buildDashboardDemo()
+
+  const makeJob = (input: Partial<JobListItem> & Pick<JobListItem, 'id' | 'status'>): JobListItem => {
+    const base: JobListItem = {
+      id: input.id,
+      type: input.type ?? 'update',
+      scope: input.scope ?? 'service',
+      stackId: input.stackId !== undefined ? input.stackId : 'stack-prod',
+      serviceId: input.serviceId !== undefined ? input.serviceId : 'svc-prod-api',
+      status: input.status,
+      createdBy: input.createdBy ?? 'ivan',
+      reason: input.reason ?? 'ui',
+      createdAt: input.createdAt ?? nowIso(-120_000),
+      startedAt: input.startedAt ?? nowIso(-110_000),
+      finishedAt: input.finishedAt ?? nowIso(-10_000),
+      allowArchMismatch: input.allowArchMismatch ?? false,
+      backupMode: input.backupMode ?? 'inherit',
+      summary: input.summary ?? {},
+      progress: input.progress ?? null,
+    }
+    return base
+  }
+
+  const jobs: JobListItem[] = [
+    makeJob({
+      id: 'overview-running-determinate',
+      status: 'running',
+      createdAt: nowIso(-18_000),
+      startedAt: nowIso(-17_000),
+      finishedAt: null,
+      progress: {
+        phase: 'apply',
+        message: 'updating services',
+        current: 6,
+        total: 8,
+        percent: 75,
+        plannedCurrent: 7,
+        plannedTotal: 8,
+        plannedPercent: 88,
+        currentTarget: 'worker',
+        updatedAt: nowIso(-800),
+      },
+    }),
+    makeJob({
+      id: 'overview-running-indeterminate',
+      status: 'running',
+      createdAt: nowIso(-25_000),
+      startedAt: nowIso(-24_000),
+      finishedAt: null,
+      progress: {
+        phase: 'prepare',
+        message: 'waiting service metadata',
+        current: 0,
+        total: 0,
+        percent: 0,
+        plannedCurrent: null,
+        plannedTotal: null,
+        plannedPercent: null,
+        currentTarget: null,
+        updatedAt: nowIso(-1_200),
+      },
+    }),
+    makeJob({
+      id: 'overview-queued',
+      status: 'queued',
+      createdAt: nowIso(-22_000),
+      startedAt: null,
+      finishedAt: null,
+      progress: null,
+    }),
+    makeJob({
+      id: 'overview-success',
+      status: 'success',
+      createdAt: nowIso(-60_000),
+      startedAt: nowIso(-58_000),
+      finishedAt: nowIso(-40_000),
+      progress: null,
+    }),
+  ]
+
+  f.jobs = jobs
+  f.jobById = Object.fromEntries(
+    jobs.map((j) => [
+      j.id,
+      {
+        ...j,
+        logs: [{ ts: nowIso(-900), level: 'info', msg: `job ${j.id} ready` }],
+        logsLastId: 1,
+      } satisfies JobDetail,
+    ]),
+  )
+
+  return f
+}
+
+function buildQueueProgressSmoothing(): Fixture {
+  const f = buildQueueMixed()
+  const runningJob = f.jobs.find((job) => job.id === 'job-running')
+  if (!runningJob) return f
+  const nextProgress = {
+    phase: 'pulling',
+    message: 'updating images',
+    current: 40,
+    total: 100,
+    percent: 40,
+    plannedCurrent: 68,
+    plannedTotal: 100,
+    plannedPercent: 68,
+    currentTarget: 'worker',
+    updatedAt: nowIso(-600),
+  }
+  runningJob.progress = nextProgress
+  const runningDetail = f.jobById['job-running']
+  if (runningDetail) runningDetail.progress = { ...nextProgress }
   return f
 }
 
@@ -1724,7 +2142,7 @@ function buildSettingsConfigured(): Fixture {
   f.notifications = {
     email: { enabled: true, smtpUrl: 'smtp://user:pass@mail.example.com:587/?to=a@example.com&from=Dockrev%20<noreply@example.com>' },
     webhook: { enabled: true, url: 'https://hooks.example.com/dockrev' },
-    telegram: { enabled: true, botToken: '123:bot-token', chatId: '987654' },
+    telegram: { enabled: true, botToken: '123:bot-token', botTokenConfigured: true, chatId: '-1009876543210' },
     webPush: { enabled: true, vapidPublicKey: 'BBOG...mock', vapidPrivateKey: null, vapidSubject: 'mailto:ops@example.com' },
   }
   const repos: GitHubPackagesRepo[] = [
@@ -1876,6 +2294,16 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'services-inference-pending-candidate-loading') return buildServicesInferencePendingCandidateLoading()
   if (scenario === 'service-detail-compose-fallbacks') return buildServiceDetailComposeFallbacks()
   if (scenario === 'service-detail-version-anomaly') return buildServiceDetailVersionAnomaly()
+  if (scenario === 'service-detail-resource-monitor-disabled') {
+    const fixture = buildDashboardDemo()
+    fixture.settings.resourceMonitor = {
+      ...fixture.settings.resourceMonitor,
+      enabled: false,
+    }
+    return fixture
+  }
+  if (scenario === 'service-detail-resource-monitor-empty') return buildDashboardDemo()
+  if (scenario === 'service-detail-resource-monitor-stream-error') return buildDashboardDemo()
   if (scenario === 'guide-line-long-names') return buildGuideLineLongNames()
   if (scenario === 'resolved-tag-demo') return buildResolvedTagDemo()
   if (scenario === 'version-inference-overview') return buildVersionInferenceOverviewFixture()
@@ -1892,6 +2320,11 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
     return buildVersionTagsPopoverDemo()
   }
   if (scenario === 'queue-mixed') return buildQueueMixed()
+  if (scenario === 'overview-jobs-card-heavy-inflight') return buildOverviewJobsCardHeavyInFlight()
+  if (scenario === 'overview-jobs-card-running-progress-modes') return buildOverviewJobsCardRunningProgressModes()
+  if (scenario === 'overview-jobs-card-terminal-only') return buildOverviewJobsCardTerminalOnly()
+  if (scenario === 'overview-jobs-card-exact-five-non-terminal') return buildOverviewJobsCardExactFiveNonTerminal()
+  if (scenario === 'queue-progress-smoothing') return buildQueueProgressSmoothing()
   if (scenario === 'queue-legacy-progress') return buildQueueLegacyProgress()
   if (scenario === 'queue-long-logs') return buildQueueLongLogs()
   if (scenario === 'settings-configured' || scenario === 'settings-configured-resolve-slow') return buildSettingsConfigured()
@@ -1904,11 +2337,47 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
   let ignoreSeq = 0
   let jobSeq = 0
   const digestSnapshotPendingAttempts = new Map<string, number>()
+  let jobsEventsSeq = 4_000
+  const queueProgressDemoSteps = [40, 44, 48, 52, 56, 60, 65, 70, 75, 80, 85, 90, 94, 97]
+  let queueProgressDemoStep = 0
+  let queueProgressDemoDirection = 1
+
+  const advanceQueueProgressDemo = (): number | null => {
+    if (!state || scenario !== 'queue-progress-smoothing') return null
+    if (queueProgressDemoStep >= queueProgressDemoSteps.length - 1) queueProgressDemoDirection = -1
+    if (queueProgressDemoStep <= 0) queueProgressDemoDirection = 1
+    queueProgressDemoStep += queueProgressDemoDirection
+    const completedPercent = queueProgressDemoSteps[queueProgressDemoStep]
+    const plannedPercent = Math.min(100, completedPercent + 16)
+    const updatedAt = nowIso()
+
+    const patchProgress = (job: JobListItem | JobDetail | undefined) => {
+      if (!job || job.id !== 'job-running' || !job.progress) return
+      job.progress = {
+        ...job.progress,
+        phase: 'pulling',
+        message: 'updating images',
+        total: 100,
+        plannedTotal: 100,
+        current: completedPercent,
+        percent: completedPercent,
+        plannedCurrent: plannedPercent,
+        plannedPercent,
+        updatedAt,
+      }
+    }
+
+    for (const job of state.jobs) patchProgress(job)
+    patchProgress(state.jobById['job-running'])
+
+    return completedPercent
+  }
 
   globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug()
   if (typeof window !== 'undefined') {
     globalThis.EventSource = MockEventSource as unknown as typeof EventSource
   }
+  MockEventSource.pollIntervalMs = scenario === 'queue-progress-smoothing' ? 700 : 4_000
 
   function findService(serviceId: string) {
     if (!state) return null
@@ -2508,6 +2977,37 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       })
     }
 
+    if (urlPath === '/api/jobs/events' && method === 'GET' && scenario === 'queue-progress-smoothing') {
+      const params = url?.searchParams ?? new URLSearchParams()
+      const afterId = Number(params.get('afterId') ?? '0') || 0
+      const events: Array<{ id: number; data: Record<string, unknown> }> = []
+      const nextCompletedPercent = advanceQueueProgressDemo()
+      if (nextCompletedPercent !== null) {
+        jobsEventsSeq += 1
+        events.push({
+          id: jobsEventsSeq,
+          data: {
+            type: 'job_progress',
+            jobId: 'job-running',
+            percent: nextCompletedPercent,
+            ts: nowIso(),
+          },
+        })
+      }
+      const newEvents = events.filter((evt) => evt.id > afterId).slice(0, 200)
+      const body = newEvents
+        .map((evt) => `id: ${evt.id}\nevent: job_event\ndata: ${JSON.stringify(evt.data)}\n\n`)
+        .join('')
+      return new Response(body || ': keep-alive\n\n', {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'x-accel-buffering': 'no',
+        },
+      })
+    }
+
     // stacks
     if (method === 'GET' && (urlPathWithQuery === '/api/stacks' || urlPathWithQuery.startsWith('/api/stacks?'))) {
       const query = url?.search ? url.search.slice(1) : urlPathWithQuery.includes('?') ? urlPathWithQuery.split('?')[1] : ''
@@ -2733,6 +3233,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       const parsed = parseJsonBody(init?.body)
       const rec = isRecord(parsed) ? parsed : null
       const backup = rec && isRecord(rec.backup) ? rec.backup : null
+      const resourceMonitor = rec && isRecord(rec.resourceMonitor) ? rec.resourceMonitor : null
       if (backup) {
         const enabled = getBoolean(backup.enabled)
         const requireSuccess = getBoolean(backup.requireSuccess)
@@ -2743,6 +3244,22 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
           requireSuccess: requireSuccess ?? f.settings.backup.requireSuccess,
           baseDir: baseDir ?? f.settings.backup.baseDir,
           skipTargetsOverBytes: skipTargetsOverBytes ?? f.settings.backup.skipTargetsOverBytes,
+        }
+      }
+      if (resourceMonitor) {
+        const enabled = getBoolean(resourceMonitor.enabled)
+        const interval = typeof resourceMonitor.sampleIntervalSeconds === 'number'
+          ? resourceMonitor.sampleIntervalSeconds
+          : null
+        const normalizedInterval =
+          interval === 10 || interval === 30 || interval === 60 || interval === 300
+            ? (interval as 10 | 30 | 60 | 300)
+            : f.settings.resourceMonitor.sampleIntervalSeconds
+
+        f.settings.resourceMonitor = {
+          ...f.settings.resourceMonitor,
+          enabled: enabled ?? f.settings.resourceMonitor.enabled,
+          sampleIntervalSeconds: normalizedInterval,
         }
       }
       return json({ ok: true })
@@ -2764,7 +3281,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
     }
 
     // notifications
-    if (method === 'GET' && urlPath === '/api/notifications') return json(f.notifications)
+    if (method === 'GET' && urlPath === '/api/notifications') return json(toNotificationsResponse(f.notifications))
     if (method === 'PUT' && urlPath === '/api/notifications') {
       const parsed = parseJsonBody(init?.body)
       if (isRecord(parsed)) {
@@ -2773,6 +3290,36 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         const webhook = isRecord(parsed.webhook) ? parsed.webhook : null
         const telegram = isRecord(parsed.telegram) ? parsed.telegram : null
         const webPush = isRecord(parsed.webPush) ? parsed.webPush : null
+        const telegramHasBotToken = telegram ? Object.prototype.hasOwnProperty.call(telegram, 'botToken') : false
+        const telegramBotToken = telegramHasBotToken ? getString(telegram?.botToken) : null
+        const telegramBotTokenTrimmed = typeof telegramBotToken === 'string' ? telegramBotToken.trim() : ''
+        const shouldReplaceTelegramToken =
+          typeof telegramBotToken === 'string' &&
+          telegramBotTokenTrimmed.length > 0 &&
+          !isMaskLiteral(telegramBotTokenTrimmed)
+        if (shouldReplaceTelegramToken && !isValidTelegramBotToken(telegramBotTokenTrimmed)) {
+          return json(
+            {
+              error: {
+                code: 'invalid_argument',
+                message: 'invalid telegram bot token',
+                details: { reason: 'telegram_bot_token_invalid' },
+              },
+            },
+            { status: 400 },
+          )
+        }
+        const telegramChatIdRaw = telegram ? getString(telegram.chatId) : null
+        const telegramChatIdTrimmed = typeof telegramChatIdRaw === 'string' ? telegramChatIdRaw.trim() : null
+        const hasExistingTelegramToken = (f.notifications.telegram.botToken ?? '').trim().length > 0
+        const nextTelegramChatId =
+          typeof telegramChatIdTrimmed === 'string'
+            ? isMaskLiteral(telegramChatIdTrimmed)
+              ? f.notifications.telegram.chatId
+              : telegramChatIdTrimmed.length > 0
+                ? telegramChatIdTrimmed
+                : null
+            : f.notifications.telegram.chatId
         f.notifications = {
           email: {
             enabled: (email && getBoolean(email.enabled)) ?? f.notifications.email.enabled,
@@ -2784,8 +3331,10 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
           },
           telegram: {
             enabled: (telegram && getBoolean(telegram.enabled)) ?? f.notifications.telegram.enabled,
-            botToken: (telegram && getString(telegram.botToken)) ?? f.notifications.telegram.botToken,
-            chatId: (telegram && getString(telegram.chatId)) ?? f.notifications.telegram.chatId,
+            botToken: shouldReplaceTelegramToken ? telegramBotToken : f.notifications.telegram.botToken,
+            botTokenConfigured:
+              shouldReplaceTelegramToken ? true : (f.notifications.telegram.botTokenConfigured ?? hasExistingTelegramToken),
+            chatId: nextTelegramChatId,
           },
           webPush: {
             enabled: (webPush && getBoolean(webPush.enabled)) ?? f.notifications.webPush.enabled,
@@ -2981,6 +3530,69 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
           manifestsOk: digestNorm ? repoTags.length : 0,
           manifestsTimeout: 0,
           manifestsError: 0,
+        },
+      })
+    }
+
+    if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/resource-usage/history')) {
+      const parts = urlPath.split('/').filter(Boolean)
+      const serviceId = decodeURIComponent(parts[2] ?? '')
+      const found = findService(serviceId)
+      if (!found) return json({ error: 'not found' }, { status: 404 })
+
+      if (!f.settings.resourceMonitor.enabled) {
+        return json(
+          {
+            error: {
+              code: 'conflict',
+              message: 'resource monitor disabled',
+              details: { reason: 'resource_monitor_disabled' },
+            },
+          },
+          { status: 409 },
+        )
+      }
+
+      const parsedWindow = parseResourceWindow(url?.searchParams.get('window') ?? null)
+      const samples =
+        scenario === 'service-detail-resource-monitor-empty'
+          ? []
+          : buildResourceHistorySamples(serviceId, parsedWindow.seconds)
+
+      return json({
+        serviceId,
+        window: parsedWindow.window,
+        samples,
+      })
+    }
+
+    if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/resource-usage/events')) {
+      const parts = urlPath.split('/').filter(Boolean)
+      const serviceId = decodeURIComponent(parts[2] ?? '')
+      const found = findService(serviceId)
+      if (!found) return json({ error: 'not found' }, { status: 404 })
+
+      if (!f.settings.resourceMonitor.enabled) {
+        return json(
+          {
+            error: {
+              code: 'conflict',
+              message: 'resource monitor disabled',
+              details: { reason: 'resource_monitor_disabled' },
+            },
+          },
+          { status: 409 },
+        )
+      }
+
+      const samples = buildResourceHistorySamples(serviceId, 60 * 60)
+      const body = buildResourceSsePayload(serviceId, samples, scenario)
+      return new Response(body || ': keep-alive\n\n', {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'x-accel-buffering': 'no',
         },
       })
     }

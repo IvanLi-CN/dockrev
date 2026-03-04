@@ -756,8 +756,9 @@ impl NotificationConfig {
             },
             telegram: TelegramNotification {
                 enabled: db.telegram_enabled,
-                bot_token: mask_if_some(db.telegram_bot_token),
-                chat_id: mask_if_some(db.telegram_chat_id),
+                bot_token: None,
+                bot_token_configured: is_non_empty(db.telegram_bot_token.as_deref()),
+                chat_id: db.telegram_chat_id,
             },
             web_push: WebPushNotification {
                 enabled: db.webpush_enabled,
@@ -807,6 +808,8 @@ pub struct TelegramNotification {
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bot_token: Option<String>,
+    #[serde(default)]
+    pub bot_token_configured: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_id: Option<String>,
 }
@@ -1274,6 +1277,7 @@ pub struct WebhookTriggerResponse {
 #[serde(rename_all = "camelCase")]
 pub struct SettingsResponse {
     pub backup: BackupSettings,
+    pub resource_monitor: ResourceMonitorSettings,
     pub auth: AuthSettings,
 }
 
@@ -1288,6 +1292,8 @@ pub struct AuthSettings {
 #[serde(rename_all = "camelCase")]
 pub struct PutSettingsRequest {
     pub backup: BackupSettings,
+    #[serde(default)]
+    pub resource_monitor: Option<PutResourceMonitorSettings>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1301,8 +1307,53 @@ pub struct BackupSettings {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ResourceMonitorSettings {
+    pub enabled: bool,
+    pub sample_interval_seconds: u64,
+    pub retention_days: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PutResourceMonitorSettings {
+    pub enabled: bool,
+    pub sample_interval_seconds: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PutSettingsResponse {
     pub ok: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceResourceSample {
+    pub sampled_at: String,
+    pub cpu_percent: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mem_used_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mem_limit_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub net_rx_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub net_tx_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_read_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_write_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pids: Option<u64>,
+    pub container_count: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceResourceHistoryResponse {
+    pub service_id: String,
+    pub window: String,
+    pub samples: Vec<ServiceResourceSample>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1407,6 +1458,10 @@ pub struct PutDeployWelcomeResponse {
 
 fn mask_if_some(input: Option<String>) -> Option<String> {
     input.map(|_| "******".to_string())
+}
+
+fn is_non_empty(input: Option<&str>) -> bool {
+    input.map(|value| !value.trim().is_empty()).unwrap_or(false)
 }
 
 fn default_true() -> bool {

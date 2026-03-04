@@ -16,6 +16,7 @@ mod ignore;
 mod notify;
 mod preflight;
 mod registry;
+mod resource_usage;
 mod runner;
 mod runtime_scan;
 mod service_check;
@@ -89,11 +90,15 @@ async fn main() -> anyhow::Result<()> {
         },
     )?);
     let runner = std::sync::Arc::new(runner::TokioCommandRunner);
+    let resource_hub = std::sync::Arc::new(resource_usage::RealtimeSamplerHub::new(
+        db.clone(),
+        runner.clone(),
+    ));
     let snapshot_worker = std::sync::Arc::new(snapshot_worker::SnapshotWorker::new(
         db.clone(),
         registry.clone(),
     ));
-    let state = state::AppState::new(config, db, registry, runner, snapshot_worker);
+    let state = state::AppState::new(config, db, registry, runner, snapshot_worker, resource_hub);
 
     // Recover orphaned/incomplete jobs created by a previous process instance.
     // This covers cases where the container was killed or the process panicked mid-job.
@@ -117,6 +122,7 @@ async fn main() -> anyhow::Result<()> {
     discovery::spawn_task(state.clone());
     runtime_scan::spawn_task(state.clone());
     ghcr_webhook_jobs::spawn_tasks(state.clone());
+    resource_usage::spawn_history_sampler(state.db.clone(), state.runner.clone());
     let app = api::router(state.clone());
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;

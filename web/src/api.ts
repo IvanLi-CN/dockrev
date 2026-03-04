@@ -304,10 +304,44 @@ export type SettingsResponse = {
     baseDir: string
     skipTargetsOverBytes: number
   }
+  resourceMonitor: {
+    enabled: boolean
+    sampleIntervalSeconds: 10 | 30 | 60 | 300
+    retentionDays: number
+  }
   auth: {
     forwardHeaderName: string
     allowAnonymousInDev: boolean
   }
+}
+
+export type PutSettingsInput = {
+  backup: SettingsResponse['backup']
+  resourceMonitor?: {
+    enabled: boolean
+    sampleIntervalSeconds: 10 | 30 | 60 | 300
+  }
+}
+
+export type ServiceResourceUsageWindow = '15m' | '1h' | '6h'
+
+export type ServiceResourceSample = {
+  sampledAt: string
+  cpuPercent: number
+  memUsedBytes?: number
+  memLimitBytes?: number
+  netRxBytes?: number
+  netTxBytes?: number
+  blockReadBytes?: number
+  blockWriteBytes?: number
+  pids?: number
+  containerCount: number
+}
+
+export type ServiceResourceHistoryResponse = {
+  serviceId: string
+  window: ServiceResourceUsageWindow | string
+  samples: ServiceResourceSample[]
 }
 
 export type DeployCheckStatus = 'pass' | 'fail' | 'na'
@@ -346,7 +380,7 @@ export type DeployWelcomeResponse = {
 export type NotificationConfig = {
   email: { enabled: boolean; smtpUrl?: string | null }
   webhook: { enabled: boolean; url?: string | null }
-  telegram: { enabled: boolean; botToken?: string | null; chatId?: string | null }
+  telegram: { enabled: boolean; botToken?: string | null; botTokenConfigured?: boolean; chatId?: string | null }
   webPush: {
     enabled: boolean
     vapidPublicKey?: string | null
@@ -761,6 +795,26 @@ export function newVersionInferenceEventsSource(opts?: { afterId?: number }): Ev
   return new EventSource(versionInferenceEventsUrl(opts), { withCredentials: true })
 }
 
+export async function getServiceResourceUsageHistory(
+  serviceId: string,
+  window: ServiceResourceUsageWindow,
+): Promise<ServiceResourceHistoryResponse> {
+  const query = new URLSearchParams({ window })
+  const resp = await apiFetch(
+    `/api/services/${encodeURIComponent(serviceId)}/resource-usage/history?${query.toString()}`,
+  )
+  return (await resp.json()) as ServiceResourceHistoryResponse
+}
+
+export function serviceResourceUsageEventsUrl(serviceId: string): string {
+  const base = apiBaseUrl().replace(/\/$/, '')
+  return `${base}/api/services/${encodeURIComponent(serviceId)}/resource-usage/events`
+}
+
+export function newServiceResourceUsageEventsSource(serviceId: string): EventSource {
+  return new EventSource(serviceResourceUsageEventsUrl(serviceId), { withCredentials: true })
+}
+
 type TriggerUpdateCommonInput = {
   mode: 'apply' | 'dry-run'
   allowArchMismatch: boolean
@@ -848,10 +902,10 @@ export async function getSettings(): Promise<SettingsResponse> {
   return (await resp.json()) as SettingsResponse
 }
 
-export async function putSettings(input: SettingsResponse['backup']) {
+export async function putSettings(input: PutSettingsInput) {
   const resp = await apiFetch('/api/settings', {
     method: 'PUT',
-    body: JSON.stringify({ backup: input }),
+    body: JSON.stringify(input),
   })
   return (await resp.json()) as { ok: boolean }
 }

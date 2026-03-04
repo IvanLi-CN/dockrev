@@ -23,6 +23,7 @@ import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { isSemverDowngradeAnomaly, serviceRowStatus } from '../updateStatus'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
+import { ServiceResourcePanel } from '../components/ServiceResourcePanel'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { useConfirm } from '../confirm'
 import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, isStrictSemverTag } from '../versionDisplay'
@@ -859,6 +860,8 @@ export function ServiceDetailPage(props: {
           supervisor offline · {supervisorErrorAt ?? '-'}
         </div>
       ) : null}
+
+      <ServiceResourcePanel serviceId={service.id} />
 
       <div className="twoCol">
         <div className="card">

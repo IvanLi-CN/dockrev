@@ -114,11 +114,80 @@ jobs:
       - name: Run cargo test
         run: cargo test --workspace --locked --all-features
 
-  frontend:
-    name: Frontend (lint + Storybook)
+  frontend-lint-build:
+    name: Frontend lint + build
     runs-on: ubuntu-latest
     needs: [changes]
     if: ${{ needs.changes.outputs.web == 'true' }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.6
+          # Avoid GitHub API rate limits (setup-bun fetches tags/releases).
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: bun install (frozen lockfile)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd web
+          bun install --frozen-lockfile
+
+      - name: Front-end lint + build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd web
+          bun run lint
+          bun run build
+
+  frontend-storybook-build:
+    name: Frontend Storybook build
+    runs-on: ubuntu-latest
+    needs: [frontend-lint-build]
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.6
+          # Avoid GitHub API rate limits (setup-bun fetches tags/releases).
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: bun install (frozen lockfile)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd web
+          bun install --frozen-lockfile
+
+      - name: Build Storybook static bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd web
+          bun run build-storybook -- --quiet
+
+      - name: Upload Storybook static artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: storybook-static-${{ github.sha }}
+          path: web/storybook-static
+          retention-days: 1
+          if-no-files-found: error
+
+  frontend-storybook-test:
+    name: Frontend Storybook test
+    runs-on: ubuntu-latest
+    needs: [frontend-storybook-build]
     timeout-minutes: 25
     steps:
       - name: Checkout
@@ -138,6 +207,12 @@ jobs:
           cd web
           bun install --frozen-lockfile
 
+      - name: Download Storybook static artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: storybook-static-${{ github.sha }}
+          path: web/storybook-static
+
       - name: Restore Playwright browser cache
         uses: actions/cache@v4
         with:
@@ -146,18 +221,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-playwright-
 
-      - name: Front-end lint + build + Storybook tests
+      - name: Run Storybook Playwright check (timeout + retry)
         shell: bash
-        run: |
-          set -euo pipefail
-          cd web
-          bun run lint
-          bun run build
-          bun run build-storybook -- --quiet
-          # `--with-deps` can hang on GitHub-hosted runners due to apt/dpkg locks.
-          # The runner already provides the required shared libraries for Chromium.
-          bun ./node_modules/.bin/playwright install chromium
-          bun run test-storybook
+        run: bash ./.github/scripts/storybook-ci-check.sh
 
   pr-release-check:
     name: Release build check (PR)

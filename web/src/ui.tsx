@@ -114,6 +114,9 @@ export function IconButton(props: {
 const SMALL_ACTION_BUTTON_QUERY = '(max-width: 700px)'
 const ACTION_BUTTON_LONG_PRESS_MS = 480
 const ACTION_BUTTON_HINT_PERSIST_MS = 1200
+type ResponsiveActionBubbleStyle = CSSProperties & {
+  '--responsive-action-bubble-offset-x'?: string
+}
 
 function buttonVariantClass(variant: 'primary' | 'danger' | 'ghost'): string {
   return variant === 'primary' ? 'btnPrimary' : variant === 'danger' ? 'btnDanger' : 'btnGhost'
@@ -310,8 +313,8 @@ export function ResponsiveActionButton(props: {
   ]
     .filter(Boolean)
     .join(' ')
-  const bubbleStyle: CSSProperties = {
-    ['--responsive-action-bubble-offset-x' as const]: `${bubbleOffsetX}px`,
+  const bubbleStyle: ResponsiveActionBubbleStyle = {
+    '--responsive-action-bubble-offset-x': `${bubbleOffsetX}px`,
   }
 
   return (

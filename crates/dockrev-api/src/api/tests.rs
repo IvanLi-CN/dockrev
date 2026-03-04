@@ -1084,7 +1084,11 @@ async fn test_state_with(
         db.clone(),
         registry.clone(),
     ));
-    AppState::new(config, db, registry, runner, snapshot_worker)
+    let resource_hub = Arc::new(crate::resource_usage::RealtimeSamplerHub::new(
+        db.clone(),
+        runner.clone(),
+    ));
+    AppState::new(config, db, registry, runner, snapshot_worker, resource_hub)
 }
 
 async fn test_state(db_path: &str) -> Arc<AppState> {
@@ -1122,7 +1126,11 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
         db.clone(),
         registry.clone(),
     ));
-    AppState::new(config, db, registry, runner, snapshot_worker)
+    let resource_hub = Arc::new(crate::resource_usage::RealtimeSamplerHub::new(
+        db.clone(),
+        runner.clone(),
+    ));
+    AppState::new(config, db, registry, runner, snapshot_worker, resource_hub)
 }
 
 async fn test_state_auth_required(db_path: &str) -> Arc<AppState> {
@@ -1159,7 +1167,11 @@ async fn test_state_auth_required(db_path: &str) -> Arc<AppState> {
         db.clone(),
         registry.clone(),
     ));
-    AppState::new(config, db, registry, runner, snapshot_worker)
+    let resource_hub = Arc::new(crate::resource_usage::RealtimeSamplerHub::new(
+        db.clone(),
+        runner.clone(),
+    ));
+    AppState::new(config, db, registry, runner, snapshot_worker, resource_hub)
 }
 
 async fn seed_stack_from_compose(state: &Arc<AppState>, name: &str, compose_file: &str) -> String {
@@ -1640,7 +1652,7 @@ services:
     assert_eq!(tags.len(), 1);
     assert_eq!(tags[0].as_str().unwrap(), "legacy-1");
     assert_eq!(body["scan"]["repoTagsTotal"].as_u64().unwrap(), 131);
-    assert_eq!(body["scan"]["repoTagsConsidered"].as_u64().unwrap(), 100);
+    assert_eq!(body["scan"]["repoTagsConsidered"].as_u64().unwrap(), 40);
 }
 
 #[tokio::test]
@@ -1886,13 +1898,13 @@ services:
     assert!(body["checkedAt"].as_str().is_some_and(|s| !s.is_empty()));
 
     let tags = body["tags"].as_array().unwrap();
-    assert_eq!(tags.len(), 50);
+    assert_eq!(tags.len(), 40);
     assert_eq!(tags[0].as_str().unwrap(), "1.0.49");
-    assert_eq!(tags[49].as_str().unwrap(), "1.0.0");
+    assert_eq!(tags[39].as_str().unwrap(), "1.0.10");
 
     assert_eq!(body["scan"]["repoTagsTotal"].as_u64().unwrap(), 50);
-    assert_eq!(body["scan"]["repoTagsConsidered"].as_u64().unwrap(), 50);
-    assert_eq!(body["scan"]["manifestsOk"].as_u64().unwrap(), 50);
+    assert_eq!(body["scan"]["repoTagsConsidered"].as_u64().unwrap(), 40);
+    assert_eq!(body["scan"]["manifestsOk"].as_u64().unwrap(), 40);
     assert_eq!(body["scan"]["manifestsTimeout"].as_u64().unwrap(), 0);
     assert_eq!(body["scan"]["manifestsError"].as_u64().unwrap(), 0);
 }
@@ -6250,7 +6262,17 @@ async fn settings_and_notifications_roundtrip() {
     assert_eq!(resp.status(), 200);
     let settings = response_json(resp).await;
     assert!(settings["backup"].is_object());
+    assert!(settings["resourceMonitor"].is_object());
     assert!(settings["auth"].is_object());
+    assert_eq!(settings["resourceMonitor"]["enabled"].as_bool(), Some(true));
+    assert_eq!(
+        settings["resourceMonitor"]["sampleIntervalSeconds"].as_u64(),
+        Some(30)
+    );
+    assert_eq!(
+        settings["resourceMonitor"]["retentionDays"].as_u64(),
+        Some(30)
+    );
 
     let put = serde_json::json!({
         "backup": {
@@ -6258,6 +6280,10 @@ async fn settings_and_notifications_roundtrip() {
             "requireSuccess": true,
             "baseDir": "/tmp/dockrev-backups",
             "skipTargetsOverBytes": 123
+        },
+        "resourceMonitor": {
+            "enabled": false,
+            "sampleIntervalSeconds": 60
         }
     });
     let resp = app
@@ -6290,6 +6316,73 @@ async fn settings_and_notifications_roundtrip() {
         settings["backup"]["skipTargetsOverBytes"].as_u64().unwrap(),
         123
     );
+    assert_eq!(
+        settings["resourceMonitor"]["enabled"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        settings["resourceMonitor"]["sampleIntervalSeconds"].as_u64(),
+        Some(60)
+    );
+    assert_eq!(
+        settings["resourceMonitor"]["retentionDays"].as_u64(),
+        Some(30)
+    );
+
+    let invalid = serde_json::json!({
+        "backup": settings["backup"],
+        "resourceMonitor": {
+            "enabled": true,
+            "sampleIntervalSeconds": 7
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(invalid.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/services/svc-test/resource-usage/history?window=1h")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    let payload = response_json(resp).await;
+    assert_eq!(
+        payload["error"]["details"]["reason"].as_str(),
+        Some("resource_monitor_disabled")
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/services/svc-test/resource-usage/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    let payload = response_json(resp).await;
+    assert_eq!(
+        payload["error"]["details"]["reason"].as_str(),
+        Some("resource_monitor_disabled")
+    );
 
     let resp = app
         .clone()
@@ -6308,7 +6401,11 @@ async fn settings_and_notifications_roundtrip() {
     let put = serde_json::json!({
         "email": { "enabled": false },
         "webhook": { "enabled": true, "url": "https://example.com/hook" },
-        "telegram": { "enabled": false },
+        "telegram": {
+            "enabled": true,
+            "botToken": "123456:telegram-bot-token",
+            "chatId": "-1001234567890"
+        },
         "webPush": { "enabled": false }
     });
     let resp = app
@@ -6339,6 +6436,285 @@ async fn settings_and_notifications_roundtrip() {
     let conf = response_json(resp).await;
     assert!(conf["webhook"]["enabled"].as_bool().unwrap());
     assert_eq!(conf["webhook"]["url"].as_str().unwrap(), "******");
+    assert_eq!(conf["telegram"]["botToken"].as_str(), None);
+    assert_eq!(conf["telegram"]["botTokenConfigured"].as_bool(), Some(true));
+    assert_eq!(conf["telegram"]["chatId"].as_str(), Some("-1001234567890"));
+
+    let put = serde_json::json!({
+        "email": { "enabled": false },
+        "webhook": { "enabled": true, "url": "******" },
+        "telegram": { "enabled": true, "chatId": "  -10055667788  " },
+        "webPush": { "enabled": false }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/notifications")
+                .header("content-type", "application/json")
+                .body(Body::from(put.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let db_conf = state.db.get_notification_settings().await.unwrap();
+    assert_eq!(
+        db_conf.telegram_bot_token.as_deref(),
+        Some("123456:telegram-bot-token")
+    );
+    assert_eq!(db_conf.telegram_chat_id.as_deref(), Some("-10055667788"));
+
+    let put = serde_json::json!({
+        "email": { "enabled": false },
+        "webhook": { "enabled": true, "url": "******" },
+        "telegram": { "enabled": true, "chatId": "******" },
+        "webPush": { "enabled": false }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/notifications")
+                .header("content-type", "application/json")
+                .body(Body::from(put.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let db_conf = state.db.get_notification_settings().await.unwrap();
+    assert_eq!(db_conf.telegram_chat_id.as_deref(), Some("-10055667788"));
+
+    let put = serde_json::json!({
+        "email": { "enabled": false },
+        "webhook": { "enabled": true, "url": "******" },
+        "telegram": { "enabled": true },
+        "webPush": { "enabled": false }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/notifications")
+                .header("content-type", "application/json")
+                .body(Body::from(put.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let db_conf = state.db.get_notification_settings().await.unwrap();
+    assert_eq!(db_conf.telegram_chat_id.as_deref(), Some("-10055667788"));
+
+    let put = serde_json::json!({
+        "email": { "enabled": false },
+        "webhook": { "enabled": true, "url": "******" },
+        "telegram": { "enabled": true, "chatId": "   " },
+        "webPush": { "enabled": false }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/notifications")
+                .header("content-type", "application/json")
+                .body(Body::from(put.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let db_conf = state.db.get_notification_settings().await.unwrap();
+    assert_eq!(db_conf.telegram_chat_id, None);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/notifications")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let conf = response_json(resp).await;
+    assert_eq!(conf["telegram"]["botToken"].as_str(), None);
+    assert_eq!(conf["telegram"]["botTokenConfigured"].as_bool(), Some(true));
+    assert!(conf["telegram"]["chatId"].is_null());
+}
+
+#[tokio::test]
+async fn resource_usage_history_returns_samples_for_window() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-resource-history-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: nginx:1.27
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let service_id = services[0].id.clone();
+
+    let now = time::OffsetDateTime::now_utc();
+    let sampled_at_1 = (now - time::Duration::minutes(20))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let sampled_at_2 = (now - time::Duration::minutes(5))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    state
+        .db
+        .insert_service_resource_samples(&[
+            crate::db::ServiceResourceSampleInput {
+                service_id: service_id.clone(),
+                sampled_at: sampled_at_1,
+                cpu_percent: 12.5,
+                mem_used_bytes: Some(128 * 1024 * 1024),
+                mem_limit_bytes: Some(1024 * 1024 * 1024),
+                net_rx_bytes: Some(5_000_000),
+                net_tx_bytes: Some(2_500_000),
+                block_read_bytes: Some(1_300_000),
+                block_write_bytes: Some(900_000),
+                pids: Some(8),
+                container_count: 1,
+            },
+            crate::db::ServiceResourceSampleInput {
+                service_id: service_id.clone(),
+                sampled_at: sampled_at_2,
+                cpu_percent: 18.0,
+                mem_used_bytes: Some(156 * 1024 * 1024),
+                mem_limit_bytes: Some(1024 * 1024 * 1024),
+                net_rx_bytes: Some(8_000_000),
+                net_tx_bytes: Some(4_800_000),
+                block_read_bytes: Some(2_300_000),
+                block_write_bytes: Some(1_700_000),
+                pids: Some(11),
+                container_count: 1,
+            },
+        ])
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{service_id}/resource-usage/history?window=1h"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let payload = response_json(resp).await;
+    assert_eq!(payload["serviceId"].as_str(), Some(service_id.as_str()));
+    assert_eq!(payload["window"].as_str(), Some("1h"));
+    let samples = payload["samples"].as_array().unwrap();
+    assert_eq!(samples.len(), 2);
+    assert_eq!(samples[0]["containerCount"].as_u64(), Some(1));
+    assert_eq!(samples[1]["cpuPercent"].as_f64(), Some(18.0));
+}
+
+#[tokio::test]
+async fn resource_usage_events_emits_error_when_runtime_stats_unavailable() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-resource-events-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: nginx:1.27
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let service_id = services[0].id.clone();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/resource-usage/events"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("text/event-stream")
+    );
+
+    let mut body = resp.into_body();
+    let evt = wait_for_sse_event(&mut body, "resource_usage_error", Duration::from_secs(2)).await;
+    let data: serde_json::Value = serde_json::from_str(&evt.data).unwrap();
+    assert_eq!(data["serviceId"].as_str(), Some(service_id.as_str()));
+    assert_eq!(data["error"].as_str(), Some("runtime_stats_unavailable"));
+}
+
+#[tokio::test]
+async fn resource_usage_events_emits_error_when_initial_snapshot_fails() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FailAllRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!(
+        "/tmp/dockrev-resource-events-initial-fail-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: nginx:1.27
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let service_id = services[0].id.clone();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/resource-usage/events"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let mut body = resp.into_body();
+    let evt = wait_for_sse_event(&mut body, "resource_usage_error", Duration::from_secs(2)).await;
+    let data: serde_json::Value = serde_json::from_str(&evt.data).unwrap();
+    assert_eq!(data["serviceId"].as_str(), Some(service_id.as_str()));
+    assert!(!data["error"].as_str().unwrap_or_default().is_empty());
 }
 
 #[tokio::test]

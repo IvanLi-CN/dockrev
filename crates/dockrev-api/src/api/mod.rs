@@ -18,14 +18,15 @@ use axum::{
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tokio::sync::broadcast;
 use tokio::task::JoinSet;
 use url::Url;
 
 use crate::github;
 use crate::{
     backup, db::GitHubPackagesWebhookDeliveryRecordInput, discovery, error::ApiError,
-    ghcr_webhook_jobs, ids, ignore, notify, preflight, registry, runtime_scan, snapshot_worker,
-    state::AppState, ui, updater,
+    ghcr_webhook_jobs, ids, ignore, notify, preflight, registry, resource_usage, runtime_scan,
+    snapshot_worker, state::AppState, ui, updater,
 };
 use types::*;
 
@@ -49,6 +50,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/api/services/{service_id}/digest-tags-snapshot",
             get(get_service_digest_tags_snapshot),
+        )
+        .route(
+            "/api/services/{service_id}/resource-usage/history",
+            get(get_service_resource_usage_history),
+        )
+        .route(
+            "/api/services/{service_id}/resource-usage/events",
+            get(service_resource_usage_events),
         )
         .route(
             "/api/services/{service_id}/version-inference/refresh",
@@ -3522,6 +3531,208 @@ async fn version_inference_events(
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ServiceResourceHistoryQuery {
+    window: Option<String>,
+}
+
+async fn get_service_resource_usage_history(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(service_id): Path<String>,
+    Query(q): Query<ServiceResourceHistoryQuery>,
+) -> Result<Json<ServiceResourceHistoryResponse>, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let settings = state
+        .db
+        .get_resource_monitor_settings()
+        .await
+        .map_err(map_internal)?;
+    if !settings.enabled {
+        return Err(
+            ApiError::conflict("resource monitor disabled").with_details(json!({
+                "reason": "resource_monitor_disabled",
+            })),
+        );
+    }
+
+    let stack_id = state
+        .db
+        .get_service_stack_id(&service_id)
+        .await
+        .map_err(map_internal)?;
+    if stack_id.is_none() {
+        return Err(ApiError::not_found("service not found"));
+    }
+
+    let window = q.window.unwrap_or_else(|| "1h".to_string());
+    let Some(window_seconds) = resource_usage::parse_window_to_seconds(&window) else {
+        return Err(ApiError::invalid_argument(
+            "window must be one of 15m/1h/6h",
+        ));
+    };
+
+    let since = (time::OffsetDateTime::now_utc() - time::Duration::seconds(window_seconds as i64))
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|err| map_internal(err.into()))?;
+    let samples = state
+        .db
+        .list_service_resource_samples_since(&service_id, &since)
+        .await
+        .map_err(map_internal)?;
+
+    Ok(Json(ServiceResourceHistoryResponse {
+        service_id,
+        window,
+        samples,
+    }))
+}
+
+async fn service_resource_usage_events(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(service_id): Path<String>,
+) -> Result<impl axum::response::IntoResponse, ApiError> {
+    let _user = require_user(&state, &headers)?;
+    let settings = state
+        .db
+        .get_resource_monitor_settings()
+        .await
+        .map_err(map_internal)?;
+    if !settings.enabled {
+        return Err(
+            ApiError::conflict("resource monitor disabled").with_details(json!({
+                "reason": "resource_monitor_disabled",
+            })),
+        );
+    }
+
+    let stack_id = state
+        .db
+        .get_service_stack_id(&service_id)
+        .await
+        .map_err(map_internal)?;
+    if stack_id.is_none() {
+        return Err(ApiError::not_found("service not found"));
+    }
+
+    let mut subscription = state.resource_hub.subscribe(&service_id).await;
+    let (initial, initial_error) = match state.resource_hub.sample_once(&service_id).await {
+        Ok(sample) => (sample, None),
+        Err(err) => {
+            tracing::warn!(
+                service_id = %service_id,
+                error = %err,
+                "resource monitor initial snapshot failed"
+            );
+            (None, Some(err.to_string()))
+        }
+    };
+    let stream_service_id = service_id.clone();
+
+    let stream = async_stream::stream! {
+        let mut event_id: u64 = 0;
+        if let Some(error) = initial_error {
+            event_id = event_id.saturating_add(1);
+            let data = json!({
+                "serviceId": stream_service_id.clone(),
+                "error": error,
+            });
+            yield Ok::<Event, Infallible>(
+                Event::default()
+                    .id(event_id.to_string())
+                    .event("resource_usage_error")
+                    .data(data.to_string()),
+            );
+        } else if let Some(sample) = initial {
+                event_id = event_id.saturating_add(1);
+                let data = json!({
+                    "serviceId": stream_service_id.clone(),
+                    "sample": sample,
+                });
+                yield Ok::<Event, Infallible>(
+                    Event::default()
+                        .id(event_id.to_string())
+                        .event("resource_usage_snapshot")
+                        .data(data.to_string()),
+                );
+        } else {
+            event_id = event_id.saturating_add(1);
+            let data = json!({
+                "serviceId": stream_service_id.clone(),
+                "error": "runtime_stats_unavailable",
+            });
+            yield Ok::<Event, Infallible>(
+                Event::default()
+                    .id(event_id.to_string())
+                    .event("resource_usage_error")
+                    .data(data.to_string()),
+            );
+        }
+
+        loop {
+            match subscription.receiver.recv().await {
+                Ok(resource_usage::RealtimeMessage::Tick(sample)) => {
+                    event_id = event_id.saturating_add(1);
+                    let data = json!({
+                        "serviceId": stream_service_id.clone(),
+                        "sample": sample,
+                    });
+                    yield Ok::<Event, Infallible>(
+                        Event::default()
+                            .id(event_id.to_string())
+                            .event("resource_usage_tick")
+                            .data(data.to_string()),
+                    );
+                }
+                Ok(resource_usage::RealtimeMessage::Error(error)) => {
+                    event_id = event_id.saturating_add(1);
+                    let data = json!({
+                        "serviceId": stream_service_id.clone(),
+                        "error": error,
+                    });
+                    yield Ok::<Event, Infallible>(
+                        Event::default()
+                            .id(event_id.to_string())
+                            .event("resource_usage_error")
+                            .data(data.to_string()),
+                    );
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    event_id = event_id.saturating_add(1);
+                    let data = json!({
+                        "serviceId": stream_service_id.clone(),
+                        "error": "resource_usage_lagged",
+                    });
+                    yield Ok::<Event, Infallible>(
+                        Event::default()
+                            .id(event_id.to_string())
+                            .event("resource_usage_error")
+                            .data(data.to_string()),
+                    );
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    };
+
+    let sse = Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    );
+
+    let mut resp_headers = HeaderMap::new();
+    resp_headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    resp_headers.insert(
+        HeaderName::from_static("x-accel-buffering"),
+        HeaderValue::from_static("no"),
+    );
+
+    Ok((resp_headers, sse))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ListServiceDigestTagsQuery {
     digest: Option<String>,
 }
@@ -3908,7 +4119,7 @@ async fn put_notifications(
     merge_secret(&mut merged.email_smtp_url, existing.email_smtp_url);
     merge_secret(&mut merged.webhook_url, existing.webhook_url);
     merge_secret(&mut merged.telegram_bot_token, existing.telegram_bot_token);
-    merge_secret(&mut merged.telegram_chat_id, existing.telegram_chat_id);
+    merge_telegram_chat_id(&mut merged.telegram_chat_id, existing.telegram_chat_id);
     merge_secret(
         &mut merged.webpush_vapid_private_key,
         existing.webpush_vapid_private_key,
@@ -5331,8 +5542,14 @@ async fn get_settings(
     let _user = require_user(&state, &headers)?;
 
     let backup = state.db.get_backup_settings().await.map_err(map_internal)?;
+    let resource_monitor = state
+        .db
+        .get_resource_monitor_settings()
+        .await
+        .map_err(map_internal)?;
     Ok(Json(SettingsResponse {
         backup,
+        resource_monitor,
         auth: AuthSettings {
             forward_header_name: state.config.auth_forward_header_name.to_string(),
             allow_anonymous_in_dev: state.config.auth_allow_anonymous_in_dev,
@@ -5347,9 +5564,31 @@ async fn put_settings(
 ) -> Result<Json<PutSettingsResponse>, ApiError> {
     let _user = require_user(&state, &headers)?;
     let now = now_rfc3339().map_err(map_internal)?;
+
+    let existing_resource_monitor = state
+        .db
+        .get_resource_monitor_settings()
+        .await
+        .map_err(map_internal)?;
+    let mut merged_resource_monitor =
+        req.resource_monitor
+            .map_or(existing_resource_monitor, |rm| ResourceMonitorSettings {
+                enabled: rm.enabled,
+                sample_interval_seconds: rm.sample_interval_seconds,
+                retention_days: resource_usage::RESOURCE_MONITOR_RETENTION_DAYS,
+            });
+    if !resource_usage::is_valid_sample_interval_seconds(
+        merged_resource_monitor.sample_interval_seconds,
+    ) {
+        return Err(ApiError::invalid_argument(
+            "resourceMonitor.sampleIntervalSeconds must be one of 10/30/60/300",
+        ));
+    }
+    merged_resource_monitor.retention_days = resource_usage::RESOURCE_MONITOR_RETENTION_DAYS;
+
     state
         .db
-        .put_backup_settings(&req.backup, &now)
+        .put_settings(&req.backup, &merged_resource_monitor, &now)
         .await
         .map_err(map_internal)?;
     Ok(Json(PutSettingsResponse { ok: true }))
@@ -5525,9 +5764,32 @@ fn github_error_is_timeout(err: &anyhow::Error) -> bool {
 fn merge_secret(target: &mut Option<String>, existing: Option<String>) {
     let keep = match target.as_deref() {
         None => true,
-        Some(v) => v == "******" || v.trim().is_empty(),
+        Some(v) => {
+            let trimmed = v.trim();
+            is_mask_literal(trimmed) || trimmed.is_empty()
+        }
     };
     if keep {
         *target = existing;
     }
+}
+
+fn merge_telegram_chat_id(target: &mut Option<String>, existing: Option<String>) {
+    match target.take() {
+        None => *target = existing,
+        Some(value) => {
+            let trimmed = value.trim();
+            if is_mask_literal(trimmed) {
+                *target = existing;
+            } else if trimmed.is_empty() {
+                *target = None;
+            } else {
+                *target = Some(trimmed.to_string());
+            }
+        }
+    }
+}
+
+fn is_mask_literal(value: &str) -> bool {
+    value == "******" || value == "••••••••••••••••"
 }

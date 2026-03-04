@@ -75,7 +75,7 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 | DELETE | `/api/ignores` | Forward Header | 删除忽略规则 | `200` `400` `401` |
 | GET | `/api/services/{service_id}/settings` | Forward Header | 服务级设置查询 | `200` `404` `401` |
 | PUT | `/api/services/{service_id}/settings` | Forward Header | 服务级设置更新 | `200` `400` `404` `401` |
-| GET | `/api/notifications` | Forward Header | 通知配置读取（敏感字段掩码） | `200` `401` |
+| GET | `/api/notifications` | Forward Header | 通知配置读取（`botToken` 不回传，`botTokenConfigured` + `chatId` 明文） | `200` `401` |
 | PUT | `/api/notifications` | Forward Header | 通知配置更新 | `200` `400` `401` |
 | POST | `/api/notifications/test` | Forward Header | 发送测试通知 | `200` `400` `401` |
 | GET | `/api/settings` | Forward Header | 系统设置读取 | `200` `401` |
@@ -124,6 +124,8 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 | POST | `/supervisor/self-upgrade/rollback` | Forward Header | 回滚当前操作 | `200` `400` `401` |
 | GET | `/supervisor/favicon.png` | 公开 | UI favicon | `200` |
 | GET | `/supervisor/` | 公开 | Supervisor UI 页面 | `200` |
+
+- `GET /supervisor/self-upgrade` 在 `state=running` 时会返回可选字段 `request`（`mode` + `rollbackOnFailure`），用于页面恢复当前运行按钮状态；空闲/历史状态下该字段可缺省。
 
 ---
 

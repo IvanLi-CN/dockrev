@@ -12,20 +12,32 @@ const meta: Meta<typeof SettingsPage> = {
 export default meta
 type Story = StoryObj<typeof SettingsPage>
 
+function renderSettingsPage(
+  pageSubtitle = '单用户 / Forward Header · 认证配置 · 通知配置 · 备份默认策略',
+) {
+  return (
+    <PageHarness route={{ name: 'settings' }} title="系统设置" pageSubtitle={pageSubtitle} topbarHint="系统设置">
+      {({ onTopActions }) => <SettingsPage onTopActions={onTopActions} />}
+    </PageHarness>
+  )
+}
+
+function scrollToNotificationCard(root: HTMLElement): void {
+  const cards = Array.from(root.querySelectorAll<HTMLElement>('.card'))
+  const notificationCard = cards.find((card) => card.querySelector('.title')?.textContent?.trim() === '通知')
+  notificationCard?.scrollIntoView({ block: 'start', behavior: 'auto' })
+}
+
+function setInputValue(input: HTMLInputElement, value: string): void {
+  const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+  descriptor?.set?.call(input, value)
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  input.dispatchEvent(new Event('change', { bubbles: true }))
+}
+
 export const Default: Story = {
   parameters: { dockrevApiScenario: 'settings-configured' },
-  render: () => {
-    return (
-      <PageHarness
-        route={{ name: 'settings' }}
-        title="系统设置"
-        pageSubtitle="单用户 / Forward Header · 认证配置 · 通知配置 · 备份默认策略"
-        topbarHint="系统设置"
-      >
-        {({ onTopActions }) => <SettingsPage onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
+  render: () => renderSettingsPage(),
 }
 
 export const DefaultLight: Story = {
@@ -37,49 +49,48 @@ export const DefaultLight: Story = {
 
 export const ResolveLoading: Story = {
   parameters: { dockrevApiScenario: 'settings-configured-resolve-slow' },
-  render: () => {
-    return (
-      <PageHarness
-        route={{ name: 'settings' }}
-        title="系统设置"
-        pageSubtitle="验证 GHCR 解析并添加按钮在慢响应下的加载反馈"
-        topbarHint="系统设置"
-      >
-        {({ onTopActions }) => <SettingsPage onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
+  render: () => renderSettingsPage('验证 GHCR 解析并添加按钮在慢响应下的加载反馈'),
 }
 
 export const RepoPickerUx: Story = {
   parameters: { dockrevApiScenario: 'settings-configured' },
-  render: () => {
-    return (
-      <PageHarness
-        route={{ name: 'settings' }}
-        title="系统设置"
-        pageSubtitle="验证 GHCR 仓库选择弹窗：默认最近活动排序、搜索筛选与拖动批量开关"
-        topbarHint="系统设置"
-      >
-        {({ onTopActions }) => <SettingsPage onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
+  render: () => renderSettingsPage('验证 GHCR 仓库选择弹窗：默认最近活动排序、搜索筛选与拖动批量开关'),
 }
 
 export const GhcrPreview: Story = {
   parameters: { dockrevApiScenario: 'settings-configured' },
-  render: () => {
-    return (
-      <PageHarness
-        route={{ name: 'settings' }}
-        title="系统设置"
-        pageSubtitle="验证 GHCR Repos 区域仅预览前 6 条并通过“查看更多”进入维护页"
-        topbarHint="系统设置"
-      >
-        {({ onTopActions }) => <SettingsPage onTopActions={onTopActions} />}
-      </PageHarness>
+  render: () => renderSettingsPage('验证 GHCR Repos 区域仅预览前 6 条并通过“查看更多”进入维护页'),
+}
+
+export const NotificationCard: Story = {
+  parameters: { dockrevApiScenario: 'settings-configured' },
+  render: () => renderSettingsPage('聚焦通知卡片（Email / Webhook / Telegram / Web Push）'),
+  play: async ({ canvasElement }) => {
+    // Wait a tick for async settings data to paint, then jump to the card.
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    scrollToNotificationCard(canvasElement)
+  },
+}
+
+export const TelegramTokenValidation: Story = {
+  parameters: { dockrevApiScenario: 'settings-configured' },
+  render: () => renderSettingsPage('验证 Telegram：未触碰不显示眼睛，输入无效 token 不会保存'),
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    scrollToNotificationCard(canvasElement)
+    await new Promise((resolve) => setTimeout(resolve, 120))
+
+    const botTokenInput = canvasElement.querySelector<HTMLInputElement>('input[autocomplete="new-password"]')
+    if (!botTokenInput) return
+
+    botTokenInput.focus()
+    setInputValue(botTokenInput, 'invalid token')
+
+    const chatIdInput = Array.from(canvasElement.querySelectorAll<HTMLInputElement>('input')).find(
+      (input) => input !== botTokenInput && (input.value?.includes('-100') ?? false),
     )
+    ;(chatIdInput ?? botTokenInput).focus()
+    await new Promise((resolve) => setTimeout(resolve, 700))
   },
 }
 
