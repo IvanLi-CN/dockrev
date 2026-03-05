@@ -317,6 +317,10 @@ export type SettingsResponse = {
     forwardHeaderName: string
     allowAnonymousInDev: boolean
   }
+  instance: {
+    // Optional for backward compatibility with older servers.
+    publicBaseUrl?: string | null
+  }
 }
 
 export type PutSettingsInput = {
@@ -328,6 +332,10 @@ export type PutSettingsInput = {
   schedules?: {
     updateCheck?: { enabled: boolean; cron: string }
     ghcrWebhookAudit?: { enabled: boolean; cron: string }
+  }
+  instance?: {
+    // When present, updates the stored public base URL. `null` (or empty string) clears it.
+    publicBaseUrl?: string | null
   }
 }
 

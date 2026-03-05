@@ -17,12 +17,27 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
-  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-    for (const client of clients) {
-      if (client.url && 'focus' in client) return client.focus()
-    }
-    if (self.clients.openWindow) return self.clients.openWindow('/')
-    return undefined
-  }))
-})
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (clients) => {
+      const data = event.notification && event.notification.data ? event.notification.data : {}
+      const url = typeof data.url === 'string' && data.url.trim().length ? data.url : null
 
+      if (url) {
+        // Prefer reusing an existing tab by navigating it when supported.
+        for (const client of clients) {
+          if (client && typeof client.focus === 'function' && typeof client.navigate === 'function') {
+            await client.navigate(url)
+            return client.focus()
+          }
+        }
+        if (self.clients.openWindow) return self.clients.openWindow(url)
+      }
+
+      for (const client of clients) {
+        if (client.url && 'focus' in client) return client.focus()
+      }
+      if (self.clients.openWindow) return self.clients.openWindow('/')
+      return undefined
+    }),
+  )
+})

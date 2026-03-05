@@ -73,6 +73,10 @@ function buildSettingsSavePayload(settings: SettingsResponse): PutSettingsInput 
       sampleIntervalSeconds: settings.resourceMonitor.sampleIntervalSeconds,
     },
     schedules: settings.schedules,
+    instance: {
+      // Server treats empty string as "clear".
+      publicBaseUrl: settings.instance.publicBaseUrl ?? '',
+    },
   }
 }
 
@@ -796,6 +800,8 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     else if (reason === 'ghcr_pat_unsaved_or_save_failed') message = 'PAT 未保存成功，无法解析，请检查网络后重试'
     else if (reason === 'ghcr_pat_invalid_or_scope_insufficient') message = 'PAT 无效或权限不足，请检查 token scope'
     else if (reason === 'telegram_bot_token_invalid') message = 'Bot token 格式不合法，请填写形如 123456:AA... 的 Telegram Bot token'
+    else if (reason === 'instance_public_base_url_invalid')
+      message = '实例 Public Base URL 格式不合法，请填写 http(s) 的绝对 URL，例如 https://dockrev.example.com/'
     else if (reason === 'github_upstream_timeout') message = 'GitHub 响应超时，请稍后重试'
     else if (reason === 'github_upstream_unavailable') message = 'GitHub 请求失败，请稍后重试'
 
@@ -1051,7 +1057,11 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
   const refresh = useCallback(async () => {
     setError(null)
-    const nextSettings = await getSettings()
+    const rawSettings = await getSettings()
+    const nextSettings: SettingsResponse = {
+      ...rawSettings,
+      instance: rawSettings.instance ?? { publicBaseUrl: null },
+    }
     const nextNotifications = normalizeNotificationsForUi(await getNotifications())
     const gh = await getGitHubPackagesSettings()
     const defaultCallbackUrl = (() => {
@@ -1254,6 +1264,17 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
         return { ...prev, schedules: updater(prev.schedules) }
       })
       markFieldDirty('backup', fieldPath, isToggle ? TOGGLE_DEBOUNCE_MS : TEXT_DEBOUNCE_MS)
+    },
+    [markFieldDirty],
+  )
+
+  const updateInstance = useCallback(
+    (fieldPath: string, updater: (current: SettingsResponse['instance']) => SettingsResponse['instance']) => {
+      setSettings((prev) => {
+        if (!prev) return prev
+        return { ...prev, instance: updater(prev.instance) }
+      })
+      markFieldDirty('backup', fieldPath, TEXT_DEBOUNCE_MS)
     },
     [markFieldDirty],
   )
@@ -1803,6 +1824,33 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                   />
                   <div className="muted" style={{ marginTop: 6 }}>
                     只巡检与标记 drift，不自动修复。
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="title">实例 Public Base URL</div>
+            <div className="muted">用于在通知中生成可点击的绝对链接（服务详情 / 任务详情）。</div>
+
+            <div className="kv">
+              <div className="kvRow">
+                <div className="label">Public Base URL</div>
+                <div>
+                  <input
+                    className="input"
+                    value={settings.instance.publicBaseUrl ?? ''}
+                    onChange={(e) =>
+                      updateInstance('instance.publicBaseUrl', (current) => ({
+                        ...current,
+                        publicBaseUrl: e.target.value,
+                      }))
+                    }
+                    placeholder="https://dockrev.example.com/"
+                  />
+                  <div className="muted" style={{ marginTop: 6 }}>
+                    为空表示不配置；保存时会自动补齐尾部 <Mono>/</Mono>
                   </div>
                 </div>
               </div>
