@@ -340,8 +340,12 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
         {job ? (
           <div className="muted" style={{ marginTop: 8 }}>
             <div>
-              task <span className={`jobTypeTag jobTypeTag-${readable.typeTone}`}>{readable.primaryLabel}</span>
-              {readable.scopeTag ? <span className="jobScopeTag">{readable.scopeTag}</span> : null} · machine{' '}
+              task{' '}
+              <span className="jobReadableTagGroup">
+                <span className={`jobTypeTag jobTypeTag-${readable.typeTone}`}>{readable.primaryLabel}</span>
+                {readable.scopeTag ? <span className="jobScopeTag">{readable.scopeTag}</span> : null}
+              </span>{' '}
+              · machine{' '}
               <Mono>{formatJobMachineName(job.type, job.scope)}</Mono> · by <Mono>{job.createdBy}</Mono> · reason{' '}
               <Mono>{job.reason}</Mono>
             </div>
