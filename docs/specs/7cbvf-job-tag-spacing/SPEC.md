@@ -54,6 +54,11 @@
 - `bun run --cwd web build` 通过。
 - `bun run --cwd web storybook:screenshots` 生成可复核截图，`Pages/JobDetailPage/RunningDualProgress` 与 `Pages/QueuePage/Default` 可见一致间距。
 
+## Visual Evidence (PR)
+
+![JobDetail 标签间距（RunningDualProgress）](./assets/jobdetail-running-dual-progress.png)
+![Queue 标签间距（Default）](./assets/queue-default.png)
+
 ## 实现里程碑（Milestones / Delivery checklist）
 
 - [x] M1: 新增统一标签容器语义，任务详情页改为复用统一容器。
@@ -66,3 +71,4 @@
 - 2026-03-05: 将 `JobDetailPage` 的 type/scope 标签改为复用统一 `jobReadableTagGroup` 容器，修复标签贴边。
 - 2026-03-05: `QueuePage` 对齐同一容器类名；`App.css` 固化共享容器 `gap: 6px`，统一全站标签间距基线。
 - 2026-03-05: 通过 `bun run --cwd web lint`、`bun run --cwd web build`、`bun run --cwd web storybook:screenshots` 验证。
+- 2026-03-05: 补充 PR 可视证据截图至 `assets/`，用于 PR 正文渲染复核。
