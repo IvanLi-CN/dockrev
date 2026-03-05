@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use axum::{body::Body, http::Request, response::IntoResponse as _};
+use axum::{Json, Router, body::Body, http::Request, response::IntoResponse as _, routing::post};
 use http_body_util::BodyExt as _;
 use tower::ServiceExt as _;
 
@@ -6639,6 +6639,90 @@ async fn notifications_test_endpoint_supports_channel_override() {
     assert_eq!(payload["ok"].as_bool(), Some(true));
     let results = payload["results"].as_object().unwrap();
     assert!(results.is_empty());
+}
+
+#[tokio::test]
+async fn notifications_test_endpoint_emits_v2_payload_to_webhook() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<serde_json::Value>(1);
+    let hook_app = Router::new().route(
+        "/hook",
+        post({
+            let tx = tx.clone();
+            move |Json(payload): Json<serde_json::Value>| {
+                let tx = tx.clone();
+                async move {
+                    let _ = tx.send(payload).await;
+                    axum::http::StatusCode::OK
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, hook_app).await.unwrap();
+    });
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let mut notification = state.db.get_notification_settings().await.unwrap();
+    notification.webhook_enabled = true;
+    notification.webhook_url = Some(format!("http://{addr}/hook"));
+    state
+        .db
+        .put_notification_settings(&notification, &now)
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/notifications/test")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "message": "dockrev: test notification",
+                        "channel": "webhook",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let payload = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .expect("webhook receive timeout")
+        .expect("webhook payload missing");
+    assert_eq!(
+        payload["schema"].as_str(),
+        Some("dockrev.notification.test.v2")
+    );
+    assert_eq!(payload["kind"].as_str(), Some("notification_test"));
+    assert_eq!(payload["channel"].as_str(), Some("webhook"));
+    assert_eq!(
+        payload["human"]["summary"].as_str(),
+        Some("dockrev: test notification")
+    );
+    assert_eq!(
+        payload["debug"]["requestedChannel"].as_str(),
+        Some("webhook")
+    );
+    assert!(payload.get("type").is_none());
+    assert!(payload.get("ts").is_none());
+    assert!(payload.get("message").is_none());
+    assert!(payload.get("title").is_none());
+    assert!(payload.get("body").is_none());
+
+    server.abort();
 }
 
 #[tokio::test]
