@@ -1,4 +1,5 @@
 import refreshIcon from '@iconify-icons/mdi/refresh'
+import linkVariant from '@iconify-icons/mdi/link-variant'
 import trashCanOutline from '@iconify-icons/mdi/trash-can-outline'
 import { Icon } from '@iconify/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -36,6 +37,30 @@ function isGhcrJobType(type: string): boolean {
 
 function normalizeRepoKey(fullName: string): string {
   return fullName.trim().toLowerCase()
+}
+
+function parseRepoFullName(fullName: string): { owner: string; repo: string } | null {
+  const input = fullName.trim()
+  const slash = input.indexOf('/')
+  if (slash <= 0 || slash !== input.lastIndexOf('/')) return null
+  const owner = input.slice(0, slash).trim()
+  const repo = input.slice(slash + 1).trim()
+  if (!owner || !repo) return null
+  return { owner, repo }
+}
+
+function buildRepoWebUrl(fullName: string): string | null {
+  const parsed = parseRepoFullName(fullName)
+  if (!parsed) return null
+  return `https://github.com/${parsed.owner}/${parsed.repo}`
+}
+
+function buildRepoWebhookWebUrl(fullName: string, hookId?: number | null): string | null {
+  const parsed = parseRepoFullName(fullName)
+  if (!parsed) return null
+  const base = `https://github.com/${parsed.owner}/${parsed.repo}/settings/hooks`
+  if (hookId == null) return base
+  return `${base}/${hookId}`
 }
 
 function readJobRepoTargets(job: JobListItem): string[] {
@@ -568,6 +593,8 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
           const repoPendingJob = repoSyncJob ?? repoLegacyRegisterJob
           const repoPending = repoPendingJob?.status === 'queued' || repoPendingJob?.status === 'running'
           const syncBlockedByDelete = isUnregisterInFlight
+          const repoWebUrl = buildRepoWebUrl(repo.fullName)
+          const repoWebhookWebUrl = buildRepoWebhookWebUrl(repo.fullName, repo.hookId)
 
           return (
             <div key={repo.fullName} className="ghcrRegistryRow">
@@ -575,7 +602,20 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
                 <div className="ghcrRegistryHeader">
                   <div className="ghcrRegistryTitle">
                     <Icon icon={webhookStateIcon(state)} className={dotClass} aria-hidden="true" />
-                    <Mono>{repo.fullName}</Mono>
+                    {repoWebUrl ? (
+                      <a
+                        className="ghcrRegistryTitleLink"
+                        href={repoWebUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={`打开仓库：${repo.fullName}`}
+                        aria-label={`打开仓库：${repo.fullName}`}
+                      >
+                        {repo.fullName}
+                      </a>
+                    ) : (
+                      <span className="ghcrRegistryTitleText">{repo.fullName}</span>
+                    )}
                   </div>
                   <div className="ghcrRegistryStatus">
                     <Pill tone={webhookStateTone(state)}>{webhookStateLabel(state)}</Pill>
@@ -602,6 +642,17 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
                 ) : null}
 
                 <div className="ghcrRegistryActions">
+                  <ResponsiveActionButton
+                    variant="ghost"
+                    disabled={!repoWebhookWebUrl || busy}
+                    label="Webhook 页面"
+                    hint={repo.hookId != null ? '打开该仓库 webhook 详情页' : '打开该仓库 webhook 列表页'}
+                    icon={<Icon icon={linkVariant} aria-hidden="true" />}
+                    onClick={() => {
+                      if (!repoWebhookWebUrl) return
+                      window.open(repoWebhookWebUrl, '_blank', 'noopener,noreferrer')
+                    }}
+                  />
                   <ResponsiveActionButton
                     variant="ghost"
                     disabled={syncBlockedByDelete || (busy && !repoPending)}
