@@ -704,6 +704,7 @@ html[data-theme='light'] .versionTagsPopover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  white-space: nowrap;
 }
 
 .btnIcon {
@@ -736,6 +737,8 @@ html[data-theme='light'] .versionTagsPopover {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 .btnInlineSpinner {
@@ -897,7 +900,7 @@ html[data-theme='light'] .versionTagsPopover {
     minmax(0, 1.9fr)
     minmax(0, 2.2fr)
     minmax(0, 1.4fr)
-    minmax(0, 0.9fr);
+    minmax(0, 1.1fr);
   align-items: center;
   height: 38px;
   border-radius: 10px;
@@ -947,7 +950,7 @@ html[data-theme='light'] .versionTagsPopover {
     minmax(0, 1.9fr)
     minmax(0, 2.2fr)
     minmax(0, 1.4fr)
-    minmax(0, 0.9fr);
+    minmax(0, 1.1fr);
   align-items: center;
   height: var(--dockrev-table-group-head-height);
   cursor: pointer;
@@ -979,7 +982,7 @@ html[data-theme='light'] .versionTagsPopover {
     minmax(0, 1.9fr)
     minmax(0, 2.2fr)
     minmax(0, 1.4fr)
-    minmax(0, 0.9fr);
+    minmax(0, 1.1fr);
   width: 100%;
   cursor: pointer;
   text-align: left;
@@ -1119,6 +1122,7 @@ html[data-theme='light'] .versionTagsPopover {
   padding: var(--dockrev-table-row-pad-y, 8px) 0;
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: var(--dockrev-table-row-line-gap, 2px);
   align-items: flex-start;
   overflow: hidden;
@@ -4610,6 +4614,7 @@ html[data-theme='light'] .card {
     border-color 160ms ease,
     background-color 160ms ease,
     color 160ms ease;
+  white-space: nowrap;
 }
 
 .btnIcon {
