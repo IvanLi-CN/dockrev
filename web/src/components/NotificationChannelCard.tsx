@@ -101,6 +101,8 @@ export function NotificationChannelTestControl(props: {
     }
 
     const onPointerDown = (e: PointerEvent) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return
+
       const el = e.target instanceof Element ? e.target : null
       if (!el) return
 

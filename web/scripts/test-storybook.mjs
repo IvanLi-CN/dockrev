@@ -622,6 +622,30 @@ async function runInteractive({ baseUrl, browser }) {
     }
   }
 
+  {
+    const page = await openStory('pages-settingspage--notification-card')
+    try {
+      const testBtn = page.locator('button[data-notification-test-channel="webPush"]')
+      await testBtn.waitFor({ timeout: 10_000 })
+      await testBtn.click()
+
+      const bubble = page.locator('[data-notification-test-bubble="webPush"]')
+      await bubble.waitFor({ state: 'visible', timeout: 10_000 })
+      await bubble.getByText('Web Push 渠道测试失败').waitFor({ timeout: 10_000 })
+
+      // Error bubble should follow the same 3s minimum-visibility rules.
+      await page.mouse.click(5, 5)
+      await page.waitForTimeout(1000)
+      if (!(await bubble.isVisible().catch(() => false))) {
+        throw new Error('Expected notification test error bubble to stay visible during the first 3s after outside click.')
+      }
+
+      await bubble.waitFor({ state: 'hidden', timeout: 3_000 })
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
   // 4) Update confirm modal: version popover must be above the modal overlay (not occluded).
   {
     const page = await openStory('pages-servicespage--dashboard-demo')
