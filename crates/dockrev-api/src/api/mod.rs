@@ -4152,6 +4152,40 @@ fn mask_if_some(input: &Option<String>) -> Option<String> {
     input.as_ref().map(|_| "******".to_string())
 }
 
+fn normalize_public_base_url(input: &str) -> anyhow::Result<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow::anyhow!("instance.publicBaseUrl must not be empty"));
+    }
+
+    let mut url = Url::parse(trimmed).context("instance.publicBaseUrl is not a valid URL")?;
+    match url.scheme() {
+        "http" | "https" => {}
+        _ => {
+            return Err(anyhow::anyhow!(
+                "instance.publicBaseUrl must start with http:// or https://"
+            ));
+        }
+    }
+    if url.host_str().is_none() {
+        return Err(anyhow::anyhow!("instance.publicBaseUrl must be absolute"));
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(anyhow::anyhow!(
+            "instance.publicBaseUrl must not include query or fragment"
+        ));
+    }
+
+    // Ensure the base behaves like a directory for URL join.
+    let mut path = url.path().to_string();
+    if !path.ends_with('/') {
+        path.push('/');
+        url.set_path(&path);
+    }
+
+    Ok(url.to_string())
+}
+
 fn gen_webhook_secret() -> anyhow::Result<String> {
     let rng = ring::rand::SystemRandom::new();
     let mut buf = [0u8; 32];
@@ -5551,6 +5585,9 @@ async fn get_settings(
     let schedules = state
         .db
         .get_schedule_settings()
+    let public_base_url = state
+        .db
+        .get_instance_public_base_url()
         .await
         .map_err(map_internal)?;
     Ok(Json(SettingsResponse {
@@ -5561,6 +5598,7 @@ async fn get_settings(
             forward_header_name: state.config.auth_forward_header_name.to_string(),
             allow_anonymous_in_dev: state.config.auth_allow_anonymous_in_dev,
         },
+        instance: InstanceSettings { public_base_url },
     }))
 }
 
@@ -5643,12 +5681,37 @@ async fn put_settings(
         )?;
     }
 
+    let existing_public_base_url = state
+        .db
+        .get_instance_public_base_url()
+        .await
+        .map_err(map_internal)?;
+    let mut merged_public_base_url = existing_public_base_url;
+    if let Some(instance) = req.instance
+        && let Some(value) = instance.public_base_url
+    {
+        merged_public_base_url = value;
+    }
+    merged_public_base_url = merged_public_base_url
+        .map(|v| v.trim().to_string())
+        .and_then(|v| if v.is_empty() { None } else { Some(v) });
+    if let Some(raw) = merged_public_base_url {
+        let normalized = normalize_public_base_url(&raw).map_err(|e| {
+            ApiError::invalid_argument(e.to_string()).with_details(serde_json::json!({
+                "reason": "instance_public_base_url_invalid",
+                "field": "instance.publicBaseUrl",
+            }))
+        })?;
+        merged_public_base_url = Some(normalized);
+    }
+
     state
         .db
         .put_settings(
             &req.backup,
             &merged_resource_monitor,
             &merged_schedules,
+            merged_public_base_url,
             &now,
         )
         .await

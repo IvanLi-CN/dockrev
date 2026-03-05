@@ -1291,6 +1291,14 @@ pub struct SettingsResponse {
     pub resource_monitor: ResourceMonitorSettings,
     pub schedules: SchedulesSettings,
     pub auth: AuthSettings,
+    pub instance: InstanceSettings,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceSettings {
+    #[serde(default)]
+    pub public_base_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1331,6 +1339,15 @@ pub struct PutSettingsRequest {
     pub resource_monitor: Option<PutResourceMonitorSettings>,
     #[serde(default)]
     pub schedules: Option<PutSchedulesSettings>,
+    pub instance: Option<PutInstanceSettings>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PutInstanceSettings {
+    /// When present, updates the stored public base url. `null` (or empty string) clears it.
+    #[serde(default)]
+    pub public_base_url: Option<Option<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -212,6 +212,7 @@ impl Db {
             ensure_settings_deploy_welcome_columns(conn)?;
             ensure_settings_resource_monitor_columns(conn)?;
             ensure_settings_schedule_columns(conn)?;
+            ensure_settings_public_base_url_columns(conn)?;
             ensure_stack_archive_columns(conn)?;
             ensure_service_archive_columns(conn)?;
             ensure_discovery_schema(conn)?;
@@ -3357,6 +3358,52 @@ LIMIT 500
         .context("list web push subscriptions")
     }
 
+    pub async fn get_instance_public_base_url(&self) -> anyhow::Result<Option<String>> {
+        self.call(|conn| {
+            Ok(conn
+                .query_row(
+                    r#"
+SELECT public_base_url
+FROM settings
+WHERE id = 'default'
+"#,
+                    [],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()?
+                .flatten())
+        })
+        .await
+        .context("get instance public base url")
+    }
+
+    #[allow(dead_code)]
+    pub async fn put_instance_public_base_url(
+        &self,
+        public_base_url: Option<String>,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let public_base_url = public_base_url.map(|v| v.trim().to_string());
+        let public_base_url =
+            public_base_url.and_then(|v| if v.is_empty() { None } else { Some(v) });
+        let now = now.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                r#"
+UPDATE settings
+SET
+  public_base_url = ?1,
+  updated_at = ?2
+WHERE id = 'default'
+"#,
+                params![public_base_url, now],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("put instance public base url")
+    }
+
     pub async fn get_backup_settings(&self) -> anyhow::Result<BackupSettings> {
         self.call(|conn| {
             Ok(conn.query_row(
@@ -3485,11 +3532,15 @@ WHERE id = 'default'
         backup: &BackupSettings,
         resource_monitor: &ResourceMonitorSettings,
         schedules: &SchedulesSettings,
+        public_base_url: Option<String>,
         now: &str,
     ) -> anyhow::Result<()> {
         let backup = backup.clone();
         let resource_monitor = resource_monitor.clone();
         let schedules = schedules.clone();
+        let public_base_url = public_base_url.map(|v| v.trim().to_string());
+        let public_base_url =
+            public_base_url.and_then(|v| if v.is_empty() { None } else { Some(v) });
         let now = now.to_string();
         self.call(move |conn| {
             conn.execute(
@@ -3506,7 +3557,8 @@ SET
   schedule_update_check_cron = ?8,
   schedule_ghcr_webhook_audit_enabled = ?9,
   schedule_ghcr_webhook_audit_cron = ?10,
-  updated_at = ?11
+  public_base_url = ?11,
+  updated_at = ?12
 WHERE id = 'default'
 "#,
                 params![
@@ -3520,7 +3572,8 @@ WHERE id = 'default'
                     schedules.update_check.cron,
                     schedules.ghcr_webhook_audit.enabled as i64,
                     schedules.ghcr_webhook_audit.cron,
-                    now
+                    public_base_url,
+                    now,
                 ],
             )?;
             Ok(())
@@ -5227,6 +5280,32 @@ fn ensure_settings_schedule_columns(conn: &rusqlite::Connection) -> anyhow::Resu
     Ok(())
 }
 
+fn ensure_settings_public_base_url_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    #[derive(Clone)]
+    struct Col<'a> {
+        name: &'a str,
+        ddl: &'a str,
+    }
+
+    let desired = [Col {
+        name: "public_base_url",
+        ddl: "ALTER TABLE settings ADD COLUMN public_base_url TEXT",
+    }];
+
+    let mut stmt = conn.prepare("PRAGMA table_info(settings)")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let existing = rows.collect::<Result<Vec<_>, _>>()?;
+
+    for col in desired {
+        if existing.iter().any(|c| c == col.name) {
+            continue;
+        }
+        conn.execute_batch(col.ddl)?;
+    }
+
+    Ok(())
+}
+
 fn ensure_stack_archive_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     #[derive(Clone)]
     struct Col<'a> {
@@ -5643,6 +5722,7 @@ CREATE TABLE IF NOT EXISTS settings (
   schedule_update_check_cron TEXT NOT NULL DEFAULT '*/30 * * * *',
   schedule_ghcr_webhook_audit_enabled INTEGER NOT NULL DEFAULT 1,
   schedule_ghcr_webhook_audit_cron TEXT NOT NULL DEFAULT '0 3 * * *',
+  public_base_url TEXT,
   deploy_welcome_never_auto_open INTEGER NOT NULL DEFAULT 0,
   deploy_welcome_updated_at TEXT,
   updated_at TEXT

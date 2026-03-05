@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{borrow::Cow, time::Duration};
 
 use anyhow::Context as _;
 use lettre::{
@@ -21,6 +21,8 @@ use crate::{
 const MAX_TEST_SUMMARY_CHARS: usize = 512;
 const MAX_TEST_DEBUG_RAW_MESSAGE_CHARS: usize = 1024;
 const TELEGRAM_MAX_MESSAGE_CHARS: usize = 4096;
+const MAX_JOB_SERVICE_URLS: usize = 10;
+const MAX_JOB_ERROR_CHARS: usize = 1024;
 
 pub async fn notify_job_updated(
     state: &AppState,
@@ -92,11 +94,86 @@ fn should_send_channel(
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct JobNotificationPayloadV2 {
+    schema: &'static str,
+    kind: &'static str,
+    sent_at: String,
+    channel: &'static str,
+    job: JobNotificationJobV2,
+    links: JobNotificationLinksV2,
+    human: JobNotificationHumanV2,
+    debug: JobNotificationDebugV2,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JobNotificationJobV2 {
+    id: String,
+    #[serde(rename = "type")]
+    r#type: String,
+    scope: String,
+    status: String,
+    reason: String,
+    created_by: String,
+    created_at: String,
+    #[serde(default)]
+    started_at: Option<String>,
+    #[serde(default)]
+    finished_at: Option<String>,
+    #[serde(default)]
+    stack_id: Option<String>,
+    #[serde(default)]
+    service_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JobNotificationLinksV2 {
+    primary_url: String,
+    job_url: String,
+    service_urls: Vec<JobNotificationServiceUrlV2>,
+    truncated: JobNotificationTruncatedV2,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JobNotificationServiceUrlV2 {
+    stack_id: String,
+    stack_name: String,
+    service_id: String,
+    service_name: String,
+    url: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JobNotificationTruncatedV2 {
+    service_urls_omitted: u32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JobNotificationHumanV2 {
+    title: String,
+    summary: String,
+    detail: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JobNotificationDebugV2 {
+    app_version: String,
+    source: &'static str,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct TestNotificationPayloadV2 {
     schema: &'static str,
     kind: &'static str,
     sent_at: String,
     channel: &'static str,
+    url: String,
     human: TestNotificationHuman,
     debug: TestNotificationDebug,
 }
@@ -136,6 +213,29 @@ fn notification_channel_label(channel: NotificationTestChannel) -> &'static str 
     }
 }
 
+fn is_absolute_http_url(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://")
+}
+
+fn best_effort_url(public_base_url: Option<&str>, path_no_leading_slash: &str) -> String {
+    if let Some(base) = public_base_url
+        && let Ok(base) = Url::parse(base)
+        && let Ok(joined) = base.join(path_no_leading_slash)
+    {
+        return joined.to_string();
+    }
+    format!("/{path_no_leading_slash}")
+}
+
+fn update_job_status_label_zh(status: &str) -> Cow<'_, str> {
+    match status {
+        "success" => Cow::Borrowed("成功"),
+        "failed" => Cow::Borrowed("失败"),
+        "rolled_back" => Cow::Borrowed("已回滚"),
+        _ => Cow::Borrowed(status),
+    }
+}
+
 fn normalize_test_message(raw_message: &str) -> String {
     let trimmed = raw_message.trim();
     let normalized = if trimmed.is_empty() {
@@ -162,12 +262,71 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
     out
 }
 
+fn extract_changed_service_ids(update: &Value) -> Vec<String> {
+    let obj = update
+        .get("newDigests")
+        .and_then(|v| v.as_object())
+        .or_else(|| update.get("oldDigests").and_then(|v| v.as_object()));
+    match obj {
+        Some(map) => map.keys().cloned().collect(),
+        None => Vec::new(),
+    }
+}
+
+fn extract_changed_services_by_stack(summary: &Value) -> Vec<(String, String)> {
+    let Some(stacks) = summary.get("stacks").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+
+    let mut out: Vec<(String, String)> = Vec::new();
+    for s in stacks {
+        let Some(stack_id) = s.get("stackId").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(update) = s.get("update") else {
+            continue;
+        };
+        for service_id in extract_changed_service_ids(update) {
+            out.push((stack_id.to_string(), service_id));
+        }
+    }
+    out
+}
+
+fn extract_error_excerpt(summary: &Value) -> Option<String> {
+    if let Some(err) = summary.get("error").and_then(|v| v.as_str()) {
+        let trimmed = err.trim();
+        if !trimmed.is_empty() {
+            return Some(truncate_chars(trimmed, MAX_JOB_ERROR_CHARS));
+        }
+    }
+
+    let stacks = summary.get("stacks").and_then(|v| v.as_array())?;
+    for s in stacks {
+        let update = s.get("update")?;
+        if let Some(err) = update.get("lastError").and_then(|v| v.as_str()) {
+            let trimmed = err.trim();
+            if !trimmed.is_empty() {
+                return Some(truncate_chars(trimmed, MAX_JOB_ERROR_CHARS));
+            }
+        }
+        if let Some(err) = update.get("error").and_then(|v| v.as_str()) {
+            let trimmed = err.trim();
+            if !trimmed.is_empty() {
+                return Some(truncate_chars(trimmed, MAX_JOB_ERROR_CHARS));
+            }
+        }
+    }
+    None
+}
+
 fn build_test_payload_v2(
     now_rfc3339: &str,
     raw_message: &str,
     requested_channel: Option<NotificationTestChannel>,
     channel: NotificationTestChannel,
     app_version: &str,
+    url: &str,
 ) -> TestNotificationPayloadV2 {
     let channel_label = notification_channel_label(channel);
     let summary = normalize_test_message(raw_message);
@@ -176,6 +335,7 @@ fn build_test_payload_v2(
         kind: "notification_test",
         sent_at: now_rfc3339.to_string(),
         channel: notification_channel_key(channel),
+        url: url.to_string(),
         human: TestNotificationHuman {
             title: format!("Dockrev test notification ({channel_label})"),
             summary,
@@ -274,6 +434,7 @@ fn to_web_push_value(payload: &TestNotificationPayloadV2) -> anyhow::Result<Valu
             "body".to_string(),
             Value::String(render_web_push_body(payload)),
         );
+        map.insert("url".to_string(), Value::String(payload.url.clone()));
     }
     Ok(value)
 }
@@ -296,6 +457,536 @@ fn render_telegram_plain_for_send(payload: &TestNotificationPayloadV2) -> anyhow
     ))
 }
 
+fn to_job_value(payload: &JobNotificationPayloadV2) -> anyhow::Result<Value> {
+    serde_json::to_value(payload).context("serialize job notification payload v2")
+}
+
+fn to_web_push_job_value(
+    payload: &JobNotificationPayloadV2,
+    error_excerpt: Option<&str>,
+) -> anyhow::Result<Value> {
+    let mut value = to_job_value(payload)?;
+    if let Value::Object(map) = &mut value {
+        map.insert(
+            "title".to_string(),
+            Value::String(payload.human.title.clone()),
+        );
+
+        let mut body = format!("{}\n任务：{}", payload.human.summary, payload.job.id);
+        if let Some(err) = error_excerpt {
+            body.push_str("\n错误：");
+            body.push_str(err);
+        }
+        map.insert("body".to_string(), Value::String(body));
+        map.insert(
+            "url".to_string(),
+            Value::String(payload.links.primary_url.clone()),
+        );
+    }
+    Ok(value)
+}
+
+fn render_open_link_html(url: &str, label: &str) -> String {
+    if is_absolute_http_url(url) {
+        format!(
+            "<a href=\"{}\">{}</a>",
+            escape_html(url),
+            escape_html(label)
+        )
+    } else {
+        // Telegram cannot resolve relative links. Show the path so operators can copy it.
+        format!("<code>{}</code>", escape_html(url))
+    }
+}
+
+fn render_telegram_job_html(
+    payload: &JobNotificationPayloadV2,
+    error_excerpt: Option<&str>,
+) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(format!("<b>{}</b>", escape_html(&payload.human.title)));
+    lines.push(escape_html(&payload.human.summary));
+
+    if !is_absolute_http_url(&payload.links.job_url) {
+        lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
+    }
+
+    lines.push(format!(
+        "任务：{}",
+        render_open_link_html(&payload.links.job_url, &payload.job.id)
+    ));
+    if payload.links.primary_url != payload.links.job_url {
+        lines.push(format!(
+            "打开服务详情：{}",
+            render_open_link_html(&payload.links.primary_url, "打开")
+        ));
+    } else {
+        lines.push(format!(
+            "打开任务详情：{}",
+            render_open_link_html(&payload.links.primary_url, "打开")
+        ));
+    }
+
+    if !payload.links.service_urls.is_empty() {
+        lines.push(String::new());
+        lines.push("<b>服务清单</b>".to_string());
+        for svc in &payload.links.service_urls {
+            lines.push(format!(
+                "- {} / {}：{}",
+                escape_html(&svc.stack_name),
+                escape_html(&svc.service_name),
+                render_open_link_html(&svc.url, "服务详情"),
+            ));
+        }
+        if payload.links.truncated.service_urls_omitted > 0 {
+            lines.push(format!(
+                "... 以及其他 {} 个服务（已省略）",
+                payload.links.truncated.service_urls_omitted
+            ));
+        }
+    }
+
+    if let Some(err) = error_excerpt {
+        lines.push(String::new());
+        lines.push("<b>错误</b>".to_string());
+        lines.push(format!("<pre>{}</pre>", escape_html(err)));
+    }
+
+    lines.join("\n")
+}
+
+fn render_telegram_job_plain(
+    payload: &JobNotificationPayloadV2,
+    error_excerpt: Option<&str>,
+) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(payload.human.title.clone());
+    lines.push(payload.human.summary.clone());
+
+    if !is_absolute_http_url(&payload.links.job_url) {
+        lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
+    }
+
+    lines.push(format!(
+        "任务：{} ({})",
+        payload.job.id, payload.links.job_url
+    ));
+    lines.push(format!("打开：{}", payload.links.primary_url));
+
+    if !payload.links.service_urls.is_empty() {
+        lines.push(String::new());
+        lines.push("服务清单".to_string());
+        for svc in &payload.links.service_urls {
+            lines.push(format!(
+                "- {} / {}: {}",
+                svc.stack_name, svc.service_name, svc.url
+            ));
+        }
+        if payload.links.truncated.service_urls_omitted > 0 {
+            lines.push(format!(
+                "... 以及其他 {} 个服务（已省略）",
+                payload.links.truncated.service_urls_omitted
+            ));
+        }
+    }
+
+    if let Some(err) = error_excerpt {
+        lines.push(String::new());
+        lines.push("错误".to_string());
+        lines.push(err.to_string());
+    }
+
+    lines.join("\n")
+}
+
+fn render_telegram_job_plain_for_send(
+    payload: &JobNotificationPayloadV2,
+    error_excerpt: Option<&str>,
+) -> String {
+    let plain = render_telegram_job_plain(payload, error_excerpt);
+    truncate_chars(&plain, TELEGRAM_MAX_MESSAGE_CHARS.saturating_sub(32))
+}
+
+fn render_email_job_plain(
+    payload: &JobNotificationPayloadV2,
+    error_excerpt: Option<&str>,
+) -> String {
+    render_telegram_job_plain(payload, error_excerpt)
+}
+
+fn render_email_job_html(
+    payload: &JobNotificationPayloadV2,
+    error_excerpt: Option<&str>,
+) -> String {
+    let title = escape_html(&payload.human.title);
+    let summary = escape_html(&payload.human.summary);
+
+    let mut items = String::new();
+    if !payload.links.service_urls.is_empty() {
+        items.push_str("<ul>");
+        for svc in &payload.links.service_urls {
+            let label = format!("{} / {}", svc.stack_name, svc.service_name);
+            let label = escape_html(&label);
+            if is_absolute_http_url(&svc.url) {
+                items.push_str(&format!(
+                    "<li>{label}: <a href=\"{}\">服务详情</a></li>",
+                    escape_html(&svc.url)
+                ));
+            } else {
+                items.push_str(&format!(
+                    "<li>{label}: <code>{}</code></li>",
+                    escape_html(&svc.url)
+                ));
+            }
+        }
+        if payload.links.truncated.service_urls_omitted > 0 {
+            items.push_str(&format!(
+                "<li>... 以及其他 {} 个服务（已省略）</li>",
+                payload.links.truncated.service_urls_omitted
+            ));
+        }
+        items.push_str("</ul>");
+    }
+
+    let job_link = if is_absolute_http_url(&payload.links.job_url) {
+        format!(
+            "<a href=\"{}\">{}</a>",
+            escape_html(&payload.links.job_url),
+            escape_html(&payload.job.id)
+        )
+    } else {
+        escape_html(&payload.job.id)
+    };
+
+    let open_primary = if is_absolute_http_url(&payload.links.primary_url) {
+        format!(
+            "<a href=\"{}\">{}</a>",
+            escape_html(&payload.links.primary_url),
+            escape_html(&payload.links.primary_url)
+        )
+    } else {
+        format!("<code>{}</code>", escape_html(&payload.links.primary_url))
+    };
+
+    let mut note = String::new();
+    if !is_absolute_http_url(&payload.links.job_url) {
+        note = "<p><em>提示：未配置实例 Public Base URL（系统设置），以下链接可能仅为站内路径。</em></p>".to_string();
+    }
+
+    let mut err_block = String::new();
+    if let Some(err) = error_excerpt {
+        err_block = format!("<h3>错误</h3><pre><code>{}</code></pre>", escape_html(err));
+    }
+
+    format!(
+        "<h2>{title}</h2><p>{summary}</p>{note}<p>任务：{job_link}</p><p>打开：{open_primary}</p>{items}{err_block}",
+    )
+}
+
+async fn send_telegram_job(
+    client: &reqwest::Client,
+    bot_token: Option<&str>,
+    chat_id: Option<&str>,
+    payload: &JobNotificationPayloadV2,
+    error_excerpt: Option<&str>,
+) -> anyhow::Result<()> {
+    let token = bot_token.context("telegram.botToken missing")?;
+    let chat_id = chat_id.context("telegram.chatId missing")?;
+    let url = format!("https://api.telegram.org/bot{token}/sendMessage");
+
+    let html_text = render_telegram_job_html(payload, error_excerpt);
+    if html_text.chars().count() > TELEGRAM_MAX_MESSAGE_CHARS {
+        let plain_text = render_telegram_job_plain_for_send(payload, error_excerpt);
+        let retry = client
+            .post(&url)
+            .json(&json!({ "chat_id": chat_id, "text": plain_text }))
+            .send()
+            .await?;
+        if retry.status().is_success() {
+            return Ok(());
+        }
+        let retry_status = retry.status();
+        let retry_body = retry.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "telegram http {}: {}",
+            retry_status,
+            retry_body
+        ));
+    }
+
+    let resp = client
+        .post(&url)
+        .json(&json!({ "chat_id": chat_id, "text": html_text, "parse_mode": "HTML" }))
+        .send()
+        .await?;
+    if resp.status().is_success() {
+        return Ok(());
+    }
+
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if should_retry_telegram_plain_text(status, &body) {
+        let plain_text = render_telegram_job_plain_for_send(payload, error_excerpt);
+        let retry = client
+            .post(&url)
+            .json(&json!({ "chat_id": chat_id, "text": plain_text }))
+            .send()
+            .await?;
+        if retry.status().is_success() {
+            return Ok(());
+        }
+        let retry_status = retry.status();
+        let retry_body = retry.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "telegram http {}: {} (fallback http {}: {})",
+            status,
+            body,
+            retry_status,
+            retry_body
+        ));
+    }
+
+    Err(anyhow::anyhow!("telegram http {}: {}", status, body))
+}
+
+async fn send_email_job(
+    smtp_url: Option<&str>,
+    payload: &JobNotificationPayloadV2,
+    error_excerpt: Option<&str>,
+) -> anyhow::Result<()> {
+    let smtp_url = smtp_url.context("email.smtpUrl missing")?;
+    let (dsn, from, to) = parse_smtp_dsn(smtp_url)?;
+
+    let status_zh = update_job_status_label_zh(&payload.job.status);
+    let subject = format!("[dockrev] 更新完成（{status_zh}） {}", payload.job.id);
+
+    let plain_text = render_email_job_plain(payload, error_excerpt);
+    let html_text = render_email_job_html(payload, error_excerpt);
+
+    let mut builder = Message::builder().from(from).subject(subject);
+    for addr in to {
+        builder = builder.to(addr);
+    }
+
+    let email = builder.multipart(
+        MultiPart::alternative()
+            .singlepart(
+                SinglePart::builder()
+                    .header(ContentType::TEXT_PLAIN)
+                    .body(plain_text),
+            )
+            .singlepart(
+                SinglePart::builder()
+                    .header(ContentType::TEXT_HTML)
+                    .body(html_text),
+            ),
+    )?;
+
+    let mailer: AsyncSmtpTransport<Tokio1Executor> =
+        AsyncSmtpTransport::<Tokio1Executor>::from_url(&dsn)?.build();
+    mailer.send(email).await?;
+    Ok(())
+}
+
+fn finalize_job_links(
+    job_url: String,
+    mut service_urls_full: Vec<JobNotificationServiceUrlV2>,
+    job_scope_is_service: bool,
+    job_service_id: Option<&str>,
+) -> JobNotificationLinksV2 {
+    // Keep service ordering stable across channels.
+    service_urls_full.sort_by(|a, b| {
+        (
+            a.stack_name.as_str(),
+            a.service_name.as_str(),
+            a.service_id.as_str(),
+        )
+            .cmp(&(
+                b.stack_name.as_str(),
+                b.service_name.as_str(),
+                b.service_id.as_str(),
+            ))
+    });
+
+    let unique_service_url = if job_scope_is_service && let Some(target) = job_service_id {
+        service_urls_full
+            .iter()
+            .find(|s| s.service_id == target)
+            .map(|s| s.url.clone())
+    } else if service_urls_full.len() == 1 {
+        service_urls_full.first().map(|s| s.url.clone())
+    } else {
+        None
+    };
+
+    let primary_url = unique_service_url.unwrap_or_else(|| job_url.clone());
+
+    let omitted = service_urls_full.len().saturating_sub(MAX_JOB_SERVICE_URLS) as u32;
+    service_urls_full.truncate(MAX_JOB_SERVICE_URLS);
+
+    JobNotificationLinksV2 {
+        primary_url,
+        job_url,
+        service_urls: service_urls_full,
+        truncated: JobNotificationTruncatedV2 {
+            service_urls_omitted: omitted,
+        },
+    }
+}
+
+async fn build_job_payload_v2(
+    state: &AppState,
+    now_rfc3339: &str,
+    public_base_url: Option<&str>,
+    channel: &'static str,
+    job_id: &str,
+    status: &str,
+    summary: &Value,
+) -> anyhow::Result<JobNotificationPayloadV2> {
+    let job_opt = state.db.get_job(job_id).await?;
+
+    let job = match &job_opt {
+        Some(job) => JobNotificationJobV2 {
+            id: job.id.clone(),
+            r#type: job.r#type.as_str().to_string(),
+            scope: job.scope.as_str().to_string(),
+            status: status.to_string(),
+            reason: job.reason.clone(),
+            created_by: job.created_by.clone(),
+            created_at: job.created_at.clone(),
+            started_at: job.started_at.clone(),
+            finished_at: job.finished_at.clone(),
+            stack_id: job.stack_id.clone(),
+            service_id: job.service_id.clone(),
+        },
+        None => JobNotificationJobV2 {
+            id: job_id.to_string(),
+            r#type: "update".to_string(),
+            scope: "unknown".to_string(),
+            status: status.to_string(),
+            reason: "unknown".to_string(),
+            created_by: "unknown".to_string(),
+            created_at: now_rfc3339.to_string(),
+            started_at: None,
+            finished_at: Some(now_rfc3339.to_string()),
+            stack_id: None,
+            service_id: None,
+        },
+    };
+
+    let job_url = best_effort_url(public_base_url, &format!("queue/{job_id}"));
+
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    let job_scope_is_service = job_opt
+        .as_ref()
+        .is_some_and(|j| j.scope.as_str() == "service" && j.service_id.is_some());
+    if job_scope_is_service
+        && let (Some(stack_id), Some(service_id)) = (job.stack_id.clone(), job.service_id.clone())
+    {
+        pairs.push((stack_id, service_id));
+    }
+    pairs.extend(extract_changed_services_by_stack(summary));
+
+    let mut seen = std::collections::HashSet::<String>::new();
+    let mut unique_pairs: Vec<(String, String)> = Vec::new();
+    for (stack_id, service_id) in pairs {
+        if seen.insert(service_id.clone()) {
+            unique_pairs.push((stack_id, service_id));
+        }
+    }
+
+    let mut service_urls_full: Vec<JobNotificationServiceUrlV2> = Vec::new();
+    for (stack_id, service_id) in unique_pairs {
+        let stack = state.db.get_stack(&stack_id).await?;
+        let stack_name = stack
+            .as_ref()
+            .map(|s| s.name.clone())
+            .unwrap_or_else(|| stack_id.clone());
+        let service_name = stack
+            .as_ref()
+            .and_then(|s| {
+                s.services
+                    .iter()
+                    .find(|svc| svc.id == service_id)
+                    .map(|svc| svc.name.clone())
+            })
+            .unwrap_or_else(|| service_id.clone());
+        let url = best_effort_url(
+            public_base_url,
+            &format!("services/{stack_id}/{service_id}"),
+        );
+        service_urls_full.push(JobNotificationServiceUrlV2 {
+            stack_id,
+            stack_name,
+            service_id,
+            service_name,
+            url,
+        });
+    }
+    let links = finalize_job_links(
+        job_url.clone(),
+        service_urls_full,
+        job_scope_is_service,
+        job.service_id.as_deref(),
+    );
+
+    let status_zh = update_job_status_label_zh(status);
+    let title = if status == "failed" {
+        "Dockrev：更新失败".to_string()
+    } else {
+        format!("Dockrev：更新完成（{status_zh}）")
+    };
+
+    let omitted = links.truncated.service_urls_omitted;
+    let summary = if links.service_urls.is_empty() {
+        format!("状态：{status_zh}。")
+    } else if links.service_urls.len() == 1 {
+        let svc = &links.service_urls[0];
+        format!(
+            "变更 1 个服务（{} / {}）。",
+            svc.stack_name, svc.service_name
+        )
+    } else if omitted > 0 {
+        format!(
+            "变更 {} 个服务（仅展示前 {} 条）。",
+            links.service_urls.len() + omitted as usize,
+            links.service_urls.len()
+        )
+    } else {
+        format!("变更 {} 个服务。", links.service_urls.len())
+    };
+
+    let mut detail_lines = Vec::new();
+    detail_lines.push(format!("任务：{job_id}"));
+    detail_lines.push(format!("打开：{}", links.primary_url));
+    detail_lines.push(format!("发送：{now_rfc3339}"));
+    if !is_absolute_http_url(&links.job_url) {
+        detail_lines.push(
+            "提示：未配置实例 Public Base URL（系统设置），Telegram/Email 无法生成可点击链接。"
+                .to_string(),
+        );
+    }
+    let detail = detail_lines.join("\n");
+
+    Ok(JobNotificationPayloadV2 {
+        schema: "dockrev.notification.job.v2",
+        kind: "job_finished",
+        sent_at: now_rfc3339.to_string(),
+        channel,
+        job,
+        links,
+        human: JobNotificationHumanV2 {
+            title,
+            summary,
+            detail,
+        },
+        debug: JobNotificationDebugV2 {
+            app_version: state.config.app_effective_version.clone(),
+            source: "dockrev-api",
+        },
+    })
+}
+
 async fn send_all(
     state: &AppState,
     job_id: Option<&str>,
@@ -304,6 +995,8 @@ async fn send_all(
     mode: NotifySendMode,
 ) -> anyhow::Result<Value> {
     let settings = state.db.get_notification_settings().await?;
+    let public_base_url = state.db.get_instance_public_base_url().await?;
+    let test_url = best_effort_url(public_base_url.as_deref(), "settings");
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(8))
         .build()
@@ -318,8 +1011,27 @@ async fn send_all(
     ) {
         let r = match &mode {
             NotifySendMode::Default => {
-                let payload = payload.context("notify payload missing for default mode")?;
-                send_webhook(&client, settings.webhook_url.as_deref(), payload).await
+                let envelope = payload.context("notify payload missing for default mode")?;
+                let status = envelope
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let summary = envelope
+                    .get("summary")
+                    .context("notify summary missing for default mode")?;
+                let job_id = job_id.context("notify jobId missing for default mode")?;
+                let job_payload = build_job_payload_v2(
+                    state,
+                    now_rfc3339,
+                    public_base_url.as_deref(),
+                    "webhook",
+                    job_id,
+                    status,
+                    summary,
+                )
+                .await?;
+                let job_value = to_job_value(&job_payload)?;
+                send_webhook(&client, settings.webhook_url.as_deref(), &job_value).await
             }
             NotifySendMode::Test { channel, message } => {
                 let test_payload = build_test_payload_v2(
@@ -328,6 +1040,7 @@ async fn send_all(
                     *channel,
                     NotificationTestChannel::Webhook,
                     &state.config.app_effective_version,
+                    &test_url,
                 );
                 let test_payload = to_value(&test_payload)?;
                 send_webhook(&client, settings.webhook_url.as_deref(), &test_payload).await
@@ -344,12 +1057,32 @@ async fn send_all(
     ) {
         let r = match &mode {
             NotifySendMode::Default => {
-                let payload = payload.context("notify payload missing for default mode")?;
-                send_telegram(
+                let envelope = payload.context("notify payload missing for default mode")?;
+                let status = envelope
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let summary = envelope
+                    .get("summary")
+                    .context("notify summary missing for default mode")?;
+                let error_excerpt = extract_error_excerpt(summary);
+                let job_id = job_id.context("notify jobId missing for default mode")?;
+                let job_payload = build_job_payload_v2(
+                    state,
+                    now_rfc3339,
+                    public_base_url.as_deref(),
+                    "telegram",
+                    job_id,
+                    status,
+                    summary,
+                )
+                .await?;
+                send_telegram_job(
                     &client,
                     settings.telegram_bot_token.as_deref(),
                     settings.telegram_chat_id.as_deref(),
-                    payload,
+                    &job_payload,
+                    error_excerpt.as_deref(),
                 )
                 .await
             }
@@ -360,6 +1093,7 @@ async fn send_all(
                     *channel,
                     NotificationTestChannel::Telegram,
                     &state.config.app_effective_version,
+                    &test_url,
                 );
                 send_telegram_test(
                     &client,
@@ -381,8 +1115,32 @@ async fn send_all(
     ) {
         let r = match &mode {
             NotifySendMode::Default => {
-                let payload = payload.context("notify payload missing for default mode")?;
-                send_email(settings.email_smtp_url.as_deref(), payload).await
+                let envelope = payload.context("notify payload missing for default mode")?;
+                let status = envelope
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let summary = envelope
+                    .get("summary")
+                    .context("notify summary missing for default mode")?;
+                let error_excerpt = extract_error_excerpt(summary);
+                let job_id = job_id.context("notify jobId missing for default mode")?;
+                let job_payload = build_job_payload_v2(
+                    state,
+                    now_rfc3339,
+                    public_base_url.as_deref(),
+                    "email",
+                    job_id,
+                    status,
+                    summary,
+                )
+                .await?;
+                send_email_job(
+                    settings.email_smtp_url.as_deref(),
+                    &job_payload,
+                    error_excerpt.as_deref(),
+                )
+                .await
             }
             NotifySendMode::Test { channel, message } => {
                 let test_payload = build_test_payload_v2(
@@ -391,6 +1149,7 @@ async fn send_all(
                     *channel,
                     NotificationTestChannel::Email,
                     &state.config.app_effective_version,
+                    &test_url,
                 );
                 send_email_test(settings.email_smtp_url.as_deref(), &test_payload).await
             }
@@ -406,12 +1165,33 @@ async fn send_all(
     ) {
         let r = match &mode {
             NotifySendMode::Default => {
-                let payload = payload.context("notify payload missing for default mode")?;
+                let envelope = payload.context("notify payload missing for default mode")?;
+                let status = envelope
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let summary = envelope
+                    .get("summary")
+                    .context("notify summary missing for default mode")?;
+                let error_excerpt = extract_error_excerpt(summary);
+                let job_id = job_id.context("notify jobId missing for default mode")?;
+                let job_payload = build_job_payload_v2(
+                    state,
+                    now_rfc3339,
+                    public_base_url.as_deref(),
+                    "webPush",
+                    job_id,
+                    status,
+                    summary,
+                )
+                .await?;
+                let web_push_payload =
+                    to_web_push_job_value(&job_payload, error_excerpt.as_deref())?;
                 send_web_push(
                     state,
                     settings.webpush_vapid_private_key.as_deref(),
                     settings.webpush_vapid_subject.as_deref(),
-                    payload,
+                    &web_push_payload,
                 )
                 .await
             }
@@ -422,6 +1202,7 @@ async fn send_all(
                     *channel,
                     NotificationTestChannel::WebPush,
                     &state.config.app_effective_version,
+                    &test_url,
                 );
                 let web_push_payload = to_web_push_value(&test_payload)?;
                 send_web_push(
@@ -483,29 +1264,6 @@ async fn send_webhook(
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
         return Err(anyhow::anyhow!("webhook http {}: {}", status, body));
-    }
-    Ok(())
-}
-
-async fn send_telegram(
-    client: &reqwest::Client,
-    bot_token: Option<&str>,
-    chat_id: Option<&str>,
-    payload: &Value,
-) -> anyhow::Result<()> {
-    let token = bot_token.context("telegram.botToken missing")?;
-    let chat_id = chat_id.context("telegram.chatId missing")?;
-    let url = format!("https://api.telegram.org/bot{token}/sendMessage");
-    let text = format!("Dockrev notification: {}", serde_json::to_string(payload)?);
-    let resp = client
-        .post(url)
-        .json(&json!({ "chat_id": chat_id, "text": text }))
-        .send()
-        .await?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(anyhow::anyhow!("telegram http {}: {}", status, body));
     }
     Ok(())
 }
@@ -572,28 +1330,6 @@ async fn send_telegram_test(
     }
 
     Err(anyhow::anyhow!("telegram http {}: {}", status, body))
-}
-
-async fn send_email(smtp_url: Option<&str>, payload: &Value) -> anyhow::Result<()> {
-    let smtp_url = smtp_url.context("email.smtpUrl missing")?;
-    let (dsn, from, to) = parse_smtp_dsn(smtp_url)?;
-
-    let subject = "[dockrev] notification";
-    let body = serde_json::to_string_pretty(payload)?;
-
-    let mut builder = Message::builder()
-        .from(from)
-        .subject(subject)
-        .header(ContentType::TEXT_PLAIN);
-    for addr in to {
-        builder = builder.to(addr);
-    }
-    let email = builder.body(body)?;
-
-    let mailer: AsyncSmtpTransport<Tokio1Executor> =
-        AsyncSmtpTransport::<Tokio1Executor>::from_url(&dsn)?.build();
-    mailer.send(email).await?;
-    Ok(())
 }
 
 async fn send_email_test(
@@ -755,6 +1491,7 @@ mod tests {
             Some(NotificationTestChannel::Webhook),
             NotificationTestChannel::Telegram,
             "0.1.0",
+            "https://dockrev.example.com/settings",
         );
         let value = to_value(&payload).unwrap();
 
@@ -764,6 +1501,10 @@ mod tests {
         );
         assert_eq!(value["kind"].as_str(), Some("notification_test"));
         assert_eq!(value["channel"].as_str(), Some("telegram"));
+        assert_eq!(
+            value["url"].as_str(),
+            Some("https://dockrev.example.com/settings")
+        );
         assert_eq!(
             value["human"]["summary"].as_str(),
             Some("dockrev: test notification")
@@ -782,6 +1523,7 @@ mod tests {
             None,
             NotificationTestChannel::Telegram,
             "0.1.0",
+            "https://dockrev.example.com/settings",
         );
         let html = render_telegram_test_html(&payload).unwrap();
         assert!(html.contains("<pre>"));
@@ -796,11 +1538,16 @@ mod tests {
             None,
             NotificationTestChannel::WebPush,
             "0.1.0",
+            "https://dockrev.example.com/settings",
         );
         let value = to_web_push_value(&payload).unwrap();
         let body = value["body"].as_str().unwrap_or_default();
         assert!(!body.contains("```"));
         assert!(!body.contains("<pre>"));
+        assert_eq!(
+            value["url"].as_str(),
+            Some("https://dockrev.example.com/settings")
+        );
     }
 
     #[test]
@@ -833,8 +1580,93 @@ mod tests {
             None,
             NotificationTestChannel::Telegram,
             "0.1.0",
+            "https://dockrev.example.com/settings",
         );
         let plain = render_telegram_plain_for_send(&payload).unwrap();
         assert!(plain.chars().count() <= TELEGRAM_MAX_MESSAGE_CHARS.saturating_sub(32));
+    }
+
+    fn sample_job_payload(links: JobNotificationLinksV2) -> JobNotificationPayloadV2 {
+        JobNotificationPayloadV2 {
+            schema: "dockrev.notification.job.v2",
+            kind: "job_finished",
+            sent_at: "2026-03-05T04:44:59Z".to_string(),
+            channel: "telegram",
+            job: JobNotificationJobV2 {
+                id: "job_123".to_string(),
+                r#type: "update".to_string(),
+                scope: "all".to_string(),
+                status: "success".to_string(),
+                reason: "manual".to_string(),
+                created_by: "test".to_string(),
+                created_at: "2026-03-05T04:40:00Z".to_string(),
+                started_at: Some("2026-03-05T04:41:00Z".to_string()),
+                finished_at: Some("2026-03-05T04:44:59Z".to_string()),
+                stack_id: None,
+                service_id: None,
+            },
+            links,
+            human: JobNotificationHumanV2 {
+                title: "Dockrev：更新完成（成功）".to_string(),
+                summary: "变更 1 个服务（blog / api）。".to_string(),
+                detail: "test".to_string(),
+            },
+            debug: JobNotificationDebugV2 {
+                app_version: "0.1.0".to_string(),
+                source: "dockrev-api",
+            },
+        }
+    }
+
+    fn make_service_url(i: usize) -> JobNotificationServiceUrlV2 {
+        JobNotificationServiceUrlV2 {
+            stack_id: format!("stk_{i}"),
+            stack_name: format!("stack-{i}"),
+            service_id: format!("svc_{i}"),
+            service_name: format!("service-{i}"),
+            url: format!("https://dockrev.example.com/services/stk_{i}/svc_{i}"),
+        }
+    }
+
+    #[test]
+    fn job_notification_links_single_service_prefers_service_url() {
+        let job_url = "https://dockrev.example.com/queue/job_123".to_string();
+        let links = finalize_job_links(job_url.clone(), vec![make_service_url(1)], false, None);
+        assert_eq!(links.primary_url, links.service_urls[0].url);
+        assert_ne!(links.primary_url, job_url);
+    }
+
+    #[test]
+    fn job_notification_links_multi_service_prefers_job_url() {
+        let job_url = "https://dockrev.example.com/queue/job_123".to_string();
+        let links = finalize_job_links(
+            job_url.clone(),
+            vec![make_service_url(1), make_service_url(2)],
+            false,
+            None,
+        );
+        assert_eq!(links.primary_url, job_url);
+    }
+
+    #[test]
+    fn service_urls_truncation_sets_omitted_count() {
+        let job_url = "https://dockrev.example.com/queue/job_123".to_string();
+        let service_urls = (0..(MAX_JOB_SERVICE_URLS + 3))
+            .map(make_service_url)
+            .collect::<Vec<_>>();
+        let links = finalize_job_links(job_url, service_urls, false, None);
+        assert_eq!(links.service_urls.len(), MAX_JOB_SERVICE_URLS);
+        assert_eq!(links.truncated.service_urls_omitted, 3);
+    }
+
+    #[test]
+    fn telegram_render_contains_clickable_service_links() {
+        let job_url = "https://dockrev.example.com/queue/job_123".to_string();
+        let links = finalize_job_links(job_url, vec![make_service_url(1)], false, None);
+        let payload = sample_job_payload(links);
+        let html = render_telegram_job_html(&payload, None);
+        assert!(html.contains("<a href=\"https://dockrev.example.com/services/stk_1/svc_1\">"));
+        assert!(html.contains("<b>服务清单</b>"));
+        assert!(!html.contains("Dockrev notification:"));
     }
 }
