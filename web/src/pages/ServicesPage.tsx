@@ -128,7 +128,8 @@ export function ServicesPage(props: {
   const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
   const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const { beginSubmitting, endSubmitting, trackJob, isTargetBusy } = useUpdateActionTracker()
+  const { beginSubmitting, endSubmitting, trackJob, isTargetBusy, getActiveJobByTarget, isTargetSubmitting } =
+    useUpdateActionTracker()
   const supervisor = useSupervisorHealth()
   const selfUpgradeUrl = useMemo(() => selfUpgradeBaseUrl(), [])
 
@@ -506,7 +507,7 @@ export function ServicesPage(props: {
           })
         }
         setNoticeJobId(resp.jobId)
-        if (targetKey) trackJob(targetKey, resp.jobId)
+        if (targetKey) trackJob(targetKey, resp.jobId, 'queued')
       } catch (e: unknown) {
         if (e instanceof ApiError) {
           if (e.status === 401) setError('需要登录/鉴权（forward header）')
@@ -692,13 +693,15 @@ export function ServicesPage(props: {
 	          {groups.map((g) => {
 	            const isCollapsed = collapsed[g.stackId] ?? false
 	            const groupSummary = formatGroupSummary(g.totalServices, g.countsAll)
-	            const stackApply =
+              const stackApply =
 	              g.countsAll.updatable > 0
 	                ? { enabled: true, title: null as string | null }
 	                : g.countsAll.hint > 0
 	                  ? { enabled: true, title: '存在需确认的候选；将由服务端计算是否实际变更' }
 	                  : { enabled: false, title: '无可更新服务' }
               const stackApplyActionKey = resolveUpdateActionTargetKey('stack', g.stackId, null)
+              const stackApplyActiveJob = stackApplyActionKey ? getActiveJobByTarget(stackApplyActionKey) : null
+              const stackApplySubmitting = stackApplyActionKey ? isTargetSubmitting(stackApplyActionKey) : false
 	            return (
 	              <div key={g.stackId} className={isCollapsed ? 'tableGroup' : 'tableGroup tableGroupExpanded'}>
 	                {!isCollapsed ? <GroupGuide /> : null}
@@ -726,12 +729,22 @@ export function ServicesPage(props: {
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={(e) => e.stopPropagation()}
                   >
-	                    <Button
-	                      variant="ghost"
-		                      disabled={busy || !stackApply.enabled}
+                    <Button
+                      variant="ghost"
+                      disabled={
+                        stackApplyActiveJob
+                          ? false
+                          : !stackApply.enabled || busy || stackApplySubmitting
+                      }
                       loading={stackApplyActionKey ? isTargetBusy(stackApplyActionKey) : false}
-		                      title={stackApply.title ?? undefined}
-		                      onClick={() => {
+                      loadingClickable={Boolean(stackApplyActiveJob)}
+                      title={stackApplyActiveJob ? '任务进行中，点击查看任务详情' : (stackApply.title ?? undefined)}
+                      hint={stackApplyActiveJob ? '任务进行中，点击查看任务详情' : undefined}
+                      onClick={() => {
+                            if (stackApplyActiveJob) {
+                              navigate({ name: 'job', jobId: stackApplyActiveJob.jobId })
+                              return
+                            }
 		                        const d = details[g.stackId]
 		                        const candidateServices = d
 		                          ? d.services
@@ -891,10 +904,16 @@ export function ServicesPage(props: {
 	                          targetLabel: `stack:${g.stackName}`,
 	                          confirmBody: body,
 	                          confirmTitle: '确认更新此 stack？',
-	                        })
-	                      }}
+		                        })
+		                      }}
 	                    >
-	                      更新此 stack
+                        {stackApplyActiveJob?.status === 'queued'
+                          ? '排队中…'
+                          : stackApplyActiveJob
+                            ? '更新中…'
+                            : stackApplySubmitting
+                              ? '提交中…'
+                              : '更新此 stack'}
 	                    </Button>
                   </div>
                 </div>
@@ -939,6 +958,8 @@ export function ServicesPage(props: {
 	                                ? { enabled: false, title: '架构不匹配（仅提示，不允许更新）' }
 	                                : { enabled: false, title: svc.ignore?.reason ?? '被阻止' }
                       const svcApplyActionKey = resolveUpdateActionTargetKey('service', null, svc.id)
+                      const svcApplyActiveJob = svcApplyActionKey ? getActiveJobByTarget(svcApplyActionKey) : null
+                      const svcApplySubmitting = svcApplyActionKey ? isTargetSubmitting(svcApplyActionKey) : false
                       return (
                         <div
                           key={svc.id}
@@ -1073,12 +1094,22 @@ export function ServicesPage(props: {
                                 ) : null}
                               </div>
                             ) : (
-	                              <Button
-	                                variant="ghost"
-		                                disabled={busy || !svcApply.enabled}
+                              <Button
+                                variant="ghost"
+                                disabled={
+                                  svcApplyActiveJob
+                                    ? false
+                                    : !svcApply.enabled || busy || svcApplySubmitting
+                                }
                                 loading={svcApplyActionKey ? isTargetBusy(svcApplyActionKey) : false}
-		                                title={svcApply.title ?? undefined}
-		                                onClick={() => {
+                                loadingClickable={Boolean(svcApplyActiveJob)}
+                                title={svcApplyActiveJob ? '任务进行中，点击查看任务详情' : (svcApply.title ?? undefined)}
+                                hint={svcApplyActiveJob ? '任务进行中，点击查看任务详情' : undefined}
+                                onClick={() => {
+                                          if (svcApplyActiveJob) {
+                                            navigate({ name: 'job', jobId: svcApplyActiveJob.jobId })
+                                            return
+                                          }
 		                                  const body = (
 		                                    <>
 	                                      <div className="modalLead">将对该服务执行更新（apply）。</div>
@@ -1176,7 +1207,13 @@ export function ServicesPage(props: {
 			                                  })
 		                                }}
 	                              >
-	                                执行更新
+                                  {svcApplyActiveJob?.status === 'queued'
+                                    ? '排队中…'
+                                    : svcApplyActiveJob
+                                      ? '更新中…'
+                                      : svcApplySubmitting
+                                        ? '提交中…'
+                                        : '执行更新'}
 	                              </Button>
 	                            )}
 	                          </div>

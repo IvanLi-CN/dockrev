@@ -1,5 +1,29 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+  type CSSProperties,
+  type ReactNode,
+} from 'react'
 import { Icon } from '@iconify/react'
+import {
+  FloatingArrow,
+  FloatingPortal,
+  autoUpdate,
+  arrow,
+  flip,
+  offset,
+  shift,
+  useDismiss,
+  useFocus,
+  useFloating,
+  useHover,
+  useInteractions,
+  useRole,
+} from '@floating-ui/react'
 import type { Service } from './api'
 import { noteFor, statusDotClass, statusIcon, statusLabel, type RowStatus } from './updateStatus'
 
@@ -62,30 +86,104 @@ export function Button(props: {
   variant?: 'primary' | 'danger' | 'ghost'
   disabled?: boolean
   loading?: boolean
+  loadingClickable?: boolean
   onClick?: () => void
   children: ReactNode
   title?: string
+  hint?: string
 }) {
   const variant = props.variant ?? 'ghost'
+  const hintText = props.hint?.trim() ?? ''
+  const hasHint = hintText.length > 0
   const className = `btn ${buttonVariantClass(variant)}`
-  const disabled = props.disabled || props.loading
+  const disabled = props.disabled || (props.loading && !props.loadingClickable)
+  const [hintOpen, setHintOpen] = useState(false)
+  const [arrowElement, setArrowElement] = useState<SVGSVGElement | null>(null)
+  const middleware = useMemo(
+    () => [
+      offset(12),
+      flip({
+        fallbackPlacements: ['bottom', 'top-start', 'top-end', 'bottom-start', 'bottom-end'],
+      }),
+      shift({ padding: 8 }),
+      ...(arrowElement ? [arrow({ element: arrowElement })] : []),
+    ],
+    [arrowElement],
+  )
+  const { refs: floatingRefs, floatingStyles, context } = useFloating({
+    open: hasHint ? hintOpen : false,
+    onOpenChange: setHintOpen,
+    placement: 'top',
+    whileElementsMounted: autoUpdate,
+    middleware,
+  })
+  const hover = useHover(context, { enabled: hasHint, move: false })
+  const focus = useFocus(context, { enabled: hasHint })
+  const dismiss = useDismiss(context, { enabled: hasHint })
+  const role = useRole(context, { role: 'tooltip' })
+  const { getReferenceProps, getFloatingProps } = useInteractions([hover, focus, dismiss, role])
+  const setReference = useCallback(
+    (node: HTMLButtonElement | null) => {
+      floatingRefs.setReference(node)
+    },
+    [floatingRefs],
+  )
+  const setFloating = useCallback(
+    (node: HTMLSpanElement | null) => {
+      floatingRefs.setFloating(node)
+    },
+    [floatingRefs],
+  )
+  const setArrow = useCallback((node: SVGSVGElement | null) => {
+    setArrowElement(node)
+  }, [])
+
+  const referenceProps = getReferenceProps({
+    onClick: props.onClick,
+    title: props.title,
+  }) as ButtonHTMLAttributes<HTMLButtonElement>
+
   return (
-    <button
-      className={className}
-      disabled={disabled}
-      onClick={props.onClick}
-      title={props.title}
-      aria-busy={props.loading ? true : undefined}
-    >
-      {props.loading ? (
-        <span className="btnInlineLoading">
-          <span className="btnInlineSpinner" aria-hidden="true" />
-          <span>{props.children}</span>
-        </span>
-      ) : (
-        props.children
-      )}
-    </button>
+    <>
+      <button
+        ref={setReference}
+        className={className}
+        disabled={disabled}
+        data-hint={hasHint ? hintText : undefined}
+        aria-busy={props.loading ? true : undefined}
+        {...referenceProps}
+      >
+        {props.loading ? (
+          <span className="btnInlineLoading">
+            <span className="btnInlineSpinner" aria-hidden="true" />
+            <span>{props.children}</span>
+          </span>
+        ) : (
+          props.children
+        )}
+      </button>
+      {hasHint && hintOpen ? (
+        <FloatingPortal>
+          <span
+            className="buttonHintFloating"
+            ref={setFloating}
+            style={floatingStyles}
+            {...getFloatingProps()}
+          >
+            {hintText}
+            <FloatingArrow
+              ref={setArrow}
+              context={context}
+              className="buttonHintFloatingArrow"
+              fill="var(--button-hint-bg)"
+              stroke="var(--button-hint-border)"
+              strokeWidth={1}
+              tipRadius={1}
+            />
+          </span>
+        </FloatingPortal>
+      ) : null}
+    </>
   )
 }
 

@@ -4652,6 +4652,33 @@ html[data-theme='light'] .card {
   outline-offset: 2px;
 }
 
+.buttonHintFloating {
+  position: fixed;
+  --button-hint-bg: color-mix(in srgb, var(--panel2) 94%, #020814 6%);
+  --button-hint-border: color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  width: max-content;
+  min-width: 140px;
+  max-width: min(320px, calc(100vw - 28px));
+  padding: 8px 11px;
+  border-radius: 12px;
+  border: 1px solid var(--button-hint-border);
+  background: var(--button-hint-bg);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: break-word;
+  text-align: left;
+  pointer-events: none;
+  box-shadow: var(--shadow-soft);
+  z-index: 120;
+}
+
+.buttonHintFloatingArrow {
+  pointer-events: none;
+}
+
 .responsiveActionBtn {
   position: relative;
   --responsive-action-bubble-anchor-left: 50%;
