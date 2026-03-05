@@ -81,6 +81,12 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 | GET | `/api/settings` | Forward Header | 系统设置读取 | `200` `401` |
 | PUT | `/api/settings` | Forward Header | 系统设置更新 | `200` `400` `401` |
 
+- `POST /api/notifications/test` 从 `2026-03-05` 起将测试通知下游 payload 切换为 **v2（breaking）**：
+  - 不再发送旧字段 `type/ts/message`。
+  - 基础结构：`schema/kind/sentAt/channel/human/debug`。
+  - Web Push 会额外附带顶层 `title/body`，用于 Service Worker 直接展示通知。
+  - 文本渲染按通道能力：Telegram/Email 带代码块，Web Push 仅自然语言（无代码块）。
+
 ### 6) GitHub Packages (GHCR) integration
 
 | 方法 | 路径 | 鉴权 | 用途 | 关键状态码 |

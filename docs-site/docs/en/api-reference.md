@@ -81,6 +81,12 @@ This page documents every HTTP route exposed in:
 | GET | `/api/settings` | Forward Header | Get system settings | `200` `401` |
 | PUT | `/api/settings` | Forward Header | Update system settings | `200` `400` `401` |
 
+- Starting `2026-03-05`, downstream payloads emitted by `POST /api/notifications/test` use **v2 (breaking)**:
+  - legacy `type/ts/message` fields are removed;
+  - new base structure is `schema/kind/sentAt/channel/human/debug`;
+  - Web Push adds `title/body` as display-oriented top-level fields for service-worker notifications;
+  - rendering is capability-aware: Telegram/Email include code blocks, Web Push is natural-language only (no code blocks).
+
 ### 6) GitHub Packages (GHCR) integration
 
 | Method | Path | Auth | Purpose | Key status codes |
