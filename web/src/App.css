@@ -2325,9 +2325,10 @@ html[data-theme='light'] .modalOverlay {
   font-weight: 650;
 }
 
-.jobReadableName {
+.jobReadableTagGroup {
   display: inline-flex;
   align-items: center;
+  /* Keep type/scope tags visually separated across queue + detail pages. */
   gap: 6px;
   flex-wrap: wrap;
 }

@@ -573,7 +573,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
               >
                 <div className="queueMain">
                   <div className="queueTitle">
-                    <span className="jobReadableName">
+                    <span className="jobReadableTagGroup">
                       <span className={`jobTypeTag jobTypeTag-${readable.typeTone}`}>{readable.primaryLabel}</span>
                       {readable.scopeTag ? <span className="jobScopeTag">{readable.scopeTag}</span> : null}
                     </span>
