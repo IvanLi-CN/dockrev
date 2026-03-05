@@ -500,6 +500,10 @@ function makeDefaultSettings(): SettingsResponse {
   return {
     backup: { enabled: true, requireSuccess: true, baseDir: '/var/lib/dockrev/backup', skipTargetsOverBytes: 104857600 },
     resourceMonitor: { enabled: true, sampleIntervalSeconds: 30, retentionDays: 30 },
+    schedules: {
+      updateCheck: { enabled: false, cron: '*/30 * * * *' },
+      ghcrWebhookAudit: { enabled: true, cron: '0 3 * * *' },
+    },
     auth: { forwardHeaderName: 'X-Forwarded-User', allowAnonymousInDev: true },
   }
 }
@@ -3281,6 +3285,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       const rec = isRecord(parsed) ? parsed : null
       const backup = rec && isRecord(rec.backup) ? rec.backup : null
       const resourceMonitor = rec && isRecord(rec.resourceMonitor) ? rec.resourceMonitor : null
+      const schedules = rec && isRecord(rec.schedules) ? rec.schedules : null
       if (backup) {
         const enabled = getBoolean(backup.enabled)
         const requireSuccess = getBoolean(backup.requireSuccess)
@@ -3307,6 +3312,27 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
           ...f.settings.resourceMonitor,
           enabled: enabled ?? f.settings.resourceMonitor.enabled,
           sampleIntervalSeconds: normalizedInterval,
+        }
+      }
+      if (schedules) {
+        const updateCheck = isRecord(schedules.updateCheck) ? schedules.updateCheck : null
+        if (updateCheck) {
+          const enabled = getBoolean(updateCheck.enabled)
+          const cron = getString(updateCheck.cron)
+          f.settings.schedules.updateCheck = {
+            enabled: enabled ?? f.settings.schedules.updateCheck.enabled,
+            cron: cron ?? f.settings.schedules.updateCheck.cron,
+          }
+        }
+
+        const ghcrWebhookAudit = isRecord(schedules.ghcrWebhookAudit) ? schedules.ghcrWebhookAudit : null
+        if (ghcrWebhookAudit) {
+          const enabled = getBoolean(ghcrWebhookAudit.enabled)
+          const cron = getString(ghcrWebhookAudit.cron)
+          f.settings.schedules.ghcrWebhookAudit = {
+            enabled: enabled ?? f.settings.schedules.ghcrWebhookAudit.enabled,
+            cron: cron ?? f.settings.schedules.ghcrWebhookAudit.cron,
+          }
         }
       }
       return json({ ok: true })

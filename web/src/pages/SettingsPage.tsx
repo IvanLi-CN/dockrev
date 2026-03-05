@@ -72,6 +72,7 @@ function buildSettingsSavePayload(settings: SettingsResponse): PutSettingsInput 
       enabled: settings.resourceMonitor.enabled,
       sampleIntervalSeconds: settings.resourceMonitor.sampleIntervalSeconds,
     },
+    schedules: settings.schedules,
   }
 }
 
@@ -211,6 +212,12 @@ function readReason(details: unknown): string | null {
   if (!details || typeof details !== 'object') return null
   const reason = (details as Record<string, unknown>).reason
   return typeof reason === 'string' ? reason : null
+}
+
+function readField(details: unknown): string | null {
+  if (!details || typeof details !== 'object') return null
+  const field = (details as Record<string, unknown>).field
+  return typeof field === 'string' ? field : null
 }
 
 function mapResolveFailure(e: unknown): string {
@@ -774,12 +781,17 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
   const buildAutoSaveIssue = useCallback((scope: SaveScope, fieldPath: string, e: unknown): AutoSaveIssue => {
     let reason: string | null = null
-    if (e instanceof ApiError) reason = readReason(e.details)
+    let apiField: string | null = null
+    if (e instanceof ApiError) {
+      reason = readReason(e.details)
+      apiField = readField(e.details)
+    }
     if (!reason && scope === 'ghcr') reason = 'ghcr_pat_unsaved_or_save_failed'
 
     const fallback = errorMessage(e)
     let message = `自动保存失败（${mapScopeLabel(scope)}）：${fallback}`
-    if (reason === 'ghcr_pat_missing') message = '请先填写 GitHub PAT'
+    if (reason === 'cron_invalid') message = 'Cron 表达式不合法，请检查格式（5 段或 6/7 段）'
+    else if (reason === 'ghcr_pat_missing') message = '请先填写 GitHub PAT'
     else if (reason === 'ghcr_pat_format_invalid') message = 'PAT 格式不合法，请使用 ghp_ / github_pat_ 等 GitHub token'
     else if (reason === 'ghcr_pat_unsaved_or_save_failed') message = 'PAT 未保存成功，无法解析，请检查网络后重试'
     else if (reason === 'ghcr_pat_invalid_or_scope_insufficient') message = 'PAT 无效或权限不足，请检查 token scope'
@@ -789,7 +801,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
     return {
       scope,
-      fieldPath,
+      fieldPath: apiField ?? fieldPath,
       reason: reason ?? 'autosave_failed',
       message,
       at: new Date().toISOString(),
@@ -1231,6 +1243,21 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     [markFieldDirty],
   )
 
+  const updateSchedules = useCallback(
+    (
+      fieldPath: string,
+      updater: (current: SettingsResponse['schedules']) => SettingsResponse['schedules'],
+      isToggle = false,
+    ) => {
+      setSettings((prev) => {
+        if (!prev) return prev
+        return { ...prev, schedules: updater(prev.schedules) }
+      })
+      markFieldDirty('backup', fieldPath, isToggle ? TOGGLE_DEBOUNCE_MS : TEXT_DEBOUNCE_MS)
+    },
+    [markFieldDirty],
+  )
+
   const updateNotifications = useCallback(
     (fieldPath: string, updater: (current: NotificationConfig) => NotificationConfig, isToggle = false) => {
       setNotifications((prev) => {
@@ -1442,9 +1469,19 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     autoSaveIssue?.scope === 'notifications' && autoSaveIssue.fieldPath === 'notifications.telegram.botToken'
       ? autoSaveIssue
       : null
+  const updateCheckCronIssue =
+    autoSaveIssue?.scope === 'backup' && autoSaveIssue.fieldPath === 'schedules.updateCheck.cron'
+      ? autoSaveIssue
+      : null
+  const ghcrWebhookAuditCronIssue =
+    autoSaveIssue?.scope === 'backup' && autoSaveIssue.fieldPath === 'schedules.ghcrWebhookAudit.cron'
+      ? autoSaveIssue
+      : null
   const showTelegramBotTokenEye =
     telegramBotTokenFocused && telegramBotTokenTouched && (notifications.telegram.botToken ?? '').trim().length > 0
   const telegramBotTokenInputClassName = telegramBotTokenIssue ? 'input inputError' : 'input'
+  const updateCheckCronInputClassName = updateCheckCronIssue ? 'input inputError' : 'input'
+  const ghcrWebhookAuditCronInputClassName = ghcrWebhookAuditCronIssue ? 'input inputError' : 'input'
   const ghcrLiveProgressText = (() => {
     if (!ghcrLiveJob) return null
     const p = ghcrLiveJob.progress
@@ -1677,6 +1714,97 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               <div className="kvRow">
                 <div className="label">历史保留</div>
                 <div className="muted">{settings.resourceMonitor.retentionDays} 天（固定）</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="title">定时任务</div>
+            <div className="muted">cron 按服务端本地时区解释（TZ）；5 段表达式会自动补秒=0。</div>
+
+            <div className="kv">
+              <div className="kvRow">
+                <div className="label">定期检查更新</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Switch
+                    checked={settings.schedules.updateCheck.enabled}
+                    disabled={busy}
+                    onChange={(value) =>
+                      updateSchedules(
+                        'schedules.updateCheck.enabled',
+                        (current) => ({
+                          ...current,
+                          updateCheck: { ...current.updateCheck, enabled: value },
+                        }),
+                        true,
+                      )
+                    }
+                  />
+                  <div className="muted">{settings.schedules.updateCheck.enabled ? 'on' : 'off'}</div>
+                </div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">Cron（检查更新）</div>
+                <div>
+                  <input
+                    className={updateCheckCronInputClassName}
+                    disabled={busy}
+                    value={settings.schedules.updateCheck.cron}
+                    onChange={(e) =>
+                      updateSchedules('schedules.updateCheck.cron', (current) => ({
+                        ...current,
+                        updateCheck: { ...current.updateCheck, cron: e.target.value },
+                      }))
+                    }
+                    placeholder="*/30 * * * *"
+                  />
+                  <div className="muted" style={{ marginTop: 6 }}>
+                    只创建检查任务（check.all），不自动更新。
+                  </div>
+                </div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">Webhook 巡查（GHCR audit_all）</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Switch
+                    checked={settings.schedules.ghcrWebhookAudit.enabled}
+                    disabled={busy}
+                    onChange={(value) =>
+                      updateSchedules(
+                        'schedules.ghcrWebhookAudit.enabled',
+                        (current) => ({
+                          ...current,
+                          ghcrWebhookAudit: { ...current.ghcrWebhookAudit, enabled: value },
+                        }),
+                        true,
+                      )
+                    }
+                  />
+                  <div className="muted">{settings.schedules.ghcrWebhookAudit.enabled ? 'on' : 'off'}</div>
+                </div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">Cron（Webhook 巡查）</div>
+                <div>
+                  <input
+                    className={ghcrWebhookAuditCronInputClassName}
+                    disabled={busy}
+                    value={settings.schedules.ghcrWebhookAudit.cron}
+                    onChange={(e) =>
+                      updateSchedules('schedules.ghcrWebhookAudit.cron', (current) => ({
+                        ...current,
+                        ghcrWebhookAudit: { ...current.ghcrWebhookAudit, cron: e.target.value },
+                      }))
+                    }
+                    placeholder="0 3 * * *"
+                  />
+                  <div className="muted" style={{ marginTop: 6 }}>
+                    只巡检与标记 drift，不自动修复。
+                  </div>
+                </div>
               </div>
             </div>
           </div>

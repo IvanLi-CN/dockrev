@@ -13,7 +13,8 @@ use crate::api::types::{
     GitHubPackagesSettingsDb, GitHubPackagesTargetDb, GitHubPackagesWebhookDeliveryDb,
     GitHubPackagesWebhookDeliverySummary, IgnoreRule, IgnoreRuleMatch, IgnoreRuleScope,
     JobListItem, JobLogLine, JobScope, JobType, NotificationSettings, ResourceMonitorSettings,
-    ServiceResourceSample, ServiceSettings, StackListItem, StackRecord, StackStatus,
+    ScheduleItemSettings, SchedulesSettings, ServiceResourceSample, ServiceSettings, StackListItem,
+    StackRecord, StackStatus,
 };
 
 #[derive(Clone, Debug)]
@@ -210,6 +211,7 @@ impl Db {
             ensure_notification_columns(conn)?;
             ensure_settings_deploy_welcome_columns(conn)?;
             ensure_settings_resource_monitor_columns(conn)?;
+            ensure_settings_schedule_columns(conn)?;
             ensure_stack_archive_columns(conn)?;
             ensure_service_archive_columns(conn)?;
             ensure_discovery_schema(conn)?;
@@ -239,9 +241,13 @@ INSERT OR IGNORE INTO settings (
   backup_skip_targets_over_bytes,
   resource_monitor_enabled,
   resource_sample_interval_seconds,
+  schedule_update_check_enabled,
+  schedule_update_check_cron,
+  schedule_ghcr_webhook_audit_enabled,
+  schedule_ghcr_webhook_audit_cron,
   deploy_welcome_never_auto_open,
   deploy_welcome_updated_at
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
 "#,
                 params![
                     "default",
@@ -251,6 +257,10 @@ INSERT OR IGNORE INTO settings (
                     104857600i64,
                     1i64,
                     30i64,
+                    0i64,
+                    "*/30 * * * *",
+                    1i64,
+                    "0 3 * * *",
                     0i64,
                     Option::<String>::None
                 ],
@@ -3394,6 +3404,37 @@ WHERE id = 'default'
         .context("get resource monitor settings")
     }
 
+    pub async fn get_schedule_settings(&self) -> anyhow::Result<SchedulesSettings> {
+        self.call(|conn| {
+            Ok(conn.query_row(
+                r#"
+SELECT
+  schedule_update_check_enabled,
+  schedule_update_check_cron,
+  schedule_ghcr_webhook_audit_enabled,
+  schedule_ghcr_webhook_audit_cron
+FROM settings
+WHERE id = 'default'
+"#,
+                [],
+                |row| {
+                    Ok(SchedulesSettings {
+                        update_check: ScheduleItemSettings {
+                            enabled: row.get::<_, i64>(0)? != 0,
+                            cron: row.get(1)?,
+                        },
+                        ghcr_webhook_audit: ScheduleItemSettings {
+                            enabled: row.get::<_, i64>(2)? != 0,
+                            cron: row.get(3)?,
+                        },
+                    })
+                },
+            )?)
+        })
+        .await
+        .context("get schedule settings")
+    }
+
     pub async fn get_deploy_welcome_settings(&self) -> anyhow::Result<DeployWelcomeSettings> {
         self.call(|conn| {
             Ok(conn.query_row(
@@ -3443,10 +3484,12 @@ WHERE id = 'default'
         &self,
         backup: &BackupSettings,
         resource_monitor: &ResourceMonitorSettings,
+        schedules: &SchedulesSettings,
         now: &str,
     ) -> anyhow::Result<()> {
         let backup = backup.clone();
         let resource_monitor = resource_monitor.clone();
+        let schedules = schedules.clone();
         let now = now.to_string();
         self.call(move |conn| {
             conn.execute(
@@ -3459,7 +3502,11 @@ SET
   backup_skip_targets_over_bytes = ?4,
   resource_monitor_enabled = ?5,
   resource_sample_interval_seconds = ?6,
-  updated_at = ?7
+  schedule_update_check_enabled = ?7,
+  schedule_update_check_cron = ?8,
+  schedule_ghcr_webhook_audit_enabled = ?9,
+  schedule_ghcr_webhook_audit_cron = ?10,
+  updated_at = ?11
 WHERE id = 'default'
 "#,
                 params![
@@ -3469,6 +3516,10 @@ WHERE id = 'default'
                     backup.skip_targets_over_bytes as i64,
                     resource_monitor.enabled as i64,
                     resource_monitor.sample_interval_seconds as i64,
+                    schedules.update_check.enabled as i64,
+                    schedules.update_check.cron,
+                    schedules.ghcr_webhook_audit.enabled as i64,
+                    schedules.ghcr_webhook_audit.cron,
                     now
                 ],
             )?;
@@ -4091,6 +4142,37 @@ WHERE type = ?1 AND status = ?2
         })
         .await
         .context("count jobs by type and status")
+    }
+
+    pub async fn has_pending_job_by_type_created_by_reason(
+        &self,
+        job_type: JobType,
+        created_by: &str,
+        reason: &str,
+    ) -> anyhow::Result<bool> {
+        let job_type = job_type.as_str().to_string();
+        let created_by = created_by.to_string();
+        let reason = reason.to_string();
+        self.call(move |conn| {
+            let row: Option<i64> = conn
+                .query_row(
+                    r#"
+SELECT 1
+FROM jobs
+WHERE type = ?1
+  AND status IN ('queued', 'running')
+  AND created_by = ?2
+  AND reason = ?3
+LIMIT 1
+"#,
+                    params![job_type, created_by, reason],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?;
+            Ok(row.is_some())
+        })
+        .await
+        .context("check pending job by type/created_by/reason")
     }
 
     pub async fn find_latest_pending_job_by_type(
@@ -5105,6 +5187,46 @@ WHERE resource_sample_interval_seconds NOT IN (10, 30, 60, 300)
     Ok(())
 }
 
+fn ensure_settings_schedule_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    #[derive(Clone)]
+    struct Col<'a> {
+        name: &'a str,
+        ddl: &'a str,
+    }
+
+    let desired = [
+        Col {
+            name: "schedule_update_check_enabled",
+            ddl: "ALTER TABLE settings ADD COLUMN schedule_update_check_enabled INTEGER NOT NULL DEFAULT 0",
+        },
+        Col {
+            name: "schedule_update_check_cron",
+            ddl: "ALTER TABLE settings ADD COLUMN schedule_update_check_cron TEXT NOT NULL DEFAULT '*/30 * * * *'",
+        },
+        Col {
+            name: "schedule_ghcr_webhook_audit_enabled",
+            ddl: "ALTER TABLE settings ADD COLUMN schedule_ghcr_webhook_audit_enabled INTEGER NOT NULL DEFAULT 1",
+        },
+        Col {
+            name: "schedule_ghcr_webhook_audit_cron",
+            ddl: "ALTER TABLE settings ADD COLUMN schedule_ghcr_webhook_audit_cron TEXT NOT NULL DEFAULT '0 3 * * *'",
+        },
+    ];
+
+    let mut stmt = conn.prepare("PRAGMA table_info(settings)")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let existing = rows.collect::<Result<Vec<_>, _>>()?;
+
+    for col in desired {
+        if existing.iter().any(|c| c == col.name) {
+            continue;
+        }
+        conn.execute_batch(col.ddl)?;
+    }
+
+    Ok(())
+}
+
 fn ensure_stack_archive_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     #[derive(Clone)]
     struct Col<'a> {
@@ -5517,6 +5639,10 @@ CREATE TABLE IF NOT EXISTS settings (
   backup_skip_targets_over_bytes INTEGER NOT NULL,
   resource_monitor_enabled INTEGER NOT NULL DEFAULT 1,
   resource_sample_interval_seconds INTEGER NOT NULL DEFAULT 30,
+  schedule_update_check_enabled INTEGER NOT NULL DEFAULT 0,
+  schedule_update_check_cron TEXT NOT NULL DEFAULT '*/30 * * * *',
+  schedule_ghcr_webhook_audit_enabled INTEGER NOT NULL DEFAULT 1,
+  schedule_ghcr_webhook_audit_cron TEXT NOT NULL DEFAULT '0 3 * * *',
   deploy_welcome_never_auto_open INTEGER NOT NULL DEFAULT 0,
   deploy_welcome_updated_at TEXT,
   updated_at TEXT

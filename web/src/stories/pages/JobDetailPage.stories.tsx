@@ -19,7 +19,7 @@ export const LongLogs: Story = {
       <PageHarness
         route={{ name: 'job', jobId: 'job-long' }}
         title="任务详情"
-        topbarHint="更新队列"
+        topbarHint="任务队列"
         pageSubtitle="代表性：长 URL / digest / 多行日志（堆栈/命令输出）应在容器内滚动，且可读可复制"
       >
         {({ onTopActions }) => <JobDetailPage jobId="job-long" onTopActions={onTopActions} />}
@@ -35,7 +35,7 @@ export const RunningDualProgress: Story = {
       <PageHarness
         route={{ name: 'job', jobId: 'job-short' }}
         title="任务详情"
-        topbarHint="更新队列"
+        topbarHint="任务队列"
         pageSubtitle="运行中：安排进度与完成进度同时显示"
       >
         {({ onTopActions }) => <JobDetailPage jobId="job-short" onTopActions={onTopActions} />}
@@ -51,7 +51,7 @@ export const LegacyProgressFallback: Story = {
       <PageHarness
         route={{ name: 'job', jobId: 'job-legacy-running' }}
         title="任务详情"
-        topbarHint="更新队列"
+        topbarHint="任务队列"
         pageSubtitle="兼容场景：旧任务缺失 planned* 字段时，UI 自动回退 planned=completed"
       >
         {({ onTopActions }) => <JobDetailPage jobId="job-legacy-running" onTopActions={onTopActions} />}

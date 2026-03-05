@@ -6294,6 +6294,7 @@ async fn settings_and_notifications_roundtrip() {
     let settings = response_json(resp).await;
     assert!(settings["backup"].is_object());
     assert!(settings["resourceMonitor"].is_object());
+    assert!(settings["schedules"].is_object());
     assert!(settings["auth"].is_object());
     assert_eq!(settings["resourceMonitor"]["enabled"].as_bool(), Some(true));
     assert_eq!(
@@ -6303,6 +6304,22 @@ async fn settings_and_notifications_roundtrip() {
     assert_eq!(
         settings["resourceMonitor"]["retentionDays"].as_u64(),
         Some(30)
+    );
+    assert_eq!(
+        settings["schedules"]["updateCheck"]["enabled"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        settings["schedules"]["updateCheck"]["cron"].as_str(),
+        Some("*/30 * * * *")
+    );
+    assert_eq!(
+        settings["schedules"]["ghcrWebhookAudit"]["enabled"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        settings["schedules"]["ghcrWebhookAudit"]["cron"].as_str(),
+        Some("0 3 * * *")
     );
 
     let put = serde_json::json!({
@@ -6358,6 +6375,22 @@ async fn settings_and_notifications_roundtrip() {
     assert_eq!(
         settings["resourceMonitor"]["retentionDays"].as_u64(),
         Some(30)
+    );
+    assert_eq!(
+        settings["schedules"]["updateCheck"]["enabled"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        settings["schedules"]["updateCheck"]["cron"].as_str(),
+        Some("*/30 * * * *")
+    );
+    assert_eq!(
+        settings["schedules"]["ghcrWebhookAudit"]["enabled"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        settings["schedules"]["ghcrWebhookAudit"]["cron"].as_str(),
+        Some("0 3 * * *")
     );
 
     let invalid = serde_json::json!({
@@ -6579,6 +6612,137 @@ async fn settings_and_notifications_roundtrip() {
     assert_eq!(conf["telegram"]["botToken"].as_str(), None);
     assert_eq!(conf["telegram"]["botTokenConfigured"].as_bool(), Some(true));
     assert!(conf["telegram"]["chatId"].is_null());
+}
+
+#[tokio::test]
+async fn settings_schedule_cron_validation() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/settings")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let settings = response_json(resp).await;
+    let backup = settings["backup"].clone();
+
+    let invalid = serde_json::json!({
+        "backup": backup,
+        "schedules": {
+            "updateCheck": { "enabled": true, "cron": "not a cron" }
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(invalid.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let payload = response_json(resp).await;
+    assert_eq!(
+        payload["error"]["details"]["reason"].as_str(),
+        Some("cron_invalid")
+    );
+    assert_eq!(
+        payload["error"]["details"]["field"].as_str(),
+        Some("schedules.updateCheck.cron")
+    );
+
+    let put_5 = serde_json::json!({
+        "backup": settings["backup"],
+        "schedules": {
+            "updateCheck": { "enabled": true, "cron": "* * * * *" }
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(put_5.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/settings")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let settings = response_json(resp).await;
+    assert_eq!(
+        settings["schedules"]["updateCheck"]["enabled"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        settings["schedules"]["updateCheck"]["cron"].as_str(),
+        Some("* * * * *")
+    );
+
+    let put_6 = serde_json::json!({
+        "backup": settings["backup"],
+        "schedules": {
+            "updateCheck": { "enabled": true, "cron": "0 * * * * *" }
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(put_6.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/settings")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let settings = response_json(resp).await;
+    assert_eq!(
+        settings["schedules"]["updateCheck"]["enabled"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        settings["schedules"]["updateCheck"]["cron"].as_str(),
+        Some("0 * * * * *")
+    );
 }
 
 #[tokio::test]

@@ -27,9 +27,9 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
         topbarHint: 'Compose 镜像更新 / 版本提示',
       }
     case 'queue':
-      return { title: '更新队列', topbarHint: '更新队列' }
+      return { title: '任务队列', topbarHint: '任务队列' }
     case 'job':
-      return { title: '任务详情', topbarHint: '更新队列' }
+      return { title: '任务详情', topbarHint: '任务队列' }
     case 'services':
       return { title: '服务', topbarHint: '服务' }
     case 'version-inference':
@@ -48,7 +48,7 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
       return {
         title: 'Webhook 收件箱',
         pageSubtitle: '按 delivery 展示事件、处理结果与响应状态',
-        topbarHint: '更新队列',
+        topbarHint: '任务队列',
       }
     case 'ghcr-webhook-registry':
       return {

@@ -3,7 +3,7 @@
 FROM docker:29-cli AS docker-cli
 
 FROM alpine:3.20 AS runtime-base
-RUN apk add --no-cache ca-certificates \
+RUN apk add --no-cache ca-certificates tzdata \
   && update-ca-certificates \
   && mkdir -p /usr/local/libexec/docker/cli-plugins
 

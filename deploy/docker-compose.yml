@@ -19,6 +19,7 @@ services:
     expose:
       - "50883"
     environment:
+      TZ: "Asia/Shanghai"
       DOCKREV_HTTP_ADDR: "0.0.0.0:50883"
       DOCKREV_DB_PATH: "/data/dockrev.sqlite3"
       DOCKREV_DOCKER_CONFIG: "/data/docker-config.json"
@@ -48,6 +49,7 @@ services:
     expose:
       - "50884"
     environment:
+      TZ: "Asia/Shanghai"
       DOCKREV_SUPERVISOR_HTTP_ADDR: "0.0.0.0:50884"
       DOCKREV_SUPERVISOR_BASE_PATH: "/supervisor"
       # For this local compose (image is dockrev:local), make auto-match work:

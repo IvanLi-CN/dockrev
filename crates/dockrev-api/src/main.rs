@@ -5,6 +5,7 @@ mod backup;
 mod compose;
 mod compose_runner;
 mod config;
+mod cron_expr;
 mod db;
 mod discovery;
 mod docker_runner;
@@ -19,6 +20,7 @@ mod registry;
 mod resource_usage;
 mod runner;
 mod runtime_scan;
+mod schedules;
 mod service_check;
 mod snapshot_worker;
 mod state;
@@ -122,6 +124,7 @@ async fn main() -> anyhow::Result<()> {
     discovery::spawn_task(state.clone());
     runtime_scan::spawn_task(state.clone());
     ghcr_webhook_jobs::spawn_tasks(state.clone());
+    schedules::spawn_tasks(state.clone());
     resource_usage::spawn_history_sampler(state.db.clone(), state.runner.clone());
     let app = api::router(state.clone());
 
