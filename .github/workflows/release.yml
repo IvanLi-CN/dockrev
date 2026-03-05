@@ -5,6 +5,12 @@ on:
     workflows: ["CI (main)"]
     types: [completed]
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      head_sha:
+        description: Commit SHA on main to backfill release for
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -18,9 +24,10 @@ env:
   SUPERVISOR_IMAGE_NAME: dockrev-supervisor
   PLATFORMS: linux/amd64,linux/arm64
   RUST_TOOLCHAIN: "1.91.0"
+  RELEASE_HEAD_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.workflow_run.head_sha }}
 
 concurrency:
-  group: release-${{ github.event.workflow_run.head_branch }}
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
@@ -28,7 +35,11 @@ jobs:
     name: Prepare (version + tag)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    if: github.event.workflow_run.conclusion == 'success'
+    if: >-
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push') ||
+      github.event_name == 'workflow_dispatch'
     outputs:
       app_effective_version: ${{ steps.meta.outputs.app_effective_version }}
       release_tag: ${{ steps.meta.outputs.release_tag }}
@@ -44,14 +55,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.RELEASE_HEAD_SHA }}
 
       - name: Determine release intent (labels)
         id: intent
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          WORKFLOW_RUN_SHA: ${{ env.RELEASE_HEAD_SHA }}
         run: bash ./.github/scripts/release-intent.sh
 
       - name: Compute effective version (label-driven)
@@ -123,7 +134,7 @@ jobs:
       - name: Checkout (workflow_run)
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.RELEASE_HEAD_SHA }}
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -148,7 +159,7 @@ jobs:
         if: ${{ hashFiles('web/dist/**') != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: web-dist-${{ github.event.workflow_run.head_sha }}
+          name: web-dist-${{ env.RELEASE_HEAD_SHA }}
           path: web/dist
           retention-days: 1
 
@@ -165,13 +176,13 @@ jobs:
       - name: Checkout (workflow_run)
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.RELEASE_HEAD_SHA }}
 
       - name: Download web dist artifact (best-effort)
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: web-dist-${{ github.event.workflow_run.head_sha }}
+          name: web-dist-${{ env.RELEASE_HEAD_SHA }}
           path: web/dist
 
       - name: Install system dependencies
@@ -223,7 +234,7 @@ jobs:
       - name: Upload binaries artifact (amd64)
         uses: actions/upload-artifact@v4
         with:
-          name: binaries-amd64-${{ github.event.workflow_run.head_sha }}
+          name: binaries-amd64-${{ env.RELEASE_HEAD_SHA }}
           path: |
             target/ci/amd64/release/dockrev
             target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev
@@ -246,13 +257,13 @@ jobs:
       - name: Checkout (workflow_run)
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.RELEASE_HEAD_SHA }}
 
       - name: Download web dist artifact (best-effort)
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: web-dist-${{ github.event.workflow_run.head_sha }}
+          name: web-dist-${{ env.RELEASE_HEAD_SHA }}
           path: web/dist
 
       - name: Install system dependencies
@@ -297,7 +308,7 @@ jobs:
       - name: Upload binaries artifact (arm64)
         uses: actions/upload-artifact@v4
         with:
-          name: binaries-arm64-${{ github.event.workflow_run.head_sha }}
+          name: binaries-arm64-${{ env.RELEASE_HEAD_SHA }}
           path: |
             target/ci/arm64/release/dockrev
             target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev
@@ -321,18 +332,18 @@ jobs:
       - name: Checkout (workflow_run)
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.RELEASE_HEAD_SHA }}
 
       - name: Download binaries (amd64)
         uses: actions/download-artifact@v4
         with:
-          name: binaries-amd64-${{ github.event.workflow_run.head_sha }}
+          name: binaries-amd64-${{ env.RELEASE_HEAD_SHA }}
           path: .
 
       - name: Download binaries (arm64)
         uses: actions/download-artifact@v4
         with:
-          name: binaries-arm64-${{ github.event.workflow_run.head_sha }}
+          name: binaries-arm64-${{ env.RELEASE_HEAD_SHA }}
           path: .
 
       - name: Ensure docker artifacts are executable
@@ -644,7 +655,7 @@ jobs:
           tags: ${{ steps.docker-tags.outputs.dockrev_tags }}
           labels: |
             org.opencontainers.image.version=${{ env.APP_EFFECTIVE_VERSION }}
-            org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
+            org.opencontainers.image.revision=${{ env.RELEASE_HEAD_SHA }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
           build-args: |
             APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
@@ -662,7 +673,7 @@ jobs:
           tags: ${{ steps.docker-tags.outputs.supervisor_tags }}
           labels: |
             org.opencontainers.image.version=${{ env.APP_EFFECTIVE_VERSION }}
-            org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
+            org.opencontainers.image.revision=${{ env.RELEASE_HEAD_SHA }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
           build-args: |
             APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
