@@ -739,6 +739,7 @@ export function ServicesPage(props: {
                       loading={stackApplyActionKey ? isTargetBusy(stackApplyActionKey) : false}
                       loadingClickable={Boolean(stackApplyActiveJob)}
                       title={stackApplyActiveJob ? '任务进行中，点击查看任务详情' : (stackApply.title ?? undefined)}
+                      hint={stackApplyActiveJob ? '任务进行中，点击查看任务详情' : undefined}
                       onClick={() => {
                             if (stackApplyActiveJob) {
                               navigate({ name: 'job', jobId: stackApplyActiveJob.jobId })
@@ -1103,6 +1104,7 @@ export function ServicesPage(props: {
                                 loading={svcApplyActionKey ? isTargetBusy(svcApplyActionKey) : false}
                                 loadingClickable={Boolean(svcApplyActiveJob)}
                                 title={svcApplyActiveJob ? '任务进行中，点击查看任务详情' : (svcApply.title ?? undefined)}
+                                hint={svcApplyActiveJob ? '任务进行中，点击查看任务详情' : undefined}
                                 onClick={() => {
                                           if (svcApplyActiveJob) {
                                             navigate({ name: 'job', jobId: svcApplyActiveJob.jobId })

@@ -690,6 +690,17 @@ async function runInteractive({ baseUrl, browser }) {
         return Boolean(btn.querySelector('.btnInlineSpinner')) && !btn.hasAttribute('disabled')
       }, null, { timeout: 10_000 })
 
+      await page.waitForFunction(() => {
+        const rows = Array.from(document.querySelectorAll('.rowLine'))
+        const apiRow = rows.find((item) => item.textContent?.includes('api'))
+        if (!apiRow) return false
+        const btn = Array.from(apiRow.querySelectorAll('button')).find((item) =>
+          ['更新中…', '排队中…'].some((label) => item.textContent?.includes(label))
+        )
+        if (!btn) return false
+        return btn.getAttribute('data-hint') === '任务进行中，点击查看任务详情'
+      }, null, { timeout: 10_000 })
+
       const jumped = await page.evaluate(() => {
         const rows = Array.from(document.querySelectorAll('.rowLine'))
         const apiRow = rows.find((item) => item.textContent?.includes('api'))
@@ -747,6 +758,14 @@ async function runInteractive({ baseUrl, browser }) {
         return Boolean(btn.querySelector('.btnInlineSpinner')) && !btn.hasAttribute('disabled')
       }, null, { timeout: 10_000 })
 
+      await page.waitForFunction(() => {
+        const btn = Array.from(document.querySelectorAll('button')).find((item) =>
+          ['更新中…', '排队中…'].includes(item.textContent?.trim() ?? '')
+        )
+        if (!btn) return false
+        return btn.getAttribute('data-hint') === '任务进行中，点击查看任务详情'
+      }, null, { timeout: 10_000 })
+
       const jumped = await page.evaluate(() => {
         const btn = Array.from(document.querySelectorAll('button')).find((item) =>
           ['更新中…', '排队中…'].includes(item.textContent?.trim() ?? '')
@@ -796,6 +815,14 @@ async function runInteractive({ baseUrl, browser }) {
         )
         if (!btn) return false
         return Boolean(btn.querySelector('.btnInlineSpinner')) && !btn.hasAttribute('disabled')
+      }, null, { timeout: 10_000 })
+
+      await page.waitForFunction(() => {
+        const btn = Array.from(document.querySelectorAll('button')).find((item) =>
+          ['更新中…', '排队中…'].includes(item.textContent?.trim() ?? '')
+        )
+        if (!btn) return false
+        return btn.getAttribute('data-hint') === '任务进行中，点击查看任务详情'
       }, null, { timeout: 10_000 })
 
       const jumped = await page.evaluate(() => {

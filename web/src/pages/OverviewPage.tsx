@@ -949,6 +949,7 @@ export function OverviewPage(props: {
           loading={allApplyActionBusy}
           loadingClickable={Boolean(allApplyActiveJob)}
           title={allApplyActiveJob ? '任务进行中，点击查看任务详情' : (allApply.title ?? undefined)}
+          hint={allApplyActiveJob ? '任务进行中，点击查看任务详情' : undefined}
           onClick={() => {
             if (allApplyActiveJob) {
               navigate({ name: 'job', jobId: allApplyActiveJob.jobId })
@@ -1349,6 +1350,7 @@ export function OverviewPage(props: {
                       loading={stackApplyActionKey ? isTargetBusy(stackApplyActionKey) : false}
                       loadingClickable={Boolean(stackApplyActiveJob)}
                       title={stackApplyActiveJob ? '任务进行中，点击查看任务详情' : (stackApply.title ?? undefined)}
+                      hint={stackApplyActiveJob ? '任务进行中，点击查看任务详情' : undefined}
                       onClick={() => {
                           if (stackApplyActiveJob) {
                             navigate({ name: 'job', jobId: stackApplyActiveJob.jobId })
@@ -1716,6 +1718,7 @@ export function OverviewPage(props: {
                                 loading={svcApplyActionKey ? isTargetBusy(svcApplyActionKey) : false}
                                 loadingClickable={Boolean(svcApplyActiveJob)}
                                 title={svcApplyActiveJob ? '任务进行中，点击查看任务详情' : (svcApply.title ?? undefined)}
+                                hint={svcApplyActiveJob ? '任务进行中，点击查看任务详情' : undefined}
                                 onClick={() => {
                                           if (svcApplyActiveJob) {
                                             navigate({ name: 'job', jobId: svcApplyActiveJob.jobId })

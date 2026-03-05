@@ -370,6 +370,7 @@ export function ServiceDetailPage(props: {
               }
               loading={applyActionBusy}
               loadingClickable={Boolean(applyActiveJob)}
+              hint={applyActiveJob ? '任务进行中，点击查看任务详情' : undefined}
               title={
                 applyActiveJob
                   ? '任务进行中，点击查看任务详情'

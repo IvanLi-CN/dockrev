@@ -86,6 +86,14 @@
 
 - 2026-03-04：实现“更新中按钮可点击跳任务详情”，并补充 storybook 自动回归。
 - 2026-03-04：review-loop 修复活跃态按钮禁用判断与 tracker 轮询竞态覆盖问题。
+- 2026-03-05：更新按钮提示气泡为浮层定位方案，补充气泡证据截图用于 PR 展示。
+
+## Visual Evidence (PR)
+
+![Overview 更新全部按钮气泡](./assets/proof-overview-all-active-tooltip.png)
+![Services 更新此 stack 按钮气泡](./assets/proof-services-stack-active-tooltip.png)
+![Services 执行更新按钮气泡](./assets/proof-services-service-active-tooltip.png)
+![Service Detail 执行更新按钮气泡](./assets/proof-service-detail-active-tooltip.png)
 
 ## 参考（References）
 

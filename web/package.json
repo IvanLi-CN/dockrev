@@ -18,6 +18,7 @@
     "preview": "bun --bun ./node_modules/.bin/vite preview"
   },
   "dependencies": {
+    "@floating-ui/react": "^0.27.19",
     "@iconify-icons/mdi": "^1.2.48",
     "@iconify/react": "^6.0.2",
     "react": "^19.2.0",
