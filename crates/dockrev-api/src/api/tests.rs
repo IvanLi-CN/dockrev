@@ -6582,6 +6582,66 @@ async fn settings_and_notifications_roundtrip() {
 }
 
 #[tokio::test]
+async fn notifications_test_endpoint_supports_channel_override() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/notifications/test")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "message": "dockrev: test notification",
+                        "channel": "webhook",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let payload = response_json(resp).await;
+    assert_eq!(payload["ok"].as_bool(), Some(true));
+    let results = payload["results"].as_object().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results["webhook"]["ok"].as_bool(), Some(false));
+    assert!(
+        results["webhook"]["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("webhook.url missing")
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/notifications/test")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "message": "dockrev: test notification",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let payload = response_json(resp).await;
+    assert_eq!(payload["ok"].as_bool(), Some(true));
+    let results = payload["results"].as_object().unwrap();
+    assert!(results.is_empty());
+}
+
+#[tokio::test]
 async fn resource_usage_history_returns_samples_for_window() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());

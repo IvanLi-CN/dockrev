@@ -3509,6 +3509,154 @@ html[data-theme='light'] .modalOverlay {
   gap: 12px;
 }
 
+.notificationChannelHeadActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.notificationTestActionWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.notificationTestBtn {
+  min-width: 88px;
+  padding-inline: 10px 12px;
+}
+
+.notificationTestBtnInner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.notificationTestBtnIcon {
+  width: 15px;
+  height: 15px;
+}
+
+.notificationTestBtnRunning .notificationTestBtnIcon {
+  animation: btnInlineSpin 0.9s linear infinite;
+}
+
+.notificationTestBubble {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 12;
+  width: min(320px, calc(100vw - 28px));
+  border-radius: 14px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  background: color-mix(in srgb, var(--panel2) 92%, #020814 8%);
+  box-shadow: var(--shadow-soft);
+  color: var(--text);
+}
+
+.notificationTestBubble::before {
+  content: '';
+  position: absolute;
+  right: 18px;
+  top: -6px;
+  width: 10px;
+  height: 10px;
+  border-left: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  border-top: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  background: color-mix(in srgb, var(--panel2) 92%, #020814 8%);
+  transform: rotate(45deg);
+}
+
+.notificationTestBubbleOk {
+  border-color: color-mix(in srgb, var(--color-success) 44%, var(--borderColor) 56%);
+}
+
+.notificationTestBubbleOk::before {
+  border-left-color: color-mix(in srgb, var(--color-success) 44%, var(--borderColor) 56%);
+  border-top-color: color-mix(in srgb, var(--color-success) 44%, var(--borderColor) 56%);
+}
+
+.notificationTestBubbleBad {
+  border-color: color-mix(in srgb, var(--color-error) 46%, var(--borderColor) 54%);
+}
+
+.notificationTestBubbleBad::before {
+  border-left-color: color-mix(in srgb, var(--color-error) 46%, var(--borderColor) 54%);
+  border-top-color: color-mix(in srgb, var(--color-error) 46%, var(--borderColor) 54%);
+}
+
+.notificationTestBubbleTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.notificationTestBubbleTitle .iconify {
+  width: 14px;
+  height: 14px;
+  color: color-mix(in srgb, var(--color-primary) 82%, var(--text) 18%);
+}
+
+.notificationTestBubbleSteps {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.notificationTestBubbleStep {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  gap: 8px;
+  align-items: start;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.notificationTestBubbleStep .iconify {
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+}
+
+.notificationTestBubbleStepRunning {
+  color: color-mix(in srgb, var(--color-primary) 82%, var(--text) 18%);
+}
+
+.notificationTestBubbleStepInfo {
+  color: var(--muted2);
+}
+
+.notificationTestBubbleStepOk {
+  color: color-mix(in srgb, var(--color-success) 84%, var(--text) 16%);
+}
+
+.notificationTestBubbleStepBad {
+  color: color-mix(in srgb, var(--color-error) 84%, var(--text) 16%);
+}
+
+.notificationTestBubbleStepIconSpin {
+  animation: btnInlineSpin 0.9s linear infinite;
+}
+
+.notificationTestBubbleError {
+  margin-top: 9px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--color-error) 28%, var(--borderColor) 72%);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  color: color-mix(in srgb, var(--color-error) 86%, var(--text) 14%);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .autoSaveToast {
   position: fixed;
   right: 20px;
@@ -5012,6 +5160,31 @@ html[data-theme='light'] .card {
   .kvRow {
     grid-template-columns: 1fr;
     gap: 3px;
+  }
+
+  .settingHead {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .notificationChannelHeadActions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .notificationTestActionWrap {
+    min-width: 0;
+  }
+
+  .notificationTestBubble {
+    left: 0;
+    right: auto;
+    width: min(320px, calc(100vw - 42px));
+  }
+
+  .notificationTestBubble::before {
+    left: 18px;
+    right: auto;
   }
 }
 

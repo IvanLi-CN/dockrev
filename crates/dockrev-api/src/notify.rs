@@ -12,7 +12,10 @@ use web_push::{
     WebPushClient as _, WebPushError, WebPushMessageBuilder,
 };
 
-use crate::{api::types::JobLogLine, state::AppState};
+use crate::{
+    api::types::{JobLogLine, NotificationTestChannel},
+    state::AppState,
+};
 
 pub async fn notify_job_updated(
     state: &AppState,
@@ -27,7 +30,14 @@ pub async fn notify_job_updated(
         "ts": now_rfc3339,
         "summary": summary,
     });
-    send_all(state, Some(job_id), now_rfc3339, &payload).await?;
+    send_all(
+        state,
+        Some(job_id),
+        now_rfc3339,
+        &payload,
+        NotifySendMode::Default,
+    )
+    .await?;
     Ok(())
 }
 
@@ -35,14 +45,44 @@ pub async fn send_test(
     state: &AppState,
     now_rfc3339: &str,
     message: &str,
+    channel: Option<NotificationTestChannel>,
 ) -> anyhow::Result<Value> {
     let payload = json!({
         "type": "test",
         "ts": now_rfc3339,
         "message": message,
     });
-    let results = send_all(state, None, now_rfc3339, &payload).await?;
+    let results = send_all(
+        state,
+        None,
+        now_rfc3339,
+        &payload,
+        NotifySendMode::Test { channel },
+    )
+    .await?;
     Ok(results)
+}
+
+#[derive(Clone, Copy, Debug)]
+enum NotifySendMode {
+    Default,
+    Test {
+        channel: Option<NotificationTestChannel>,
+    },
+}
+
+fn should_send_channel(
+    mode: NotifySendMode,
+    enabled: bool,
+    channel: NotificationTestChannel,
+) -> bool {
+    match mode {
+        NotifySendMode::Default => enabled,
+        NotifySendMode::Test {
+            channel: Some(target),
+        } => target == channel,
+        NotifySendMode::Test { channel: None } => enabled,
+    }
 }
 
 async fn send_all(
@@ -50,6 +90,7 @@ async fn send_all(
     job_id: Option<&str>,
     now_rfc3339: &str,
     payload: &Value,
+    mode: NotifySendMode,
 ) -> anyhow::Result<Value> {
     let settings = state.db.get_notification_settings().await?;
     let client = reqwest::Client::builder()
@@ -59,13 +100,21 @@ async fn send_all(
 
     let mut results = serde_json::Map::new();
 
-    if settings.webhook_enabled {
+    if should_send_channel(
+        mode,
+        settings.webhook_enabled,
+        NotificationTestChannel::Webhook,
+    ) {
         let r = send_webhook(&client, settings.webhook_url.as_deref(), payload).await;
         log_result(state, job_id, now_rfc3339, "webhook", &r).await;
         results.insert("webhook".to_string(), result_value(r));
     }
 
-    if settings.telegram_enabled {
+    if should_send_channel(
+        mode,
+        settings.telegram_enabled,
+        NotificationTestChannel::Telegram,
+    ) {
         let r = send_telegram(
             &client,
             settings.telegram_bot_token.as_deref(),
@@ -77,13 +126,17 @@ async fn send_all(
         results.insert("telegram".to_string(), result_value(r));
     }
 
-    if settings.email_enabled {
+    if should_send_channel(mode, settings.email_enabled, NotificationTestChannel::Email) {
         let r = send_email(settings.email_smtp_url.as_deref(), payload).await;
         log_result(state, job_id, now_rfc3339, "email", &r).await;
         results.insert("email".to_string(), result_value(r));
     }
 
-    if settings.webpush_enabled {
+    if should_send_channel(
+        mode,
+        settings.webpush_enabled,
+        NotificationTestChannel::WebPush,
+    ) {
         let r = send_web_push(
             state,
             settings.webpush_vapid_private_key.as_deref(),

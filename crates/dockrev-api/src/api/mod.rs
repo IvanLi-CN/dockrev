@@ -4141,7 +4141,7 @@ async fn test_notifications(
     let _user = require_user(&state, &headers)?;
     let now = now_rfc3339().map_err(map_internal)?;
     let message = req.message.unwrap_or_else(|| "dockrev test".to_string());
-    let results = notify::send_test(state.as_ref(), &now, &message)
+    let results = notify::send_test(state.as_ref(), &now, &message, req.channel)
         .await
         .map_err(map_internal)?;
     Ok(Json(TestNotificationsResponse { ok: true, results }))

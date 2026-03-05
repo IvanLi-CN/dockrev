@@ -35,6 +35,12 @@ function setInputValue(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event('change', { bubbles: true }))
 }
 
+function clickNotificationTestButton(canvasElement: HTMLElement, channel: 'email' | 'webhook' | 'telegram' | 'webPush') {
+  const button = canvasElement.querySelector<HTMLButtonElement>(`button[data-notification-test-channel="${channel}"]`)
+  if (!button) throw new globalThis.Error(`notification test button not found: ${channel}`)
+  button.click()
+}
+
 export const Default: Story = {
   parameters: { dockrevApiScenario: 'settings-configured' },
   render: () => renderSettingsPage(),
@@ -64,11 +70,37 @@ export const GhcrPreview: Story = {
 
 export const NotificationCard: Story = {
   parameters: { dockrevApiScenario: 'settings-configured' },
-  render: () => renderSettingsPage('聚焦通知卡片（Email / Webhook / Telegram / Web Push）'),
+  render: () => renderSettingsPage('聚焦通知卡片（每渠道独立测试按钮 + 气泡结果）'),
   play: async ({ canvasElement }) => {
     // Wait a tick for async settings data to paint, then jump to the card.
     await new Promise((resolve) => setTimeout(resolve, 120))
     scrollToNotificationCard(canvasElement)
+  },
+}
+
+export const NotificationChannelTestBubbles: Story = {
+  parameters: { dockrevApiScenario: 'settings-configured' },
+  render: () => renderSettingsPage('验证独立测试按钮：Email 成功 + Web Push 失败气泡'),
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    scrollToNotificationCard(canvasElement)
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    clickNotificationTestButton(canvasElement, 'email')
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    clickNotificationTestButton(canvasElement, 'webPush')
+    await new Promise((resolve) => setTimeout(resolve, 120))
+  },
+}
+
+export const NotificationChannelDisabledError: Story = {
+  parameters: { dockrevApiScenario: 'settings-notification-channel-errors' },
+  render: () => renderSettingsPage('验证渠道关闭/缺配置时仍可测试并显示具体错误'),
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    scrollToNotificationCard(canvasElement)
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    clickNotificationTestButton(canvasElement, 'telegram')
+    await new Promise((resolve) => setTimeout(resolve, 120))
   },
 }
 

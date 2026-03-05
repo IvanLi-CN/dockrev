@@ -389,6 +389,18 @@ export type NotificationConfig = {
   }
 }
 
+export type NotificationTestChannel = 'email' | 'webhook' | 'telegram' | 'webPush'
+
+export type NotificationChannelTestResult = {
+  ok: boolean
+  error?: string
+}
+
+export type TestNotificationsResponse = {
+  ok: boolean
+  results: Partial<Record<NotificationTestChannel, NotificationChannelTestResult>>
+}
+
 export type GitHubPackagesTarget = {
   input: string
   kind: 'repo' | 'owner' | string
@@ -1064,12 +1076,18 @@ export async function removeGitHubPackagesTarget(input: RemoveGitHubPackagesTarg
   return (await resp.json()) as RemoveGitHubPackagesTargetResponse
 }
 
-export async function testNotifications(message?: string) {
+export async function testNotifications(input?: {
+  message?: string | null
+  channel?: NotificationTestChannel
+}): Promise<TestNotificationsResponse> {
   const resp = await apiFetch('/api/notifications/test', {
     method: 'POST',
-    body: JSON.stringify({ message: message || null }),
+    body: JSON.stringify({
+      message: input?.message ?? null,
+      channel: input?.channel ?? null,
+    }),
   })
-  return (await resp.json()) as { ok: boolean; results: unknown }
+  return (await resp.json()) as TestNotificationsResponse
 }
 
 export async function createWebPushSubscription(input: { endpoint: string; keys: { p256dh: string; auth: string } }) {
