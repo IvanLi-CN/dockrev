@@ -27,7 +27,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
-| p2n8k | Dockrev：通知事件开关 + 新版本发现通知 + GHCR Webhook 异常通知 | 已完成 | `p2n8k-notification-event-switches-and-new-alerts/SPEC.md` | 2026-03-06 | fast-track（spec-sync: clippy refactor + 用户文案去 jobId + 新版本/巡检摘要直出服务与仓库名 + 巡检文案移除打开设置） |
+| p2n8k | Dockrev：通知事件开关 + 新版本发现通知 + GHCR Webhook 异常通知 | 已完成 | `p2n8k-notification-event-switches-and-new-alerts/SPEC.md` | 2026-03-06 | fast-track（spec-sync: clippy refactor + 用户文案去 jobId + 新版本/巡检摘要直出服务与仓库名 + 巡检文案移除打开设置 + Telegram 首行任务超链接） |
 | keynr | Dockrev：设置页新增 Cron 定时任务（定期检查更新 + Webhook 巡查）+ /queue 模块名修正 | 已完成 | `keynr-settings-scheduled-cron-tasks/SPEC.md` | 2026-03-05 | fast-track |
 | tqeph | Dockrev：GHCR 维护页项目标题链接与 Webhook 快捷入口 | 已完成 | `tqeph-ghcr-webhook-registry-links/SPEC.md` | 2026-03-05 | fast-track（标题外链 + webhook 快捷入口 + story 覆盖） |
 | 7cbvf | Dockrev：任务类型/作用域标签间距修复（全站统一 6px） | 已完成 | `7cbvf-job-tag-spacing/SPEC.md` | 2026-03-05 | fast-track（Queue/JobDetail 标签容器统一 + 6px gap） |

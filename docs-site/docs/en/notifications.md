@@ -141,6 +141,7 @@ Key fields:
 - `links.primaryUrl`: defaults to `links.jobUrl` (Web Push click target)
 - `links.repos[]`: failing repo list with state and error excerpt
 - `human.summary`: directly lists visible failing repos (example: `Found 2 anomalous repos: acme/api [missing], acme/worker [error].`)
+- Telegram first line includes a clickable task link: `Dockrev: GitHub Webhook audit anomaly 任务`.
 
 Truncation:
 

@@ -1261,17 +1261,24 @@ fn render_email_new_version_html(payload: &NewVersionNotificationPayloadV2) -> S
 
 fn render_telegram_ghcr_webhook_anomaly_html(payload: &GhcrWebhookAnomalyPayloadV2) -> String {
     let mut lines: Vec<String> = Vec::new();
-    lines.push(format!("<b>{}</b>", escape_html(&payload.human.title)));
+    if is_absolute_http_url(&payload.links.job_url) {
+        lines.push(format!(
+            "<b>{}</b> {}",
+            escape_html(&payload.human.title),
+            render_open_link_html(&payload.links.job_url, "任务")
+        ));
+    } else {
+        lines.push(format!("<b>{}</b>", escape_html(&payload.human.title)));
+    }
     lines.push(escape_html(&payload.human.summary));
 
     if !is_absolute_http_url(&payload.links.settings_url) {
         lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
+        lines.push(format!(
+            "任务：{}",
+            render_open_link_html(&payload.links.job_url, "任务")
+        ));
     }
-
-    lines.push(format!(
-        "巡检任务：{}",
-        render_open_link_html(&payload.links.job_url, "查看巡检任务")
-    ));
 
     if !payload.links.repos.is_empty() {
         lines.push(String::new());
@@ -1297,14 +1304,15 @@ fn render_telegram_ghcr_webhook_anomaly_html(payload: &GhcrWebhookAnomalyPayload
 
 fn render_telegram_ghcr_webhook_anomaly_plain(payload: &GhcrWebhookAnomalyPayloadV2) -> String {
     let mut lines: Vec<String> = Vec::new();
-    lines.push(payload.human.title.clone());
+    lines.push(format!(
+        "{} 任务：{}",
+        payload.human.title, payload.links.job_url
+    ));
     lines.push(payload.human.summary.clone());
 
     if !is_absolute_http_url(&payload.links.settings_url) {
         lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
     }
-
-    lines.push(format!("任务：{}", payload.links.job_url));
 
     if !payload.links.repos.is_empty() {
         lines.push(String::new());
@@ -3053,10 +3061,14 @@ mod tests {
     fn ghcr_anomaly_telegram_render_contains_repo_state() {
         let payload = sample_ghcr_anomaly_payload();
         let html = render_telegram_ghcr_webhook_anomaly_html(&payload);
+        assert!(html.contains(
+            "<b>Dockrev：GitHub Webhook 巡检异常</b> <a href=\"https://dockrev.example.com/queue/job_ghcr_123\">任务</a>"
+        ));
         assert!(html.contains("acme/api"));
         assert!(html.contains("acme/worker"));
         assert!(html.contains("missing"));
         assert!(html.contains("webhook missing"));
+        assert!(!html.contains("巡检任务："));
         assert!(!html.contains("打开设置"));
     }
 

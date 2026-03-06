@@ -174,6 +174,7 @@ Dockrev 会生成两类路径（总能生成）：
 - 标题：`Dockrev：GitHub Webhook 巡检异常`
 - 摘要：`巡检发现 2 个异常仓库：acme/api [missing]、acme/worker [error]。`
 - 主链接：`https://dockrev.example.com/queue/job_...`
+- Telegram 首行：`Dockrev：GitHub Webhook 巡检异常 任务（可点击）`
 
 ## Notification test（`dockrev.notification.test.v2`）
 
