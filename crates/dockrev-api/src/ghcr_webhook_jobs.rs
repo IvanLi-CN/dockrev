@@ -15,7 +15,7 @@ use crate::{
         GitHubPackagesWebhookOverviewResponse, GitHubPackagesWebhookOverviewSummary, JobListItem,
         JobLogLine, JobProgress, JobScope, JobType,
     },
-    github, ids,
+    github, ids, notify,
     state::AppState,
 };
 
@@ -737,6 +737,56 @@ async fn run_claimed_job(state: Arc<AppState>, job: JobListItem) -> anyhow::Resu
         }),
     )
     .await;
+
+    let scheduled_audit = matches!(
+        parsed.kind,
+        ParsedGhcrWebhookJobKind::Legacy(GhcrWebhookOp::AuditAll)
+    ) && job.created_by == "schedule"
+        && job.reason == "schedule";
+    let anomaly_total = counters.missing + counters.conflict + counters.error;
+    if scheduled_audit && anomaly_total > 0 {
+        match state.db.list_github_packages_repos().await {
+            Ok(rows) => {
+                let anomaly_repos = rows
+                    .into_iter()
+                    .filter(|row| row.selected)
+                    .filter(|row| {
+                        matches!(row.webhook_state.as_str(), "missing" | "conflict" | "error")
+                    })
+                    .map(|row| notify::GhcrWebhookAnomalyRepo {
+                        owner: row.owner,
+                        repo: row.repo,
+                        state: row.webhook_state,
+                        last_error: row.last_error,
+                    })
+                    .collect::<Vec<_>>();
+
+                let notify_state = state.clone();
+                let notify_job_id = job_id.clone();
+                let notify_finished_at = finished_at.clone();
+                tokio::spawn(async move {
+                    let _ = notify::notify_ghcr_webhook_anomaly(
+                        notify_state.as_ref(),
+                        &notify_job_id,
+                        final_status,
+                        &notify_finished_at,
+                        counters.missing,
+                        counters.conflict,
+                        counters.error,
+                        &anomaly_repos,
+                    )
+                    .await;
+                });
+            }
+            Err(err) => {
+                tracing::warn!(
+                    job_id = %job_id,
+                    error = %err,
+                    "ghcr webhook anomaly notify: failed to list repos"
+                );
+            }
+        }
+    }
 
     Ok(())
 }

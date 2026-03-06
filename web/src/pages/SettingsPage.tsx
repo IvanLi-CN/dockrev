@@ -109,6 +109,11 @@ const NOTIFICATION_CHANNEL_LABEL: Record<NotificationTestChannel, string> = {
   telegram: 'Telegram',
   webPush: 'Web Push',
 }
+const DEFAULT_NOTIFICATION_EVENTS = {
+  update: true,
+  newVersion: true,
+  ghcrWebhookAnomaly: true,
+} as const
 
 type GhcrDraft = {
   enabled: boolean
@@ -130,6 +135,16 @@ function isMaskedTelegramBotToken(value: string): boolean {
   return value === TELEGRAM_BOT_TOKEN_MASK || value === PAT_MASK
 }
 
+function normalizeNotificationEvents(
+  events: NotificationConfig['events'] | undefined,
+): NonNullable<NotificationConfig['events']> {
+  return {
+    update: events?.update ?? DEFAULT_NOTIFICATION_EVENTS.update,
+    newVersion: events?.newVersion ?? DEFAULT_NOTIFICATION_EVENTS.newVersion,
+    ghcrWebhookAnomaly: events?.ghcrWebhookAnomaly ?? DEFAULT_NOTIFICATION_EVENTS.ghcrWebhookAnomaly,
+  }
+}
+
 function normalizeNotificationsForUi(input: NotificationConfig): NotificationConfig {
   const rawBotToken = input.telegram.botToken ?? ''
   const hasExplicitBotToken = rawBotToken.trim().length > 0 && !isMaskedTelegramBotToken(rawBotToken)
@@ -142,6 +157,7 @@ function normalizeNotificationsForUi(input: NotificationConfig): NotificationCon
       botToken,
       botTokenConfigured,
     },
+    events: normalizeNotificationEvents(input.events),
   }
 }
 
@@ -158,6 +174,7 @@ function normalizeNotificationsForSave(input: NotificationConfig): NotificationC
       botToken,
       chatId,
     },
+    events: normalizeNotificationEvents(input.events),
   }
 }
 
@@ -1859,7 +1876,74 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
           <div className="card">
             <div className="title">通知</div>
-            <div className="muted">事件：发现更新 / 版本提示 / 更新成功 / 更新失败 / 备份失败</div>
+            <div className="muted">先选择通知事件，再为每个渠道配置发送方式。</div>
+
+            <div className="kv" style={{ marginBottom: 12 }}>
+              <div className="kvRow">
+                <div className="label">更新完成通知</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Switch
+                    checked={normalizeNotificationEvents(notifications.events).update}
+                    disabled={busy}
+                    onChange={(value) =>
+                      updateNotifications(
+                        'notifications.events.update',
+                        (current) => ({
+                          ...current,
+                          events: { ...normalizeNotificationEvents(current.events), update: value },
+                        }),
+                        true,
+                      )
+                    }
+                  />
+                  <div className="muted">{normalizeNotificationEvents(notifications.events).update ? 'on' : 'off'}</div>
+                </div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">发现新版本通知（定时检查）</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Switch
+                    checked={normalizeNotificationEvents(notifications.events).newVersion}
+                    disabled={busy}
+                    onChange={(value) =>
+                      updateNotifications(
+                        'notifications.events.newVersion',
+                        (current) => ({
+                          ...current,
+                          events: { ...normalizeNotificationEvents(current.events), newVersion: value },
+                        }),
+                        true,
+                      )
+                    }
+                  />
+                  <div className="muted">{normalizeNotificationEvents(notifications.events).newVersion ? 'on' : 'off'}</div>
+                </div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">GitHub Webhook 异常通知（巡检）</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Switch
+                    checked={normalizeNotificationEvents(notifications.events).ghcrWebhookAnomaly}
+                    disabled={busy}
+                    onChange={(value) =>
+                      updateNotifications(
+                        'notifications.events.ghcrWebhookAnomaly',
+                        (current) => ({
+                          ...current,
+                          events: { ...normalizeNotificationEvents(current.events), ghcrWebhookAnomaly: value },
+                        }),
+                        true,
+                      )
+                    }
+                  />
+                  <div className="muted">
+                    {normalizeNotificationEvents(notifications.events).ghcrWebhookAnomaly ? 'on' : 'off'}
+                  </div>
+                </div>
+              </div>
+            </div>
 
             <NotificationChannelCard
               channel="email"

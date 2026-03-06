@@ -29,9 +29,26 @@ Purpose: turn internal paths (e.g. `queue/{jobId}`) into absolute URLs (e.g. `ht
 | kind | schema | Trigger (high level) |
 | --- | --- | --- |
 | `job_finished` | `dockrev.notification.job.v2` | An update job finishes (success / failed / rolled back) and is not filtered out |
+| `new_version_discovered` | `dockrev.notification.new_version_discovered.v2` | Scheduled update-check discovers new versions (aggregated per check job) |
+| `ghcr_webhook_anomaly` | `dockrev.notification.ghcr_webhook_anomaly.v2` | Scheduled GHCR webhook audit (`audit_all`) detects missing/conflict/error repos |
 | `notification_test` | `dockrev.notification.test.v2` | `POST /api/notifications/test` |
 
 > Webhook receivers should always route by `schema` (the switch to `dockrev.notification.job.v2` is a breaking change).
+
+## Event switches in Settings
+
+Path: `Settings -> Notifications`
+
+Per-event switches:
+
+- `Update finished notification` -> controls `job_finished`
+- `New version discovered (scheduled check)` -> controls `new_version_discovered`
+- `GitHub webhook anomaly (audit)` -> controls `ghcr_webhook_anomaly`
+
+Behavior:
+
+- If an event switch is off, that event is not sent to any channel.
+- Delivery requires both switches to be on: event switch **and** channel switch.
 
 ## Job finished (`dockrev.notification.job.v2`)
 
@@ -92,6 +109,41 @@ Uniquely mapped means:
 - the omitted count is stored in `links.truncated.serviceUrlsOmitted`
 - error excerpts (when present) are truncated to avoid overly long Telegram/Email messages
 
+## New version discovered (`dockrev.notification.new_version_discovered.v2`)
+
+Trigger: scheduled update checks only. A notification is sent when a check run discovers new versions.
+
+Key fields:
+
+- `check.jobId`: check job id
+- `check.servicesChecked`: total services checked
+- `check.newVersions`: number of services with newly discovered versions
+- `links.jobUrl`: `/queue/{jobId}`
+- `links.serviceUrls[]`: `/services/{stackId}/{serviceId}`
+- `links.primaryUrl`: service URL when exactly one service is affected, otherwise job URL
+
+Truncation:
+
+- `links.serviceUrls` keeps at most 10 entries
+- overflow is reported via `links.truncated.serviceUrlsOmitted`
+
+## GHCR webhook anomaly (`dockrev.notification.ghcr_webhook_anomaly.v2`)
+
+Trigger: scheduled GHCR webhook audit (`audit_all`) only. Sent when missing/conflict/error repos are found.
+
+Key fields:
+
+- `job.id`: audit job id
+- `job.missing/conflict/error`: anomaly counts
+- `links.settingsUrl`: settings page URL for remediation
+- `links.jobUrl`: job detail URL for audit logs
+- `links.repos[]`: failing repo list with state and error excerpt
+
+Truncation:
+
+- `links.repos` keeps at most 10 entries
+- overflow is reported via `links.truncated.reposOmitted`
+
 ## Notification test (`dockrev.notification.test.v2`)
 
 - `url` points to the settings page (`/settings`) to demonstrate a clickable link
@@ -109,9 +161,13 @@ Subject includes status + job id. Body is sent as both HTML and plain text.
 
 ### Webhook (JSON)
 
-Raw JSON payload is POSTed. Route by `schema`.
+Raw JSON payload is POSTed. Route by `schema`:
+
+- `dockrev.notification.job.v2`
+- `dockrev.notification.new_version_discovered.v2`
+- `dockrev.notification.ghcr_webhook_anomaly.v2`
+- `dockrev.notification.test.v2`
 
 ### Web Push
 
-The payload includes `title` / `body` / `url`. Clicking opens `url` (prefer service page, otherwise job page).
-
+The payload includes `title` / `body` / `url`. Clicking opens `url` (service page, job page, or settings page depending on event type).

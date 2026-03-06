@@ -403,6 +403,11 @@ export type NotificationConfig = {
     vapidPrivateKey?: string | null
     vapidSubject?: string | null
   }
+  events?: {
+    update: boolean
+    newVersion: boolean
+    ghcrWebhookAnomaly: boolean
+  }
 }
 
 export type NotificationTestChannel = 'email' | 'webhook' | 'telegram' | 'webPush'

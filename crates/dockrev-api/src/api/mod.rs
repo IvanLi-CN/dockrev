@@ -921,12 +921,14 @@ async fn handle_check_worker_result(
     planned_services: u32,
     services_checked: &mut u32,
     services_with_candidate: &mut u32,
+    discovered_versions: &mut Vec<CheckDiscoveredVersion>,
     latest_target: &mut Option<String>,
     last_progress_logged_at: &mut Option<std::time::Instant>,
     latest_progress: &mut JobProgress,
 ) -> Result<(), ApiError> {
     let CheckWorkerResult {
         stack_id,
+        service_id,
         service_name,
         service_image_ref,
         service_image_tag,
@@ -939,6 +941,15 @@ async fn handle_check_worker_result(
     let outcome = outcome.map_err(map_internal)?;
     if outcome.candidate_present {
         *services_with_candidate = (*services_with_candidate).saturating_add(1);
+    }
+    if outcome.candidate_present && outcome.candidate_digest_changed {
+        discovered_versions.push(CheckDiscoveredVersion {
+            stack_id: stack_id.clone(),
+            service_id: service_id.clone(),
+            service_name: service_name.clone(),
+            current_tag: Some(service_image_tag.clone()),
+            candidate_tag: outcome.candidate_tag.clone(),
+        });
     }
     if outcome.candidate_digest_changed
         && outcome.candidate_digest.is_some()
@@ -1006,10 +1017,20 @@ async fn handle_check_worker_result(
 #[derive(Debug)]
 struct CheckWorkerResult {
     stack_id: String,
+    service_id: String,
     service_name: String,
     service_image_ref: String,
     service_image_tag: String,
     outcome: anyhow::Result<crate::service_check::ServiceCheckOutcome>,
+}
+
+#[derive(Clone, Debug)]
+struct CheckDiscoveredVersion {
+    stack_id: String,
+    service_id: String,
+    service_name: String,
+    current_tag: Option<String>,
+    candidate_tag: Option<String>,
 }
 
 async fn trigger_check(
@@ -1325,6 +1346,7 @@ pub(crate) async fn run_check_for_job(
     let mut planned_services = 0u32;
     let mut services_checked = 0u32;
     let mut services_with_candidate = 0u32;
+    let mut discovered_versions: Vec<CheckDiscoveredVersion> = Vec::new();
     let mut last_progress_logged_at: Option<std::time::Instant> = None;
     let mut latest_target: Option<String> = None;
     let mut next_spawn_not_before: Option<std::time::Instant> = None;
@@ -1344,6 +1366,7 @@ pub(crate) async fn run_check_for_job(
                 planned_services,
                 &mut services_checked,
                 &mut services_with_candidate,
+                &mut discovered_versions,
                 &mut latest_target,
                 &mut last_progress_logged_at,
                 &mut latest_progress,
@@ -1363,6 +1386,7 @@ pub(crate) async fn run_check_for_job(
                     planned_services,
                     &mut services_checked,
                     &mut services_with_candidate,
+                    &mut discovered_versions,
                     &mut latest_target,
                     &mut last_progress_logged_at,
                     &mut latest_progress,
@@ -1384,6 +1408,7 @@ pub(crate) async fn run_check_for_job(
                     planned_services,
                     &mut services_checked,
                     &mut services_with_candidate,
+                    &mut discovered_versions,
                     &mut latest_target,
                     &mut last_progress_logged_at,
                     &mut latest_progress,
@@ -1412,6 +1437,7 @@ pub(crate) async fn run_check_for_job(
                             planned_services,
                             &mut services_checked,
                             &mut services_with_candidate,
+                            &mut discovered_versions,
                             &mut latest_target,
                             &mut last_progress_logged_at,
                             &mut latest_progress,
@@ -1431,6 +1457,7 @@ pub(crate) async fn run_check_for_job(
         let spawn_repo_tags_cache = repo_tags_cache.clone();
         join_set.spawn(async move {
             let stack_id = unit.stack_id.clone();
+            let service_id = unit.service.id.clone();
             let service_name = unit.service.name.clone();
             let service_image_ref = unit.service.image_ref.clone();
             let service_image_tag = unit.service.image_tag.clone();
@@ -1462,6 +1489,7 @@ pub(crate) async fn run_check_for_job(
             .await;
             CheckWorkerResult {
                 stack_id,
+                service_id,
                 service_name,
                 service_image_ref,
                 service_image_tag,
@@ -1528,12 +1556,28 @@ pub(crate) async fn run_check_for_job(
     let progress_json = serde_json::to_value(&latest_progress)
         .map_err(anyhow::Error::from)
         .map_err(map_internal)?;
+    let new_versions_json = discovered_versions
+        .iter()
+        .map(|item| {
+            json!({
+                "stackId": item.stack_id,
+                "serviceId": item.service_id,
+                "serviceName": item.service_name,
+                "currentTag": item.current_tag,
+                "candidateTag": item.candidate_tag,
+            })
+        })
+        .collect::<Vec<_>>();
     Ok(json!({
         "hostPlatform": host_platform,
         "scope": scope.as_str(),
         "stackIds": stack_ids,
         "servicesChecked": services_checked,
         "servicesWithCandidate": services_with_candidate,
+        "newVersions": {
+            "count": new_versions_json.len(),
+            "services": new_versions_json,
+        },
         "progress": progress_json,
     }))
 }
@@ -4115,6 +4159,10 @@ async fn put_notifications(
         .get_notification_settings()
         .await
         .map_err(map_internal)?;
+    let keep_existing_events = req.events.is_none();
+    let existing_event_update_enabled = existing.event_update_enabled;
+    let existing_event_new_version_enabled = existing.event_new_version_enabled;
+    let existing_event_ghcr_webhook_anomaly_enabled = existing.event_ghcr_webhook_anomaly_enabled;
     let mut merged = req.into_db();
 
     merge_secret(&mut merged.email_smtp_url, existing.email_smtp_url);
@@ -4125,6 +4173,11 @@ async fn put_notifications(
         &mut merged.webpush_vapid_private_key,
         existing.webpush_vapid_private_key,
     );
+    if keep_existing_events {
+        merged.event_update_enabled = existing_event_update_enabled;
+        merged.event_new_version_enabled = existing_event_new_version_enabled;
+        merged.event_ghcr_webhook_anomaly_enabled = existing_event_ghcr_webhook_anomaly_enabled;
+    }
 
     state
         .db
@@ -5585,6 +5638,8 @@ async fn get_settings(
     let schedules = state
         .db
         .get_schedule_settings()
+        .await
+        .map_err(map_internal)?;
     let public_base_url = state
         .db
         .get_instance_public_base_url()

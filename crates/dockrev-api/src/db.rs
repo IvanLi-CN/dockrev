@@ -281,8 +281,11 @@ INSERT OR IGNORE INTO notification_settings (
   webpush_enabled,
   webpush_vapid_public_key,
   webpush_vapid_private_key,
-  webpush_vapid_subject
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+  webpush_vapid_subject,
+  event_update_enabled,
+  event_new_version_enabled,
+  event_ghcr_webhook_anomaly_enabled
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
 "#,
                 params![
                     "default",
@@ -296,7 +299,10 @@ INSERT OR IGNORE INTO notification_settings (
                     0i64,
                     Option::<String>::None,
                     Option::<String>::None,
-                    Option::<String>::None
+                    Option::<String>::None,
+                    1i64,
+                    1i64,
+                    1i64
                 ],
             )?;
 
@@ -1984,7 +1990,10 @@ SELECT
   webpush_enabled,
   webpush_vapid_public_key,
   webpush_vapid_private_key,
-  webpush_vapid_subject
+  webpush_vapid_subject,
+  event_update_enabled,
+  event_new_version_enabled,
+  event_ghcr_webhook_anomaly_enabled
 FROM notification_settings
 WHERE id = 'default'
 "#,
@@ -2002,6 +2011,9 @@ WHERE id = 'default'
                         webpush_vapid_public_key: row.get(8)?,
                         webpush_vapid_private_key: row.get(9)?,
                         webpush_vapid_subject: row.get(10)?,
+                        event_update_enabled: row.get::<_, i64>(11)? != 0,
+                        event_new_version_enabled: row.get::<_, i64>(12)? != 0,
+                        event_ghcr_webhook_anomaly_enabled: row.get::<_, i64>(13)? != 0,
                     })
                 },
             )?)
@@ -2033,7 +2045,10 @@ SET
   webpush_vapid_public_key = ?9,
   webpush_vapid_private_key = ?10,
   webpush_vapid_subject = ?11,
-  updated_at = ?12
+  event_update_enabled = ?12,
+  event_new_version_enabled = ?13,
+  event_ghcr_webhook_anomaly_enabled = ?14,
+  updated_at = ?15
 WHERE id = 'default'
 "#,
                 params![
@@ -2048,6 +2063,9 @@ WHERE id = 'default'
                     settings.webpush_vapid_public_key,
                     settings.webpush_vapid_private_key,
                     settings.webpush_vapid_subject,
+                    settings.event_update_enabled as i64,
+                    settings.event_new_version_enabled as i64,
+                    settings.event_ghcr_webhook_anomaly_enabled as i64,
                     now
                 ],
             )?;
@@ -5151,6 +5169,18 @@ fn ensure_notification_columns(conn: &rusqlite::Connection) -> anyhow::Result<()
             name: "webpush_vapid_subject",
             ddl: "ALTER TABLE notification_settings ADD COLUMN webpush_vapid_subject TEXT",
         },
+        Col {
+            name: "event_update_enabled",
+            ddl: "ALTER TABLE notification_settings ADD COLUMN event_update_enabled INTEGER NOT NULL DEFAULT 1",
+        },
+        Col {
+            name: "event_new_version_enabled",
+            ddl: "ALTER TABLE notification_settings ADD COLUMN event_new_version_enabled INTEGER NOT NULL DEFAULT 1",
+        },
+        Col {
+            name: "event_ghcr_webhook_anomaly_enabled",
+            ddl: "ALTER TABLE notification_settings ADD COLUMN event_ghcr_webhook_anomaly_enabled INTEGER NOT NULL DEFAULT 1",
+        },
     ];
 
     let mut stmt = conn.prepare("PRAGMA table_info(notification_settings)")?;
@@ -5741,6 +5771,9 @@ CREATE TABLE IF NOT EXISTS notification_settings (
   webpush_vapid_public_key TEXT,
   webpush_vapid_private_key TEXT,
   webpush_vapid_subject TEXT,
+  event_update_enabled INTEGER NOT NULL DEFAULT 1,
+  event_new_version_enabled INTEGER NOT NULL DEFAULT 1,
+  event_ghcr_webhook_anomaly_enabled INTEGER NOT NULL DEFAULT 1,
   updated_at TEXT
 );
 

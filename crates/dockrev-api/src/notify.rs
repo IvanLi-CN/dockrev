@@ -14,7 +14,7 @@ use web_push::{
 };
 
 use crate::{
-    api::types::{JobLogLine, NotificationTestChannel},
+    api::types::{JobLogLine, NotificationSettings, NotificationTestChannel},
     state::AppState,
 };
 
@@ -23,6 +23,9 @@ const MAX_TEST_DEBUG_RAW_MESSAGE_CHARS: usize = 1024;
 const TELEGRAM_MAX_MESSAGE_CHARS: usize = 4096;
 const MAX_JOB_SERVICE_URLS: usize = 10;
 const MAX_JOB_ERROR_CHARS: usize = 1024;
+const MAX_NEW_VERSION_SERVICE_URLS: usize = 10;
+const MAX_GHCR_REPOS: usize = 10;
+const MAX_GHCR_REPO_ERROR_CHARS: usize = 256;
 
 pub async fn notify_job_updated(
     state: &AppState,
@@ -43,6 +46,54 @@ pub async fn notify_job_updated(
         now_rfc3339,
         Some(&payload),
         NotifySendMode::Default,
+    )
+    .await?;
+    Ok(())
+}
+
+pub async fn notify_new_versions_discovered(
+    state: &AppState,
+    check_job_id: &str,
+    now_rfc3339: &str,
+    services_checked: u32,
+    discovered_services: &[NewVersionDiscoveredService],
+) -> anyhow::Result<()> {
+    if discovered_services.is_empty() {
+        return Ok(());
+    }
+    send_new_versions(
+        state,
+        check_job_id,
+        now_rfc3339,
+        services_checked,
+        discovered_services,
+    )
+    .await?;
+    Ok(())
+}
+
+pub async fn notify_ghcr_webhook_anomaly(
+    state: &AppState,
+    job_id: &str,
+    status: &str,
+    now_rfc3339: &str,
+    missing: u32,
+    conflict: u32,
+    error: u32,
+    repos: &[GhcrWebhookAnomalyRepo],
+) -> anyhow::Result<()> {
+    if missing + conflict + error == 0 {
+        return Ok(());
+    }
+    send_ghcr_webhook_anomaly(
+        state,
+        job_id,
+        status,
+        now_rfc3339,
+        missing,
+        conflict,
+        error,
+        repos,
     )
     .await?;
     Ok(())
@@ -75,6 +126,37 @@ enum NotifySendMode {
         channel: Option<NotificationTestChannel>,
         message: String,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NotificationEventKind {
+    Update,
+    NewVersionDiscovered,
+    GhcrWebhookAnomaly,
+}
+
+#[derive(Clone, Debug)]
+pub struct NewVersionDiscoveredService {
+    pub stack_id: String,
+    pub service_id: String,
+    pub current_tag: Option<String>,
+    pub candidate_tag: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct GhcrWebhookAnomalyRepo {
+    pub owner: String,
+    pub repo: String,
+    pub state: String,
+    pub last_error: Option<String>,
+}
+
+fn is_event_enabled(settings: &NotificationSettings, event: NotificationEventKind) -> bool {
+    match event {
+        NotificationEventKind::Update => settings.event_update_enabled,
+        NotificationEventKind::NewVersionDiscovered => settings.event_new_version_enabled,
+        NotificationEventKind::GhcrWebhookAnomaly => settings.event_ghcr_webhook_anomaly_enabled,
+    }
 }
 
 fn should_send_channel(
@@ -164,6 +246,103 @@ struct JobNotificationHumanV2 {
 struct JobNotificationDebugV2 {
     app_version: String,
     source: &'static str,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NewVersionNotificationPayloadV2 {
+    schema: &'static str,
+    kind: &'static str,
+    sent_at: String,
+    channel: &'static str,
+    check: NewVersionNotificationCheckV2,
+    links: NewVersionNotificationLinksV2,
+    human: JobNotificationHumanV2,
+    debug: JobNotificationDebugV2,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NewVersionNotificationCheckV2 {
+    job_id: String,
+    status: String,
+    scope: String,
+    services_checked: u32,
+    new_versions: u32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NewVersionNotificationLinksV2 {
+    primary_url: String,
+    job_url: String,
+    service_urls: Vec<NewVersionNotificationServiceUrlV2>,
+    truncated: JobNotificationTruncatedV2,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NewVersionNotificationServiceUrlV2 {
+    stack_id: String,
+    stack_name: String,
+    service_id: String,
+    service_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    candidate_tag: Option<String>,
+    url: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GhcrWebhookAnomalyPayloadV2 {
+    schema: &'static str,
+    kind: &'static str,
+    sent_at: String,
+    channel: &'static str,
+    job: GhcrWebhookAnomalyJobV2,
+    links: GhcrWebhookAnomalyLinksV2,
+    human: JobNotificationHumanV2,
+    debug: JobNotificationDebugV2,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GhcrWebhookAnomalyJobV2 {
+    id: String,
+    status: String,
+    missing: u32,
+    conflict: u32,
+    error: u32,
+    total_anomalies: u32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GhcrWebhookAnomalyLinksV2 {
+    primary_url: String,
+    job_url: String,
+    settings_url: String,
+    repos: Vec<GhcrWebhookAnomalyRepoV2>,
+    truncated: GhcrWebhookAnomalyTruncatedV2,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GhcrWebhookAnomalyRepoV2 {
+    owner: String,
+    repo: String,
+    full_name: String,
+    state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GhcrWebhookAnomalyTruncatedV2 {
+    repos_omitted: u32,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -260,6 +439,14 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
         out.push_str("... [truncated]");
     }
     out
+}
+
+fn render_tag_transition(current_tag: Option<&str>, candidate_tag: Option<&str>) -> Option<String> {
+    match (current_tag, candidate_tag) {
+        (Some(current), Some(candidate)) => Some(format!("{current} -> {candidate}")),
+        (None, Some(candidate)) => Some(format!("-> {candidate}")),
+        _ => None,
+    }
 }
 
 fn extract_changed_service_ids(update: &Value) -> Vec<String> {
@@ -461,6 +648,14 @@ fn to_job_value(payload: &JobNotificationPayloadV2) -> anyhow::Result<Value> {
     serde_json::to_value(payload).context("serialize job notification payload v2")
 }
 
+fn to_new_version_value(payload: &NewVersionNotificationPayloadV2) -> anyhow::Result<Value> {
+    serde_json::to_value(payload).context("serialize new version notification payload v2")
+}
+
+fn to_ghcr_webhook_anomaly_value(payload: &GhcrWebhookAnomalyPayloadV2) -> anyhow::Result<Value> {
+    serde_json::to_value(payload).context("serialize ghcr webhook anomaly payload v2")
+}
+
 fn to_web_push_job_value(
     payload: &JobNotificationPayloadV2,
     error_excerpt: Option<&str>,
@@ -478,6 +673,54 @@ fn to_web_push_job_value(
             body.push_str(err);
         }
         map.insert("body".to_string(), Value::String(body));
+        map.insert(
+            "url".to_string(),
+            Value::String(payload.links.primary_url.clone()),
+        );
+    }
+    Ok(value)
+}
+
+fn to_web_push_new_version_value(
+    payload: &NewVersionNotificationPayloadV2,
+) -> anyhow::Result<Value> {
+    let mut value = to_new_version_value(payload)?;
+    if let Value::Object(map) = &mut value {
+        map.insert(
+            "title".to_string(),
+            Value::String(payload.human.title.clone()),
+        );
+        map.insert(
+            "body".to_string(),
+            Value::String(format!(
+                "{}\n检查任务：{}",
+                payload.human.summary, payload.check.job_id
+            )),
+        );
+        map.insert(
+            "url".to_string(),
+            Value::String(payload.links.primary_url.clone()),
+        );
+    }
+    Ok(value)
+}
+
+fn to_web_push_ghcr_webhook_anomaly_value(
+    payload: &GhcrWebhookAnomalyPayloadV2,
+) -> anyhow::Result<Value> {
+    let mut value = to_ghcr_webhook_anomaly_value(payload)?;
+    if let Value::Object(map) = &mut value {
+        map.insert(
+            "title".to_string(),
+            Value::String(payload.human.title.clone()),
+        );
+        map.insert(
+            "body".to_string(),
+            Value::String(format!(
+                "{}\n任务：{}",
+                payload.human.summary, payload.job.id
+            )),
+        );
         map.insert(
             "url".to_string(),
             Value::String(payload.links.primary_url.clone()),
@@ -788,6 +1031,507 @@ async fn send_email_job(
     Ok(())
 }
 
+fn render_telegram_new_version_html(payload: &NewVersionNotificationPayloadV2) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(format!("<b>{}</b>", escape_html(&payload.human.title)));
+    lines.push(escape_html(&payload.human.summary));
+
+    if !is_absolute_http_url(&payload.links.job_url) {
+        lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
+    }
+
+    lines.push(format!(
+        "检查任务：{}",
+        render_open_link_html(&payload.links.job_url, &payload.check.job_id)
+    ));
+    if payload.links.primary_url != payload.links.job_url {
+        lines.push(format!(
+            "打开服务详情：{}",
+            render_open_link_html(&payload.links.primary_url, "打开")
+        ));
+    } else {
+        lines.push(format!(
+            "打开检查任务：{}",
+            render_open_link_html(&payload.links.primary_url, "打开")
+        ));
+    }
+
+    if !payload.links.service_urls.is_empty() {
+        lines.push(String::new());
+        lines.push("<b>服务清单</b>".to_string());
+        for svc in &payload.links.service_urls {
+            let mut label = format!("{} / {}", svc.stack_name, svc.service_name);
+            if let Some(transition) =
+                render_tag_transition(svc.current_tag.as_deref(), svc.candidate_tag.as_deref())
+            {
+                label.push_str(&format!(" ({transition})"));
+            }
+            lines.push(format!(
+                "- {}：{}",
+                escape_html(&label),
+                render_open_link_html(&svc.url, "服务详情"),
+            ));
+        }
+        if payload.links.truncated.service_urls_omitted > 0 {
+            lines.push(format!(
+                "... 以及其他 {} 个服务（已省略）",
+                payload.links.truncated.service_urls_omitted
+            ));
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn render_telegram_new_version_plain(payload: &NewVersionNotificationPayloadV2) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(payload.human.title.clone());
+    lines.push(payload.human.summary.clone());
+
+    if !is_absolute_http_url(&payload.links.job_url) {
+        lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
+    }
+
+    lines.push(format!("检查任务：{}", payload.links.job_url));
+    lines.push(format!("打开：{}", payload.links.primary_url));
+
+    if !payload.links.service_urls.is_empty() {
+        lines.push(String::new());
+        lines.push("服务清单".to_string());
+        for svc in &payload.links.service_urls {
+            let mut label = format!("{} / {}", svc.stack_name, svc.service_name);
+            if let Some(transition) =
+                render_tag_transition(svc.current_tag.as_deref(), svc.candidate_tag.as_deref())
+            {
+                label.push_str(&format!(" ({transition})"));
+            }
+            lines.push(format!("- {}: {}", label, svc.url));
+        }
+        if payload.links.truncated.service_urls_omitted > 0 {
+            lines.push(format!(
+                "... 以及其他 {} 个服务（已省略）",
+                payload.links.truncated.service_urls_omitted
+            ));
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn render_telegram_new_version_plain_for_send(payload: &NewVersionNotificationPayloadV2) -> String {
+    let plain = render_telegram_new_version_plain(payload);
+    truncate_chars(&plain, TELEGRAM_MAX_MESSAGE_CHARS.saturating_sub(32))
+}
+
+fn render_email_new_version_plain(payload: &NewVersionNotificationPayloadV2) -> String {
+    render_telegram_new_version_plain(payload)
+}
+
+fn render_email_new_version_html(payload: &NewVersionNotificationPayloadV2) -> String {
+    let title = escape_html(&payload.human.title);
+    let summary = escape_html(&payload.human.summary);
+
+    let mut items = String::new();
+    if !payload.links.service_urls.is_empty() {
+        items.push_str("<ul>");
+        for svc in &payload.links.service_urls {
+            let mut label = format!("{} / {}", svc.stack_name, svc.service_name);
+            if let Some(transition) =
+                render_tag_transition(svc.current_tag.as_deref(), svc.candidate_tag.as_deref())
+            {
+                label.push_str(&format!(" ({transition})"));
+            }
+            let label = escape_html(&label);
+            if is_absolute_http_url(&svc.url) {
+                items.push_str(&format!(
+                    "<li>{label}: <a href=\"{}\">服务详情</a></li>",
+                    escape_html(&svc.url)
+                ));
+            } else {
+                items.push_str(&format!(
+                    "<li>{label}: <code>{}</code></li>",
+                    escape_html(&svc.url)
+                ));
+            }
+        }
+        if payload.links.truncated.service_urls_omitted > 0 {
+            items.push_str(&format!(
+                "<li>... 以及其他 {} 个服务（已省略）</li>",
+                payload.links.truncated.service_urls_omitted
+            ));
+        }
+        items.push_str("</ul>");
+    }
+
+    let check_link = if is_absolute_http_url(&payload.links.job_url) {
+        format!(
+            "<a href=\"{}\">{}</a>",
+            escape_html(&payload.links.job_url),
+            escape_html(&payload.check.job_id)
+        )
+    } else {
+        escape_html(&payload.check.job_id)
+    };
+
+    let open_primary = if is_absolute_http_url(&payload.links.primary_url) {
+        format!(
+            "<a href=\"{}\">{}</a>",
+            escape_html(&payload.links.primary_url),
+            escape_html(&payload.links.primary_url)
+        )
+    } else {
+        format!("<code>{}</code>", escape_html(&payload.links.primary_url))
+    };
+
+    let mut note = String::new();
+    if !is_absolute_http_url(&payload.links.job_url) {
+        note = "<p><em>提示：未配置实例 Public Base URL（系统设置），以下链接可能仅为站内路径。</em></p>".to_string();
+    }
+
+    format!(
+        "<h2>{title}</h2><p>{summary}</p>{note}<p>检查任务：{check_link}</p><p>打开：{open_primary}</p>{items}",
+    )
+}
+
+fn render_telegram_ghcr_webhook_anomaly_html(payload: &GhcrWebhookAnomalyPayloadV2) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(format!("<b>{}</b>", escape_html(&payload.human.title)));
+    lines.push(escape_html(&payload.human.summary));
+
+    if !is_absolute_http_url(&payload.links.settings_url) {
+        lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
+    }
+
+    lines.push(format!(
+        "打开设置：{}",
+        render_open_link_html(&payload.links.settings_url, "GHCR 设置")
+    ));
+    lines.push(format!(
+        "任务：{}",
+        render_open_link_html(&payload.links.job_url, &payload.job.id)
+    ));
+
+    if !payload.links.repos.is_empty() {
+        lines.push(String::new());
+        lines.push("<b>异常仓库</b>".to_string());
+        for repo in &payload.links.repos {
+            let mut detail = format!("{} [{}]", repo.full_name, repo.state);
+            if let Some(err) = repo.last_error.as_deref() {
+                detail.push_str(" - ");
+                detail.push_str(err);
+            }
+            lines.push(format!("- {}", escape_html(&detail)));
+        }
+        if payload.links.truncated.repos_omitted > 0 {
+            lines.push(format!(
+                "... 以及其他 {} 个仓库（已省略）",
+                payload.links.truncated.repos_omitted
+            ));
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn render_telegram_ghcr_webhook_anomaly_plain(payload: &GhcrWebhookAnomalyPayloadV2) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(payload.human.title.clone());
+    lines.push(payload.human.summary.clone());
+
+    if !is_absolute_http_url(&payload.links.settings_url) {
+        lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
+    }
+
+    lines.push(format!("打开设置：{}", payload.links.settings_url));
+    lines.push(format!("任务：{}", payload.links.job_url));
+
+    if !payload.links.repos.is_empty() {
+        lines.push(String::new());
+        lines.push("异常仓库".to_string());
+        for repo in &payload.links.repos {
+            let mut detail = format!("{} [{}]", repo.full_name, repo.state);
+            if let Some(err) = repo.last_error.as_deref() {
+                detail.push_str(" - ");
+                detail.push_str(err);
+            }
+            lines.push(format!("- {detail}"));
+        }
+        if payload.links.truncated.repos_omitted > 0 {
+            lines.push(format!(
+                "... 以及其他 {} 个仓库（已省略）",
+                payload.links.truncated.repos_omitted
+            ));
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn render_telegram_ghcr_webhook_anomaly_plain_for_send(
+    payload: &GhcrWebhookAnomalyPayloadV2,
+) -> String {
+    let plain = render_telegram_ghcr_webhook_anomaly_plain(payload);
+    truncate_chars(&plain, TELEGRAM_MAX_MESSAGE_CHARS.saturating_sub(32))
+}
+
+fn render_email_ghcr_webhook_anomaly_plain(payload: &GhcrWebhookAnomalyPayloadV2) -> String {
+    render_telegram_ghcr_webhook_anomaly_plain(payload)
+}
+
+fn render_email_ghcr_webhook_anomaly_html(payload: &GhcrWebhookAnomalyPayloadV2) -> String {
+    let title = escape_html(&payload.human.title);
+    let summary = escape_html(&payload.human.summary);
+
+    let mut items = String::new();
+    if !payload.links.repos.is_empty() {
+        items.push_str("<ul>");
+        for repo in &payload.links.repos {
+            let mut detail = format!("{} [{}]", repo.full_name, repo.state);
+            if let Some(err) = repo.last_error.as_deref() {
+                detail.push_str(" - ");
+                detail.push_str(err);
+            }
+            items.push_str(&format!("<li>{}</li>", escape_html(&detail)));
+        }
+        if payload.links.truncated.repos_omitted > 0 {
+            items.push_str(&format!(
+                "<li>... 以及其他 {} 个仓库（已省略）</li>",
+                payload.links.truncated.repos_omitted
+            ));
+        }
+        items.push_str("</ul>");
+    }
+
+    let settings_link = if is_absolute_http_url(&payload.links.settings_url) {
+        format!(
+            "<a href=\"{}\">{}</a>",
+            escape_html(&payload.links.settings_url),
+            escape_html(&payload.links.settings_url)
+        )
+    } else {
+        format!("<code>{}</code>", escape_html(&payload.links.settings_url))
+    };
+
+    let job_link = if is_absolute_http_url(&payload.links.job_url) {
+        format!(
+            "<a href=\"{}\">{}</a>",
+            escape_html(&payload.links.job_url),
+            escape_html(&payload.job.id)
+        )
+    } else {
+        escape_html(&payload.job.id)
+    };
+
+    let mut note = String::new();
+    if !is_absolute_http_url(&payload.links.settings_url) {
+        note = "<p><em>提示：未配置实例 Public Base URL（系统设置），以下链接可能仅为站内路径。</em></p>".to_string();
+    }
+
+    format!(
+        "<h2>{title}</h2><p>{summary}</p>{note}<p>打开设置：{settings_link}</p><p>任务：{job_link}</p>{items}",
+    )
+}
+
+async fn send_telegram_new_version(
+    client: &reqwest::Client,
+    bot_token: Option<&str>,
+    chat_id: Option<&str>,
+    payload: &NewVersionNotificationPayloadV2,
+) -> anyhow::Result<()> {
+    let token = bot_token.context("telegram.botToken missing")?;
+    let chat_id = chat_id.context("telegram.chatId missing")?;
+    let url = format!("https://api.telegram.org/bot{token}/sendMessage");
+    let html_text = render_telegram_new_version_html(payload);
+    if html_text.chars().count() > TELEGRAM_MAX_MESSAGE_CHARS {
+        let plain_text = render_telegram_new_version_plain_for_send(payload);
+        let retry = client
+            .post(&url)
+            .json(&json!({ "chat_id": chat_id, "text": plain_text }))
+            .send()
+            .await?;
+        if retry.status().is_success() {
+            return Ok(());
+        }
+        let retry_status = retry.status();
+        let retry_body = retry.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "telegram http {}: {}",
+            retry_status,
+            retry_body
+        ));
+    }
+
+    let resp = client
+        .post(&url)
+        .json(&json!({ "chat_id": chat_id, "text": html_text, "parse_mode": "HTML" }))
+        .send()
+        .await?;
+    if resp.status().is_success() {
+        return Ok(());
+    }
+
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if should_retry_telegram_plain_text(status, &body) {
+        let plain_text = render_telegram_new_version_plain_for_send(payload);
+        let retry = client
+            .post(&url)
+            .json(&json!({ "chat_id": chat_id, "text": plain_text }))
+            .send()
+            .await?;
+        if retry.status().is_success() {
+            return Ok(());
+        }
+        let retry_status = retry.status();
+        let retry_body = retry.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "telegram http {}: {} (fallback http {}: {})",
+            status,
+            body,
+            retry_status,
+            retry_body
+        ));
+    }
+
+    Err(anyhow::anyhow!("telegram http {}: {}", status, body))
+}
+
+async fn send_email_new_version(
+    smtp_url: Option<&str>,
+    payload: &NewVersionNotificationPayloadV2,
+) -> anyhow::Result<()> {
+    let smtp_url = smtp_url.context("email.smtpUrl missing")?;
+    let (dsn, from, to) = parse_smtp_dsn(smtp_url)?;
+
+    let subject = format!("[dockrev] 发现新版本 {}", payload.check.job_id);
+    let plain_text = render_email_new_version_plain(payload);
+    let html_text = render_email_new_version_html(payload);
+
+    let mut builder = Message::builder().from(from).subject(subject);
+    for addr in to {
+        builder = builder.to(addr);
+    }
+
+    let email = builder.multipart(
+        MultiPart::alternative()
+            .singlepart(
+                SinglePart::builder()
+                    .header(ContentType::TEXT_PLAIN)
+                    .body(plain_text),
+            )
+            .singlepart(
+                SinglePart::builder()
+                    .header(ContentType::TEXT_HTML)
+                    .body(html_text),
+            ),
+    )?;
+
+    let mailer: AsyncSmtpTransport<Tokio1Executor> =
+        AsyncSmtpTransport::<Tokio1Executor>::from_url(&dsn)?.build();
+    mailer.send(email).await?;
+    Ok(())
+}
+
+async fn send_telegram_ghcr_webhook_anomaly(
+    client: &reqwest::Client,
+    bot_token: Option<&str>,
+    chat_id: Option<&str>,
+    payload: &GhcrWebhookAnomalyPayloadV2,
+) -> anyhow::Result<()> {
+    let token = bot_token.context("telegram.botToken missing")?;
+    let chat_id = chat_id.context("telegram.chatId missing")?;
+    let url = format!("https://api.telegram.org/bot{token}/sendMessage");
+    let html_text = render_telegram_ghcr_webhook_anomaly_html(payload);
+    if html_text.chars().count() > TELEGRAM_MAX_MESSAGE_CHARS {
+        let plain_text = render_telegram_ghcr_webhook_anomaly_plain_for_send(payload);
+        let retry = client
+            .post(&url)
+            .json(&json!({ "chat_id": chat_id, "text": plain_text }))
+            .send()
+            .await?;
+        if retry.status().is_success() {
+            return Ok(());
+        }
+        let retry_status = retry.status();
+        let retry_body = retry.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "telegram http {}: {}",
+            retry_status,
+            retry_body
+        ));
+    }
+
+    let resp = client
+        .post(&url)
+        .json(&json!({ "chat_id": chat_id, "text": html_text, "parse_mode": "HTML" }))
+        .send()
+        .await?;
+    if resp.status().is_success() {
+        return Ok(());
+    }
+
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if should_retry_telegram_plain_text(status, &body) {
+        let plain_text = render_telegram_ghcr_webhook_anomaly_plain_for_send(payload);
+        let retry = client
+            .post(&url)
+            .json(&json!({ "chat_id": chat_id, "text": plain_text }))
+            .send()
+            .await?;
+        if retry.status().is_success() {
+            return Ok(());
+        }
+        let retry_status = retry.status();
+        let retry_body = retry.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "telegram http {}: {} (fallback http {}: {})",
+            status,
+            body,
+            retry_status,
+            retry_body
+        ));
+    }
+
+    Err(anyhow::anyhow!("telegram http {}: {}", status, body))
+}
+
+async fn send_email_ghcr_webhook_anomaly(
+    smtp_url: Option<&str>,
+    payload: &GhcrWebhookAnomalyPayloadV2,
+) -> anyhow::Result<()> {
+    let smtp_url = smtp_url.context("email.smtpUrl missing")?;
+    let (dsn, from, to) = parse_smtp_dsn(smtp_url)?;
+
+    let subject = format!("[dockrev] GHCR Webhook 巡检异常 {}", payload.job.id);
+    let plain_text = render_email_ghcr_webhook_anomaly_plain(payload);
+    let html_text = render_email_ghcr_webhook_anomaly_html(payload);
+
+    let mut builder = Message::builder().from(from).subject(subject);
+    for addr in to {
+        builder = builder.to(addr);
+    }
+
+    let email = builder.multipart(
+        MultiPart::alternative()
+            .singlepart(
+                SinglePart::builder()
+                    .header(ContentType::TEXT_PLAIN)
+                    .body(plain_text),
+            )
+            .singlepart(
+                SinglePart::builder()
+                    .header(ContentType::TEXT_HTML)
+                    .body(html_text),
+            ),
+    )?;
+
+    let mailer: AsyncSmtpTransport<Tokio1Executor> =
+        AsyncSmtpTransport::<Tokio1Executor>::from_url(&dsn)?.build();
+    mailer.send(email).await?;
+    Ok(())
+}
+
 fn finalize_job_links(
     job_url: String,
     mut service_urls_full: Vec<JobNotificationServiceUrlV2>,
@@ -987,6 +1731,493 @@ async fn build_job_payload_v2(
     })
 }
 
+async fn build_new_version_payload_v2(
+    state: &AppState,
+    now_rfc3339: &str,
+    public_base_url: Option<&str>,
+    channel: &'static str,
+    check_job_id: &str,
+    services_checked: u32,
+    discovered_services: &[NewVersionDiscoveredService],
+) -> anyhow::Result<NewVersionNotificationPayloadV2> {
+    let job_opt = state.db.get_job(check_job_id).await?;
+    let status = job_opt
+        .as_ref()
+        .map(|job| job.status.clone())
+        .unwrap_or_else(|| "success".to_string());
+    let scope = job_opt
+        .as_ref()
+        .map(|job| job.scope.as_str().to_string())
+        .unwrap_or_else(|| "all".to_string());
+
+    let job_url = best_effort_url(public_base_url, &format!("queue/{check_job_id}"));
+
+    let mut seen = std::collections::HashSet::<String>::new();
+    let mut service_urls_full: Vec<NewVersionNotificationServiceUrlV2> = Vec::new();
+    for item in discovered_services {
+        let key = format!("{}/{}", item.stack_id, item.service_id);
+        if !seen.insert(key) {
+            continue;
+        }
+
+        let stack = state.db.get_stack(&item.stack_id).await?;
+        let stack_name = stack
+            .as_ref()
+            .map(|s| s.name.clone())
+            .unwrap_or_else(|| item.stack_id.clone());
+        let service_name = stack
+            .as_ref()
+            .and_then(|s| {
+                s.services
+                    .iter()
+                    .find(|svc| svc.id == item.service_id)
+                    .map(|svc| svc.name.clone())
+            })
+            .unwrap_or_else(|| item.service_id.clone());
+
+        let url = best_effort_url(
+            public_base_url,
+            &format!("services/{}/{}", item.stack_id, item.service_id),
+        );
+        service_urls_full.push(NewVersionNotificationServiceUrlV2 {
+            stack_id: item.stack_id.clone(),
+            stack_name,
+            service_id: item.service_id.clone(),
+            service_name,
+            current_tag: item.current_tag.clone(),
+            candidate_tag: item.candidate_tag.clone(),
+            url,
+        });
+    }
+
+    service_urls_full.sort_by(|a, b| {
+        (
+            a.stack_name.as_str(),
+            a.service_name.as_str(),
+            a.service_id.as_str(),
+        )
+            .cmp(&(
+                b.stack_name.as_str(),
+                b.service_name.as_str(),
+                b.service_id.as_str(),
+            ))
+    });
+
+    let total_new_versions = service_urls_full.len();
+    let omitted = service_urls_full
+        .len()
+        .saturating_sub(MAX_NEW_VERSION_SERVICE_URLS) as u32;
+    service_urls_full.truncate(MAX_NEW_VERSION_SERVICE_URLS);
+
+    let primary_url = if service_urls_full.len() == 1 {
+        service_urls_full
+            .first()
+            .map(|svc| svc.url.clone())
+            .unwrap_or_else(|| job_url.clone())
+    } else {
+        job_url.clone()
+    };
+
+    let summary = if total_new_versions == 1 {
+        let svc = &service_urls_full[0];
+        let transition =
+            render_tag_transition(svc.current_tag.as_deref(), svc.candidate_tag.as_deref())
+                .map(|t| format!("，{t}"))
+                .unwrap_or_default();
+        format!(
+            "发现 1 个服务有新版本（{} / {}{}）。",
+            svc.stack_name, svc.service_name, transition
+        )
+    } else if omitted > 0 {
+        format!(
+            "发现 {} 个服务有新版本（仅展示前 {} 条）。",
+            total_new_versions,
+            service_urls_full.len()
+        )
+    } else {
+        format!("发现 {} 个服务有新版本。", total_new_versions)
+    };
+
+    let mut detail_lines = vec![
+        format!("检查任务：{check_job_id}"),
+        format!("打开：{primary_url}"),
+        format!("发送：{now_rfc3339}"),
+    ];
+    if !is_absolute_http_url(&job_url) {
+        detail_lines.push(
+            "提示：未配置实例 Public Base URL（系统设置），Telegram/Email 无法生成可点击链接。"
+                .to_string(),
+        );
+    }
+
+    Ok(NewVersionNotificationPayloadV2 {
+        schema: "dockrev.notification.new_version_discovered.v2",
+        kind: "new_version_discovered",
+        sent_at: now_rfc3339.to_string(),
+        channel,
+        check: NewVersionNotificationCheckV2 {
+            job_id: check_job_id.to_string(),
+            status,
+            scope,
+            services_checked,
+            new_versions: total_new_versions as u32,
+        },
+        links: NewVersionNotificationLinksV2 {
+            primary_url,
+            job_url,
+            service_urls: service_urls_full,
+            truncated: JobNotificationTruncatedV2 {
+                service_urls_omitted: omitted,
+            },
+        },
+        human: JobNotificationHumanV2 {
+            title: "Dockrev：发现新版本".to_string(),
+            summary,
+            detail: detail_lines.join("\n"),
+        },
+        debug: JobNotificationDebugV2 {
+            app_version: state.config.app_effective_version.clone(),
+            source: "dockrev-api",
+        },
+    })
+}
+
+async fn build_ghcr_webhook_anomaly_payload_v2(
+    state: &AppState,
+    now_rfc3339: &str,
+    public_base_url: Option<&str>,
+    channel: &'static str,
+    job_id: &str,
+    status: &str,
+    missing: u32,
+    conflict: u32,
+    error: u32,
+    repos: &[GhcrWebhookAnomalyRepo],
+) -> anyhow::Result<GhcrWebhookAnomalyPayloadV2> {
+    let job_url = best_effort_url(public_base_url, &format!("queue/{job_id}"));
+    let settings_url = best_effort_url(public_base_url, "settings");
+    let primary_url = settings_url.clone();
+    let total_anomalies = missing + conflict + error;
+
+    let mut seen = std::collections::HashSet::<String>::new();
+    let mut repo_items: Vec<GhcrWebhookAnomalyRepoV2> = Vec::new();
+    for repo in repos {
+        let full_name = format!("{}/{}", repo.owner, repo.repo);
+        if !seen.insert(full_name.to_ascii_lowercase()) {
+            continue;
+        }
+
+        let last_error = repo
+            .last_error
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(|v| truncate_chars(v, MAX_GHCR_REPO_ERROR_CHARS));
+
+        repo_items.push(GhcrWebhookAnomalyRepoV2 {
+            owner: repo.owner.clone(),
+            repo: repo.repo.clone(),
+            full_name,
+            state: repo.state.clone(),
+            last_error,
+        });
+    }
+
+    repo_items.sort_by(|a, b| a.full_name.cmp(&b.full_name));
+    let omitted = repo_items.len().saturating_sub(MAX_GHCR_REPOS) as u32;
+    repo_items.truncate(MAX_GHCR_REPOS);
+
+    let mut detail_lines = vec![
+        format!("任务：{job_id}"),
+        format!("打开：{primary_url}"),
+        format!("发送：{now_rfc3339}"),
+    ];
+    if !is_absolute_http_url(&settings_url) {
+        detail_lines.push(
+            "提示：未配置实例 Public Base URL（系统设置），Telegram/Email 无法生成可点击链接。"
+                .to_string(),
+        );
+    }
+
+    Ok(GhcrWebhookAnomalyPayloadV2 {
+        schema: "dockrev.notification.ghcr_webhook_anomaly.v2",
+        kind: "ghcr_webhook_anomaly",
+        sent_at: now_rfc3339.to_string(),
+        channel,
+        job: GhcrWebhookAnomalyJobV2 {
+            id: job_id.to_string(),
+            status: status.to_string(),
+            missing,
+            conflict,
+            error,
+            total_anomalies,
+        },
+        links: GhcrWebhookAnomalyLinksV2 {
+            primary_url,
+            job_url,
+            settings_url,
+            repos: repo_items,
+            truncated: GhcrWebhookAnomalyTruncatedV2 {
+                repos_omitted: omitted,
+            },
+        },
+        human: JobNotificationHumanV2 {
+            title: "Dockrev：GitHub Webhook 巡检异常".to_string(),
+            summary: format!(
+                "巡检发现 {} 个异常仓库（missing={}，conflict={}，error={}）。",
+                total_anomalies, missing, conflict, error
+            ),
+            detail: detail_lines.join("\n"),
+        },
+        debug: JobNotificationDebugV2 {
+            app_version: state.config.app_effective_version.clone(),
+            source: "dockrev-api",
+        },
+    })
+}
+
+async fn send_new_versions(
+    state: &AppState,
+    check_job_id: &str,
+    now_rfc3339: &str,
+    services_checked: u32,
+    discovered_services: &[NewVersionDiscoveredService],
+) -> anyhow::Result<Value> {
+    let settings = state.db.get_notification_settings().await?;
+    if !is_event_enabled(&settings, NotificationEventKind::NewVersionDiscovered) {
+        return Ok(Value::Object(serde_json::Map::new()));
+    }
+
+    let public_base_url = state.db.get_instance_public_base_url().await?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .build()
+        .context("build reqwest client")?;
+
+    let mut results = serde_json::Map::new();
+
+    if settings.webhook_enabled {
+        let r = async {
+            let payload = build_new_version_payload_v2(
+                state,
+                now_rfc3339,
+                public_base_url.as_deref(),
+                "webhook",
+                check_job_id,
+                services_checked,
+                discovered_services,
+            )
+            .await?;
+            let value = to_new_version_value(&payload)?;
+            send_webhook(&client, settings.webhook_url.as_deref(), &value).await
+        }
+        .await;
+        log_result(state, Some(check_job_id), now_rfc3339, "webhook", &r).await;
+        results.insert("webhook".to_string(), result_value(r));
+    }
+
+    if settings.telegram_enabled {
+        let r = async {
+            let payload = build_new_version_payload_v2(
+                state,
+                now_rfc3339,
+                public_base_url.as_deref(),
+                "telegram",
+                check_job_id,
+                services_checked,
+                discovered_services,
+            )
+            .await?;
+            send_telegram_new_version(
+                &client,
+                settings.telegram_bot_token.as_deref(),
+                settings.telegram_chat_id.as_deref(),
+                &payload,
+            )
+            .await
+        }
+        .await;
+        log_result(state, Some(check_job_id), now_rfc3339, "telegram", &r).await;
+        results.insert("telegram".to_string(), result_value(r));
+    }
+
+    if settings.email_enabled {
+        let r = async {
+            let payload = build_new_version_payload_v2(
+                state,
+                now_rfc3339,
+                public_base_url.as_deref(),
+                "email",
+                check_job_id,
+                services_checked,
+                discovered_services,
+            )
+            .await?;
+            send_email_new_version(settings.email_smtp_url.as_deref(), &payload).await
+        }
+        .await;
+        log_result(state, Some(check_job_id), now_rfc3339, "email", &r).await;
+        results.insert("email".to_string(), result_value(r));
+    }
+
+    if settings.webpush_enabled {
+        let r = async {
+            let payload = build_new_version_payload_v2(
+                state,
+                now_rfc3339,
+                public_base_url.as_deref(),
+                "webPush",
+                check_job_id,
+                services_checked,
+                discovered_services,
+            )
+            .await?;
+            let web_push_payload = to_web_push_new_version_value(&payload)?;
+            send_web_push(
+                state,
+                settings.webpush_vapid_private_key.as_deref(),
+                settings.webpush_vapid_subject.as_deref(),
+                &web_push_payload,
+            )
+            .await
+        }
+        .await;
+        log_result(state, Some(check_job_id), now_rfc3339, "webPush", &r).await;
+        results.insert("webPush".to_string(), result_value(r));
+    }
+
+    Ok(Value::Object(results))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn send_ghcr_webhook_anomaly(
+    state: &AppState,
+    job_id: &str,
+    status: &str,
+    now_rfc3339: &str,
+    missing: u32,
+    conflict: u32,
+    error: u32,
+    repos: &[GhcrWebhookAnomalyRepo],
+) -> anyhow::Result<Value> {
+    let settings = state.db.get_notification_settings().await?;
+    if !is_event_enabled(&settings, NotificationEventKind::GhcrWebhookAnomaly) {
+        return Ok(Value::Object(serde_json::Map::new()));
+    }
+
+    let public_base_url = state.db.get_instance_public_base_url().await?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .build()
+        .context("build reqwest client")?;
+
+    let mut results = serde_json::Map::new();
+
+    if settings.webhook_enabled {
+        let r = async {
+            let payload = build_ghcr_webhook_anomaly_payload_v2(
+                state,
+                now_rfc3339,
+                public_base_url.as_deref(),
+                "webhook",
+                job_id,
+                status,
+                missing,
+                conflict,
+                error,
+                repos,
+            )
+            .await?;
+            let value = to_ghcr_webhook_anomaly_value(&payload)?;
+            send_webhook(&client, settings.webhook_url.as_deref(), &value).await
+        }
+        .await;
+        log_result(state, Some(job_id), now_rfc3339, "webhook", &r).await;
+        results.insert("webhook".to_string(), result_value(r));
+    }
+
+    if settings.telegram_enabled {
+        let r = async {
+            let payload = build_ghcr_webhook_anomaly_payload_v2(
+                state,
+                now_rfc3339,
+                public_base_url.as_deref(),
+                "telegram",
+                job_id,
+                status,
+                missing,
+                conflict,
+                error,
+                repos,
+            )
+            .await?;
+            send_telegram_ghcr_webhook_anomaly(
+                &client,
+                settings.telegram_bot_token.as_deref(),
+                settings.telegram_chat_id.as_deref(),
+                &payload,
+            )
+            .await
+        }
+        .await;
+        log_result(state, Some(job_id), now_rfc3339, "telegram", &r).await;
+        results.insert("telegram".to_string(), result_value(r));
+    }
+
+    if settings.email_enabled {
+        let r = async {
+            let payload = build_ghcr_webhook_anomaly_payload_v2(
+                state,
+                now_rfc3339,
+                public_base_url.as_deref(),
+                "email",
+                job_id,
+                status,
+                missing,
+                conflict,
+                error,
+                repos,
+            )
+            .await?;
+            send_email_ghcr_webhook_anomaly(settings.email_smtp_url.as_deref(), &payload).await
+        }
+        .await;
+        log_result(state, Some(job_id), now_rfc3339, "email", &r).await;
+        results.insert("email".to_string(), result_value(r));
+    }
+
+    if settings.webpush_enabled {
+        let r = async {
+            let payload = build_ghcr_webhook_anomaly_payload_v2(
+                state,
+                now_rfc3339,
+                public_base_url.as_deref(),
+                "webPush",
+                job_id,
+                status,
+                missing,
+                conflict,
+                error,
+                repos,
+            )
+            .await?;
+            let web_push_payload = to_web_push_ghcr_webhook_anomaly_value(&payload)?;
+            send_web_push(
+                state,
+                settings.webpush_vapid_private_key.as_deref(),
+                settings.webpush_vapid_subject.as_deref(),
+                &web_push_payload,
+            )
+            .await
+        }
+        .await;
+        log_result(state, Some(job_id), now_rfc3339, "webPush", &r).await;
+        results.insert("webPush".to_string(), result_value(r));
+    }
+
+    Ok(Value::Object(results))
+}
+
 async fn send_all(
     state: &AppState,
     job_id: Option<&str>,
@@ -995,6 +2226,11 @@ async fn send_all(
     mode: NotifySendMode,
 ) -> anyhow::Result<Value> {
     let settings = state.db.get_notification_settings().await?;
+    if matches!(mode, NotifySendMode::Default)
+        && !is_event_enabled(&settings, NotificationEventKind::Update)
+    {
+        return Ok(Value::Object(serde_json::Map::new()));
+    }
     let public_base_url = state.db.get_instance_public_base_url().await?;
     let test_url = best_effort_url(public_base_url.as_deref(), "settings");
     let client = reqwest::Client::builder()
@@ -1668,5 +2904,148 @@ mod tests {
         assert!(html.contains("<a href=\"https://dockrev.example.com/services/stk_1/svc_1\">"));
         assert!(html.contains("<b>服务清单</b>"));
         assert!(!html.contains("Dockrev notification:"));
+    }
+
+    fn sample_new_version_payload() -> NewVersionNotificationPayloadV2 {
+        NewVersionNotificationPayloadV2 {
+            schema: "dockrev.notification.new_version_discovered.v2",
+            kind: "new_version_discovered",
+            sent_at: "2026-03-05T04:44:59Z".to_string(),
+            channel: "telegram",
+            check: NewVersionNotificationCheckV2 {
+                job_id: "job_check_123".to_string(),
+                status: "success".to_string(),
+                scope: "all".to_string(),
+                services_checked: 12,
+                new_versions: 1,
+            },
+            links: NewVersionNotificationLinksV2 {
+                primary_url: "https://dockrev.example.com/services/stk_1/svc_1".to_string(),
+                job_url: "https://dockrev.example.com/queue/job_check_123".to_string(),
+                service_urls: vec![NewVersionNotificationServiceUrlV2 {
+                    stack_id: "stk_1".to_string(),
+                    stack_name: "blog".to_string(),
+                    service_id: "svc_1".to_string(),
+                    service_name: "api".to_string(),
+                    current_tag: Some("latest".to_string()),
+                    candidate_tag: Some("latest".to_string()),
+                    url: "https://dockrev.example.com/services/stk_1/svc_1".to_string(),
+                }],
+                truncated: JobNotificationTruncatedV2 {
+                    service_urls_omitted: 0,
+                },
+            },
+            human: JobNotificationHumanV2 {
+                title: "Dockrev：发现新版本".to_string(),
+                summary: "发现 1 个服务有新版本（blog / api）。".to_string(),
+                detail: "test".to_string(),
+            },
+            debug: JobNotificationDebugV2 {
+                app_version: "0.1.0".to_string(),
+                source: "dockrev-api",
+            },
+        }
+    }
+
+    fn sample_ghcr_anomaly_payload() -> GhcrWebhookAnomalyPayloadV2 {
+        GhcrWebhookAnomalyPayloadV2 {
+            schema: "dockrev.notification.ghcr_webhook_anomaly.v2",
+            kind: "ghcr_webhook_anomaly",
+            sent_at: "2026-03-05T04:44:59Z".to_string(),
+            channel: "telegram",
+            job: GhcrWebhookAnomalyJobV2 {
+                id: "job_ghcr_123".to_string(),
+                status: "failed".to_string(),
+                missing: 1,
+                conflict: 0,
+                error: 1,
+                total_anomalies: 2,
+            },
+            links: GhcrWebhookAnomalyLinksV2 {
+                primary_url: "https://dockrev.example.com/settings".to_string(),
+                job_url: "https://dockrev.example.com/queue/job_ghcr_123".to_string(),
+                settings_url: "https://dockrev.example.com/settings".to_string(),
+                repos: vec![GhcrWebhookAnomalyRepoV2 {
+                    owner: "acme".to_string(),
+                    repo: "api".to_string(),
+                    full_name: "acme/api".to_string(),
+                    state: "missing".to_string(),
+                    last_error: Some("webhook missing".to_string()),
+                }],
+                truncated: GhcrWebhookAnomalyTruncatedV2 { repos_omitted: 0 },
+            },
+            human: JobNotificationHumanV2 {
+                title: "Dockrev：GitHub Webhook 巡检异常".to_string(),
+                summary: "巡检发现 2 个异常仓库。".to_string(),
+                detail: "test".to_string(),
+            },
+            debug: JobNotificationDebugV2 {
+                app_version: "0.1.0".to_string(),
+                source: "dockrev-api",
+            },
+        }
+    }
+
+    #[test]
+    fn new_version_telegram_render_contains_clickable_service_links() {
+        let payload = sample_new_version_payload();
+        let html = render_telegram_new_version_html(&payload);
+        assert!(html.contains("<a href=\"https://dockrev.example.com/services/stk_1/svc_1\">"));
+        assert!(html.contains("<b>服务清单</b>"));
+    }
+
+    #[test]
+    fn ghcr_anomaly_telegram_render_contains_repo_state() {
+        let payload = sample_ghcr_anomaly_payload();
+        let html = render_telegram_ghcr_webhook_anomaly_html(&payload);
+        assert!(html.contains("acme/api"));
+        assert!(html.contains("missing"));
+        assert!(html.contains("webhook missing"));
+    }
+
+    #[test]
+    fn web_push_payload_contains_url_for_new_notifications() {
+        let new_version_payload = sample_new_version_payload();
+        let new_version_value = to_web_push_new_version_value(&new_version_payload).unwrap();
+        assert_eq!(
+            new_version_value["url"].as_str(),
+            Some("https://dockrev.example.com/services/stk_1/svc_1")
+        );
+
+        let ghcr_payload = sample_ghcr_anomaly_payload();
+        let ghcr_value = to_web_push_ghcr_webhook_anomaly_value(&ghcr_payload).unwrap();
+        assert_eq!(
+            ghcr_value["url"].as_str(),
+            Some("https://dockrev.example.com/settings")
+        );
+    }
+
+    #[test]
+    fn event_toggle_flags_are_checked_per_type() {
+        let settings = NotificationSettings {
+            email_enabled: false,
+            email_smtp_url: None,
+            webhook_enabled: false,
+            webhook_url: None,
+            telegram_enabled: false,
+            telegram_bot_token: None,
+            telegram_chat_id: None,
+            webpush_enabled: false,
+            webpush_vapid_public_key: None,
+            webpush_vapid_private_key: None,
+            webpush_vapid_subject: None,
+            event_update_enabled: true,
+            event_new_version_enabled: false,
+            event_ghcr_webhook_anomaly_enabled: true,
+        };
+        assert!(is_event_enabled(&settings, NotificationEventKind::Update));
+        assert!(!is_event_enabled(
+            &settings,
+            NotificationEventKind::NewVersionDiscovered
+        ));
+        assert!(is_event_enabled(
+            &settings,
+            NotificationEventKind::GhcrWebhookAnomaly
+        ));
     }
 }
