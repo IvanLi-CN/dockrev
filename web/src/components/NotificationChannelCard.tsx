@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react'
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
 import alertCircleOutline from '@iconify-icons/mdi/alert-circle-outline'
 import checkCircleOutline from '@iconify-icons/mdi/check-circle-outline'
@@ -40,6 +40,8 @@ const NOTIFICATION_CHANNEL_ICON = {
   webPush: bellOutline,
 } as const
 
+const NOTIFICATION_TEST_BUBBLE_MIN_VISIBLE_MS = 3000
+
 export function NotificationChannelTestControl(props: {
   channel: NotificationTestChannel
   state: NotificationChannelTestState | undefined
@@ -47,6 +49,103 @@ export function NotificationChannelTestControl(props: {
   onRun: (channel: NotificationTestChannel) => void
 }) {
   const label = NOTIFICATION_CHANNEL_LABEL[props.channel]
+  const [dismissedKey, setDismissedKey] = useState<string | null>(null)
+  const bubbleRef = useRef<HTMLDivElement | null>(null)
+  const dismissTimerRef = useRef<number | null>(null)
+  const outsideClickRequestedRef = useRef(false)
+  const shownAtMsRef = useRef<number | null>(null)
+  const stateKeyRef = useRef<string | null>(null)
+
+  const clearDismissTimer = useCallback(() => {
+    const handle = dismissTimerRef.current
+    if (handle == null) return
+    window.clearTimeout(handle)
+    dismissTimerRef.current = null
+  }, [])
+
+  const stateKey = useMemo(() => {
+    if (!props.state) return null
+    // Use a delimiter not present in ISO timestamps.
+    return `${props.channel}|${props.state.phase}|${props.state.updatedAt}`
+  }, [props.channel, props.state])
+
+  useEffect(() => {
+    stateKeyRef.current = stateKey
+  }, [stateKey])
+
+  const updatedAt = props.state?.updatedAt ?? null
+
+  useEffect(() => {
+    clearDismissTimer()
+    outsideClickRequestedRef.current = false
+    shownAtMsRef.current = null
+
+    if (!updatedAt) return
+
+    const parsed = Date.parse(updatedAt)
+    shownAtMsRef.current = Number.isFinite(parsed) ? parsed : Date.now()
+  }, [clearDismissTimer, updatedAt])
+
+  const bubbleVisible = Boolean(props.state && stateKey && dismissedKey !== stateKey)
+
+  const canOutsideDismiss =
+    props.state != null &&
+    bubbleVisible &&
+    (props.state.phase === 'success' || props.state.phase === 'error')
+
+  useEffect(() => {
+    if (!canOutsideDismiss) {
+      clearDismissTimer()
+      outsideClickRequestedRef.current = false
+      return
+    }
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return
+
+      const el = e.target instanceof Element ? e.target : null
+      if (!el) return
+
+      // Only dismiss when the click is outside of the bubble itself.
+      if (bubbleRef.current?.contains(el)) return
+
+      const shownAtMs = shownAtMsRef.current ?? Date.now()
+      const earliestCloseAt = shownAtMs + NOTIFICATION_TEST_BUBBLE_MIN_VISIBLE_MS
+      const now = Date.now()
+
+      if (now >= earliestCloseAt) {
+        clearDismissTimer()
+        outsideClickRequestedRef.current = false
+        const keyNow = stateKeyRef.current
+        if (keyNow != null) setDismissedKey(keyNow)
+        return
+      }
+
+      outsideClickRequestedRef.current = true
+      if (dismissTimerRef.current != null) return
+
+      const waitMs = Math.max(0, earliestCloseAt - now)
+      const keyAtSchedule = stateKeyRef.current
+
+      dismissTimerRef.current = window.setTimeout(() => {
+        dismissTimerRef.current = null
+
+        // State changed (new test) while waiting: do not dismiss the new bubble.
+        if (stateKeyRef.current !== keyAtSchedule) return
+        if (!outsideClickRequestedRef.current) return
+
+        outsideClickRequestedRef.current = false
+        if (keyAtSchedule != null) setDismissedKey(keyAtSchedule)
+      }, waitMs)
+    }
+
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      clearDismissTimer()
+      outsideClickRequestedRef.current = false
+    }
+  }, [canOutsideDismiss, clearDismissTimer])
 
   return (
     <div className="notificationTestActionWrap" data-notification-test-wrap={props.channel}>
@@ -65,8 +164,9 @@ export function NotificationChannelTestControl(props: {
         </span>
       </button>
 
-      {props.state ? (
+      {props.state && bubbleVisible ? (
         <div
+          ref={bubbleRef}
           className={`notificationTestBubble notificationTestBubble${props.state.phase === 'error' ? 'Bad' : props.state.phase === 'success' ? 'Ok' : 'Info'}`}
           role="status"
           aria-live="polite"
