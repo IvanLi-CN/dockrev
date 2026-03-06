@@ -136,5 +136,6 @@
 - 2026-03-06：根据可读性反馈，`ghcr_webhook_anomaly` 摘要改为直接包含异常仓库名预览（不再只显示数量）。
 - 2026-03-06：根据可读性反馈，`ghcr_webhook_anomaly` 用户可读文案移除“打开设置”；Web Push 主跳转改为巡检任务详情页。
 - 2026-03-06：根据可读性反馈，Telegram 的 `ghcr_webhook_anomaly` 首行改为“标题 + 任务超链接”，并移除重复“巡检任务”行。
+- 2026-03-06：根据可读性反馈，Telegram 的 `job_finished` 与 `new_version_discovered` 也改为“标题 + 详情超链接”，移除重复任务链接行。
 - 2026-03-06：根据可读性反馈，用户可读渠道去掉内部 jobId 展示；统一改为“任务详情/检查任务/巡检任务”动作文案，Web Push body 同步简化。
 - 2026-03-06：CI clippy 要求收紧后，将 GHCR 异常通知参数重构为事件对象，行为保持不变，仅消除 `too_many_arguments` 告警。

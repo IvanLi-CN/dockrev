@@ -816,26 +816,22 @@ fn render_telegram_job_html(
     error_excerpt: Option<&str>,
 ) -> String {
     let mut lines: Vec<String> = Vec::new();
-    lines.push(format!("<b>{}</b>", escape_html(&payload.human.title)));
-    lines.push(escape_html(&payload.human.summary));
-
-    if !is_absolute_http_url(&payload.links.job_url) {
-        lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
-    }
-
-    lines.push(format!(
-        "任务详情：{}",
-        render_open_link_html(&payload.links.job_url, "查看任务详情")
-    ));
-    if payload.links.primary_url != payload.links.job_url {
+    if is_absolute_http_url(&payload.links.primary_url) {
         lines.push(format!(
-            "打开服务详情：{}",
-            render_open_link_html(&payload.links.primary_url, "打开")
+            "<b>{}</b> {}",
+            escape_html(&payload.human.title),
+            render_open_link_html(&payload.links.primary_url, "详情")
         ));
     } else {
+        lines.push(format!("<b>{}</b>", escape_html(&payload.human.title)));
+    }
+    lines.push(escape_html(&payload.human.summary));
+
+    if !is_absolute_http_url(&payload.links.primary_url) {
+        lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
         lines.push(format!(
-            "打开任务详情：{}",
-            render_open_link_html(&payload.links.primary_url, "打开")
+            "详情：{}",
+            render_open_link_html(&payload.links.primary_url, "详情")
         ));
     }
 
@@ -872,15 +868,15 @@ fn render_telegram_job_plain(
     error_excerpt: Option<&str>,
 ) -> String {
     let mut lines: Vec<String> = Vec::new();
-    lines.push(payload.human.title.clone());
+    lines.push(format!(
+        "{} 详情：{}",
+        payload.human.title, payload.links.primary_url
+    ));
     lines.push(payload.human.summary.clone());
 
-    if !is_absolute_http_url(&payload.links.job_url) {
+    if !is_absolute_http_url(&payload.links.primary_url) {
         lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
     }
-
-    lines.push(format!("任务详情：{}", payload.links.job_url));
-    lines.push(format!("打开：{}", payload.links.primary_url));
 
     if !payload.links.service_urls.is_empty() {
         lines.push(String::new());
@@ -1099,26 +1095,22 @@ async fn send_email_job(
 
 fn render_telegram_new_version_html(payload: &NewVersionNotificationPayloadV2) -> String {
     let mut lines: Vec<String> = Vec::new();
-    lines.push(format!("<b>{}</b>", escape_html(&payload.human.title)));
-    lines.push(escape_html(&payload.human.summary));
-
-    if !is_absolute_http_url(&payload.links.job_url) {
-        lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
-    }
-
-    lines.push(format!(
-        "检查任务：{}",
-        render_open_link_html(&payload.links.job_url, "查看检查任务")
-    ));
-    if payload.links.primary_url != payload.links.job_url {
+    if is_absolute_http_url(&payload.links.primary_url) {
         lines.push(format!(
-            "打开服务详情：{}",
-            render_open_link_html(&payload.links.primary_url, "打开")
+            "<b>{}</b> {}",
+            escape_html(&payload.human.title),
+            render_open_link_html(&payload.links.primary_url, "详情")
         ));
     } else {
+        lines.push(format!("<b>{}</b>", escape_html(&payload.human.title)));
+    }
+    lines.push(escape_html(&payload.human.summary));
+
+    if !is_absolute_http_url(&payload.links.primary_url) {
+        lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
         lines.push(format!(
-            "打开检查任务：{}",
-            render_open_link_html(&payload.links.primary_url, "打开")
+            "详情：{}",
+            render_open_link_html(&payload.links.primary_url, "详情")
         ));
     }
 
@@ -1151,15 +1143,15 @@ fn render_telegram_new_version_html(payload: &NewVersionNotificationPayloadV2) -
 
 fn render_telegram_new_version_plain(payload: &NewVersionNotificationPayloadV2) -> String {
     let mut lines: Vec<String> = Vec::new();
-    lines.push(payload.human.title.clone());
+    lines.push(format!(
+        "{} 详情：{}",
+        payload.human.title, payload.links.primary_url
+    ));
     lines.push(payload.human.summary.clone());
 
-    if !is_absolute_http_url(&payload.links.job_url) {
+    if !is_absolute_http_url(&payload.links.primary_url) {
         lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
     }
-
-    lines.push(format!("检查任务：{}", payload.links.job_url));
-    lines.push(format!("打开：{}", payload.links.primary_url));
 
     if !payload.links.service_urls.is_empty() {
         lines.push(String::new());
@@ -2907,8 +2899,13 @@ mod tests {
         let links = finalize_job_links(job_url, vec![make_service_url(1)], false, None);
         let payload = sample_job_payload(links);
         let html = render_telegram_job_html(&payload, None);
+        assert!(html.contains(
+            "<b>Dockrev：更新完成（成功）</b> <a href=\"https://dockrev.example.com/services/stk_1/svc_1\">详情</a>"
+        ));
         assert!(html.contains("<a href=\"https://dockrev.example.com/services/stk_1/svc_1\">"));
         assert!(html.contains("<b>服务清单</b>"));
+        assert!(!html.contains("任务详情："));
+        assert!(!html.contains("打开服务详情："));
         assert!(!html.contains("Dockrev notification:"));
     }
 
@@ -3053,8 +3050,13 @@ mod tests {
     fn new_version_telegram_render_contains_clickable_service_links() {
         let payload = sample_new_version_payload();
         let html = render_telegram_new_version_html(&payload);
+        assert!(html.contains(
+            "<b>Dockrev：发现新版本</b> <a href=\"https://dockrev.example.com/services/stk_1/svc_1\">详情</a>"
+        ));
         assert!(html.contains("<a href=\"https://dockrev.example.com/services/stk_1/svc_1\">"));
         assert!(html.contains("<b>服务清单</b>"));
+        assert!(!html.contains("检查任务："));
+        assert!(!html.contains("打开服务详情："));
     }
 
     #[test]

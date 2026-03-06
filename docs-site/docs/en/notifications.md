@@ -157,7 +157,7 @@ Truncation:
 
 ### Telegram (HTML)
 
-Chinese title + summary + clickable links (task detail + primary + per-service list) + optional error excerpt (`<pre>...`).
+Chinese title with an inline clickable `详情` link + summary + per-service list + optional error excerpt (`<pre>...`).
 
 ### Email (multipart)
 
