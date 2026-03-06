@@ -24,7 +24,6 @@ const TELEGRAM_MAX_MESSAGE_CHARS: usize = 4096;
 const MAX_JOB_SERVICE_URLS: usize = 10;
 const MAX_JOB_ERROR_CHARS: usize = 1024;
 const MAX_NEW_VERSION_SERVICE_URLS: usize = 10;
-const MAX_NEW_VERSION_SUMMARY_SERVICES: usize = 3;
 const MAX_GHCR_REPOS: usize = 10;
 const MAX_GHCR_REPO_ERROR_CHARS: usize = 256;
 
@@ -481,27 +480,21 @@ fn summarize_new_version_services(
 
     let preview = visible_services
         .iter()
-        .take(MAX_NEW_VERSION_SUMMARY_SERVICES)
         .map(|svc| format!("{} / {}", svc.stack_name, svc.service_name))
         .collect::<Vec<_>>()
         .join("、");
     if preview.is_empty() {
         return format!("发现 {total_new_versions} 个服务有新版本。");
     }
-    let preview_more = if total_new_versions > MAX_NEW_VERSION_SUMMARY_SERVICES {
-        " 等"
-    } else {
-        ""
-    };
 
     if omitted > 0 {
         return format!(
-            "发现 {total_new_versions} 个服务有新版本：{preview}{preview_more}（通知正文仅展示前 {} 条）。",
+            "发现 {total_new_versions} 个服务有新版本：{preview}（通知正文仅展示前 {} 条）。",
             visible_services.len()
         );
     }
 
-    format!("发现 {total_new_versions} 个服务有新版本：{preview}{preview_more}。")
+    format!("发现 {total_new_versions} 个服务有新版本：{preview}。")
 }
 
 fn extract_changed_service_ids(update: &Value) -> Vec<String> {
@@ -2989,7 +2982,7 @@ mod tests {
         assert!(summary.contains("blog / api"));
         assert!(summary.contains("blog / worker"));
         assert!(summary.contains("shop / gateway"));
-        assert!(summary.contains("等"));
+        assert!(summary.contains("shop / sync"));
         assert!(summary.contains("仅展示前 4 条"));
     }
 
