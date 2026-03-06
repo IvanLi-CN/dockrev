@@ -499,15 +499,11 @@ fn summarize_new_version_services(
 
 fn summarize_ghcr_anomaly_repos(
     total_anomalies: u32,
-    missing: u32,
-    conflict: u32,
-    error: u32,
     visible_repos: &[GhcrWebhookAnomalyRepoV2],
     omitted: u32,
 ) -> String {
-    let counts = format!("missing={missing}，conflict={conflict}，error={error}");
     if visible_repos.is_empty() {
-        return format!("巡检发现 {total_anomalies} 个异常仓库（{counts}）。");
+        return format!("巡检发现 {total_anomalies} 个异常仓库。");
     }
 
     let preview = visible_repos
@@ -518,12 +514,12 @@ fn summarize_ghcr_anomaly_repos(
 
     if omitted > 0 {
         return format!(
-            "巡检发现 {total_anomalies} 个异常仓库：{preview}（{counts}；通知正文仅展示前 {} 条）。",
+            "巡检发现 {total_anomalies} 个异常仓库：{preview}（通知正文仅展示前 {} 条）。",
             visible_repos.len()
         );
     }
 
-    format!("巡检发现 {total_anomalies} 个异常仓库：{preview}（{counts}）。")
+    format!("巡检发现 {total_anomalies} 个异常仓库：{preview}。")
 }
 
 fn extract_changed_service_ids(update: &Value) -> Vec<String> {
@@ -1273,10 +1269,6 @@ fn render_telegram_ghcr_webhook_anomaly_html(payload: &GhcrWebhookAnomalyPayload
     }
 
     lines.push(format!(
-        "打开设置：{}",
-        render_open_link_html(&payload.links.settings_url, "GHCR 设置")
-    ));
-    lines.push(format!(
         "巡检任务：{}",
         render_open_link_html(&payload.links.job_url, "查看巡检任务")
     ));
@@ -1312,7 +1304,6 @@ fn render_telegram_ghcr_webhook_anomaly_plain(payload: &GhcrWebhookAnomalyPayloa
         lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
     }
 
-    lines.push(format!("打开设置：{}", payload.links.settings_url));
     lines.push(format!("任务：{}", payload.links.job_url));
 
     if !payload.links.repos.is_empty() {
@@ -1372,16 +1363,6 @@ fn render_email_ghcr_webhook_anomaly_html(payload: &GhcrWebhookAnomalyPayloadV2)
         items.push_str("</ul>");
     }
 
-    let settings_link = if is_absolute_http_url(&payload.links.settings_url) {
-        format!(
-            "<a href=\"{}\">{}</a>",
-            escape_html(&payload.links.settings_url),
-            escape_html(&payload.links.settings_url)
-        )
-    } else {
-        format!("<code>{}</code>", escape_html(&payload.links.settings_url))
-    };
-
     let job_link = if is_absolute_http_url(&payload.links.job_url) {
         format!(
             "<a href=\"{}\">{}</a>",
@@ -1397,9 +1378,7 @@ fn render_email_ghcr_webhook_anomaly_html(payload: &GhcrWebhookAnomalyPayloadV2)
         note = "<p><em>提示：未配置实例 Public Base URL（系统设置），以下链接可能仅为站内路径。</em></p>".to_string();
     }
 
-    format!(
-        "<h2>{title}</h2><p>{summary}</p>{note}<p>打开设置：{settings_link}</p><p>巡检任务：{job_link}</p>{items}",
-    )
+    format!("<h2>{title}</h2><p>{summary}</p>{note}<p>巡检任务：{job_link}</p>{items}",)
 }
 
 async fn send_telegram_new_version(
@@ -1973,14 +1952,7 @@ async fn build_ghcr_webhook_anomaly_payload_v2(
     repo_items.sort_by(|a, b| a.full_name.cmp(&b.full_name));
     let omitted = repo_items.len().saturating_sub(MAX_GHCR_REPOS) as u32;
     repo_items.truncate(MAX_GHCR_REPOS);
-    let summary = summarize_ghcr_anomaly_repos(
-        total_anomalies,
-        event.counts.missing,
-        event.counts.conflict,
-        event.counts.error,
-        &repo_items,
-        omitted,
-    );
+    let summary = summarize_ghcr_anomaly_repos(total_anomalies, &repo_items, omitted);
 
     let mut detail_lines = vec![
         format!("任务：{}", event.job_id),
@@ -3058,9 +3030,8 @@ mod tests {
             },
             human: JobNotificationHumanV2 {
                 title: "Dockrev：GitHub Webhook 巡检异常".to_string(),
-                summary:
-                    "巡检发现 2 个异常仓库：acme/api [missing]、acme/worker [error]（missing=1，conflict=0，error=1）。"
-                        .to_string(),
+                summary: "巡检发现 2 个异常仓库：acme/api [missing]、acme/worker [error]。"
+                    .to_string(),
                 detail: "test".to_string(),
             },
             debug: JobNotificationDebugV2 {
@@ -3086,10 +3057,11 @@ mod tests {
         assert!(html.contains("acme/worker"));
         assert!(html.contains("missing"));
         assert!(html.contains("webhook missing"));
+        assert!(!html.contains("打开设置"));
     }
 
     #[test]
-    fn ghcr_anomaly_summary_includes_repo_names_and_counts() {
+    fn ghcr_anomaly_summary_includes_repo_names() {
         let repos = vec![
             GhcrWebhookAnomalyRepoV2 {
                 owner: "acme".to_string(),
@@ -3106,12 +3078,10 @@ mod tests {
                 last_error: None,
             },
         ];
-        let summary = summarize_ghcr_anomaly_repos(2, 1, 0, 1, &repos, 0);
+        let summary = summarize_ghcr_anomaly_repos(2, &repos, 0);
         assert!(summary.contains("acme/api [missing]"));
         assert!(summary.contains("acme/worker [error]"));
-        assert!(summary.contains("missing=1"));
-        assert!(summary.contains("conflict=0"));
-        assert!(summary.contains("error=1"));
+        assert!(!summary.contains("missing="));
     }
 
     #[test]
@@ -3139,7 +3109,7 @@ mod tests {
                 last_error: None,
             },
         ];
-        let summary = summarize_ghcr_anomaly_repos(14, 7, 2, 5, &repos, 11);
+        let summary = summarize_ghcr_anomaly_repos(14, &repos, 11);
         assert!(summary.contains("acme/api [missing]"));
         assert!(summary.contains("acme/worker [error]"));
         assert!(summary.contains("acme/sync [conflict]"));

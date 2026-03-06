@@ -171,7 +171,7 @@ Dockrev 会生成两类路径（总能生成）：
 示例（摘要）：
 
 - 标题：`Dockrev：GitHub Webhook 巡检异常`
-- 摘要：`巡检发现 2 个异常仓库：acme/api [missing]、acme/worker [error]（missing=1，conflict=0，error=1）。`
+- 摘要：`巡检发现 2 个异常仓库：acme/api [missing]、acme/worker [error]。`
 - 主链接：`https://dockrev.example.com/settings`
 
 ## Notification test（`dockrev.notification.test.v2`）
