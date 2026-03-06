@@ -71,6 +71,7 @@
 - `new_version_discovered`：
   - schema 固定为 `dockrev.notification.new_version_discovered.v2`；
   - 仅在“定时检查”发现新版本服务数 > 0 时发送；
+  - `human.summary` 必须直接包含服务名预览（不只给数量）；
   - `primaryUrl`：单服务时指向服务详情，多服务时指向任务详情。
 - `ghcr_webhook_anomaly`：
   - schema 固定为 `dockrev.notification.ghcr_webhook_anomaly.v2`；
@@ -130,5 +131,6 @@
 
 ## Change log
 
+- 2026-03-06：根据可读性反馈，`new_version_discovered` 摘要改为直接包含服务名预览（不再只显示数量）。
 - 2026-03-06：根据可读性反馈，用户可读渠道去掉内部 jobId 展示；统一改为“任务详情/检查任务/巡检任务”动作文案，Web Push body 同步简化。
 - 2026-03-06：CI clippy 要求收紧后，将 GHCR 异常通知参数重构为事件对象，行为保持不变，仅消除 `too_many_arguments` 告警。

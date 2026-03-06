@@ -24,6 +24,7 @@ const TELEGRAM_MAX_MESSAGE_CHARS: usize = 4096;
 const MAX_JOB_SERVICE_URLS: usize = 10;
 const MAX_JOB_ERROR_CHARS: usize = 1024;
 const MAX_NEW_VERSION_SERVICE_URLS: usize = 10;
+const MAX_NEW_VERSION_SUMMARY_SERVICES: usize = 3;
 const MAX_GHCR_REPOS: usize = 10;
 const MAX_GHCR_REPO_ERROR_CHARS: usize = 256;
 
@@ -453,6 +454,54 @@ fn render_tag_transition(current_tag: Option<&str>, candidate_tag: Option<&str>)
         (None, Some(candidate)) => Some(format!("-> {candidate}")),
         _ => None,
     }
+}
+
+fn summarize_new_version_services(
+    total_new_versions: usize,
+    visible_services: &[NewVersionNotificationServiceUrlV2],
+    omitted: u32,
+) -> String {
+    if total_new_versions == 0 {
+        return "发现新版本服务数为 0。".to_string();
+    }
+
+    if total_new_versions == 1 {
+        if let Some(svc) = visible_services.first() {
+            let transition =
+                render_tag_transition(svc.current_tag.as_deref(), svc.candidate_tag.as_deref())
+                    .map(|t| format!("，{t}"))
+                    .unwrap_or_default();
+            return format!(
+                "发现 1 个服务有新版本（{} / {}{}）。",
+                svc.stack_name, svc.service_name, transition
+            );
+        }
+        return "发现 1 个服务有新版本。".to_string();
+    }
+
+    let preview = visible_services
+        .iter()
+        .take(MAX_NEW_VERSION_SUMMARY_SERVICES)
+        .map(|svc| format!("{} / {}", svc.stack_name, svc.service_name))
+        .collect::<Vec<_>>()
+        .join("、");
+    if preview.is_empty() {
+        return format!("发现 {total_new_versions} 个服务有新版本。");
+    }
+    let preview_more = if total_new_versions > MAX_NEW_VERSION_SUMMARY_SERVICES {
+        " 等"
+    } else {
+        ""
+    };
+
+    if omitted > 0 {
+        return format!(
+            "发现 {total_new_versions} 个服务有新版本：{preview}{preview_more}（通知正文仅展示前 {} 条）。",
+            visible_services.len()
+        );
+    }
+
+    format!("发现 {total_new_versions} 个服务有新版本：{preview}{preview_more}。")
 }
 
 fn extract_changed_service_ids(update: &Value) -> Vec<String> {
@@ -1817,25 +1866,7 @@ async fn build_new_version_payload_v2(
         job_url.clone()
     };
 
-    let summary = if total_new_versions == 1 {
-        let svc = &service_urls_full[0];
-        let transition =
-            render_tag_transition(svc.current_tag.as_deref(), svc.candidate_tag.as_deref())
-                .map(|t| format!("，{t}"))
-                .unwrap_or_default();
-        format!(
-            "发现 1 个服务有新版本（{} / {}{}）。",
-            svc.stack_name, svc.service_name, transition
-        )
-    } else if omitted > 0 {
-        format!(
-            "发现 {} 个服务有新版本（仅展示前 {} 条）。",
-            total_new_versions,
-            service_urls_full.len()
-        )
-    } else {
-        format!("发现 {} 个服务有新版本。", total_new_versions)
-    };
+    let summary = summarize_new_version_services(total_new_versions, &service_urls_full, omitted);
 
     let mut detail_lines = vec![
         format!("检查任务：{check_job_id}"),
@@ -2913,6 +2944,53 @@ mod tests {
                 source: "dockrev-api",
             },
         }
+    }
+
+    fn make_new_version_service(
+        stack_name: &str,
+        service_name: &str,
+    ) -> NewVersionNotificationServiceUrlV2 {
+        NewVersionNotificationServiceUrlV2 {
+            stack_id: format!("stk_{stack_name}"),
+            stack_name: stack_name.to_string(),
+            service_id: format!("svc_{service_name}"),
+            service_name: service_name.to_string(),
+            current_tag: Some("v1.0.0".to_string()),
+            candidate_tag: Some("v1.1.0".to_string()),
+            url: format!(
+                "https://dockrev.example.com/services/stk_{stack_name}/svc_{service_name}"
+            ),
+        }
+    }
+
+    #[test]
+    fn new_version_summary_includes_service_names_for_multi() {
+        let services = vec![
+            make_new_version_service("blog", "api"),
+            make_new_version_service("blog", "worker"),
+            make_new_version_service("shop", "gateway"),
+        ];
+        let summary = summarize_new_version_services(3, &services, 0);
+        assert!(summary.contains("blog / api"));
+        assert!(summary.contains("blog / worker"));
+        assert!(summary.contains("shop / gateway"));
+        assert!(summary.starts_with("发现 3 个服务有新版本："));
+    }
+
+    #[test]
+    fn new_version_summary_marks_omitted_and_preview() {
+        let services = vec![
+            make_new_version_service("blog", "api"),
+            make_new_version_service("blog", "worker"),
+            make_new_version_service("shop", "gateway"),
+            make_new_version_service("shop", "sync"),
+        ];
+        let summary = summarize_new_version_services(14, &services, 10);
+        assert!(summary.contains("blog / api"));
+        assert!(summary.contains("blog / worker"));
+        assert!(summary.contains("shop / gateway"));
+        assert!(summary.contains("等"));
+        assert!(summary.contains("仅展示前 4 条"));
     }
 
     fn sample_ghcr_anomaly_payload() -> GhcrWebhookAnomalyPayloadV2 {

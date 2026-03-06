@@ -148,7 +148,7 @@ Dockrev 会生成两类路径（总能生成）：
 示例（摘要）：
 
 - 标题：`Dockrev：发现新版本`
-- 摘要：`发现 3 个服务有新版本。`
+- 摘要：`发现 3 个服务有新版本：blog / api、blog / worker、shop / gateway。`
 - 主链接：`https://dockrev.example.com/queue/job_...`（多服务）或服务详情（单服务）
 
 ## GHCR webhook anomaly（`dockrev.notification.ghcr_webhook_anomaly.v2`）

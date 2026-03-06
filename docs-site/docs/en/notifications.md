@@ -121,6 +121,7 @@ Key fields:
 - `links.jobUrl`: `/queue/{jobId}`
 - `links.serviceUrls[]`: `/services/{stackId}/{serviceId}`
 - `links.primaryUrl`: service URL when exactly one service is affected, otherwise job URL
+- `human.summary`: includes affected service names directly (for example: `Found 3 services with new versions: blog/api, blog/worker, shop/gateway.`)
 
 Truncation:
 
