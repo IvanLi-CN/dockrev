@@ -1922,7 +1922,7 @@ async fn build_ghcr_webhook_anomaly_payload_v2(
 ) -> anyhow::Result<GhcrWebhookAnomalyPayloadV2> {
     let job_url = best_effort_url(public_base_url, &format!("queue/{}", event.job_id));
     let settings_url = best_effort_url(public_base_url, "settings");
-    let primary_url = settings_url.clone();
+    let primary_url = job_url.clone();
     let total_anomalies = event.counts.total();
 
     let mut seen = std::collections::HashSet::<String>::new();
@@ -3007,7 +3007,7 @@ mod tests {
                 total_anomalies: 2,
             },
             links: GhcrWebhookAnomalyLinksV2 {
-                primary_url: "https://dockrev.example.com/settings".to_string(),
+                primary_url: "https://dockrev.example.com/queue/job_ghcr_123".to_string(),
                 job_url: "https://dockrev.example.com/queue/job_ghcr_123".to_string(),
                 settings_url: "https://dockrev.example.com/settings".to_string(),
                 repos: vec![
@@ -3129,7 +3129,7 @@ mod tests {
         let ghcr_value = to_web_push_ghcr_webhook_anomaly_value(&ghcr_payload).unwrap();
         assert_eq!(
             ghcr_value["url"].as_str(),
-            Some("https://dockrev.example.com/settings")
+            Some("https://dockrev.example.com/queue/job_ghcr_123")
         );
     }
 

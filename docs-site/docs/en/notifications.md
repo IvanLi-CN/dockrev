@@ -138,6 +138,7 @@ Key fields:
 - `job.missing/conflict/error`: anomaly counts
 - `links.settingsUrl`: settings page URL for remediation
 - `links.jobUrl`: job detail URL for audit logs
+- `links.primaryUrl`: defaults to `links.jobUrl` (Web Push click target)
 - `links.repos[]`: failing repo list with state and error excerpt
 - `human.summary`: directly lists visible failing repos (example: `Found 2 anomalous repos: acme/api [missing], acme/worker [error].`)
 

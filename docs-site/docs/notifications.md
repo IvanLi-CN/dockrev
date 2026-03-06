@@ -161,6 +161,7 @@ Dockrev 会生成两类路径（总能生成）：
 - `job.missing/conflict/error`：异常统计
 - `links.settingsUrl`：设置页（用于修复配置）
 - `links.jobUrl`：任务详情页（查看巡检日志）
+- `links.primaryUrl`：默认等于 `links.jobUrl`（Web Push 点击目标）
 - `links.repos[]`：异常仓库列表（含状态与错误节选）
 
 截断规则：
@@ -172,7 +173,7 @@ Dockrev 会生成两类路径（总能生成）：
 
 - 标题：`Dockrev：GitHub Webhook 巡检异常`
 - 摘要：`巡检发现 2 个异常仓库：acme/api [missing]、acme/worker [error]。`
-- 主链接：`https://dockrev.example.com/settings`
+- 主链接：`https://dockrev.example.com/queue/job_...`
 
 ## Notification test（`dockrev.notification.test.v2`）
 
