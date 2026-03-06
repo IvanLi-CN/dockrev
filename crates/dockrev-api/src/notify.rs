@@ -522,6 +522,45 @@ fn summarize_ghcr_anomaly_repos(
     format!("巡检发现 {total_anomalies} 个异常仓库：{preview}。")
 }
 
+fn summarize_updated_services(
+    visible_services: &[JobNotificationServiceUrlV2],
+    omitted: u32,
+) -> String {
+    let total_changed = visible_services.len() + omitted as usize;
+    if total_changed == 0 {
+        return "变更 0 个服务。".to_string();
+    }
+
+    if total_changed == 1 {
+        if let Some(svc) = visible_services.first() {
+            return format!(
+                "变更 1 个服务（{} / {}）。",
+                svc.stack_name, svc.service_name
+            );
+        }
+        return "变更 1 个服务。".to_string();
+    }
+
+    let preview = visible_services
+        .iter()
+        .map(|svc| format!("{} / {}", svc.stack_name, svc.service_name))
+        .collect::<Vec<_>>()
+        .join("、");
+
+    if preview.is_empty() {
+        return format!("变更 {total_changed} 个服务。");
+    }
+
+    if omitted > 0 {
+        return format!(
+            "变更 {total_changed} 个服务：{preview}（通知正文仅展示前 {} 条）。",
+            visible_services.len()
+        );
+    }
+
+    format!("变更 {total_changed} 个服务：{preview}。")
+}
+
 fn extract_changed_service_ids(update: &Value) -> Vec<String> {
     let obj = update
         .get("newDigests")
@@ -1706,23 +1745,10 @@ async fn build_job_payload_v2(
         format!("Dockrev：更新完成（{status_zh}）")
     };
 
-    let omitted = links.truncated.service_urls_omitted;
     let summary = if links.service_urls.is_empty() {
         format!("状态：{status_zh}。")
-    } else if links.service_urls.len() == 1 {
-        let svc = &links.service_urls[0];
-        format!(
-            "变更 1 个服务（{} / {}）。",
-            svc.stack_name, svc.service_name
-        )
-    } else if omitted > 0 {
-        format!(
-            "变更 {} 个服务（仅展示前 {} 条）。",
-            links.service_urls.len() + omitted as usize,
-            links.service_urls.len()
-        )
     } else {
-        format!("变更 {} 个服务。", links.service_urls.len())
+        summarize_updated_services(&links.service_urls, links.truncated.service_urls_omitted)
     };
 
     let mut detail_lines = Vec::new();
@@ -2867,6 +2893,35 @@ mod tests {
         let links = finalize_job_links(job_url, service_urls, false, None);
         assert_eq!(links.service_urls.len(), MAX_JOB_SERVICE_URLS);
         assert_eq!(links.truncated.service_urls_omitted, 3);
+    }
+
+    #[test]
+    fn update_summary_includes_service_names_for_multi() {
+        let services = vec![
+            make_service_url(1),
+            make_service_url(2),
+            make_service_url(3),
+        ];
+        let summary = summarize_updated_services(&services, 0);
+        assert!(summary.starts_with("变更 3 个服务："));
+        assert!(summary.contains("stack-1 / service-1"));
+        assert!(summary.contains("stack-2 / service-2"));
+        assert!(summary.contains("stack-3 / service-3"));
+    }
+
+    #[test]
+    fn update_summary_marks_omitted_and_visible_limit() {
+        let services = vec![
+            make_service_url(1),
+            make_service_url(2),
+            make_service_url(3),
+        ];
+        let summary = summarize_updated_services(&services, 9);
+        assert!(summary.contains("变更 12 个服务"));
+        assert!(summary.contains("stack-1 / service-1"));
+        assert!(summary.contains("stack-2 / service-2"));
+        assert!(summary.contains("stack-3 / service-3"));
+        assert!(summary.contains("仅展示前 3 条"));
     }
 
     #[test]
