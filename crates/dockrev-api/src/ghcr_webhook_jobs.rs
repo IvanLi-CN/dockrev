@@ -765,15 +765,20 @@ async fn run_claimed_job(state: Arc<AppState>, job: JobListItem) -> anyhow::Resu
                 let notify_job_id = job_id.clone();
                 let notify_finished_at = finished_at.clone();
                 tokio::spawn(async move {
+                    let event = notify::GhcrWebhookAnomalyEvent {
+                        job_id: &notify_job_id,
+                        status: final_status,
+                        counts: notify::GhcrWebhookAnomalyCounts {
+                            missing: counters.missing,
+                            conflict: counters.conflict,
+                            error: counters.error,
+                        },
+                        repos: &anomaly_repos,
+                    };
                     let _ = notify::notify_ghcr_webhook_anomaly(
                         notify_state.as_ref(),
-                        &notify_job_id,
-                        final_status,
                         &notify_finished_at,
-                        counters.missing,
-                        counters.conflict,
-                        counters.error,
-                        &anomaly_repos,
+                        event,
                     )
                     .await;
                 });

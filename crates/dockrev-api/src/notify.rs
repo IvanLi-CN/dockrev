@@ -74,28 +74,13 @@ pub async fn notify_new_versions_discovered(
 
 pub async fn notify_ghcr_webhook_anomaly(
     state: &AppState,
-    job_id: &str,
-    status: &str,
     now_rfc3339: &str,
-    missing: u32,
-    conflict: u32,
-    error: u32,
-    repos: &[GhcrWebhookAnomalyRepo],
+    event: GhcrWebhookAnomalyEvent<'_>,
 ) -> anyhow::Result<()> {
-    if missing + conflict + error == 0 {
+    if event.counts.total() == 0 {
         return Ok(());
     }
-    send_ghcr_webhook_anomaly(
-        state,
-        job_id,
-        status,
-        now_rfc3339,
-        missing,
-        conflict,
-        error,
-        repos,
-    )
-    .await?;
+    send_ghcr_webhook_anomaly(state, now_rfc3339, event).await?;
     Ok(())
 }
 
@@ -149,6 +134,27 @@ pub struct GhcrWebhookAnomalyRepo {
     pub repo: String,
     pub state: String,
     pub last_error: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GhcrWebhookAnomalyCounts {
+    pub missing: u32,
+    pub conflict: u32,
+    pub error: u32,
+}
+
+impl GhcrWebhookAnomalyCounts {
+    pub fn total(self) -> u32 {
+        self.missing + self.conflict + self.error
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct GhcrWebhookAnomalyEvent<'a> {
+    pub job_id: &'a str,
+    pub status: &'a str,
+    pub counts: GhcrWebhookAnomalyCounts,
+    pub repos: &'a [GhcrWebhookAnomalyRepo],
 }
 
 fn is_event_enabled(settings: &NotificationSettings, event: NotificationEventKind) -> bool {
@@ -1889,21 +1895,16 @@ async fn build_ghcr_webhook_anomaly_payload_v2(
     now_rfc3339: &str,
     public_base_url: Option<&str>,
     channel: &'static str,
-    job_id: &str,
-    status: &str,
-    missing: u32,
-    conflict: u32,
-    error: u32,
-    repos: &[GhcrWebhookAnomalyRepo],
+    event: GhcrWebhookAnomalyEvent<'_>,
 ) -> anyhow::Result<GhcrWebhookAnomalyPayloadV2> {
-    let job_url = best_effort_url(public_base_url, &format!("queue/{job_id}"));
+    let job_url = best_effort_url(public_base_url, &format!("queue/{}", event.job_id));
     let settings_url = best_effort_url(public_base_url, "settings");
     let primary_url = settings_url.clone();
-    let total_anomalies = missing + conflict + error;
+    let total_anomalies = event.counts.total();
 
     let mut seen = std::collections::HashSet::<String>::new();
     let mut repo_items: Vec<GhcrWebhookAnomalyRepoV2> = Vec::new();
-    for repo in repos {
+    for repo in event.repos {
         let full_name = format!("{}/{}", repo.owner, repo.repo);
         if !seen.insert(full_name.to_ascii_lowercase()) {
             continue;
@@ -1930,7 +1931,7 @@ async fn build_ghcr_webhook_anomaly_payload_v2(
     repo_items.truncate(MAX_GHCR_REPOS);
 
     let mut detail_lines = vec![
-        format!("任务：{job_id}"),
+        format!("任务：{}", event.job_id),
         format!("打开：{primary_url}"),
         format!("发送：{now_rfc3339}"),
     ];
@@ -1947,11 +1948,11 @@ async fn build_ghcr_webhook_anomaly_payload_v2(
         sent_at: now_rfc3339.to_string(),
         channel,
         job: GhcrWebhookAnomalyJobV2 {
-            id: job_id.to_string(),
-            status: status.to_string(),
-            missing,
-            conflict,
-            error,
+            id: event.job_id.to_string(),
+            status: event.status.to_string(),
+            missing: event.counts.missing,
+            conflict: event.counts.conflict,
+            error: event.counts.error,
             total_anomalies,
         },
         links: GhcrWebhookAnomalyLinksV2 {
@@ -1967,7 +1968,7 @@ async fn build_ghcr_webhook_anomaly_payload_v2(
             title: "Dockrev：GitHub Webhook 巡检异常".to_string(),
             summary: format!(
                 "巡检发现 {} 个异常仓库（missing={}，conflict={}，error={}）。",
-                total_anomalies, missing, conflict, error
+                total_anomalies, event.counts.missing, event.counts.conflict, event.counts.error
             ),
             detail: detail_lines.join("\n"),
         },
@@ -2091,16 +2092,10 @@ async fn send_new_versions(
     Ok(Value::Object(results))
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn send_ghcr_webhook_anomaly(
     state: &AppState,
-    job_id: &str,
-    status: &str,
     now_rfc3339: &str,
-    missing: u32,
-    conflict: u32,
-    error: u32,
-    repos: &[GhcrWebhookAnomalyRepo],
+    event: GhcrWebhookAnomalyEvent<'_>,
 ) -> anyhow::Result<Value> {
     let settings = state.db.get_notification_settings().await?;
     if !is_event_enabled(&settings, NotificationEventKind::GhcrWebhookAnomaly) {
@@ -2122,19 +2117,14 @@ async fn send_ghcr_webhook_anomaly(
                 now_rfc3339,
                 public_base_url.as_deref(),
                 "webhook",
-                job_id,
-                status,
-                missing,
-                conflict,
-                error,
-                repos,
+                event,
             )
             .await?;
             let value = to_ghcr_webhook_anomaly_value(&payload)?;
             send_webhook(&client, settings.webhook_url.as_deref(), &value).await
         }
         .await;
-        log_result(state, Some(job_id), now_rfc3339, "webhook", &r).await;
+        log_result(state, Some(event.job_id), now_rfc3339, "webhook", &r).await;
         results.insert("webhook".to_string(), result_value(r));
     }
 
@@ -2145,12 +2135,7 @@ async fn send_ghcr_webhook_anomaly(
                 now_rfc3339,
                 public_base_url.as_deref(),
                 "telegram",
-                job_id,
-                status,
-                missing,
-                conflict,
-                error,
-                repos,
+                event,
             )
             .await?;
             send_telegram_ghcr_webhook_anomaly(
@@ -2162,7 +2147,7 @@ async fn send_ghcr_webhook_anomaly(
             .await
         }
         .await;
-        log_result(state, Some(job_id), now_rfc3339, "telegram", &r).await;
+        log_result(state, Some(event.job_id), now_rfc3339, "telegram", &r).await;
         results.insert("telegram".to_string(), result_value(r));
     }
 
@@ -2173,18 +2158,13 @@ async fn send_ghcr_webhook_anomaly(
                 now_rfc3339,
                 public_base_url.as_deref(),
                 "email",
-                job_id,
-                status,
-                missing,
-                conflict,
-                error,
-                repos,
+                event,
             )
             .await?;
             send_email_ghcr_webhook_anomaly(settings.email_smtp_url.as_deref(), &payload).await
         }
         .await;
-        log_result(state, Some(job_id), now_rfc3339, "email", &r).await;
+        log_result(state, Some(event.job_id), now_rfc3339, "email", &r).await;
         results.insert("email".to_string(), result_value(r));
     }
 
@@ -2195,12 +2175,7 @@ async fn send_ghcr_webhook_anomaly(
                 now_rfc3339,
                 public_base_url.as_deref(),
                 "webPush",
-                job_id,
-                status,
-                missing,
-                conflict,
-                error,
-                repos,
+                event,
             )
             .await?;
             let web_push_payload = to_web_push_ghcr_webhook_anomaly_value(&payload)?;
@@ -2213,7 +2188,7 @@ async fn send_ghcr_webhook_anomaly(
             .await
         }
         .await;
-        log_result(state, Some(job_id), now_rfc3339, "webPush", &r).await;
+        log_result(state, Some(event.job_id), now_rfc3339, "webPush", &r).await;
         results.insert("webPush".to_string(), result_value(r));
     }
 
