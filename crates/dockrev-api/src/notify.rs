@@ -490,7 +490,9 @@ fn extract_error_excerpt(summary: &Value) -> Option<String> {
 
     let stacks = summary.get("stacks").and_then(|v| v.as_array())?;
     for s in stacks {
-        let update = s.get("update")?;
+        let Some(update) = s.get("update") else {
+            continue;
+        };
         if let Some(err) = update.get("lastError").and_then(|v| v.as_str()) {
             let trimmed = err.trim();
             if !trimmed.is_empty() {
@@ -3047,5 +3049,17 @@ mod tests {
             &settings,
             NotificationEventKind::GhcrWebhookAnomaly
         ));
+    }
+
+    #[test]
+    fn error_excerpt_skips_stacks_without_update_block() {
+        let summary = json!({
+            "stacks": [
+                { "stackId": "stk_empty" },
+                { "stackId": "stk_err", "update": { "error": "registry timeout" } }
+            ]
+        });
+        let excerpt = extract_error_excerpt(&summary);
+        assert_eq!(excerpt.as_deref(), Some("registry timeout"));
     }
 }

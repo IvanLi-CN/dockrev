@@ -25,9 +25,17 @@ self.addEventListener('notificationclick', (event) => {
       if (url) {
         // Prefer reusing an existing tab by navigating it when supported.
         for (const client of clients) {
-          if (client && typeof client.focus === 'function' && typeof client.navigate === 'function') {
-            await client.navigate(url)
-            return client.focus()
+          if (client && typeof client.focus === 'function') {
+            if (typeof client.navigate === 'function') {
+              try {
+                const navigatedClient = await client.navigate(url)
+                if (navigatedClient && typeof navigatedClient.focus === 'function') {
+                  return navigatedClient.focus()
+                }
+              } catch (_) {
+                // Fall through to openWindow.
+              }
+            }
           }
         }
         if (self.clients.openWindow) return self.clients.openWindow(url)
