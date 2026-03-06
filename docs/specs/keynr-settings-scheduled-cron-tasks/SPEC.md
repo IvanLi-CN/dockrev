@@ -119,3 +119,9 @@
 - [x] M5: Web：SettingsPage UI + api types + storybook mock 同步
 - [x] M6: Web：/queue 模块名统一为“任务队列”
 - [x] M7: 测试与回归：`cargo test -p dockrev-api` + `bun test` + `bun run --cwd web build`
+
+## 视觉证据（Visual Evidence）
+
+- Settings 页「定时任务」卡片截图（Storybook）：
+
+![Settings 定时任务卡片](./assets/schedules-card.png)
