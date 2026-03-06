@@ -207,7 +207,7 @@ Service Worker（`web/public/sw.js`）会优先读取 `data.url` 并打开。
 ```
 Dockrev：更新完成（成功）
 变更 1 个服务（blog / api）。
-任务：job_...（可点击）
+任务详情：（可点击）
 打开服务详情：（可点击）
 
 服务清单
@@ -216,7 +216,7 @@ Dockrev：更新完成（成功）
 
 ### Email（multipart）
 
-- Subject：`[dockrev] 更新完成（成功） job_...`
+- Subject：`[dockrev] 更新完成（成功）`
 - Body：同 Telegram 的结构，提供 HTML + 纯文本两份
 
 ### Webhook（JSON）

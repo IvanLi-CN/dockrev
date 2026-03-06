@@ -82,6 +82,7 @@
 ### SHOULD
 
 - Telegram/Email 文案保持人类可读，不退化为原始 JSON。
+- 用户可读通知默认不展示内部 `jobId`，改用“任务详情/检查任务/巡检任务”等动作文案 + 可点击链接。
 - 列表有截断策略并写入 omitted 计数，避免超长消息。
 
 ## 接口契约（Interfaces & Contracts）
@@ -129,4 +130,5 @@
 
 ## Change log
 
+- 2026-03-06：根据可读性反馈，用户可读渠道去掉内部 jobId 展示；统一改为“任务详情/检查任务/巡检任务”动作文案，Web Push body 同步简化。
 - 2026-03-06：CI clippy 要求收紧后，将 GHCR 异常通知参数重构为事件对象，行为保持不变，仅消除 `too_many_arguments` 告警。

@@ -675,7 +675,7 @@ fn to_web_push_job_value(
             Value::String(payload.human.title.clone()),
         );
 
-        let mut body = format!("{}\n任务：{}", payload.human.summary, payload.job.id);
+        let mut body = format!("{}\n点击通知查看详情", payload.human.summary);
         if let Some(err) = error_excerpt {
             body.push_str("\n错误：");
             body.push_str(err);
@@ -700,10 +700,7 @@ fn to_web_push_new_version_value(
         );
         map.insert(
             "body".to_string(),
-            Value::String(format!(
-                "{}\n检查任务：{}",
-                payload.human.summary, payload.check.job_id
-            )),
+            Value::String(format!("{}\n点击通知查看详情", payload.human.summary)),
         );
         map.insert(
             "url".to_string(),
@@ -724,10 +721,7 @@ fn to_web_push_ghcr_webhook_anomaly_value(
         );
         map.insert(
             "body".to_string(),
-            Value::String(format!(
-                "{}\n任务：{}",
-                payload.human.summary, payload.job.id
-            )),
+            Value::String(format!("{}\n点击通知查看详情", payload.human.summary)),
         );
         map.insert(
             "url".to_string(),
@@ -763,8 +757,8 @@ fn render_telegram_job_html(
     }
 
     lines.push(format!(
-        "任务：{}",
-        render_open_link_html(&payload.links.job_url, &payload.job.id)
+        "任务详情：{}",
+        render_open_link_html(&payload.links.job_url, "查看任务详情")
     ));
     if payload.links.primary_url != payload.links.job_url {
         lines.push(format!(
@@ -818,10 +812,7 @@ fn render_telegram_job_plain(
         lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
     }
 
-    lines.push(format!(
-        "任务：{} ({})",
-        payload.job.id, payload.links.job_url
-    ));
+    lines.push(format!("任务详情：{}", payload.links.job_url));
     lines.push(format!("打开：{}", payload.links.primary_url));
 
     if !payload.links.service_urls.is_empty() {
@@ -903,10 +894,10 @@ fn render_email_job_html(
         format!(
             "<a href=\"{}\">{}</a>",
             escape_html(&payload.links.job_url),
-            escape_html(&payload.job.id)
+            "查看任务详情"
         )
     } else {
-        escape_html(&payload.job.id)
+        format!("<code>{}</code>", escape_html(&payload.links.job_url))
     };
 
     let open_primary = if is_absolute_http_url(&payload.links.primary_url) {
@@ -930,7 +921,7 @@ fn render_email_job_html(
     }
 
     format!(
-        "<h2>{title}</h2><p>{summary}</p>{note}<p>任务：{job_link}</p><p>打开：{open_primary}</p>{items}{err_block}",
+        "<h2>{title}</h2><p>{summary}</p>{note}<p>任务详情：{job_link}</p><p>打开：{open_primary}</p>{items}{err_block}",
     )
 }
 
@@ -1009,7 +1000,7 @@ async fn send_email_job(
     let (dsn, from, to) = parse_smtp_dsn(smtp_url)?;
 
     let status_zh = update_job_status_label_zh(&payload.job.status);
-    let subject = format!("[dockrev] 更新完成（{status_zh}） {}", payload.job.id);
+    let subject = format!("[dockrev] 更新完成（{status_zh}）");
 
     let plain_text = render_email_job_plain(payload, error_excerpt);
     let html_text = render_email_job_html(payload, error_excerpt);
@@ -1050,7 +1041,7 @@ fn render_telegram_new_version_html(payload: &NewVersionNotificationPayloadV2) -
 
     lines.push(format!(
         "检查任务：{}",
-        render_open_link_html(&payload.links.job_url, &payload.check.job_id)
+        render_open_link_html(&payload.links.job_url, "查看检查任务")
     ));
     if payload.links.primary_url != payload.links.job_url {
         lines.push(format!(
@@ -1175,10 +1166,10 @@ fn render_email_new_version_html(payload: &NewVersionNotificationPayloadV2) -> S
         format!(
             "<a href=\"{}\">{}</a>",
             escape_html(&payload.links.job_url),
-            escape_html(&payload.check.job_id)
+            "查看检查任务"
         )
     } else {
-        escape_html(&payload.check.job_id)
+        format!("<code>{}</code>", escape_html(&payload.links.job_url))
     };
 
     let open_primary = if is_absolute_http_url(&payload.links.primary_url) {
@@ -1215,8 +1206,8 @@ fn render_telegram_ghcr_webhook_anomaly_html(payload: &GhcrWebhookAnomalyPayload
         render_open_link_html(&payload.links.settings_url, "GHCR 设置")
     ));
     lines.push(format!(
-        "任务：{}",
-        render_open_link_html(&payload.links.job_url, &payload.job.id)
+        "巡检任务：{}",
+        render_open_link_html(&payload.links.job_url, "查看巡检任务")
     ));
 
     if !payload.links.repos.is_empty() {
@@ -1324,10 +1315,10 @@ fn render_email_ghcr_webhook_anomaly_html(payload: &GhcrWebhookAnomalyPayloadV2)
         format!(
             "<a href=\"{}\">{}</a>",
             escape_html(&payload.links.job_url),
-            escape_html(&payload.job.id)
+            "查看巡检任务"
         )
     } else {
-        escape_html(&payload.job.id)
+        format!("<code>{}</code>", escape_html(&payload.links.job_url))
     };
 
     let mut note = String::new();
@@ -1336,7 +1327,7 @@ fn render_email_ghcr_webhook_anomaly_html(payload: &GhcrWebhookAnomalyPayloadV2)
     }
 
     format!(
-        "<h2>{title}</h2><p>{summary}</p>{note}<p>打开设置：{settings_link}</p><p>任务：{job_link}</p>{items}",
+        "<h2>{title}</h2><p>{summary}</p>{note}<p>打开设置：{settings_link}</p><p>巡检任务：{job_link}</p>{items}",
     )
 }
 
@@ -1411,7 +1402,7 @@ async fn send_email_new_version(
     let smtp_url = smtp_url.context("email.smtpUrl missing")?;
     let (dsn, from, to) = parse_smtp_dsn(smtp_url)?;
 
-    let subject = format!("[dockrev] 发现新版本 {}", payload.check.job_id);
+    let subject = "[dockrev] 发现新版本".to_string();
     let plain_text = render_email_new_version_plain(payload);
     let html_text = render_email_new_version_html(payload);
 
@@ -1511,7 +1502,7 @@ async fn send_email_ghcr_webhook_anomaly(
     let smtp_url = smtp_url.context("email.smtpUrl missing")?;
     let (dsn, from, to) = parse_smtp_dsn(smtp_url)?;
 
-    let subject = format!("[dockrev] GHCR Webhook 巡检异常 {}", payload.job.id);
+    let subject = "[dockrev] GHCR Webhook 巡检异常".to_string();
     let plain_text = render_email_ghcr_webhook_anomaly_plain(payload);
     let html_text = render_email_ghcr_webhook_anomaly_html(payload);
 

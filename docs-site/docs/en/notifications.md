@@ -153,11 +153,11 @@ Truncation:
 
 ### Telegram (HTML)
 
-Chinese title + summary + clickable links (job + primary + per-service list) + optional error excerpt (`<pre>...`).
+Chinese title + summary + clickable links (task detail + primary + per-service list) + optional error excerpt (`<pre>...`).
 
 ### Email (multipart)
 
-Subject includes status + job id. Body is sent as both HTML and plain text.
+Subject includes status (no internal job id). Body is sent as both HTML and plain text.
 
 ### Webhook (JSON)
 
