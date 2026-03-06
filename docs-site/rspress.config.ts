@@ -54,7 +54,10 @@ export default defineConfig({
         },
         {
           text: '接口参考',
-          items: [{ text: 'API Reference', link: '/api-reference' }]
+          items: [
+            { text: 'API Reference', link: '/api-reference' },
+            { text: 'Notifications', link: '/notifications' }
+          ]
         }
       ],
       '/en/': [
@@ -80,7 +83,10 @@ export default defineConfig({
         },
         {
           text: 'Reference',
-          items: [{ text: 'API Reference', link: '/en/api-reference' }]
+          items: [
+            { text: 'API Reference', link: '/en/api-reference' },
+            { text: 'Notifications', link: '/en/notifications' }
+          ]
         }
       ]
     }

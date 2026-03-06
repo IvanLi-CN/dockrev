@@ -6293,6 +6293,8 @@ async fn settings_and_notifications_roundtrip() {
     assert!(settings["resourceMonitor"].is_object());
     assert!(settings["schedules"].is_object());
     assert!(settings["auth"].is_object());
+    assert!(settings["instance"].is_object());
+    assert!(settings["instance"]["publicBaseUrl"].is_null());
     assert_eq!(settings["resourceMonitor"]["enabled"].as_bool(), Some(true));
     assert_eq!(
         settings["resourceMonitor"]["sampleIntervalSeconds"].as_u64(),
@@ -6361,6 +6363,8 @@ async fn settings_and_notifications_roundtrip() {
         settings["backup"]["skipTargetsOverBytes"].as_u64().unwrap(),
         123
     );
+    assert!(settings["instance"].is_object());
+    assert!(settings["instance"]["publicBaseUrl"].is_null());
     assert_eq!(
         settings["resourceMonitor"]["enabled"].as_bool(),
         Some(false)
@@ -6410,6 +6414,68 @@ async fn settings_and_notifications_roundtrip() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 400);
+
+    let set_base_url = serde_json::json!({
+        "backup": settings["backup"],
+        "instance": {
+            "publicBaseUrl": "https://dockrev.example.com"
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(set_base_url.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/settings")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let settings = response_json(resp).await;
+    assert_eq!(
+        settings["instance"]["publicBaseUrl"].as_str(),
+        Some("https://dockrev.example.com/")
+    );
+
+    let invalid_base_url = serde_json::json!({
+        "backup": settings["backup"],
+        "instance": {
+            "publicBaseUrl": "ftp://dockrev.example.com/"
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(invalid_base_url.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let payload = response_json(resp).await;
+    assert_eq!(
+        payload["error"]["details"]["reason"].as_str(),
+        Some("instance_public_base_url_invalid")
+    );
 
     let resp = app
         .clone()

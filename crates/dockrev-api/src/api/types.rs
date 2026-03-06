@@ -732,6 +732,9 @@ pub struct NotificationSettings {
     pub webpush_vapid_public_key: Option<String>,
     pub webpush_vapid_private_key: Option<String>,
     pub webpush_vapid_subject: Option<String>,
+    pub event_update_enabled: bool,
+    pub event_new_version_enabled: bool,
+    pub event_ghcr_webhook_anomaly_enabled: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -741,6 +744,8 @@ pub struct NotificationConfig {
     pub webhook: WebhookNotification,
     pub telegram: TelegramNotification,
     pub web_push: WebPushNotification,
+    #[serde(default)]
+    pub events: Option<NotificationEventsConfig>,
 }
 
 impl NotificationConfig {
@@ -766,10 +771,16 @@ impl NotificationConfig {
                 vapid_private_key: mask_if_some(db.webpush_vapid_private_key),
                 vapid_subject: db.webpush_vapid_subject,
             },
+            events: Some(NotificationEventsConfig {
+                update: db.event_update_enabled,
+                new_version: db.event_new_version_enabled,
+                ghcr_webhook_anomaly: db.event_ghcr_webhook_anomaly_enabled,
+            }),
         }
     }
 
     pub fn into_db(self) -> NotificationSettings {
+        let events = self.events.unwrap_or_default();
         NotificationSettings {
             email_enabled: self.email.enabled,
             email_smtp_url: self.email.smtp_url,
@@ -782,8 +793,36 @@ impl NotificationConfig {
             webpush_vapid_public_key: self.web_push.vapid_public_key,
             webpush_vapid_private_key: self.web_push.vapid_private_key,
             webpush_vapid_subject: self.web_push.vapid_subject,
+            event_update_enabled: events.update,
+            event_new_version_enabled: events.new_version,
+            event_ghcr_webhook_anomaly_enabled: events.ghcr_webhook_anomaly,
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationEventsConfig {
+    #[serde(default = "notification_event_default_true")]
+    pub update: bool,
+    #[serde(default = "notification_event_default_true")]
+    pub new_version: bool,
+    #[serde(default = "notification_event_default_true")]
+    pub ghcr_webhook_anomaly: bool,
+}
+
+impl Default for NotificationEventsConfig {
+    fn default() -> Self {
+        Self {
+            update: true,
+            new_version: true,
+            ghcr_webhook_anomaly: true,
+        }
+    }
+}
+
+fn notification_event_default_true() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1291,6 +1330,14 @@ pub struct SettingsResponse {
     pub resource_monitor: ResourceMonitorSettings,
     pub schedules: SchedulesSettings,
     pub auth: AuthSettings,
+    pub instance: InstanceSettings,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceSettings {
+    #[serde(default)]
+    pub public_base_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1331,6 +1378,15 @@ pub struct PutSettingsRequest {
     pub resource_monitor: Option<PutResourceMonitorSettings>,
     #[serde(default)]
     pub schedules: Option<PutSchedulesSettings>,
+    pub instance: Option<PutInstanceSettings>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PutInstanceSettings {
+    /// When present, updates the stored public base url. `null` (or empty string) clears it.
+    #[serde(default)]
+    pub public_base_url: Option<Option<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

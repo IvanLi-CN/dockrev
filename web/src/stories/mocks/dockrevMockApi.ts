@@ -505,6 +505,7 @@ function makeDefaultSettings(): SettingsResponse {
       ghcrWebhookAudit: { enabled: true, cron: '0 3 * * *' },
     },
     auth: { forwardHeaderName: 'X-Forwarded-User', allowAnonymousInDev: true },
+    instance: { publicBaseUrl: null },
   }
 }
 

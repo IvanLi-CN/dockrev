@@ -212,6 +212,7 @@ impl Db {
             ensure_settings_deploy_welcome_columns(conn)?;
             ensure_settings_resource_monitor_columns(conn)?;
             ensure_settings_schedule_columns(conn)?;
+            ensure_settings_public_base_url_columns(conn)?;
             ensure_stack_archive_columns(conn)?;
             ensure_service_archive_columns(conn)?;
             ensure_discovery_schema(conn)?;
@@ -280,8 +281,11 @@ INSERT OR IGNORE INTO notification_settings (
   webpush_enabled,
   webpush_vapid_public_key,
   webpush_vapid_private_key,
-  webpush_vapid_subject
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+  webpush_vapid_subject,
+  event_update_enabled,
+  event_new_version_enabled,
+  event_ghcr_webhook_anomaly_enabled
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
 "#,
                 params![
                     "default",
@@ -295,7 +299,10 @@ INSERT OR IGNORE INTO notification_settings (
                     0i64,
                     Option::<String>::None,
                     Option::<String>::None,
-                    Option::<String>::None
+                    Option::<String>::None,
+                    1i64,
+                    1i64,
+                    1i64
                 ],
             )?;
 
@@ -1983,7 +1990,10 @@ SELECT
   webpush_enabled,
   webpush_vapid_public_key,
   webpush_vapid_private_key,
-  webpush_vapid_subject
+  webpush_vapid_subject,
+  event_update_enabled,
+  event_new_version_enabled,
+  event_ghcr_webhook_anomaly_enabled
 FROM notification_settings
 WHERE id = 'default'
 "#,
@@ -2001,6 +2011,9 @@ WHERE id = 'default'
                         webpush_vapid_public_key: row.get(8)?,
                         webpush_vapid_private_key: row.get(9)?,
                         webpush_vapid_subject: row.get(10)?,
+                        event_update_enabled: row.get::<_, i64>(11)? != 0,
+                        event_new_version_enabled: row.get::<_, i64>(12)? != 0,
+                        event_ghcr_webhook_anomaly_enabled: row.get::<_, i64>(13)? != 0,
                     })
                 },
             )?)
@@ -2032,7 +2045,10 @@ SET
   webpush_vapid_public_key = ?9,
   webpush_vapid_private_key = ?10,
   webpush_vapid_subject = ?11,
-  updated_at = ?12
+  event_update_enabled = ?12,
+  event_new_version_enabled = ?13,
+  event_ghcr_webhook_anomaly_enabled = ?14,
+  updated_at = ?15
 WHERE id = 'default'
 "#,
                 params![
@@ -2047,6 +2063,9 @@ WHERE id = 'default'
                     settings.webpush_vapid_public_key,
                     settings.webpush_vapid_private_key,
                     settings.webpush_vapid_subject,
+                    settings.event_update_enabled as i64,
+                    settings.event_new_version_enabled as i64,
+                    settings.event_ghcr_webhook_anomaly_enabled as i64,
                     now
                 ],
             )?;
@@ -3357,6 +3376,52 @@ LIMIT 500
         .context("list web push subscriptions")
     }
 
+    pub async fn get_instance_public_base_url(&self) -> anyhow::Result<Option<String>> {
+        self.call(|conn| {
+            Ok(conn
+                .query_row(
+                    r#"
+SELECT public_base_url
+FROM settings
+WHERE id = 'default'
+"#,
+                    [],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()?
+                .flatten())
+        })
+        .await
+        .context("get instance public base url")
+    }
+
+    #[allow(dead_code)]
+    pub async fn put_instance_public_base_url(
+        &self,
+        public_base_url: Option<String>,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let public_base_url = public_base_url.map(|v| v.trim().to_string());
+        let public_base_url =
+            public_base_url.and_then(|v| if v.is_empty() { None } else { Some(v) });
+        let now = now.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                r#"
+UPDATE settings
+SET
+  public_base_url = ?1,
+  updated_at = ?2
+WHERE id = 'default'
+"#,
+                params![public_base_url, now],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("put instance public base url")
+    }
+
     pub async fn get_backup_settings(&self) -> anyhow::Result<BackupSettings> {
         self.call(|conn| {
             Ok(conn.query_row(
@@ -3485,11 +3550,15 @@ WHERE id = 'default'
         backup: &BackupSettings,
         resource_monitor: &ResourceMonitorSettings,
         schedules: &SchedulesSettings,
+        public_base_url: Option<String>,
         now: &str,
     ) -> anyhow::Result<()> {
         let backup = backup.clone();
         let resource_monitor = resource_monitor.clone();
         let schedules = schedules.clone();
+        let public_base_url = public_base_url.map(|v| v.trim().to_string());
+        let public_base_url =
+            public_base_url.and_then(|v| if v.is_empty() { None } else { Some(v) });
         let now = now.to_string();
         self.call(move |conn| {
             conn.execute(
@@ -3506,7 +3575,8 @@ SET
   schedule_update_check_cron = ?8,
   schedule_ghcr_webhook_audit_enabled = ?9,
   schedule_ghcr_webhook_audit_cron = ?10,
-  updated_at = ?11
+  public_base_url = ?11,
+  updated_at = ?12
 WHERE id = 'default'
 "#,
                 params![
@@ -3520,7 +3590,8 @@ WHERE id = 'default'
                     schedules.update_check.cron,
                     schedules.ghcr_webhook_audit.enabled as i64,
                     schedules.ghcr_webhook_audit.cron,
-                    now
+                    public_base_url,
+                    now,
                 ],
             )?;
             Ok(())
@@ -5098,6 +5169,18 @@ fn ensure_notification_columns(conn: &rusqlite::Connection) -> anyhow::Result<()
             name: "webpush_vapid_subject",
             ddl: "ALTER TABLE notification_settings ADD COLUMN webpush_vapid_subject TEXT",
         },
+        Col {
+            name: "event_update_enabled",
+            ddl: "ALTER TABLE notification_settings ADD COLUMN event_update_enabled INTEGER NOT NULL DEFAULT 1",
+        },
+        Col {
+            name: "event_new_version_enabled",
+            ddl: "ALTER TABLE notification_settings ADD COLUMN event_new_version_enabled INTEGER NOT NULL DEFAULT 1",
+        },
+        Col {
+            name: "event_ghcr_webhook_anomaly_enabled",
+            ddl: "ALTER TABLE notification_settings ADD COLUMN event_ghcr_webhook_anomaly_enabled INTEGER NOT NULL DEFAULT 1",
+        },
     ];
 
     let mut stmt = conn.prepare("PRAGMA table_info(notification_settings)")?;
@@ -5212,6 +5295,32 @@ fn ensure_settings_schedule_columns(conn: &rusqlite::Connection) -> anyhow::Resu
             ddl: "ALTER TABLE settings ADD COLUMN schedule_ghcr_webhook_audit_cron TEXT NOT NULL DEFAULT '0 3 * * *'",
         },
     ];
+
+    let mut stmt = conn.prepare("PRAGMA table_info(settings)")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let existing = rows.collect::<Result<Vec<_>, _>>()?;
+
+    for col in desired {
+        if existing.iter().any(|c| c == col.name) {
+            continue;
+        }
+        conn.execute_batch(col.ddl)?;
+    }
+
+    Ok(())
+}
+
+fn ensure_settings_public_base_url_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    #[derive(Clone)]
+    struct Col<'a> {
+        name: &'a str,
+        ddl: &'a str,
+    }
+
+    let desired = [Col {
+        name: "public_base_url",
+        ddl: "ALTER TABLE settings ADD COLUMN public_base_url TEXT",
+    }];
 
     let mut stmt = conn.prepare("PRAGMA table_info(settings)")?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
@@ -5643,6 +5752,7 @@ CREATE TABLE IF NOT EXISTS settings (
   schedule_update_check_cron TEXT NOT NULL DEFAULT '*/30 * * * *',
   schedule_ghcr_webhook_audit_enabled INTEGER NOT NULL DEFAULT 1,
   schedule_ghcr_webhook_audit_cron TEXT NOT NULL DEFAULT '0 3 * * *',
+  public_base_url TEXT,
   deploy_welcome_never_auto_open INTEGER NOT NULL DEFAULT 0,
   deploy_welcome_updated_at TEXT,
   updated_at TEXT
@@ -5661,6 +5771,9 @@ CREATE TABLE IF NOT EXISTS notification_settings (
   webpush_vapid_public_key TEXT,
   webpush_vapid_private_key TEXT,
   webpush_vapid_subject TEXT,
+  event_update_enabled INTEGER NOT NULL DEFAULT 1,
+  event_new_version_enabled INTEGER NOT NULL DEFAULT 1,
+  event_ghcr_webhook_anomaly_enabled INTEGER NOT NULL DEFAULT 1,
   updated_at TEXT
 );
 

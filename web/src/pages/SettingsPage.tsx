@@ -73,6 +73,10 @@ function buildSettingsSavePayload(settings: SettingsResponse): PutSettingsInput 
       sampleIntervalSeconds: settings.resourceMonitor.sampleIntervalSeconds,
     },
     schedules: settings.schedules,
+    instance: {
+      // Server treats empty string as "clear".
+      publicBaseUrl: settings.instance.publicBaseUrl ?? '',
+    },
   }
 }
 
@@ -105,6 +109,11 @@ const NOTIFICATION_CHANNEL_LABEL: Record<NotificationTestChannel, string> = {
   telegram: 'Telegram',
   webPush: 'Web Push',
 }
+const DEFAULT_NOTIFICATION_EVENTS = {
+  update: true,
+  newVersion: true,
+  ghcrWebhookAnomaly: true,
+} as const
 
 type GhcrDraft = {
   enabled: boolean
@@ -126,6 +135,16 @@ function isMaskedTelegramBotToken(value: string): boolean {
   return value === TELEGRAM_BOT_TOKEN_MASK || value === PAT_MASK
 }
 
+function normalizeNotificationEvents(
+  events: NotificationConfig['events'] | undefined,
+): NonNullable<NotificationConfig['events']> {
+  return {
+    update: events?.update ?? DEFAULT_NOTIFICATION_EVENTS.update,
+    newVersion: events?.newVersion ?? DEFAULT_NOTIFICATION_EVENTS.newVersion,
+    ghcrWebhookAnomaly: events?.ghcrWebhookAnomaly ?? DEFAULT_NOTIFICATION_EVENTS.ghcrWebhookAnomaly,
+  }
+}
+
 function normalizeNotificationsForUi(input: NotificationConfig): NotificationConfig {
   const rawBotToken = input.telegram.botToken ?? ''
   const hasExplicitBotToken = rawBotToken.trim().length > 0 && !isMaskedTelegramBotToken(rawBotToken)
@@ -138,6 +157,7 @@ function normalizeNotificationsForUi(input: NotificationConfig): NotificationCon
       botToken,
       botTokenConfigured,
     },
+    events: normalizeNotificationEvents(input.events),
   }
 }
 
@@ -154,6 +174,7 @@ function normalizeNotificationsForSave(input: NotificationConfig): NotificationC
       botToken,
       chatId,
     },
+    events: normalizeNotificationEvents(input.events),
   }
 }
 
@@ -796,6 +817,8 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     else if (reason === 'ghcr_pat_unsaved_or_save_failed') message = 'PAT 未保存成功，无法解析，请检查网络后重试'
     else if (reason === 'ghcr_pat_invalid_or_scope_insufficient') message = 'PAT 无效或权限不足，请检查 token scope'
     else if (reason === 'telegram_bot_token_invalid') message = 'Bot token 格式不合法，请填写形如 123456:AA... 的 Telegram Bot token'
+    else if (reason === 'instance_public_base_url_invalid')
+      message = '实例 Public Base URL 格式不合法，请填写 http(s) 的绝对 URL，例如 https://dockrev.example.com/'
     else if (reason === 'github_upstream_timeout') message = 'GitHub 响应超时，请稍后重试'
     else if (reason === 'github_upstream_unavailable') message = 'GitHub 请求失败，请稍后重试'
 
@@ -1051,7 +1074,11 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
   const refresh = useCallback(async () => {
     setError(null)
-    const nextSettings = await getSettings()
+    const rawSettings = await getSettings()
+    const nextSettings: SettingsResponse = {
+      ...rawSettings,
+      instance: rawSettings.instance ?? { publicBaseUrl: null },
+    }
     const nextNotifications = normalizeNotificationsForUi(await getNotifications())
     const gh = await getGitHubPackagesSettings()
     const defaultCallbackUrl = (() => {
@@ -1254,6 +1281,17 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
         return { ...prev, schedules: updater(prev.schedules) }
       })
       markFieldDirty('backup', fieldPath, isToggle ? TOGGLE_DEBOUNCE_MS : TEXT_DEBOUNCE_MS)
+    },
+    [markFieldDirty],
+  )
+
+  const updateInstance = useCallback(
+    (fieldPath: string, updater: (current: SettingsResponse['instance']) => SettingsResponse['instance']) => {
+      setSettings((prev) => {
+        if (!prev) return prev
+        return { ...prev, instance: updater(prev.instance) }
+      })
+      markFieldDirty('backup', fieldPath, TEXT_DEBOUNCE_MS)
     },
     [markFieldDirty],
   )
@@ -1810,8 +1848,102 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
           </div>
 
           <div className="card">
+            <div className="title">实例 Public Base URL</div>
+            <div className="muted">用于在通知中生成可点击的绝对链接（服务详情 / 任务详情）。</div>
+
+            <div className="kv">
+              <div className="kvRow">
+                <div className="label">Public Base URL</div>
+                <div>
+                  <input
+                    className="input"
+                    value={settings.instance.publicBaseUrl ?? ''}
+                    onChange={(e) =>
+                      updateInstance('instance.publicBaseUrl', (current) => ({
+                        ...current,
+                        publicBaseUrl: e.target.value,
+                      }))
+                    }
+                    placeholder="https://dockrev.example.com/"
+                  />
+                  <div className="muted" style={{ marginTop: 6 }}>
+                    为空表示不配置；保存时会自动补齐尾部 <Mono>/</Mono>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
             <div className="title">通知</div>
-            <div className="muted">事件：发现更新 / 版本提示 / 更新成功 / 更新失败 / 备份失败</div>
+            <div className="muted">先选择通知事件，再为每个渠道配置发送方式。</div>
+
+            <div className="kv" style={{ marginBottom: 12 }}>
+              <div className="kvRow">
+                <div className="label">更新完成通知</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Switch
+                    checked={normalizeNotificationEvents(notifications.events).update}
+                    disabled={busy}
+                    onChange={(value) =>
+                      updateNotifications(
+                        'notifications.events.update',
+                        (current) => ({
+                          ...current,
+                          events: { ...normalizeNotificationEvents(current.events), update: value },
+                        }),
+                        true,
+                      )
+                    }
+                  />
+                  <div className="muted">{normalizeNotificationEvents(notifications.events).update ? 'on' : 'off'}</div>
+                </div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">发现新版本通知（定时检查）</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Switch
+                    checked={normalizeNotificationEvents(notifications.events).newVersion}
+                    disabled={busy}
+                    onChange={(value) =>
+                      updateNotifications(
+                        'notifications.events.newVersion',
+                        (current) => ({
+                          ...current,
+                          events: { ...normalizeNotificationEvents(current.events), newVersion: value },
+                        }),
+                        true,
+                      )
+                    }
+                  />
+                  <div className="muted">{normalizeNotificationEvents(notifications.events).newVersion ? 'on' : 'off'}</div>
+                </div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">GitHub Webhook 异常通知（巡检）</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Switch
+                    checked={normalizeNotificationEvents(notifications.events).ghcrWebhookAnomaly}
+                    disabled={busy}
+                    onChange={(value) =>
+                      updateNotifications(
+                        'notifications.events.ghcrWebhookAnomaly',
+                        (current) => ({
+                          ...current,
+                          events: { ...normalizeNotificationEvents(current.events), ghcrWebhookAnomaly: value },
+                        }),
+                        true,
+                      )
+                    }
+                  />
+                  <div className="muted">
+                    {normalizeNotificationEvents(notifications.events).ghcrWebhookAnomaly ? 'on' : 'off'}
+                  </div>
+                </div>
+              </div>
+            </div>
 
             <NotificationChannelCard
               channel="email"
