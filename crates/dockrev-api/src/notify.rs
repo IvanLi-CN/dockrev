@@ -497,6 +497,35 @@ fn summarize_new_version_services(
     format!("发现 {total_new_versions} 个服务有新版本：{preview}。")
 }
 
+fn summarize_ghcr_anomaly_repos(
+    total_anomalies: u32,
+    missing: u32,
+    conflict: u32,
+    error: u32,
+    visible_repos: &[GhcrWebhookAnomalyRepoV2],
+    omitted: u32,
+) -> String {
+    let counts = format!("missing={missing}，conflict={conflict}，error={error}");
+    if visible_repos.is_empty() {
+        return format!("巡检发现 {total_anomalies} 个异常仓库（{counts}）。");
+    }
+
+    let preview = visible_repos
+        .iter()
+        .map(|repo| format!("{} [{}]", repo.full_name, repo.state))
+        .collect::<Vec<_>>()
+        .join("、");
+
+    if omitted > 0 {
+        return format!(
+            "巡检发现 {total_anomalies} 个异常仓库：{preview}（{counts}；通知正文仅展示前 {} 条）。",
+            visible_repos.len()
+        );
+    }
+
+    format!("巡检发现 {total_anomalies} 个异常仓库：{preview}（{counts}）。")
+}
+
 fn extract_changed_service_ids(update: &Value) -> Vec<String> {
     let obj = update
         .get("newDigests")
@@ -1944,6 +1973,14 @@ async fn build_ghcr_webhook_anomaly_payload_v2(
     repo_items.sort_by(|a, b| a.full_name.cmp(&b.full_name));
     let omitted = repo_items.len().saturating_sub(MAX_GHCR_REPOS) as u32;
     repo_items.truncate(MAX_GHCR_REPOS);
+    let summary = summarize_ghcr_anomaly_repos(
+        total_anomalies,
+        event.counts.missing,
+        event.counts.conflict,
+        event.counts.error,
+        &repo_items,
+        omitted,
+    );
 
     let mut detail_lines = vec![
         format!("任务：{}", event.job_id),
@@ -1981,10 +2018,7 @@ async fn build_ghcr_webhook_anomaly_payload_v2(
         },
         human: JobNotificationHumanV2 {
             title: "Dockrev：GitHub Webhook 巡检异常".to_string(),
-            summary: format!(
-                "巡检发现 {} 个异常仓库（missing={}，conflict={}，error={}）。",
-                total_anomalies, event.counts.missing, event.counts.conflict, event.counts.error
-            ),
+            summary,
             detail: detail_lines.join("\n"),
         },
         debug: JobNotificationDebugV2 {
@@ -3004,18 +3038,29 @@ mod tests {
                 primary_url: "https://dockrev.example.com/settings".to_string(),
                 job_url: "https://dockrev.example.com/queue/job_ghcr_123".to_string(),
                 settings_url: "https://dockrev.example.com/settings".to_string(),
-                repos: vec![GhcrWebhookAnomalyRepoV2 {
-                    owner: "acme".to_string(),
-                    repo: "api".to_string(),
-                    full_name: "acme/api".to_string(),
-                    state: "missing".to_string(),
-                    last_error: Some("webhook missing".to_string()),
-                }],
+                repos: vec![
+                    GhcrWebhookAnomalyRepoV2 {
+                        owner: "acme".to_string(),
+                        repo: "api".to_string(),
+                        full_name: "acme/api".to_string(),
+                        state: "missing".to_string(),
+                        last_error: Some("webhook missing".to_string()),
+                    },
+                    GhcrWebhookAnomalyRepoV2 {
+                        owner: "acme".to_string(),
+                        repo: "worker".to_string(),
+                        full_name: "acme/worker".to_string(),
+                        state: "error".to_string(),
+                        last_error: Some("github api timeout".to_string()),
+                    },
+                ],
                 truncated: GhcrWebhookAnomalyTruncatedV2 { repos_omitted: 0 },
             },
             human: JobNotificationHumanV2 {
                 title: "Dockrev：GitHub Webhook 巡检异常".to_string(),
-                summary: "巡检发现 2 个异常仓库。".to_string(),
+                summary:
+                    "巡检发现 2 个异常仓库：acme/api [missing]、acme/worker [error]（missing=1，conflict=0，error=1）。"
+                        .to_string(),
                 detail: "test".to_string(),
             },
             debug: JobNotificationDebugV2 {
@@ -3038,8 +3083,67 @@ mod tests {
         let payload = sample_ghcr_anomaly_payload();
         let html = render_telegram_ghcr_webhook_anomaly_html(&payload);
         assert!(html.contains("acme/api"));
+        assert!(html.contains("acme/worker"));
         assert!(html.contains("missing"));
         assert!(html.contains("webhook missing"));
+    }
+
+    #[test]
+    fn ghcr_anomaly_summary_includes_repo_names_and_counts() {
+        let repos = vec![
+            GhcrWebhookAnomalyRepoV2 {
+                owner: "acme".to_string(),
+                repo: "api".to_string(),
+                full_name: "acme/api".to_string(),
+                state: "missing".to_string(),
+                last_error: None,
+            },
+            GhcrWebhookAnomalyRepoV2 {
+                owner: "acme".to_string(),
+                repo: "worker".to_string(),
+                full_name: "acme/worker".to_string(),
+                state: "error".to_string(),
+                last_error: None,
+            },
+        ];
+        let summary = summarize_ghcr_anomaly_repos(2, 1, 0, 1, &repos, 0);
+        assert!(summary.contains("acme/api [missing]"));
+        assert!(summary.contains("acme/worker [error]"));
+        assert!(summary.contains("missing=1"));
+        assert!(summary.contains("conflict=0"));
+        assert!(summary.contains("error=1"));
+    }
+
+    #[test]
+    fn ghcr_anomaly_summary_marks_omitted_and_visible_limit() {
+        let repos = vec![
+            GhcrWebhookAnomalyRepoV2 {
+                owner: "acme".to_string(),
+                repo: "api".to_string(),
+                full_name: "acme/api".to_string(),
+                state: "missing".to_string(),
+                last_error: None,
+            },
+            GhcrWebhookAnomalyRepoV2 {
+                owner: "acme".to_string(),
+                repo: "worker".to_string(),
+                full_name: "acme/worker".to_string(),
+                state: "error".to_string(),
+                last_error: None,
+            },
+            GhcrWebhookAnomalyRepoV2 {
+                owner: "acme".to_string(),
+                repo: "sync".to_string(),
+                full_name: "acme/sync".to_string(),
+                state: "conflict".to_string(),
+                last_error: None,
+            },
+        ];
+        let summary = summarize_ghcr_anomaly_repos(14, 7, 2, 5, &repos, 11);
+        assert!(summary.contains("acme/api [missing]"));
+        assert!(summary.contains("acme/worker [error]"));
+        assert!(summary.contains("acme/sync [conflict]"));
+        assert!(summary.contains("仅展示前 3 条"));
     }
 
     #[test]

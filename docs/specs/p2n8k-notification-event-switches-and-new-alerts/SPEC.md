@@ -76,6 +76,7 @@
 - `ghcr_webhook_anomaly`：
   - schema 固定为 `dockrev.notification.ghcr_webhook_anomaly.v2`；
   - 仅在 schedule audit_all 且 anomaly 总数 > 0 时发送；
+  - `human.summary` 必须直接包含异常仓库名预览（不只给数量）；
   - 聚合异常仓库列表，主跳转指向设置页。
 - 新旧客户端兼容：
   - 若 `PUT /api/notifications` 未提交 `events` 字段，后端保持已有事件开关不变。
@@ -132,5 +133,6 @@
 ## Change log
 
 - 2026-03-06：根据可读性反馈，`new_version_discovered` 摘要改为直接包含服务名预览（不再只显示数量）。
+- 2026-03-06：根据可读性反馈，`ghcr_webhook_anomaly` 摘要改为直接包含异常仓库名预览（不再只显示数量）。
 - 2026-03-06：根据可读性反馈，用户可读渠道去掉内部 jobId 展示；统一改为“任务详情/检查任务/巡检任务”动作文案，Web Push body 同步简化。
 - 2026-03-06：CI clippy 要求收紧后，将 GHCR 异常通知参数重构为事件对象，行为保持不变，仅消除 `too_many_arguments` 告警。

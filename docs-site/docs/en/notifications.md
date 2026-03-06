@@ -139,6 +139,7 @@ Key fields:
 - `links.settingsUrl`: settings page URL for remediation
 - `links.jobUrl`: job detail URL for audit logs
 - `links.repos[]`: failing repo list with state and error excerpt
+- `human.summary`: directly lists visible failing repos (example: `Found 2 anomalous repos: acme/api [missing], acme/worker [error] (missing=1, conflict=0, error=1).`)
 
 Truncation:
 
