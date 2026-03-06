@@ -816,23 +816,15 @@ fn render_telegram_job_html(
     error_excerpt: Option<&str>,
 ) -> String {
     let mut lines: Vec<String> = Vec::new();
-    if is_absolute_http_url(&payload.links.primary_url) {
-        lines.push(format!(
-            "<b>{}</b> {}",
-            escape_html(&payload.human.title),
-            render_open_link_html(&payload.links.primary_url, "详情")
-        ));
-    } else {
-        lines.push(format!("<b>{}</b>", escape_html(&payload.human.title)));
-    }
+    lines.push(format!(
+        "<b>{}</b> {}",
+        escape_html(&payload.human.title),
+        render_open_link_html(&payload.links.primary_url, "详情")
+    ));
     lines.push(escape_html(&payload.human.summary));
 
     if !is_absolute_http_url(&payload.links.primary_url) {
         lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
-        lines.push(format!(
-            "详情：{}",
-            render_open_link_html(&payload.links.primary_url, "详情")
-        ));
     }
 
     if !payload.links.service_urls.is_empty() {
@@ -1095,23 +1087,15 @@ async fn send_email_job(
 
 fn render_telegram_new_version_html(payload: &NewVersionNotificationPayloadV2) -> String {
     let mut lines: Vec<String> = Vec::new();
-    if is_absolute_http_url(&payload.links.primary_url) {
-        lines.push(format!(
-            "<b>{}</b> {}",
-            escape_html(&payload.human.title),
-            render_open_link_html(&payload.links.primary_url, "详情")
-        ));
-    } else {
-        lines.push(format!("<b>{}</b>", escape_html(&payload.human.title)));
-    }
+    lines.push(format!(
+        "<b>{}</b> {}",
+        escape_html(&payload.human.title),
+        render_open_link_html(&payload.links.primary_url, "详情")
+    ));
     lines.push(escape_html(&payload.human.summary));
 
     if !is_absolute_http_url(&payload.links.primary_url) {
         lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
-        lines.push(format!(
-            "详情：{}",
-            render_open_link_html(&payload.links.primary_url, "详情")
-        ));
     }
 
     if !payload.links.service_urls.is_empty() {
@@ -1253,23 +1237,15 @@ fn render_email_new_version_html(payload: &NewVersionNotificationPayloadV2) -> S
 
 fn render_telegram_ghcr_webhook_anomaly_html(payload: &GhcrWebhookAnomalyPayloadV2) -> String {
     let mut lines: Vec<String> = Vec::new();
-    if is_absolute_http_url(&payload.links.job_url) {
-        lines.push(format!(
-            "<b>{}</b> {}",
-            escape_html(&payload.human.title),
-            render_open_link_html(&payload.links.job_url, "任务")
-        ));
-    } else {
-        lines.push(format!("<b>{}</b>", escape_html(&payload.human.title)));
-    }
+    lines.push(format!(
+        "<b>{}</b> {}",
+        escape_html(&payload.human.title),
+        render_open_link_html(&payload.links.job_url, "任务")
+    ));
     lines.push(escape_html(&payload.human.summary));
 
-    if !is_absolute_http_url(&payload.links.settings_url) {
+    if !is_absolute_http_url(&payload.links.job_url) {
         lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
-        lines.push(format!(
-            "任务：{}",
-            render_open_link_html(&payload.links.job_url, "任务")
-        ));
     }
 
     if !payload.links.repos.is_empty() {
@@ -1302,7 +1278,7 @@ fn render_telegram_ghcr_webhook_anomaly_plain(payload: &GhcrWebhookAnomalyPayloa
     ));
     lines.push(payload.human.summary.clone());
 
-    if !is_absolute_http_url(&payload.links.settings_url) {
+    if !is_absolute_http_url(&payload.links.job_url) {
         lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
     }
 
@@ -1374,7 +1350,7 @@ fn render_email_ghcr_webhook_anomaly_html(payload: &GhcrWebhookAnomalyPayloadV2)
     };
 
     let mut note = String::new();
-    if !is_absolute_http_url(&payload.links.settings_url) {
+    if !is_absolute_http_url(&payload.links.job_url) {
         note = "<p><em>提示：未配置实例 Public Base URL（系统设置），以下链接可能仅为站内路径。</em></p>".to_string();
     }
 
@@ -2909,6 +2885,30 @@ mod tests {
         assert!(!html.contains("Dockrev notification:"));
     }
 
+    #[test]
+    fn telegram_job_title_line_keeps_detail_suffix_without_base_url() {
+        let links = JobNotificationLinksV2 {
+            primary_url: "services/stk_1/svc_1".to_string(),
+            job_url: "queue/job_123".to_string(),
+            service_urls: vec![JobNotificationServiceUrlV2 {
+                stack_id: "stk_1".to_string(),
+                stack_name: "blog".to_string(),
+                service_id: "svc_1".to_string(),
+                service_name: "api".to_string(),
+                url: "services/stk_1/svc_1".to_string(),
+            }],
+            truncated: JobNotificationTruncatedV2 {
+                service_urls_omitted: 0,
+            },
+        };
+        let payload = sample_job_payload(links);
+        let html = render_telegram_job_html(&payload, None);
+        assert!(
+            html.contains("<b>Dockrev：更新完成（成功）</b> <code>services/stk_1/svc_1</code>")
+        );
+        assert!(!html.contains("\n详情："));
+    }
+
     fn sample_new_version_payload() -> NewVersionNotificationPayloadV2 {
         NewVersionNotificationPayloadV2 {
             schema: "dockrev.notification.new_version_discovered.v2",
@@ -3060,6 +3060,18 @@ mod tests {
     }
 
     #[test]
+    fn new_version_title_line_keeps_detail_suffix_without_base_url() {
+        let mut payload = sample_new_version_payload();
+        payload.links.primary_url = "services/stk_1/svc_1".to_string();
+        payload.links.job_url = "queue/job_check_123".to_string();
+        payload.links.service_urls[0].url = "services/stk_1/svc_1".to_string();
+
+        let html = render_telegram_new_version_html(&payload);
+        assert!(html.contains("<b>Dockrev：发现新版本</b> <code>services/stk_1/svc_1</code>"));
+        assert!(!html.contains("\n详情："));
+    }
+
+    #[test]
     fn ghcr_anomaly_telegram_render_contains_repo_state() {
         let payload = sample_ghcr_anomaly_payload();
         let html = render_telegram_ghcr_webhook_anomaly_html(&payload);
@@ -3072,6 +3084,22 @@ mod tests {
         assert!(html.contains("webhook missing"));
         assert!(!html.contains("巡检任务："));
         assert!(!html.contains("打开设置"));
+    }
+
+    #[test]
+    fn ghcr_anomaly_title_line_keeps_task_suffix_without_base_url() {
+        let mut payload = sample_ghcr_anomaly_payload();
+        payload.links.primary_url = "queue/job_ghcr_123".to_string();
+        payload.links.job_url = "queue/job_ghcr_123".to_string();
+        payload.links.settings_url = "settings".to_string();
+
+        let html = render_telegram_ghcr_webhook_anomaly_html(&payload);
+        assert!(
+            html.contains(
+                "<b>Dockrev：GitHub Webhook 巡检异常</b> <code>queue/job_ghcr_123</code>"
+            )
+        );
+        assert!(!html.contains("\n任务："));
     }
 
     #[test]
