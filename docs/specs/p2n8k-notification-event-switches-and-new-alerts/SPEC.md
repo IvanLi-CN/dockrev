@@ -122,6 +122,11 @@
 
 ## 验证记录
 
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - `cargo check -p dockrev-api`
 - `cargo test -p dockrev-api notify::tests`
 - `cd web && bun run build`
+
+## Change log
+
+- 2026-03-06：CI clippy 要求收紧后，将 GHCR 异常通知参数重构为事件对象，行为保持不变，仅消除 `too_many_arguments` 告警。
