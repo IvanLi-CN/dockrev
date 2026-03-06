@@ -60,7 +60,7 @@ export function AppShell(props: {
   const nav = useMemo(
     () => [
       { key: 'overview', label: '概览', to: { name: 'overview' } as const },
-      { key: 'queue', label: '更新队列', to: { name: 'queue' } as const },
+      { key: 'queue', label: '任务队列', to: { name: 'queue' } as const },
       { key: 'services', label: '服务', to: { name: 'services' } as const },
       { key: 'settings', label: '系统设置', to: { name: 'settings' } as const },
     ],

@@ -309,6 +309,10 @@ export type SettingsResponse = {
     sampleIntervalSeconds: 10 | 30 | 60 | 300
     retentionDays: number
   }
+  schedules: {
+    updateCheck: { enabled: boolean; cron: string }
+    ghcrWebhookAudit: { enabled: boolean; cron: string }
+  }
   auth: {
     forwardHeaderName: string
     allowAnonymousInDev: boolean
@@ -320,6 +324,10 @@ export type PutSettingsInput = {
   resourceMonitor?: {
     enabled: boolean
     sampleIntervalSeconds: 10 | 30 | 60 | 300
+  }
+  schedules?: {
+    updateCheck?: { enabled: boolean; cron: string }
+    ghcrWebhookAudit?: { enabled: boolean; cron: string }
   }
 }
 

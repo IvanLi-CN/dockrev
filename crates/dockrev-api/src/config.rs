@@ -21,7 +21,6 @@ pub struct Config {
     pub discovery_interval_seconds: u64,
     pub discovery_max_actions: u32,
     pub runtime_scan_interval_seconds: u64,
-    pub ghcr_webhook_audit_interval_seconds: u64,
     pub deploy_check_local_command_timeout_seconds: u64,
     pub registry_per_host_concurrency: usize,
     pub registry_retry_max_attempts: usize,
@@ -100,16 +99,7 @@ impl Config {
             ));
         }
 
-        let ghcr_webhook_audit_interval_seconds =
-            std::env::var("DOCKREV_GHCR_WEBHOOK_AUDIT_INTERVAL_SECONDS")
-                .ok()
-                .and_then(|v| v.trim().parse::<u64>().ok())
-                .unwrap_or(86_400);
-        if ghcr_webhook_audit_interval_seconds < 60 {
-            return Err(anyhow::anyhow!(
-                "DOCKREV_GHCR_WEBHOOK_AUDIT_INTERVAL_SECONDS must be >= 60"
-            ));
-        }
+        warn_legacy_ghcr_webhook_interval_env("DOCKREV_GHCR_WEBHOOK_AUDIT_INTERVAL_SECONDS");
 
         let deploy_check_local_command_timeout_seconds =
             std::env::var("DOCKREV_DEPLOY_CHECK_LOCAL_COMMAND_TIMEOUT_SECONDS")
@@ -213,7 +203,6 @@ impl Config {
             discovery_interval_seconds,
             discovery_max_actions,
             runtime_scan_interval_seconds,
-            ghcr_webhook_audit_interval_seconds,
             deploy_check_local_command_timeout_seconds,
             registry_per_host_concurrency,
             registry_retry_max_attempts,
@@ -223,6 +212,30 @@ impl Config {
             update_idempotent_retry_base_ms,
             update_idempotent_retry_max_ms,
         })
+    }
+}
+
+fn warn_legacy_ghcr_webhook_interval_env(name: &str) {
+    let Some(raw_value) = std::env::var_os(name) else {
+        return;
+    };
+
+    let raw_value = raw_value.to_string_lossy();
+    match raw_value.trim().parse::<u64>() {
+        Ok(parsed) => {
+            tracing::warn!(
+                env = name,
+                value = parsed,
+                "legacy ghcr webhook interval env is deprecated and ignored; use settings.schedules.ghcrWebhookAudit.cron"
+            );
+        }
+        Err(_) => {
+            tracing::warn!(
+                env = name,
+                value = raw_value.as_ref(),
+                "legacy ghcr webhook interval env has invalid value and is ignored; use settings.schedules.ghcrWebhookAudit.cron"
+            );
+        }
     }
 }
 

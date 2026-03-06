@@ -3,7 +3,7 @@ pub mod types;
 #[cfg(test)]
 mod tests;
 
-use std::{collections::BTreeMap, convert::Infallible, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, convert::Infallible, str::FromStr, sync::Arc, time::Duration};
 
 use anyhow::Context as _;
 use axum::{
@@ -16,6 +16,7 @@ use axum::{
     routing::{get, post},
 };
 use base64::Engine as _;
+use cron::Schedule;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::broadcast;
@@ -1250,7 +1251,7 @@ async fn trigger_runtime_scan(
     Ok(Json(TriggerRuntimeScanResponse { job_id }))
 }
 
-async fn run_check_for_job(
+pub(crate) async fn run_check_for_job(
     state: &Arc<AppState>,
     job_id: &str,
     scope: &JobScope,
@@ -5547,9 +5548,15 @@ async fn get_settings(
         .get_resource_monitor_settings()
         .await
         .map_err(map_internal)?;
+    let schedules = state
+        .db
+        .get_schedule_settings()
+        .await
+        .map_err(map_internal)?;
     Ok(Json(SettingsResponse {
         backup,
         resource_monitor,
+        schedules,
         auth: AuthSettings {
             forward_header_name: state.config.auth_forward_header_name.to_string(),
             allow_anonymous_in_dev: state.config.auth_allow_anonymous_in_dev,
@@ -5586,9 +5593,64 @@ async fn put_settings(
     }
     merged_resource_monitor.retention_days = resource_usage::RESOURCE_MONITOR_RETENTION_DAYS;
 
+    let existing_schedules = state
+        .db
+        .get_schedule_settings()
+        .await
+        .map_err(map_internal)?;
+    let mut merged_schedules = existing_schedules;
+    if let Some(put) = req.schedules {
+        if let Some(v) = put.update_check {
+            merged_schedules.update_check = v;
+        }
+        if let Some(v) = put.ghcr_webhook_audit {
+            merged_schedules.ghcr_webhook_audit = v;
+        }
+    }
+    merged_schedules.update_check.cron =
+        crate::cron_expr::canonicalize_for_store(&merged_schedules.update_check.cron);
+    merged_schedules.ghcr_webhook_audit.cron =
+        crate::cron_expr::canonicalize_for_store(&merged_schedules.ghcr_webhook_audit.cron);
+
+    let validate_cron = |expr: &str, field: &str| -> Result<(), ApiError> {
+        let normalized = crate::cron_expr::normalize_cron(expr).map_err(|e| {
+            ApiError::invalid_argument("cron expression is invalid").with_details(json!({
+                "reason": "cron_invalid",
+                "field": field,
+                "error": e.to_string(),
+            }))
+        })?;
+        Schedule::from_str(&normalized).map_err(|e| {
+            ApiError::invalid_argument("cron expression is invalid").with_details(json!({
+                "reason": "cron_invalid",
+                "field": field,
+                "error": e.to_string(),
+            }))
+        })?;
+        Ok(())
+    };
+
+    if merged_schedules.update_check.enabled {
+        validate_cron(
+            &merged_schedules.update_check.cron,
+            "schedules.updateCheck.cron",
+        )?;
+    }
+    if merged_schedules.ghcr_webhook_audit.enabled {
+        validate_cron(
+            &merged_schedules.ghcr_webhook_audit.cron,
+            "schedules.ghcrWebhookAudit.cron",
+        )?;
+    }
+
     state
         .db
-        .put_settings(&req.backup, &merged_resource_monitor, &now)
+        .put_settings(
+            &req.backup,
+            &merged_resource_monitor,
+            &merged_schedules,
+            &now,
+        )
         .await
         .map_err(map_internal)?;
     Ok(Json(PutSettingsResponse { ok: true }))

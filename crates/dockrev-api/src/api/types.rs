@@ -1289,6 +1289,7 @@ pub struct WebhookTriggerResponse {
 pub struct SettingsResponse {
     pub backup: BackupSettings,
     pub resource_monitor: ResourceMonitorSettings,
+    pub schedules: SchedulesSettings,
     pub auth: AuthSettings,
 }
 
@@ -1301,10 +1302,35 @@ pub struct AuthSettings {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ScheduleItemSettings {
+    pub enabled: bool,
+    pub cron: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchedulesSettings {
+    pub update_check: ScheduleItemSettings,
+    pub ghcr_webhook_audit: ScheduleItemSettings,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PutSchedulesSettings {
+    #[serde(default)]
+    pub update_check: Option<ScheduleItemSettings>,
+    #[serde(default)]
+    pub ghcr_webhook_audit: Option<ScheduleItemSettings>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PutSettingsRequest {
     pub backup: BackupSettings,
     #[serde(default)]
     pub resource_monitor: Option<PutResourceMonitorSettings>,
+    #[serde(default)]
+    pub schedules: Option<PutSchedulesSettings>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

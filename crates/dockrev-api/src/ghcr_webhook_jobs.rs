@@ -147,11 +147,6 @@ pub fn spawn_tasks(state: Arc<AppState>) {
         JobType::GitHubPackagesWebhookSyncRepo,
         GHCR_SYNC_REPO_WORKERS,
     );
-
-    let scheduler_state = state.clone();
-    tokio::spawn(async move {
-        run_audit_scheduler(scheduler_state).await;
-    });
 }
 
 fn spawn_worker_loops(state: &Arc<AppState>, job_type: JobType, workers: usize) {
@@ -635,19 +630,6 @@ async fn run_worker_loop(state: Arc<AppState>, job_type: JobType) {
                 );
                 tokio::time::sleep(Duration::from_millis(WORKER_IDLE_POLL_MS)).await;
             }
-        }
-    }
-}
-
-async fn run_audit_scheduler(state: Arc<AppState>) {
-    let interval = state.config.ghcr_webhook_audit_interval_seconds.max(60);
-    let mut ticker = tokio::time::interval(Duration::from_secs(interval));
-    // Skip the immediate first tick so schedule cadence starts after one full interval.
-    ticker.tick().await;
-    loop {
-        ticker.tick().await;
-        if let Err(err) = enqueue_audit_job(&state, "schedule", "schedule").await {
-            tracing::warn!(error = %err, "enqueue ghcr audit job failed");
         }
     }
 }
