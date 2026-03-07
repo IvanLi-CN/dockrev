@@ -15,7 +15,10 @@ function deriveBasePathFromPagePathname(pagePathname: string): { basePath: strin
 
   const lastSlash = normalizedPagePath.lastIndexOf('/')
   const lastSegment = normalizedPagePath.slice(lastSlash + 1)
-  const basePath = lastSegment.includes('.') ? normalizedPagePath.slice(0, lastSlash) || '/' : normalizedPagePath
+  const basePath =
+    lastSegment === 'index.html' || lastSegment === 'iframe.html'
+      ? normalizedPagePath.slice(0, lastSlash) || '/'
+      : normalizedPagePath
 
   return { basePath, matchesSettingsRoute }
 }

@@ -62,7 +62,7 @@
 
 - 气泡样式应与现有 Settings 视觉风格一致，作为输入框下的 info-style inline bubble，而不是遮挡式浮层。
 - Storybook 应有可复现的两个场景：建议可见并自动填入、已拒绝后刷新不再显示。
-- 纯函数测试应覆盖 `/settings`、`/settings/`、带 base path 的 `/dockrev/settings` / `/dockrev/settings/`，以及 hash-routing 下从当前页面 pathname 保留 base path 的推导结果。
+- 纯函数测试应覆盖 `/settings`、`/settings/`、带 base path 的 `/dockrev/settings` / `/dockrev/settings/`，以及 hash-routing 下从当前页面 pathname 保留 base path 的推导结果（含带点号的部署目录如 `/v1.2.3/`）。
 
 ## 验收标准（Acceptance Criteria）
 
@@ -90,4 +90,5 @@
 - 2026-03-07: 完成 Settings inline suggestion bubble、localStorage 拒绝偏好与 Storybook 场景；`bun run --cwd web lint`、`build`、`build-storybook`、`test-storybook` 通过。
 - 2026-03-07: 根据复查补充 base path 保留逻辑与纯函数测试，避免在 `/base/settings/` 场景下错误建议到设置页子路径。
 - 2026-03-07: 进一步覆盖 hash-routing 场景，确保 `/#/settings` 也能结合当前页面 pathname 保留部署 base path。
+- 2026-03-07: 收紧 page pathname 文件段识别，仅把 `index.html` / `iframe.html` 视为文件名，避免带点号的部署目录被误裁剪。
 - 2026-03-07: 记录快车道交付分支与 PR #145，规格与实现保持同步。
