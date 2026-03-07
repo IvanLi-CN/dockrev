@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  createContext,
+  createElement,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { getJob } from './api'
 
 const UPDATE_JOB_POLL_INTERVAL_MS = 1200
@@ -11,6 +21,17 @@ export type ActiveUpdateJob = {
   jobId: string
   status: UpdateActionJobStatus
 }
+
+type UpdateActionTracker = {
+  beginSubmitting: (target: UpdateActionTargetKey) => void
+  endSubmitting: (target: UpdateActionTargetKey) => void
+  trackJob: (target: UpdateActionTargetKey, jobId: string, status?: UpdateActionJobStatus) => void
+  isTargetBusy: (target: UpdateActionTargetKey) => boolean
+  getActiveJobByTarget: (target: UpdateActionTargetKey) => ActiveUpdateJob | null
+  isTargetSubmitting: (target: UpdateActionTargetKey) => boolean
+}
+
+const UpdateActionTrackingContext = createContext<UpdateActionTracker | null>(null)
 
 export function resolveUpdateActionTargetKey(
   scope: string,
@@ -33,7 +54,7 @@ export function isUpdateJobActiveStatus(status: string): boolean {
   return status === 'queued' || status === 'running'
 }
 
-export function useUpdateActionTracker() {
+function useProvideUpdateActionTracker(): UpdateActionTracker {
   const [submittingCounts, setSubmittingCounts] = useState<Record<string, number>>({})
   const [activeByTarget, setActiveByTarget] = useState<Record<string, ActiveUpdateJob>>({})
   const activeByTargetRef = useRef(new Map<UpdateActionTargetKey, ActiveUpdateJob>())
@@ -181,12 +202,28 @@ export function useUpdateActionTracker() {
     [submittingCounts],
   )
 
-  return {
-    beginSubmitting,
-    endSubmitting,
-    trackJob,
-    isTargetBusy,
-    getActiveJobByTarget,
-    isTargetSubmitting,
+  return useMemo(
+    () => ({
+      beginSubmitting,
+      endSubmitting,
+      trackJob,
+      isTargetBusy,
+      getActiveJobByTarget,
+      isTargetSubmitting,
+    }),
+    [beginSubmitting, endSubmitting, getActiveJobByTarget, isTargetBusy, isTargetSubmitting, trackJob],
+  )
+}
+
+export function UpdateActionTrackerProvider(props: { children: ReactNode }) {
+  const tracker = useProvideUpdateActionTracker()
+  return createElement(UpdateActionTrackingContext.Provider, { value: tracker }, props.children)
+}
+
+export function useUpdateActionTracker(): UpdateActionTracker {
+  const tracker = useContext(UpdateActionTrackingContext)
+  if (!tracker) {
+    throw new Error('useUpdateActionTracker must be used within UpdateActionTrackerProvider')
   }
+  return tracker
 }
