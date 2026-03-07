@@ -46,6 +46,17 @@ Notes:
 - Self-upgrade applies an extra Compose override file (image-only) and may cause containers in the same project to report different `com.docker.compose.project.config_files` label values. Dockrev will surface this as a warning (not invalid) and pick a stable canonical compose file list.
   - To let Dockrev read the override file (so discovery can reflect the self-upgraded image), store supervisor state in a mounted absolute path (e.g. set `DOCKREV_SUPERVISOR_STATE_PATH=/data/self-upgrade.json`) and mount that same `/data` path into the Dockrev container read-only.
 
+## Traefik + Authelia example
+
+If you want a production-oriented Forward Auth deployment you can copy directly, use:
+
+- `deploy/examples/traefik-authelia/docker-compose.yml`
+- `deploy/examples/traefik-authelia/authelia/configuration.yml`
+- `deploy/examples/traefik-authelia/authelia/users.yml`
+- `deploy/examples/traefik-authelia/README.md`
+
+This example keeps protected Dockrev routes behind Traefik `forwardAuth`, and exposes only the webhook endpoints by Traefik router split instead of Authelia `bypass` rules.
+
 ## Forward Auth / reverse proxy
 
 - Production should use Forward Auth in front of Dockrev. Traefik / Authelia handle authentication; Dockrev authorizes the request by matching `DOCKREV_AUTH_ALLOWED_USER` and/or `DOCKREV_AUTH_ALLOWED_GROUP`.

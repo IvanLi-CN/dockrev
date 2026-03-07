@@ -1,0 +1,114 @@
+services:
+  traefik:
+    image: traefik:v3.5
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.email=admin@example.com
+      - --certificatesresolvers.letsencrypt.acme.storage=/data/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./data/traefik:/data
+    networks:
+      - proxy
+
+  authelia:
+    image: authelia/authelia:4.39
+    restart: unless-stopped
+    volumes:
+      - ./authelia/configuration.yml:/config/configuration.yml:ro
+      - ./authelia/users.yml:/config/users.yml:ro
+      - ./data/authelia:/config/data
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: proxy
+      traefik.http.routers.authelia.rule: Host(`auth.example.com`)
+      traefik.http.routers.authelia.entrypoints: websecure
+      traefik.http.routers.authelia.tls.certresolver: letsencrypt
+      traefik.http.services.authelia.loadbalancer.server.port: "9091"
+      traefik.http.middlewares.authelia.forwardauth.address: http://authelia:9091/api/authz/forward-auth
+      traefik.http.middlewares.authelia.forwardauth.trustforwardheader: "true"
+      traefik.http.middlewares.authelia.forwardauth.authresponseheaders: Remote-User,Remote-Groups,Remote-Name,Remote-Email
+    networks:
+      - proxy
+
+  dockrev:
+    image: ghcr.io/ivanli-cn/dockrev:<semver>
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      DOCKREV_HTTP_ADDR: 0.0.0.0:50883
+      DOCKREV_DB_PATH: /data/dockrev.sqlite3
+      DOCKREV_DOCKER_CONFIG: /data/docker-config.json
+      DOCKREV_COMPOSE_BIN: docker-compose
+      DOCKREV_AUTH_FORWARD_HEADER_NAME: Remote-User
+      DOCKREV_AUTH_GROUP_HEADER_NAME: Remote-Groups
+      DOCKREV_AUTH_ALLOWED_GROUP: dockrev-users
+      DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV: "false"
+      DOCKREV_SELF_UPGRADE_URL: /supervisor/
+      DOCKREV_IMAGE_REPO: ghcr.io/ivanli-cn/dockrev
+      # DOCKREV_WEBHOOK_SECRET: change-me
+      # DOCKER_HOST: tcp://docker-socket-proxy:2375
+    volumes:
+      - ./data/dockrev:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      # If your compose files live on the host at /srv/compose/**, mount them read-only at the same path:
+      # - /srv/compose:/srv/compose:ro
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: proxy
+      traefik.http.services.dockrev.loadbalancer.server.port: "50883"
+      traefik.http.routers.dockrev.rule: Host(`dockrev.example.com`)
+      traefik.http.routers.dockrev.entrypoints: websecure
+      traefik.http.routers.dockrev.tls.certresolver: letsencrypt
+      traefik.http.routers.dockrev.middlewares: authelia@docker
+      traefik.http.routers.dockrev.priority: "10"
+      traefik.http.routers.dockrev-webhooks.rule: Host(`dockrev.example.com`) && (Path(`/api/webhooks/trigger`) || Path(`/api/webhooks/github-packages`))
+      traefik.http.routers.dockrev-webhooks.entrypoints: websecure
+      traefik.http.routers.dockrev-webhooks.tls.certresolver: letsencrypt
+      traefik.http.routers.dockrev-webhooks.priority: "100"
+    networks:
+      - proxy
+
+  supervisor:
+    image: ghcr.io/ivanli-cn/dockrev-supervisor:latest
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      DOCKREV_SUPERVISOR_HTTP_ADDR: 0.0.0.0:50884
+      DOCKREV_SUPERVISOR_BASE_PATH: /supervisor
+      DOCKREV_AUTH_FORWARD_HEADER_NAME: Remote-User
+      DOCKREV_AUTH_GROUP_HEADER_NAME: Remote-Groups
+      DOCKREV_AUTH_ALLOWED_GROUP: dockrev-users
+      DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV: "false"
+      DOCKREV_SUPERVISOR_TARGET_IMAGE_REPO: ghcr.io/ivanli-cn/dockrev
+      DOCKREV_SUPERVISOR_STATE_PATH: /data/self-upgrade.json
+      DOCKREV_SUPERVISOR_COMPOSE_BIN: docker-compose
+      # DOCKREV_SUPERVISOR_DOCKER_HOST: tcp://docker-socket-proxy:2375
+    volumes:
+      - ./data/supervisor:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Self-upgrade also needs the target compose files to be readable at the same absolute path:
+      # - /srv/compose:/srv/compose:ro
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: proxy
+      traefik.http.services.supervisor.loadbalancer.server.port: "50884"
+      traefik.http.routers.supervisor.rule: Host(`dockrev.example.com`) && PathPrefix(`/supervisor`)
+      traefik.http.routers.supervisor.entrypoints: websecure
+      traefik.http.routers.supervisor.tls.certresolver: letsencrypt
+      traefik.http.routers.supervisor.middlewares: authelia@docker
+      traefik.http.routers.supervisor.priority: "120"
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    name: dockrev-proxy

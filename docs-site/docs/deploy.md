@@ -43,6 +43,17 @@ docker compose up -d --build
 - 使用持久化 DB 路径（例如 `/data/dockrev.sqlite3`）
 - 对 compose 文件目录做“同绝对路径只读挂载”
 
+## 可直接复制的示例文件
+
+仓库里额外提供了一套可直接抄的生产示例：
+
+- `deploy/examples/traefik-authelia/docker-compose.yml`
+- `deploy/examples/traefik-authelia/authelia/configuration.yml`
+- `deploy/examples/traefik-authelia/authelia/users.yml`
+- `deploy/examples/traefik-authelia/README.md`
+
+这套示例的特点是：保护页面/API 全部走同一套 Forward Auth，中间不靠 Authelia 路径例外；webhook 通过 Traefik 单独分流，因此仍然能被 GitHub 或外部系统访问，同时继续由 Dockrev 自己校验 secret / signature。
+
 ## Forward Auth（Traefik + Authelia）
 
 ### 职责拆分
