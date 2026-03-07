@@ -60,13 +60,13 @@
 
 ### SHOULD
 
-- 气泡样式应与现有 Settings 视觉风格一致，并沿用项目现有的 bubble / tooltip 视觉语法（包含明确的锚点箭头）；提示文案与操作按钮应保持单行并排显示，必要时允许 URL 文本省略，但不让按钮掉到下一行。
+- 气泡样式应与现有 Settings 视觉风格一致，并沿用项目现有的 bubble / tooltip 视觉语法（包含明确的锚点箭头）；气泡应相对输入框右对齐悬浮显示，提示文案与操作按钮保持单行并排，必要时允许 URL 文本省略，但不让按钮掉到下一行。
 - Storybook 应有可复现的两个场景：建议可见并自动填入、已拒绝后刷新不再显示。
 - 纯函数测试应覆盖 `/settings`、`/settings/`、带 base path 的 `/dockrev/settings` / `/dockrev/settings/`，以及 hash-routing 下从当前页面 pathname 保留 base path 的推导结果（含带点号的部署目录如 `/v1.2.3/`）。
 
 ## 验收标准（Acceptance Criteria）
 
-- Given `publicBaseUrl` 为空且 localStorage 未拒绝，When 打开 Settings，Then Public Base URL 输入框附近出现悬浮建议气泡，且显示当前站点根地址，同时不把后续内容向下撑开。
+- Given `publicBaseUrl` 为空且 localStorage 未拒绝，When 打开 Settings，Then Public Base URL 输入框附近出现相对输入框右对齐的悬浮建议气泡，显示当前站点根地址，同时不把后续内容向下撑开。
 - Given 当前页面路径为 `/settings`，When 生成候选地址，Then 展示值为页面目录根地址（根路径部署时即 `origin + '/'`），而不是包含 `/settings` 的完整 URL。
 - Given 用户点击 `自动填入`，When 交互完成，Then 输入框被填入候选地址，建议气泡立即消失，后续保存继续复用现有 autosave。
 - Given 用户点击 `不`，When 刷新页面且字段仍为空，Then 建议气泡不再显示。
@@ -94,4 +94,5 @@
 - 2026-03-07: 根据视觉反馈将建议气泡改为悬浮定位，避免显示时撑开 Settings 布局。
 - 2026-03-07: 进一步对齐项目现有 bubble 语法，补上箭头与更接近通知测试气泡的视觉锚点。
 - 2026-03-07: 根据最新视觉反馈收紧为单行气泡布局，保持文案与按钮同排，必要时对 URL 做省略。
+- 2026-03-07: 根据最新定位反馈将建议气泡改为相对输入框右对齐，并把尾巴固定到更贴近项目原生 bubble 的右侧锚点。
 - 2026-03-07: 记录快车道交付分支与 PR #145，规格与实现保持同步。

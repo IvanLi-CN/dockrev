@@ -3498,6 +3498,29 @@ html[data-theme='light'] .modalOverlay {
   color: var(--text);
 }
 
+.settingsInlineSuggestionBubble::before {
+  content: '';
+  position: absolute;
+  right: 22px;
+  width: 10px;
+  height: 10px;
+  background: var(--settings-inline-suggestion-bg);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.settingsInlineSuggestionBubble[data-placement^='bottom']::before {
+  top: -6px;
+  border-left: 1px solid var(--settings-inline-suggestion-border);
+  border-top: 1px solid var(--settings-inline-suggestion-border);
+}
+
+.settingsInlineSuggestionBubble[data-placement^='top']::before {
+  bottom: -6px;
+  border-right: 1px solid var(--settings-inline-suggestion-border);
+  border-bottom: 1px solid var(--settings-inline-suggestion-border);
+}
+
 .settingsInlineSuggestionText {
   flex: 1 1 auto;
   min-width: 0;
@@ -3517,10 +3540,6 @@ html[data-theme='light'] .modalOverlay {
   max-width: min(260px, calc(100vw - 210px));
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.settingsInlineSuggestionBubbleArrow {
-  pointer-events: none;
 }
 
 .settingsInlineSuggestionActions {
