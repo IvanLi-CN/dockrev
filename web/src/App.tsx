@@ -14,6 +14,7 @@ import { GhcrWebhookQueuePage } from './pages/GhcrWebhookQueuePage'
 import { GhcrWebhookInboxPage } from './pages/GhcrWebhookInboxPage'
 import { GhcrWebhookRegistryPage } from './pages/GhcrWebhookRegistryPage'
 import { SupervisorMisroutePage } from './pages/SupervisorMisroutePage'
+import { brandMarkUrl } from './publicAssetUrls'
 import { DeployWelcomePage } from './pages/DeployWelcomePage'
 import { useRoute } from './useRoute'
 import { getDeployWelcome } from './api'
@@ -123,7 +124,7 @@ export default function App() {
           <div className="standaloneHead">
             <div className="standaloneHeadLeft">
               <div className="brand">
-                <img className="brandMark" src="/brand-mark.png" alt="" aria-hidden="true" />
+                <img className="brandMark" src={brandMarkUrl} alt="" aria-hidden="true" />
                 Dockrev
               </div>
             </div>

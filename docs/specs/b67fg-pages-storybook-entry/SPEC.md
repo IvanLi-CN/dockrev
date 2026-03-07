@@ -21,12 +21,13 @@
 - 新增复用型组装脚本，将 docs 构建产物放站点根目录、Storybook 构建产物放 `storybook/` 子目录。
 - 在 docs 顶栏、默认首页、中文首页、英文首页都新增 Storybook 跳转入口。
 - 保持 `DOCS_BASE` 对站内绝对链接的重写语义，不在文档里写死仓库名。
+- 确保 Storybook 挂到 `/storybook/` 后，交互页使用到的共享 public 资源（品牌图、Service Worker）仍按子路径加载，不回退到站点根路径。
 
 ### Non-goals
 
 - 不拆分独立 Storybook 站点、独立仓库、独立域名或第二个 Pages workflow。
 - 不扩展 README 在线入口。
-- 不修改 Storybook stories、组件实现或生产运行时行为。
+- 不新增或改写 Storybook stories 内容，也不顺带调整与子路径兼容无关的业务逻辑。
 
 ## 范围（Scope）
 
@@ -40,11 +41,15 @@
 - `docs-site/docs/en/index.md`
 - `docs-site/docs/storybook.mdx`
 - `docs/specs/README.md`
+- `web/src/App.tsx`
+- `web/src/Shell.tsx`
+- `web/src/pages/SettingsPage.tsx`
+- `web/src/publicAssetUrls.ts`
 
 ### Out of scope
 
 - `README.md`
-- `web/src/**`
+- 除 public 资源子路径兼容修复外的其他 `web/src/**` 业务改动
 - Storybook 配置文件与现有 stories 内容
 
 ## 接口契约（Interfaces & Contracts）
@@ -63,10 +68,13 @@
 - Given 组装后的站点目录，When 检查文件结构，Then 站点根下存在 `index.html`，且存在 `storybook/index.html`。
 - Given docs 顶栏与首页入口，When 在 GitHub Pages repo base 下访问，Then 先进入 `/<repo>/storybook.html` redirect 页面，再跳转到 `/<repo>/storybook/`。
 - Given Storybook 作为子路径部署，When 打开 `/storybook/`，Then `iframe.html`、`index.json`、`assets/*` 与 `sb-manager/*` 均可加载，无资源 404。
+- Given Storybook 交互页会复用品牌图与 Web Push Service Worker，When 在 `/storybook/` 子路径下渲染与触发注册，Then 对应资源从 `/<repo>/storybook/` 下解析，不请求站点根路径 `/brand-mark.png` 或 `/sw.js`。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
 - `bun run docs:build`
+- `bun run --cwd web lint`
+- `bun run --cwd web build`
 - `bun run --cwd web build-storybook -- --quiet`
 - 本地组装后访问 docs 根页与 `storybook.html` redirect 页面，确认可跳转到 `/storybook/` 且静态资源可用。
 
@@ -75,9 +83,10 @@
 - [x] M1: 新建 spec，冻结单站点 `/storybook/` 入口与并行构建口径。
 - [x] M2: docs 顶栏、默认/中/英文首页与 `storybook.html` redirect 页面完成落地。
 - [x] M3: 新增 Pages 组装脚本并改造 workflow 为并行构建 + 汇总后部署。
-- [x] M4: 完成本地验证与 spec sync，确保组合站点可访问。
+- [x] M4: 完成本地验证与 spec sync，确保组合站点与共享 public 资源在 `/storybook/` 子路径下可访问。
 
 ## 变更记录（Change log）
 
 - 2026-03-07：创建规格，锁定 GitHub Pages 单站点发布 Storybook 的路径、入口位置与 workflow 并行构建方案。
 - 2026-03-07：完成 docs 顶栏/首页入口、`storybook.html` redirect 页面、Pages 组装脚本与并行 workflow 改造；本地通过 docs build、Storybook build、组装烟测与浏览器跳转验证。
+- 2026-03-07：补充 `/storybook/` 子路径兼容修复，避免品牌图与 `sw.js` 仍从站点根路径请求而在 GitHub Pages 组合站点中 404。

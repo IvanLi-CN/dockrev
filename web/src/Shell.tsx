@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { getDockrevVersion } from './api'
 import { Chip, GitHubIcon, Mono } from './ui'
 import { ConfirmProvider } from './ConfirmProvider'
+import { brandMarkUrl } from './publicAssetUrls'
 import { UpdateActionTrackerProvider } from './updateActionTracking'
 import type { Route } from './routes'
 import { currentHref, navigate } from './routes'
@@ -100,7 +101,7 @@ export function AppShell(props: {
           <div className="topbarLeft">
             <div className="topbarIdentity">
               <div className="brand">
-                <img className="brandMark" src="/brand-mark.png" alt="" aria-hidden="true" />
+                <img className="brandMark" src={brandMarkUrl} alt="" aria-hidden="true" />
                 Dockrev
               </div>
               {props.topbarHint ? <div className="topbarHint">{props.topbarHint}</div> : null}
