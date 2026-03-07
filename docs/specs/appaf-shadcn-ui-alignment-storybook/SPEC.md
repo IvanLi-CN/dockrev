@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 已实现
+- Status: 已完成
 - Created: 2026-03-07
 - Last: 2026-03-07
 
@@ -142,7 +142,7 @@
 - [x] M2：接入 Tailwind v4 + shadcn/ui 基础设施并生成 primitives。
 - [x] M3：完成 shared UI / overlay / composite 迁移。
 - [x] M4：完成 Storybook stories + docs 补齐。
-- [ ] M5：完成 lint/build/storybook/review/PR 收敛并同步 spec。
+- [x] M5：完成 lint/build/storybook/review/PR 收敛并同步 spec。
 
 ## 风险 / 假设
 
@@ -159,3 +159,4 @@
 - 2026-03-07：完成 Storybook 覆盖补齐：primitives 采用 autodocs，复杂复合组件补 attached MDX，`Typography` / `Iconography` 组合文档落地。
 - 2026-03-07：本地验证通过：`bun --cwd web lint`、`bun --cwd web build`、`bun --cwd web build-storybook -- --quiet`、`bun --cwd web test-storybook`。
 - 2026-03-07：review-loop 修复 hover-open → click-pin 固定气泡回归，并恢复 `DeployWelcomePage` 中 switch 与 label 的可点击关联；Storybook smoke 新增 hover-pin 留存校验。
+- 2026-03-07：创建 PR #147，补齐 `type:patch` / `channel:stable` 标签并合入 `origin/main` 最新主干；review-loop 阻塞项已清零，远端 checks 通过。
