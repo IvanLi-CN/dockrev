@@ -37,8 +37,9 @@ import { useConfirm } from '../confirm'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { webhookStateDotClass, webhookStateIcon } from '../webhookStatus'
-import { navigate } from '../routes'
+import { currentRoutePathname, navigate } from '../routes'
 import { serviceWorkerUrl } from '../publicAssetUrls'
+import { derivePublicBaseUrlSuggestion } from '../publicBaseUrlSuggestion'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -389,17 +390,6 @@ function writeInstancePublicBaseUrlSuggestDismissedToStorage(): boolean {
     return true
   } catch {
     return false
-  }
-}
-
-function readCurrentPublicBaseUrlSuggestion(): string | null {
-  if (typeof window === 'undefined') return null
-  try {
-    const suggested = new URL('./', window.location.href).toString().trim()
-    if (!suggested || suggested === 'null') return null
-    return suggested.endsWith('/') ? suggested : `${suggested}/`
-  } catch {
-    return null
   }
 }
 
@@ -1522,7 +1512,8 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   }
 
   const instancePublicBaseUrlValue = settings.instance.publicBaseUrl ?? ''
-  const suggestedPublicBaseUrl = readCurrentPublicBaseUrlSuggestion()
+  const suggestedPublicBaseUrl =
+    typeof window === 'undefined' ? null : derivePublicBaseUrlSuggestion(currentRoutePathname(), window.location.origin)
   const showInstancePublicBaseUrlSuggestBubble =
     !instancePublicBaseUrlSuggestDismissed &&
     instancePublicBaseUrlValue.trim().length === 0 &&

@@ -33,8 +33,10 @@
 ### In scope
 
 - `web/src/pages/SettingsPage.tsx`
+- `web/src/publicBaseUrlSuggestion.ts`
 - `web/src/App.css`
 - `web/src/stories/pages/SettingsPage.stories.tsx`
+- `web/tests/publicBaseUrlSuggestion.test.ts`
 - `docs/specs/README.md`
 
 ### Out of scope
@@ -50,8 +52,8 @@
 - 建议气泡只在以下条件同时成立时显示：
   - `settings.instance.publicBaseUrl` 为 `null`、空字符串或仅空白字符；
   - 本地拒绝偏好不存在；
-  - 当前运行环境可解析出有效的 `window.location.origin`。
-- 建议文案固定为“是否使用当前地址 `<Mono>{originWithTrailingSlash}</Mono>`？”。
+  - 当前运行环境可解析出有效的浏览器 origin，且当前 Settings 路由可推导出实例根路径。
+- 建议文案固定为“是否使用当前地址 `<Mono>{suggestedPublicBaseUrl}</Mono>`？”。
 - `自动填入` 必须把输入框值设置为候选地址，并走现有 autosave 队列。
 - `不` 必须立即隐藏当前页气泡，并尽力写入 localStorage；若写入失败，当前页隐藏仍然成立。
 - 输入框出现任意非空白值时，建议气泡必须消失；若用户之后再次清空且未拒绝，允许重新出现。
@@ -60,6 +62,7 @@
 
 - 气泡样式应与现有 Settings 视觉风格一致，作为输入框下的 info-style inline bubble，而不是遮挡式浮层。
 - Storybook 应有可复现的两个场景：建议可见并自动填入、已拒绝后刷新不再显示。
+- 纯函数测试应覆盖 `/settings`、`/settings/` 与带 base path 的 `/dockrev/settings` / `/dockrev/settings/` 推导结果。
 
 ## 验收标准（Acceptance Criteria）
 
@@ -71,18 +74,19 @@
 
 ## 里程碑（Milestones / checklist）
 
-- [x] M1: Settings 页新增当前站点根地址候选值与 localStorage 拒绝偏好 helper。
+- [x] M1: Settings 页新增 Public Base URL 建议值推导与 localStorage 拒绝偏好 helper（含 base path 保留）。
 - [x] M2: Public Base URL 输入区新增 inline suggestion bubble 与 `自动填入` / `不` 交互。
 - [x] M3: Storybook 新增可见态与已拒绝态场景。
-- [x] M4: `lint` / `build` / `build-storybook` / `test-storybook` 回归通过。
+- [x] M4: `lint` / `build` / `build-storybook` / `test-storybook` 与 `bun test web/tests/publicBaseUrlSuggestion.test.ts` 回归通过。
 
 ## 风险 / 假设
 
-- 假设：`window.location.origin` 在生产部署与 Storybook 环境下都可用，并且用作实例对外访问根地址是合理默认值。
+- 假设：当前 Settings 路由形态稳定为 `<base>/settings`（可带尾斜杠），因此可以从当前路由反推出实例根路径。
 - 风险：若部署拓扑与当前浏览器访问地址不一致，建议值仍可能不是最终对外地址，用户仍可手动改写。
 
 ## 变更记录（Change log）
 
 - 2026-03-07: 新建规格并冻结“空 Public Base URL 当前地址建议气泡”的交互口径。
 - 2026-03-07: 完成 Settings inline suggestion bubble、localStorage 拒绝偏好与 Storybook 场景；`bun run --cwd web lint`、`build`、`build-storybook`、`test-storybook` 通过。
+- 2026-03-07: 根据复查补充 base path 保留逻辑与纯函数测试，避免在 `/base/settings/` 场景下错误建议到设置页子路径。
 - 2026-03-07: 记录快车道交付分支与 PR #145，规格与实现保持同步。

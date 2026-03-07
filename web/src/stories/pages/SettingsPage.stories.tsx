@@ -2,6 +2,8 @@ import type { Meta, StoryObj } from '@storybook/react'
 import { SettingsPage } from '../../pages/SettingsPage'
 import { PageHarness } from '../mocks/PageHarness'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+import { derivePublicBaseUrlSuggestion } from '../../publicBaseUrlSuggestion'
+import { currentRoutePathname } from '../../routes'
 
 const meta: Meta<typeof SettingsPage> = {
   title: 'Pages/SettingsPage',
@@ -76,7 +78,8 @@ export const PublicBaseUrlSuggestion: Story = {
     const bubble = canvasElement.querySelector<HTMLElement>('[data-settings-public-base-url-suggestion="visible"]')
     if (!bubble) throw new globalThis.Error('public base url suggestion bubble missing')
 
-    const expectedUrl = new URL('./', window.location.href).toString()
+    const expectedUrl = derivePublicBaseUrlSuggestion(currentRoutePathname(), window.location.origin)
+    if (!expectedUrl) throw new globalThis.Error('expected public base url suggestion missing')
     if (!bubble.textContent?.includes(expectedUrl)) {
       throw new globalThis.Error(`unexpected suggested public base url: ${bubble.textContent ?? '<empty>'}`)
     }
