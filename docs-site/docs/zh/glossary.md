@@ -13,5 +13,5 @@ description: Dockrev 文档中的核心术语解释。
 - **Scope**：任务作用范围（all / stack / service）。
 - **Resolved Tag**：由 digest 反推得到的候选版本标签。
 - **Supervisor**：Dockrev 自升级执行器与控制台。
-- **Forward Header Auth**：通过反向代理透传用户头完成鉴权。
+- **Forward Auth**：由入口代理完成认证并向 Dockrev 透传可信用户/组头；Dockrev 再据此执行项目侧鉴权。
 - **GHCR Webhook**：GitHub Packages 事件回调，触发自动扫描。

@@ -1344,7 +1344,18 @@ pub struct InstanceSettings {
 #[serde(rename_all = "camelCase")]
 pub struct AuthSettings {
     pub forward_header_name: String,
+    pub group_header_name: String,
     pub allow_anonymous_in_dev: bool,
+    pub authorization_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_user_masked: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_group_masked: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_user: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub current_groups: Vec<String>,
+    pub matched_by: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -7,7 +7,7 @@ use std::{
 use axum::{
     Json, Router,
     extract::State,
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, HeaderName, StatusCode, header},
     response::{Html, IntoResponse},
     routing::{get, post},
 };
@@ -519,15 +519,52 @@ async fn ui_favicon() -> impl IntoResponse {
 }
 
 fn require_user(app: &App, headers: &HeaderMap) -> Result<String, ApiError> {
-    let name = app.cfg.auth_forward_header_name.as_str();
-    let Some(v) = headers.get(name) else {
-        return Err(ApiError::auth_required());
-    };
-    let user = v.to_str().unwrap_or("").trim();
-    if user.is_empty() {
-        return Err(ApiError::auth_required());
+    let user = read_header_value(headers, &app.cfg.auth_forward_header_name);
+    let groups = read_groups(headers, &app.cfg.auth_group_header_name);
+
+    if let Some(current_user) = user.as_deref()
+        && app.cfg.auth_allowed_user.as_deref() == Some(current_user)
+    {
+        return Ok(current_user.to_string());
     }
-    Ok(user.to_string())
+
+    if let Some(allowed_group) = app.cfg.auth_allowed_group.as_deref()
+        && groups.iter().any(|group| group == allowed_group)
+    {
+        return Ok(user.unwrap_or_else(|| format!("group:{allowed_group}")));
+    }
+
+    if app.cfg.auth_allow_anonymous_in_dev {
+        if user.is_none() && groups.is_empty() {
+            return Ok("anonymous".to_string());
+        }
+
+        if app.cfg.auth_allowed_user.is_none() && app.cfg.auth_allowed_group.is_none() {
+            return Ok(user.unwrap_or_else(|| "anonymous".to_string()));
+        }
+    }
+
+    Err(ApiError::auth_required())
+}
+
+fn read_header_value(headers: &HeaderMap, name: &HeaderName) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn read_groups(headers: &HeaderMap, name: &HeaderName) -> Vec<String> {
+    let Some(raw) = read_header_value(headers, name) else {
+        return Vec::new();
+    };
+    raw.split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect()
 }
 
 #[derive(Debug, Serialize)]
@@ -1880,6 +1917,72 @@ mod tests {
         assert!(value.get("request").is_none());
     }
 
+    async fn test_app_for_authz(
+        allowed_user: Option<&str>,
+        allowed_group: Option<&str>,
+        allow_anonymous_in_dev: bool,
+    ) -> Arc<App> {
+        let dir = std::env::temp_dir().join(format!(
+            "dockrev-supervisor-test-{}-authz-{}",
+            std::process::id(),
+            ulid::Ulid::new()
+        ));
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+
+        Arc::new(
+            App::new(Config {
+                http_addr: "127.0.0.1:0".to_string(),
+                base_path: "/supervisor".to_string(),
+                auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
+                auth_group_header_name: "Remote-Groups".parse().unwrap(),
+                auth_allowed_user: allowed_user.map(ToString::to_string),
+                auth_allowed_group: allowed_group.map(ToString::to_string),
+                auth_allow_anonymous_in_dev: allow_anonymous_in_dev,
+                target_image_repo: "ghcr.io/ivanli-cn/dockrev".to_string(),
+                target_container_id: Some("ctr".to_string()),
+                target_compose_project: Some("p".to_string()),
+                target_compose_service: Some("dockrev".to_string()),
+                target_compose_files: vec!["/abs/compose.yml".to_string()],
+                docker_bin: "docker".to_string(),
+                docker_host: None,
+                compose_bin: "docker-compose".to_string(),
+                state_path: dir.join("state.json"),
+            })
+            .await
+            .unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn supervisor_auth_allows_matching_group() {
+        let app = test_app_for_authz(None, Some("ops"), false).await;
+        let mut headers = HeaderMap::new();
+        headers.insert("Remote-Groups", "dev, ops".parse().unwrap());
+
+        let user = require_user(app.as_ref(), &headers).unwrap();
+        assert_eq!(user, "group:ops");
+    }
+
+    #[tokio::test]
+    async fn supervisor_auth_allows_matching_user() {
+        let app = test_app_for_authz(Some("alice"), None, false).await;
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Forwarded-User", "alice".parse().unwrap());
+
+        let user = require_user(app.as_ref(), &headers).unwrap();
+        assert_eq!(user, "alice");
+    }
+
+    #[tokio::test]
+    async fn supervisor_auth_allows_anonymous_in_dev_without_identity() {
+        let app = test_app_for_authz(None, None, true).await;
+        let headers = HeaderMap::new();
+
+        let user = require_user(app.as_ref(), &headers).unwrap();
+        assert_eq!(user, "anonymous");
+    }
+
     #[tokio::test]
     async fn get_self_upgrade_returns_request_only_while_running() {
         let dir = std::env::temp_dir().join(format!(
@@ -1894,6 +1997,10 @@ mod tests {
                 http_addr: "127.0.0.1:0".to_string(),
                 base_path: "/supervisor".to_string(),
                 auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
+                auth_group_header_name: "Remote-Groups".parse().unwrap(),
+                auth_allowed_user: None,
+                auth_allowed_group: None,
+                auth_allow_anonymous_in_dev: true,
                 target_image_repo: "ghcr.io/ivanli-cn/dockrev".to_string(),
                 target_container_id: Some("ctr".to_string()),
                 target_compose_project: Some("p".to_string()),
@@ -2053,6 +2160,10 @@ mod tests {
             http_addr: "127.0.0.1:0".to_string(),
             base_path: "/supervisor".to_string(),
             auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
+            auth_group_header_name: "Remote-Groups".parse().unwrap(),
+            auth_allowed_user: None,
+            auth_allowed_group: None,
+            auth_allow_anonymous_in_dev: true,
             target_image_repo: "ghcr.io/ivanli-cn/dockrev".to_string(),
             target_container_id: Some("ctr".to_string()),
             target_compose_project: Some("p".to_string()),
@@ -2119,6 +2230,10 @@ mod tests {
             http_addr: "127.0.0.1:0".to_string(),
             base_path: "/supervisor".to_string(),
             auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
+            auth_group_header_name: "Remote-Groups".parse().unwrap(),
+            auth_allowed_user: None,
+            auth_allowed_group: None,
+            auth_allow_anonymous_in_dev: true,
             target_image_repo: "ghcr.io/ivanli-cn/dockrev".to_string(),
             target_container_id: Some("ctr".to_string()),
             target_compose_project: Some("p".to_string()),
@@ -2166,6 +2281,10 @@ mod tests {
             http_addr: "127.0.0.1:0".to_string(),
             base_path: "/supervisor".to_string(),
             auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
+            auth_group_header_name: "Remote-Groups".parse().unwrap(),
+            auth_allowed_user: None,
+            auth_allowed_group: None,
+            auth_allow_anonymous_in_dev: true,
             target_image_repo: "ghcr.io/ivanli-cn/dockrev".to_string(),
             target_container_id: Some("ctr".to_string()),
             target_compose_project: Some("p".to_string()),
@@ -2219,6 +2338,10 @@ mod tests {
                 http_addr: "127.0.0.1:0".to_string(),
                 base_path: "/supervisor".to_string(),
                 auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
+                auth_group_header_name: "Remote-Groups".parse().unwrap(),
+                auth_allowed_user: None,
+                auth_allowed_group: None,
+                auth_allow_anonymous_in_dev: true,
                 target_image_repo: "ghcr.io/ivanli-cn/dockrev".to_string(),
                 target_container_id: Some("ctr".to_string()),
                 target_compose_project: Some("p".to_string()),

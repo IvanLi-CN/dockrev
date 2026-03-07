@@ -1082,6 +1082,9 @@ async fn test_state_with(
         docker_config_path: None,
         compose_bin: "docker-compose".to_string(),
         auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
+        auth_group_header_name: "Remote-Groups".parse().unwrap(),
+        auth_allowed_user: None,
+        auth_allowed_group: None,
         auth_allow_anonymous_in_dev: true,
         self_upgrade_url: "/supervisor/".to_string(),
         dockrev_image_repo: "ghcr.io/ivanli-cn/dockrev".to_string(),
@@ -1120,6 +1123,9 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
         docker_config_path: None,
         compose_bin: "docker-compose".to_string(),
         auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
+        auth_group_header_name: "Remote-Groups".parse().unwrap(),
+        auth_allowed_user: None,
+        auth_allowed_group: None,
         auth_allow_anonymous_in_dev: true,
         self_upgrade_url: "/supervisor/".to_string(),
         dockrev_image_repo: "ghcr.io/ivanli-cn/dockrev".to_string(),
@@ -1161,7 +1167,58 @@ async fn test_state_auth_required(db_path: &str) -> Arc<AppState> {
         docker_config_path: None,
         compose_bin: "docker-compose".to_string(),
         auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
+        auth_group_header_name: "Remote-Groups".parse().unwrap(),
+        auth_allowed_user: None,
+        auth_allowed_group: None,
         auth_allow_anonymous_in_dev: false,
+        self_upgrade_url: "/supervisor/".to_string(),
+        dockrev_image_repo: "ghcr.io/ivanli-cn/dockrev".to_string(),
+        webhook_secret: Some("secret".to_string()),
+        host_platform: Some("linux/amd64".to_string()),
+        discovery_interval_seconds: 60,
+        discovery_max_actions: 200,
+        runtime_scan_interval_seconds: 600,
+        deploy_check_local_command_timeout_seconds: 12,
+        registry_per_host_concurrency: crate::config::FIXED_REGISTRY_PER_HOST_CONCURRENCY,
+        registry_retry_max_attempts: 3,
+        registry_retry_base_ms: 250,
+        registry_retry_max_ms: 2000,
+        update_idempotent_retry_max_attempts: 3,
+        update_idempotent_retry_base_ms: 300,
+        update_idempotent_retry_max_ms: 3000,
+    };
+
+    let db = Db::open(&config.db_path).await.unwrap();
+    let registry = Arc::new(FakeRegistry);
+    let runner = Arc::new(FakeRunner);
+    let snapshot_worker = Arc::new(crate::snapshot_worker::SnapshotWorker::new(
+        db.clone(),
+        registry.clone(),
+    ));
+    let resource_hub = Arc::new(crate::resource_usage::RealtimeSamplerHub::new(
+        db.clone(),
+        runner.clone(),
+    ));
+    AppState::new(config, db, registry, runner, snapshot_worker, resource_hub)
+}
+
+async fn test_state_with_authz(
+    db_path: &str,
+    allowed_user: Option<&str>,
+    allowed_group: Option<&str>,
+    allow_anonymous_in_dev: bool,
+) -> Arc<AppState> {
+    let config = Config {
+        app_effective_version: "0.1.0".to_string(),
+        http_addr: "127.0.0.1:0".to_string(),
+        db_path: PathBuf::from(db_path),
+        docker_config_path: None,
+        compose_bin: "docker-compose".to_string(),
+        auth_forward_header_name: "X-Forwarded-User".parse().unwrap(),
+        auth_group_header_name: "Remote-Groups".parse().unwrap(),
+        auth_allowed_user: allowed_user.map(ToString::to_string),
+        auth_allowed_group: allowed_group.map(ToString::to_string),
+        auth_allow_anonymous_in_dev: allow_anonymous_in_dev,
         self_upgrade_url: "/supervisor/".to_string(),
         dockrev_image_repo: "ghcr.io/ivanli-cn/dockrev".to_string(),
         webhook_secret: Some("secret".to_string()),
@@ -7175,7 +7232,7 @@ async fn deploy_welcome_roundtrip() {
 
 #[tokio::test]
 async fn deploy_check_report_is_read_only() {
-    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+    let state = test_state_with_authz(":memory:", Some("ops"), None, false).await;
 
     let compose_file = format!("/tmp/dockrev-preflight-test-{}.yml", ulid::Ulid::new());
     std::fs::write(
@@ -7197,6 +7254,7 @@ services:
         .oneshot(
             Request::builder()
                 .uri("/api/deploy-check/report")
+                .header("X-Forwarded-User", "ops")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -9080,6 +9138,99 @@ async fn github_packages_webhook_deliveries_requires_auth_when_anonymous_disable
         .await
         .unwrap();
     assert_eq!(resp.status(), 401);
+}
+
+#[tokio::test]
+async fn settings_auth_reports_group_match_details() {
+    let state = test_state_with_authz(":memory:", Some("alice"), Some("ops"), false).await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/settings")
+                .header("X-Forwarded-User", "bob")
+                .header("Remote-Groups", "dev, ops")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["auth"]["forwardHeaderName"], "x-forwarded-user");
+    assert_eq!(body["auth"]["groupHeaderName"], "remote-groups");
+    assert_eq!(body["auth"]["authorizationMode"], "user_or_group");
+    assert_eq!(body["auth"]["matchedBy"], "group");
+    assert_eq!(body["auth"]["currentUser"], "bob");
+    assert_eq!(
+        body["auth"]["currentGroups"],
+        serde_json::json!(["d**v", "o**s"])
+    );
+}
+
+#[tokio::test]
+async fn protected_endpoint_returns_authz_details_and_redirect_target() {
+    let state = test_state_with_authz(":memory:", Some("alice"), None, false).await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/settings")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+    let body = response_json(resp).await;
+    assert_eq!(body["error"]["code"], "auth_required");
+    assert_eq!(body["error"]["details"]["reason"], "identity_missing");
+    assert_eq!(body["error"]["details"]["redirectTo"], "deploy-check");
+    assert_eq!(
+        body["error"]["details"]["authorizationMode"],
+        "user_or_group"
+    );
+    assert_eq!(body["error"]["details"]["allowedUserMasked"], "al***ce");
+}
+
+#[tokio::test]
+async fn deploy_check_report_surfaces_authz_failures_without_full_report() {
+    let state = test_state_with_authz(":memory:", Some("alice"), None, false).await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/deploy-check/report")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["overall"]["result"], "fail");
+    assert_eq!(
+        body["overall"]["summary"],
+        "Forward Auth or project authorization is not ready"
+    );
+    let checks = body["checks"].as_array().unwrap();
+    assert_eq!(checks.len(), 2);
+    assert_eq!(checks[0]["id"], "core.forward_auth_authorization_config");
+    assert_eq!(checks[0]["status"], "pass");
+    assert_eq!(checks[1]["id"], "core.forward_auth_request_authorization");
+    assert_eq!(checks[1]["status"], "fail");
+    let blocking = body["overall"]["blockingCheckIds"].as_array().unwrap();
+    assert!(
+        blocking
+            .iter()
+            .any(|v| v == "core.forward_auth_request_authorization")
+    );
 }
 
 #[tokio::test]

@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod api;
+mod authz;
 mod backup;
 mod compose;
 mod compose_runner;

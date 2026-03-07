@@ -25,9 +25,15 @@ use url::Url;
 
 use crate::github;
 use crate::{
-    backup, db::GitHubPackagesWebhookDeliveryRecordInput, discovery, error::ApiError,
+    authz::{self, AuthzFailure, AuthzMatchKind, RequestAuth},
+    backup,
+    db::GitHubPackagesWebhookDeliveryRecordInput,
+    discovery,
+    error::ApiError,
     ghcr_webhook_jobs, ids, ignore, notify, preflight, registry, resource_usage, runtime_scan,
-    snapshot_worker, state::AppState, ui, updater,
+    snapshot_worker,
+    state::AppState,
+    ui, updater,
 };
 use types::*;
 
@@ -193,7 +199,7 @@ async fn list_stacks(
     headers: HeaderMap,
     Query(q): Query<ListStacksQuery>,
 ) -> Result<Json<ListStacksResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let stacks = state
         .db
         .list_stacks(parse_archived_filter(q.archived.as_deref())?)
@@ -514,7 +520,7 @@ async fn get_stack(
     headers: HeaderMap,
     Path(stack_id): Path<String>,
 ) -> Result<Json<GetStackResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let stack = state.db.get_stack(&stack_id).await.map_err(map_internal)?;
     let Some(mut stack) = stack else {
         return Err(ApiError::not_found("stack not found"));
@@ -536,7 +542,7 @@ async fn register_stack_disabled(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     Ok((
         StatusCode::METHOD_NOT_ALLOWED,
         Json(json!({
@@ -550,7 +556,7 @@ async fn archive_stack(
     headers: HeaderMap,
     Path(stack_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
     let changed = state
         .db
@@ -568,7 +574,7 @@ async fn restore_stack(
     headers: HeaderMap,
     Path(stack_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
     let changed = state
         .db
@@ -586,7 +592,7 @@ async fn archive_service(
     headers: HeaderMap,
     Path(service_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
     let changed = state
         .db
@@ -604,7 +610,7 @@ async fn restore_service(
     headers: HeaderMap,
     Path(service_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
     let changed = state
         .db
@@ -621,7 +627,7 @@ async fn trigger_discovery_scan(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<TriggerDiscoveryScanJobResponse>, ApiError> {
-    let user = require_user(&state, &headers)?;
+    let user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
 
     let job_id = ids::new_discovery_id();
@@ -635,7 +641,7 @@ async fn trigger_discovery_scan(
     );
 
     let mut job_db = job.to_db();
-    job_db.created_by = user;
+    job_db.created_by = user.principal;
     job_db.reason = "ui".to_string();
     state.db.insert_job(job_db).await.map_err(map_internal)?;
 
@@ -688,7 +694,7 @@ async fn list_discovery_projects(
     headers: HeaderMap,
     Query(q): Query<ListDiscoveryProjectsQuery>,
 ) -> Result<Json<ListDiscoveredProjectsResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let projects = state
         .db
         .list_discovered_compose_projects(parse_archived_filter(q.archived.as_deref())?)
@@ -702,7 +708,7 @@ async fn archive_discovery_project(
     headers: HeaderMap,
     Path(project): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
     let changed = state
         .db
@@ -720,7 +726,7 @@ async fn restore_discovery_project(
     headers: HeaderMap,
     Path(project): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
     let changed = state
         .db
@@ -1038,7 +1044,7 @@ async fn trigger_check(
     headers: HeaderMap,
     Json(req): Json<TriggerCheckRequest>,
 ) -> Result<Json<TriggerCheckResponse>, ApiError> {
-    let user = require_user(&state, &headers)?;
+    let user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
 
     validate_scope(
@@ -1101,7 +1107,7 @@ async fn trigger_check(
     );
 
     let mut job_db = job.to_db();
-    job_db.created_by = user.clone();
+    job_db.created_by = user.principal.clone();
     job_db.reason = req.reason.as_str().to_string();
     state.db.insert_job(job_db).await.map_err(map_internal)?;
 
@@ -1200,7 +1206,7 @@ async fn trigger_runtime_scan(
     headers: HeaderMap,
     Json(req): Json<TriggerRuntimeScanRequest>,
 ) -> Result<Json<TriggerRuntimeScanResponse>, ApiError> {
-    let user = require_user(&state, &headers)?;
+    let user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
 
     validate_scope(
@@ -1237,7 +1243,7 @@ async fn trigger_runtime_scan(
     );
 
     let mut job_db = job.to_db();
-    job_db.created_by = user.clone();
+    job_db.created_by = user.principal.clone();
     job_db.reason = req.reason.as_str().to_string();
     state.db.insert_job(job_db).await.map_err(map_internal)?;
 
@@ -1712,7 +1718,7 @@ async fn trigger_update(
     headers: HeaderMap,
     Json(req): Json<TriggerUpdateRequest>,
 ) -> Result<Json<TriggerUpdateResponse>, ApiError> {
-    let user = require_user(&state, &headers)?;
+    let user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
 
     validate_scope(
@@ -1749,7 +1755,14 @@ async fn trigger_update(
         ));
     }
 
-    let job_id = enqueue_update_job(state, user, req.reason.as_str().to_string(), req, now).await?;
+    let job_id = enqueue_update_job(
+        state,
+        user.principal,
+        req.reason.as_str().to_string(),
+        req,
+        now,
+    )
+    .await?;
 
     Ok(Json(TriggerUpdateResponse { job_id }))
 }
@@ -2728,7 +2741,7 @@ async fn list_jobs(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<ListJobsResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let jobs = state.db.list_jobs().await.map_err(map_internal)?;
     Ok(Json(ListJobsResponse {
         jobs: jobs.into_iter().map(|j| j.into_api()).collect(),
@@ -2740,7 +2753,7 @@ async fn get_job(
     headers: HeaderMap,
     Path(job_id): Path<String>,
 ) -> Result<Json<GetJobResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
 
     let job = state.db.get_job(&job_id).await.map_err(map_internal)?;
     let Some(job) = job else {
@@ -2811,7 +2824,7 @@ async fn jobs_events(
     headers: HeaderMap,
     Query(q): Query<JobEventsQuery>,
 ) -> Result<impl axum::response::IntoResponse, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let mut after_id = resolve_sse_after_id(&headers, q.after_id);
 
     // Default to tail-following so the queue page subscribes to future updates without replay storms.
@@ -2901,7 +2914,7 @@ async fn job_events(
     Path(job_id): Path<String>,
     Query(q): Query<JobEventsQuery>,
 ) -> Result<impl axum::response::IntoResponse, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
 
     // Fail fast on invalid job ids to avoid leaving open SSE connections forever.
     let job = state.db.get_job(&job_id).await.map_err(map_internal)?;
@@ -3016,7 +3029,7 @@ async fn list_ignores(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<ListIgnoresResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let rules = state.db.list_ignore_rules().await.map_err(map_internal)?;
     Ok(Json(ListIgnoresResponse { rules }))
 }
@@ -3026,7 +3039,7 @@ async fn create_ignore(
     headers: HeaderMap,
     Json(req): Json<CreateIgnoreRequest>,
 ) -> Result<(StatusCode, Json<CreateIgnoreResponse>), ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
 
     if req.scope.kind != "service" {
@@ -3066,7 +3079,7 @@ async fn delete_ignore(
     headers: HeaderMap,
     Json(req): Json<DeleteIgnoreRequest>,
 ) -> Result<Json<DeleteIgnoreResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
 
     let deleted = state
         .db
@@ -3082,7 +3095,7 @@ async fn get_service_settings(
     headers: HeaderMap,
     Path(service_id): Path<String>,
 ) -> Result<Json<ServiceSettingsResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let settings = state
         .db
         .get_service_settings(&service_id)
@@ -3103,7 +3116,7 @@ async fn trigger_service_version_inference_refresh(
     headers: HeaderMap,
     Path(service_id): Path<String>,
 ) -> Result<Response, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let stack_id = state
         .db
         .get_service_stack_id(&service_id)
@@ -3300,7 +3313,7 @@ async fn get_version_inference_overview(
     headers: HeaderMap,
     Query(q): Query<VersionInferenceOverviewQuery>,
 ) -> Result<Json<VersionInferenceOverviewResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let page = q.page.unwrap_or(1).max(1);
     let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
     let status_filter = normalize_version_inference_status_filter(q.status.as_deref())?;
@@ -3510,7 +3523,7 @@ async fn version_inference_events(
     headers: HeaderMap,
     Query(q): Query<VersionInferenceEventsQuery>,
 ) -> Result<impl axum::response::IntoResponse, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let mut after_id = resolve_sse_after_id(&headers, q.after_id);
     if after_id <= 0 {
         after_id = state.snapshot_worker.latest_event_id().await;
@@ -3586,7 +3599,7 @@ async fn get_service_resource_usage_history(
     Path(service_id): Path<String>,
     Query(q): Query<ServiceResourceHistoryQuery>,
 ) -> Result<Json<ServiceResourceHistoryResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let settings = state
         .db
         .get_resource_monitor_settings()
@@ -3637,7 +3650,7 @@ async fn service_resource_usage_events(
     headers: HeaderMap,
     Path(service_id): Path<String>,
 ) -> Result<impl axum::response::IntoResponse, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let settings = state
         .db
         .get_resource_monitor_settings()
@@ -3794,7 +3807,7 @@ async fn get_service_digest_tags_snapshot(
     Path(service_id): Path<String>,
     Query(q): Query<GetServiceDigestTagsSnapshotQuery>,
 ) -> Result<Response, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
 
     let digest_input = q.digest.unwrap_or_default();
     let digest_trimmed = digest_input.trim();
@@ -3879,7 +3892,7 @@ async fn list_service_digest_tags(
         time::{Instant, timeout, timeout_at},
     };
 
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
 
     let digest_input = q.digest.unwrap_or_default();
     let digest_trimmed = digest_input.trim();
@@ -4112,7 +4125,7 @@ async fn put_service_settings(
     Path(service_id): Path<String>,
     Json(req): Json<ServiceSettingsRequest>,
 ) -> Result<Json<PutServiceSettingsResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
 
     let settings = ServiceSettings {
@@ -4137,7 +4150,7 @@ async fn get_notifications(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<NotificationConfig>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let settings = state
         .db
         .get_notification_settings()
@@ -4151,7 +4164,7 @@ async fn put_notifications(
     headers: HeaderMap,
     Json(req): Json<NotificationConfig>,
 ) -> Result<Json<PutNotificationsResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
 
     let existing = state
@@ -4192,7 +4205,7 @@ async fn test_notifications(
     headers: HeaderMap,
     Json(req): Json<TestNotificationsRequest>,
 ) -> Result<Json<TestNotificationsResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
     let message = req.message.unwrap_or_else(|| "dockrev test".to_string());
     let results = notify::send_test(state.as_ref(), &now, &message, req.channel)
@@ -4279,7 +4292,7 @@ async fn get_github_packages_settings(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<GitHubPackagesSettingsResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
 
     let settings = state
         .db
@@ -4326,7 +4339,7 @@ async fn put_github_packages_settings(
     headers: HeaderMap,
     Json(req): Json<PutGitHubPackagesSettingsRequest>,
 ) -> Result<Json<PutGitHubPackagesSettingsResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
 
     let _ = Url::parse(&req.callback_url)
@@ -4436,7 +4449,7 @@ async fn list_github_packages_repos(
     headers: HeaderMap,
     Query(q): Query<ListGitHubPackagesReposQuery>,
 ) -> Result<Json<ListGitHubPackagesReposResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
 
     let page = q.page.unwrap_or(1).max(1);
     let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
@@ -4516,7 +4529,7 @@ async fn list_github_packages_webhook_deliveries(
     headers: HeaderMap,
     Query(q): Query<ListGitHubPackagesWebhookDeliveriesQuery>,
 ) -> Result<Json<ListGitHubPackagesWebhookDeliveriesResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
 
     let page = q.page.unwrap_or(1).max(1);
     let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
@@ -4582,7 +4595,7 @@ async fn get_github_packages_webhook_overview(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<GitHubPackagesWebhookOverviewResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let overview = ghcr_webhook_jobs::get_overview(&state)
         .await
         .map_err(map_internal)?;
@@ -4593,10 +4606,10 @@ async fn trigger_github_packages_webhook_sync_all(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<TriggerGitHubPackagesWebhookSyncAllResponse>, ApiError> {
-    let user = require_user(&state, &headers)?;
+    let user = require_user(&state, &headers).await?;
     ensure_github_packages_sync_ready(&state).await?;
 
-    let queued = ghcr_webhook_jobs::enqueue_sync_all_job(&state, &user, "ui")
+    let queued = ghcr_webhook_jobs::enqueue_sync_all_job(&state, &user.principal, "ui")
         .await
         .map_err(map_ghcr_sync_enqueue_error)?;
     Ok(Json(TriggerGitHubPackagesWebhookSyncAllResponse {
@@ -4612,7 +4625,7 @@ async fn trigger_github_packages_webhook_sync_repo(
     headers: HeaderMap,
     Json(req): Json<TriggerGitHubPackagesWebhookSyncRepoRequest>,
 ) -> Result<Json<TriggerGitHubPackagesWebhookSyncRepoResponse>, ApiError> {
-    let user = require_user(&state, &headers)?;
+    let user = require_user(&state, &headers).await?;
     ensure_github_packages_sync_ready(&state).await?;
 
     let full_name = req.full_name.trim();
@@ -4620,7 +4633,7 @@ async fn trigger_github_packages_webhook_sync_repo(
         return Err(ApiError::invalid_argument("fullName is required"));
     }
 
-    let queued = ghcr_webhook_jobs::enqueue_sync_repo_job(&state, full_name, &user, "ui")
+    let queued = ghcr_webhook_jobs::enqueue_sync_repo_job(&state, full_name, &user.principal, "ui")
         .await
         .map_err(map_ghcr_sync_enqueue_error)?;
     Ok(Json(TriggerGitHubPackagesWebhookSyncRepoResponse {
@@ -4655,7 +4668,7 @@ async fn set_github_packages_repo_selected(
     headers: HeaderMap,
     Json(req): Json<SetGitHubPackagesRepoSelectedRequest>,
 ) -> Result<Json<SetGitHubPackagesRepoSelectedResponse>, ApiError> {
-    let user = require_user(&state, &headers)?;
+    let user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
 
     let mut parts = req.full_name.split('/');
@@ -4686,7 +4699,7 @@ async fn set_github_packages_repo_selected(
                 &state,
                 &full_name,
                 ghcr_webhook_jobs::GhcrWebhookOp::Register,
-                &user,
+                &user.principal,
                 "ui",
             )
             .await
@@ -4706,7 +4719,7 @@ async fn delete_github_packages_repo(
     headers: HeaderMap,
     Json(req): Json<DeleteGitHubPackagesRepoRequest>,
 ) -> Result<Json<DeleteGitHubPackagesRepoResponse>, ApiError> {
-    let user = require_user(&state, &headers)?;
+    let user = require_user(&state, &headers).await?;
 
     let mut parts = req.full_name.split('/');
     let owner = parts.next().unwrap_or_default().trim();
@@ -4728,7 +4741,7 @@ async fn delete_github_packages_repo(
         &state,
         &format!("{owner}/{repo}"),
         ghcr_webhook_jobs::GhcrWebhookOp::Unregister,
-        &user,
+        &user.principal,
         "ui",
     )
     .await
@@ -4742,7 +4755,7 @@ async fn bulk_set_github_packages_repos_selected(
     headers: HeaderMap,
     Json(req): Json<BulkSetGitHubPackagesReposSelectedRequest>,
 ) -> Result<Json<BulkSetGitHubPackagesReposSelectedResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
 
     let selected_filter = parse_selected_filter(req.selected_filter.as_deref())?;
@@ -4768,7 +4781,7 @@ async fn add_github_packages_target(
     headers: HeaderMap,
     Json(req): Json<AddGitHubPackagesTargetRequest>,
 ) -> Result<Json<AddGitHubPackagesTargetResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
 
     let settings = state
@@ -4835,7 +4848,7 @@ async fn remove_github_packages_target(
     headers: HeaderMap,
     Json(req): Json<RemoveGitHubPackagesTargetRequest>,
 ) -> Result<Json<RemoveGitHubPackagesTargetResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
 
     let _ = state
         .db
@@ -4851,7 +4864,7 @@ async fn resolve_github_packages_target(
     headers: HeaderMap,
     Json(req): Json<ResolveGitHubPackagesTargetRequest>,
 ) -> Result<Json<ResolveGitHubPackagesTargetResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
 
     let parsed = github::parse_target_input(&req.input).map_err(|e| {
         ApiError::invalid_argument("invalid input")
@@ -4984,7 +4997,7 @@ async fn sync_github_packages_webhooks(
     headers: HeaderMap,
     Json(req): Json<SyncGitHubPackagesWebhooksRequest>,
 ) -> Result<Json<SyncGitHubPackagesWebhooksResponse>, ApiError> {
-    let user = require_user(&state, &headers)?;
+    let user = require_user(&state, &headers).await?;
     ensure_github_packages_sync_ready(&state).await?;
 
     let mut selected_repos: Vec<(String, String)> = state
@@ -5022,7 +5035,8 @@ async fn sync_github_packages_webhooks(
             continue;
         }
 
-        let queued = ghcr_webhook_jobs::enqueue_sync_repo_job(&state, &full, &user, "ui").await;
+        let queued =
+            ghcr_webhook_jobs::enqueue_sync_repo_job(&state, &full, &user.principal, "ui").await;
         match queued {
             Ok(enqueued) => results.push(SyncGitHubPackagesWebhookResult {
                 repo: full,
@@ -5407,7 +5421,7 @@ async fn create_web_push_subscription(
     headers: HeaderMap,
     Json(req): Json<WebPushSubscriptionRequest>,
 ) -> Result<Json<WebPushSubscriptionResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
 
     state
@@ -5424,7 +5438,7 @@ async fn delete_web_push_subscription(
     headers: HeaderMap,
     Json(req): Json<DeleteWebPushSubscriptionRequest>,
 ) -> Result<Json<WebPushSubscriptionResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let deleted = state
         .db
         .delete_web_push_subscription(&req.endpoint)
@@ -5627,7 +5641,7 @@ async fn get_settings(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<SettingsResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let auth = require_user(&state, &headers).await?;
 
     let backup = state.db.get_backup_settings().await.map_err(map_internal)?;
     let resource_monitor = state
@@ -5645,13 +5659,21 @@ async fn get_settings(
         .get_instance_public_base_url()
         .await
         .map_err(map_internal)?;
+    let auth_view = authz::config_view(&state.config);
     Ok(Json(SettingsResponse {
         backup,
         resource_monitor,
         schedules,
         auth: AuthSettings {
-            forward_header_name: state.config.auth_forward_header_name.to_string(),
-            allow_anonymous_in_dev: state.config.auth_allow_anonymous_in_dev,
+            forward_header_name: auth_view.forward_header_name,
+            group_header_name: auth_view.group_header_name,
+            allow_anonymous_in_dev: auth_view.allow_anonymous_in_dev,
+            authorization_mode: auth_view.authorization_mode.to_string(),
+            allowed_user_masked: auth_view.allowed_user_masked,
+            allowed_group_masked: auth_view.allowed_group_masked,
+            current_user: auth.user.clone(),
+            current_groups: authz::mask_list(&auth.groups),
+            matched_by: authz_match_label(&auth.matched_by).to_string(),
         },
         instance: InstanceSettings { public_base_url },
     }))
@@ -5662,7 +5684,7 @@ async fn put_settings(
     headers: HeaderMap,
     Json(req): Json<PutSettingsRequest>,
 ) -> Result<Json<PutSettingsResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
 
     let existing_resource_monitor = state
@@ -5778,18 +5800,23 @@ async fn get_deploy_check_report(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<DeployCheckReportResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let auth = authorize_request(&state, &headers).await;
     let report = preflight::build_report(state.as_ref())
         .await
         .map_err(map_internal)?;
-    Ok(Json(report))
+    Ok(Json(attach_authz_checks(
+        state.as_ref(),
+        &headers,
+        report,
+        auth,
+    )))
 }
 
 async fn get_deploy_welcome(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<DeployWelcomeResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let settings = state
         .db
         .get_deploy_welcome_settings()
@@ -5803,7 +5830,7 @@ async fn put_deploy_welcome(
     headers: HeaderMap,
     Json(req): Json<PutDeployWelcomeRequest>,
 ) -> Result<Json<PutDeployWelcomeResponse>, ApiError> {
-    let _user = require_user(&state, &headers)?;
+    let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
     state
         .db
@@ -5817,19 +5844,220 @@ async fn put_deploy_welcome(
     }))
 }
 
-fn require_user(state: &AppState, headers: &HeaderMap) -> Result<String, ApiError> {
-    if let Some(value) = headers.get(&state.config.auth_forward_header_name) {
-        let user = value.to_str().unwrap_or_default().trim().to_string();
-        if !user.is_empty() {
-            return Ok(user);
+async fn require_user(state: &AppState, headers: &HeaderMap) -> Result<RequestAuth, ApiError> {
+    authorize_request(state, headers).await
+}
+
+async fn authorize_request(state: &AppState, headers: &HeaderMap) -> Result<RequestAuth, ApiError> {
+    match authz::authorize_request(&state.config, headers) {
+        Ok(auth) => Ok(auth),
+        Err(failure) => Err(authz_error(state, failure).await),
+    }
+}
+
+async fn authz_error(state: &AppState, failure: AuthzFailure) -> ApiError {
+    let redirect_to = match state.db.get_deploy_welcome_settings().await {
+        Ok(settings) if !settings.never_auto_open => "deploy-check",
+        _ => "unauthorized",
+    };
+    let auth_view = authz::config_view(&state.config);
+
+    ApiError::auth_required().with_details(json!({
+        "reason": failure.reason,
+        "message": failure.message,
+        "redirectTo": redirect_to,
+        "forwardHeaderName": auth_view.forward_header_name,
+        "groupHeaderName": auth_view.group_header_name,
+        "allowedUserMasked": auth_view.allowed_user_masked,
+        "allowedGroupMasked": auth_view.allowed_group_masked,
+        "currentUser": failure.current_user,
+        "currentGroups": authz::mask_list(&failure.current_groups),
+        "authorizationMode": auth_view.authorization_mode,
+    }))
+}
+
+fn attach_authz_checks(
+    state: &AppState,
+    headers: &HeaderMap,
+    mut report: DeployCheckReportResponse,
+    auth: Result<RequestAuth, ApiError>,
+) -> DeployCheckReportResponse {
+    let auth_checks = build_authz_checks(state, headers, &auth);
+    if auth.is_err() {
+        let blocking_check_ids = auth_checks
+            .iter()
+            .filter(|item| item.required && item.status == DeployCheckStatus::Fail)
+            .map(|item| item.id.clone())
+            .collect::<Vec<_>>();
+        return DeployCheckReportResponse {
+            generated_at: report.generated_at,
+            overall: DeployCheckOverall {
+                result: DeployCheckResult::Fail,
+                blocking_check_ids,
+                summary: "Forward Auth or project authorization is not ready".to_string(),
+            },
+            checks: auth_checks,
+        };
+    }
+
+    let mut checks = auth_checks;
+    checks.extend(report.checks);
+    let blocking_check_ids = checks
+        .iter()
+        .filter(|item| item.required && item.status == DeployCheckStatus::Fail)
+        .map(|item| item.id.clone())
+        .collect::<Vec<_>>();
+    report.overall = if blocking_check_ids.is_empty() {
+        DeployCheckOverall {
+            result: DeployCheckResult::Pass,
+            blocking_check_ids,
+            summary: "All required capabilities are available".to_string(),
         }
-    }
+    } else {
+        DeployCheckOverall {
+            result: DeployCheckResult::Fail,
+            blocking_check_ids,
+            summary: "At least one required capability is unavailable".to_string(),
+        }
+    };
+    report.checks = checks;
+    report
+}
 
-    if state.config.auth_allow_anonymous_in_dev {
-        return Ok("anonymous".to_string());
+fn authz_match_label(kind: &AuthzMatchKind) -> &'static str {
+    match kind {
+        AuthzMatchKind::User => "user",
+        AuthzMatchKind::Group => "group",
+        AuthzMatchKind::AnonymousDev => "anonymous_dev",
     }
+}
 
-    Err(ApiError::auth_required())
+fn deploy_check_pass(
+    id: &str,
+    title: &str,
+    summary: &str,
+    impact: &str,
+    evidence: impl Into<String>,
+) -> DeployCheckItem {
+    DeployCheckItem {
+        id: id.to_string(),
+        title: title.to_string(),
+        group: DeployCheckGroup::Core,
+        required: true,
+        status: DeployCheckStatus::Pass,
+        na_reason: None,
+        summary: summary.to_string(),
+        impact: impact.to_string(),
+        evidence: evidence.into(),
+        recommendation: String::new(),
+    }
+}
+
+fn deploy_check_fail(
+    id: &str,
+    title: &str,
+    summary: &str,
+    impact: &str,
+    evidence: impl Into<String>,
+    recommendation: &str,
+) -> DeployCheckItem {
+    DeployCheckItem {
+        id: id.to_string(),
+        title: title.to_string(),
+        group: DeployCheckGroup::Core,
+        required: true,
+        status: DeployCheckStatus::Fail,
+        na_reason: None,
+        summary: summary.to_string(),
+        impact: impact.to_string(),
+        evidence: evidence.into(),
+        recommendation: recommendation.to_string(),
+    }
+}
+
+fn build_authz_checks(
+    state: &AppState,
+    headers: &HeaderMap,
+    auth: &Result<RequestAuth, ApiError>,
+) -> Vec<DeployCheckItem> {
+    let configured =
+        state.config.auth_allowed_user.is_some() || state.config.auth_allowed_group.is_some();
+    let config_evidence = format!(
+        "user={}; group={}; forwardHeader={}; groupHeader={}",
+        authz::mask_value(state.config.auth_allowed_user.as_deref())
+            .unwrap_or_else(|| "unset".to_string()),
+        authz::mask_value(state.config.auth_allowed_group.as_deref())
+            .unwrap_or_else(|| "unset".to_string()),
+        state.config.auth_forward_header_name,
+        state.config.auth_group_header_name,
+    );
+    let config_check = if configured {
+        deploy_check_pass(
+            "core.forward_auth_authorization_config",
+            "项目鉴权目标已配置",
+            "authorization target is configured",
+            "未配置允许用户/组时，生产环境无法判断谁可访问 Dockrev",
+            config_evidence,
+        )
+    } else {
+        deploy_check_fail(
+            "core.forward_auth_authorization_config",
+            "项目鉴权目标已配置",
+            "authorization target is missing",
+            "未配置允许用户/组时，生产环境无法判断谁可访问 Dockrev",
+            config_evidence,
+            "设置 `DOCKREV_AUTH_ALLOWED_USER` 或 `DOCKREV_AUTH_ALLOWED_GROUP`（二选一或同时设置）；开发模式仅建议本地临时使用。",
+        )
+    };
+
+    let user = headers
+        .get(&state.config.auth_forward_header_name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let groups = headers
+        .get(&state.config.auth_group_header_name)
+        .and_then(|value| value.to_str().ok())
+        .map(|raw| {
+            raw.split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let request_evidence = format!(
+        "currentUser={}; currentGroups={}",
+        authz::mask_value(user.as_deref()).unwrap_or_else(|| "missing".to_string()),
+        if groups.is_empty() {
+            "missing".to_string()
+        } else {
+            authz::mask_list(&groups).join(",")
+        },
+    );
+    let request_check = match auth {
+        Ok(request_auth) => deploy_check_pass(
+            "core.forward_auth_request_authorization",
+            "当前请求满足项目鉴权",
+            "request is authorized for Dockrev",
+            "不满足时，当前访问者会被重定向到自检页或 401 提示页",
+            format!(
+                "{request_evidence}; matchedBy={}",
+                authz_match_label(&request_auth.matched_by)
+            ),
+        ),
+        Err(_) => deploy_check_fail(
+            "core.forward_auth_request_authorization",
+            "当前请求满足项目鉴权",
+            "request is not authorized for Dockrev",
+            "不满足时，当前访问者会被重定向到自检页或 401 提示页",
+            request_evidence,
+            "确认 Traefik/Authelia 已注入正确的 Forward Auth 用户/组头，并让当前身份命中 `DOCKREV_AUTH_ALLOWED_USER` 或 `DOCKREV_AUTH_ALLOWED_GROUP`。",
+        ),
+    };
+
+    vec![config_check, request_check]
 }
 
 fn validate_scope(

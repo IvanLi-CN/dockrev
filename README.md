@@ -92,7 +92,10 @@ Environment variables (API):
 - `DOCKREV_DOCKER_CONFIG` (optional) path to Docker `config.json` for registry credentials
 - `DOCKREV_COMPOSE_BIN` (default `docker-compose`; set to `docker` to use the plugin)
 - `DOCKREV_DEPLOY_CHECK_LOCAL_COMMAND_TIMEOUT_SECONDS` (default `12`; must be `>= 1`) timeout for local `docker info` / `compose version` probes used by `GET /api/deploy-check/report`
-- `DOCKREV_AUTH_FORWARD_HEADER_NAME` (default `X-Forwarded-User`)
+- `DOCKREV_AUTH_FORWARD_HEADER_NAME` (default `X-Forwarded-User`) trusted Forward Auth user header
+- `DOCKREV_AUTH_GROUP_HEADER_NAME` (default `Remote-Groups`) trusted Forward Auth group header
+- `DOCKREV_AUTH_ALLOWED_USER` (optional) single allowed user for Dockrev authorization
+- `DOCKREV_AUTH_ALLOWED_GROUP` (optional) single allowed group for Dockrev authorization
 - `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV` (default `true`; set to `false` in production)
 - `DOCKREV_SELF_UPGRADE_URL` (default `/supervisor/`) UI jump target for “升级 Dockrev”
 - `DOCKREV_IMAGE_REPO` (default `ghcr.io/ivanli-cn/dockrev`) image repo used by the UI to detect which service is “Dockrev” for showing “升级 Dockrev” (example: set to `dockrev` for local images like `dockrev:local`)
@@ -128,7 +131,7 @@ Environment variables (Supervisor):
   - Overview/Services: “更新此 stack” + service row “执行更新”
   - Service detail: “执行更新”
 - Dockrev self-upgrade:
-  - For the Dockrev service, “升级 Dockrev” jumps to the supervisor console (disabled unless `GET {selfUpgradeBaseUrl}/self-upgrade` returns 2xx; a 401 means auth/forward header is missing).
+  - For the Dockrev service, “升级 Dockrev” jumps to the supervisor console (disabled unless `GET {selfUpgradeBaseUrl}/self-upgrade` returns 2xx; a 401 means Forward Auth is missing or Dockrev authorization denied the request).
 
 ## Auto-discovery (Compose projects)
 
