@@ -28,6 +28,7 @@ export default defineConfig({
         link: '/en/index.html',
         activeMatch: '^/en(?:/|$)'
       },
+      { text: 'Storybook', link: '/storybook.html' },
       { text: 'GitHub', link: 'https://github.com/ivanli-cn/dockrev' }
     ],
     sidebar: {

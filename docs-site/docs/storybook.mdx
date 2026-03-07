@@ -1,0 +1,20 @@
+---
+title: Storybook
+description: Redirect to the Dockrev Storybook site.
+---
+
+import { useEffect } from 'react'
+
+export default function StorybookRedirect() {
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.location.replace(new URL('./storybook/', window.location.href).toString())
+  }, [])
+
+  return (
+    <>
+      <h1>Redirecting to Storybook...</h1>
+      <p>If the redirect does not start automatically, open <a href="./storybook/">Dockrev Storybook</a>.</p>
+    </>
+  )
+}
