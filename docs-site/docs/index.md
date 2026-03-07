@@ -22,6 +22,7 @@ Dockrev 是一个自托管的 Docker/Compose 更新管理器，提供自动发�
 - [运维手册](/operations)
 - [集成指南](/integrations)
 - [API 参考（全量接口）](/api-reference)
+- [UI 预览（Storybook）](/storybook.html)
 - [故障排查](/troubleshooting)
 - [常见问题](/faq)
 - [术语表](/glossary)
@@ -30,6 +31,7 @@ Dockrev 是一个自托管的 Docker/Compose 更新管理器，提供自动发�
 
 - 中文文档入口: [简体中文](/index.html)
 - English docs entry: [English](/en/index.html)
+- UI 预览入口: [Storybook](/storybook.html)
 
 ## 典型使用路径
 
