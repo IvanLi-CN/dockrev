@@ -158,3 +158,4 @@
 - 2026-03-07：完成 shared UI 迁移：`web/src/ui.tsx` 收缩为兼容 barrel + app-specific wrappers，`ConfirmProvider` 切换到 shadcn `AlertDialog`，版本浮层收敛到共享 `HoverPinnedPopover` 基座，页面内共享输入/选择/切换统一改到 shadcn primitives。
 - 2026-03-07：完成 Storybook 覆盖补齐：primitives 采用 autodocs，复杂复合组件补 attached MDX，`Typography` / `Iconography` 组合文档落地。
 - 2026-03-07：本地验证通过：`bun --cwd web lint`、`bun --cwd web build`、`bun --cwd web build-storybook -- --quiet`、`bun --cwd web test-storybook`。
+- 2026-03-07：review-loop 修复 hover-open → click-pin 固定气泡回归，并恢复 `DeployWelcomePage` 中 switch 与 label 的可点击关联；Storybook smoke 新增 hover-pin 留存校验。
