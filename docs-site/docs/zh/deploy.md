@@ -54,6 +54,8 @@ docker compose up -d --build
 
 这套示例的特点是：保护页面/API 全部走同一套 Forward Auth，中间不靠 Authelia 路径例外；webhook 通过 Traefik 单独分流，因此仍然能被 GitHub 或外部系统访问，同时继续由 Dockrev 自己校验 secret / signature。
 
+如果你直接使用仓库里的 Traefik + Authelia 示例，建议保持 `traefik:v3.6.1` 或更新版本，避免旧版 Docker provider 在新 Docker Engine 上无法发现容器。
+
 ## Forward Auth（Traefik + Authelia）
 
 ### 职责拆分

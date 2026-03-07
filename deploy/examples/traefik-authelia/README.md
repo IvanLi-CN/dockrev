@@ -4,7 +4,7 @@ This example keeps Dockrev's local `deploy/docker-compose.yml` unchanged and pro
 
 ## What this example does
 
-- Traefik handles ingress and TLS.
+- Traefik handles ingress and TLS. Use `traefik:v3.6.1` or newer when you rely on the Docker provider.
 - Authelia handles authentication via Traefik Forward Auth.
 - Dockrev and Supervisor perform project-side authorization using `Remote-User` / `Remote-Groups`.
 - Webhook endpoints are routed without Forward Auth middleware, so you do not need Authelia `bypass` rules for them.
@@ -30,10 +30,10 @@ Also replace the password hash in `authelia/users.yml`.
 Generate a password hash with the official Authelia image:
 
 ```bash
-docker run --rm authelia/authelia:4.39 authelia crypto hash generate argon2 --password 'change-me'
+docker run --rm authelia/authelia:4.39 authelia crypto hash generate argon2 --password 'change-me' | sed 's/^Digest: //'
 ```
 
-Then paste the generated hash into `authelia/users.yml`.
+Then paste the generated digest into the `password:` field in `authelia/users.yml`. If you keep the `Digest: ` prefix, wrap the whole value in quotes.
 
 ## Secrets
 
