@@ -27,6 +27,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| pv9vc | Dockrev：更新按钮跨路由返回后保留运行态 | 已完成 | `pv9vc-update-button-route-return-spin/SPEC.md` | 2026-03-07 | fast-track（follow-up to #q6x2g：AppShell 级共享 tracker + browser back 回归 + storybook tests 通过） |
 | p2n8k | Dockrev：通知事件开关 + 新版本发现通知 + GHCR Webhook 异常通知 | 已完成 | `p2n8k-notification-event-switches-and-new-alerts/SPEC.md` | 2026-03-06 | fast-track（spec-sync: clippy refactor + 用户文案去 jobId + 新版本/巡检摘要直出服务与仓库名 + 巡检文案移除打开设置 + Telegram 标题后详情超链接） |
 | keynr | Dockrev：设置页新增 Cron 定时任务（定期检查更新 + Webhook 巡查）+ /queue 模块名修正 | 已完成 | `keynr-settings-scheduled-cron-tasks/SPEC.md` | 2026-03-05 | fast-track |
 | tqeph | Dockrev：GHCR 维护页项目标题链接与 Webhook 快捷入口 | 已完成 | `tqeph-ghcr-webhook-registry-links/SPEC.md` | 2026-03-05 | fast-track（标题外链 + webhook 快捷入口 + story 覆盖） |

@@ -863,6 +863,73 @@ async function runInteractive({ baseUrl, browser }) {
     }
   }
 
+  // 5c2) Interactive app overview: browser back should preserve the active update spinner while the job is still running.
+  {
+    const page = await openStory('pages-interactiveapp--dashboard-slow-update')
+    try {
+      const apiRow = page.locator('.rowLine', { hasText: 'api' }).first()
+      const applyBtn = apiRow.getByRole('button', { name: '执行更新' })
+      await applyBtn.waitFor({ timeout: 10_000 })
+      await applyBtn.click()
+
+      const modal = page.getByRole('dialog')
+      await modal.waitFor({ timeout: 10_000 })
+      await modal.getByRole('button', { name: '执行更新' }).click()
+
+      await page.waitForFunction(() => {
+        const rows = Array.from(document.querySelectorAll('.rowLine'))
+        const apiRow = rows.find((item) => item.textContent?.includes('api'))
+        if (!apiRow) return false
+        const btn = Array.from(apiRow.querySelectorAll('button')).find((item) =>
+          ['更新中…', '排队中…'].some((label) => item.textContent?.includes(label))
+        )
+        if (!btn) return false
+        return (
+          window.location.hash === '#/' &&
+          Boolean(btn.querySelector('.btnInlineSpinner')) &&
+          btn.getAttribute('data-hint') === '任务进行中，点击查看任务详情' &&
+          !btn.hasAttribute('disabled')
+        )
+      }, null, { timeout: 10_000 })
+
+      const jumped = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('.rowLine'))
+        const apiRow = rows.find((item) => item.textContent?.includes('api'))
+        if (!apiRow) return false
+        const btn = Array.from(apiRow.querySelectorAll('button')).find((item) =>
+          ['更新中…', '排队中…'].some((label) => item.textContent?.includes(label))
+        )
+        if (!btn) return false
+        btn.click()
+        return true
+      })
+      if (!jumped) throw new Error('Expected active overview update button to navigate to job detail before browser back.')
+
+      await page.waitForFunction(() => window.location.hash.startsWith('#/queue/job-ui-'), null, { timeout: 10_000 })
+      await page.getByRole('button', { name: '返回列表' }).waitFor({ timeout: 10_000 })
+
+      await page.goBack()
+      await page.waitForFunction(() => window.location.hash === '#/', null, { timeout: 10_000 })
+
+      await page.waitForFunction(() => {
+        const rows = Array.from(document.querySelectorAll('.rowLine'))
+        const apiRow = rows.find((item) => item.textContent?.includes('api'))
+        if (!apiRow) return false
+        const btn = Array.from(apiRow.querySelectorAll('button')).find((item) =>
+          ['更新中…', '排队中…'].some((label) => item.textContent?.includes(label))
+        )
+        if (!btn) return false
+        return (
+          Boolean(btn.querySelector('.btnInlineSpinner')) &&
+          btn.getAttribute('data-hint') === '任务进行中，点击查看任务详情' &&
+          !btn.hasAttribute('disabled')
+        )
+      }, null, { timeout: 10_000 })
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
   // 5d) Service detail page: active apply button should be clickable and jump to job detail.
   {
     const page = await openStory('pages-servicedetailpage--updatable')
