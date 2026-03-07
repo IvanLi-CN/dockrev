@@ -78,7 +78,7 @@ export const PublicBaseUrlSuggestion: Story = {
     const bubble = canvasElement.querySelector<HTMLElement>('[data-settings-public-base-url-suggestion="visible"]')
     if (!bubble) throw new globalThis.Error('public base url suggestion bubble missing')
 
-    const expectedUrl = derivePublicBaseUrlSuggestion(currentRoutePathname(), window.location.origin)
+    const expectedUrl = derivePublicBaseUrlSuggestion(currentRoutePathname(), window.location.origin, window.location.pathname)
     if (!expectedUrl) throw new globalThis.Error('expected public base url suggestion missing')
     if (!bubble.textContent?.includes(expectedUrl)) {
       throw new globalThis.Error(`unexpected suggested public base url: ${bubble.textContent ?? '<empty>'}`)

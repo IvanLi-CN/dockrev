@@ -62,7 +62,7 @@
 
 - 气泡样式应与现有 Settings 视觉风格一致，作为输入框下的 info-style inline bubble，而不是遮挡式浮层。
 - Storybook 应有可复现的两个场景：建议可见并自动填入、已拒绝后刷新不再显示。
-- 纯函数测试应覆盖 `/settings`、`/settings/` 与带 base path 的 `/dockrev/settings` / `/dockrev/settings/` 推导结果。
+- 纯函数测试应覆盖 `/settings`、`/settings/`、带 base path 的 `/dockrev/settings` / `/dockrev/settings/`，以及 hash-routing 下从当前页面 pathname 保留 base path 的推导结果。
 
 ## 验收标准（Acceptance Criteria）
 
@@ -81,7 +81,7 @@
 
 ## 风险 / 假设
 
-- 假设：当前 Settings 路由形态稳定为 `<base>/settings`（可带尾斜杠），因此可以从当前路由反推出实例根路径。
+- 假设：当前 Settings 路由形态稳定为 `<base>/settings`（可带尾斜杠）；若启用 hash routing，则仍可结合当前页面 pathname 反推出实例根路径。
 - 风险：若部署拓扑与当前浏览器访问地址不一致，建议值仍可能不是最终对外地址，用户仍可手动改写。
 
 ## 变更记录（Change log）
@@ -89,4 +89,5 @@
 - 2026-03-07: 新建规格并冻结“空 Public Base URL 当前地址建议气泡”的交互口径。
 - 2026-03-07: 完成 Settings inline suggestion bubble、localStorage 拒绝偏好与 Storybook 场景；`bun run --cwd web lint`、`build`、`build-storybook`、`test-storybook` 通过。
 - 2026-03-07: 根据复查补充 base path 保留逻辑与纯函数测试，避免在 `/base/settings/` 场景下错误建议到设置页子路径。
+- 2026-03-07: 进一步覆盖 hash-routing 场景，确保 `/#/settings` 也能结合当前页面 pathname 保留部署 base path。
 - 2026-03-07: 记录快车道交付分支与 PR #145，规格与实现保持同步。

@@ -1513,7 +1513,9 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
   const instancePublicBaseUrlValue = settings.instance.publicBaseUrl ?? ''
   const suggestedPublicBaseUrl =
-    typeof window === 'undefined' ? null : derivePublicBaseUrlSuggestion(currentRoutePathname(), window.location.origin)
+    typeof window === 'undefined'
+      ? null
+      : derivePublicBaseUrlSuggestion(currentRoutePathname(), window.location.origin, window.location.pathname)
   const showInstancePublicBaseUrlSuggestBubble =
     !instancePublicBaseUrlSuggestDismissed &&
     instancePublicBaseUrlValue.trim().length === 0 &&
