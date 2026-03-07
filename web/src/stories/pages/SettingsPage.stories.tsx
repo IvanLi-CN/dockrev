@@ -12,9 +12,23 @@ const meta: Meta<typeof SettingsPage> = {
 export default meta
 type Story = StoryObj<typeof SettingsPage>
 
+const INSTANCE_PUBLIC_BASE_URL_SUGGEST_DISMISSED_STORAGE_KEY =
+  'dockrev:settings:instancePublicBaseUrl:suggestCurrentOriginDismissed'
+
+function preparePublicBaseUrlSuggestionStorage(mode: 'clear' | 'dismissed' = 'clear') {
+  if (typeof window === 'undefined') return
+  if (mode === 'dismissed') {
+    window.localStorage.setItem(INSTANCE_PUBLIC_BASE_URL_SUGGEST_DISMISSED_STORAGE_KEY, '1')
+    return
+  }
+  window.localStorage.removeItem(INSTANCE_PUBLIC_BASE_URL_SUGGEST_DISMISSED_STORAGE_KEY)
+}
+
 function renderSettingsPage(
   pageSubtitle = '单用户 / Forward Header · 认证配置 · 通知配置 · 备份默认策略',
+  options?: { publicBaseUrlSuggestion?: 'clear' | 'dismissed' },
 ) {
+  preparePublicBaseUrlSuggestionStorage(options?.publicBaseUrlSuggestion ?? 'clear')
   return (
     <PageHarness route={{ name: 'settings' }} title="系统设置" pageSubtitle={pageSubtitle} topbarHint="系统设置">
       {({ onTopActions }) => <SettingsPage onTopActions={onTopActions} />}
@@ -50,6 +64,53 @@ export const DefaultLight: Story = {
   ...Default,
   globals: {
     theme: 'light',
+  },
+}
+
+export const PublicBaseUrlSuggestion: Story = {
+  parameters: { dockrevApiScenario: 'settings-configured' },
+  render: () => renderSettingsPage('验证空 Public Base URL 时提示当前站点根地址并可自动填入'),
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => setTimeout(resolve, 120))
+
+    const bubble = canvasElement.querySelector<HTMLElement>('[data-settings-public-base-url-suggestion="visible"]')
+    if (!bubble) throw new globalThis.Error('public base url suggestion bubble missing')
+
+    const expectedUrl = `${window.location.origin}/`
+    if (!bubble.textContent?.includes(expectedUrl)) {
+      throw new globalThis.Error(`unexpected suggested public base url: ${bubble.textContent ?? '<empty>'}`)
+    }
+
+    const autofillButton = Array.from(bubble.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === '自动填入',
+    )
+    if (!autofillButton) throw new globalThis.Error('autofill button missing')
+    autofillButton.click()
+
+    await new Promise((resolve) => setTimeout(resolve, 40))
+
+    const input = canvasElement.querySelector<HTMLInputElement>('input[placeholder="https://dockrev.example.com/"]')
+    if (!input) throw new globalThis.Error('public base url input missing')
+    if (input.value !== expectedUrl) {
+      throw new globalThis.Error(`public base url input not autofilled: ${input.value || '<empty>'}`)
+    }
+    if (canvasElement.querySelector('[data-settings-public-base-url-suggestion="visible"]')) {
+      throw new globalThis.Error('public base url suggestion bubble should disappear after autofill')
+    }
+  },
+}
+
+export const PublicBaseUrlSuggestionDismissed: Story = {
+  parameters: { dockrevApiScenario: 'settings-configured' },
+  render: () =>
+    renderSettingsPage('验证点击“不”后使用 localStorage 记住偏好并在下次加载时不再显示', {
+      publicBaseUrlSuggestion: 'dismissed',
+    }),
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    if (canvasElement.querySelector('[data-settings-public-base-url-suggestion="visible"]')) {
+      throw new globalThis.Error('public base url suggestion bubble should stay hidden after dismissal')
+    }
   },
 }
 

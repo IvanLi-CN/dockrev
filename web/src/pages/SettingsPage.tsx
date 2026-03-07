@@ -318,6 +318,8 @@ type RepoPickerItem = {
   lastActivityAt: string | null
 }
 const GHCR_PICKER_LIST_DENSITY_STORAGE_KEY = 'dockrev:settings:ghcrPicker:listDensity'
+const INSTANCE_PUBLIC_BASE_URL_SUGGEST_DISMISSED_STORAGE_KEY =
+  'dockrev:settings:instancePublicBaseUrl:suggestCurrentOriginDismissed'
 
 function normalizeRepoVisibility(raw: string | undefined): RepoVisibility {
   if (raw === 'public') return 'public'
@@ -371,6 +373,30 @@ function writeRepoListDensityToStorage(value: RepoListDensity) {
   } catch {
     // Ignore storage errors (quota/disabled).
   }
+}
+
+function readInstancePublicBaseUrlSuggestDismissedFromStorage(): boolean {
+  try {
+    return window.localStorage.getItem(INSTANCE_PUBLIC_BASE_URL_SUGGEST_DISMISSED_STORAGE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeInstancePublicBaseUrlSuggestDismissedToStorage(): boolean {
+  try {
+    window.localStorage.setItem(INSTANCE_PUBLIC_BASE_URL_SUGGEST_DISMISSED_STORAGE_KEY, '1')
+    return true
+  } catch {
+    return false
+  }
+}
+
+function readCurrentOriginWithTrailingSlash(): string | null {
+  if (typeof window === 'undefined') return null
+  const origin = window.location.origin?.trim() ?? ''
+  if (!origin || origin === 'null') return null
+  return origin.endsWith('/') ? origin : `${origin}/`
 }
 
 function GitHubPackagesRepoPicker({
@@ -684,6 +710,9 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   const [notificationTestRunning, setNotificationTestRunning] = useState<
     Partial<Record<NotificationTestChannel, boolean>>
   >({})
+  const [instancePublicBaseUrlSuggestDismissed, setInstancePublicBaseUrlSuggestDismissed] = useState(() =>
+    readInstancePublicBaseUrlSuggestDismissedFromStorage(),
+  )
 
   const settingsRef = useRef<SettingsResponse | null>(null)
   const notificationsRef = useRef<NotificationConfig | null>(null)
@@ -1488,6 +1517,26 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     return <div className="muted">加载中…</div>
   }
 
+  const instancePublicBaseUrlValue = settings.instance.publicBaseUrl ?? ''
+  const suggestedPublicBaseUrl = readCurrentOriginWithTrailingSlash()
+  const showInstancePublicBaseUrlSuggestBubble =
+    !instancePublicBaseUrlSuggestDismissed &&
+    instancePublicBaseUrlValue.trim().length === 0 &&
+    suggestedPublicBaseUrl != null
+
+  const fillInstancePublicBaseUrlFromCurrentOrigin = () => {
+    if (!suggestedPublicBaseUrl) return
+    updateInstance('instance.publicBaseUrl', (current) => ({
+      ...current,
+      publicBaseUrl: suggestedPublicBaseUrl,
+    }))
+  }
+
+  const dismissInstancePublicBaseUrlSuggestBubble = () => {
+    setInstancePublicBaseUrlSuggestDismissed(true)
+    writeInstancePublicBaseUrlSuggestDismissedToStorage()
+  }
+
   const autoSaveStatusText =
     autoSavePhase === 'saving'
       ? `自动保存中：${mapScopeLabel(autoSaveSavingScope ?? 'backup')}`
@@ -1858,7 +1907,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                 <div>
                   <input
                     className="input"
-                    value={settings.instance.publicBaseUrl ?? ''}
+                    value={instancePublicBaseUrlValue}
                     onChange={(e) =>
                       updateInstance('instance.publicBaseUrl', (current) => ({
                         ...current,
@@ -1867,6 +1916,28 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     }
                     placeholder="https://dockrev.example.com/"
                   />
+                  {showInstancePublicBaseUrlSuggestBubble && suggestedPublicBaseUrl ? (
+                    <div
+                      className="settingsInlineSuggestionBubble"
+                      role="status"
+                      aria-live="polite"
+                      data-settings-public-base-url-suggestion="visible"
+                    >
+                      <div className="settingsInlineSuggestionText">
+                        <span>是否使用当前地址</span>
+                        <Mono>{suggestedPublicBaseUrl}</Mono>
+                        <span>？</span>
+                      </div>
+                      <div className="settingsInlineSuggestionActions">
+                        <Button variant="primary" disabled={busy} onClick={fillInstancePublicBaseUrlFromCurrentOrigin}>
+                          自动填入
+                        </Button>
+                        <Button disabled={busy} onClick={dismissInstancePublicBaseUrlSuggestBubble}>
+                          不
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="muted" style={{ marginTop: 6 }}>
                     为空表示不配置；保存时会自动补齐尾部 <Mono>/</Mono>
                   </div>
