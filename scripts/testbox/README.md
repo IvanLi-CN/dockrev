@@ -17,8 +17,11 @@ Available scripts:
    - verifies update job does not issue fallback `docker pull <repo>:<semver>`
    - verifies update summary does not include `failureStep=semver_pull`
 
-These scripts are intentionally **not wired into GitHub Actions** because they depend on SSH + a shared
-host environment and can be flaky due to network / registry rate limits.
+These scripts can now be executed from GitHub Actions via the manual workflow
+`.github/workflows/e2e-testbox.yml`, but only on a **self-hosted Linux x64 runner** that already has
+network access plus SSH trust to `codex-testbox`. They are still kept out of the default PR/main CI
+because they depend on a shared host environment and can be flaky due to network / registry rate
+limits.
 
 Important: the shared testbox runs Docker inside LXC where `CAP_SETFCAP` is not available. This
 means `docker build` / `docker compose up --build` can fail. To keep tests reliable, these
@@ -34,6 +37,20 @@ scripts:
 - `bun` (to run the script)
 - `ssh` and `rsync`
 - SSH access to `codex-testbox` (host alias: `codex-testbox`)
+
+## GitHub Actions (manual)
+
+Workflow: `.github/workflows/e2e-testbox.yml`
+
+Recommended trigger settings:
+
+- `scenario=all` for a full regression sweep
+- `repeat_count=2` when you want extra confidence against shared-host flakes
+- `keep_remote_artifacts=true` only when you need post-failure inspection
+- run it on a `self-hosted`, `linux`, `x64` runner that can already `ssh codex-testbox`
+
+The workflow uploads `.artifacts/testbox-e2e/` as a GitHub Actions artifact so each run keeps the raw
+per-scenario logs.
 
 ## Quickstart
 

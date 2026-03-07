@@ -13,7 +13,7 @@ export default meta
 type Story = StoryObj<typeof SettingsPage>
 
 function renderSettingsPage(
-  pageSubtitle = '单用户 / Forward Header · 认证配置 · 通知配置 · 备份默认策略',
+  pageSubtitle = 'Forward Auth · 用户/组鉴权 · 通知配置 · 备份默认策略',
 ) {
   return (
     <PageHarness route={{ name: 'settings' }} title="系统设置" pageSubtitle={pageSubtitle} topbarHint="系统设置">

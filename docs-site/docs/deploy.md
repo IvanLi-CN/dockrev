@@ -22,7 +22,7 @@ description: Dockrev 生产部署与反向代理接入说明。
 ## 推荐部署步骤
 
 1. 准备目录与凭据文件（只读挂载 Docker config）。
-2. 校验反向代理是否可注入认证头。
+2. 校验反向代理是否可注入 Forward Auth 用户/组头。
 3. 启动 compose 并检查健康接口。
 4. 从 UI 完成首轮发现与检查。
 
@@ -38,9 +38,72 @@ docker compose up -d --build
 ## 生产必要项
 
 - `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV=false`
-- 在网关注入 `DOCKREV_AUTH_FORWARD_HEADER_NAME` 指定的转发头
+- 在网关注入 `DOCKREV_AUTH_FORWARD_HEADER_NAME` 与 `DOCKREV_AUTH_GROUP_HEADER_NAME`（如使用组鉴权）
+- 至少配置 `DOCKREV_AUTH_ALLOWED_USER` 或 `DOCKREV_AUTH_ALLOWED_GROUP` 之一
 - 使用持久化 DB 路径（例如 `/data/dockrev.sqlite3`）
 - 对 compose 文件目录做“同绝对路径只读挂载”
+
+## 可直接复制的示例文件
+
+仓库里额外提供了一套可直接抄的生产示例：
+
+- `deploy/examples/traefik-authelia/docker-compose.yml`
+- `deploy/examples/traefik-authelia/authelia/configuration.yml`
+- `deploy/examples/traefik-authelia/authelia/users.yml`
+- `deploy/examples/traefik-authelia/README.md`
+
+这套示例的特点是：保护页面/API 全部走同一套 Forward Auth，中间不靠 Authelia 路径例外；webhook 通过 Traefik 单独分流，因此仍然能被 GitHub 或外部系统访问，同时继续由 Dockrev 自己校验 secret / signature。
+
+如果你直接使用仓库里的 Traefik + Authelia 示例，建议保持 `traefik:v3.6.1` 或更新版本，避免旧版 Docker provider 在新 Docker Engine 上无法发现容器。
+
+## Forward Auth（Traefik + Authelia）
+
+### 职责拆分
+
+- **Traefik / Authelia**：负责认证（是否已登录、是谁）。
+- **Dockrev**：负责鉴权（这个用户或组是否允许进入 Dockrev）。
+- `DOCKREV_AUTH_ALLOWED_USER` 与 `DOCKREV_AUTH_ALLOWED_GROUP` 各只接受一个值；两者同时配置时，命中任意一个即可通过。
+
+### 推荐接法
+
+推荐把 Dockrev UI、受保护 API、`/supervisor/*` 都放在 Traefik `forwardAuth` 后面，由 Authelia 做 `one_factor`，再把可信的用户/组头转给 Dockrev。
+
+```yaml
+http:
+  middlewares:
+    dockrev-forward-auth:
+      forwardAuth:
+        address: http://authelia:9091/api/authz/forward-auth
+        trustForwardHeader: true
+        authResponseHeaders:
+          - Remote-User
+          - Remote-Groups
+
+  routers:
+    dockrev:
+      rule: Host(`dockrev.example.com`)
+      service: dockrev
+      middlewares:
+        - dockrev-forward-auth
+```
+
+```env
+DOCKREV_AUTH_FORWARD_HEADER_NAME=Remote-User
+DOCKREV_AUTH_GROUP_HEADER_NAME=Remote-Groups
+DOCKREV_AUTH_ALLOWED_USER=
+DOCKREV_AUTH_ALLOWED_GROUP=ops
+DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV=false
+```
+
+### 为什么不推荐“全站匿名放行 + 仅在已登录时带头”
+
+Dockrev 需要稳定、可信的认证身份来执行项目侧鉴权。对于需要保护的页面/API，推荐始终经过 Forward Auth，并由 Dockrev决定是否允许该用户/组访问，而不是依赖匿名放行策略来“顺带”提供身份头。
+
+### Webhook 说明
+
+- `/api/webhooks/trigger`：使用 `DOCKREV_WEBHOOK_SECRET`。
+- `/api/webhooks/github-packages`：使用 GitHub `X-Hub-Signature-256`。
+- 这两个端点不依赖 Forward Auth；如果它们和 UI 复用同一域名入口，需要在入口层单独保证 webhook 请求能到达 Dockrev。
 
 ## 使用已发布镜像
 
@@ -68,7 +131,7 @@ services:
 ## 验收检查
 
 - `GET /api/health` 返回 `ok`
-- `GET /api/deploy-check/report` 可返回 deploy check 报告
+- `GET /api/deploy-check/report` 可返回 deploy check 报告；未通过鉴权时也会返回仅含鉴权项的自检结果
 - `GET /supervisor/health` 通过网关可访问
 - 设置页中保存配置后，重新打开仍能看到 PAT/secret 掩码（说明已落库）
 

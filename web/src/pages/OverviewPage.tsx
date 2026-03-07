@@ -881,7 +881,7 @@ export function OverviewPage(props: {
         if (targetKey) trackJob(targetKey, resp.jobId, 'queued')
       } catch (e: unknown) {
         if (e instanceof ApiError) {
-          if (e.status === 401) setError('需要登录/鉴权（forward header）')
+          if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
           else if (e.status === 409) {
             setError('扫描结果已变化，请刷新并重新扫描后再更新')
             await refresh()
@@ -914,7 +914,7 @@ export function OverviewPage(props: {
                 await refresh()
               } catch (e: unknown) {
                 if (e instanceof ApiError) {
-                  if (e.status === 401) setError('需要登录/鉴权（forward header）')
+                  if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
                   else if (e.status === 409) {
                     const d = e.details
                     const existingJobId =

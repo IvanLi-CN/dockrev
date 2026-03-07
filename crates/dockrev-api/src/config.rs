@@ -13,6 +13,9 @@ pub struct Config {
     pub docker_config_path: Option<PathBuf>,
     pub compose_bin: String,
     pub auth_forward_header_name: HeaderName,
+    pub auth_group_header_name: HeaderName,
+    pub auth_allowed_user: Option<String>,
+    pub auth_allowed_group: Option<String>,
     pub auth_allow_anonymous_in_dev: bool,
     pub self_upgrade_url: String,
     pub dockrev_image_repo: String,
@@ -55,6 +58,18 @@ impl Config {
         let auth_forward_header_name = std::env::var("DOCKREV_AUTH_FORWARD_HEADER_NAME")
             .unwrap_or_else(|_| "X-Forwarded-User".to_string())
             .parse::<HeaderName>()?;
+
+        let auth_group_header_name = std::env::var("DOCKREV_AUTH_GROUP_HEADER_NAME")
+            .unwrap_or_else(|_| "Remote-Groups".to_string())
+            .parse::<HeaderName>()?;
+
+        let auth_allowed_user = std::env::var("DOCKREV_AUTH_ALLOWED_USER")
+            .ok()
+            .and_then(parse_non_empty);
+
+        let auth_allowed_group = std::env::var("DOCKREV_AUTH_ALLOWED_GROUP")
+            .ok()
+            .and_then(parse_non_empty);
 
         let auth_allow_anonymous_in_dev = std::env::var("DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV")
             .ok()
@@ -195,6 +210,9 @@ impl Config {
             docker_config_path,
             compose_bin,
             auth_forward_header_name,
+            auth_group_header_name,
+            auth_allowed_user,
+            auth_allowed_group,
             auth_allow_anonymous_in_dev,
             self_upgrade_url,
             dockrev_image_repo,
@@ -236,6 +254,15 @@ fn warn_legacy_ghcr_webhook_interval_env(name: &str) {
                 "legacy ghcr webhook interval env has invalid value and is ignored; use settings.schedules.ghcrWebhookAudit.cron"
             );
         }
+    }
+}
+
+fn parse_non_empty(input: String) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
     }
 }
 

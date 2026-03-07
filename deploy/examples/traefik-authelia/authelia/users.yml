@@ -1,0 +1,8 @@
+users:
+  admin:
+    disabled: false
+    displayname: Dockrev Admin
+    password: replace-me-with-an-authelia-password-hash
+    email: admin@example.com
+    groups:
+      - dockrev-users

@@ -8,6 +8,10 @@ pub struct Config {
     pub base_path: String,
 
     pub auth_forward_header_name: HeaderName,
+    pub auth_group_header_name: HeaderName,
+    pub auth_allowed_user: Option<String>,
+    pub auth_allowed_group: Option<String>,
+    pub auth_allow_anonymous_in_dev: bool,
 
     pub target_image_repo: String,
     pub target_container_id: Option<String>,
@@ -35,6 +39,21 @@ impl Config {
         let auth_forward_header_name = std::env::var("DOCKREV_AUTH_FORWARD_HEADER_NAME")
             .unwrap_or_else(|_| "X-Forwarded-User".to_string())
             .parse::<HeaderName>()?;
+
+        let auth_group_header_name = std::env::var("DOCKREV_AUTH_GROUP_HEADER_NAME")
+            .unwrap_or_else(|_| "Remote-Groups".to_string())
+            .parse::<HeaderName>()?;
+
+        let auth_allowed_user = std::env::var("DOCKREV_AUTH_ALLOWED_USER")
+            .ok()
+            .and_then(non_empty);
+        let auth_allowed_group = std::env::var("DOCKREV_AUTH_ALLOWED_GROUP")
+            .ok()
+            .and_then(non_empty);
+        let auth_allow_anonymous_in_dev = std::env::var("DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV")
+            .ok()
+            .and_then(|v| parse_bool(&v))
+            .unwrap_or(true);
 
         let target_image_repo = std::env::var("DOCKREV_SUPERVISOR_TARGET_IMAGE_REPO")
             .unwrap_or_else(|_| "ghcr.io/ivanli-cn/dockrev".to_string());
@@ -72,6 +91,10 @@ impl Config {
             http_addr,
             base_path,
             auth_forward_header_name,
+            auth_group_header_name,
+            auth_allowed_user,
+            auth_allowed_group,
+            auth_allow_anonymous_in_dev,
             target_image_repo,
             target_container_id,
             target_compose_project,
@@ -86,7 +109,12 @@ impl Config {
 }
 
 fn non_empty(v: String) -> Option<String> {
-    if v.trim().is_empty() { None } else { Some(v) }
+    let trimmed = v.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn parse_csv_paths(input: &str) -> Vec<String> {
@@ -96,6 +124,14 @@ fn parse_csv_paths(input: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect()
+}
+
+fn parse_bool(input: &str) -> Option<bool> {
+    match input.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "y" | "on" => Some(true),
+        "0" | "false" | "no" | "n" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 fn normalize_base_path(input: &str) -> anyhow::Result<String> {
@@ -117,4 +153,15 @@ fn normalize_base_path(input: &str) -> anyhow::Result<String> {
         ));
     }
     Ok(out.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::non_empty;
+
+    #[test]
+    fn non_empty_trims_whitespace() {
+        assert_eq!(non_empty("  alice  ".to_string()).as_deref(), Some("alice"));
+        assert_eq!(non_empty("   ".to_string()), None);
+    }
 }

@@ -109,7 +109,7 @@ export function AppShell(props: {
           </div>
           <div className="topbarRight">
             {props.topActions ? <div className="topActions">{props.topActions}</div> : null}
-            <div className="chipStatic chipStaticUser">用户：ivan（FH）</div>
+            <div className="chipStatic chipStaticUser">鉴权：Forward Auth</div>
           </div>
         </header>
 
