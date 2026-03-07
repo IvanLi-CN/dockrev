@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import {
   ApiError,
   forceRefreshServiceVersionInference,
@@ -406,7 +406,7 @@ export function CurrentVersionPopover(props: {
 
   return (
     <Popover {...popoverProps}>
-      <PopoverTrigger asChild>
+      <PopoverAnchor asChild>
         <button
           {...triggerProps}
           type="button"
@@ -416,7 +416,7 @@ export function CurrentVersionPopover(props: {
         >
           {triggerLabel}
         </button>
-      </PopoverTrigger>
+      </PopoverAnchor>
       <PopoverContent
         {...contentProps}
         align="start"

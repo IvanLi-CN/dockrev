@@ -181,6 +181,25 @@ function getModal(page) {
   return page.locator('[role="alertdialog"], [role="dialog"]').first()
 }
 
+async function assertHoverPinKeepsPopoverOpen({ page, trigger, popover, label }) {
+  await trigger.hover()
+  await popover.waitFor({ timeout: 10_000 })
+
+  await trigger.click()
+
+  const triggerBox = await requireBoundingBox(trigger, `${label} trigger`)
+  const popoverBox = await requireBoundingBox(popover, `${label} popover`)
+  const outsideX = Math.max(0, Math.min(triggerBox.x, popoverBox.x) - 24)
+  const outsideY = Math.max(0, Math.min(triggerBox.y, popoverBox.y) - 24)
+  await page.mouse.move(outsideX, outsideY)
+  await page.waitForTimeout(450)
+
+  const state = await popover.getAttribute('data-state')
+  if (state !== 'open') {
+    throw new Error(`Popover did not stay pinned after hover+click (${label}).`)
+  }
+}
+
 async function assertGroupGuideAligned(page, label) {
   const allGroups = page.locator('.tableGroup')
   await allGroups.first().waitFor({ timeout: 10_000 })
@@ -1119,6 +1138,31 @@ async function runInteractive({ baseUrl, browser }) {
       if (dbg.digestTagsSnapshotCalls !== 1) {
         throw new Error(`Expected exactly one /digest-tags-snapshot call, got ${dbg.digestTagsSnapshotCalls}.`)
       }
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
+  // 7b) Hover-opened popovers must stay open after click-pin even after the pointer leaves.
+  {
+    const page = await openStory('components-versiontagspopover--multi-tags')
+    try {
+      const trigger = page.getByRole('button', { name: 'v0.8.8-arm64' })
+      const popover = page.locator(".versionTagsPopover[data-state='open']")
+      await trigger.waitFor({ timeout: 10_000 })
+      await assertHoverPinKeepsPopoverOpen({ page, trigger, popover, label: 'version-tags hover-pin' })
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
+  {
+    const page = await openStory('components-currentversionpopover--resolved')
+    try {
+      const trigger = page.getByRole('button', { name: 'v5.2.1' }).first()
+      const popover = page.locator(".versionTagsPopover[data-state='open']")
+      await trigger.waitFor({ timeout: 10_000 })
+      await assertHoverPinKeepsPopoverOpen({ page, trigger, popover, label: 'current-version hover-pin' })
     } finally {
       await page.close().catch(() => {})
     }

@@ -300,11 +300,12 @@ export function DeployWelcomePage() {
             <div className="deployWelcomeActionCopy">
               <div className="deployNeverAutoCheckbox">
                 <Switch
+                  id="deploy-never-auto-open"
                   checked={neverAutoOpen}
                   disabled={saving || !welcomeLoaded}
                   onChange={setNeverAutoOpen}
                 />
-                <Label>不再自动显示此页面</Label>
+                <Label htmlFor="deploy-never-auto-open">不再自动显示此页面</Label>
               </div>
               <p className="deployWelcomeActionHint">勾选后，后续访问首页将直接进入 Dashboard；可在设置页手动重新打开本页面。</p>
             </div>
