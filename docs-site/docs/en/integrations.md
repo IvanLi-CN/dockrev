@@ -7,7 +7,7 @@ description: GHCR webhook integration, notifications, and external triggers.
 
 ## GitHub Packages (GHCR) webhook
 
-Use GH package events (`package.published`) to trigger Dockrev discovery automatically.
+Use GH package events (`package.published`) to make Dockrev check matching services first; only fall back to discovery when no managed service matches or the payload can only identify the owner.
 
 ### Settings field guide (Settings -> GitHub Packages (GHCR) Webhook)
 
@@ -29,7 +29,14 @@ Use GH package events (`package.published`) to trigger Dockrev discovery automat
 4. Select repositories to track (`selected=true`).
 5. Run webhook sync and verify `created/noop/updated` results.
 6. In GitHub repository settings, confirm webhook entries now point to Dockrev.
-7. Publish a GHCR package (`package.published`) and confirm discovery jobs appear in Dockrev Queue/logs.
+7. Publish a GHCR package (`package.published`) and confirm matching services enqueue `check.service` jobs in Dockrev Queue/logs; only zero-match or owner-only payloads should fall back to one discovery job.
+
+### Runtime behavior
+
+- When `package.published` hits a managed repo, Dockrev enqueues `check.service` per matching service (`reason=webhook`) instead of going straight to global discovery.
+- If the payload can only identify the owner, or the repo matches no active managed service, Dockrev creates or reuses exactly one discovery fallback job.
+- Duplicate deliveries are deduped by `X-GitHub-Delivery`; if a matching service already has a `queued/running` check, Dockrev reuses that job, and fallback discovery also reuses the existing global discovery job.
+- When a `reason=webhook` check finds new versions, Dockrev sends the same `new_version_discovered` schema as scheduled checks. UI-triggered manual checks stay silent.
 
 ### Copy-ready minimum viable configuration (MVP)
 
@@ -82,7 +89,7 @@ When creating the token, set:
 3. After selecting repos, tracked/selected count is > 0.
 4. After webhook sync, each selected repo shows `created/updated/noop`.
 5. In GitHub `Settings -> Webhooks`, callback exists with `package` event.
-6. After publishing a GHCR package, Dockrev Queue shows a discovery job.
+6. After publishing a GHCR package, Dockrev Queue shows `check.service` for matching services; if no managed service matches that repo, Dockrev falls back to a single discovery job.
 
 ### Callback reachability checks
 

@@ -3,7 +3,7 @@ use std::{str::FromStr, sync::Arc, time::Duration};
 use anyhow::Context as _;
 use chrono::Local;
 use cron::Schedule;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::{
     api,
@@ -25,39 +25,6 @@ fn next_fire_time_local(expr: &str) -> anyhow::Result<chrono::DateTime<Local>> {
         .upcoming(Local)
         .next()
         .ok_or_else(|| anyhow::anyhow!("cron produced no upcoming fire times"))
-}
-
-fn extract_discovered_new_versions(summary: &Value) -> Vec<notify::NewVersionDiscoveredService> {
-    let Some(items) = summary
-        .get("newVersions")
-        .and_then(|v| v.get("services"))
-        .and_then(|v| v.as_array())
-    else {
-        return Vec::new();
-    };
-
-    let mut out = Vec::new();
-    for item in items {
-        let Some(stack_id) = item.get("stackId").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        let Some(service_id) = item.get("serviceId").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        out.push(notify::NewVersionDiscoveredService {
-            stack_id: stack_id.to_string(),
-            service_id: service_id.to_string(),
-            current_tag: item
-                .get("currentTag")
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string),
-            candidate_tag: item
-                .get("candidateTag")
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string),
-        });
-    }
-    out
 }
 
 pub fn spawn_tasks(state: Arc<AppState>) {
@@ -236,7 +203,7 @@ async fn trigger_scheduled_check(state: Arc<AppState>) -> anyhow::Result<()> {
                 {
                     tracing::error!(job_id = %run_check_id, error = %e, "failed to finish check job");
                 } else {
-                    let discovered_services = extract_discovered_new_versions(&summary);
+                    let discovered_services = notify::extract_new_versions_discovered(&summary);
                     if !discovered_services.is_empty() {
                         let services_checked = summary
                             .get("servicesChecked")

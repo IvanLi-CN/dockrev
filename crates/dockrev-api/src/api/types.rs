@@ -962,6 +962,7 @@ pub struct GitHubPackagesWebhookDeliveryDb {
     pub reason: Option<String>,
     pub response_status: Option<u16>,
     pub job_id: Option<String>,
+    pub job_ids: Vec<String>,
     pub attempt_count: u32,
 }
 
@@ -1263,6 +1264,8 @@ pub struct GitHubPackagesWebhookDelivery {
     pub response_status: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub job_ids: Vec<String>,
     pub attempt_count: u32,
 }
 

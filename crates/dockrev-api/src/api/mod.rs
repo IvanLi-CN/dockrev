@@ -3,7 +3,16 @@ pub mod types;
 #[cfg(test)]
 mod tests;
 
-use std::{collections::BTreeMap, convert::Infallible, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    convert::Infallible,
+    str::FromStr,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use anyhow::Context as _;
 use axum::{
@@ -1033,6 +1042,244 @@ struct CheckDiscoveredVersion {
     candidate_tag: Option<String>,
 }
 
+fn check_job_is_stale(existing: &JobListItem, now: &str, stale_threshold: time::Duration) -> bool {
+    let started_at = existing
+        .started_at
+        .as_deref()
+        .unwrap_or(existing.created_at.as_str());
+    time::OffsetDateTime::parse(started_at, &time::format_description::well_known::Rfc3339)
+        .ok()
+        .and_then(|started| {
+            time::OffsetDateTime::parse(now, &time::format_description::well_known::Rfc3339)
+                .ok()
+                .map(|cur| cur - started)
+        })
+        .is_some_and(|age| age > stale_threshold)
+}
+
+fn check_reason_emits_new_version_notification(reason: &str) -> bool {
+    reason.eq_ignore_ascii_case("schedule") || reason.eq_ignore_ascii_case("webhook")
+}
+
+fn summary_emits_new_version_notification(summary: &serde_json::Value) -> bool {
+    summary
+        .get("source")
+        .and_then(|value| value.as_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("github_webhook"))
+}
+
+fn summary_matched_service_ids(
+    summary: &serde_json::Value,
+) -> Option<std::collections::HashSet<String>> {
+    let items = summary.get("matchedServiceIds")?.as_array()?;
+    let ids = items
+        .iter()
+        .filter_map(|value| value.as_str())
+        .map(ToString::to_string)
+        .collect::<std::collections::HashSet<_>>();
+    if ids.is_empty() { None } else { Some(ids) }
+}
+
+fn merge_job_summary(
+    mut summary: serde_json::Value,
+    extra_summary: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    if !summary.is_object() {
+        summary = json!({ "result": summary });
+    }
+
+    if let Some(extra) = extra_summary.and_then(|value| value.as_object())
+        && let Some(obj) = summary.as_object_mut()
+    {
+        for (key, value) in extra {
+            obj.insert(key.clone(), value.clone());
+        }
+    }
+
+    summary
+}
+
+async fn maybe_notify_check_new_versions(
+    state: &Arc<AppState>,
+    job_id: &str,
+    reason: &str,
+    finished_at: &str,
+    summary: &serde_json::Value,
+) -> anyhow::Result<()> {
+    if !check_reason_emits_new_version_notification(reason)
+        && !summary_emits_new_version_notification(summary)
+    {
+        return Ok(());
+    }
+
+    let mut discovered_services = notify::extract_new_versions_discovered(summary);
+    if discovered_services.is_empty() {
+        return Ok(());
+    }
+
+    if !check_reason_emits_new_version_notification(reason)
+        && summary_emits_new_version_notification(summary)
+        && let Some(matched_service_ids) = summary_matched_service_ids(summary)
+    {
+        discovered_services.retain(|service| matched_service_ids.contains(&service.service_id));
+        if discovered_services.is_empty() {
+            return Ok(());
+        }
+    }
+
+    let services_checked = summary
+        .get("servicesChecked")
+        .and_then(|v| v.as_u64())
+        .unwrap_or_default()
+        .min(u32::MAX as u64) as u32;
+    notify::notify_new_versions_discovered(
+        state.as_ref(),
+        job_id,
+        finished_at,
+        services_checked,
+        &discovered_services,
+    )
+    .await
+}
+
+async fn complete_check_job(
+    state: &Arc<AppState>,
+    job_id: &str,
+    reason: &str,
+    finished_at: &str,
+    outcome: Result<serde_json::Value, ApiError>,
+    failure_log_prefix: &str,
+    extra_summary: Option<serde_json::Value>,
+) {
+    match outcome {
+        Ok(summary) => {
+            let summary = merge_job_summary(summary, extra_summary.as_ref());
+            if let Err(e) = state
+                .db
+                .finish_job(job_id, "success", finished_at, &summary)
+                .await
+            {
+                tracing::error!(job_id = %job_id, error = %e, "failed to finish check job");
+            } else {
+                let notify_summary = state
+                    .db
+                    .get_job(job_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|job| job.summary_json)
+                    .unwrap_or_else(|| summary.clone());
+                if let Err(e) = maybe_notify_check_new_versions(
+                    state,
+                    job_id,
+                    reason,
+                    finished_at,
+                    &notify_summary,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        job_id = %job_id,
+                        error = %e,
+                        "failed to send discovered-version notification"
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            if let Err(err) = state
+                .db
+                .insert_job_log(
+                    job_id,
+                    &JobLogLine {
+                        ts: finished_at.to_string(),
+                        level: "error".to_string(),
+                        msg: format!("{failure_log_prefix}: {e:?}"),
+                    },
+                )
+                .await
+            {
+                tracing::warn!(job_id = %job_id, error = %err, "failed to insert check failure log");
+            }
+            let summary =
+                merge_job_summary(json!({"error": format!("{e:?}")}), extra_summary.as_ref());
+            if let Err(err) = state
+                .db
+                .finish_job(job_id, "failed", finished_at, &summary)
+                .await
+            {
+                tracing::error!(job_id = %job_id, error = %err, "failed to finish failed check job");
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_check_job_task(
+    state: Arc<AppState>,
+    job_id: String,
+    scope: JobScope,
+    stack_id: Option<String>,
+    service_id: Option<String>,
+    host_platform: String,
+    started_at: String,
+    reason: String,
+    start_log_message: String,
+    failure_log_prefix: String,
+    extra_summary: Option<serde_json::Value>,
+) {
+    tokio::spawn(async move {
+        if let Err(e) = state
+            .db
+            .insert_job_log(
+                &job_id,
+                &JobLogLine {
+                    ts: started_at.clone(),
+                    level: "info".to_string(),
+                    msg: start_log_message,
+                },
+            )
+            .await
+        {
+            tracing::warn!(job_id = %job_id, error = %e, "failed to insert check started log");
+        }
+
+        let outcome = run_check_for_job(
+            &state,
+            &job_id,
+            &scope,
+            stack_id.as_deref(),
+            service_id.as_deref(),
+            &host_platform,
+            &started_at,
+        )
+        .await;
+
+        let finished_at = match now_rfc3339() {
+            Ok(ts) => ts,
+            Err(err) => {
+                tracing::warn!(
+                    job_id = %job_id,
+                    error = %err,
+                    "failed to format finished_at as RFC3339; falling back to started_at"
+                );
+                started_at.clone()
+            }
+        };
+
+        complete_check_job(
+            &state,
+            &job_id,
+            &reason,
+            &finished_at,
+            outcome,
+            &failure_log_prefix,
+            extra_summary,
+        )
+        .await;
+    });
+}
+
 async fn trigger_check(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -1059,24 +1306,7 @@ async fn trigger_check(
         )
         .await
     {
-        let started_at = existing
-            .started_at
-            .as_deref()
-            .unwrap_or(existing.created_at.as_str());
-        let existing_stale =
-            time::OffsetDateTime::parse(started_at, &time::format_description::well_known::Rfc3339)
-                .ok()
-                .and_then(|started| {
-                    time::OffsetDateTime::parse(
-                        &now,
-                        &time::format_description::well_known::Rfc3339,
-                    )
-                    .ok()
-                    .map(|cur| cur - started)
-                })
-                .is_some_and(|age| age > stale_threshold);
-
-        if existing_stale {
+        if check_job_is_stale(&existing, &now, stale_threshold) {
             let _ = state
                 .db
                 .terminate_job_as_failed(&existing.id, &now, "stale_check")
@@ -1110,87 +1340,19 @@ async fn trigger_check(
 
     // Run the check job in the background so it is not tied to the HTTP request lifecycle.
     // This avoids orphaned `running` jobs when the client disconnects or the gateway times out.
-    let run_state = state.clone();
-    let run_check_id = check_id.clone();
-    let run_scope = req.scope.clone();
-    let run_stack_id = req.stack_id.clone();
-    let run_service_id = req.service_id.clone();
-    let run_host_platform = host_platform.clone();
-    let run_started_at = now.clone();
-    tokio::spawn(async move {
-        if let Err(e) = run_state
-            .db
-            .insert_job_log(
-                &run_check_id,
-                &JobLogLine {
-                    ts: run_started_at.clone(),
-                    level: "info".to_string(),
-                    msg: "check started".to_string(),
-                },
-            )
-            .await
-        {
-            tracing::warn!(job_id = %run_check_id, error = %e, "failed to insert check started log");
-        }
-
-        let outcome = run_check_for_job(
-            &run_state,
-            &run_check_id,
-            &run_scope,
-            run_stack_id.as_deref(),
-            run_service_id.as_deref(),
-            &run_host_platform,
-            &run_started_at,
-        )
-        .await;
-
-        let finished_at = match now_rfc3339() {
-            Ok(ts) => ts,
-            Err(err) => {
-                tracing::warn!(
-                    job_id = %run_check_id,
-                    error = %err,
-                    "failed to format finished_at as RFC3339; falling back to started_at"
-                );
-                run_started_at.clone()
-            }
-        };
-        match outcome {
-            Ok(summary) => {
-                if let Err(e) = run_state
-                    .db
-                    .finish_job(&run_check_id, "success", &finished_at, &summary)
-                    .await
-                {
-                    tracing::error!(job_id = %run_check_id, error = %e, "failed to finish check job");
-                }
-            }
-            Err(e) => {
-                if let Err(err) = run_state
-                    .db
-                    .insert_job_log(
-                        &run_check_id,
-                        &JobLogLine {
-                            ts: finished_at.clone(),
-                            level: "error".to_string(),
-                            msg: format!("check failed: {e:?}"),
-                        },
-                    )
-                    .await
-                {
-                    tracing::warn!(job_id = %run_check_id, error = %err, "failed to insert check failure log");
-                }
-                let summary = json!({"error": format!("{e:?}")});
-                if let Err(err) = run_state
-                    .db
-                    .finish_job(&run_check_id, "failed", &finished_at, &summary)
-                    .await
-                {
-                    tracing::error!(job_id = %run_check_id, error = %err, "failed to finish failed check job");
-                }
-            }
-        }
-    });
+    spawn_check_job_task(
+        state.clone(),
+        check_id.clone(),
+        req.scope.clone(),
+        req.stack_id.clone(),
+        req.service_id.clone(),
+        host_platform,
+        now.clone(),
+        req.reason.as_str().to_string(),
+        "check started".to_string(),
+        "check failed".to_string(),
+        None,
+    );
 
     Ok(Json(TriggerCheckResponse { check_id }))
 }
@@ -1303,6 +1465,8 @@ pub(crate) async fn run_check_for_job(
         }
     };
 
+    let target_service_id =
+        matches!(scope, JobScope::Service).then(|| service_id.unwrap_or_default().to_string());
     let mut units: std::collections::VecDeque<CheckUnit> = std::collections::VecDeque::new();
 
     for stack_id in &stack_ids {
@@ -1319,6 +1483,12 @@ pub(crate) async fn run_check_for_job(
             .map_err(map_internal)?;
 
         for svc in services {
+            if target_service_id
+                .as_deref()
+                .is_some_and(|target| target != svc.id)
+            {
+                continue;
+            }
             units.push_back(CheckUnit {
                 stack_id: stack_id.clone(),
                 compose_project: compose_project.clone(),
@@ -4571,6 +4741,7 @@ async fn list_github_packages_webhook_deliveries(
                     reason: d.reason,
                     response_status: d.response_status,
                     job_id: d.job_id,
+                    job_ids: d.job_ids,
                     attempt_count: d.attempt_count,
                 }
             })
@@ -5101,6 +5272,208 @@ fn extract_owner_login(payload: &serde_json::Value) -> Option<String> {
         })
 }
 
+fn github_webhook_repo_key(owner: &str, repo: &str) -> String {
+    format!("ghcr.io/{owner}/{repo}").to_ascii_lowercase()
+}
+
+fn github_webhook_repo_key_from_full_name(full_name: Option<&str>) -> Option<String> {
+    let (owner, repo) = full_name?.split_once('/')?;
+    Some(github_webhook_repo_key(owner.trim(), repo.trim()))
+}
+
+fn github_webhook_audit_summary(
+    repo: Option<&str>,
+    delivery_id: &str,
+    matched_service_ids: &[String],
+    fallback_used: bool,
+    reused_job_ids: &[String],
+    fallback_reason: Option<&str>,
+) -> serde_json::Value {
+    let mut summary = json!({
+        "source": "github_webhook",
+        "repo": repo,
+        "repos": repo.map(|value| vec![value]).unwrap_or_default(),
+        "deliveryId": delivery_id,
+        "deliveryIds": [delivery_id],
+        "matchedServiceIds": matched_service_ids,
+        "fallbackUsed": fallback_used,
+        "reusedJobIds": reused_job_ids,
+    });
+    if let Some(reason) = fallback_reason
+        && let Some(obj) = summary.as_object_mut()
+    {
+        obj.insert("fallbackReason".to_string(), json!(reason));
+    }
+    summary
+}
+
+async fn append_github_webhook_audit_log(
+    state: &Arc<AppState>,
+    job_id: &str,
+    now: &str,
+    action: &str,
+    audit: &serde_json::Value,
+) {
+    let _ = state.db.merge_job_summary_fields(job_id, audit).await;
+    let _ = state
+        .db
+        .insert_job_log(
+            job_id,
+            &JobLogLine {
+                ts: now.to_string(),
+                level: "info".to_string(),
+                msg: format!("github webhook {action}: {audit}"),
+            },
+        )
+        .await;
+}
+
+async fn list_github_webhook_matched_services(
+    state: &Arc<AppState>,
+    repo_key: &str,
+) -> Result<Vec<crate::db::GithubWebhookServiceTarget>, ApiError> {
+    Ok(state
+        .db
+        .list_active_github_webhook_service_targets()
+        .await
+        .map_err(map_internal)?
+        .into_iter()
+        .filter(|target| {
+            snapshot_worker::image_repo_from_image_ref(&target.image_ref)
+                .is_some_and(|image_repo| image_repo.eq_ignore_ascii_case(repo_key))
+        })
+        .collect())
+}
+
+async fn enqueue_github_webhook_check_job(
+    state: &Arc<AppState>,
+    now: &str,
+    stale_threshold: time::Duration,
+    target: &crate::db::GithubWebhookServiceTarget,
+    audit: serde_json::Value,
+) -> Result<(String, bool), ApiError> {
+    let job_id = ids::new_check_id();
+    let mut job_db = JobRecord::new_running(
+        job_id.clone(),
+        JobType::Check,
+        JobScope::Service,
+        Some(target.stack_id.clone()),
+        Some(target.service_id.clone()),
+        now,
+    )
+    .to_db();
+    job_db.created_by = "github".to_string();
+    job_db.reason = "webhook".to_string();
+    job_db.summary_json = audit.clone();
+
+    match state
+        .db
+        .insert_or_reuse_webhook_check_job_for_service(job_db, now, stale_threshold)
+        .await
+        .map_err(map_internal)?
+    {
+        crate::db::PendingJobUpsert::Inserted => {
+            let host_platform =
+                registry::host_platform_override(state.config.host_platform.as_deref())
+                    .unwrap_or_else(|| "linux/amd64".to_string());
+            spawn_check_job_task(
+                state.clone(),
+                job_id.clone(),
+                JobScope::Service,
+                Some(target.stack_id.clone()),
+                Some(target.service_id.clone()),
+                host_platform,
+                now.to_string(),
+                "webhook".to_string(),
+                format!("github webhook check started: {audit}"),
+                "github webhook check failed".to_string(),
+                Some(audit),
+            );
+            Ok((job_id, false))
+        }
+        crate::db::PendingJobUpsert::Reused(existing) => Ok((existing.id.clone(), true)),
+    }
+}
+
+async fn enqueue_github_webhook_discovery_job(
+    state: &Arc<AppState>,
+    now: &str,
+    stale_threshold: time::Duration,
+    audit: serde_json::Value,
+) -> Result<(String, bool), ApiError> {
+    let job_id = ids::new_discovery_id();
+    let mut job_db = JobRecord::new_running(
+        job_id.clone(),
+        JobType::Discovery,
+        JobScope::All,
+        None,
+        None,
+        now,
+    )
+    .to_db();
+    job_db.created_by = "github".to_string();
+    job_db.reason = "github_webhook".to_string();
+    job_db.summary_json = audit.clone();
+
+    match state
+        .db
+        .insert_or_reuse_webhook_discovery_job(job_db, now, stale_threshold)
+        .await
+        .map_err(map_internal)?
+    {
+        crate::db::PendingJobUpsert::Inserted => {
+            let run_state = state.clone();
+            let run_job_id = job_id.clone();
+            let run_started_at = now.to_string();
+            tokio::spawn(async move {
+                append_github_webhook_audit_log(
+                    &run_state,
+                    &run_job_id,
+                    &run_started_at,
+                    "started discovery fallback",
+                    &audit,
+                )
+                .await;
+
+                let outcome = discovery::run_scan_for_job(run_state.as_ref(), &run_job_id).await;
+                let finished_at =
+                    now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+                match outcome {
+                    Ok(resp) => {
+                        let summary = merge_job_summary(json!({ "scan": resp }), Some(&audit));
+                        let _ = run_state
+                            .db
+                            .finish_job(&run_job_id, "success", &finished_at, &summary)
+                            .await;
+                    }
+                    Err(e) => {
+                        let _ = run_state
+                            .db
+                            .insert_job_log(
+                                &run_job_id,
+                                &JobLogLine {
+                                    ts: finished_at.clone(),
+                                    level: "error".to_string(),
+                                    msg: format!("discovery scan failed: {e}"),
+                                },
+                            )
+                            .await;
+                        let summary =
+                            merge_job_summary(json!({ "error": e.to_string() }), Some(&audit));
+                        let _ = run_state
+                            .db
+                            .finish_job(&run_job_id, "failed", &finished_at, &summary)
+                            .await;
+                    }
+                }
+            });
+
+            Ok((job_id, false))
+        }
+        crate::db::PendingJobUpsert::Reused(existing) => Ok((existing.id.clone(), true)),
+    }
+}
+
 async fn record_github_packages_delivery(
     state: &Arc<AppState>,
     input: GitHubPackagesWebhookDeliveryRecordInput,
@@ -5180,6 +5553,7 @@ async fn github_packages_webhook(
                     reason: Some("invalid_json".to_string()),
                     response_status: Some(400),
                     job_id: None,
+                    job_ids: Vec::new(),
                 },
             )
             .await;
@@ -5214,6 +5588,7 @@ async fn github_packages_webhook(
                 reason: Some("not_published".to_string()),
                 response_status: Some(200),
                 job_id: None,
+                job_ids: Vec::new(),
             },
         )
         .await?;
@@ -5293,6 +5668,7 @@ async fn github_packages_webhook(
                 reason: Some("repo_not_selected".to_string()),
                 response_status: Some(200),
                 job_id: None,
+                job_ids: Vec::new(),
             },
         )
         .await?;
@@ -5329,77 +5705,238 @@ async fn github_packages_webhook(
         ));
     }
 
-    let now = received_at.clone();
-    let job_id = ids::new_discovery_id();
-    let job = JobRecord::new_running(
-        job_id.clone(),
-        JobType::Discovery,
-        JobScope::All,
-        None,
-        None,
-        &now,
-    );
-    let mut job_db = job.to_db();
-    job_db.created_by = "github".to_string();
-    job_db.reason = "github_webhook".to_string();
-    state.db.insert_job(job_db).await.map_err(map_internal)?;
-    state
-        .db
-        .update_github_packages_delivery_outcome(
-            &delivery_id,
-            &received_at,
-            owner.as_deref(),
-            repo.as_deref(),
-            Some(event.as_str()),
-            Some(action.as_str()),
-            "processed",
-            None,
-            Some(200),
-            Some(job_id.as_str()),
-        )
-        .await
-        .map_err(map_internal)?;
+    let delivery_has_work = AtomicBool::new(false);
+    let result: Result<serde_json::Value, ApiError> = async {
+        let now = received_at.clone();
+        let repo_key = github_webhook_repo_key_from_full_name(repo_full_name.as_deref());
+        let stale_threshold = time::Duration::hours(2);
 
-    let run_state = state.clone();
-    let run_job_id = job_id.clone();
-    let run_repo_full_name = repo_full_name.clone();
-    tokio::spawn(async move {
-        let outcome = discovery::run_scan_for_job(run_state.as_ref(), &run_job_id).await;
-        let finished_at =
-            now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
-        match outcome {
-            Ok(resp) => {
-                let summary =
-                    json!({ "scan": resp, "source": "github_webhook", "repo": run_repo_full_name });
-                let _ = run_state
-                    .db
-                    .finish_job(&run_job_id, "success", &finished_at, &summary)
-                    .await;
-            }
-            Err(e) => {
-                let _ = run_state
-                    .db
-                    .insert_job_log(
-                        &run_job_id,
-                        &JobLogLine {
-                            ts: finished_at.clone(),
-                            level: "error".to_string(),
-                            msg: format!("discovery scan failed: {e}"),
-                        },
+        let (job_ids, reused_job_ids, matched_service_ids, fallback_used, fallback_reason) =
+            if let Some(repo_key) = repo_key.as_deref() {
+                let matched_targets =
+                    list_github_webhook_matched_services(&state, repo_key).await?;
+                if matched_targets.is_empty() {
+                    let fallback_reason = "no_managed_service_match".to_string();
+                    let initial_audit = github_webhook_audit_summary(
+                        Some(repo_key),
+                        &delivery_id,
+                        &[],
+                        true,
+                        &[],
+                        Some(&fallback_reason),
+                    );
+                    let (job_id, reused) = enqueue_github_webhook_discovery_job(
+                        &state,
+                        &now,
+                        stale_threshold,
+                        initial_audit,
+                    )
+                    .await?;
+                    let job_ids = vec![job_id.clone()];
+                    let reused_job_ids = if reused {
+                        vec![job_id.clone()]
+                    } else {
+                        Vec::new()
+                    };
+                    let final_audit = github_webhook_audit_summary(
+                        Some(repo_key),
+                        &delivery_id,
+                        &[],
+                        true,
+                        &reused_job_ids,
+                        Some(&fallback_reason),
+                    );
+                    if reused {
+                        append_github_webhook_audit_log(
+                            &state,
+                            &job_id,
+                            &now,
+                            "reused discovery fallback",
+                            &final_audit,
+                        )
+                        .await;
+                    }
+                    (
+                        job_ids,
+                        reused_job_ids,
+                        Vec::new(),
+                        true,
+                        Some(fallback_reason),
+                    )
+                } else {
+                    let mut seen_service_ids = std::collections::HashSet::<String>::new();
+                    let matched_service_ids = matched_targets
+                        .iter()
+                        .filter_map(|target| {
+                            if seen_service_ids.insert(target.service_id.clone()) {
+                                Some(target.service_id.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    let initial_audit = github_webhook_audit_summary(
+                        Some(repo_key),
+                        &delivery_id,
+                        &matched_service_ids,
+                        false,
+                        &[],
+                        None,
+                    );
+                    let mut job_ids = Vec::<String>::new();
+                    let mut inserted_job_ids = Vec::<String>::new();
+                    let mut reused_job_ids = Vec::<String>::new();
+
+                    for target in &matched_targets {
+                        let (job_id, reused) = enqueue_github_webhook_check_job(
+                            &state,
+                            &now,
+                            stale_threshold,
+                            target,
+                            initial_audit.clone(),
+                        )
+                        .await?;
+                        if reused {
+                            if !reused_job_ids.contains(&job_id) {
+                                reused_job_ids.push(job_id.clone());
+                            }
+                        } else if !inserted_job_ids.contains(&job_id) {
+                            inserted_job_ids.push(job_id.clone());
+                        }
+                        if !job_ids.contains(&job_id) {
+                            job_ids.push(job_id);
+                        }
+                    }
+
+                    let final_audit = github_webhook_audit_summary(
+                        Some(repo_key),
+                        &delivery_id,
+                        &matched_service_ids,
+                        false,
+                        &reused_job_ids,
+                        None,
+                    );
+                    for job_id in &reused_job_ids {
+                        append_github_webhook_audit_log(
+                            &state,
+                            job_id,
+                            &now,
+                            "reused check job",
+                            &final_audit,
+                        )
+                        .await;
+                    }
+                    for job_id in &inserted_job_ids {
+                        let _ = state
+                            .db
+                            .merge_job_summary_fields(job_id, &final_audit)
+                            .await;
+                    }
+
+                    (job_ids, reused_job_ids, matched_service_ids, false, None)
+                }
+            } else {
+                let fallback_reason = "owner_only_payload".to_string();
+                let initial_audit = github_webhook_audit_summary(
+                    None,
+                    &delivery_id,
+                    &[],
+                    true,
+                    &[],
+                    Some(&fallback_reason),
+                );
+                let (job_id, reused) = enqueue_github_webhook_discovery_job(
+                    &state,
+                    &now,
+                    stale_threshold,
+                    initial_audit,
+                )
+                .await?;
+                let job_ids = vec![job_id.clone()];
+                let reused_job_ids = if reused {
+                    vec![job_id.clone()]
+                } else {
+                    Vec::new()
+                };
+                let final_audit = github_webhook_audit_summary(
+                    None,
+                    &delivery_id,
+                    &[],
+                    true,
+                    &reused_job_ids,
+                    Some(&fallback_reason),
+                );
+                if reused {
+                    append_github_webhook_audit_log(
+                        &state,
+                        &job_id,
+                        &now,
+                        "reused discovery fallback",
+                        &final_audit,
                     )
                     .await;
-                let summary = json!({ "error": e.to_string(), "source": "github_webhook" });
-                let _ = run_state
-                    .db
-                    .finish_job(&run_job_id, "failed", &finished_at, &summary)
-                    .await;
+                }
+                (
+                    job_ids,
+                    reused_job_ids,
+                    Vec::new(),
+                    true,
+                    Some(fallback_reason),
+                )
+            };
+
+        if !job_ids.is_empty() {
+            delivery_has_work.store(true, Ordering::Relaxed);
+        }
+        let primary_job_id = job_ids.first().cloned();
+        state
+            .db
+            .update_github_packages_delivery_outcome(
+                &delivery_id,
+                &received_at,
+                owner.as_deref(),
+                repo.as_deref(),
+                Some(event.as_str()),
+                Some(action.as_str()),
+                "processed",
+                None,
+                Some(200),
+                primary_job_id.as_deref(),
+                &job_ids,
+            )
+            .await
+            .map_err(map_internal)?;
+
+        let mut response = json!({
+            "ok": true,
+            "attemptCount": 1,
+            "jobIds": job_ids,
+            "matchedServiceIds": matched_service_ids,
+            "reusedJobIds": reused_job_ids,
+            "fallbackUsed": fallback_used,
+        });
+        if let Some(obj) = response.as_object_mut() {
+            if let Some(job_id) = primary_job_id {
+                obj.insert("jobId".to_string(), json!(job_id));
+            }
+            if let Some(reason) = fallback_reason {
+                obj.insert("fallbackReason".to_string(), json!(reason));
             }
         }
-    });
 
-    Ok(Json(
-        json!({"ok": true, "jobId": job_id, "attemptCount": 1}),
-    ))
+        Ok(response)
+    }
+    .await;
+
+    match result {
+        Ok(response) => Ok(Json(response)),
+        Err(err) => {
+            if !delivery_has_work.load(Ordering::Relaxed) {
+                let _ = state.db.delete_github_packages_delivery(&delivery_id).await;
+            }
+            Err(err)
+        }
+    }
 }
 
 async fn create_web_push_subscription(
@@ -5491,103 +6028,19 @@ async fn webhook_trigger(
                 registry::host_platform_override(state.config.host_platform.as_deref())
                     .unwrap_or_else(|| "linux/amd64".to_string());
 
-            let run_state = state.clone();
-            let run_job_id = job_id.clone();
-            let run_scope = scope.clone();
-            let run_stack_id = stack_id.clone();
-            let run_service_id = service_id.clone();
-            let run_host_platform = host_platform.clone();
-            let run_started_at = now.clone();
-            tokio::spawn(async move {
-                if let Err(e) = run_state
-                    .db
-                    .insert_job_log(
-                        &run_job_id,
-                        &JobLogLine {
-                            ts: run_started_at.clone(),
-                            level: "info".to_string(),
-                            msg: "webhook check started".to_string(),
-                        },
-                    )
-                    .await
-                {
-                    tracing::warn!(
-                        job_id = %run_job_id,
-                        error = %e,
-                        "failed to insert webhook check started log"
-                    );
-                }
-
-                let outcome = run_check_for_job(
-                    &run_state,
-                    &run_job_id,
-                    &run_scope,
-                    run_stack_id.as_deref(),
-                    run_service_id.as_deref(),
-                    &run_host_platform,
-                    &run_started_at,
-                )
-                .await;
-
-                let finished_at = match now_rfc3339() {
-                    Ok(ts) => ts,
-                    Err(err) => {
-                        tracing::warn!(
-                            job_id = %run_job_id,
-                            error = %err,
-                            "failed to format finished_at as RFC3339; falling back to started_at"
-                        );
-                        run_started_at.clone()
-                    }
-                };
-                match outcome {
-                    Ok(summary) => {
-                        if let Err(e) = run_state
-                            .db
-                            .finish_job(&run_job_id, "success", &finished_at, &summary)
-                            .await
-                        {
-                            tracing::error!(
-                                job_id = %run_job_id,
-                                error = %e,
-                                "failed to finish webhook check job"
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        if let Err(err) = run_state
-                            .db
-                            .insert_job_log(
-                                &run_job_id,
-                                &JobLogLine {
-                                    ts: finished_at.clone(),
-                                    level: "error".to_string(),
-                                    msg: format!("webhook check failed: {e:?}"),
-                                },
-                            )
-                            .await
-                        {
-                            tracing::warn!(
-                                job_id = %run_job_id,
-                                error = %err,
-                                "failed to insert webhook check failure log"
-                            );
-                        }
-                        let summary = json!({"error": format!("{e:?}")});
-                        if let Err(err) = run_state
-                            .db
-                            .finish_job(&run_job_id, "failed", &finished_at, &summary)
-                            .await
-                        {
-                            tracing::error!(
-                                job_id = %run_job_id,
-                                error = %err,
-                                "failed to finish failed webhook check job"
-                            );
-                        }
-                    }
-                }
-            });
+            spawn_check_job_task(
+                state.clone(),
+                job_id.clone(),
+                scope,
+                stack_id,
+                service_id,
+                host_platform,
+                now.clone(),
+                "webhook".to_string(),
+                "webhook check started".to_string(),
+                "webhook check failed".to_string(),
+                None,
+            );
 
             Ok(Json(WebhookTriggerResponse { job_id }))
         }
