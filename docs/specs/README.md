@@ -27,8 +27,10 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| qh1dx | Dockrev：Forward Auth 项目鉴权 + codex-testbox E2E 手动工作流 | 已完成 | `qh1dx-forward-auth-project-authz-and-testbox-e2e/SPEC.md` | 2026-03-07 | fast-track（review-loop 收敛 + PR 准备） |
 | appaf | Dockrev：shadcn/ui 全量对齐与 Storybook Docs/Stories 补齐 | 已实现 | `appaf-shadcn-ui-alignment-storybook/SPEC.md` | 2026-03-07 | fast-track（Tailwind v4 + shadcn/ui + Storybook autodocs/MDX；本地 lint/build/build-storybook/test-storybook 通过） |
 | b67fg | Dockrev：GitHub Pages 合并发布文档站与 Storybook | 已完成 | `b67fg-pages-storybook-entry/SPEC.md` | 2026-03-07 | fast-track（Pages 并行构建 + docs Storybook 入口 + redirect bridge） |
+| z3mw5 | Dockrev：GHCR Webhook 命中服务检查优先，零命中回退 Discovery | 已完成 | `z3mw5-ghcr-webhook-service-check/SPEC.md` | 2026-03-07 | fast-track（webhook check-first + fallback discovery + webhook notify + review-loop hardening） |
 | pv9vc | Dockrev：更新按钮跨路由返回后保留运行态 | 已完成 | `pv9vc-update-button-route-return-spin/SPEC.md` | 2026-03-07 | fast-track（follow-up to #q6x2g：AppShell 级共享 tracker + browser back 回归 + storybook tests 通过） |
 | p2n8k | Dockrev：通知事件开关 + 新版本发现通知 + GHCR Webhook 异常通知 | 已完成 | `p2n8k-notification-event-switches-and-new-alerts/SPEC.md` | 2026-03-06 | fast-track（spec-sync: clippy refactor + 用户文案去 jobId + 新版本/巡检摘要直出服务与仓库名 + 巡检文案移除打开设置 + Telegram 标题后详情超链接） |
 | keynr | Dockrev：设置页新增 Cron 定时任务（定期检查更新 + Webhook 巡查）+ /queue 模块名修正 | 已完成 | `keynr-settings-scheduled-cron-tasks/SPEC.md` | 2026-03-05 | fast-track |

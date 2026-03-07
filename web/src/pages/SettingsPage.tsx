@@ -1554,13 +1554,48 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
       <div className="twoCol">
         <div className="settingsCol">
           <div className="card">
-            <div className="title">鉴权（Forward Header）</div>
-            <div className="muted">单用户：由反向代理注入 Header；本服务信任来源（运行时只读）</div>
+            <div className="title">鉴权（Forward Auth）</div>
+            <div className="muted">认证由入口代理负责；Dockrev 按用户/组执行项目侧鉴权（运行时只读）</div>
 
             <div className="kv">
               <div className="kvRow">
-                <div className="label">Header 名称</div>
+                <div className="label">用户头</div>
                 <div className="mono">{settings.auth.forwardHeaderName}</div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">组头</div>
+                <div className="mono">{settings.auth.groupHeaderName}</div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">鉴权模式</div>
+                <div className="mono">{settings.auth.authorizationMode}</div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">允许用户</div>
+                <div className="mono">{settings.auth.allowedUserMasked || '-'}</div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">允许组</div>
+                <div className="mono">{settings.auth.allowedGroupMasked || '-'}</div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">当前用户</div>
+                <div className="mono">{settings.auth.currentUser || '-'}</div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">当前组</div>
+                <div className="mono">{settings.auth.currentGroups.length ? settings.auth.currentGroups.join(', ') : '-'}</div>
+              </div>
+
+              <div className="kvRow">
+                <div className="label">命中方式</div>
+                <div className="mono">{settings.auth.matchedBy || '-'}</div>
               </div>
 
               <div className="kvRow">
@@ -1568,12 +1603,9 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                 <div className="muted">{settings.auth.allowAnonymousInDev ? 'on' : 'off'}</div>
               </div>
 
-              <div className="kvRow">
-                <div className="label">当前用户展示</div>
-                <div className="mono">ivan</div>
-              </div>
               <div className="muted" style={{ marginTop: 6 }}>
-                该区域由启动配置控制：`DOCKREV_AUTH_FORWARD_HEADER_NAME` /
+                该区域由启动配置控制：`DOCKREV_AUTH_FORWARD_HEADER_NAME` / `DOCKREV_AUTH_GROUP_HEADER_NAME` /
+                `DOCKREV_AUTH_ALLOWED_USER` / `DOCKREV_AUTH_ALLOWED_GROUP` /
                 `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV`，修改后需重启服务生效。
               </div>
             </div>

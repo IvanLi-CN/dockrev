@@ -315,7 +315,14 @@ export type SettingsResponse = {
   }
   auth: {
     forwardHeaderName: string
+    groupHeaderName: string
     allowAnonymousInDev: boolean
+    authorizationMode: string
+    allowedUserMasked?: string | null
+    allowedGroupMasked?: string | null
+    currentUser?: string | null
+    currentGroups: string[]
+    matchedBy?: string | null
   }
   instance: {
     // Optional for backward compatibility with older servers.
@@ -566,6 +573,7 @@ export type GitHubPackagesWebhookDelivery = {
   reason?: string | null
   responseStatus?: number | null
   jobId?: string | null
+  jobIds?: string[]
   attemptCount: number
 }
 
@@ -626,6 +634,64 @@ export class ApiError extends Error {
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null
 }
+export type AuthRequiredDetails = {
+  reason?: string
+  message?: string
+  redirectTo?: string
+  forwardHeaderName?: string
+  groupHeaderName?: string
+  authorizationMode?: string
+  allowedUserMasked?: string | null
+  allowedGroupMasked?: string | null
+  currentUser?: string | null
+  currentGroups?: string[]
+}
+
+export const AUTH_REQUIRED_EVENT = 'dockrev:auth-required'
+
+export function asAuthRequiredDetails(details: unknown): AuthRequiredDetails | null {
+  if (!isRecord(details)) return null
+  const currentGroups = Array.isArray(details.currentGroups)
+    ? details.currentGroups.filter((value): value is string => typeof value === 'string')
+    : undefined
+  return {
+    reason: typeof details.reason === 'string' ? details.reason : undefined,
+    message: typeof details.message === 'string' ? details.message : undefined,
+    redirectTo: typeof details.redirectTo === 'string' ? details.redirectTo : undefined,
+    forwardHeaderName: typeof details.forwardHeaderName === 'string' ? details.forwardHeaderName : undefined,
+    groupHeaderName: typeof details.groupHeaderName === 'string' ? details.groupHeaderName : undefined,
+    authorizationMode: typeof details.authorizationMode === 'string' ? details.authorizationMode : undefined,
+    allowedUserMasked:
+      typeof details.allowedUserMasked === 'string' || details.allowedUserMasked === null
+        ? (details.allowedUserMasked as string | null)
+        : undefined,
+    allowedGroupMasked:
+      typeof details.allowedGroupMasked === 'string' || details.allowedGroupMasked === null
+        ? (details.allowedGroupMasked as string | null)
+        : undefined,
+    currentUser:
+      typeof details.currentUser === 'string' || details.currentUser === null
+        ? (details.currentUser as string | null)
+        : undefined,
+    currentGroups,
+  }
+}
+
+function dispatchAuthRequired(error: ApiError) {
+  if (typeof window === 'undefined') return
+  if (error.status !== 401 || error.code !== 'auth_required') return
+  window.dispatchEvent(
+    new CustomEvent(AUTH_REQUIRED_EVENT, {
+      detail: {
+        status: error.status,
+        code: error.code,
+        message: error.message,
+        details: asAuthRequiredDetails(error.details),
+      },
+    }),
+  )
+}
+
 
 async function apiFetch(path: string, init?: RequestInit) {
   const resp = await fetch(`${API_BASE}${path}`, {
@@ -650,18 +716,22 @@ async function apiFetch(path: string, init?: RequestInit) {
             ? err.message
             : text || resp.statusText || `HTTP ${resp.status}`
         const details = err ? (err.details as unknown) : undefined
-        throw new ApiError({ status: resp.status, code, message, details, bodyText: text || undefined })
+        const apiError = new ApiError({ status: resp.status, code, message, details, bodyText: text || undefined })
+        dispatchAuthRequired(apiError)
+        throw apiError
       } catch (e) {
         if (e instanceof ApiError) throw e
         // fall through to plain text error for invalid/unexpected JSON
       }
     }
 
-    throw new ApiError({
+    const apiError = new ApiError({
       status: resp.status,
       message: text || resp.statusText || `HTTP ${resp.status}`,
       bodyText: text || undefined,
     })
+    dispatchAuthRequired(apiError)
+    throw apiError
   }
   return resp
 }
@@ -932,7 +1002,16 @@ export async function deleteIgnore(ruleId: string) {
 
 export async function getSettings(): Promise<SettingsResponse> {
   const resp = await apiFetch('/api/settings')
-  return (await resp.json()) as SettingsResponse
+  const data = (await resp.json()) as SettingsResponse
+  return {
+    ...data,
+    auth: {
+      ...data.auth,
+      currentGroups: Array.isArray(data.auth?.currentGroups)
+        ? data.auth.currentGroups.filter((value): value is string => typeof value === 'string')
+        : [],
+    },
+  }
 }
 
 export async function putSettings(input: PutSettingsInput) {

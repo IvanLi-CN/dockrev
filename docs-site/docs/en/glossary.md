@@ -13,5 +13,5 @@ description: Core terms used in Dockrev documentation.
 - **Scope**: Target range (`all` / `stack` / `service`).
 - **Resolved Tag**: Inferred tag mapped from digest.
 - **Supervisor**: Self-upgrade executor and console.
-- **Forward Header Auth**: Authentication via trusted proxy-injected header.
+- **Forward Auth**: Authentication via trusted proxy-injected header.
 - **GHCR Webhook**: GitHub package event callback used to trigger discovery.

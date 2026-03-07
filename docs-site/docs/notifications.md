@@ -29,7 +29,7 @@ description: Dockrev 通知类型、字段格式、以及可点击 URL/跳转规
 | kind | schema | 触发条件（概述） |
 | --- | --- | --- |
 | `job_finished` | `dockrev.notification.job.v2` | 更新任务完成（成功/失败/回滚等）且未被过滤跳过 |
-| `new_version_discovered` | `dockrev.notification.new_version_discovered.v2` | 定时检查更新（`check` schedule）发现新版本（按本次任务聚合） |
+| `new_version_discovered` | `dockrev.notification.new_version_discovered.v2` | 定时检查或 GHCR webhook 触发的检查发现新版本（按本次任务聚合） |
 | `ghcr_webhook_anomaly` | `dockrev.notification.ghcr_webhook_anomaly.v2` | GHCR Webhook 定时巡检（`audit_all`）发现异常仓库（missing/conflict/error） |
 | `notification_test` | `dockrev.notification.test.v2` | 调用 `POST /api/notifications/test` 发送测试通知 |
 
@@ -42,7 +42,7 @@ description: Dockrev 通知类型、字段格式、以及可点击 URL/跳转规
 事件级开关（独立控制）：
 
 - `更新完成通知`：控制 `job_finished`
-- `发现新版本通知（定时检查）`：控制 `new_version_discovered`
+- `发现新版本通知（定时 / Webhook 检查）`：控制 `new_version_discovered`
 - `GitHub Webhook 异常通知（巡检）`：控制 `ghcr_webhook_anomaly`
 
 说明：
@@ -129,7 +129,7 @@ Dockrev 会生成两类路径（总能生成）：
 
 ## New version discovered（`dockrev.notification.new_version_discovered.v2`）
 
-触发条件：仅由**定时检查更新任务**触发；当某次检查发现新的可更新服务时，按任务聚合发送。
+触发条件：由**定时检查更新任务**或 **GHCR webhook 触发的服务检查**触发；当某次检查发现新的可更新服务时，按任务聚合发送。UI 手动 check 保持静默，不发送该通知。
 
 关键字段：
 

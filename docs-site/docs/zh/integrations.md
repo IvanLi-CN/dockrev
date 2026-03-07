@@ -7,7 +7,7 @@ description: GHCR webhook、通知与外部触发集成。
 
 ## GitHub Packages (GHCR) Webhook
 
-目标：当 GHCR 发生 `package.published` 事件时，自动触发 Dockrev discovery scan。
+目标：当 GHCR 发生 `package.published` 事件时，Dockrev 优先检查命中的服务镜像；只有零命中或只能定位 owner 时才回退到 discovery。
 
 ### 设置页字段说明（Settings -> GitHub Packages (GHCR) Webhook）
 
@@ -29,7 +29,14 @@ description: GHCR webhook、通知与外部触发集成。
 4. 在列表中勾选需要跟踪的仓库（selected=true）。
 5. 点击“同步 webhook”，确保每个选中 repo 返回 `created/noop/updated`。
 6. 在 GitHub 仓库的 Webhooks 页面确认已经存在回调到 Dockrev 的 webhook。
-7. 发布一次 GHCR 新包（触发 `package.published`），在 Dockrev Queue/日志中确认 discovery 被触发。
+7. 发布一次 GHCR 新包（触发 `package.published`），在 Dockrev Queue/日志中确认命中服务会触发 `check.service`；若零命中或只有 owner 信息，则仅回退触发 1 个 discovery。
+
+### Webhook 运行时行为
+
+- `package.published` 命中受管仓库时，Dockrev 会按服务逐个入队 `check.service`（`reason=webhook`），而不是直接做全量 discovery。
+- 若 payload 只能定位到 owner，或 repo 当前对不上任何未归档服务，则只创建 / 复用 1 个 discovery fallback 任务。
+- 重复投递会按 `X-GitHub-Delivery` 去重；同服务已有 `queued/running` check 时会复用现有任务；fallback discovery 也会复用现有全局 discovery。
+- `reason=webhook` 的 check 发现新版本后，会发送与定时检查相同 schema 的 `new_version_discovered` 通知；UI 手动 check 不会发这类通知。
 
 ### 可直接照填的最小可行配置（MVP）
 
@@ -82,7 +89,7 @@ Dockrev 在 GHCR webhook 流程中会调用这些 GitHub API：
 3. 勾选 selected 后，“已跟踪”数量大于 0。
 4. “同步 webhook”后，每个选中仓库为 `created/updated/noop`。
 5. GitHub 仓库 `Settings -> Webhooks` 中出现指向 Dockrev 的 webhook（事件包含 `package`）。
-6. 发布 GHCR 新版本后，Dockrev Queue 出现 discovery 任务。
+6. 发布 GHCR 新版本后，Dockrev Queue 对命中服务出现 `check.service`；若当前没有受管服务命中该仓库，则出现 1 个 discovery fallback 任务。
 
 ### 回调可达性检查
 

@@ -1,0 +1,35 @@
+server:
+  address: tcp://0.0.0.0:9091
+
+log:
+  level: info
+
+identity_validation:
+  reset_password:
+    jwt_secret: change-me-with-a-long-random-string
+
+authentication_backend:
+  file:
+    path: /config/users.yml
+
+access_control:
+  default_policy: deny
+  rules:
+    - domain: dockrev.example.com
+      policy: one_factor
+
+session:
+  secret: change-me-with-a-long-random-string
+  cookies:
+    - domain: example.com
+      authelia_url: https://auth.example.com
+      default_redirection_url: https://dockrev.example.com
+
+storage:
+  encryption_key: change-me-with-a-long-random-string
+  local:
+    path: /config/data/db.sqlite3
+
+notifier:
+  filesystem:
+    filename: /config/data/notification.txt

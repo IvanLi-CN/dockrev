@@ -14,7 +14,7 @@ description: Runtime configuration reference for Dockrev API and Supervisor.
 | `DOCKREV_DOCKER_CONFIG` | empty | Docker registry credentials file |
 | `DOCKREV_COMPOSE_BIN` | `docker-compose` | Compose command selector |
 | `DOCKREV_AUTH_FORWARD_HEADER_NAME` | `X-Forwarded-User` | Forward auth header name |
-| `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV` | `true` | Anonymous mode for dev |
+| `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV` | `true` | Anonymous mode for dev; auto-disabled when an allowed user/group is configured |
 | `DOCKREV_SELF_UPGRADE_URL` | `/supervisor/` | Self-upgrade UI URL |
 | `DOCKREV_IMAGE_REPO` | `ghcr.io/ivanli-cn/dockrev` | Dockrev service image repo matcher |
 | `DOCKREV_WEBHOOK_SECRET` | empty | Shared secret for `/api/webhooks/trigger` |
@@ -51,7 +51,7 @@ Fixed scheduler behavior:
 
 ## Production baseline
 
-- Disable anonymous mode
+- Disable anonymous mode (it is also ignored once an allowed user/group is configured)
 - Ensure forward auth header injection
 - Persist DB/state on durable volume
 - Reduce Docker socket exposure (or use socket proxy)

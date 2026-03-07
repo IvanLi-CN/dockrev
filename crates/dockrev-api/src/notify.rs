@@ -128,6 +128,39 @@ pub struct NewVersionDiscoveredService {
     pub candidate_tag: Option<String>,
 }
 
+pub fn extract_new_versions_discovered(summary: &Value) -> Vec<NewVersionDiscoveredService> {
+    let Some(items) = summary
+        .get("newVersions")
+        .and_then(|v| v.get("services"))
+        .and_then(|v| v.as_array())
+    else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for item in items {
+        let Some(stack_id) = item.get("stackId").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(service_id) = item.get("serviceId").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        out.push(NewVersionDiscoveredService {
+            stack_id: stack_id.to_string(),
+            service_id: service_id.to_string(),
+            current_tag: item
+                .get("currentTag")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string),
+            candidate_tag: item
+                .get("candidateTag")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string),
+        });
+    }
+    out
+}
+
 #[derive(Clone, Debug)]
 pub struct GhcrWebhookAnomalyRepo {
     pub owner: String,

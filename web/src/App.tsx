@@ -16,8 +16,9 @@ import { GhcrWebhookRegistryPage } from './pages/GhcrWebhookRegistryPage'
 import { SupervisorMisroutePage } from './pages/SupervisorMisroutePage'
 import { brandMarkUrl } from './publicAssetUrls'
 import { DeployWelcomePage } from './pages/DeployWelcomePage'
+import { UnauthorizedPage } from './pages/UnauthorizedPage'
 import { useRoute } from './useRoute'
-import { getDeployWelcome } from './api'
+import { AUTH_REQUIRED_EVENT, getDeployWelcome, type AuthRequiredDetails } from './api'
 
 function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbarHint?: string } {
   switch (route.name) {
@@ -66,11 +67,13 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
     case 'settings':
       return {
         title: '系统设置',
-        pageSubtitle: '单用户 / Forward Header · 认证配置 · 通知配置 · 备份默认策略',
+        pageSubtitle: 'Forward Auth · 用户/组鉴权 · 通知配置 · 备份默认策略',
         topbarHint: '系统设置',
       }
     case 'service':
       return { title: '服务详情', topbarHint: '服务详情' }
+    case 'unauthorized':
+      return { title: '未授权', topbarHint: 'Forward Auth / 鉴权' }
     case 'supervisor-misroute':
       return { title: '部署问题', topbarHint: '自我升级（Supervisor）' }
   }
@@ -84,6 +87,7 @@ export default function App() {
     loaded: false,
     neverAutoOpen: true,
   })
+  const [authFailure, setAuthFailure] = useState<AuthRequiredDetails | null>(null)
 
   const head = useMemo(() => pageTitle(route), [route])
   const topActions = useMemo(() => {
@@ -117,6 +121,26 @@ export default function App() {
     navigate({ name: 'deploy-check' })
   }, [deployWelcomeState, route.name])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const onAuthRequired = (event: Event) => {
+      const detail = (event as CustomEvent<{ details?: AuthRequiredDetails | null }>).detail
+      const next = detail?.details ?? null
+      setAuthFailure(next)
+
+      const redirectTo = next?.redirectTo === 'unauthorized' ? 'unauthorized' : 'deploy-check'
+      if (route.name !== redirectTo) {
+        navigate({ name: redirectTo })
+      }
+    }
+
+    window.addEventListener(AUTH_REQUIRED_EVENT, onAuthRequired)
+    return () => {
+      window.removeEventListener(AUTH_REQUIRED_EVENT, onAuthRequired)
+    }
+  }, [route.name])
+
   if (route.name === 'supervisor-misroute') {
     return (
       <div className="standaloneShell">
@@ -128,7 +152,7 @@ export default function App() {
                 Dockrev
               </div>
             </div>
-            <div className="chipStatic chipStaticUser">用户：ivan（FH）</div>
+            <div className="chipStatic chipStaticUser">鉴权：Forward Auth</div>
           </div>
           <SupervisorMisroutePage basePath={route.basePath} pathname={route.pathname} />
         </div>
@@ -138,6 +162,10 @@ export default function App() {
 
   if (route.name === 'deploy-check') {
     return <DeployWelcomePage />
+  }
+
+  if (route.name === 'unauthorized') {
+    return <UnauthorizedPage authDetails={authFailure} />
   }
 
   return (
