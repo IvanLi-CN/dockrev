@@ -77,6 +77,7 @@
 - `bun run --cwd web build`
 - `bun run --cwd web build-storybook -- --quiet`
 - 本地组装后访问 docs 根页与 `storybook.html` redirect 页面，确认可跳转到 `/storybook/` 且静态资源可用。
+- Pages 组装烟测以最终渲染输出为准，校验 redirect 页面文案与 Storybook 入口存在，不依赖 `window.location.replace` 字面量继续出现在静态 HTML 中。
 
 ## 实现里程碑（Milestones / Delivery checklist）
 
@@ -90,3 +91,4 @@
 - 2026-03-07：创建规格，锁定 GitHub Pages 单站点发布 Storybook 的路径、入口位置与 workflow 并行构建方案。
 - 2026-03-07：完成 docs 顶栏/首页入口、`storybook.html` redirect 页面、Pages 组装脚本与并行 workflow 改造；本地通过 docs build、Storybook build、组装烟测与浏览器跳转验证。
 - 2026-03-07：补充 `/storybook/` 子路径兼容修复，避免品牌图与 `sw.js` 仍从站点根路径请求而在 GitHub Pages 组合站点中 404。
+- 2026-03-07：收紧 Pages 组装烟测为对渲染结果做断言，避免把 redirect 逻辑的 bundle 实现细节当成静态 HTML 契约。

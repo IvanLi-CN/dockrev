@@ -130,7 +130,8 @@ jobs:
           test -f .tmp/pages-site/storybook/index.html
           test -f .tmp/pages-site/storybook.html
           grep -q '/storybook.html' .tmp/pages-site/index.html
-          grep -q 'window.location.replace' .tmp/pages-site/storybook.html
+          grep -q 'Redirecting to Storybook' .tmp/pages-site/storybook.html
+          grep -q 'Dockrev Storybook' .tmp/pages-site/storybook.html
           grep -q './sb-manager/runtime.js' .tmp/pages-site/storybook/index.html
           grep -q './sb-common-assets/nunito-sans-regular.woff2' .tmp/pages-site/storybook/index.html
 
