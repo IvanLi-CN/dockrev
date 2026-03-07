@@ -14,14 +14,15 @@
   - do not enqueue `discovery.all` by default.
 - When payload cannot resolve to repo, or repo resolves but matches zero managed services:
   - enqueue or reuse one `discovery.all` fallback job.
-- Delivery outcome payload/logging must record:
+- Delivery acknowledgement payload/logging must record:
   - `repo`
   - `deliveryId`
   - `matchedServiceIds`
-  - `checkJobIds`
+  - `jobIds`
   - `reusedJobIds`
   - `fallbackUsed`
-  - `fallbackJobId`
+- Response keeps `jobId` as the primary alias for backward-compatible single-job navigation.
+- Delivery history APIs persist the full `jobIds` list so multi-service matches remain traceable after the synchronous webhook response is gone.
 
 ### Matching contract
 

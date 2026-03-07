@@ -59,6 +59,7 @@
 - 对 discovery fallback：若已有 `queued/running` 的 `discovery.all`，新 webhook 不再重复入队，必须复用现有 job。
 - `schedule` 与 `webhook` 触发的 check 在 `newVersions.count > 0` 时都发送 `new_version_discovered` 通知；`ui` 触发的 check 不发送该通知。
 - webhook 任务 summary/log 必须包含足够审计信息：`source=github_webhook`、`repo`、`deliveryId`、`matchedServiceIds`、`fallbackUsed`、`reusedJobIds`。
+- delivery 历史/API 视图在多服务命中时必须保留全部关联 `jobIds`，同时保留主 `jobId` 兼容既有跳转。
 
 ### SHOULD
 
