@@ -1,29 +1,34 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ButtonHTMLAttributes,
-  type CSSProperties,
-  type ReactNode,
-} from 'react'
+import { useEffect, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
+import { Badge } from '@/components/ui/badge'
+import { Button as PrimitiveButton } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch as PrimitiveSwitch } from '@/components/ui/switch'
+import { Toggle } from '@/components/ui/toggle'
 import {
-  FloatingArrow,
-  FloatingPortal,
-  autoUpdate,
-  arrow,
-  flip,
-  offset,
-  shift,
-  useDismiss,
-  useFocus,
-  useFloating,
-  useHover,
-  useInteractions,
-  useRole,
-} from '@floating-ui/react'
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
+export { Input } from '@/components/ui/input'
+export { Label } from '@/components/ui/label'
+export {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+export { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+export { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+
 import type { Service } from './api'
 import { noteFor, statusDotClass, statusIcon, statusLabel, type RowStatus } from './updateStatus'
 
@@ -65,7 +70,6 @@ export function TrashIcon(props: { className?: string }) {
 }
 
 export function GitHubIcon(props: { className?: string }) {
-  // GitHub mark (octicon style) as an inline SVG to avoid extra deps.
   return (
     <svg className={props.className} viewBox="0 0 16 16" aria-hidden="true" focusable="false">
       <path
@@ -82,8 +86,10 @@ export function GitHubIcon(props: { className?: string }) {
   )
 }
 
-export function Button(props: {
-  variant?: 'primary' | 'danger' | 'ghost'
+type AppButtonVariant = 'primary' | 'danger' | 'ghost'
+
+type ButtonProps = {
+  variant?: AppButtonVariant
   disabled?: boolean
   loading?: boolean
   loadingClickable?: boolean
@@ -91,137 +97,132 @@ export function Button(props: {
   children: ReactNode
   title?: string
   hint?: string
-}) {
-  const variant = props.variant ?? 'ghost'
-  const hintText = props.hint?.trim() ?? ''
-  const hasHint = hintText.length > 0
-  const className = `btn ${buttonVariantClass(variant)}`
-  const disabled = props.disabled || (props.loading && !props.loadingClickable)
-  const [hintOpen, setHintOpen] = useState(false)
-  const [arrowElement, setArrowElement] = useState<SVGSVGElement | null>(null)
-  const middleware = useMemo(
-    () => [
-      offset(12),
-      flip({
-        fallbackPlacements: ['bottom', 'top-start', 'top-end', 'bottom-start', 'bottom-end'],
-      }),
-      shift({ padding: 8 }),
-      ...(arrowElement ? [arrow({ element: arrowElement })] : []),
-    ],
-    [arrowElement],
-  )
-  const { refs: floatingRefs, floatingStyles, context } = useFloating({
-    open: hasHint ? hintOpen : false,
-    onOpenChange: setHintOpen,
-    placement: 'top',
-    whileElementsMounted: autoUpdate,
-    middleware,
-  })
-  const hover = useHover(context, { enabled: hasHint, move: false })
-  const focus = useFocus(context, { enabled: hasHint })
-  const dismiss = useDismiss(context, { enabled: hasHint })
-  const role = useRole(context, { role: 'tooltip' })
-  const { getReferenceProps, getFloatingProps } = useInteractions([hover, focus, dismiss, role])
-  const setReference = useCallback(
-    (node: HTMLButtonElement | null) => {
-      floatingRefs.setReference(node)
-    },
-    [floatingRefs],
-  )
-  const setFloating = useCallback(
-    (node: HTMLSpanElement | null) => {
-      floatingRefs.setFloating(node)
-    },
-    [floatingRefs],
-  )
-  const setArrow = useCallback((node: SVGSVGElement | null) => {
-    setArrowElement(node)
-  }, [])
+}
 
-  const referenceProps = getReferenceProps({
-    onClick: props.onClick,
-    title: props.title,
-  }) as ButtonHTMLAttributes<HTMLButtonElement>
+function mapButtonVariant(variant: AppButtonVariant | undefined): 'default' | 'destructive' | 'ghost' {
+  return variant === 'primary' ? 'default' : variant === 'danger' ? 'destructive' : 'ghost'
+}
 
+function buttonVariantClass(variant: AppButtonVariant): string {
+  return variant === 'primary' ? 'btnPrimary' : variant === 'danger' ? 'btnDanger' : 'btnGhost'
+}
+
+function maybeWithTooltip(node: ReactNode, text: string | undefined) {
+  const content = text?.trim() ?? ''
+  if (!content) return node
   return (
-    <>
-      <button
-        ref={setReference}
-        className={className}
-        disabled={disabled}
-        data-hint={hasHint ? hintText : undefined}
-        aria-busy={props.loading ? true : undefined}
-        {...referenceProps}
-      >
-        {props.loading ? (
-          <span className="btnInlineLoading">
-            <span className="btnInlineSpinner" aria-hidden="true" />
-            <span>{props.children}</span>
-          </span>
-        ) : (
-          props.children
-        )}
-      </button>
-      {hasHint && hintOpen ? (
-        <FloatingPortal>
-          <span
-            className="buttonHintFloating"
-            ref={setFloating}
-            style={floatingStyles}
-            {...getFloatingProps()}
-          >
-            {hintText}
-            <FloatingArrow
-              ref={setArrow}
-              context={context}
-              className="buttonHintFloatingArrow"
-              fill="var(--button-hint-bg)"
-              stroke="var(--button-hint-border)"
-              strokeWidth={1}
-              tipRadius={1}
-            />
-          </span>
-        </FloatingPortal>
-      ) : null}
-    </>
+    <TooltipProvider delayDuration={160}>
+      <Tooltip>
+        <TooltipTrigger asChild>{node}</TooltipTrigger>
+        <TooltipContent>{content}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }
 
+export type SelectFieldOption<T extends string = string> = {
+  value: T
+  label: ReactNode
+  disabled?: boolean
+}
+
+export function SelectField<T extends string>(props: {
+  value: T
+  onChange: (value: T) => void
+  options: Array<SelectFieldOption<T>>
+  className?: string
+  disabled?: boolean
+  placeholder?: string
+  title?: string
+  id?: string
+  ariaLabel?: string
+}) {
+  return (
+    <Select disabled={props.disabled} value={props.value} onValueChange={(value) => props.onChange(value as T)}>
+      <SelectTrigger
+        aria-label={props.ariaLabel}
+        className={cn('select', props.className)}
+        id={props.id}
+        title={props.title}
+      >
+        <SelectValue placeholder={props.placeholder} />
+      </SelectTrigger>
+      <SelectContent>
+        {props.options.map((option) => (
+          <SelectItem key={option.value} disabled={option.disabled} value={option.value}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
+}
+
+export function Button(props: ButtonProps) {
+  const variant = props.variant ?? 'ghost'
+  const disabled = props.disabled || (props.loading && !props.loadingClickable)
+  const button = (
+    <PrimitiveButton
+      className={cn('btn', buttonVariantClass(variant))}
+      disabled={disabled}
+      aria-busy={props.loading ? true : undefined}
+      data-hint={props.hint ?? undefined}
+      onClick={props.onClick}
+      title={props.title}
+      variant={mapButtonVariant(variant)}
+      type="button"
+    >
+      {props.loading ? (
+        <span className="btnInlineLoading">
+          <span className="btnInlineSpinner" aria-hidden="true" />
+          <span>{props.children}</span>
+        </span>
+      ) : (
+        props.children
+      )}
+    </PrimitiveButton>
+  )
+
+  return maybeWithTooltip(button, props.hint)
+}
+
 export function IconButton(props: {
-  variant?: 'primary' | 'danger' | 'ghost'
+  variant?: AppButtonVariant
   disabled?: boolean
   onClick?: () => void
   title: string
   children: ReactNode
 }) {
   const variant = props.variant ?? 'ghost'
-  const className = `btn btnIcon ${buttonVariantClass(variant)}`
-  return (
-    <button
-      className={className}
+  const button = (
+    <PrimitiveButton
+      className={cn('btn', 'btnIcon', buttonVariantClass(variant))}
       disabled={props.disabled}
+      data-hint={props.title}
       onClick={props.onClick}
-      title={props.title}
+      variant={mapButtonVariant(variant)}
+      size="icon"
+      type="button"
       aria-label={props.title}
+      title={props.title}
     >
       {props.children}
-    </button>
+    </PrimitiveButton>
   )
+
+  return maybeWithTooltip(button, props.title)
 }
 
 const SMALL_ACTION_BUTTON_QUERY = '(max-width: 700px)'
 const ACTION_BUTTON_LONG_PRESS_MS = 480
 const ACTION_BUTTON_HINT_PERSIST_MS = 1200
+
 type ResponsiveActionBubbleStyle = CSSProperties & {
   '--responsive-action-bubble-offset-x'?: string
 }
 
-function buttonVariantClass(variant: 'primary' | 'danger' | 'ghost'): string {
-  return variant === 'primary' ? 'btnPrimary' : variant === 'danger' ? 'btnDanger' : 'btnGhost'
-}
-
 export function ResponsiveActionButton(props: {
-  variant?: 'primary' | 'danger' | 'ghost'
+  variant?: AppButtonVariant
   disabled?: boolean
   onClick?: () => void
   label: string
@@ -279,6 +280,7 @@ export function ResponsiveActionButton(props: {
       setBubbleOffsetX(0)
       return
     }
+
     const margin = 8
     const viewportRight = window.innerWidth - margin
     const bubbleGap = 10
@@ -292,10 +294,12 @@ export function ResponsiveActionButton(props: {
       { align: 'left', left: rootRect.left },
       { align: 'right', left: rootRect.right - bubbleWidth },
     ]
+
     const overflowScore = (left: number) => {
       const right = left + bubbleWidth
       return Math.max(0, margin - left) + Math.max(0, right - viewportRight)
     }
+
     let best = candidates[0]
     let bestScore = overflowScore(best.left)
     for (const candidate of candidates.slice(1)) {
@@ -305,6 +309,7 @@ export function ResponsiveActionButton(props: {
         bestScore = score
       }
     }
+
     const bestRight = best.left + bubbleWidth
     let offsetX = 0
     if (best.left < margin) {
@@ -312,9 +317,9 @@ export function ResponsiveActionButton(props: {
     } else if (bestRight > viewportRight) {
       offsetX = viewportRight - bestRight
     }
+
     setBubbleAlign(best.align)
     setBubbleOffsetX(offsetX)
-
     setBubbleVertical(aboveOverflow <= belowOverflow ? 'above' : 'below')
   }
 
@@ -416,12 +421,13 @@ export function ResponsiveActionButton(props: {
   }
 
   return (
-    <button
+    <PrimitiveButton
       ref={rootRef}
       className={className}
       style={bubbleStyle}
       disabled={props.disabled}
       aria-label={props.label}
+      data-hint={props.hint ?? undefined}
       onPointerEnter={updateBubbleAlign}
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerEnd}
@@ -444,6 +450,8 @@ export function ResponsiveActionButton(props: {
         dismissHint()
         props.onClick?.()
       }}
+      type="button"
+      variant={mapButtonVariant(variant)}
     >
       <span className="responsiveActionBtnIcon" aria-hidden="true">
         {props.icon}
@@ -452,16 +460,23 @@ export function ResponsiveActionButton(props: {
       <span className="responsiveActionBtnBubble" aria-hidden="true">
         {bubbleText}
       </span>
-    </button>
+    </PrimitiveButton>
   )
 }
 
 export function Chip(props: { children: ReactNode; active?: boolean; onClick?: () => void; title?: string }) {
-  const className = props.active ? 'chip chipActive' : 'chip'
+  const active = props.active ?? false
   return (
-    <button className={className} onClick={props.onClick} title={props.title}>
+    <Toggle
+      aria-pressed={active}
+      className={cn('chip', active && 'chipActive')}
+      onPressedChange={() => props.onClick?.()}
+      pressed={active}
+      title={props.title}
+      variant="outline"
+    >
       {props.children}
-    </button>
+    </Toggle>
   )
 }
 
@@ -481,21 +496,18 @@ export function Pill(props: {
             ? 'pill pillInfo'
             : 'pill pillMuted'
   const className = props.breathing ? `${toneClass} pillBreathing` : toneClass
-  return <span className={className}>{props.children}</span>
+  return <Badge className={className} variant="outline">{props.children}</Badge>
 }
 
-export function Switch(props: { checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void }) {
-  return (
-    <label className={props.disabled ? 'switch switchDisabled' : 'switch'}>
-      <input
-        type="checkbox"
-        checked={props.checked}
-        disabled={props.disabled}
-        onChange={(e) => props.onChange(e.target.checked)}
-      />
-      <span className="switchSlider" />
-    </label>
-  )
+export function Switch(
+  props: Omit<ComponentProps<typeof PrimitiveSwitch>, 'onCheckedChange' | 'onChange'> & {
+    checked: boolean
+    disabled?: boolean
+    onChange: (checked: boolean) => void
+  },
+) {
+  const { onChange, ...rest } = props
+  return <PrimitiveSwitch {...rest} onCheckedChange={onChange} />
 }
 
 export function Mono(props: { children: ReactNode }) {

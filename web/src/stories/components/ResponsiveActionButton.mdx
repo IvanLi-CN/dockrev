@@ -1,0 +1,16 @@
+import { Meta, Primary, Stories, Title, Description } from '@storybook/addon-docs/blocks'
+import * as ResponsiveActionButtonStories from './ResponsiveActionButton.stories'
+
+<Meta of={ResponsiveActionButtonStories} />
+<Title />
+<Description>
+`ResponsiveActionButton` 在桌面端保持紧凑 icon action，在小屏下支持长按提示，适合列表尾部的危险操作与低频维护动作。
+</Description>
+
+## 行为说明
+- 短按直接执行操作。
+- 小屏长按会展示 hint bubble，避免图标语义不清。
+- 继续沿用 Dockrev 的 `primary / ghost / danger` 语义映射。
+
+<Primary />
+<Stories />

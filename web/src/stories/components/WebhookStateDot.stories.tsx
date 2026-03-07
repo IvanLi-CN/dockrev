@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from '@storybook/react'
 import { webhookStateDotClass, webhookStateIcon } from '../../webhookStatus'
 
 const meta: Meta = {
+  tags: ['autodocs'],
   title: 'Components/WebhookStateDot',
 }
 

@@ -15,7 +15,7 @@ import {
   type StackListItem,
 } from '../api'
 import { navigate } from '../routes'
-import { ArrowRightIcon, Button, Mono, Pill, StatusRemark } from '../ui'
+import { ArrowRightIcon, Button, Input, Mono, Pill, StatusRemark } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { isSemverDowngradeAnomaly, serviceRowStatus, type RowStatus } from '../updateStatus'
@@ -665,11 +665,11 @@ export function ServicesPage(props: {
 	        <div className="sectionRow">
 	          <div className="title">服务</div>
 	          <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
-            <input
+            <Input
               className="input"
-              value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="搜索 service / image / stack"
+              value={search}
             />
 	            <div className="muted">
 	              {totals.filtered}/{totals.total}

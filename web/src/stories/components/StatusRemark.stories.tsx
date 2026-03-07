@@ -6,6 +6,7 @@ import { serviceRowStatus } from '../../updateStatus'
 
 const meta: Meta<typeof StatusRemark> = {
   title: 'Components/StatusRemark',
+  tags: ['autodocs'],
   component: StatusRemark,
 }
 

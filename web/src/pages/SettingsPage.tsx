@@ -32,7 +32,7 @@ import {
   NotificationChannelCard,
   type NotificationChannelTestState,
 } from '../components/NotificationChannelCard'
-import { Button, Mono, Switch } from '../ui'
+import { Button, Input, Mono, SelectField, Switch } from '../ui'
 import { useConfirm } from '../confirm'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
@@ -541,7 +541,7 @@ function GitHubPackagesRepoPicker({
         <div className="ghcrPickerControls">
           <div className="ghcrPickerField">
             <div className="ghcrPickerFieldLabel">搜索</div>
-            <input
+            <Input
               className="input"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
@@ -550,41 +550,44 @@ function GitHubPackagesRepoPicker({
           </div>
           <div className="ghcrPickerField">
             <div className="ghcrPickerFieldLabel">已添加状态</div>
-            <select
+            <SelectField
               className="select"
-              value={selectedFilter}
-              onChange={(event) => setSelectedFilter(event.target.value as RepoSelectedFilter)}
+              onChange={(value) => setSelectedFilter(value as RepoSelectedFilter)}
+              options={[
+                { value: 'all', label: '全部' },
+                { value: 'selected', label: '已添加' },
+                { value: 'unselected', label: '未添加' },
+              ]}
               title="按已添加状态筛选"
-            >
-              <option value="all">全部</option>
-              <option value="selected">已添加</option>
-              <option value="unselected">未添加</option>
-            </select>
+              value={selectedFilter}
+            />
           </div>
           <div className="ghcrPickerField">
             <div className="ghcrPickerFieldLabel">可见性</div>
-            <select
+            <SelectField
               className="select"
-              value={visibilityFilter}
-              onChange={(event) => setVisibilityFilter(event.target.value as RepoVisibilityFilter)}
+              onChange={(value) => setVisibilityFilter(value as RepoVisibilityFilter)}
+              options={[
+                { value: 'all', label: '全部可见性' },
+                { value: 'public', label: '公开' },
+                { value: 'private', label: '私有' },
+              ]}
               title="按可见性筛选"
-            >
-              <option value="all">全部可见性</option>
-              <option value="public">公开</option>
-              <option value="private">私有</option>
-            </select>
+              value={visibilityFilter}
+            />
           </div>
           <div className="ghcrPickerField">
             <div className="ghcrPickerFieldLabel">排序方式</div>
-            <select
+            <SelectField
               className="select"
-              value={sortKey}
-              onChange={(event) => setSortKey(event.target.value as RepoSortKey)}
+              onChange={(value) => setSortKey(value as RepoSortKey)}
+              options={[
+                { value: 'activity_desc', label: '最近活动（新→旧）' },
+                { value: 'name_asc', label: '仓库名（A→Z）' },
+              ]}
               title="排序方式"
-            >
-              <option value="activity_desc">最近活动（新→旧）</option>
-              <option value="name_asc">仓库名（A→Z）</option>
-            </select>
+              value={sortKey}
+            />
           </div>
           <div className="ghcrPickerField">
             <div className="ghcrPickerFieldLabel">右侧列表布局</div>
@@ -1676,7 +1679,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               </div>
               <div className="kvRow">
                 <div className="label">备份输出目录</div>
-                <input
+                <Input
                   className="input"
                   value={settings.backup.baseDir}
                   onChange={(e) =>
@@ -1687,7 +1690,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               <div className="kvRow">
                 <div className="label">体积阈值（超过则跳过）</div>
                 <div>
-                  <input
+                  <Input
                     className="input"
                     value={String(settings.backup.skipTargetsOverBytes)}
                     onChange={(e) =>
@@ -1730,24 +1733,25 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
               <div className="kvRow">
                 <div className="label">历史采样频率</div>
-                <select
+                <SelectField
                   className="input"
-                  value={String(settings.resourceMonitor.sampleIntervalSeconds)}
                   disabled={busy || !settings.resourceMonitor.enabled}
-                  onChange={(event) => {
-                    const next = Number(event.target.value)
+                  onChange={(value) => {
+                    const next = Number(value)
                     if (![10, 30, 60, 300].includes(next)) return
                     updateResourceMonitor('settings.resourceMonitor.sampleIntervalSeconds', (current) => ({
                       ...current,
                       sampleIntervalSeconds: next as 10 | 30 | 60 | 300,
                     }))
                   }}
-                >
-                  <option value="10">10 秒</option>
-                  <option value="30">30 秒</option>
-                  <option value="60">60 秒</option>
-                  <option value="300">300 秒</option>
-                </select>
+                  options={[
+                    { value: '10', label: '10 秒' },
+                    { value: '30', label: '30 秒' },
+                    { value: '60', label: '60 秒' },
+                    { value: '300', label: '300 秒' },
+                  ]}
+                  value={String(settings.resourceMonitor.sampleIntervalSeconds)}
+                />
               </div>
 
               <div className="kvRow">
@@ -1786,7 +1790,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               <div className="kvRow">
                 <div className="label">Cron（检查更新）</div>
                 <div>
-                  <input
+                  <Input
                     className={updateCheckCronInputClassName}
                     disabled={busy}
                     value={settings.schedules.updateCheck.cron}
@@ -1828,7 +1832,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               <div className="kvRow">
                 <div className="label">Cron（Webhook 巡查）</div>
                 <div>
-                  <input
+                  <Input
                     className={ghcrWebhookAuditCronInputClassName}
                     disabled={busy}
                     value={settings.schedules.ghcrWebhookAudit.cron}
@@ -1856,7 +1860,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               <div className="kvRow">
                 <div className="label">Public Base URL</div>
                 <div>
-                  <input
+                  <Input
                     className="input"
                     value={settings.instance.publicBaseUrl ?? ''}
                     onChange={(e) =>
@@ -1964,7 +1968,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             >
               <div className="kvRow">
                 <div className="label">SMTP URL</div>
-                <input
+                <Input
                   className="input"
                   value={notifications.email.smtpUrl ?? ''}
                   onChange={(e) =>
@@ -1996,7 +2000,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             >
               <div className="kvRow">
                 <div className="label">URL</div>
-                <input
+                <Input
                   className="input"
                   value={notifications.webhook.url ?? ''}
                   onChange={(e) =>
@@ -2029,7 +2033,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               <div className="kvRow">
                 <div className="label">Bot token</div>
                 <div className={showTelegramBotTokenEye ? 'inputWithAction' : undefined}>
-                  <input
+                  <Input
                     className={telegramBotTokenInputClassName}
                     type={telegramBotTokenVisible ? 'text' : 'password'}
                     autoComplete="new-password"
@@ -2071,7 +2075,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               </div>
               <div className="kvRow">
                 <div className="label">Chat id</div>
-                <input
+                <Input
                   className="input"
                   value={notifications.telegram.chatId ?? ''}
                   onChange={(e) =>
@@ -2102,7 +2106,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             >
               <div className="kvRow">
                 <div className="label">Public Key</div>
-                <input
+                <Input
                   className="input"
                   value={notifications.webPush.vapidPublicKey ?? ''}
                   onChange={(e) =>
@@ -2115,7 +2119,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               </div>
               <div className="kvRow">
                 <div className="label">Private Key（留空=保持原值）</div>
-                <input
+                <Input
                   className="input"
                   value={notifications.webPush.vapidPrivateKey ?? ''}
                   onChange={(e) =>
@@ -2128,7 +2132,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               </div>
               <div className="kvRow">
                 <div className="label">Subject</div>
-                <input
+                <Input
                   className="input"
                   value={notifications.webPush.vapidSubject ?? ''}
                   onChange={(e) =>
@@ -2224,7 +2228,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
             <div className="kv">
               <div className="kvRow">
                 <div className="label">GitHub PAT（留空=保持原值）</div>
-                <input
+                <Input
                   className={ghcrPatIssue ? 'input inputError' : 'input'}
                   value={githubPackagesPat}
                   onChange={(e) =>
@@ -2236,7 +2240,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
 
               <div className="kvRow">
                 <div className="label">Callback URL</div>
-                <input
+                <Input
                   className="input"
                   value={githubPackages.callbackUrl}
                   onChange={(e) =>
@@ -2258,7 +2262,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
               <div className="kvRow">
                 <div className="label">添加 Repo</div>
                 <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                  <input
+                  <Input
                     className="input"
                     value={githubPackagesNewRepo}
                     onChange={(e) => setGitHubPackagesNewRepo(e.target.value)}

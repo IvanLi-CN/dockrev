@@ -1,13 +1,42 @@
 import { access, readFile } from 'node:fs/promises'
 import http from 'node:http'
+import net from 'node:net'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const DEFAULT_OUTDIR = path.resolve(process.cwd(), 'storybook-static')
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url))
+const DEFAULT_OUTDIR = path.resolve(SCRIPT_DIR, '../storybook-static')
 const DEFAULT_PORT = 50887
 
 function parsePort(value, fallback) {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+async function findAvailablePort(preferredPort) {
+  return await new Promise((resolve, reject) => {
+    const probe = net.createServer()
+    let retriedWithRandomPort = false
+
+    const handleError = (error) => {
+      if (!retriedWithRandomPort && preferredPort !== 0 && error && typeof error === 'object' && error.code === 'EADDRINUSE') {
+        retriedWithRandomPort = true
+        probe.listen(0, '127.0.0.1')
+        return
+      }
+      reject(error)
+    }
+
+    probe.on('error', handleError)
+    probe.listen(preferredPort, '127.0.0.1', () => {
+      const address = probe.address()
+      const port = typeof address === 'object' && address ? address.port : preferredPort
+      probe.close((closeError) => {
+        if (closeError) reject(closeError)
+        else resolve(port)
+      })
+    })
+  })
 }
 
 function parseArgs(argv) {
@@ -146,6 +175,10 @@ async function requireBoundingBox(locator, label) {
   const box = await locator.boundingBox()
   if (!box) throw new Error(`Missing bounding box: ${label}`)
   return box
+}
+
+function getModal(page) {
+  return page.locator('[role="alertdialog"], [role="dialog"]').first()
 }
 
 async function assertGroupGuideAligned(page, label) {
@@ -369,8 +402,8 @@ async function runInteractive({ baseUrl, browser }) {
       )
       await btn.click()
 
-      // The app uses a custom confirm dialog (not the browser's built-in confirm).
-      const modal = page.getByRole('dialog')
+      // Dockrev uses custom confirm surfaces; accept either dialog or alertdialog for compatibility.
+      const modal = getModal(page)
       await modal.waitFor({ timeout: 10_000 })
       await modal.getByRole('button', { name: '执行更新' }).click()
 
@@ -655,7 +688,7 @@ async function runInteractive({ baseUrl, browser }) {
       await btn.waitFor({ timeout: 10_000 })
       await btn.click()
 
-      const modal = page.getByRole('dialog')
+      const modal = getModal(page)
       await modal.waitFor({ timeout: 10_000 })
 
       const trigger = modal.locator('.versionTagsTrigger').first()
@@ -690,7 +723,7 @@ async function runInteractive({ baseUrl, browser }) {
       await btn.waitFor({ timeout: 10_000 })
       await btn.click()
 
-      const modal = page.getByRole('dialog')
+      const modal = getModal(page)
       await modal.waitFor({ timeout: 10_000 })
 
       // The confirm modal should not allow selecting a target version.
@@ -731,7 +764,7 @@ async function runInteractive({ baseUrl, browser }) {
       await workerButton.waitFor({ timeout: 10_000 })
       await apiButton.click()
 
-      const modal = page.getByRole('dialog')
+      const modal = getModal(page)
       await modal.waitFor({ timeout: 10_000 })
       await modal.getByRole('button', { name: '执行更新' }).click()
 
@@ -772,7 +805,8 @@ async function runInteractive({ baseUrl, browser }) {
           ['更新中…', '排队中…'].some((label) => item.textContent?.includes(label))
         )
         if (!btn) return false
-        return btn.getAttribute('data-hint') === '任务进行中，点击查看任务详情'
+        const hint = btn.getAttribute('data-hint') ?? btn.getAttribute('title') ?? btn.getAttribute('aria-label')
+        return hint === '任务进行中，点击查看任务详情'
       }, null, { timeout: 10_000 })
 
       const jumped = await page.evaluate(() => {
@@ -812,7 +846,7 @@ async function runInteractive({ baseUrl, browser }) {
       await allBtn.waitFor({ timeout: 10_000 })
       await allBtn.click()
 
-      const modal = page.getByRole('dialog')
+      const modal = getModal(page)
       await modal.waitFor({ timeout: 10_000 })
       await modal.getByRole('button', { name: '执行更新' }).click()
 
@@ -872,7 +906,7 @@ async function runInteractive({ baseUrl, browser }) {
       await applyBtn.waitFor({ timeout: 10_000 })
       await applyBtn.click()
 
-      const modal = page.getByRole('dialog')
+      const modal = getModal(page)
       await modal.waitFor({ timeout: 10_000 })
       await modal.getByRole('button', { name: '执行更新' }).click()
 
@@ -938,7 +972,7 @@ async function runInteractive({ baseUrl, browser }) {
       await applyBtn.waitFor({ timeout: 10_000 })
       await applyBtn.click()
 
-      const modal = page.getByRole('dialog')
+      const modal = getModal(page)
       await modal.waitFor({ timeout: 10_000 })
       await modal.getByRole('button', { name: '执行更新' }).click()
 
@@ -1206,15 +1240,14 @@ async function main() {
   }
 
   await ensureStaticBuild()
-  const port = parsePort(process.env.DOCKREV_TEST_STORYBOOK_PORT, DEFAULT_PORT)
+  const requestedPort = parsePort(process.env.DOCKREV_TEST_STORYBOOK_PORT, DEFAULT_PORT)
+  const port = process.env.DOCKREV_TEST_STORYBOOK_PORT ? requestedPort : await findAvailablePort(requestedPort)
   const server = startStaticServer({ port })
   try {
     await server.listen()
   } catch (error) {
     if (error && typeof error === 'object' && error.code === 'EADDRINUSE') {
-      console.error(
-        `Port ${port} is already in use. Set DOCKREV_TEST_STORYBOOK_PORT or pass --url/TARGET_URL.`
-      )
+      console.error(`Port ${port} is already in use.`)
       process.exit(1)
     }
     throw error

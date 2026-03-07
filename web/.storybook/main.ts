@@ -5,10 +5,9 @@ const config: StorybookConfig = {
     name: '@storybook/react-vite',
     options: {},
   },
-  // We currently don't use MDX stories; keeping the MDX glob makes Storybook emit a noisy warning.
-  stories: ['../src/**/*.stories.@(js|jsx|mjs|ts|tsx)'],
+  stories: ['../src/**/*.mdx', '../src/**/*.stories.@(js|jsx|mjs|ts|tsx)'],
+  addons: ['@storybook/addon-docs'],
   core: {
-    // Storybook's "What's new" banner is noise for our review workflow.
     disableWhatsNewNotifications: true,
   },
 }

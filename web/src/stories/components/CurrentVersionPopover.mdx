@@ -1,0 +1,16 @@
+import { Meta, Primary, Stories, Title, Description } from '@storybook/addon-docs/blocks'
+import * as CurrentVersionPopoverStories from './CurrentVersionPopover.stories'
+
+<Meta of={CurrentVersionPopoverStories} />
+<Title />
+<Description>
+`CurrentVersionPopover` 基于共享 hover-open / click-pin popover 基座，展示当前镜像 tag、digest、推测 semver 结果以及同 digest tags 快照。
+</Description>
+
+## 交互要求
+- 悬停可打开，点击可 pin 住，按 `Esc` 或点外部关闭。
+- 快照缺失或读取失败时，重新 pin 会触发一次显式重试。
+- “强制刷新” 继续复用现有版本推测刷新行为。
+
+<Primary />
+<Stories />

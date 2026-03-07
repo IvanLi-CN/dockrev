@@ -1,0 +1,16 @@
+import { Meta, Primary, Stories, Title, Description } from '@storybook/addon-docs/blocks'
+import * as ConfirmDialogStories from './ConfirmDialog.stories'
+
+<Meta of={ConfirmDialogStories} />
+<Title />
+<Description>
+`ConfirmDialog` 由 `useConfirm()` 驱动，内部已经切换到 shadcn `AlertDialog`。这里主要验证标题、正文、徽标语义以及不同确认动作风格。
+</Description>
+
+## 验证重点
+- 取消、确认、按下 `Esc` 都会正确回收 promise。
+- `badgeText / badgeTone` 用于提示风险等级或任务类型。
+- 业务调用方不需要知道底层已从自绘 modal 切到 `AlertDialog`。
+
+<Primary />
+<Stories />

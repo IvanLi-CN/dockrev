@@ -17,7 +17,7 @@ import {
 } from '../api'
 import { useConfirm } from '../confirm'
 import { navigate } from '../routes'
-import { Button, Chip, Mono, Pill, ResponsiveActionButton } from '../ui'
+import { Button, Chip, Input, Mono, Pill, ResponsiveActionButton, SelectField } from '../ui'
 import { webhookStateDotClass, webhookStateIcon } from '../webhookStatus'
 
 type RepoStateFilter = 'all' | 'ok' | 'missing' | 'error' | 'conflict' | 'queued' | 'running' | 'unknown'
@@ -478,32 +478,30 @@ export function GhcrWebhookRegistryPage(props: { onTopActions: (node: React.Reac
             <label className="ghcrRegistryFilterSelectLabel" htmlFor="ghcr-registry-filter-select">
               状态筛选
             </label>
-            <select
-              id="ghcr-registry-filter-select"
+            <SelectField
               className="select ghcrRegistryFilterSelect"
+              id="ghcr-registry-filter-select"
+              onChange={(value) => setFilter(value as RepoStateFilter)}
+              options={filterItems.map((item) => ({
+                value: item.key,
+                label: `${item.label} (${item.count})`,
+              }))}
               value={filter}
-              onChange={(event) => setFilter(event.target.value as RepoStateFilter)}
-            >
-              {filterItems.map((it) => (
-                <option key={it.key} value={it.key}>
-                  {`${it.label} (${it.count})`}
-                </option>
-              ))}
-            </select>
+            />
           </div>
         ) : null}
 
         <div className="ghcrRegistrySearchForm">
-          <input
+          <Input
             className="input"
-            value={queryInput}
             onChange={(event) => setQueryInput(event.target.value)}
-            placeholder="搜索 owner/repo、状态、hookId、错误信息"
             onKeyDown={(event) => {
               if (event.key !== 'Enter') return
               event.preventDefault()
               setQuery(queryInput.trim())
             }}
+            placeholder="搜索 owner/repo、状态、hookId、错误信息"
+            value={queryInput}
           />
           <Button variant="ghost" onClick={() => setQuery(queryInput.trim())}>
             搜索

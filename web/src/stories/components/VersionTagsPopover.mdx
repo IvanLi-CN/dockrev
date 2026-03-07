@@ -1,0 +1,16 @@
+import { Meta, Primary, Stories, Title, Description } from '@storybook/addon-docs/blocks'
+import * as VersionTagsPopoverStories from './VersionTagsPopover.stories'
+
+<Meta of={VersionTagsPopoverStories} />
+<Title />
+<Description>
+`VersionTagsPopover` 与当前版本弹层共用同一个 hover/pin 基座，但聚焦在候选 tag 的 digest 关联 tags、快照状态与快速复制动作。
+</Description>
+
+## 交互要求
+- 默认 hover 打开，点击 pin 住，外部点击和 `Esc` 关闭。
+- `prefetchOnMount` 场景会提前进入 loading，以减少首次悬浮等待。
+- 缺少 digest 时不做 registry 扫描，只提供候选 tag 的复制操作。
+
+<Primary />
+<Stories />

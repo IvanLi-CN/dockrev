@@ -1,8 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Button, Pill } from './ui'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { Pill } from './ui'
 import { ConfirmContext, type ConfirmBadgeTone, type ConfirmOptions, type ConfirmVariant } from './confirm'
 
 type ConfirmRequest = ConfirmOptions & { resolve: (ok: boolean) => void }
+
+function confirmButtonClass(variant: ConfirmVariant) {
+  if (variant === 'danger') return 'btn btnDanger'
+  if (variant === 'primary') return 'btn btnPrimary'
+  return 'btn btnGhost'
+}
 
 export function ConfirmProvider(props: { children: ReactNode }) {
   const [req, setReq] = useState<ConfirmRequest | null>(null)
@@ -39,7 +55,7 @@ export function ConfirmProvider(props: { children: ReactNode }) {
   )
 }
 
-function ConfirmDialog(props: {
+export function ConfirmDialog(props: {
   title: string
   body: ReactNode
   cardClassName?: string
@@ -52,6 +68,7 @@ function ConfirmDialog(props: {
   onClose: (ok: boolean) => void
 }) {
   const cancelRef = useRef<HTMLButtonElement | null>(null)
+  const didResolveRef = useRef(false)
   const confirmVariant = props.confirmVariant ?? 'danger'
   const confirmText = props.confirmText ?? '确定'
   const cancelText = props.cancelText ?? '取消'
@@ -65,50 +82,42 @@ function ConfirmDialog(props: {
     typeof badgeTextCandidate === 'string' && badgeTextCandidate.trim() === '' ? null : badgeTextCandidate
   const badgeTone = badgeText ? (props.badgeTone ?? defaultBadgeTone) : null
 
+  const closeOnce = useCallback(
+    (ok: boolean) => {
+      if (didResolveRef.current) return
+      didResolveRef.current = true
+      props.onClose(ok)
+    },
+    [props],
+  )
+
   useEffect(() => {
     cancelRef.current?.focus()
   }, [])
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        props.onClose(false)
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [props])
-
   return (
-    <div
-      className="modalOverlay"
-      role="presentation"
-      onClick={() => {
-        props.onClose(false)
-      }}
-    >
-      <div
-        className={props.cardClassName ? `modalCard ${props.cardClassName}` : 'modalCard'}
-        role="dialog"
-        aria-modal="true"
-        aria-label={props.title}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="modalHeader">
-          <div className="modalTitle">{props.title}</div>
-          {badgeText && badgeTone ? <Pill tone={badgeTone}>{badgeText}</Pill> : null}
-        </div>
-        <div className={props.bodyClassName ? `modalBody ${props.bodyClassName}` : 'modalBody'}>{props.body}</div>
-        <div className="modalActions">
-          <button className="btn btnGhost" ref={cancelRef} onClick={() => props.onClose(false)}>
+    <AlertDialog open onOpenChange={(open) => (!open ? closeOnce(false) : undefined)}>
+      <AlertDialogContent className={props.cardClassName ? `modalCard ${props.cardClassName}` : 'modalCard'}>
+        <AlertDialogHeader className="modalHeader">
+          <div className="modalTitleRow">
+            <AlertDialogTitle asChild>
+              <div className="modalTitle">{props.title}</div>
+            </AlertDialogTitle>
+            {badgeText && badgeTone ? <Pill tone={badgeTone}>{badgeText}</Pill> : null}
+          </div>
+          <AlertDialogDescription asChild>
+            <div className={props.bodyClassName ? `modalBody ${props.bodyClassName}` : 'modalBody'}>{props.body}</div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter className="modalActions">
+          <AlertDialogCancel ref={cancelRef} className="btn btnGhost" onClick={() => closeOnce(false)}>
             {cancelText}
-          </button>
-          <Button variant={confirmVariant} onClick={() => props.onClose(true)}>
+          </AlertDialogCancel>
+          <AlertDialogAction className={confirmButtonClass(confirmVariant)} onClick={() => closeOnce(true)}>
             {confirmText}
-          </Button>
-        </div>
-      </div>
-    </div>
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
