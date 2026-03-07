@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 待实现
+- Status: 已实现
 - Created: 2026-03-07
 - Last: 2026-03-07
 
@@ -138,10 +138,10 @@
 
 ## 实现里程碑（Milestones / Delivery checklist）
 
-- [ ] M1：创建 spec、索引与主题分支，冻结组件 inventory / docs 矩阵。
-- [ ] M2：接入 Tailwind v4 + shadcn/ui 基础设施并生成 primitives。
-- [ ] M3：完成 shared UI / overlay / composite 迁移。
-- [ ] M4：完成 Storybook stories + docs 补齐。
+- [x] M1：创建 spec、索引与主题分支，冻结组件 inventory / docs 矩阵。
+- [x] M2：接入 Tailwind v4 + shadcn/ui 基础设施并生成 primitives。
+- [x] M3：完成 shared UI / overlay / composite 迁移。
+- [x] M4：完成 Storybook stories + docs 补齐。
 - [ ] M5：完成 lint/build/storybook/review/PR 收敛并同步 spec。
 
 ## 风险 / 假设
@@ -154,3 +154,7 @@
 ## 变更记录（Change log）
 
 - 2026-03-07：创建规格，冻结 shadcn/ui 迁移范围、共享组件 inventory 与 Storybook docs 策略。
+- 2026-03-07：完成 Tailwind v4 + shadcn/ui 基础设施接入，新增 `web/components.json`、`web/src/lib/utils.ts`、`web/src/components/ui/*`、Vite/TS alias 与主题 token 映射，并保留现有 dark/light 语义。
+- 2026-03-07：完成 shared UI 迁移：`web/src/ui.tsx` 收缩为兼容 barrel + app-specific wrappers，`ConfirmProvider` 切换到 shadcn `AlertDialog`，版本浮层收敛到共享 `HoverPinnedPopover` 基座，页面内共享输入/选择/切换统一改到 shadcn primitives。
+- 2026-03-07：完成 Storybook 覆盖补齐：primitives 采用 autodocs，复杂复合组件补 attached MDX，`Typography` / `Iconography` 组合文档落地。
+- 2026-03-07：本地验证通过：`bun --cwd web lint`、`bun --cwd web build`、`bun --cwd web build-storybook -- --quiet`、`bun --cwd web test-storybook`。
