@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { FloatingPortal, autoUpdate, flip, offset, shift, useFloating } from '@floating-ui/react'
+import { FloatingArrow, FloatingPortal, arrow, autoUpdate, flip, offset, shift, useFloating } from '@floating-ui/react'
 import { Icon } from '@iconify/react'
 import eyeOffOutline from '@iconify-icons/mdi/eye-off-outline'
 import eyeOutline from '@iconify-icons/mdi/eye-outline'
@@ -1518,14 +1518,20 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     !instancePublicBaseUrlSuggestDismissed &&
     instancePublicBaseUrlValue.trim().length === 0 &&
     suggestedPublicBaseUrl != null
-  const { refs: instancePublicBaseUrlSuggestRefs, floatingStyles: instancePublicBaseUrlSuggestFloatingStyles } = useFloating({
+  const [instancePublicBaseUrlSuggestArrow, setInstancePublicBaseUrlSuggestArrow] = useState<SVGSVGElement | null>(null)
+  const {
+    refs: instancePublicBaseUrlSuggestRefs,
+    floatingStyles: instancePublicBaseUrlSuggestFloatingStyles,
+    context: instancePublicBaseUrlSuggestFloatingContext,
+  } = useFloating({
     open: showInstancePublicBaseUrlSuggestBubble,
     placement: 'bottom-start',
     whileElementsMounted: autoUpdate,
     middleware: [
-      offset(10),
+      offset(12),
       flip({ fallbackPlacements: ['top-start', 'bottom-end', 'top-end'] }),
       shift({ padding: 12 }),
+      ...(instancePublicBaseUrlSuggestArrow ? [arrow({ element: instancePublicBaseUrlSuggestArrow })] : []),
     ],
   })
   const setInstancePublicBaseUrlSuggestReference = useCallback(
@@ -1540,6 +1546,9 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     },
     [instancePublicBaseUrlSuggestRefs],
   )
+  const setInstancePublicBaseUrlSuggestArrowRef = useCallback((node: SVGSVGElement | null) => {
+    setInstancePublicBaseUrlSuggestArrow(node)
+  }, [])
 
   if (!settings || !notifications || !githubPackages) {
     return <div className="muted">加载中…</div>
@@ -1961,6 +1970,15 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                             不
                           </Button>
                         </div>
+                        <FloatingArrow
+                          ref={setInstancePublicBaseUrlSuggestArrowRef}
+                          context={instancePublicBaseUrlSuggestFloatingContext}
+                          className="settingsInlineSuggestionBubbleArrow"
+                          fill="var(--settings-inline-suggestion-bg)"
+                          stroke="var(--settings-inline-suggestion-border)"
+                          strokeWidth={1}
+                          tipRadius={1}
+                        />
                       </div>
                     </FloatingPortal>
                   ) : null}
