@@ -1059,6 +1059,18 @@ fn summary_emits_new_version_notification(summary: &serde_json::Value) -> bool {
         .is_some_and(|value| value.eq_ignore_ascii_case("github_webhook"))
 }
 
+fn summary_matched_service_ids(
+    summary: &serde_json::Value,
+) -> Option<std::collections::HashSet<String>> {
+    let items = summary.get("matchedServiceIds")?.as_array()?;
+    let ids = items
+        .iter()
+        .filter_map(|value| value.as_str())
+        .map(ToString::to_string)
+        .collect::<std::collections::HashSet<_>>();
+    if ids.is_empty() { None } else { Some(ids) }
+}
+
 fn merge_job_summary(
     mut summary: serde_json::Value,
     extra_summary: Option<&serde_json::Value>,
@@ -1091,9 +1103,19 @@ async fn maybe_notify_check_new_versions(
         return Ok(());
     }
 
-    let discovered_services = notify::extract_new_versions_discovered(summary);
+    let mut discovered_services = notify::extract_new_versions_discovered(summary);
     if discovered_services.is_empty() {
         return Ok(());
+    }
+
+    if !check_reason_emits_new_version_notification(reason)
+        && summary_emits_new_version_notification(summary)
+        && let Some(matched_service_ids) = summary_matched_service_ids(summary)
+    {
+        discovered_services.retain(|service| matched_service_ids.contains(&service.service_id));
+        if discovered_services.is_empty() {
+            return Ok(());
+        }
     }
 
     let services_checked = summary
@@ -5261,7 +5283,9 @@ fn github_webhook_audit_summary(
     let mut summary = json!({
         "source": "github_webhook",
         "repo": repo,
+        "repos": repo.map(|value| vec![value]).unwrap_or_default(),
         "deliveryId": delivery_id,
+        "deliveryIds": [delivery_id],
         "matchedServiceIds": matched_service_ids,
         "fallbackUsed": fallback_used,
         "reusedJobIds": reused_job_ids,
@@ -5315,9 +5339,10 @@ async fn list_github_webhook_matched_services(
 async fn enqueue_github_webhook_check_job(
     state: &Arc<AppState>,
     now: &str,
+    stale_threshold: time::Duration,
     target: &crate::db::GithubWebhookServiceTarget,
     audit: serde_json::Value,
-) -> Result<String, ApiError> {
+) -> Result<(String, bool), ApiError> {
     let job_id = ids::new_check_id();
     let mut job_db = JobRecord::new_running(
         job_id.clone(),
@@ -5331,32 +5356,42 @@ async fn enqueue_github_webhook_check_job(
     job_db.created_by = "github".to_string();
     job_db.reason = "webhook".to_string();
     job_db.summary_json = audit.clone();
-    state.db.insert_job(job_db).await.map_err(map_internal)?;
 
-    let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
-        .unwrap_or_else(|| "linux/amd64".to_string());
-    spawn_check_job_task(
-        state.clone(),
-        job_id.clone(),
-        JobScope::Service,
-        Some(target.stack_id.clone()),
-        Some(target.service_id.clone()),
-        host_platform,
-        now.to_string(),
-        "webhook".to_string(),
-        format!("github webhook check started: {audit}"),
-        "github webhook check failed".to_string(),
-        Some(audit),
-    );
-
-    Ok(job_id)
+    match state
+        .db
+        .insert_or_reuse_webhook_check_job_for_service(job_db, now, stale_threshold)
+        .await
+        .map_err(map_internal)?
+    {
+        crate::db::PendingJobUpsert::Inserted => {
+            let host_platform =
+                registry::host_platform_override(state.config.host_platform.as_deref())
+                    .unwrap_or_else(|| "linux/amd64".to_string());
+            spawn_check_job_task(
+                state.clone(),
+                job_id.clone(),
+                JobScope::Service,
+                Some(target.stack_id.clone()),
+                Some(target.service_id.clone()),
+                host_platform,
+                now.to_string(),
+                "webhook".to_string(),
+                format!("github webhook check started: {audit}"),
+                "github webhook check failed".to_string(),
+                Some(audit),
+            );
+            Ok((job_id, false))
+        }
+        crate::db::PendingJobUpsert::Reused(existing) => Ok((existing.id.clone(), true)),
+    }
 }
 
 async fn enqueue_github_webhook_discovery_job(
     state: &Arc<AppState>,
     now: &str,
+    stale_threshold: time::Duration,
     audit: serde_json::Value,
-) -> Result<String, ApiError> {
+) -> Result<(String, bool), ApiError> {
     let job_id = ids::new_discovery_id();
     let mut job_db = JobRecord::new_running(
         job_id.clone(),
@@ -5370,54 +5405,64 @@ async fn enqueue_github_webhook_discovery_job(
     job_db.created_by = "github".to_string();
     job_db.reason = "github_webhook".to_string();
     job_db.summary_json = audit.clone();
-    state.db.insert_job(job_db).await.map_err(map_internal)?;
 
-    let run_state = state.clone();
-    let run_job_id = job_id.clone();
-    let run_started_at = now.to_string();
-    tokio::spawn(async move {
-        append_github_webhook_audit_log(
-            &run_state,
-            &run_job_id,
-            &run_started_at,
-            "started discovery fallback",
-            &audit,
-        )
-        .await;
+    match state
+        .db
+        .insert_or_reuse_webhook_discovery_job(job_db, now, stale_threshold)
+        .await
+        .map_err(map_internal)?
+    {
+        crate::db::PendingJobUpsert::Inserted => {
+            let run_state = state.clone();
+            let run_job_id = job_id.clone();
+            let run_started_at = now.to_string();
+            tokio::spawn(async move {
+                append_github_webhook_audit_log(
+                    &run_state,
+                    &run_job_id,
+                    &run_started_at,
+                    "started discovery fallback",
+                    &audit,
+                )
+                .await;
 
-        let outcome = discovery::run_scan_for_job(run_state.as_ref(), &run_job_id).await;
-        let finished_at =
-            now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
-        match outcome {
-            Ok(resp) => {
-                let summary = merge_job_summary(json!({ "scan": resp }), Some(&audit));
-                let _ = run_state
-                    .db
-                    .finish_job(&run_job_id, "success", &finished_at, &summary)
-                    .await;
-            }
-            Err(e) => {
-                let _ = run_state
-                    .db
-                    .insert_job_log(
-                        &run_job_id,
-                        &JobLogLine {
-                            ts: finished_at.clone(),
-                            level: "error".to_string(),
-                            msg: format!("discovery scan failed: {e}"),
-                        },
-                    )
-                    .await;
-                let summary = merge_job_summary(json!({ "error": e.to_string() }), Some(&audit));
-                let _ = run_state
-                    .db
-                    .finish_job(&run_job_id, "failed", &finished_at, &summary)
-                    .await;
-            }
+                let outcome = discovery::run_scan_for_job(run_state.as_ref(), &run_job_id).await;
+                let finished_at =
+                    now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+                match outcome {
+                    Ok(resp) => {
+                        let summary = merge_job_summary(json!({ "scan": resp }), Some(&audit));
+                        let _ = run_state
+                            .db
+                            .finish_job(&run_job_id, "success", &finished_at, &summary)
+                            .await;
+                    }
+                    Err(e) => {
+                        let _ = run_state
+                            .db
+                            .insert_job_log(
+                                &run_job_id,
+                                &JobLogLine {
+                                    ts: finished_at.clone(),
+                                    level: "error".to_string(),
+                                    msg: format!("discovery scan failed: {e}"),
+                                },
+                            )
+                            .await;
+                        let summary =
+                            merge_job_summary(json!({ "error": e.to_string() }), Some(&audit));
+                        let _ = run_state
+                            .db
+                            .finish_job(&run_job_id, "failed", &finished_at, &summary)
+                            .await;
+                    }
+                }
+            });
+
+            Ok((job_id, false))
         }
-    });
-
-    Ok(job_id)
+        crate::db::PendingJobUpsert::Reused(existing) => Ok((existing.id.clone(), true)),
+    }
 }
 
 async fn record_github_packages_delivery(
@@ -5651,23 +5696,39 @@ async fn github_packages_webhook(
         ));
     }
 
-    let now = received_at.clone();
-    let repo_key = github_webhook_repo_key_from_full_name(repo_full_name.as_deref());
-    let stale_threshold = time::Duration::hours(2);
+    let result: Result<serde_json::Value, ApiError> = async {
+        let now = received_at.clone();
+        let repo_key = github_webhook_repo_key_from_full_name(repo_full_name.as_deref());
+        let stale_threshold = time::Duration::hours(2);
 
-    let (job_ids, reused_job_ids, matched_service_ids, fallback_used, fallback_reason) =
-        if let Some(repo_key) = repo_key.as_deref() {
-            let matched_targets = list_github_webhook_matched_services(&state, repo_key).await?;
-            if matched_targets.is_empty() {
-                let fallback_reason = "no_managed_service_match".to_string();
-                if let Some(existing) = state
-                    .db
-                    .find_latest_pending_job_by_type(JobType::Discovery)
-                    .await
-                    .map_err(map_internal)?
-                {
-                    let reused_job_ids = vec![existing.id.clone()];
-                    let audit = github_webhook_audit_summary(
+        let (job_ids, reused_job_ids, matched_service_ids, fallback_used, fallback_reason) =
+            if let Some(repo_key) = repo_key.as_deref() {
+                let matched_targets =
+                    list_github_webhook_matched_services(&state, repo_key).await?;
+                if matched_targets.is_empty() {
+                    let fallback_reason = "no_managed_service_match".to_string();
+                    let initial_audit = github_webhook_audit_summary(
+                        Some(repo_key),
+                        &delivery_id,
+                        &[],
+                        true,
+                        &[],
+                        Some(&fallback_reason),
+                    );
+                    let (job_id, reused) = enqueue_github_webhook_discovery_job(
+                        &state,
+                        &now,
+                        stale_threshold,
+                        initial_audit,
+                    )
+                    .await?;
+                    let job_ids = vec![job_id.clone()];
+                    let reused_job_ids = if reused {
+                        vec![job_id.clone()]
+                    } else {
+                        Vec::new()
+                    };
+                    let final_audit = github_webhook_audit_summary(
                         Some(repo_key),
                         &delivery_id,
                         &[],
@@ -5675,123 +5736,123 @@ async fn github_packages_webhook(
                         &reused_job_ids,
                         Some(&fallback_reason),
                     );
-                    append_github_webhook_audit_log(
-                        &state,
-                        &existing.id,
-                        &now,
-                        "reused discovery fallback",
-                        &audit,
-                    )
-                    .await;
+                    if reused {
+                        append_github_webhook_audit_log(
+                            &state,
+                            &job_id,
+                            &now,
+                            "reused discovery fallback",
+                            &final_audit,
+                        )
+                        .await;
+                    }
                     (
-                        vec![existing.id],
+                        job_ids,
                         reused_job_ids,
                         Vec::new(),
                         true,
                         Some(fallback_reason),
                     )
                 } else {
-                    let audit = github_webhook_audit_summary(
+                    let mut seen_service_ids = std::collections::HashSet::<String>::new();
+                    let matched_service_ids = matched_targets
+                        .iter()
+                        .filter_map(|target| {
+                            if seen_service_ids.insert(target.service_id.clone()) {
+                                Some(target.service_id.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    let initial_audit = github_webhook_audit_summary(
                         Some(repo_key),
                         &delivery_id,
+                        &matched_service_ids,
+                        false,
                         &[],
-                        true,
-                        &[],
-                        Some(&fallback_reason),
+                        None,
                     );
-                    let job_id = enqueue_github_webhook_discovery_job(&state, &now, audit).await?;
-                    (
-                        vec![job_id],
-                        Vec::new(),
-                        Vec::new(),
-                        true,
-                        Some(fallback_reason),
-                    )
-                }
-            } else {
-                let mut seen_service_ids = std::collections::HashSet::<String>::new();
-                let matched_service_ids = matched_targets
-                    .iter()
-                    .filter_map(|target| {
-                        if seen_service_ids.insert(target.service_id.clone()) {
-                            Some(target.service_id.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                let mut create_targets = Vec::<crate::db::GithubWebhookServiceTarget>::new();
-                let mut reused_job_ids = Vec::<String>::new();
-                let mut job_ids = Vec::<String>::new();
+                    let mut job_ids = Vec::<String>::new();
+                    let mut inserted_job_ids = Vec::<String>::new();
+                    let mut reused_job_ids = Vec::<String>::new();
 
-                for target in &matched_targets {
-                    if let Some(existing) = state
-                        .db
-                        .find_latest_pending_job_by_type_and_service_id(
-                            JobType::Check,
-                            &target.service_id,
+                    for target in &matched_targets {
+                        let (job_id, reused) = enqueue_github_webhook_check_job(
+                            &state,
+                            &now,
+                            stale_threshold,
+                            target,
+                            initial_audit.clone(),
                         )
-                        .await
-                        .map_err(map_internal)?
-                    {
-                        if existing.status == "running"
-                            && check_job_is_stale(&existing, &now, stale_threshold)
-                        {
+                        .await?;
+                        if reused {
                             let _ = state
                                 .db
-                                .terminate_job_as_failed(&existing.id, &now, "stale_check")
+                                .merge_job_summary_fields(&job_id, &initial_audit)
                                 .await;
-                            create_targets.push(target.clone());
-                        } else {
-                            if !reused_job_ids.contains(&existing.id) {
-                                reused_job_ids.push(existing.id.clone());
+                            if !reused_job_ids.contains(&job_id) {
+                                reused_job_ids.push(job_id.clone());
                             }
-                            if !job_ids.contains(&existing.id) {
-                                job_ids.push(existing.id.clone());
-                            }
+                        } else if !inserted_job_ids.contains(&job_id) {
+                            inserted_job_ids.push(job_id.clone());
                         }
-                    } else {
-                        create_targets.push(target.clone());
+                        if !job_ids.contains(&job_id) {
+                            job_ids.push(job_id);
+                        }
                     }
-                }
 
-                let audit = github_webhook_audit_summary(
-                    Some(repo_key),
-                    &delivery_id,
-                    &matched_service_ids,
-                    false,
-                    &reused_job_ids,
+                    let final_audit = github_webhook_audit_summary(
+                        Some(repo_key),
+                        &delivery_id,
+                        &matched_service_ids,
+                        false,
+                        &reused_job_ids,
+                        None,
+                    );
+                    for job_id in &reused_job_ids {
+                        append_github_webhook_audit_log(
+                            &state,
+                            job_id,
+                            &now,
+                            "reused check job",
+                            &final_audit,
+                        )
+                        .await;
+                    }
+                    for job_id in &inserted_job_ids {
+                        let _ = state
+                            .db
+                            .merge_job_summary_fields(job_id, &final_audit)
+                            .await;
+                    }
+
+                    (job_ids, reused_job_ids, matched_service_ids, false, None)
+                }
+            } else {
+                let fallback_reason = "owner_only_payload".to_string();
+                let initial_audit = github_webhook_audit_summary(
                     None,
+                    &delivery_id,
+                    &[],
+                    true,
+                    &[],
+                    Some(&fallback_reason),
                 );
-                for job_id in &reused_job_ids {
-                    append_github_webhook_audit_log(
-                        &state,
-                        job_id,
-                        &now,
-                        "reused check job",
-                        &audit,
-                    )
-                    .await;
-                }
-                for target in create_targets {
-                    let job_id =
-                        enqueue_github_webhook_check_job(&state, &now, &target, audit.clone())
-                            .await?;
-                    job_ids.push(job_id);
-                }
-
-                (job_ids, reused_job_ids, matched_service_ids, false, None)
-            }
-        } else {
-            let fallback_reason = "owner_only_payload".to_string();
-            if let Some(existing) = state
-                .db
-                .find_latest_pending_job_by_type(JobType::Discovery)
-                .await
-                .map_err(map_internal)?
-            {
-                let reused_job_ids = vec![existing.id.clone()];
-                let audit = github_webhook_audit_summary(
+                let (job_id, reused) = enqueue_github_webhook_discovery_job(
+                    &state,
+                    &now,
+                    stale_threshold,
+                    initial_audit,
+                )
+                .await?;
+                let job_ids = vec![job_id.clone()];
+                let reused_job_ids = if reused {
+                    vec![job_id.clone()]
+                } else {
+                    Vec::new()
+                };
+                let final_audit = github_webhook_audit_summary(
                     None,
                     &delivery_id,
                     &[],
@@ -5799,78 +5860,72 @@ async fn github_packages_webhook(
                     &reused_job_ids,
                     Some(&fallback_reason),
                 );
-                append_github_webhook_audit_log(
-                    &state,
-                    &existing.id,
-                    &now,
-                    "reused discovery fallback",
-                    &audit,
-                )
-                .await;
+                if reused {
+                    append_github_webhook_audit_log(
+                        &state,
+                        &job_id,
+                        &now,
+                        "reused discovery fallback",
+                        &final_audit,
+                    )
+                    .await;
+                }
                 (
-                    vec![existing.id],
+                    job_ids,
                     reused_job_ids,
                     Vec::new(),
                     true,
                     Some(fallback_reason),
                 )
-            } else {
-                let audit = github_webhook_audit_summary(
-                    None,
-                    &delivery_id,
-                    &[],
-                    true,
-                    &[],
-                    Some(&fallback_reason),
-                );
-                let job_id = enqueue_github_webhook_discovery_job(&state, &now, audit).await?;
-                (
-                    vec![job_id],
-                    Vec::new(),
-                    Vec::new(),
-                    true,
-                    Some(fallback_reason),
-                )
+            };
+
+        let primary_job_id = job_ids.first().cloned();
+        state
+            .db
+            .update_github_packages_delivery_outcome(
+                &delivery_id,
+                &received_at,
+                owner.as_deref(),
+                repo.as_deref(),
+                Some(event.as_str()),
+                Some(action.as_str()),
+                "processed",
+                None,
+                Some(200),
+                primary_job_id.as_deref(),
+                &job_ids,
+            )
+            .await
+            .map_err(map_internal)?;
+
+        let mut response = json!({
+            "ok": true,
+            "attemptCount": 1,
+            "jobIds": job_ids,
+            "matchedServiceIds": matched_service_ids,
+            "reusedJobIds": reused_job_ids,
+            "fallbackUsed": fallback_used,
+        });
+        if let Some(obj) = response.as_object_mut() {
+            if let Some(job_id) = primary_job_id {
+                obj.insert("jobId".to_string(), json!(job_id));
             }
-        };
-
-    let primary_job_id = job_ids.first().cloned();
-    state
-        .db
-        .update_github_packages_delivery_outcome(
-            &delivery_id,
-            &received_at,
-            owner.as_deref(),
-            repo.as_deref(),
-            Some(event.as_str()),
-            Some(action.as_str()),
-            "processed",
-            None,
-            Some(200),
-            primary_job_id.as_deref(),
-            &job_ids,
-        )
-        .await
-        .map_err(map_internal)?;
-
-    let mut response = json!({
-        "ok": true,
-        "attemptCount": 1,
-        "jobIds": job_ids,
-        "matchedServiceIds": matched_service_ids,
-        "reusedJobIds": reused_job_ids,
-        "fallbackUsed": fallback_used,
-    });
-    if let Some(obj) = response.as_object_mut() {
-        if let Some(job_id) = primary_job_id {
-            obj.insert("jobId".to_string(), json!(job_id));
+            if let Some(reason) = fallback_reason {
+                obj.insert("fallbackReason".to_string(), json!(reason));
+            }
         }
-        if let Some(reason) = fallback_reason {
-            obj.insert("fallbackReason".to_string(), json!(reason));
+
+        Ok(response)
+    }
+    .await;
+
+    match result {
+        Ok(response) => Ok(Json(response)),
+        Err(err) => {
+            let _ = state.db.delete_github_packages_delivery(&delivery_id).await;
+            Err(err)
         }
     }
-
-    Ok(Json(response))
 }
 
 async fn create_web_push_subscription(

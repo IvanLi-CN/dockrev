@@ -185,6 +185,173 @@ fn parse_github_packages_delivery_job_ids(
     job_ids
 }
 
+#[derive(Clone, Debug)]
+pub enum PendingJobUpsert {
+    Inserted,
+    Reused(Box<JobListItem>),
+}
+
+fn map_job_list_item_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JobListItem> {
+    let summary_json: String = row.get(13)?;
+    let summary: serde_json::Value = serde_json::from_str(&summary_json).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    Ok(JobListItem {
+        id: row.get(0)?,
+        r#type: JobType::from_str(&row.get::<_, String>(1)?),
+        scope: JobScope::from_str(&row.get::<_, String>(2)?),
+        stack_id: row.get(3)?,
+        service_id: row.get(4)?,
+        status: row.get(5)?,
+        created_by: row.get(6)?,
+        reason: row.get(7)?,
+        created_at: row.get(8)?,
+        started_at: row.get(9)?,
+        finished_at: row.get(10)?,
+        allow_arch_mismatch: row.get::<_, i64>(11)? != 0,
+        backup_mode: row.get(12)?,
+        summary_json: summary,
+    })
+}
+
+fn job_is_stale(existing: &JobListItem, now: &str, stale_threshold: time::Duration) -> bool {
+    let started_at = existing
+        .started_at
+        .as_deref()
+        .unwrap_or(existing.created_at.as_str());
+    time::OffsetDateTime::parse(started_at, &time::format_description::well_known::Rfc3339)
+        .ok()
+        .and_then(|started| {
+            time::OffsetDateTime::parse(now, &time::format_description::well_known::Rfc3339)
+                .ok()
+                .map(|cur| cur - started)
+        })
+        .is_some_and(|age| age > stale_threshold)
+}
+
+fn terminate_job_as_failed_tx(
+    tx: &rusqlite::Transaction<'_>,
+    job: &JobListItem,
+    now: &str,
+    reason: &str,
+) -> anyhow::Result<()> {
+    tx.execute(
+        r#"
+INSERT INTO job_logs (job_id, ts, level, msg)
+VALUES (?1, ?2, 'warn', ?3)
+"#,
+        params![
+            &job.id,
+            now,
+            format!(
+                "job terminated: reason={reason} (previous_status={})",
+                job.status
+            )
+        ],
+    )?;
+
+    let mut summary = job.summary_json.clone();
+    if !summary.is_object() {
+        summary = serde_json::json!({});
+    }
+    if let Some(obj) = summary.as_object_mut() {
+        obj.insert(
+            "terminated".to_string(),
+            serde_json::json!({
+                "reason": reason,
+                "at": now,
+            }),
+        );
+    }
+
+    let summary_json = serde_json::to_string(&summary)?;
+    let is_terminal = matches!(job.status.as_str(), "success" | "failed" | "rolled_back");
+    if is_terminal {
+        tx.execute(
+            r#"
+UPDATE jobs
+SET finished_at = ?2, summary_json = ?3
+WHERE id = ?1
+"#,
+            params![&job.id, now, summary_json],
+        )?;
+    } else {
+        tx.execute(
+            r#"
+UPDATE jobs
+SET status = 'failed', finished_at = ?2, summary_json = ?3
+WHERE id = ?1
+"#,
+            params![&job.id, now, summary_json],
+        )?;
+    }
+    Ok(())
+}
+
+fn merge_summary_string_array(existing: &mut serde_json::Value, value: &serde_json::Value) -> bool {
+    let Some(existing_items) = existing.as_array_mut() else {
+        return false;
+    };
+    let Some(new_items) = value.as_array() else {
+        return false;
+    };
+
+    let mut seen = existing_items
+        .iter()
+        .filter_map(|item| item.as_str().map(ToString::to_string))
+        .collect::<std::collections::HashSet<_>>();
+    for item in new_items {
+        if let Some(item) = item.as_str() {
+            if seen.insert(item.to_string()) {
+                existing_items.push(serde_json::Value::String(item.to_string()));
+            }
+        } else if !existing_items.contains(item) {
+            existing_items.push(item.clone());
+        }
+    }
+    true
+}
+
+fn insert_job_tx(tx: &rusqlite::Transaction<'_>, job: &JobListItem) -> anyhow::Result<()> {
+    tx.execute(
+        r#"
+INSERT INTO jobs (
+  id,
+  type,
+  scope,
+  stack_id,
+  service_id,
+  status,
+  allow_arch_mismatch,
+  backup_mode,
+  created_by,
+  reason,
+  created_at,
+  started_at,
+  finished_at,
+  summary_json
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+"#,
+        params![
+            &job.id,
+            job.r#type.as_str(),
+            job.scope.as_str(),
+            &job.stack_id,
+            &job.service_id,
+            &job.status,
+            job.allow_arch_mismatch as i64,
+            &job.backup_mode,
+            &job.created_by,
+            &job.reason,
+            &job.created_at,
+            &job.started_at,
+            &job.finished_at,
+            serde_json::to_string(&job.summary_json)?
+        ],
+    )?;
+    Ok(())
+}
+
 impl ArchivedFilter {
     fn where_clause(self, column: &str) -> String {
         match self {
@@ -3348,6 +3515,19 @@ VALUES (?1, ?2, ?2, ?3, ?4, 'package', 'published', 'processed', 200, 1)
         .context("insert github packages delivery")
     }
 
+    pub async fn delete_github_packages_delivery(&self, delivery_id: &str) -> anyhow::Result<()> {
+        let delivery_id = delivery_id.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                "DELETE FROM github_packages_deliveries WHERE delivery_id = ?1",
+                params![delivery_id],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("delete github packages delivery")
+    }
+
     pub async fn github_packages_delivery_exists(&self, delivery_id: &str) -> anyhow::Result<bool> {
         let delivery_id = delivery_id.to_string();
         self.call(move |conn| {
@@ -3921,6 +4101,129 @@ INSERT INTO jobs (
         .context("insert job")
     }
 
+    pub async fn insert_or_reuse_webhook_check_job_for_service(
+        &self,
+        job: JobListItem,
+        now: &str,
+        stale_threshold: time::Duration,
+    ) -> anyhow::Result<PendingJobUpsert> {
+        let service_id = job
+            .service_id
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("service_id is required for webhook service check"))?;
+        let now = now.to_string();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let existing = tx
+                .query_row(
+                    r#"
+SELECT
+  id,
+  type,
+  scope,
+  stack_id,
+  service_id,
+  status,
+  created_by,
+  reason,
+  created_at,
+  started_at,
+  finished_at,
+  allow_arch_mismatch,
+  backup_mode,
+  summary_json
+FROM jobs
+WHERE type = 'check'
+  AND scope = 'service'
+  AND service_id = ?1
+  AND status IN ('queued', 'running')
+ORDER BY
+  CASE status WHEN 'running' THEN 0 ELSE 1 END,
+  created_at DESC,
+  id DESC
+LIMIT 1
+"#,
+                    params![&service_id],
+                    map_job_list_item_row,
+                )
+                .optional()?;
+
+            if let Some(existing) = existing {
+                if existing.status == "running" && job_is_stale(&existing, &now, stale_threshold) {
+                    terminate_job_as_failed_tx(&tx, &existing, &now, "stale_check")?;
+                } else {
+                    tx.commit()?;
+                    return Ok(PendingJobUpsert::Reused(Box::new(existing)));
+                }
+            }
+
+            insert_job_tx(&tx, &job)?;
+            tx.commit()?;
+            Ok(PendingJobUpsert::Inserted)
+        })
+        .await
+        .context("insert or reuse webhook check job for service")
+    }
+
+    pub async fn insert_or_reuse_webhook_discovery_job(
+        &self,
+        job: JobListItem,
+        now: &str,
+        stale_threshold: time::Duration,
+    ) -> anyhow::Result<PendingJobUpsert> {
+        let now = now.to_string();
+        self.call(move |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let existing = tx
+                .query_row(
+                    r#"
+SELECT
+  id,
+  type,
+  scope,
+  stack_id,
+  service_id,
+  status,
+  created_by,
+  reason,
+  created_at,
+  started_at,
+  finished_at,
+  allow_arch_mismatch,
+  backup_mode,
+  summary_json
+FROM jobs
+WHERE type = 'discovery'
+  AND scope = 'all'
+  AND status IN ('queued', 'running')
+ORDER BY
+  CASE status WHEN 'running' THEN 0 ELSE 1 END,
+  created_at DESC,
+  id DESC
+LIMIT 1
+"#,
+                    [],
+                    map_job_list_item_row,
+                )
+                .optional()?;
+
+            if let Some(existing) = existing {
+                if existing.status == "running" && job_is_stale(&existing, &now, stale_threshold) {
+                    terminate_job_as_failed_tx(&tx, &existing, &now, "stale_check")?;
+                } else {
+                    tx.commit()?;
+                    return Ok(PendingJobUpsert::Reused(Box::new(existing)));
+                }
+            }
+
+            insert_job_tx(&tx, &job)?;
+            tx.commit()?;
+            Ok(PendingJobUpsert::Inserted)
+        })
+        .await
+        .context("insert or reuse webhook discovery job")
+    }
+
     pub async fn claim_next_queued_job_by_type(
         &self,
         job_type: JobType,
@@ -4101,6 +4404,14 @@ WHERE id = ?1
                 && let Some(fields_obj) = fields.as_object()
             {
                 for (key, value) in fields_obj {
+                    if matches!(
+                        key.as_str(),
+                        "matchedServiceIds" | "reusedJobIds" | "deliveryIds" | "repos"
+                    ) && let Some(existing) = summary_obj.get_mut(key)
+                        && merge_summary_string_array(existing, value)
+                    {
+                        continue;
+                    }
                     summary_obj.insert(key.clone(), value.clone());
                 }
             }
