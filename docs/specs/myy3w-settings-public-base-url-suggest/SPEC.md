@@ -85,3 +85,4 @@
 
 - 2026-03-07: 新建规格并冻结“空 Public Base URL 当前地址建议气泡”的交互口径。
 - 2026-03-07: 完成 Settings inline suggestion bubble、localStorage 拒绝偏好与 Storybook 场景；`bun run --cwd web lint`、`build`、`build-storybook`、`test-storybook` 通过。
+- 2026-03-07: 记录快车道交付分支与 PR #145，规格与实现保持同步。
