@@ -102,6 +102,7 @@ impl App {
 
     pub fn router(self: Arc<Self>) -> Router {
         let base = self.cfg.base_path.clone();
+        let base_with_slash = format!("{base}/");
         let api = Router::new()
             .route("/health", get(health))
             .route("/version", get(version))
@@ -111,9 +112,12 @@ impl App {
             )
             .route("/self-upgrade/rollback", post(post_self_upgrade_rollback))
             .route("/favicon.png", get(ui_favicon))
-            .route("/", get(ui_index))
-            .with_state(self);
-        Router::new().nest(&base, api)
+            .with_state(self.clone());
+        Router::new()
+            .route(&base, get(ui_index))
+            .route(&base_with_slash, get(ui_index))
+            .nest(&base, api)
+            .with_state(self)
     }
 
     async fn start_op(&self, req: StartSelfUpgradeRequest) -> Result<String, ApiError> {
@@ -1555,6 +1559,8 @@ async fn fetch_dockrev_version(target: &TargetRuntime) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{body::Body, http::Request};
+    use tower::util::ServiceExt;
 
     #[test]
     fn rollback_image_ref_handles_full_refs_and_plain_tags() {
@@ -1596,6 +1602,35 @@ mod tests {
         let html = render_ui("/supervisor", &test_meta());
         assert!(html.contains(r".join('\n')"));
         assert!(!html.contains(r".join('\\n')"));
+    }
+
+    #[tokio::test]
+    async fn supervisor_ui_accepts_base_path_with_or_without_trailing_slash() {
+        let app = test_app_for_authz(None, None, true).await;
+        let router = app.clone().router();
+
+        let no_slash = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/supervisor")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(no_slash.status(), StatusCode::OK);
+
+        let with_slash = router
+            .oneshot(
+                Request::builder()
+                    .uri("/supervisor/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(with_slash.status(), StatusCode::OK);
     }
 
     fn test_meta() -> SupervisorMeta {
