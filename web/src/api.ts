@@ -1001,7 +1001,16 @@ export async function deleteIgnore(ruleId: string) {
 
 export async function getSettings(): Promise<SettingsResponse> {
   const resp = await apiFetch('/api/settings')
-  return (await resp.json()) as SettingsResponse
+  const data = (await resp.json()) as SettingsResponse
+  return {
+    ...data,
+    auth: {
+      ...data.auth,
+      currentGroups: Array.isArray(data.auth?.currentGroups)
+        ? data.auth.currentGroups.filter((value): value is string => typeof value === 'string')
+        : [],
+    },
+  }
 }
 
 export async function putSettings(input: PutSettingsInput) {

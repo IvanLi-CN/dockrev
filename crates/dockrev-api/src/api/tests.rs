@@ -9193,6 +9193,27 @@ async fn settings_auth_reports_group_only_mode() {
 }
 
 #[tokio::test]
+async fn settings_auth_serializes_empty_current_groups() {
+    let state = test_state_with_authz(":memory:", Some("alice"), None, false).await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/settings")
+                .header("X-Forwarded-User", "alice")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["auth"]["currentGroups"], serde_json::json!([]));
+}
+
+#[tokio::test]
 async fn protected_endpoint_returns_authz_details_and_redirect_target() {
     let state = test_state_with_authz(":memory:", Some("alice"), None, false).await;
     let app = api::router(state);

@@ -1353,7 +1353,7 @@ pub struct AuthSettings {
     pub allowed_group_masked: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_user: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub current_groups: Vec<String>,
     pub matched_by: String,
 }

@@ -109,7 +109,12 @@ impl Config {
 }
 
 fn non_empty(v: String) -> Option<String> {
-    if v.trim().is_empty() { None } else { Some(v) }
+    let trimmed = v.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn parse_csv_paths(input: &str) -> Vec<String> {
@@ -148,4 +153,15 @@ fn normalize_base_path(input: &str) -> anyhow::Result<String> {
         ));
     }
     Ok(out.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::non_empty;
+
+    #[test]
+    fn non_empty_trims_whitespace() {
+        assert_eq!(non_empty("  alice  ".to_string()).as_deref(), Some("alice"));
+        assert_eq!(non_empty("   ".to_string()), None);
+    }
 }
