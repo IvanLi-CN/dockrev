@@ -5801,6 +5801,16 @@ async fn get_deploy_check_report(
     headers: HeaderMap,
 ) -> Result<Json<DeployCheckReportResponse>, ApiError> {
     let auth = authorize_request(&state, &headers).await;
+    if auth.is_err() {
+        let generated_at = now_rfc3339().map_err(map_internal)?;
+        return Ok(Json(build_authz_only_report(
+            state.as_ref(),
+            &headers,
+            &auth,
+            generated_at,
+        )));
+    }
+
     let report = preflight::build_report(state.as_ref())
         .await
         .map_err(map_internal)?;
@@ -5876,31 +5886,36 @@ async fn authz_error(state: &AppState, failure: AuthzFailure) -> ApiError {
     }))
 }
 
+fn build_authz_only_report(
+    state: &AppState,
+    headers: &HeaderMap,
+    auth: &Result<RequestAuth, ApiError>,
+    generated_at: String,
+) -> DeployCheckReportResponse {
+    let auth_checks = build_authz_checks(state, headers, auth);
+    let blocking_check_ids = auth_checks
+        .iter()
+        .filter(|item| item.required && item.status == DeployCheckStatus::Fail)
+        .map(|item| item.id.clone())
+        .collect::<Vec<_>>();
+    DeployCheckReportResponse {
+        generated_at,
+        overall: DeployCheckOverall {
+            result: DeployCheckResult::Fail,
+            blocking_check_ids,
+            summary: "Forward Auth or project authorization is not ready".to_string(),
+        },
+        checks: auth_checks,
+    }
+}
+
 fn attach_authz_checks(
     state: &AppState,
     headers: &HeaderMap,
     mut report: DeployCheckReportResponse,
     auth: Result<RequestAuth, ApiError>,
 ) -> DeployCheckReportResponse {
-    let auth_checks = build_authz_checks(state, headers, &auth);
-    if auth.is_err() {
-        let blocking_check_ids = auth_checks
-            .iter()
-            .filter(|item| item.required && item.status == DeployCheckStatus::Fail)
-            .map(|item| item.id.clone())
-            .collect::<Vec<_>>();
-        return DeployCheckReportResponse {
-            generated_at: report.generated_at,
-            overall: DeployCheckOverall {
-                result: DeployCheckResult::Fail,
-                blocking_check_ids,
-                summary: "Forward Auth or project authorization is not ready".to_string(),
-            },
-            checks: auth_checks,
-        };
-    }
-
-    let mut checks = auth_checks;
+    let mut checks = build_authz_checks(state, headers, &auth);
     checks.extend(report.checks);
     let blocking_check_ids = checks
         .iter()

@@ -9274,6 +9274,35 @@ async fn deploy_check_report_surfaces_authz_failures_without_full_report() {
 }
 
 #[tokio::test]
+async fn deploy_check_report_skips_preflight_when_request_is_unauthorized() {
+    let state = test_state_with_authz(":memory:", Some("alice"), None, false).await;
+    state
+        .db
+        .put_instance_public_base_url(
+            Some("ftp://dockrev.example.com".to_string()),
+            &super::now_rfc3339().unwrap(),
+        )
+        .await
+        .unwrap();
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/deploy-check/report")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["overall"]["result"], "fail");
+    assert_eq!(body["checks"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn github_packages_webhook_persists_ignored_delivery_for_unselected_repo() {
     use ring::hmac;
 
