@@ -41,6 +41,8 @@ pub fn authorize_request(
 ) -> Result<RequestAuth, AuthzFailure> {
     let user = read_header_value(headers, &config.auth_forward_header_name);
     let groups = read_groups(headers, &config.auth_group_header_name);
+    let allowlist_configured =
+        config.auth_allowed_user.is_some() || config.auth_allowed_group.is_some();
 
     if let Some(current_user) = user.clone()
         && config.auth_allowed_user.as_deref() == Some(current_user.as_str())
@@ -66,28 +68,17 @@ pub fn authorize_request(
         });
     }
 
-    if config.auth_allow_anonymous_in_dev {
-        if user.is_none() && groups.is_empty() {
-            return Ok(RequestAuth {
-                principal: "anonymous".to_string(),
-                user: Some("anonymous".to_string()),
-                groups,
-                matched_by: AuthzMatchKind::AnonymousDev,
-            });
-        }
-
-        if config.auth_allowed_user.is_none() && config.auth_allowed_group.is_none() {
-            let principal = user.clone().unwrap_or_else(|| "anonymous".to_string());
-            return Ok(RequestAuth {
-                principal,
-                user,
-                groups,
-                matched_by: AuthzMatchKind::AnonymousDev,
-            });
-        }
+    if config.auth_allow_anonymous_in_dev && !allowlist_configured {
+        let principal = user.clone().unwrap_or_else(|| "anonymous".to_string());
+        return Ok(RequestAuth {
+            principal,
+            user,
+            groups,
+            matched_by: AuthzMatchKind::AnonymousDev,
+        });
     }
 
-    if config.auth_allowed_user.is_none() && config.auth_allowed_group.is_none() {
+    if !allowlist_configured {
         return Err(AuthzFailure {
             reason: "authz_config_missing",
             message: "authorization target is not configured",
@@ -120,7 +111,19 @@ pub fn config_view(config: &Config) -> AuthzConfigView {
         allow_anonymous_in_dev: config.auth_allow_anonymous_in_dev,
         allowed_user_masked: mask_value(config.auth_allowed_user.as_deref()),
         allowed_group_masked: mask_value(config.auth_allowed_group.as_deref()),
-        authorization_mode: "user_or_group",
+        authorization_mode: authorization_mode(config),
+    }
+}
+
+fn authorization_mode(config: &Config) -> &'static str {
+    match (
+        config.auth_allowed_user.is_some(),
+        config.auth_allowed_group.is_some(),
+    ) {
+        (true, true) => "user_or_group",
+        (true, false) => "user_only",
+        (false, true) => "group_only",
+        (false, false) => "unconfigured",
     }
 }
 
@@ -270,7 +273,33 @@ mod tests {
 
         let auth = authorize_request(&config, &headers).unwrap();
         assert_eq!(auth.principal, "anonymous");
-        assert_eq!(auth.user.as_deref(), Some("anonymous"));
+        assert_eq!(auth.user, None);
         assert_eq!(auth.matched_by, AuthzMatchKind::AnonymousDev);
+    }
+
+    #[test]
+    fn allowlist_disables_anonymous_dev_bypass() {
+        let mut config = config();
+        config.auth_allowed_user = Some("alice".to_string());
+        config.auth_allow_anonymous_in_dev = true;
+        let headers = HeaderMap::new();
+
+        let err = authorize_request(&config, &headers).unwrap_err();
+        assert_eq!(err.reason, "identity_missing");
+    }
+
+    #[test]
+    fn config_view_reports_specific_authorization_mode() {
+        let mut config = config();
+        assert_eq!(config_view(&config).authorization_mode, "unconfigured");
+
+        config.auth_allowed_user = Some("alice".to_string());
+        assert_eq!(config_view(&config).authorization_mode, "user_only");
+
+        config.auth_allowed_group = Some("ops".to_string());
+        assert_eq!(config_view(&config).authorization_mode, "user_or_group");
+
+        config.auth_allowed_user = None;
+        assert_eq!(config_view(&config).authorization_mode, "group_only");
     }
 }

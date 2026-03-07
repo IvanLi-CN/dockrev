@@ -525,6 +525,8 @@ async fn ui_favicon() -> impl IntoResponse {
 fn require_user(app: &App, headers: &HeaderMap) -> Result<String, ApiError> {
     let user = read_header_value(headers, &app.cfg.auth_forward_header_name);
     let groups = read_groups(headers, &app.cfg.auth_group_header_name);
+    let allowlist_configured =
+        app.cfg.auth_allowed_user.is_some() || app.cfg.auth_allowed_group.is_some();
 
     if let Some(current_user) = user.as_deref()
         && app.cfg.auth_allowed_user.as_deref() == Some(current_user)
@@ -538,14 +540,8 @@ fn require_user(app: &App, headers: &HeaderMap) -> Result<String, ApiError> {
         return Ok(user.unwrap_or_else(|| format!("group:{allowed_group}")));
     }
 
-    if app.cfg.auth_allow_anonymous_in_dev {
-        if user.is_none() && groups.is_empty() {
-            return Ok("anonymous".to_string());
-        }
-
-        if app.cfg.auth_allowed_user.is_none() && app.cfg.auth_allowed_group.is_none() {
-            return Ok(user.unwrap_or_else(|| "anonymous".to_string()));
-        }
+    if app.cfg.auth_allow_anonymous_in_dev && !allowlist_configured {
+        return Ok(user.unwrap_or_else(|| "anonymous".to_string()));
     }
 
     Err(ApiError::auth_required())
@@ -2016,6 +2012,14 @@ mod tests {
 
         let user = require_user(app.as_ref(), &headers).unwrap();
         assert_eq!(user, "anonymous");
+    }
+
+    #[tokio::test]
+    async fn supervisor_auth_requires_identity_once_allowlist_is_configured() {
+        let app = test_app_for_authz(Some("alice"), None, true).await;
+        let headers = HeaderMap::new();
+
+        assert!(require_user(app.as_ref(), &headers).is_err());
     }
 
     #[tokio::test]

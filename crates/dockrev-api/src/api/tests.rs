@@ -9171,6 +9171,28 @@ async fn settings_auth_reports_group_match_details() {
 }
 
 #[tokio::test]
+async fn settings_auth_reports_group_only_mode() {
+    let state = test_state_with_authz(":memory:", None, Some("ops"), false).await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/settings")
+                .header("Remote-Groups", "dev, ops")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["auth"]["authorizationMode"], "group_only");
+    assert_eq!(body["auth"]["matchedBy"], "group");
+}
+
+#[tokio::test]
 async fn protected_endpoint_returns_authz_details_and_redirect_target() {
     let state = test_state_with_authz(":memory:", Some("alice"), None, false).await;
     let app = api::router(state);
@@ -9190,11 +9212,29 @@ async fn protected_endpoint_returns_authz_details_and_redirect_target() {
     assert_eq!(body["error"]["code"], "auth_required");
     assert_eq!(body["error"]["details"]["reason"], "identity_missing");
     assert_eq!(body["error"]["details"]["redirectTo"], "deploy-check");
-    assert_eq!(
-        body["error"]["details"]["authorizationMode"],
-        "user_or_group"
-    );
+    assert_eq!(body["error"]["details"]["authorizationMode"], "user_only");
     assert_eq!(body["error"]["details"]["allowedUserMasked"], "al***ce");
+}
+
+#[tokio::test]
+async fn protected_endpoint_does_not_allow_dev_bypass_when_allowlist_is_configured() {
+    let state = test_state_with_authz(":memory:", Some("alice"), None, true).await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/settings")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+    let body = response_json(resp).await;
+    assert_eq!(body["error"]["details"]["reason"], "identity_missing");
+    assert_eq!(body["error"]["details"]["authorizationMode"], "user_only");
 }
 
 #[tokio::test]

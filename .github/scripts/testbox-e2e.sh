@@ -99,7 +99,9 @@ run_script() {
 
 for script_name in "${scripts[@]}"; do
   for ((iteration = 1; iteration <= repeat_count; iteration++)); do
-    run_script "$script_name" "$iteration"
+    if ! run_script "$script_name" "$iteration"; then
+      :
+    fi
   done
 done
 
