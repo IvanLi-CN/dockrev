@@ -17,7 +17,7 @@
 ### Goals
 
 - 当 `instance.publicBaseUrl` 为空（含全空白字符）且未被本浏览器拒绝时，在输入框下方显示当前站点根地址建议气泡。
-- 候选值固定使用当前页面 `origin + '/'`，例如 `https://dockrev.ivanli.cc/`，不带 `/settings`、query 或 hash。
+- 候选值固定从当前页面 URL 推导目录根地址（根路径部署时等价于 `origin + '/'`），例如 `https://dockrev.ivanli.cc/`；不带 `/settings`、query 或 hash，并保留部署 base path。
 - 气泡中的候选地址使用 `Mono` 内联 code 样式展示，按钮文案固定为 `自动填入` 与 `不`。
 - 点击 `自动填入` 复用现有 `updateInstance('instance.publicBaseUrl', ...)` 与 autosave 链路，不新增后端接口。
 - 点击 `不` 后用 `localStorage['dockrev:settings:instancePublicBaseUrl:suggestCurrentOriginDismissed'] = '1'` 记住偏好，下次同浏览器不再显示。
@@ -64,7 +64,7 @@
 ## 验收标准（Acceptance Criteria）
 
 - Given `publicBaseUrl` 为空且 localStorage 未拒绝，When 打开 Settings，Then Public Base URL 输入框下方出现建议气泡，且显示当前站点根地址。
-- Given 当前页面路径为 `/settings`，When 生成候选地址，Then 展示值为 `origin + '/'`，而不是包含 `/settings` 的完整 URL。
+- Given 当前页面路径为 `/settings`，When 生成候选地址，Then 展示值为页面目录根地址（根路径部署时即 `origin + '/'`），而不是包含 `/settings` 的完整 URL。
 - Given 用户点击 `自动填入`，When 交互完成，Then 输入框被填入候选地址，建议气泡立即消失，后续保存继续复用现有 autosave。
 - Given 用户点击 `不`，When 刷新页面且字段仍为空，Then 建议气泡不再显示。
 - Given 输入框已有任意非空白值，When 页面渲染，Then 建议气泡不存在。
@@ -79,7 +79,7 @@
 ## 风险 / 假设
 
 - 假设：`window.location.origin` 在生产部署与 Storybook 环境下都可用，并且用作实例对外访问根地址是合理默认值。
-- 风险：若部署实际需要子路径而不是站点根地址，本建议只提供 origin 级默认值，用户仍可手动改写。
+- 风险：若部署拓扑与当前浏览器访问地址不一致，建议值仍可能不是最终对外地址，用户仍可手动改写。
 
 ## 变更记录（Change log）
 

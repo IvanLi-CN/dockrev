@@ -392,11 +392,15 @@ function writeInstancePublicBaseUrlSuggestDismissedToStorage(): boolean {
   }
 }
 
-function readCurrentOriginWithTrailingSlash(): string | null {
+function readCurrentPublicBaseUrlSuggestion(): string | null {
   if (typeof window === 'undefined') return null
-  const origin = window.location.origin?.trim() ?? ''
-  if (!origin || origin === 'null') return null
-  return origin.endsWith('/') ? origin : `${origin}/`
+  try {
+    const suggested = new URL('./', window.location.href).toString().trim()
+    if (!suggested || suggested === 'null') return null
+    return suggested.endsWith('/') ? suggested : `${suggested}/`
+  } catch {
+    return null
+  }
 }
 
 function GitHubPackagesRepoPicker({
@@ -1518,7 +1522,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
   }
 
   const instancePublicBaseUrlValue = settings.instance.publicBaseUrl ?? ''
-  const suggestedPublicBaseUrl = readCurrentOriginWithTrailingSlash()
+  const suggestedPublicBaseUrl = readCurrentPublicBaseUrlSuggestion()
   const showInstancePublicBaseUrlSuggestBubble =
     !instancePublicBaseUrlSuggestDismissed &&
     instancePublicBaseUrlValue.trim().length === 0 &&
