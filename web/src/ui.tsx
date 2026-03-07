@@ -168,7 +168,7 @@ export function Button(props: ButtonProps) {
       aria-busy={props.loading ? true : undefined}
       data-hint={props.hint ?? undefined}
       onClick={props.onClick}
-      title={props.title}
+      title={props.hint ? undefined : props.title}
       variant={mapButtonVariant(variant)}
       type="button"
     >
@@ -204,7 +204,6 @@ export function IconButton(props: {
       size="icon"
       type="button"
       aria-label={props.title}
-      title={props.title}
     >
       {props.children}
     </PrimitiveButton>
