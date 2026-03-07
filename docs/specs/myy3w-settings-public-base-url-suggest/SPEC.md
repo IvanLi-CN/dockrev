@@ -72,6 +72,16 @@
 - Given 用户点击 `不`，When 刷新页面且字段仍为空，Then 建议气泡不再显示。
 - Given 输入框已有任意非空白值，When 页面渲染，Then 建议气泡不存在。
 
+## 验收截图（Storybook）
+
+- 桌面宽度（右对齐悬浮气泡）：
+
+![Settings Public Base URL 建议气泡（Desktop）](./assets/public-base-url-suggestion-desktop.png)
+
+- 小屏宽度（当前实现截图）：
+
+![Settings Public Base URL 建议气泡（Mobile）](./assets/public-base-url-suggestion-mobile.png)
+
 ## 里程碑（Milestones / checklist）
 
 - [x] M1: Settings 页新增 Public Base URL 建议值推导与 localStorage 拒绝偏好 helper（含 base path 保留）。
@@ -95,4 +105,5 @@
 - 2026-03-07: 进一步对齐项目现有 bubble 语法，补上箭头与更接近通知测试气泡的视觉锚点。
 - 2026-03-07: 根据最新视觉反馈收紧为单行气泡布局，保持文案与按钮同排，必要时对 URL 做省略。
 - 2026-03-07: 根据最新定位反馈将建议气泡改为相对输入框右对齐，并把尾巴固定到更贴近项目原生 bubble 的右侧锚点。
+- 2026-03-07: 检查移动端 DOM 后确认旧的 `.settingsInlineSuggestionActions { width: 100% }` 媒体查询导致文案宽度被压到 0；移除该覆盖并更新 Desktop / Mobile 验收截图。
 - 2026-03-07: 记录快车道交付分支与 PR #145，规格与实现保持同步。
