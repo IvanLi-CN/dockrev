@@ -3,7 +3,16 @@ pub mod types;
 #[cfg(test)]
 mod tests;
 
-use std::{collections::BTreeMap, convert::Infallible, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    convert::Infallible,
+    str::FromStr,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use anyhow::Context as _;
 use axum::{
@@ -5696,6 +5705,7 @@ async fn github_packages_webhook(
         ));
     }
 
+    let delivery_has_work = AtomicBool::new(false);
     let result: Result<serde_json::Value, ApiError> = async {
         let now = received_at.clone();
         let repo_key = github_webhook_repo_key_from_full_name(repo_full_name.as_deref());
@@ -5787,10 +5797,6 @@ async fn github_packages_webhook(
                         )
                         .await?;
                         if reused {
-                            let _ = state
-                                .db
-                                .merge_job_summary_fields(&job_id, &initial_audit)
-                                .await;
                             if !reused_job_ids.contains(&job_id) {
                                 reused_job_ids.push(job_id.clone());
                             }
@@ -5879,6 +5885,9 @@ async fn github_packages_webhook(
                 )
             };
 
+        if !job_ids.is_empty() {
+            delivery_has_work.store(true, Ordering::Relaxed);
+        }
         let primary_job_id = job_ids.first().cloned();
         state
             .db
@@ -5922,7 +5931,9 @@ async fn github_packages_webhook(
     match result {
         Ok(response) => Ok(Json(response)),
         Err(err) => {
-            let _ = state.db.delete_github_packages_delivery(&delivery_id).await;
+            if !delivery_has_work.load(Ordering::Relaxed) {
+                let _ = state.db.delete_github_packages_delivery(&delivery_id).await;
+            }
             Err(err)
         }
     }

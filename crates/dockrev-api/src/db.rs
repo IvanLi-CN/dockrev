@@ -312,6 +312,28 @@ fn merge_summary_string_array(existing: &mut serde_json::Value, value: &serde_js
     true
 }
 
+fn merge_job_summary_value(summary: &mut serde_json::Value, fields: &serde_json::Value) {
+    if !summary.is_object() {
+        *summary = serde_json::Value::Object(Default::default());
+    }
+
+    if let Some(summary_obj) = summary.as_object_mut()
+        && let Some(fields_obj) = fields.as_object()
+    {
+        for (key, value) in fields_obj {
+            if matches!(
+                key.as_str(),
+                "matchedServiceIds" | "reusedJobIds" | "deliveryIds" | "repos"
+            ) && let Some(existing) = summary_obj.get_mut(key)
+                && merge_summary_string_array(existing, value)
+            {
+                continue;
+            }
+            summary_obj.insert(key.clone(), value.clone());
+        }
+    }
+}
+
 fn insert_job_tx(tx: &rusqlite::Transaction<'_>, job: &JobListItem) -> anyhow::Result<()> {
     tx.execute(
         r#"
@@ -4148,10 +4170,19 @@ LIMIT 1
                 )
                 .optional()?;
 
-            if let Some(existing) = existing {
+            if let Some(mut existing) = existing {
                 if existing.status == "running" && job_is_stale(&existing, &now, stale_threshold) {
                     terminate_job_as_failed_tx(&tx, &existing, &now, "stale_check")?;
                 } else {
+                    merge_job_summary_value(&mut existing.summary_json, &job.summary_json);
+                    tx.execute(
+                        r#"
+UPDATE jobs
+SET summary_json = ?2
+WHERE id = ?1
+"#,
+                        params![&existing.id, serde_json::to_string(&existing.summary_json)?],
+                    )?;
                     tx.commit()?;
                     return Ok(PendingJobUpsert::Reused(Box::new(existing)));
                 }
@@ -4396,25 +4427,7 @@ WHERE id = ?1
 
             let mut summary: serde_json::Value = serde_json::from_str(&summary_raw)
                 .unwrap_or_else(|_| serde_json::Value::Object(Default::default()));
-            if !summary.is_object() {
-                summary = serde_json::Value::Object(Default::default());
-            }
-
-            if let Some(summary_obj) = summary.as_object_mut()
-                && let Some(fields_obj) = fields.as_object()
-            {
-                for (key, value) in fields_obj {
-                    if matches!(
-                        key.as_str(),
-                        "matchedServiceIds" | "reusedJobIds" | "deliveryIds" | "repos"
-                    ) && let Some(existing) = summary_obj.get_mut(key)
-                        && merge_summary_string_array(existing, value)
-                    {
-                        continue;
-                    }
-                    summary_obj.insert(key.clone(), value.clone());
-                }
-            }
+            merge_job_summary_value(&mut summary, &fields);
 
             conn.execute(
                 r#"
