@@ -573,6 +573,7 @@ export type GitHubPackagesWebhookDelivery = {
   reason?: string | null
   responseStatus?: number | null
   jobId?: string | null
+  jobIds?: string[]
   attemptCount: number
 }
 

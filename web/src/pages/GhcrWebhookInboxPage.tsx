@@ -48,8 +48,15 @@ function responseTone(status?: number | null): 'ok' | 'warn' | 'bad' | 'muted' {
   return 'muted'
 }
 
-function taskLabel(jobId?: string | null): string {
-  if (jobId) return '查看扫描任务'
+function deliveryJobIds(jobId?: string | null, jobIds?: string[] | null): string[] {
+  if (Array.isArray(jobIds) && jobIds.length > 0) return jobIds
+  if (jobId) return [jobId]
+  return []
+}
+
+function taskLabel(jobIds: string[]): string {
+  if (jobIds.length > 1) return `查看 ${jobIds.length} 个任务`
+  if (jobIds.length === 1) return '查看扫描任务'
   return '无关联任务'
 }
 
@@ -385,18 +392,39 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
               </Pill>
             </div>
             <div className="ghcrInboxCell ghcrInboxCellTask">
-              {delivery.jobId ? (
-                <button
-                  type="button"
-                  className="linkButton"
-                  title={`任务 ID: ${delivery.jobId}`}
-                  onClick={() => navigate({ name: 'job', jobId: delivery.jobId! })}
-                >
-                  {taskLabel(delivery.jobId)}
-                </button>
-              ) : (
-                <div className="muted">{taskLabel(delivery.jobId)}</div>
-              )}
+              {(() => {
+                const jobIds = deliveryJobIds(delivery.jobId, delivery.jobIds)
+                if (jobIds.length === 0) {
+                  return <div className="muted">{taskLabel(jobIds)}</div>
+                }
+                if (jobIds.length === 1) {
+                  return (
+                    <button
+                      type="button"
+                      className="linkButton"
+                      title={`任务 ID: ${jobIds[0]}`}
+                      onClick={() => navigate({ name: 'job', jobId: jobIds[0] })}
+                    >
+                      {taskLabel(jobIds)}
+                    </button>
+                  )
+                }
+                return (
+                  <div className="ghcrInboxTaskList" aria-label={`关联任务 ${jobIds.length} 个`}>
+                    {jobIds.map((jobId) => (
+                      <button
+                        key={jobId}
+                        type="button"
+                        className="linkButton ghcrInboxTaskLink"
+                        title={`任务 ID: ${jobId}`}
+                        onClick={() => navigate({ name: 'job', jobId })}
+                      >
+                        <span>{jobId}</span>
+                      </button>
+                    ))}
+                  </div>
+                )
+              })()}
             </div>
           </div>
         ))}

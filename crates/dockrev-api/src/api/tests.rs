@@ -1355,6 +1355,126 @@ async fn set_single_service_check_result(
     service.id.clone()
 }
 
+async fn seed_discovered_project(state: &Arc<AppState>, stack_id: &str, project: &str) {
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: project.to_string(),
+            stack_id: Some(stack_id.to_string()),
+            status: "active".to_string(),
+            last_seen_at: Some(now.clone()),
+            last_scan_at: now,
+            last_error: None,
+            last_config_files: None,
+            unarchive_if_active: true,
+        })
+        .await
+        .unwrap();
+}
+
+async fn enable_github_packages_webhook(
+    state: &Arc<AppState>,
+    secret: &str,
+    repos: &[(&str, &str, bool)],
+) {
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .put_github_packages_settings(
+            &crate::api::types::GitHubPackagesSettingsDb {
+                enabled: true,
+                callback_url: "https://dockrev.example.com/api/webhooks/github-packages"
+                    .to_string(),
+                pat: Some("ghp_example".to_string()),
+                webhook_secret: Some(secret.to_string()),
+                updated_at: Some(now.clone()),
+            },
+            &now,
+        )
+        .await
+        .unwrap();
+    let repos = repos
+        .iter()
+        .map(|(owner, repo, selected)| (owner.to_string(), repo.to_string(), *selected))
+        .collect::<Vec<_>>();
+    state
+        .db
+        .put_github_packages_repos(&repos, &now)
+        .await
+        .unwrap();
+}
+
+fn sign_github_package_payload(secret: &str, payload: &serde_json::Value) -> (Vec<u8>, String) {
+    use ring::hmac;
+
+    let payload_bytes = payload.to_string().into_bytes();
+    let key = hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes());
+    let tag = hmac::sign(&key, &payload_bytes);
+    let sig = format!("sha256={}", hex::encode(tag.as_ref()));
+    (payload_bytes, sig)
+}
+
+async fn wait_for_job_terminal(
+    state: &Arc<AppState>,
+    job_id: &str,
+) -> crate::api::types::JobListItem {
+    for _ in 0..300 {
+        let job = state.db.get_job(job_id).await.unwrap().unwrap();
+        if job.status != "queued" && job.status != "running" {
+            return job;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("timed out waiting for job {job_id} to finish");
+}
+
+async fn configure_webhook_notifications(
+    state: &Arc<AppState>,
+) -> (
+    tokio::sync::mpsc::Receiver<serde_json::Value>,
+    tokio::task::JoinHandle<()>,
+) {
+    let (tx, rx) = tokio::sync::mpsc::channel::<serde_json::Value>(8);
+    let hook_app = Router::new().route(
+        "/hook",
+        post({
+            let tx = tx.clone();
+            move |Json(payload): Json<serde_json::Value>| {
+                let tx = tx.clone();
+                async move {
+                    let _ = tx.send(payload).await;
+                    axum::http::StatusCode::OK
+                }
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, hook_app).await.unwrap();
+    });
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let mut notification = state.db.get_notification_settings().await.unwrap();
+    notification.webhook_enabled = true;
+    notification.webhook_url = Some(format!("http://{addr}/hook"));
+    notification.event_new_version_enabled = true;
+    state
+        .db
+        .put_notification_settings(&notification, &now)
+        .await
+        .unwrap();
+
+    (rx, server)
+}
+
 #[tokio::test]
 async fn health_ok() {
     let state = test_state(":memory:").await;
@@ -8063,6 +8183,1105 @@ async fn github_packages_webhook_matches_selected_repos_case_insensitively() {
 }
 
 #[tokio::test]
+async fn github_packages_webhook_matches_managed_service_and_enqueues_check() {
+    let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", Arc::new(DigestOnlyUpdateRegistry), runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-ghcr-webhook-single-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo-single").await;
+    enable_github_packages_webhook(&state, "secret123", &[("acme", "web", true)]).await;
+
+    let service_id = state.db.list_services_for_check(&stack_id).await.unwrap()[0]
+        .id
+        .clone();
+    let payload = serde_json::json!({
+        "action": "published",
+        "repository": { "full_name": "acme/web", "owner": { "login": "acme" } }
+    });
+    let (payload_bytes, sig) = sign_github_package_payload("secret123", &payload);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "svc-match-1")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["fallbackUsed"], false);
+    assert_eq!(
+        body["matchedServiceIds"],
+        serde_json::json!([service_id.clone()])
+    );
+    assert_eq!(body["reusedJobIds"], serde_json::json!([]));
+    let job_id = body["jobId"].as_str().unwrap().to_string();
+    assert!(job_id.starts_with("chk_"));
+    assert_eq!(body["jobIds"], serde_json::json!([job_id.clone()]));
+
+    let job = wait_for_job_terminal(&state, &job_id).await;
+    assert_eq!(job.r#type.as_str(), "check");
+    assert_eq!(job.scope.as_str(), "service");
+    assert_eq!(job.reason, "webhook");
+    assert_eq!(job.stack_id.as_deref(), Some(stack_id.as_str()));
+    assert_eq!(job.service_id.as_deref(), Some(service_id.as_str()));
+    assert_eq!(job.summary_json["source"].as_str(), Some("github_webhook"));
+    assert_eq!(job.summary_json["repo"].as_str(), Some("ghcr.io/acme/web"));
+    assert_eq!(job.summary_json["deliveryId"].as_str(), Some("svc-match-1"));
+    assert_eq!(job.summary_json["fallbackUsed"], false);
+}
+
+#[tokio::test]
+async fn github_packages_webhook_matches_multiple_services_without_discovery_noise() {
+    let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", Arc::new(DigestOnlyUpdateRegistry), runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path_a = format!(
+        "/tmp/dockrev-ghcr-webhook-multi-a-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path_a,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+  other:
+    image: ghcr.io/acme/other:1.0
+"#,
+    )
+    .unwrap();
+    let stack_a = seed_stack_from_compose(&state, "demo-a", &compose_path_a).await;
+    seed_discovered_project(&state, &stack_a, "demo-a").await;
+
+    let compose_path_b = format!(
+        "/tmp/dockrev-ghcr-webhook-multi-b-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path_b,
+        r#"
+services:
+  api:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_b = seed_stack_from_compose(&state, "demo-b", &compose_path_b).await;
+    seed_discovered_project(&state, &stack_b, "demo-b").await;
+
+    enable_github_packages_webhook(&state, "secret123", &[("acme", "web", true)]).await;
+
+    let service_ids = vec![
+        state
+            .db
+            .list_services_for_check(&stack_a)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|service| service.name == "web")
+            .unwrap()
+            .id,
+        state.db.list_services_for_check(&stack_b).await.unwrap()[0]
+            .id
+            .clone(),
+    ];
+
+    let payload = serde_json::json!({
+        "action": "published",
+        "repository": { "full_name": "acme/web", "owner": { "login": "acme" } }
+    });
+    let (payload_bytes, sig) = sign_github_package_payload("secret123", &payload);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "svc-match-2")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["fallbackUsed"], false);
+    assert_eq!(body["reusedJobIds"], serde_json::json!([]));
+    let matched = body["matchedServiceIds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(matched.len(), 2);
+    for service_id in &service_ids {
+        assert!(matched.contains(&service_id.as_str()));
+    }
+    let job_ids = body["jobIds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    assert_eq!(job_ids.len(), 2);
+    assert!(job_ids.iter().all(|job_id| job_id.starts_with("chk_")));
+
+    for job_id in &job_ids {
+        let job = wait_for_job_terminal(&state, job_id).await;
+        assert_eq!(job.r#type.as_str(), "check");
+        assert_eq!(job.scope.as_str(), "service");
+    }
+
+    let jobs = state.db.list_jobs().await.unwrap();
+    assert_eq!(
+        jobs.iter()
+            .filter(|job| job.r#type.as_str() == "check")
+            .count(),
+        2
+    );
+    assert_eq!(
+        jobs.iter()
+            .filter(|job| job.r#type.as_str() == "discovery")
+            .count(),
+        0
+    );
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    let delivery_job_ids = body["deliveries"][0]["jobIds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(delivery_job_ids.len(), 2);
+    for job_id in &job_ids {
+        assert!(delivery_job_ids.contains(&job_id.as_str()));
+    }
+}
+
+#[tokio::test]
+async fn github_packages_webhook_zero_match_falls_back_to_discovery() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    enable_github_packages_webhook(&state, "secret123", &[("acme", "widgets", true)]).await;
+
+    let payload = serde_json::json!({
+        "action": "published",
+        "repository": { "full_name": "acme/widgets", "owner": { "login": "acme" } }
+    });
+    let (payload_bytes, sig) = sign_github_package_payload("secret123", &payload);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "fallback-1")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["fallbackUsed"], true);
+    assert_eq!(body["fallbackReason"], "no_managed_service_match");
+    assert_eq!(body["matchedServiceIds"], serde_json::json!([]));
+    let job_id = body["jobId"].as_str().unwrap().to_string();
+    assert!(job_id.starts_with("dsc_"));
+
+    let job = wait_for_job_terminal(&state, &job_id).await;
+    assert_eq!(job.r#type.as_str(), "discovery");
+    assert_eq!(job.reason, "github_webhook");
+    assert_eq!(job.summary_json["source"].as_str(), Some("github_webhook"));
+    assert_eq!(job.summary_json["fallbackUsed"], true);
+    assert_eq!(
+        job.summary_json["fallbackReason"].as_str(),
+        Some("no_managed_service_match")
+    );
+}
+
+#[tokio::test]
+async fn github_packages_webhook_reuses_pending_discovery_fallback_job() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    enable_github_packages_webhook(&state, "secret123", &[("acme", "widgets", true)]).await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let existing_id = ids::new_discovery_id();
+    let mut existing = crate::api::types::JobRecord::new_running(
+        existing_id.clone(),
+        crate::api::types::JobType::Discovery,
+        crate::api::types::JobScope::All,
+        None,
+        None,
+        &now,
+    )
+    .to_db();
+    existing.created_by = "schedule".to_string();
+    existing.reason = "schedule".to_string();
+    state.db.insert_job(existing).await.unwrap();
+
+    let payload = serde_json::json!({
+        "action": "published",
+        "repository": { "full_name": "acme/widgets", "owner": { "login": "acme" } }
+    });
+    let (payload_bytes, sig) = sign_github_package_payload("secret123", &payload);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "fallback-2")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["jobId"], existing_id);
+    assert_eq!(body["jobIds"], serde_json::json!([existing_id.clone()]));
+    assert_eq!(
+        body["reusedJobIds"],
+        serde_json::json!([existing_id.clone()])
+    );
+    assert_eq!(body["fallbackUsed"], true);
+    assert_eq!(state.db.list_jobs().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn github_packages_webhook_replaces_stale_discovery_fallback_job() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    enable_github_packages_webhook(&state, "secret123", &[("acme", "widgets", true)]).await;
+
+    let stale_at = (time::OffsetDateTime::now_utc() - time::Duration::hours(3))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let existing_id = ids::new_discovery_id();
+    let mut existing = crate::api::types::JobRecord::new_running(
+        existing_id.clone(),
+        crate::api::types::JobType::Discovery,
+        crate::api::types::JobScope::All,
+        None,
+        None,
+        &stale_at,
+    )
+    .to_db();
+    existing.created_by = "schedule".to_string();
+    existing.reason = "schedule".to_string();
+    state.db.insert_job(existing).await.unwrap();
+
+    let payload = serde_json::json!({
+        "action": "published",
+        "repository": { "full_name": "acme/widgets", "owner": { "login": "acme" } }
+    });
+    let (payload_bytes, sig) = sign_github_package_payload("secret123", &payload);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "fallback-stale-1")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["fallbackUsed"], true);
+    assert_eq!(body["fallbackReason"], "no_managed_service_match");
+    assert_eq!(body["reusedJobIds"], serde_json::json!([]));
+    let job_id = body["jobId"].as_str().unwrap().to_string();
+    assert!(job_id.starts_with("dsc_"));
+    assert_ne!(job_id, existing_id);
+
+    let stale = state.db.get_job(&existing_id).await.unwrap().unwrap();
+    assert_eq!(stale.status, "failed");
+    assert_eq!(
+        stale.summary_json["terminated"]["reason"].as_str(),
+        Some("stale_check")
+    );
+    let stale_logs = state.db.list_job_logs(&existing_id).await.unwrap();
+    assert!(
+        stale_logs
+            .iter()
+            .any(|line| line.msg.contains("job terminated: reason=stale_check"))
+    );
+
+    let job = wait_for_job_terminal(&state, &job_id).await;
+    assert_eq!(job.reason, "github_webhook");
+    assert_eq!(state.db.list_jobs().await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn github_packages_webhook_reuses_pending_service_check_job() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-ghcr-webhook-reuse-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = state.db.list_services_for_check(&stack_id).await.unwrap()[0]
+        .id
+        .clone();
+    enable_github_packages_webhook(&state, "secret123", &[("acme", "web", true)]).await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let existing_id = ids::new_check_id();
+    let mut existing = crate::api::types::JobRecord::new_running(
+        existing_id.clone(),
+        crate::api::types::JobType::Check,
+        crate::api::types::JobScope::Service,
+        Some(stack_id.clone()),
+        Some(service_id.clone()),
+        &now,
+    )
+    .to_db();
+    existing.created_by = "ivan".to_string();
+    existing.reason = "ui".to_string();
+    state.db.insert_job(existing).await.unwrap();
+
+    let payload = serde_json::json!({
+        "action": "published",
+        "repository": { "full_name": "acme/web", "owner": { "login": "acme" } }
+    });
+    let (payload_bytes, sig) = sign_github_package_payload("secret123", &payload);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "svc-reuse-1")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["jobId"], existing_id);
+    assert_eq!(body["jobIds"], serde_json::json!([existing_id.clone()]));
+    assert_eq!(
+        body["reusedJobIds"],
+        serde_json::json!([existing_id.clone()])
+    );
+    assert_eq!(
+        body["matchedServiceIds"],
+        serde_json::json!([service_id.clone()])
+    );
+    assert_eq!(body["fallbackUsed"], false);
+    assert_eq!(state.db.list_jobs().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn github_packages_webhook_does_not_reuse_covering_stack_check_job() {
+    let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", Arc::new(DigestOnlyUpdateRegistry), runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!(
+        "/tmp/dockrev-ghcr-webhook-stack-running-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo-stack-running").await;
+    let service_id = state.db.list_services_for_check(&stack_id).await.unwrap()[0]
+        .id
+        .clone();
+    enable_github_packages_webhook(&state, "secret123", &[("acme", "web", true)]).await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let existing_id = ids::new_check_id();
+    let mut existing = crate::api::types::JobRecord::new_running(
+        existing_id.clone(),
+        crate::api::types::JobType::Check,
+        crate::api::types::JobScope::Stack,
+        Some(stack_id.clone()),
+        None,
+        &now,
+    )
+    .to_db();
+    existing.created_by = "ivan".to_string();
+    existing.reason = "ui".to_string();
+    state.db.insert_job(existing).await.unwrap();
+
+    let payload = serde_json::json!({
+        "action": "published",
+        "repository": { "full_name": "acme/web", "owner": { "login": "acme" } }
+    });
+    let (payload_bytes, sig) = sign_github_package_payload("secret123", &payload);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "svc-stack-running-1")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    let job_id = body["jobId"].as_str().unwrap().to_string();
+    assert_ne!(job_id, existing_id);
+    assert_eq!(body["jobIds"], serde_json::json!([job_id.clone()]));
+    assert_eq!(body["reusedJobIds"], serde_json::json!([]));
+    assert_eq!(
+        body["matchedServiceIds"],
+        serde_json::json!([service_id.clone()])
+    );
+    assert_eq!(body["fallbackUsed"], false);
+    assert_eq!(state.db.list_jobs().await.unwrap().len(), 2);
+
+    let job = wait_for_job_terminal(&state, &job_id).await;
+    assert_eq!(job.scope.as_str(), "service");
+    assert_eq!(job.reason, "webhook");
+    assert_eq!(job.stack_id.as_deref(), Some(stack_id.as_str()));
+    assert_eq!(job.service_id.as_deref(), Some(service_id.as_str()));
+
+    let existing = state.db.get_job(&existing_id).await.unwrap().unwrap();
+    assert_eq!(existing.scope.as_str(), "stack");
+    assert_eq!(existing.status, "running");
+}
+
+#[tokio::test]
+async fn github_packages_webhook_does_not_reuse_covering_all_check_job() {
+    let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", Arc::new(DigestOnlyUpdateRegistry), runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!(
+        "/tmp/dockrev-ghcr-webhook-all-running-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo-all-running").await;
+    let service_id = state.db.list_services_for_check(&stack_id).await.unwrap()[0]
+        .id
+        .clone();
+    enable_github_packages_webhook(&state, "secret123", &[("acme", "web", true)]).await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let existing_id = ids::new_check_id();
+    let mut existing = crate::api::types::JobRecord::new_running(
+        existing_id.clone(),
+        crate::api::types::JobType::Check,
+        crate::api::types::JobScope::All,
+        None,
+        None,
+        &now,
+    )
+    .to_db();
+    existing.created_by = "ivan".to_string();
+    existing.reason = "ui".to_string();
+    state.db.insert_job(existing).await.unwrap();
+
+    let payload = serde_json::json!({
+        "action": "published",
+        "repository": { "full_name": "acme/web", "owner": { "login": "acme" } }
+    });
+    let (payload_bytes, sig) = sign_github_package_payload("secret123", &payload);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "svc-all-running-1")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    let job_id = body["jobId"].as_str().unwrap().to_string();
+    assert_ne!(job_id, existing_id);
+    assert_eq!(body["jobIds"], serde_json::json!([job_id.clone()]));
+    assert_eq!(body["reusedJobIds"], serde_json::json!([]));
+    assert_eq!(
+        body["matchedServiceIds"],
+        serde_json::json!([service_id.clone()])
+    );
+    assert_eq!(body["fallbackUsed"], false);
+    assert_eq!(state.db.list_jobs().await.unwrap().len(), 2);
+
+    let job = wait_for_job_terminal(&state, &job_id).await;
+    assert_eq!(job.scope.as_str(), "service");
+    assert_eq!(job.reason, "webhook");
+    assert_eq!(job.stack_id.as_deref(), Some(stack_id.as_str()));
+    assert_eq!(job.service_id.as_deref(), Some(service_id.as_str()));
+
+    let existing = state.db.get_job(&existing_id).await.unwrap().unwrap();
+    assert_eq!(existing.scope.as_str(), "all");
+    assert_eq!(existing.status, "running");
+}
+
+#[tokio::test]
+async fn github_packages_webhook_dedupes_concurrent_service_checks_across_deliveries() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(200)));
+    let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", registry, runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!(
+        "/tmp/dockrev-ghcr-webhook-concurrent-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo-concurrent").await;
+    let service_id = state.db.list_services_for_check(&stack_id).await.unwrap()[0]
+        .id
+        .clone();
+    enable_github_packages_webhook(&state, "secret123", &[("acme", "web", true)]).await;
+
+    let payload = serde_json::json!({
+        "action": "published",
+        "repository": { "full_name": "acme/web", "owner": { "login": "acme" } }
+    });
+    let (payload_bytes, sig) = sign_github_package_payload("secret123", &payload);
+
+    let req1 = app.clone().oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/api/webhooks/github-packages")
+            .header("X-GitHub-Event", "package")
+            .header("X-GitHub-Delivery", "svc-concurrent-1")
+            .header("X-Hub-Signature-256", sig.clone())
+            .body(Body::from(payload_bytes.clone()))
+            .unwrap(),
+    );
+    let req2 = app.clone().oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/api/webhooks/github-packages")
+            .header("X-GitHub-Event", "package")
+            .header("X-GitHub-Delivery", "svc-concurrent-2")
+            .header("X-Hub-Signature-256", sig)
+            .body(Body::from(payload_bytes))
+            .unwrap(),
+    );
+    let (resp1, resp2) = tokio::join!(req1, req2);
+    let resp1 = resp1.unwrap();
+    let resp2 = resp2.unwrap();
+    assert_eq!(resp1.status(), 200);
+    assert_eq!(resp2.status(), 200);
+
+    let body1 = response_json(resp1).await;
+    let body2 = response_json(resp2).await;
+    let job_id_1 = body1["jobId"].as_str().unwrap().to_string();
+    let job_id_2 = body2["jobId"].as_str().unwrap().to_string();
+    assert_eq!(job_id_1, job_id_2);
+    assert_eq!(
+        body1["matchedServiceIds"],
+        serde_json::json!([service_id.clone()])
+    );
+    assert_eq!(
+        body2["matchedServiceIds"],
+        serde_json::json!([service_id.clone()])
+    );
+    assert_eq!(state.db.list_jobs().await.unwrap().len(), 1);
+
+    let reused_count = [body1["reusedJobIds"].clone(), body2["reusedJobIds"].clone()]
+        .into_iter()
+        .filter(|value| value == &serde_json::json!([job_id_1.clone()]))
+        .count();
+    let inserted_count = [body1["reusedJobIds"].clone(), body2["reusedJobIds"].clone()]
+        .into_iter()
+        .filter(|value| value == &serde_json::json!([]))
+        .count();
+    assert_eq!(reused_count, 1);
+    assert_eq!(inserted_count, 1);
+
+    let job = wait_for_job_terminal(&state, &job_id_1).await;
+    assert_eq!(job.reason, "webhook");
+    assert_eq!(job.summary_json["source"].as_str(), Some("github_webhook"));
+}
+
+#[tokio::test]
+async fn merge_job_summary_fields_unions_webhook_arrays() {
+    let state = test_state(":memory:").await;
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let job_id = ids::new_check_id();
+    let mut job = crate::api::types::JobRecord::new_running(
+        job_id.clone(),
+        crate::api::types::JobType::Check,
+        crate::api::types::JobScope::All,
+        None,
+        None,
+        &now,
+    )
+    .to_db();
+    job.summary_json = serde_json::json!({
+        "source": "github_webhook",
+        "matchedServiceIds": ["svc-a"],
+        "reusedJobIds": ["chk-old"],
+        "deliveryId": "delivery-1",
+        "deliveryIds": ["delivery-1"],
+        "repo": "ghcr.io/acme/web",
+        "repos": ["ghcr.io/acme/web"]
+    });
+    state.db.insert_job(job).await.unwrap();
+
+    state
+        .db
+        .merge_job_summary_fields(
+            &job_id,
+            &serde_json::json!({
+                "matchedServiceIds": ["svc-b", "svc-a"],
+                "reusedJobIds": ["chk-old", "chk-new"],
+                "deliveryId": "delivery-2",
+                "deliveryIds": ["delivery-2"],
+                "repo": "ghcr.io/acme/api",
+                "repos": ["ghcr.io/acme/api"]
+            }),
+        )
+        .await
+        .unwrap();
+
+    let job = state.db.get_job(&job_id).await.unwrap().unwrap();
+    assert_eq!(
+        job.summary_json["matchedServiceIds"],
+        serde_json::json!(["svc-a", "svc-b"])
+    );
+    assert_eq!(
+        job.summary_json["reusedJobIds"],
+        serde_json::json!(["chk-old", "chk-new"])
+    );
+    assert_eq!(
+        job.summary_json["deliveryId"],
+        serde_json::json!("delivery-2")
+    );
+}
+
+#[tokio::test]
+async fn webhook_reused_ui_check_still_sends_new_version_notification() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(150)));
+    let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", registry, runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!(
+        "/tmp/dockrev-ghcr-webhook-reuse-notify-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo-reuse-notify").await;
+    let service_id = state.db.list_services_for_check(&stack_id).await.unwrap()[0]
+        .id
+        .clone();
+    enable_github_packages_webhook(&state, "secret123", &[("acme", "web", true)]).await;
+    let (mut rx, server) = configure_webhook_notifications(&state).await;
+
+    let ui_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "scope": "service",
+                        "stackId": stack_id,
+                        "serviceId": service_id,
+                        "reason": "ui"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ui_resp.status(), 200);
+    let ui_body = response_json(ui_resp).await;
+    let job_id = ui_body["checkId"].as_str().unwrap().to_string();
+
+    let payload = serde_json::json!({
+        "action": "published",
+        "repository": { "full_name": "acme/web", "owner": { "login": "acme" } }
+    });
+    let (payload_bytes, sig) = sign_github_package_payload("secret123", &payload);
+
+    let webhook_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "notify-reuse-1")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(webhook_resp.status(), 200);
+    let webhook_body = response_json(webhook_resp).await;
+    assert_eq!(webhook_body["jobId"], job_id);
+    assert_eq!(webhook_body["jobIds"], serde_json::json!([job_id.clone()]));
+    assert_eq!(
+        webhook_body["reusedJobIds"],
+        serde_json::json!([job_id.clone()])
+    );
+
+    let delivered = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .expect("webhook receive timeout")
+        .expect("notification payload missing");
+    assert_eq!(
+        delivered["schema"].as_str(),
+        Some("dockrev.notification.new_version_discovered.v2")
+    );
+    assert_eq!(delivered["kind"].as_str(), Some("new_version_discovered"));
+    assert_eq!(delivered["channel"].as_str(), Some("webhook"));
+    assert_eq!(delivered["check"]["jobId"].as_str(), Some(job_id.as_str()));
+
+    let job = wait_for_job_terminal(&state, &job_id).await;
+    assert_eq!(job.reason, "ui");
+    assert_eq!(job.summary_json["source"].as_str(), Some("github_webhook"));
+    assert_eq!(
+        job.summary_json["deliveryId"].as_str(),
+        Some("notify-reuse-1")
+    );
+    let logs = state.db.list_job_logs(&job_id).await.unwrap();
+    assert!(
+        logs.iter()
+            .any(|line| line.msg.contains("github webhook reused check job"))
+    );
+    assert!(
+        logs.iter()
+            .any(|line| line.msg.contains("notify: webhook=ok"))
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn service_scope_check_only_updates_target_service() {
+    let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", Arc::new(DigestOnlyUpdateRegistry), runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-check-service-scope-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+  worker:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo-service-scope").await;
+
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let target_service_id = services
+        .iter()
+        .find(|service| service.name == "web")
+        .unwrap()
+        .id
+        .clone();
+    let other_service_id = services
+        .iter()
+        .find(|service| service.name == "worker")
+        .unwrap()
+        .id
+        .clone();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "scope": "service",
+                        "stackId": stack_id,
+                        "serviceId": target_service_id,
+                        "reason": "ui"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    let job_id = body["checkId"].as_str().unwrap().to_string();
+    let job = wait_for_job_terminal(&state, &job_id).await;
+    assert_eq!(job.summary_json["servicesChecked"].as_u64(), Some(1));
+
+    let stack = state.db.get_stack(&stack_id).await.unwrap().unwrap();
+    let target = stack
+        .services
+        .iter()
+        .find(|service| service.id == target_service_id)
+        .unwrap();
+    let other = stack
+        .services
+        .iter()
+        .find(|service| service.id == other_service_id)
+        .unwrap();
+    assert_eq!(
+        target
+            .candidate
+            .as_ref()
+            .map(|candidate| candidate.tag.as_str()),
+        Some("5.2")
+    );
+    assert!(other.candidate.is_none());
+}
+
+#[tokio::test]
+async fn webhook_reason_check_sends_new_version_notification() {
+    let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", Arc::new(DigestOnlyUpdateRegistry), runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-ghcr-webhook-notify-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo-notify").await;
+    enable_github_packages_webhook(&state, "secret123", &[("acme", "web", true)]).await;
+    let (mut rx, server) = configure_webhook_notifications(&state).await;
+
+    let payload = serde_json::json!({
+        "action": "published",
+        "repository": { "full_name": "acme/web", "owner": { "login": "acme" } }
+    });
+    let (payload_bytes, sig) = sign_github_package_payload("secret123", &payload);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "notify-1")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    let job_id = body["jobId"].as_str().unwrap().to_string();
+
+    let payload = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .expect("webhook receive timeout")
+        .expect("notification payload missing");
+    assert_eq!(
+        payload["schema"].as_str(),
+        Some("dockrev.notification.new_version_discovered.v2")
+    );
+    assert_eq!(payload["kind"].as_str(), Some("new_version_discovered"));
+    assert_eq!(payload["channel"].as_str(), Some("webhook"));
+    assert_eq!(payload["check"]["jobId"].as_str(), Some(job_id.as_str()));
+
+    let job = wait_for_job_terminal(&state, &job_id).await;
+    let logs = state.db.list_job_logs(&job_id).await.unwrap();
+    assert!(job.finished_at.is_some());
+    assert!(
+        logs.iter()
+            .any(|line| line.msg.contains("notify: webhook=ok"))
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn ui_reason_check_does_not_send_new_version_notification() {
+    let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", Arc::new(DigestOnlyUpdateRegistry), runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-ui-check-notify-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo-ui-silent").await;
+    let service_id = state.db.list_services_for_check(&stack_id).await.unwrap()[0]
+        .id
+        .clone();
+    let (mut rx, server) = configure_webhook_notifications(&state).await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "scope": "service",
+                        "stackId": stack_id,
+                        "serviceId": service_id,
+                        "reason": "ui"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    let job_id = body["checkId"].as_str().unwrap().to_string();
+    let _job = wait_for_job_terminal(&state, &job_id).await;
+
+    let received = tokio::time::timeout(Duration::from_millis(300), rx.recv()).await;
+    assert!(
+        received.is_err(),
+        "ui check should not emit new-version notifications"
+    );
+
+    let logs = state.db.list_job_logs(&job_id).await.unwrap();
+    assert!(!logs.iter().any(|line| line.msg.contains("notify:")));
+    server.abort();
+}
+
+#[tokio::test]
 async fn github_packages_repo_selected_upsert_is_case_insensitive_and_preserves_sync_state() {
     let state = test_state(":memory:").await;
 
@@ -9063,6 +10282,7 @@ async fn github_packages_webhook_deliveries_supports_decision_and_query_filters(
             reason: None,
             response_status: Some(200),
             job_id: Some("dsc_ok".to_string()),
+            job_ids: vec!["dsc_ok".to_string()],
         })
         .await
         .unwrap();
@@ -9079,6 +10299,7 @@ async fn github_packages_webhook_deliveries_supports_decision_and_query_filters(
             reason: Some("repo_not_selected".to_string()),
             response_status: Some(200),
             job_id: None,
+            job_ids: Vec::new(),
         })
         .await
         .unwrap();
@@ -9095,6 +10316,7 @@ async fn github_packages_webhook_deliveries_supports_decision_and_query_filters(
             reason: Some("invalid_signature".to_string()),
             response_status: Some(401),
             job_id: None,
+            job_ids: Vec::new(),
         })
         .await
         .unwrap();
@@ -9103,7 +10325,7 @@ async fn github_packages_webhook_deliveries_supports_decision_and_query_filters(
         .oneshot(
             Request::builder()
                 .method("GET")
-                .uri("/api/github-packages/webhook/deliveries?decision=ignored&q=repo_not_selected")
+                .uri("/api/github-packages/webhook/deliveries?decision=processed&q=dsc_ok")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -9116,9 +10338,14 @@ async fn github_packages_webhook_deliveries_supports_decision_and_query_filters(
     assert_eq!(body["summary"]["processed"], 1);
     assert_eq!(body["summary"]["ignored"], 1);
     assert_eq!(body["summary"]["rejected"], 1);
-    assert_eq!(body["deliveries"][0]["deliveryId"], "d-ignore");
-    assert_eq!(body["deliveries"][0]["decision"], "ignored");
-    assert_eq!(body["deliveries"][0]["reason"], "repo_not_selected");
+    assert_eq!(body["deliveries"][0]["jobId"], "dsc_ok");
+    assert_eq!(
+        body["deliveries"][0]["jobIds"],
+        serde_json::json!(["dsc_ok"])
+    );
+    assert_eq!(body["deliveries"][0]["deliveryId"], "d-ok");
+    assert_eq!(body["deliveries"][0]["decision"], "processed");
+    assert_eq!(body["deliveries"][0]["reason"], serde_json::Value::Null);
     assert_eq!(body["deliveries"][0]["responseStatus"], 200);
 }
 

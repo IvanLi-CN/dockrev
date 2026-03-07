@@ -32,6 +32,19 @@ export const Dashboard: Story = {
   },
 }
 
+
+export const DashboardSlowUpdate: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo-slow-update' },
+  render: () => {
+    return (
+      <>
+        <LocationReset pathname="/" />
+        <App />
+      </>
+    )
+  },
+}
+
 export const Queue: Story = {
   parameters: { dockrevApiScenario: 'queue-mixed' },
   render: () => {

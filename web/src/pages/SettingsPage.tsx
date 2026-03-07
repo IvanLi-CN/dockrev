@@ -38,6 +38,7 @@ import { selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { webhookStateDotClass, webhookStateIcon } from '../webhookStatus'
 import { navigate } from '../routes'
+import { serviceWorkerUrl } from '../publicAssetUrls'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -1453,7 +1454,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     if (!notifications?.webPush.vapidPublicKey) throw new Error('请先在右侧配置 VAPID Public Key')
     if (!canWebPush) throw new Error('当前环境不支持 Web Push / Service Worker')
 
-    const reg = await navigator.serviceWorker.register('/sw.js')
+    const reg = await navigator.serviceWorker.register(serviceWorkerUrl)
     const keyBytes = base64UrlToUint8Array(notifications.webPush.vapidPublicKey)
     const appServerKey = keyBytes.buffer.slice(
       keyBytes.byteOffset,

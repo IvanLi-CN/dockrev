@@ -2555,6 +2555,22 @@ html[data-theme='light'] .modalOverlay {
   align-items: flex-start;
 }
 
+.ghcrInboxTaskList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ghcrInboxTaskLink {
+  max-width: 100%;
+}
+
+.ghcrInboxTaskLink span {
+  display: inline-block;
+  max-width: 100%;
+  word-break: break-all;
+}
+
 .ghcrInboxCell .pill {
   display: inline-flex;
   align-items: center;

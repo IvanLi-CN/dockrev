@@ -27,6 +27,7 @@ import type {
 export type DockrevApiScenario =
   | 'default'
   | 'dashboard-demo'
+  | 'dashboard-demo-slow-update'
   | 'services-inference-pending-candidate-loading'
   | 'service-detail-compose-fallbacks'
   | 'service-detail-version-anomaly'
@@ -2351,7 +2352,7 @@ function buildMultiStackMixed(): Fixture {
 function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'empty') return baseEmpty()
   if (scenario === 'no-candidates') return buildNoCandidates()
-  if (scenario === 'dashboard-demo') return buildDashboardDemo()
+  if (scenario === 'dashboard-demo' || scenario === 'dashboard-demo-slow-update') return buildDashboardDemo()
   if (scenario === 'services-inference-pending-candidate-loading') return buildServicesInferencePendingCandidateLoading()
   if (scenario === 'service-detail-compose-fallbacks') return buildServiceDetailComposeFallbacks()
   if (scenario === 'service-detail-version-anomaly') return buildServiceDetailVersionAnomaly()
@@ -3172,6 +3173,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         ],
         logsLastId: 2,
       }
+      const updateFinishDelayMs = scenario === 'dashboard-demo-slow-update' ? 4_500 : 1_400
       window.setTimeout(() => {
         const live = f.jobById[jobId]
         if (!live || (live.status !== 'queued' && live.status !== 'running')) return
@@ -3186,7 +3188,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         }
         f.jobById[jobId] = finalJob
         f.jobs = f.jobs.map((row) => (row.id === jobId ? { ...row, status: 'success', finishedAt } : row))
-      }, 1400)
+      }, updateFinishDelayMs)
       return json({ jobId })
     }
 
