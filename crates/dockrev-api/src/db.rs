@@ -104,6 +104,13 @@ pub struct ServiceResourceTarget {
 }
 
 #[derive(Clone, Debug)]
+pub struct GithubWebhookServiceTarget {
+    pub stack_id: String,
+    pub service_id: String,
+    pub image_ref: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct DiscoveredComposeProjectRecord {
     pub stack_id: Option<String>,
 }
@@ -153,6 +160,7 @@ pub struct GitHubPackagesWebhookDeliveryRecordInput {
     pub reason: Option<String>,
     pub response_status: Option<u16>,
     pub job_id: Option<String>,
+    pub job_ids: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -160,6 +168,21 @@ pub enum ArchivedFilter {
     Exclude,
     Include,
     Only,
+}
+
+fn parse_github_packages_delivery_job_ids(
+    job_id: Option<&str>,
+    job_ids_json: Option<&str>,
+) -> Vec<String> {
+    let mut job_ids = job_ids_json
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(raw).ok())
+        .unwrap_or_default();
+    if job_ids.is_empty()
+        && let Some(job_id) = job_id.filter(|value| !value.is_empty())
+    {
+        job_ids.push(job_id.to_string());
+    }
+    job_ids
 }
 
 impl ArchivedFilter {
@@ -3029,6 +3052,7 @@ WHERE (?1 IS NULL OR decision = ?1)
     OR lower(COALESCE(action, '')) LIKE ?2
     OR lower(COALESCE(reason, '')) LIKE ?2
     OR lower(COALESCE(job_id, '')) LIKE ?2
+    OR lower(COALESCE(job_ids_json, '')) LIKE ?2
   )
 "#,
                 params![decision, q_like],
@@ -3063,6 +3087,7 @@ SELECT
   reason,
   response_status,
   job_id,
+  job_ids_json,
   attempt_count
 FROM github_packages_deliveries
 WHERE (?1 IS NULL OR decision = ?1)
@@ -3075,12 +3100,15 @@ WHERE (?1 IS NULL OR decision = ?1)
     OR lower(COALESCE(action, '')) LIKE ?2
     OR lower(COALESCE(reason, '')) LIKE ?2
     OR lower(COALESCE(job_id, '')) LIKE ?2
+    OR lower(COALESCE(job_ids_json, '')) LIKE ?2
   )
 ORDER BY received_at DESC, delivery_id DESC
 LIMIT ?3 OFFSET ?4
 "#,
             )?;
             let rows = stmt.query_map(params![decision, q_like, limit, offset], |row| {
+                let job_id: Option<String> = row.get(10)?;
+                let job_ids_json: Option<String> = row.get(11)?;
                 Ok(GitHubPackagesWebhookDeliveryDb {
                     delivery_id: row.get(0)?,
                     received_at: row.get(1)?,
@@ -3094,8 +3122,12 @@ LIMIT ?3 OFFSET ?4
                     response_status: row
                         .get::<_, Option<i64>>(9)?
                         .and_then(|value| u16::try_from(value).ok()),
-                    job_id: row.get(10)?,
-                    attempt_count: row.get::<_, i64>(11)?.max(1) as u32,
+                    job_ids: parse_github_packages_delivery_job_ids(
+                        job_id.as_deref(),
+                        job_ids_json.as_deref(),
+                    ),
+                    job_id,
+                    attempt_count: row.get::<_, i64>(12)?.max(1) as u32,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -3110,6 +3142,7 @@ LIMIT ?3 OFFSET ?4
     ) -> anyhow::Result<u32> {
         self.call(move |conn| {
             let delivery_id = input.delivery_id.clone();
+            let job_ids_json = serde_json::to_string(&input.job_ids)?;
             conn.execute(
                 r#"
 INSERT INTO github_packages_deliveries (
@@ -3124,9 +3157,10 @@ INSERT INTO github_packages_deliveries (
   reason,
   response_status,
   job_id,
+  job_ids_json,
   attempt_count
 )
-VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1)
+VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1)
 ON CONFLICT(delivery_id) DO UPDATE SET
   received_at = excluded.received_at,
   owner = COALESCE(excluded.owner, github_packages_deliveries.owner),
@@ -3137,6 +3171,7 @@ ON CONFLICT(delivery_id) DO UPDATE SET
   reason = excluded.reason,
   response_status = excluded.response_status,
   job_id = COALESCE(excluded.job_id, github_packages_deliveries.job_id),
+  job_ids_json = COALESCE(excluded.job_ids_json, github_packages_deliveries.job_ids_json),
   attempt_count = github_packages_deliveries.attempt_count + 1
 "#,
                 params![
@@ -3149,7 +3184,8 @@ ON CONFLICT(delivery_id) DO UPDATE SET
                     input.decision,
                     input.reason,
                     input.response_status.map(i64::from),
-                    input.job_id
+                    input.job_id,
+                    job_ids_json,
                 ],
             )?;
             conn.query_row(
@@ -3222,6 +3258,7 @@ WHERE delivery_id = ?1
         reason: Option<&str>,
         response_status: Option<u16>,
         job_id: Option<&str>,
+        job_ids: &[String],
     ) -> anyhow::Result<()> {
         let delivery_id = delivery_id.to_string();
         let received_at = received_at.to_string();
@@ -3233,6 +3270,11 @@ WHERE delivery_id = ?1
         let reason = reason.map(|s| s.to_string());
         let response_status = response_status.map(i64::from);
         let job_id = job_id.map(|s| s.to_string());
+        let job_ids = if job_ids.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(job_ids)?)
+        };
         self.call(move |conn| {
             conn.execute(
                 r#"
@@ -3246,7 +3288,8 @@ SET
   decision = ?7,
   reason = ?8,
   response_status = ?9,
-  job_id = COALESCE(?10, job_id)
+  job_id = COALESCE(?10, job_id),
+  job_ids_json = COALESCE(?11, job_ids_json)
 WHERE delivery_id = ?1
 "#,
                 params![
@@ -3259,7 +3302,8 @@ WHERE delivery_id = ?1
                     decision,
                     reason,
                     response_status,
-                    job_id
+                    job_id,
+                    job_ids,
                 ],
             )?;
             Ok(())
@@ -3647,6 +3691,35 @@ ORDER BY sv.stack_id ASC, sv.name ASC
         .context("list service resource targets")
     }
 
+    pub async fn list_active_github_webhook_service_targets(
+        &self,
+    ) -> anyhow::Result<Vec<GithubWebhookServiceTarget>> {
+        self.call(|conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT
+  st.id,
+  sv.id,
+  sv.image_ref
+FROM services sv
+JOIN stacks st ON st.id = sv.stack_id
+WHERE st.archived = 0 AND sv.archived = 0
+ORDER BY st.name ASC, sv.name ASC
+"#,
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(GithubWebhookServiceTarget {
+                    stack_id: row.get(0)?,
+                    service_id: row.get(1)?,
+                    image_ref: row.get(2)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list active github webhook service targets")
+    }
+
     pub async fn get_service_resource_target(
         &self,
         service_id: &str,
@@ -3950,7 +4023,6 @@ WHERE id = ?1 AND status = 'queued'
         let finished_at = finished_at.to_string();
         let mut summary_json = summary_json.clone();
         self.call(move |conn| {
-            // Keep latest progress if caller doesn't include it in final summary.
             let previous_summary_raw = conn
                 .query_row(
                     r#"
@@ -3963,25 +4035,19 @@ WHERE id = ?1
                 )
                 .optional()?;
 
+            if !summary_json.is_object() {
+                summary_json = serde_json::json!({ "result": summary_json });
+            }
+
             if let Some(previous_summary_raw) = previous_summary_raw {
                 let previous_summary: serde_json::Value =
                     serde_json::from_str(&previous_summary_raw)
                         .unwrap_or_else(|_| serde_json::json!({}));
-                let previous_progress = previous_summary
-                    .as_object()
-                    .and_then(|o| o.get("progress"))
-                    .cloned();
-
-                let has_new_progress = summary_json
-                    .as_object()
-                    .is_some_and(|o| o.contains_key("progress"));
-
-                if !has_new_progress && let Some(previous_progress) = previous_progress {
-                    if !summary_json.is_object() {
-                        summary_json = serde_json::json!({});
-                    }
-                    if let Some(obj) = summary_json.as_object_mut() {
-                        obj.insert("progress".to_string(), previous_progress);
+                if let Some(previous) = previous_summary.as_object()
+                    && let Some(obj) = summary_json.as_object_mut()
+                {
+                    for (key, value) in previous {
+                        obj.entry(key.clone()).or_insert_with(|| value.clone());
                     }
                 }
             }
@@ -3999,6 +4065,58 @@ WHERE id = ?1
         })
         .await
         .context("finish job")
+    }
+
+    pub async fn merge_job_summary_fields(
+        &self,
+        job_id: &str,
+        fields: &serde_json::Value,
+    ) -> anyhow::Result<()> {
+        let job_id = job_id.to_string();
+        let fields = fields.clone();
+        self.call(move |conn| {
+            let summary_raw = conn
+                .query_row(
+                    r#"
+SELECT summary_json
+FROM jobs
+WHERE id = ?1
+"#,
+                    params![&job_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+
+            let Some(summary_raw) = summary_raw else {
+                return Ok(());
+            };
+
+            let mut summary: serde_json::Value = serde_json::from_str(&summary_raw)
+                .unwrap_or_else(|_| serde_json::Value::Object(Default::default()));
+            if !summary.is_object() {
+                summary = serde_json::Value::Object(Default::default());
+            }
+
+            if let Some(summary_obj) = summary.as_object_mut()
+                && let Some(fields_obj) = fields.as_object()
+            {
+                for (key, value) in fields_obj {
+                    summary_obj.insert(key.clone(), value.clone());
+                }
+            }
+
+            conn.execute(
+                r#"
+UPDATE jobs
+SET summary_json = ?2
+WHERE id = ?1
+"#,
+                params![&job_id, serde_json::to_string(&summary)?],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("merge job summary fields")
     }
 
     pub async fn set_job_progress(
@@ -5494,6 +5612,10 @@ fn ensure_github_packages_deliveries_columns(conn: &rusqlite::Connection) -> any
             ddl: "ALTER TABLE github_packages_deliveries ADD COLUMN job_id TEXT",
         },
         Col {
+            name: "job_ids_json",
+            ddl: "ALTER TABLE github_packages_deliveries ADD COLUMN job_ids_json TEXT NOT NULL DEFAULT '[]'",
+        },
+        Col {
             name: "attempt_count",
             ddl: "ALTER TABLE github_packages_deliveries ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 1",
         },
@@ -5549,6 +5671,15 @@ WHERE response_status IS NULL AND decision = 'processed'
 UPDATE github_packages_deliveries
 SET attempt_count = 1
 WHERE attempt_count IS NULL OR attempt_count < 1
+"#,
+        [],
+    )?;
+
+    conn.execute(
+        r#"
+UPDATE github_packages_deliveries
+SET job_ids_json = '[]'
+WHERE job_ids_json IS NULL OR trim(job_ids_json) = ''
 "#,
         [],
     )?;
@@ -5830,6 +5961,7 @@ CREATE TABLE IF NOT EXISTS github_packages_deliveries (
   reason TEXT,
   response_status INTEGER,
   job_id TEXT,
+  job_ids_json TEXT NOT NULL DEFAULT '[]',
   attempt_count INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_github_packages_deliveries_received_delivery
