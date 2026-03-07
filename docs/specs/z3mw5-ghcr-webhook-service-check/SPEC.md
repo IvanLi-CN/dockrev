@@ -148,6 +148,7 @@
 
 - 2026-03-07：新建规格，冻结“GHCR webhook 改为 check-first，零命中才回退 discovery，并让 webhook check 发送新版本通知”的行为边界与验收口径。
 - 2026-03-07：实现 webhook 命中服务优先检查、零命中回退 discovery、webhook check 新版本通知，以及相关去重/审计/回归测试。
+- 2026-03-07：根据 review-loop 收敛结果补强 webhook job 复用与审计落盘，明确只复用 `check.service` / `discovery.all`，并确保复用 job 的 summary 数组合并与 delivery 记录不会在异常路径丢失。
 
 ## 参考（References）
 
