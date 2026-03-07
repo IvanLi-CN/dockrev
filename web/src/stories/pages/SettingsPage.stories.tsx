@@ -75,7 +75,7 @@ export const PublicBaseUrlSuggestion: Story = {
   play: async ({ canvasElement }) => {
     await new Promise((resolve) => setTimeout(resolve, 120))
 
-    const bubble = canvasElement.querySelector<HTMLElement>('[data-settings-public-base-url-suggestion="visible"]')
+    const bubble = canvasElement.ownerDocument.querySelector<HTMLElement>('[data-settings-public-base-url-suggestion="visible"]')
     if (!bubble) throw new globalThis.Error('public base url suggestion bubble missing')
 
     const expectedUrl = derivePublicBaseUrlSuggestion(currentRoutePathname(), window.location.origin, window.location.pathname)
@@ -97,7 +97,7 @@ export const PublicBaseUrlSuggestion: Story = {
     if (input.value !== expectedUrl) {
       throw new globalThis.Error(`public base url input not autofilled: ${input.value || '<empty>'}`)
     }
-    if (canvasElement.querySelector('[data-settings-public-base-url-suggestion="visible"]')) {
+    if (canvasElement.ownerDocument.querySelector('[data-settings-public-base-url-suggestion="visible"]')) {
       throw new globalThis.Error('public base url suggestion bubble should disappear after autofill')
     }
   },
@@ -111,7 +111,7 @@ export const PublicBaseUrlSuggestionDismissed: Story = {
     }),
   play: async ({ canvasElement }) => {
     await new Promise((resolve) => setTimeout(resolve, 120))
-    if (canvasElement.querySelector('[data-settings-public-base-url-suggestion="visible"]')) {
+    if (canvasElement.ownerDocument.querySelector('[data-settings-public-base-url-suggestion="visible"]')) {
       throw new globalThis.Error('public base url suggestion bubble should stay hidden after dismissal')
     }
   },

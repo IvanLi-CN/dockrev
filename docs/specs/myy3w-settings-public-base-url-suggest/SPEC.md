@@ -60,13 +60,13 @@
 
 ### SHOULD
 
-- 气泡样式应与现有 Settings 视觉风格一致，作为输入框下的 info-style inline bubble，而不是遮挡式浮层。
+- 气泡样式应与现有 Settings 视觉风格一致，作为锚定在 Public Base URL 输入框附近的悬浮 bubble 显示，不参与文档流布局、也不把后续内容向下撑开。
 - Storybook 应有可复现的两个场景：建议可见并自动填入、已拒绝后刷新不再显示。
 - 纯函数测试应覆盖 `/settings`、`/settings/`、带 base path 的 `/dockrev/settings` / `/dockrev/settings/`，以及 hash-routing 下从当前页面 pathname 保留 base path 的推导结果（含带点号的部署目录如 `/v1.2.3/`）。
 
 ## 验收标准（Acceptance Criteria）
 
-- Given `publicBaseUrl` 为空且 localStorage 未拒绝，When 打开 Settings，Then Public Base URL 输入框下方出现建议气泡，且显示当前站点根地址。
+- Given `publicBaseUrl` 为空且 localStorage 未拒绝，When 打开 Settings，Then Public Base URL 输入框附近出现悬浮建议气泡，且显示当前站点根地址，同时不把后续内容向下撑开。
 - Given 当前页面路径为 `/settings`，When 生成候选地址，Then 展示值为页面目录根地址（根路径部署时即 `origin + '/'`），而不是包含 `/settings` 的完整 URL。
 - Given 用户点击 `自动填入`，When 交互完成，Then 输入框被填入候选地址，建议气泡立即消失，后续保存继续复用现有 autosave。
 - Given 用户点击 `不`，When 刷新页面且字段仍为空，Then 建议气泡不再显示。
@@ -91,4 +91,5 @@
 - 2026-03-07: 根据复查补充 base path 保留逻辑与纯函数测试，避免在 `/base/settings/` 场景下错误建议到设置页子路径。
 - 2026-03-07: 进一步覆盖 hash-routing 场景，确保 `/#/settings` 也能结合当前页面 pathname 保留部署 base path。
 - 2026-03-07: 收紧 page pathname 文件段识别，仅把 `index.html` / `iframe.html` 视为文件名，避免带点号的部署目录被误裁剪。
+- 2026-03-07: 根据视觉反馈将建议气泡改为悬浮定位，避免显示时撑开 Settings 布局。
 - 2026-03-07: 记录快车道交付分支与 PR #145，规格与实现保持同步。

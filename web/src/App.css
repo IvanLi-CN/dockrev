@@ -3478,16 +3478,20 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .settingsInlineSuggestionBubble {
-  margin-top: 10px;
+  position: fixed;
+  z-index: 1100;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px 12px;
+  width: min(640px, calc(100vw - 24px));
+  max-width: min(640px, calc(100vw - 24px));
   padding: 10px 12px;
+  box-sizing: border-box;
   border-radius: 14px;
   border: 1px solid color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
   background: color-mix(in srgb, var(--panel2) 92%, #020814 8%);
-  box-shadow: var(--shadow-soft);
+  box-shadow: 0 20px 44px rgba(2, 6, 23, 0.32);
 }
 
 .settingsInlineSuggestionText {

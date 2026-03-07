@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { FloatingPortal, autoUpdate, flip, offset, shift, useFloating } from '@floating-ui/react'
 import { Icon } from '@iconify/react'
 import eyeOffOutline from '@iconify-icons/mdi/eye-off-outline'
 import eyeOutline from '@iconify-icons/mdi/eye-outline'
@@ -1507,19 +1508,42 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     setWebPushEndpoint(null)
   }
 
-  if (!settings || !notifications || !githubPackages) {
-    return <div className="muted">加载中…</div>
-  }
-
-  const instancePublicBaseUrlValue = settings.instance.publicBaseUrl ?? ''
+  const instancePublicBaseUrlValue = settings?.instance.publicBaseUrl ?? ''
   const suggestedPublicBaseUrl =
     typeof window === 'undefined'
       ? null
       : derivePublicBaseUrlSuggestion(currentRoutePathname(), window.location.origin, window.location.pathname)
   const showInstancePublicBaseUrlSuggestBubble =
+    Boolean(settings && notifications && githubPackages) &&
     !instancePublicBaseUrlSuggestDismissed &&
     instancePublicBaseUrlValue.trim().length === 0 &&
     suggestedPublicBaseUrl != null
+  const { refs: instancePublicBaseUrlSuggestRefs, floatingStyles: instancePublicBaseUrlSuggestFloatingStyles } = useFloating({
+    open: showInstancePublicBaseUrlSuggestBubble,
+    placement: 'bottom-start',
+    whileElementsMounted: autoUpdate,
+    middleware: [
+      offset(10),
+      flip({ fallbackPlacements: ['top-start', 'bottom-end', 'top-end'] }),
+      shift({ padding: 12 }),
+    ],
+  })
+  const setInstancePublicBaseUrlSuggestReference = useCallback(
+    (node: HTMLInputElement | null) => {
+      instancePublicBaseUrlSuggestRefs.setReference(node)
+    },
+    [instancePublicBaseUrlSuggestRefs],
+  )
+  const setInstancePublicBaseUrlSuggestFloating = useCallback(
+    (node: HTMLDivElement | null) => {
+      instancePublicBaseUrlSuggestRefs.setFloating(node)
+    },
+    [instancePublicBaseUrlSuggestRefs],
+  )
+
+  if (!settings || !notifications || !githubPackages) {
+    return <div className="muted">加载中…</div>
+  }
 
   const fillInstancePublicBaseUrlFromCurrentOrigin = () => {
     if (!suggestedPublicBaseUrl) return
@@ -1903,6 +1927,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                 <div className="label">Public Base URL</div>
                 <div>
                   <input
+                    ref={setInstancePublicBaseUrlSuggestReference}
                     className="input"
                     value={instancePublicBaseUrlValue}
                     onChange={(e) =>
@@ -1914,26 +1939,30 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
                     placeholder="https://dockrev.example.com/"
                   />
                   {showInstancePublicBaseUrlSuggestBubble && suggestedPublicBaseUrl ? (
-                    <div
-                      className="settingsInlineSuggestionBubble"
-                      role="status"
-                      aria-live="polite"
-                      data-settings-public-base-url-suggestion="visible"
-                    >
-                      <div className="settingsInlineSuggestionText">
-                        <span>是否使用当前地址</span>
-                        <Mono>{suggestedPublicBaseUrl}</Mono>
-                        <span>？</span>
+                    <FloatingPortal>
+                      <div
+                        ref={setInstancePublicBaseUrlSuggestFloating}
+                        className="settingsInlineSuggestionBubble"
+                        style={instancePublicBaseUrlSuggestFloatingStyles}
+                        role="status"
+                        aria-live="polite"
+                        data-settings-public-base-url-suggestion="visible"
+                      >
+                        <div className="settingsInlineSuggestionText">
+                          <span>是否使用当前地址</span>
+                          <Mono>{suggestedPublicBaseUrl}</Mono>
+                          <span>？</span>
+                        </div>
+                        <div className="settingsInlineSuggestionActions">
+                          <Button variant="primary" disabled={busy} onClick={fillInstancePublicBaseUrlFromCurrentOrigin}>
+                            自动填入
+                          </Button>
+                          <Button disabled={busy} onClick={dismissInstancePublicBaseUrlSuggestBubble}>
+                            不
+                          </Button>
+                        </div>
                       </div>
-                      <div className="settingsInlineSuggestionActions">
-                        <Button variant="primary" disabled={busy} onClick={fillInstancePublicBaseUrlFromCurrentOrigin}>
-                          自动填入
-                        </Button>
-                        <Button disabled={busy} onClick={dismissInstancePublicBaseUrlSuggestBubble}>
-                          不
-                        </Button>
-                      </div>
-                    </div>
+                    </FloatingPortal>
                   ) : null}
                   <div className="muted" style={{ marginTop: 6 }}>
                     为空表示不配置；保存时会自动补齐尾部 <Mono>/</Mono>
