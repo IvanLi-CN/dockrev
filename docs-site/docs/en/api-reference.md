@@ -13,7 +13,7 @@ This page documents every HTTP route exposed in:
 ## Authentication model
 
 - **Public**: no auth header required.
-- **Forward Auth**: the ingress authenticates the request and injects trusted user/group headers for Dockrev.
+- **Forward Auth**: the ingress may forward trusted identity headers from the upstream auth system, but Dockrev still decides whether a protected route returns data or `401 auth_required`.
 - **Dockrev authorization**: Dockrev reads `DOCKREV_AUTH_ALLOWED_USER` and `DOCKREV_AUTH_ALLOWED_GROUP`; each accepts a single value, and matching either one is enough when both are set.
 - **Webhook Secret**: requires `X-Dockrev-Webhook-Secret` matching server config.
 - **GitHub Signature**: requires `X-Hub-Signature-256`, `X-GitHub-Event`, and `X-GitHub-Delivery`.
@@ -111,7 +111,7 @@ This page documents every HTTP route exposed in:
 | DELETE | `/api/web-push/subscriptions` | Forward Auth | Delete web push subscription | `200` `400` `401` |
 | POST | `/api/webhooks/trigger` | Webhook Secret | External trigger for check/update jobs (`action=update` only supports `all`/`stack`) | `200` `400` `401` |
 | POST | `/api/webhooks/github-packages` | GitHub Signature | Receive GH package webhook and enqueue discovery | `200` `202` `400` `401` |
-| GET | `/api/deploy-check/report` | Forward Auth | Deployment preflight report; returns an auth-only report when authorization fails | `200` |
+| GET | `/api/deploy-check/report` | Forward Auth | Deployment preflight report; anonymous or non-matching identities receive Dockrev-generated `401 auth_required` | `200` `401` |
 | GET | `/api/deploy-welcome` | Forward Auth | Get deploy welcome status | `200` `401` |
 | PUT | `/api/deploy-welcome` | Forward Auth | Update deploy welcome status | `200` `400` `401` |
 
@@ -121,13 +121,13 @@ This page documents every HTTP route exposed in:
 
 | Method | Path | Auth | Purpose | Key status codes |
 | --- | --- | --- | --- | --- |
-| GET | `/supervisor/health` | Public | Supervisor health probe | `200` |
-| GET | `/supervisor/version` | Public | Supervisor metadata (`version` + `repository` + `developerName` + `developerUrl`) | `200` |
+| GET | `/supervisor/health` | Forward Auth | Supervisor health probe (protected) | `200` `401` |
+| GET | `/supervisor/version` | Forward Auth | Supervisor metadata (`version` + `repository` + `developerName` + `developerUrl`) | `200` `401` |
 | GET | `/supervisor/self-upgrade` | Forward Auth | Read self-upgrade state | `200` `401` |
 | POST | `/supervisor/self-upgrade` | Forward Auth | Start self-upgrade (dry-run/apply) | `200` `400` `401` `409` |
 | POST | `/supervisor/self-upgrade/rollback` | Forward Auth | Roll back operation | `200` `400` `401` |
 | GET | `/supervisor/favicon.png` | Public | UI favicon | `200` |
-| GET | `/supervisor/` | Public | Supervisor web UI | `200` |
+| GET | `/supervisor/` | Forward Auth | Supervisor web UI | `200` `401` |
 
 - `GET /supervisor/self-upgrade` now includes an optional `request` object (`mode` + `rollbackOnFailure`) while `state=running`, so the UI can restore which action button is actively running after refresh. The field may be omitted for idle/legacy states.
 

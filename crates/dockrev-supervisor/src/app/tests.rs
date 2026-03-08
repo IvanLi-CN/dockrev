@@ -498,6 +498,43 @@ async fn supervisor_auth_requires_identity_once_allowlist_is_configured() {
 }
 
 #[tokio::test]
+async fn supervisor_health_requires_authorized_request() {
+    let app = test_app_for_authz(Some("alice"), None, false).await;
+    let router = app.clone().router();
+
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/supervisor/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn supervisor_version_allows_matching_identity() {
+    let app = test_app_for_authz(Some("alice"), None, false).await;
+    let router = app.clone().router();
+
+    let resp = router
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/supervisor/version")
+                .header("X-Forwarded-User", "alice")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn get_self_upgrade_returns_request_only_while_running() {
     let dir = std::env::temp_dir().join(format!(
         "dockrev-supervisor-test-{}-request-visibility",

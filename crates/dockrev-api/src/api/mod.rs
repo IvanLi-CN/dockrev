@@ -478,16 +478,7 @@ async fn get_deploy_check_report(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<DeployCheckReportResponse>, ApiError> {
-    let auth = authorize_request(&state, &headers).await;
-    if auth.is_err() {
-        let generated_at = now_rfc3339().map_err(map_internal)?;
-        return Ok(Json(build_authz_only_report(
-            state.as_ref(),
-            &headers,
-            &auth,
-            generated_at,
-        )));
-    }
+    let auth = require_user(&state, &headers).await?;
 
     let report = preflight::build_report(state.as_ref())
         .await
@@ -496,7 +487,7 @@ async fn get_deploy_check_report(
         state.as_ref(),
         &headers,
         report,
-        auth,
+        Ok(auth),
     )))
 }
 
@@ -544,16 +535,11 @@ async fn authorize_request(state: &AppState, headers: &HeaderMap) -> Result<Requ
 }
 
 async fn authz_error(state: &AppState, failure: AuthzFailure) -> ApiError {
-    let redirect_to = match state.db.get_deploy_welcome_settings().await {
-        Ok(settings) if !settings.never_auto_open => "deploy-check",
-        _ => "unauthorized",
-    };
     let auth_view = authz::config_view(&state.config);
 
     ApiError::auth_required().with_details(json!({
         "reason": failure.reason,
         "message": failure.message,
-        "redirectTo": redirect_to,
         "forwardHeaderName": auth_view.forward_header_name,
         "groupHeaderName": auth_view.group_header_name,
         "allowedUserMasked": auth_view.allowed_user_masked,
@@ -562,29 +548,6 @@ async fn authz_error(state: &AppState, failure: AuthzFailure) -> ApiError {
         "currentGroups": authz::mask_list(&failure.current_groups),
         "authorizationMode": auth_view.authorization_mode,
     }))
-}
-
-fn build_authz_only_report(
-    state: &AppState,
-    headers: &HeaderMap,
-    auth: &Result<RequestAuth, ApiError>,
-    generated_at: String,
-) -> DeployCheckReportResponse {
-    let auth_checks = build_authz_checks(state, headers, auth);
-    let blocking_check_ids = auth_checks
-        .iter()
-        .filter(|item| item.required && item.status == DeployCheckStatus::Fail)
-        .map(|item| item.id.clone())
-        .collect::<Vec<_>>();
-    DeployCheckReportResponse {
-        generated_at,
-        overall: DeployCheckOverall {
-            result: DeployCheckResult::Fail,
-            blocking_check_ids,
-            summary: "Forward Auth or project authorization is not ready".to_string(),
-        },
-        checks: auth_checks,
-    }
 }
 
 fn attach_authz_checks(

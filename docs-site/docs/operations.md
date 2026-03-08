@@ -7,17 +7,17 @@ description: Dockrev 生产运维、备份恢复与升级回滚。
 
 ## 日常巡检（建议每天）
 
-1. 检查 `/api/health` 与 `/supervisor/health`。
-2. 查看 Queue 是否存在长时间 `running` 任务。
-3. 抽查最近一次 discovery/check/update 日志是否异常。
+1. 匿名检查 `/api/health` 与 `/api/version`。
+2. 以命中 allowlist 的身份检查 `/api/deploy-check/report` 与 `/supervisor/health`。
+3. 查看 Queue 是否存在长时间 `running` 任务。
 4. 若启用 GHCR webhook，确认最近 delivery 无连续失败。
 
 ## 运行健康检查
 
-- API 健康：`GET /api/health`
-- 版本信息：`GET /api/version`
-- Deploy 预检：`GET /api/deploy-check/report`
+- 匿名健康：`GET /api/health`、`GET /api/version`
+- 运维预检：`GET /api/deploy-check/report`
 - Supervisor 健康：`GET /supervisor/health`
+- 若匿名访问受保护接口收到 `401 auth_required`，说明 Dockrev 的透明透传边界仍在生效；不要把这类 401 误判为网关故障。
 
 ## 备份策略
 

@@ -10513,7 +10513,7 @@ async fn settings_auth_serializes_empty_current_groups() {
 }
 
 #[tokio::test]
-async fn protected_endpoint_returns_authz_details_and_redirect_target() {
+async fn protected_endpoint_returns_authz_details_without_redirect_target() {
     let state = test_state_with_authz(":memory:", Some("alice"), None, false).await;
     let app = api::router(state);
 
@@ -10531,9 +10531,13 @@ async fn protected_endpoint_returns_authz_details_and_redirect_target() {
     let body = response_json(resp).await;
     assert_eq!(body["error"]["code"], "auth_required");
     assert_eq!(body["error"]["details"]["reason"], "identity_missing");
-    assert_eq!(body["error"]["details"]["redirectTo"], "deploy-check");
     assert_eq!(body["error"]["details"]["authorizationMode"], "user_only");
     assert_eq!(body["error"]["details"]["allowedUserMasked"], "al***ce");
+    assert!(
+        body["error"]["details"]
+            .as_object()
+            .is_some_and(|obj| !obj.contains_key("redirectTo"))
+    );
 }
 
 #[tokio::test]
@@ -10558,7 +10562,7 @@ async fn protected_endpoint_does_not_allow_dev_bypass_when_allowlist_is_configur
 }
 
 #[tokio::test]
-async fn deploy_check_report_surfaces_authz_failures_without_full_report() {
+async fn deploy_check_report_requires_authorized_request() {
     let state = test_state_with_authz(":memory:", Some("alice"), None, false).await;
     let app = api::router(state);
 
@@ -10572,29 +10576,14 @@ async fn deploy_check_report_surfaces_authz_failures_without_full_report() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.status(), 401);
     let body = response_json(resp).await;
-    assert_eq!(body["overall"]["result"], "fail");
-    assert_eq!(
-        body["overall"]["summary"],
-        "Forward Auth or project authorization is not ready"
-    );
-    let checks = body["checks"].as_array().unwrap();
-    assert_eq!(checks.len(), 2);
-    assert_eq!(checks[0]["id"], "core.forward_auth_authorization_config");
-    assert_eq!(checks[0]["status"], "pass");
-    assert_eq!(checks[1]["id"], "core.forward_auth_request_authorization");
-    assert_eq!(checks[1]["status"], "fail");
-    let blocking = body["overall"]["blockingCheckIds"].as_array().unwrap();
-    assert!(
-        blocking
-            .iter()
-            .any(|v| v == "core.forward_auth_request_authorization")
-    );
+    assert_eq!(body["error"]["code"], "auth_required");
+    assert_eq!(body["error"]["details"]["reason"], "identity_missing");
 }
 
 #[tokio::test]
-async fn deploy_check_report_skips_preflight_when_request_is_unauthorized() {
+async fn deploy_check_report_rejects_unauthorized_request_before_preflight() {
     let state = test_state_with_authz(":memory:", Some("alice"), None, false).await;
     state
         .db
@@ -10616,10 +10605,10 @@ async fn deploy_check_report_skips_preflight_when_request_is_unauthorized() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.status(), 401);
     let body = response_json(resp).await;
-    assert_eq!(body["overall"]["result"], "fail");
-    assert_eq!(body["checks"].as_array().unwrap().len(), 2);
+    assert_eq!(body["error"]["code"], "auth_required");
+    assert_eq!(body["error"]["details"]["reason"], "identity_missing");
 }
 
 #[tokio::test]

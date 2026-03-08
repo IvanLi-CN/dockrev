@@ -24,12 +24,12 @@ use super::{
     ui::render_ui,
 };
 
-async fn health_impl() -> impl IntoResponse {
-    Json(json!({ "ok": true }))
-}
-
-pub(crate) async fn health() -> impl IntoResponse {
-    health_impl().await
+pub(crate) async fn health(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    let _user = require_user(&app, &headers)?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 #[derive(Serialize)]
@@ -41,14 +41,18 @@ struct VersionResponse {
     developer_url: String,
 }
 
-pub(crate) async fn version(State(_app): State<Arc<App>>) -> impl IntoResponse {
+pub(crate) async fn version(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    let _user = require_user(&app, &headers)?;
     let meta = supervisor_meta();
-    Json(VersionResponse {
+    Ok(Json(VersionResponse {
         version: meta.version,
         repository: meta.repository,
         developer_name: meta.developer_name,
         developer_url: meta.developer_url,
-    })
+    }))
 }
 
 pub(crate) async fn ui_favicon() -> impl IntoResponse {
