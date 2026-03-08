@@ -1036,6 +1036,7 @@ where
     )))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn rollback_service_after_failed_update(
     runner: &dyn CommandRunner,
     compose_cfg: &ComposeRunnerConfig,
