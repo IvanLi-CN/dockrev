@@ -27,6 +27,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| upjqw | Dockrev：更新后本地 Compose Tag 稳定化，消除手动 `docker compose up -d` 回退 | 已完成 | `upjqw-compose-tag-stability/SPEC.md` | 2026-03-08 | fast-track（普通更新 + supervisor 自升级稳定 tag，避免手工 up 回退） |
 | mvjy8 | Dockrev：服务端模块拆分 + GitHub-hosted 官方环境验收 | 已实现 | `mvjy8-server-module-decomposition-testbox-gate/SPEC.md` | 2026-03-08 | fast-track（server decomposition + hosted deploy smoke + official CI regressions） |
 | myy3w | Dockrev：Settings 空 Public Base URL 当前地址建议气泡 | 已完成 | `myy3w-settings-public-base-url-suggest/SPEC.md` | 2026-03-07 | fast-track（当前页面根地址建议气泡 + localStorage 拒绝偏好 + storybook 覆盖，PR #145） |
 | qh1dx | Dockrev：Forward Auth 项目鉴权 + 部署文档补齐 | 已完成 | `qh1dx-forward-auth-project-authz-and-deploy-docs/SPEC.md` | 2026-03-08 | fast-track（review-loop 收敛 + 鉴权/部署文档补齐） |

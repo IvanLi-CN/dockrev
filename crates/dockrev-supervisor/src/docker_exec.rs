@@ -430,6 +430,17 @@ pub async fn docker_pull(cfg: &Config, image_ref: &str, timeout: Duration) -> an
     Ok(())
 }
 
+pub async fn docker_tag(
+    cfg: &Config,
+    image_id: &str,
+    image_ref: &str,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let _ts = now_rfc3339()?;
+    let _ = run_docker_lines(cfg, &["image", "tag", image_id, image_ref], timeout).await?;
+    Ok(())
+}
+
 pub async fn compose_up(
     cfg: &Config,
     target: &TargetRuntime,
@@ -890,6 +901,39 @@ exit 1
         cfg.docker_bin = docker_bin;
         let got = auto_match_container(&cfg).await.unwrap();
         assert_eq!(got, "ctr_dangling");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn docker_tag_invokes_docker_image_tag() {
+        let script = r#"#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "dockrev-fake-probe" ]]; then
+  exit 0
+fi
+printf '%s
+' "$*" >"$(dirname "$0")/last-args.txt"
+exit 0
+"#;
+
+        let (dir, docker_bin) = install_fake_docker(script).unwrap();
+        let mut cfg = test_cfg();
+        cfg.docker_bin = docker_bin;
+
+        docker_tag(
+            &cfg,
+            "sha256:new-image",
+            "ghcr.io/ivanli-cn/dockrev:latest",
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+
+        let recorded = std::fs::read_to_string(dir.path().join("last-args.txt")).unwrap();
+        assert_eq!(
+            recorded.trim(),
+            "image tag sha256:new-image ghcr.io/ivanli-cn/dockrev:latest"
+        );
     }
 
     #[cfg(unix)]

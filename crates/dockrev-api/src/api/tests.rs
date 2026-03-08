@@ -539,6 +539,17 @@ impl CommandRunner for SemverRetryFailRunner {
             7 => {
                 assert_eq!(
                     args,
+                    vec!["image", "tag", "sha256:new", "ghcr.io/acme/web:latest"]
+                );
+                CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }
+            }
+            8 => {
+                assert_eq!(
+                    args,
                     vec![
                         "image",
                         "inspect",
@@ -553,7 +564,7 @@ impl CommandRunner for SemverRetryFailRunner {
                     stderr: String::new(),
                 }
             }
-            8 => {
+            9 => {
                 assert_eq!(
                     args,
                     vec![
@@ -570,7 +581,7 @@ impl CommandRunner for SemverRetryFailRunner {
                     stderr: String::new(),
                 }
             }
-            9..=11 => {
+            10..=12 => {
                 assert_eq!(args, vec!["pull", "ghcr.io/acme/web:0.7.7"]);
                 CommandOutput {
                     status: 1,

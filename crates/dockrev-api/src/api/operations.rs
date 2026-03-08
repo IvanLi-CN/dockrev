@@ -135,7 +135,9 @@ pub(super) fn update_apply_fraction(evt: &updater::UpdateProgressEvent) -> f64 {
         S::UpStart => 0.60,
         S::UpDone => 0.82,
         S::HealthStart => 0.86,
-        S::HealthDone => 0.95,
+        S::HealthDone => 0.90,
+        S::SyncTagStart => 0.93,
+        S::SyncTagDone => 0.97,
         S::ServiceDone => 1.0,
     };
 
@@ -1644,6 +1646,7 @@ pub(super) async fn run_update_job(
                         updater::UpdateProgressStep::PullDone
                             | updater::UpdateProgressStep::UpDone
                             | updater::UpdateProgressStep::HealthDone
+                            | updater::UpdateProgressStep::SyncTagDone
                             | updater::UpdateProgressStep::ServiceDone
                     );
                     let should_emit = force_emit
