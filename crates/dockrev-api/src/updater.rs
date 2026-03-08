@@ -278,9 +278,9 @@ fn failed_summary_with_failure_step(
     serde_json::Value::Object(obj)
 }
 
-fn should_sync_local_tag(image_ref: &str, target_digest: Option<&str>) -> bool {
+fn should_sync_local_tag(image_ref: &str) -> bool {
     let trimmed = image_ref.trim();
-    target_digest.is_none() && !trimmed.is_empty() && !trimmed.contains('@')
+    !trimmed.is_empty() && !trimmed.contains('@')
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -382,7 +382,7 @@ pub async fn run_update_job(
             continue;
         }
 
-        let sync_local_tag = should_sync_local_tag(&svc.image.reference, target_digest);
+        let sync_local_tag = should_sync_local_tag(&svc.image.reference);
 
         let old_image_id = run_to_string_with_retry(
             runner,
@@ -1876,6 +1876,80 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct ExplicitTargetDigestSyncRunner {
+        step: Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for ExplicitTargetDigestSyncRunner {
+        async fn run(
+            &self,
+            spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            let mut step = self.step.lock().unwrap();
+            let out = match *step {
+                0 => CommandOutput {
+                    status: 0,
+                    stdout: "old_container\n".to_string(),
+                    stderr: String::new(),
+                },
+                1 => CommandOutput {
+                    status: 0,
+                    stdout: "sha256:old\n".to_string(),
+                    stderr: String::new(),
+                },
+                2 => CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+                3 => CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+                4 => CommandOutput {
+                    status: 0,
+                    stdout: "new_container\n".to_string(),
+                    stderr: String::new(),
+                },
+                5 => CommandOutput {
+                    status: 0,
+                    stdout: "0\n".to_string(),
+                    stderr: String::new(),
+                },
+                6 => CommandOutput {
+                    status: 0,
+                    stdout: "sha256:new\n".to_string(),
+                    stderr: String::new(),
+                },
+                7 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec!["image", "tag", "sha256:new", "ghcr.io/org/web:1.0"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                }
+                _ => panic!(
+                    "unexpected extra command: program={} args={:?}",
+                    spec.program, spec.args
+                ),
+            };
+            *step += 1;
+            Ok(out)
+        }
+    }
+
+    #[derive(Default)]
     struct SyncBeforeSemverRunner {
         calls: Mutex<Vec<(String, Vec<String>)>>,
     }
@@ -2002,9 +2076,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn explicit_target_digest_skips_local_tag_sync() {
+    async fn explicit_target_digest_still_syncs_tag_based_service() {
         let stack = single_service_stack("ghcr.io/org/web:1.0", None);
-        let runner = DigestPinnedRunner::default();
+        let runner = ExplicitTargetDigestSyncRunner::default();
 
         let outcome = run_update_job(
             &runner,
@@ -2024,7 +2098,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(outcome.status, "success");
-        assert_eq!(*runner.step.lock().unwrap(), 7);
+        assert_eq!(*runner.step.lock().unwrap(), 8);
     }
 
     #[tokio::test]
