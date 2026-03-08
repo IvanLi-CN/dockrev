@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import {
   ApiError,
   forceRefreshServiceVersionInference,
@@ -8,6 +8,7 @@ import {
   type ServiceDigestTagsScanSummary,
 } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
+import { useHoverPinnedPopover } from './HoverPinnedPopover'
 
 type TagSeries = {
   major: number
@@ -66,8 +67,6 @@ function uniquePreserveOrder(values: string[] | null | undefined): string[] {
   return out
 }
 
-const HOVER_CLOSE_DELAY_MS = 300
-const POPOVER_ANIM_MS = 160
 const FETCH_DEBOUNCE_MS = 220
 const TAGS_PREVIEW_MAX = 12
 
@@ -106,21 +105,8 @@ export function CurrentVersionPopover(props: {
 }) {
   const { imageTag, imageDigest, resolvedTag } = props
   const preferSource = props.preferSource ?? 'resolvedTag'
-  const triggerRef = useRef<HTMLButtonElement | null>(null)
-  const popoverRef = useRef<HTMLDivElement | null>(null)
-  const hoverCloseTimer = useRef<number | null>(null)
-  const popoverUnmountTimer = useRef<number | null>(null)
-  const popoverShowRaf = useRef<number | null>(null)
   const fetchTimer = useRef<number | null>(null)
-  const pinnedRef = useRef(false)
-
-  const [pinned, setPinned] = useState(false)
-  const [hoverOpen, setHoverOpen] = useState(false)
-  const open = pinned || hoverOpen
-  const [renderPopover, setRenderPopover] = useState(false)
-  const [popoverVisible, setPopoverVisible] = useState(false)
-
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
+  const { contentProps, open, pinned, popoverProps, togglePinned, triggerProps } = useHoverPinnedPopover()
 
   const digestNorm = useMemo(() => normalizeDigest(imageDigest), [imageDigest])
 
@@ -165,83 +151,14 @@ export function CurrentVersionPopover(props: {
   const tagsPreview = useMemo(() => effectiveTags.slice(0, TAGS_PREVIEW_MAX), [effectiveTags])
   const tagsMore = useMemo(() => Math.max(0, effectiveTags.length - tagsPreview.length), [effectiveTags.length, tagsPreview.length])
 
-  const clearHoverCloseTimer = useCallback(() => {
-    if (hoverCloseTimer.current == null) return
-    window.clearTimeout(hoverCloseTimer.current)
-    hoverCloseTimer.current = null
-  }, [])
-
-  const clearPopoverUnmountTimer = useCallback(() => {
-    if (popoverUnmountTimer.current == null) return
-    window.clearTimeout(popoverUnmountTimer.current)
-    popoverUnmountTimer.current = null
-  }, [])
-
-  const clearPopoverShowRaf = useCallback(() => {
-    if (popoverShowRaf.current == null) return
-    window.cancelAnimationFrame(popoverShowRaf.current)
-    popoverShowRaf.current = null
-  }, [])
-
-  const showPopover = useCallback(() => {
-    clearPopoverUnmountTimer()
-
-    if (!renderPopover) {
-      setRenderPopover(true)
-      setPopoverVisible(false)
-      clearPopoverShowRaf()
-      popoverShowRaf.current = window.requestAnimationFrame(() => {
-        setPopoverVisible(true)
-        popoverShowRaf.current = null
-      })
-      return
-    }
-
-    setPopoverVisible(true)
-  }, [clearPopoverShowRaf, clearPopoverUnmountTimer, renderPopover])
-
-  const hidePopover = useCallback(() => {
-    if (!renderPopover) return
-
-    clearPopoverShowRaf()
-    setPopoverVisible(false)
-    clearPopoverUnmountTimer()
-    popoverUnmountTimer.current = window.setTimeout(() => {
-      setRenderPopover(false)
-      popoverUnmountTimer.current = null
-    }, POPOVER_ANIM_MS)
-  }, [clearPopoverShowRaf, clearPopoverUnmountTimer, renderPopover])
-
-  const scheduleHoverClose = () => {
-    if (pinnedRef.current) return
-    clearHoverCloseTimer()
-    hoverCloseTimer.current = window.setTimeout(() => {
-      hoverCloseTimer.current = null
-      if (pinnedRef.current) return
-      setHoverOpen(false)
-      hidePopover()
-    }, HOVER_CLOSE_DELAY_MS)
-  }
-
-  const close = useCallback(() => {
-    clearHoverCloseTimer()
-    setPinned(false)
-    pinnedRef.current = false
-    setHoverOpen(false)
-    hidePopover()
-  }, [clearHoverCloseTimer, hidePopover])
-
   useEffect(() => {
     return () => {
-      clearHoverCloseTimer()
-      clearPopoverShowRaf()
-      clearPopoverUnmountTimer()
       if (fetchTimer.current != null) {
         window.clearTimeout(fetchTimer.current)
         fetchTimer.current = null
       }
     }
-  }, [clearHoverCloseTimer, clearPopoverShowRaf, clearPopoverUnmountTimer])
+  }, [])
 
   const triggerForceRefresh = useCallback(async () => {
     if (refreshing) return
@@ -363,70 +280,6 @@ export function CurrentVersionPopover(props: {
     setSnapshotPhase('idle')
   }, [digestKey])
 
-  useLayoutEffect(() => {
-    if (!open) return
-    const trigger = triggerRef.current
-    if (!trigger) return
-    const rect = trigger.getBoundingClientRect()
-    setPos({ left: rect.left, top: rect.bottom + 8 })
-  }, [open])
-
-  useLayoutEffect(() => {
-    if (!open) return
-    const trigger = triggerRef.current
-    const pop = popoverRef.current
-    if (!trigger || !pop) return
-
-    const reposition = () => {
-      const rect = trigger.getBoundingClientRect()
-      const popRect = pop.getBoundingClientRect()
-
-      let left = rect.left
-      let top = rect.bottom + 8
-
-      const margin = 10
-      if (left + popRect.width > window.innerWidth - margin) left = window.innerWidth - margin - popRect.width
-      if (left < margin) left = margin
-
-      if (top + popRect.height > window.innerHeight - margin) top = rect.top - 8 - popRect.height
-      if (top < margin) top = margin
-
-      setPos((prev) => (prev && prev.left === left && prev.top === top ? prev : { left, top }))
-    }
-
-    reposition()
-    window.addEventListener('resize', reposition)
-    window.addEventListener('scroll', reposition, true)
-    return () => {
-      window.removeEventListener('resize', reposition)
-      window.removeEventListener('scroll', reposition, true)
-    }
-  }, [open])
-
-  useEffect(() => {
-    if (!pinned) return
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close()
-    }
-
-    const onPointerDown = (e: PointerEvent) => {
-      const t = e.target as unknown
-      const el = t instanceof Element ? t : null
-      if (!el) return
-      if (triggerRef.current?.contains(el)) return
-      if (popoverRef.current?.contains(el)) return
-      close()
-    }
-
-    document.addEventListener('keydown', onKeyDown)
-    document.addEventListener('pointerdown', onPointerDown)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-      document.removeEventListener('pointerdown', onPointerDown)
-    }
-  }, [close, pinned])
-
   const inferenceBlock = useMemo<ReactNode>(() => {
     const rawTrim = (imageTag ?? '').trim()
     const resolved = resolvedTagTrim
@@ -527,118 +380,20 @@ export function CurrentVersionPopover(props: {
     )
   }, [digestNorm, imageTag, preferSource, rawSeries, resolvedTagTrim])
 
-  const popoverBody = renderPopover ? (
-    <div
-      ref={popoverRef}
-      className="versionTagsPopover"
-      style={pos ? { left: pos.left, top: pos.top } : undefined}
-      role="dialog"
-      aria-label="Current version"
-      data-state={popoverVisible ? 'open' : 'closed'}
-      onPointerEnter={() => {
-        clearHoverCloseTimer()
-        setHoverOpen(true)
-        showPopover()
-      }}
-      onPointerLeave={() => {
-        scheduleHoverClose()
-      }}
-    >
-      <div className="versionTagsPopoverHeader">
-        <div className="versionTagsPopoverTitle">
-          <span className="mono monoPrimary">{displayTag}</span>
-          {digestNorm ? (
-            <span className="mono muted">
-              {shortenDigest(digestNorm)}
-            </span>
-          ) : (
-            <span className="mono muted">digest 未知</span>
-          )}
-        </div>
-        <div className="versionTagsPopoverActions">
-          <button
-            type="button"
-            className="versionTagsPopoverAction"
-            disabled={refreshing}
-            onClick={() => {
-              void triggerForceRefresh()
-            }}
-          >
-            {refreshing ? '强制刷新中…' : '强制刷新'}
-          </button>
-        </div>
-      </div>
-
-      {refreshNotice ? <div className="muted">{refreshNotice}</div> : null}
-      {refreshError ? <div className="muted">触发失败：{refreshError}</div> : null}
-
-      <div className="versionTagsPopoverSection">
-        <div className="label">推测</div>
-        {inferenceBlock}
-      </div>
-
-      <div className="versionTagsPopoverSection">
-        <div className="label">当前镜像</div>
-        <div className="muted">
-          raw tag <span className="mono">{imageTag.trim() ? imageTag : '（空）'}</span>
-        </div>
-        <div className="muted">
-          resolvedTag <span className="mono">{resolvedTagTrim || '（缺失）'}</span>
-        </div>
-      </div>
-
-      <div className="versionTagsPopoverSection">
-        <div className="label">同 digest 的 tags</div>
-        {!digestNorm && effectiveTags.length === 0 ? (
-          <div className="muted">digest 未知，暂无 tags 信息</div>
-        ) : digestNorm && missingSnapshot ? (
-          <div className="muted">快照缺失：请先执行一次 check（本气泡不再实时扫描 registry）</div>
-        ) : digestNorm && digestTags == null && effectiveTags.length === 0 ? (
-          <div className="muted">读取扫描快照中…</div>
-        ) : loadError && effectiveTags.length === 0 ? (
-          <div className="muted">读取失败：{loadError}</div>
-        ) : effectiveTags.length === 0 ? (
-          <div className="muted">未找到同 digest 的标签</div>
-        ) : (
-          <>
-            <div className="muted">共 {effectiveTags.length} 个 tags</div>
-
-            {checkedAt ? (
-              <div className="muted">
-                快照时间 <span className="mono">{checkedAt}</span>
-              </div>
-            ) : null}
-
-            {scan && digestNorm && scan.repoTagsConsidered < scan.repoTagsTotal ? (
-              <div className="muted">
-                注意：仅比对最近 {scan.repoTagsConsidered} / {scan.repoTagsTotal} 个 tags，结果可能不完整
-              </div>
-            ) : null}
-
-            {scan && digestNorm && (scan.manifestsTimeout > 0 || scan.manifestsError > 0) ? (
-              <div className="muted">
-                注意：digest tags 可能不完整（ok {scan.manifestsOk} / {scan.repoTagsConsidered}
-                {scan.manifestsTimeout > 0 ? ` · timeout ${scan.manifestsTimeout}` : ''}
-                {scan.manifestsError > 0 ? ` · error ${scan.manifestsError}` : ''}
-                ）
-              </div>
-            ) : null}
-
-            <div className="muted">
-              tags 预览：{tagsMore > 0 ? `显示 ${tagsPreview.length}，另有 ${tagsMore} 个` : '全部'}
-            </div>
-            <div className="versionTagsPopoverChips">
-              {tagsPreview.map((t) => (
-                <span key={t} className="versionTagsChip">
-                  <span className={`mono${t === resolvedTagTrim ? ' monoPrimary' : ''}`}>{t}</span>
-                </span>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  ) : null
+  const handleTriggerClick = () => {
+    const next = togglePinned()
+    if (next && (missingSnapshot || loadError)) {
+      setDigestState({
+        key: digestKey,
+        tags: null,
+        scan: null,
+        checkedAt: null,
+        missingSnapshot: false,
+        error: null,
+      })
+      setSnapshotPhase('idle')
+    }
+  }
 
   const showSnapshotLoadingTriggerLabel = preferSource !== 'rawTag' && Boolean(digestNorm) && snapshotPhase === 'loading'
   const showInferenceLoadingStyle = preferSource !== 'rawTag' && Boolean(props.inferenceLoading)
@@ -650,46 +405,120 @@ export function CurrentVersionPopover(props: {
   const triggerLabel = showSnapshotLoadingTriggerLabel ? '加载中…' : (props.children ?? displayTag)
 
   return (
-    <>
-      <button
-        ref={triggerRef}
-        type="button"
-        className={triggerClassName}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        onPointerEnter={() => {
-          clearHoverCloseTimer()
-          setHoverOpen(true)
-          showPopover()
-        }}
-        onPointerLeave={() => {
-          scheduleHoverClose()
-        }}
-        onClick={() => {
-          clearHoverCloseTimer()
-          const next = !pinnedRef.current
-          pinnedRef.current = next
-          setPinned(next)
-          // If we previously failed to load (404/no snapshot yet, or other error),
-          // treat pinning as an explicit one-shot retry by clearing state to "loading".
-          if (next && (missingSnapshot || loadError)) {
-            setDigestState({
-              key: digestKey,
-              tags: null,
-              scan: null,
-              checkedAt: null,
-              missingSnapshot: false,
-              error: null,
-            })
-            setSnapshotPhase('idle')
-          }
-          setHoverOpen(true)
-          showPopover()
-        }}
+    <Popover {...popoverProps}>
+      <PopoverAnchor asChild>
+        <button
+          {...triggerProps}
+          type="button"
+          className={triggerClassName}
+          aria-haspopup="dialog"
+          onClick={handleTriggerClick}
+        >
+          {triggerLabel}
+        </button>
+      </PopoverAnchor>
+      <PopoverContent
+        {...contentProps}
+        align="start"
+        aria-label="Current version"
+        className="versionTagsPopover"
+        forceMount
+        sideOffset={8}
       >
-        {triggerLabel}
-      </button>
-      {renderPopover ? createPortal(popoverBody, document.body) : null}
-    </>
+        <div className="versionTagsPopoverHeader">
+          <div className="versionTagsPopoverTitle">
+            <span className="mono monoPrimary">{displayTag}</span>
+            {digestNorm ? (
+              <span className="mono muted">
+                {shortenDigest(digestNorm)}
+              </span>
+            ) : (
+              <span className="mono muted">digest 未知</span>
+            )}
+          </div>
+          <div className="versionTagsPopoverActions">
+            <button
+              type="button"
+              className="versionTagsPopoverAction"
+              disabled={refreshing}
+              onClick={() => {
+                void triggerForceRefresh()
+              }}
+            >
+              {refreshing ? '强制刷新中…' : '强制刷新'}
+            </button>
+          </div>
+        </div>
+
+        {refreshNotice ? <div className="muted">{refreshNotice}</div> : null}
+        {refreshError ? <div className="muted">触发失败：{refreshError}</div> : null}
+
+        <div className="versionTagsPopoverSection">
+          <div className="label">推测</div>
+          {inferenceBlock}
+        </div>
+
+        <div className="versionTagsPopoverSection">
+          <div className="label">当前镜像</div>
+          <div className="muted">
+            raw tag <span className="mono">{imageTag.trim() ? imageTag : '（空）'}</span>
+          </div>
+          <div className="muted">
+            resolvedTag <span className="mono">{resolvedTagTrim || '（缺失）'}</span>
+          </div>
+        </div>
+
+        <div className="versionTagsPopoverSection">
+          <div className="label">同 digest 的 tags</div>
+          {!digestNorm && effectiveTags.length === 0 ? (
+            <div className="muted">digest 未知，暂无 tags 信息</div>
+          ) : digestNorm && missingSnapshot ? (
+            <div className="muted">快照缺失：请先执行一次 check（本气泡不再实时扫描 registry）</div>
+          ) : digestNorm && digestTags == null && effectiveTags.length === 0 ? (
+            <div className="muted">读取扫描快照中…</div>
+          ) : loadError && effectiveTags.length === 0 ? (
+            <div className="muted">读取失败：{loadError}</div>
+          ) : effectiveTags.length === 0 ? (
+            <div className="muted">未找到同 digest 的标签</div>
+          ) : (
+            <>
+              <div className="muted">共 {effectiveTags.length} 个 tags</div>
+
+              {checkedAt ? (
+                <div className="muted">
+                  快照时间 <span className="mono">{checkedAt}</span>
+                </div>
+              ) : null}
+
+              {scan && digestNorm && scan.repoTagsConsidered < scan.repoTagsTotal ? (
+                <div className="muted">
+                  注意：仅比对最近 {scan.repoTagsConsidered} / {scan.repoTagsTotal} 个 tags，结果可能不完整
+                </div>
+              ) : null}
+
+              {scan && digestNorm && (scan.manifestsTimeout > 0 || scan.manifestsError > 0) ? (
+                <div className="muted">
+                  注意：digest tags 可能不完整（ok {scan.manifestsOk} / {scan.repoTagsConsidered}
+                  {scan.manifestsTimeout > 0 ? ` · timeout ${scan.manifestsTimeout}` : ''}
+                  {scan.manifestsError > 0 ? ` · error ${scan.manifestsError}` : ''}
+                  ）
+                </div>
+              ) : null}
+
+              <div className="muted">
+                tags 预览：{tagsMore > 0 ? `显示 ${tagsPreview.length}，另有 ${tagsMore} 个` : '全部'}
+              </div>
+              <div className="versionTagsPopoverChips">
+                {tagsPreview.map((t) => (
+                  <span key={t} className="versionTagsChip">
+                    <span className={`mono${t === resolvedTagTrim ? ' monoPrimary' : ''}`}>{t}</span>
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }

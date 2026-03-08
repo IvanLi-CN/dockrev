@@ -1,0 +1,16 @@
+import { Meta, Primary, Stories, Title, Description } from '@storybook/addon-docs/blocks'
+import * as NotificationChannelCardStories from './NotificationChannelCard.stories'
+
+<Meta of={NotificationChannelCardStories} />
+<Title />
+<Description>
+`NotificationChannelCard` 组合了 shadcn `Switch`、测试气泡与渠道配置表单，是系统设置页里最常见的复合块之一。
+</Description>
+
+## 关注点
+- 顶部开关负责启停渠道，不影响测试入口存在。
+- 测试 bubble 需要覆盖 running / success / error 三态。
+- 内容区应能容纳 Email、Webhook、Telegram、Web Push 四类不同字段。
+
+<Primary />
+<Stories />

@@ -4,6 +4,7 @@ import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../../compon
 
 const meta: Meta<typeof UpdateCandidateFilters> = {
   title: 'Components/UpdateCandidateFilters',
+  tags: ['autodocs'],
   component: UpdateCandidateFilters,
   args: {
     total: 18,

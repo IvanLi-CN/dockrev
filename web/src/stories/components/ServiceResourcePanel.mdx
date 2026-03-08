@@ -1,0 +1,16 @@
+import { Meta, Primary, Stories, Title, Description } from '@storybook/addon-docs/blocks'
+import * as ServiceResourcePanelStories from './ServiceResourcePanel.stories'
+
+<Meta of={ServiceResourcePanelStories} />
+<Title />
+<Description>
+`ServiceResourcePanel` 已经把指标切换迁到 shadcn `Tabs`、把时间窗口切换迁到 `ToggleGroup`，同时保留 SSE 实时状态与历史趋势图逻辑。
+</Description>
+
+## 关注点
+- `Tabs` 负责 CPU / 内存 / 网络 / 磁盘 I/O / PIDs 的指标切换。
+- `ToggleGroup` 负责 15m / 1h / 6h 时间窗口。
+- Story 使用 mock API，覆盖空数据、监控关闭与流错误三类异常状态。
+
+<Primary />
+<Stories />

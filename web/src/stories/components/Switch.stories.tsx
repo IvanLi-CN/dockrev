@@ -5,27 +5,23 @@ import { Switch } from '../../ui'
 const meta: Meta<typeof Switch> = {
   title: 'Components/Switch',
   component: Switch,
+  tags: ['autodocs'],
 }
 
 export default meta
+
 type Story = StoryObj<typeof Switch>
 
 export const Off: Story = {
-  render: () => {
-    return <Switch checked={false} onChange={() => {}} />
-  },
+  render: () => <Switch checked={false} onChange={() => {}} />,
 }
 
 export const On: Story = {
-  render: () => {
-    return <Switch checked onChange={() => {}} />
-  },
+  render: () => <Switch checked onChange={() => {}} />,
 }
 
 export const Disabled: Story = {
-  render: () => {
-    return <Switch checked disabled onChange={() => {}} />
-  },
+  render: () => <Switch checked disabled onChange={() => {}} />,
 }
 
 function SwitchExample() {
@@ -34,7 +30,5 @@ function SwitchExample() {
 }
 
 export const Interactive: Story = {
-  render: () => {
-    return <SwitchExample />
-  },
+  render: () => <SwitchExample />,
 }

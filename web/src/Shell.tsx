@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { getDockrevVersion } from './api'
-import { Chip, GitHubIcon, Mono } from './ui'
+import { GitHubIcon, Mono, ToggleGroup, ToggleGroupItem } from './ui'
 import { ConfirmProvider } from './ConfirmProvider'
 import { brandMarkUrl } from './publicAssetUrls'
 import { UpdateActionTrackerProvider } from './updateActionTracking'
@@ -223,18 +223,27 @@ export function FilterChips<T extends string>(props: {
   items: Array<{ key: T; label: string; count?: number; activeTone?: 'primary' | 'ghost' }>
 }) {
   return (
-    <div className="chipRow">
+    <ToggleGroup
+      aria-label="过滤条件"
+      className="chipRow"
+      onValueChange={(value) => {
+        if (value) props.onChange(value as T)
+      }}
+      type="single"
+      value={props.value}
+    >
       {props.items.map((it) => (
-        <Chip
+        <ToggleGroupItem
           key={it.key}
-          active={props.value === it.key}
-          onClick={() => props.onChange(it.key)}
+          className={props.value === it.key ? 'chip chipActive' : 'chip'}
           title={it.count != null ? `${it.label}: ${it.count}` : it.label}
+          value={it.key}
+          variant="outline"
         >
           <span>{it.label}</span>
           {it.count != null ? <span className="chipCount">{it.count}</span> : null}
-        </Chip>
+        </ToggleGroupItem>
       ))}
-    </div>
+    </ToggleGroup>
   )
 }

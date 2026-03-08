@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   ApiError,
   getServiceResourceUsageHistory,
@@ -633,21 +635,18 @@ export function ServiceResourcePanel(props: { serviceId: string }) {
             </div>
           </div>
 
-          <div className="svcResourceChartWrap">
-            <div className="svcResourceTabs" role="tablist" aria-label="监控指标切换">
+          <Tabs className="svcResourceChartWrap" onValueChange={(value) => setMetricTab(value as MetricTabKey)} value={metricTab}>
+            <TabsList className="svcResourceTabs" aria-label="监控指标切换">
               {TAB_OPTIONS.map((tab) => (
-                <button
+                <TabsTrigger
                   key={tab.key}
-                  type="button"
                   className={tab.key === metricTab ? 'svcResourceTab active' : 'svcResourceTab'}
-                  onClick={() => setMetricTab(tab.key)}
-                  role="tab"
-                  aria-selected={tab.key === metricTab}
+                  value={tab.key}
                 >
                   {tab.label}
-                </button>
+                </TabsTrigger>
               ))}
-            </div>
+            </TabsList>
 
             {historyLoading ? (
               <div className="svcResourceChartEmpty">正在加载历史采样…</div>
@@ -660,21 +659,29 @@ export function ServiceResourcePanel(props: { serviceId: string }) {
                 emptyText="当前窗口暂无可展示的监控数据"
               />
             )}
-          </div>
+          </Tabs>
 
           <div className="svcResourceFooter">
-            <div className="svcResourceWindowSwitch" role="group" aria-label="时间窗口切换">
+            <ToggleGroup
+              className="svcResourceWindowSwitch"
+              type="single"
+              value={windowKey}
+              onValueChange={(value) => {
+                if (!value) return
+                setWindowKey(value as ServiceResourceUsageWindow)
+              }}
+              aria-label="时间窗口切换"
+            >
               {WINDOW_OPTIONS.map((option) => (
-                <button
+                <ToggleGroupItem
                   key={option.key}
-                  type="button"
                   className={option.key === windowKey ? 'svcResourceWindowBtn active' : 'svcResourceWindowBtn'}
-                  onClick={() => setWindowKey(option.key)}
+                  value={option.key}
                 >
                   {option.label}
-                </button>
+                </ToggleGroupItem>
               ))}
-            </div>
+            </ToggleGroup>
 
             <div className="svcResourceStreamStatus">{streamError ? `实时状态：${streamError}` : streamStatusLabel}</div>
           </div>

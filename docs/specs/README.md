@@ -28,6 +28,7 @@
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
 | qh1dx | Dockrev：Forward Auth 项目鉴权 + codex-testbox E2E 手动工作流 | 已完成 | `qh1dx-forward-auth-project-authz-and-testbox-e2e/SPEC.md` | 2026-03-07 | fast-track（review-loop 收敛 + PR 准备） |
+| appaf | Dockrev：shadcn/ui 全量对齐与 Storybook Docs/Stories 补齐 | 已完成 | `appaf-shadcn-ui-alignment-storybook/SPEC.md` | 2026-03-07 | fast-track（PR #147；checks 通过；review-loop 无阻塞） |
 | b67fg | Dockrev：GitHub Pages 合并发布文档站与 Storybook | 已完成 | `b67fg-pages-storybook-entry/SPEC.md` | 2026-03-07 | fast-track（Pages 并行构建 + docs Storybook 入口 + redirect bridge） |
 | z3mw5 | Dockrev：GHCR Webhook 命中服务检查优先，零命中回退 Discovery | 已完成 | `z3mw5-ghcr-webhook-service-check/SPEC.md` | 2026-03-07 | fast-track（webhook check-first + fallback discovery + webhook notify + review-loop hardening） |
 | pv9vc | Dockrev：更新按钮跨路由返回后保留运行态 | 已完成 | `pv9vc-update-button-route-return-spin/SPEC.md` | 2026-03-07 | fast-track（follow-up to #q6x2g：AppShell 级共享 tracker + browser back 回归 + storybook tests 通过） |

@@ -1,0 +1,15 @@
+import { Meta, Primary, Stories, Title, Description } from '@storybook/addon-docs/blocks'
+import * as TypographyStories from './Typography.stories'
+
+<Meta of={TypographyStories} />
+<Title />
+<Description>
+Typography helper 不再拆成多个零碎页面，而是统一在这里说明 `Mono` 与 `SectionTitle` 的使用边界。
+</Description>
+
+## 何时使用
+- `Mono`：digest、镜像引用、任务 id、cron 等机器可读文本。
+- `SectionTitle`：设置卡片或明细区块里的二级标题，不替代页面级 heading。
+
+<Primary />
+<Stories />

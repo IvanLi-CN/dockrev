@@ -4,17 +4,46 @@ import { Button } from '../../ui'
 const meta: Meta<typeof Button> = {
   title: 'Components/Button',
   component: Button,
+  tags: ['autodocs'],
   args: {
-    children: 'Button',
+    children: '保存设置',
     disabled: false,
     variant: 'primary',
+  },
+  argTypes: {
+    onClick: { action: 'clicked' },
   },
 }
 
 export default meta
+
 type Story = StoryObj<typeof Button>
 
-export const Primary: Story = { args: { variant: 'primary' } }
-export const Ghost: Story = { args: { variant: 'ghost' } }
-export const Danger: Story = { args: { variant: 'danger' } }
-export const Disabled: Story = { args: { disabled: true } }
+export const Default: Story = {}
+
+export const Ghost: Story = {
+  args: {
+    variant: 'ghost',
+    children: '次要操作',
+  },
+}
+
+export const Danger: Story = {
+  args: {
+    variant: 'danger',
+    children: '删除',
+  },
+}
+
+export const Loading: Story = {
+  args: {
+    children: '保存中',
+    loading: true,
+  },
+}
+
+export const Disabled: Story = {
+  args: {
+    disabled: true,
+  },
+}

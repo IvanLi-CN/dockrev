@@ -1,9 +1,26 @@
 import type { Preview } from '@storybook/react'
+import { themes } from 'storybook/theming'
 
+import { TooltipProvider } from '../src/components/ui/tooltip'
 import '../src/index.css'
 import '../src/App.css'
 
 const preview: Preview = {
+  parameters: {
+    backgrounds: {
+      options: {
+        dark: { name: 'dark', value: '#061227' },
+        light: { name: 'light', value: '#f5f7fb' },
+      },
+    },
+    docs: {
+      theme: themes.dark,
+    },
+  },
+  initialGlobals: {
+    backgrounds: { value: 'dark' },
+    theme: 'dark',
+  },
   globalTypes: {
     theme: {
       description: 'Theme',
@@ -22,7 +39,12 @@ const preview: Preview = {
       const theme = context.globals.theme === 'light' ? 'light' : 'dark'
       document.documentElement.dataset.theme = theme
       document.documentElement.style.colorScheme = theme
-      return Story()
+      document.documentElement.classList.toggle('dark', theme === 'dark')
+      return (
+        <TooltipProvider>
+          <Story />
+        </TooltipProvider>
+      )
     },
   ],
 }

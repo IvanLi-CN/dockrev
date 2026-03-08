@@ -1466,6 +1466,13 @@ html[data-theme='light'] .modalOverlay {
   gap: 12px;
 }
 
+.modalTitleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .modalTitle {
   font-size: 16px;
   font-weight: 750;
@@ -4218,10 +4225,15 @@ html[data-theme='light'] .modalOverlay {
   color: #eff6ff;
 }
 
-.deployNeverAutoCheckbox input {
-  width: 16px;
-  height: 16px;
-  accent-color: #50b7ff;
+.deployNeverAutoCheckbox label {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  cursor: pointer;
+}
+
+.deployNeverAutoCheckbox button {
+  flex-shrink: 0;
 }
 
 .deployWelcomeActionHint {
