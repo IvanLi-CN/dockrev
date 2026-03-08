@@ -3500,6 +3500,81 @@ html[data-theme='light'] .modalOverlay {
   align-items: center;
 }
 
+.settingsInlineSuggestionBubble {
+  position: fixed;
+  z-index: 1100;
+  --settings-inline-suggestion-bg: color-mix(in srgb, var(--panel2) 92%, #020814 8%);
+  --settings-inline-suggestion-border: color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 12px;
+  width: max-content;
+  min-width: 240px;
+  max-width: min(560px, calc(100vw - 28px));
+  padding: 10px 12px;
+  box-sizing: border-box;
+  border-radius: 14px;
+  border: 1px solid var(--settings-inline-suggestion-border);
+  background: var(--settings-inline-suggestion-bg);
+  box-shadow: var(--shadow-soft);
+  color: var(--text);
+}
+
+.settingsInlineSuggestionBubble::before {
+  content: '';
+  position: absolute;
+  right: 22px;
+  width: 10px;
+  height: 10px;
+  background: var(--settings-inline-suggestion-bg);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.settingsInlineSuggestionBubble[data-placement^='bottom']::before {
+  top: -6px;
+  border-left: 1px solid var(--settings-inline-suggestion-border);
+  border-top: 1px solid var(--settings-inline-suggestion-border);
+}
+
+.settingsInlineSuggestionBubble[data-placement^='top']::before {
+  bottom: -6px;
+  border-right: 1px solid var(--settings-inline-suggestion-border);
+  border-bottom: 1px solid var(--settings-inline-suggestion-border);
+}
+
+.settingsInlineSuggestionText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.settingsInlineSuggestionText .mono {
+  color: var(--text);
+  min-width: 0;
+  max-width: min(260px, calc(100vw - 210px));
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settingsInlineSuggestionActions {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .ruleList {
   margin-top: 12px;
   display: flex;
