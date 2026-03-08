@@ -840,25 +840,13 @@ impl CommandRunner for UpdateAndRuntimeScanRunner {
         let args = spec.args;
         let updated_now = *self.updated.lock().unwrap();
 
-        let (status, stdout) = if args.first().map(|s| s.as_str()) == Some("ps")
+        let (status, stdout) = if (args.first().map(|s| s.as_str()) == Some("ps")
             && args.get(1).map(|s| s.as_str()) == Some("-q")
             && args
                 .iter()
-                .any(|arg| arg.contains("com.docker.compose.project="))
+                .any(|arg| arg.contains("com.docker.compose.project=")))
+            || args.ends_with(&["ps".to_string(), "-q".to_string(), "web".to_string()])
         {
-            (
-                0,
-                if updated_now {
-                    "container_new
-"
-                    .to_string()
-                } else {
-                    "container_old
-"
-                    .to_string()
-                },
-            )
-        } else if args.ends_with(&["ps".to_string(), "-q".to_string(), "web".to_string()]) {
             (
                 0,
                 if updated_now {

@@ -1714,12 +1714,14 @@ pub(super) async fn run_update_job(
             let _ = progress_task.await;
             match update_outcome {
                 Ok(outcome) => {
-                    if outcome.status == "success" && !planned_service_ids.is_empty() {
-                        if let Some(project) = state.db.get_stack_compose_project(stack_id).await? {
-                            let settled_at = now_rfc3339()
-                                .unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
-                            let mut settled_services = 0usize;
-                            for changed_service_id in &planned_service_ids {
+                    if outcome.status == "success"
+                        && !planned_service_ids.is_empty()
+                        && let Some(project) = state.db.get_stack_compose_project(stack_id).await?
+                    {
+                        let settled_at = now_rfc3339()
+                            .unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+                        let mut settled_services = 0usize;
+                        for changed_service_id in &planned_service_ids {
                             let Some(svc) = stack.services.iter().find(|svc| svc.id == *changed_service_id) else {
                                 continue;
                             };
@@ -1739,86 +1741,94 @@ pub(super) async fn run_update_job(
                                 continue;
                             };
 
-                            if outcome.status == "success" {
-                                let svc_for_check = crate::db::ServiceForCheck {
-                                    id: svc.id.clone(),
-                                    name: svc.name.clone(),
-                                    image_ref: svc.image.reference.clone(),
-                                    image_tag: svc.image.tag.clone(),
-                                    current_digest: svc.image.digest.clone(),
-                                    current_resolved_tag: svc.image.resolved_tag.clone(),
-                                    current_resolved_tags_json: svc.image.resolved_tags.as_ref().and_then(|tags| serde_json::to_string(tags).ok()),
-                                    candidate_digest: svc.candidate.as_ref().map(|candidate| candidate.digest.clone()),
-                                    candidate_resolved_tag: svc.candidate.as_ref().and_then(|candidate| candidate.resolved_tag.clone()),
-                                };
-                                let mut settle_outcome = service_check::check_service_and_persist(
-                                    &state,
-                                    &job_id,
-                                    &svc_for_check,
-                                    Some(runtime_digest.clone()),
-                                    &host_platform,
-                                    &settled_at,
-                                    &manifest_digest_cache,
-                                    &repo_tags_cache,
-                                )
-                                .await?;
-                                let mut inference_ok = true;
-                                if settle_outcome.current_digest.is_none() {
-                                    inference_ok = false;
-                                    state
-                                        .db
-                                        .update_service_check_result(
-                                            &svc.id,
-                                            Some(runtime_digest.clone()),
-                                            None,
-                                            None,
-                                            None,
-                                            None,
-                                            None,
-                                            None,
-                                            None,
-                                            None,
-                                            None,
-                                            &settled_at,
-                                            &settled_at,
-                                        )
-                                        .await?;
-                                    settle_outcome.current_digest = Some(runtime_digest.clone());
-                                    settle_outcome.current_resolved_tag = None;
-                                    settle_outcome.current_resolved_tags_json = None;
-                                    settle_outcome.candidate_tag = None;
-                                    settle_outcome.candidate_resolved_tag = None;
-                                    settle_outcome.candidate_digest = None;
-                                    settle_outcome.candidate_arch_match = None;
-                                    settle_outcome.candidate_arch_json = None;
-                                    settle_outcome.ignore_rule_id = None;
-                                    settle_outcome.ignore_reason = None;
-                                    settle_outcome.candidate_present = false;
-                                }
-                                let evt = json!({
-                                    "type": "update_state_settled",
-                                    "jobId": job_id,
-                                    "ts": settled_at,
-                                    "stackId": stack_id,
-                                    "serviceId": svc.id,
-                                    "serviceName": svc.name,
-                                    "runtimeDigest": runtime_digest,
-                                    "candidatePresent": settle_outcome.candidate_present,
-                                    "inferenceOk": inference_ok,
-                                });
+                            let svc_for_check = crate::db::ServiceForCheck {
+                                id: svc.id.clone(),
+                                name: svc.name.clone(),
+                                image_ref: svc.image.reference.clone(),
+                                image_tag: svc.image.tag.clone(),
+                                current_digest: svc.image.digest.clone(),
+                                current_resolved_tag: svc.image.resolved_tag.clone(),
+                                current_resolved_tags_json: svc
+                                    .image
+                                    .resolved_tags
+                                    .as_ref()
+                                    .and_then(|tags| serde_json::to_string(tags).ok()),
+                                candidate_digest: svc
+                                    .candidate
+                                    .as_ref()
+                                    .map(|candidate| candidate.digest.clone()),
+                                candidate_resolved_tag: svc
+                                    .candidate
+                                    .as_ref()
+                                    .and_then(|candidate| candidate.resolved_tag.clone()),
+                            };
+                            let mut settle_outcome = service_check::check_service_and_persist(
+                                &state,
+                                &job_id,
+                                &svc_for_check,
+                                Some(runtime_digest.clone()),
+                                &host_platform,
+                                &settled_at,
+                                &manifest_digest_cache,
+                                &repo_tags_cache,
+                            )
+                            .await?;
+                            let mut inference_ok = true;
+                            if settle_outcome.current_digest.is_none() {
+                                inference_ok = false;
                                 state
                                     .db
-                                    .insert_job_log(
-                                        &job_id,
-                                        &JobLogLine {
-                                            ts: settled_at.clone(),
-                                            level: "event".to_string(),
-                                            msg: evt.to_string(),
-                                        },
+                                    .update_service_check_result(
+                                        &svc.id,
+                                        Some(runtime_digest.clone()),
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        &settled_at,
+                                        &settled_at,
                                     )
                                     .await?;
-                                settled_services += 1;
+                                settle_outcome.current_digest = Some(runtime_digest.clone());
+                                settle_outcome.current_resolved_tag = None;
+                                settle_outcome.current_resolved_tags_json = None;
+                                settle_outcome.candidate_tag = None;
+                                settle_outcome.candidate_resolved_tag = None;
+                                settle_outcome.candidate_digest = None;
+                                settle_outcome.candidate_arch_match = None;
+                                settle_outcome.candidate_arch_json = None;
+                                settle_outcome.ignore_rule_id = None;
+                                settle_outcome.ignore_reason = None;
+                                settle_outcome.candidate_present = false;
                             }
+                            let evt = json!({
+                                "type": "update_state_settled",
+                                "jobId": job_id,
+                                "ts": settled_at,
+                                "stackId": stack_id,
+                                "serviceId": svc.id,
+                                "serviceName": svc.name,
+                                "runtimeDigest": runtime_digest,
+                                "candidatePresent": settle_outcome.candidate_present,
+                                "inferenceOk": inference_ok,
+                            });
+                            state
+                                .db
+                                .insert_job_log(
+                                    &job_id,
+                                    &JobLogLine {
+                                        ts: settled_at.clone(),
+                                        level: "event".to_string(),
+                                        msg: evt.to_string(),
+                                    },
+                                )
+                                .await?;
+                            settled_services += 1;
 
                             enqueue_snapshot_for_image_ref(
                                 &state,
@@ -1829,9 +1839,8 @@ pub(super) async fn run_update_job(
                             )
                             .await;
                         }
-                            if outcome.status == "success" && settled_services > 0 {
-                                state.db.update_stack_last_check_at(stack_id, &settled_at).await?;
-                            }
+                        if settled_services > 0 {
+                            state.db.update_stack_last_check_at(stack_id, &settled_at).await?;
                         }
                     }
                     final_status = outcome.status.clone();
