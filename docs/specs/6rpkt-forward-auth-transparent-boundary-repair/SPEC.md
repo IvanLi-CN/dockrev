@@ -2,10 +2,10 @@
 
 ## 状态
 
-- Status: 部分完成（4/5）
+- Status: 已完成
 - Created: 2026-03-08
 - Last: 2026-03-08
-- Notes: fast-track（follow-up to #qh1dx；修正 PR #146 的网关拦截口径）
+- Notes: fast-track（follow-up to #qh1dx；修正 PR #146 的网关拦截口径；PR #149）
 
 ## 背景 / 问题陈述
 
@@ -78,7 +78,7 @@
 - [x] M2: 收紧 supervisor `/health` / `/version` 到同一内部授权模型，并保持 `/supervisor` / `/supervisor/` 兼容。
 - [x] M3: 删除前端全局 401 跳转，改为当前受保护模块原位显示统一鉴权诊断。
 - [x] M4: 重写 Traefik + Authelia 示例、README 与 docs-site 文档，统一成透明身份透传口径。
-- [ ] M5: 通过 Rust/Web 验证、shared-testbox 验证、浏览器验证，并完成快车道 PR 收敛。
+- [x] M5: 通过 Rust/Web 验证、shared-testbox 验证、浏览器验证，并完成快车道 PR 收敛。
 
 ## 风险 / 假设
 
@@ -88,5 +88,6 @@
 
 ## 变更记录（Change log）
 
+- 2026-03-08: 完成 PR #149 收口：补齐 `type:patch` / `channel:stable` label，GitHub checks 全部明确，规格状态收束为已完成。
 - 2026-03-08: 完成 API / Supervisor 受保护边界回收、前端原位 401 诊断、Traefik + Authelia 透明透传示例重写，以及本地 + shared-testbox + 浏览器验证。
 - 2026-03-08: 新建 follow-up spec，冻结 Forward Auth 透明透传修补边界，专门修正 PR #146 引入的网关访问控制口径。
