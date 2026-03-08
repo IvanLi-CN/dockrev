@@ -1,5 +1,0 @@
-services:
-  # Template fixture for the semver-fallback regression.
-  # The scenario rewrites this into a run-scoped runtime compose file with a concrete image ref.
-  semvercase:
-    image: ghcr.io/ivanli-cn/dockrev:latest

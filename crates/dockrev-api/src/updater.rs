@@ -1731,6 +1731,74 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct NoSemverOciVersionRunner {
+        inspect_repo_tags_calls: Mutex<usize>,
+        pull_calls: Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for NoSemverOciVersionRunner {
+        async fn run(
+            &self,
+            spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            if spec.program != "docker" {
+                return Ok(CommandOutput {
+                    status: 1,
+                    stdout: String::new(),
+                    stderr: "unexpected program".to_string(),
+                });
+            }
+            let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
+            if args
+                == vec![
+                    "image",
+                    "inspect",
+                    "--format",
+                    r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
+                    "sha256:no-semver",
+                ]
+            {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: "latest\n".to_string(),
+                    stderr: String::new(),
+                });
+            }
+            if args
+                == vec![
+                    "image",
+                    "inspect",
+                    "--format",
+                    "{{json .RepoTags}}",
+                    "sha256:no-semver",
+                ]
+            {
+                *self.inspect_repo_tags_calls.lock().unwrap() += 1;
+                return Ok(CommandOutput {
+                    status: 1,
+                    stdout: String::new(),
+                    stderr: "repo tags should not be inspected without a semver label".to_string(),
+                });
+            }
+            if args == vec!["pull", "ghcr.io/org/web:latest"] {
+                *self.pull_calls.lock().unwrap() += 1;
+                return Ok(CommandOutput {
+                    status: 1,
+                    stdout: String::new(),
+                    stderr: "pull should not be attempted without a semver label".to_string(),
+                });
+            }
+            Ok(CommandOutput {
+                status: 1,
+                stdout: String::new(),
+                stderr: "unexpected args".to_string(),
+            })
+        }
+    }
+
     #[tokio::test]
     async fn semver_pull_failure_is_not_best_effort_anymore() {
         let runner = SemverPullFailRunner::default();
@@ -1768,6 +1836,40 @@ mod tests {
         assert!(detail.last_error.contains("status=1"));
         assert!(semver_pulled.is_empty());
         assert_eq!(*runner.pull_calls.lock().unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn maybe_pull_semver_tag_skips_when_oci_version_is_not_semver() {
+        let runner = NoSemverOciVersionRunner::default();
+        let docker_cfg = docker_runner::DockerRunnerConfig::default();
+
+        let mut semver_pulled: Vec<String> = Vec::new();
+        let mut semver_pulled_set: HashSet<String> = HashSet::new();
+        let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
+            serde_json::Map::new();
+
+        maybe_pull_semver_tag_for_image(
+            &runner,
+            &docker_cfg,
+            IdempotentRetryPolicy {
+                max_attempts: 3,
+                base_ms: 1,
+                max_ms: 2,
+            },
+            "svc_1",
+            "ghcr.io/org/web",
+            "sha256:no-semver",
+            &mut semver_pulled,
+            &mut semver_pulled_set,
+            &mut semver_pull_warnings,
+        )
+        .await
+        .expect("non-semver OCI version should skip fallback pull");
+
+        assert!(semver_pulled.is_empty());
+        assert!(semver_pulled_set.is_empty());
+        assert_eq!(*runner.inspect_repo_tags_calls.lock().unwrap(), 0);
+        assert_eq!(*runner.pull_calls.lock().unwrap(), 0);
     }
 
     #[test]
