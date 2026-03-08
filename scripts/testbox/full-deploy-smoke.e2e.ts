@@ -181,16 +181,11 @@ function resolveArtifactPath(repoRoot: string, value: string): string {
 }
 
 function renderDeployOverride(opts: {
-  remoteGatewayPort: string;
   dockrevBaseImage: string;
   supervisorBaseImage: string;
   versionLabel: string;
 }) {
   return `services:
-  gateway:
-    ports:
-      - "127.0.0.1:${opts.remoteGatewayPort}:80"
-
   dockrev:
     image: ${opts.dockrevBaseImage}
     environment:
@@ -262,6 +257,7 @@ async function main() {
   const composeProject = sanitizeComposeProject(`codex_${repoName}__${pathHash8}_${runId}`);
   const remoteGatewayPort = env("REMOTE_HTTP_PORT") || (await probeFreeRemotePort(testboxHost, sshOpts, 56000));
   const localPort = await findFreeLocalPort(localForwardStart);
+  const gatewayBind = `127.0.0.1:${remoteGatewayPort}:80`;
 
   info(`repoRoot=${repoRootReal}`);
   info(`PREBUILT_DIR=${artifactRoot}`);
@@ -269,6 +265,7 @@ async function main() {
   info(`REMOTE_RUN=${remoteRun}`);
   info(`COMPOSE_PROJECT=${composeProject}`);
   info(`REMOTE_GATEWAY_PORT=${remoteGatewayPort}`);
+  info(`DOCKREV_GATEWAY_BIND=${gatewayBind}`);
   info(`LOCAL_FORWARD_PORT=${localPort}`);
   info(`DOCKREV_BASE_IMAGE=${dockrevBaseImage}`);
   info(`DOCKREV_SUPERVISOR_BASE_IMAGE=${supervisorBaseImage}`);
@@ -287,7 +284,6 @@ async function main() {
   fs.writeFileSync(
     path.join(stageDeployDir, "docker-compose.testbox.override.yml"),
     renderDeployOverride({
-      remoteGatewayPort,
       dockrevBaseImage,
       supervisorBaseImage,
       versionLabel,
@@ -323,6 +319,7 @@ async function main() {
       `
 set -euo pipefail
 cd ${bashQuote(remoteRun)}
+export DOCKREV_GATEWAY_BIND=${bashQuote(gatewayBind)}
 docker compose -p ${bashQuote(composeProject)} -f deploy/docker-compose.yml -f deploy/docker-compose.testbox.override.yml -f deploy/.codex.caps-compat.deploy.yml down -v --remove-orphans || true
 rm -rf ${bashQuote(remoteRun)} || true
 `,
@@ -362,6 +359,8 @@ if [[ ! -s dist/ci/docker/amd64/dockrev || ! -s dist/ci/docker/amd64/dockrev-sup
   exit 2
 fi
 chmod 0755 dist/ci/docker/amd64/dockrev dist/ci/docker/amd64/dockrev-supervisor
+
+export DOCKREV_GATEWAY_BIND=${bashQuote(gatewayBind)}
 
 services=$(docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.testbox.override.yml config --services)
 {
