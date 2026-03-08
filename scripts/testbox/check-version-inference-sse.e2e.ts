@@ -166,9 +166,8 @@ async function run(
     stderr: "pipe",
   });
   if (opts?.stdin) {
-    const w = p.stdin.getWriter();
-    await w.write(new TextEncoder().encode(opts.stdin));
-    await w.close();
+    p.stdin.write(opts.stdin);
+    p.stdin.end();
   }
   const [stdoutBuf, stderrBuf, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
   const out = { code, stdout: stdoutBuf.trimEnd(), stderr: stderrBuf.trimEnd() };
@@ -185,8 +184,8 @@ function bashQuote(s: string): string {
 }
 
 async function ssh(host: string, sshOpts: string[], script: string, allowFailure?: boolean) {
-  const cmd = ["ssh", ...sshOpts, host, "bash", "-lc", script];
-  return await run(cmd, { allowFailure });
+  const cmd = ["ssh", ...sshOpts, host, "bash", "-s", "--"];
+  return await run(cmd, { stdin: script, allowFailure });
 }
 
 async function rsyncToRemote(host: string, sshOpts: string[], srcDir: string, remoteDir: string) {
@@ -211,6 +210,15 @@ async function rsyncToRemote(host: string, sshOpts: string[], srcDir: string, re
     `${host}:${remoteDir.replace(/\/$/, "")}/`,
   ];
   await run(args);
+}
+
+async function rsyncFileToRemote(host: string, sshOpts: string[], srcFile: string, remoteFile: string) {
+  const sshCmd = ["ssh", ...sshOpts].join(" ");
+  await run(["rsync", "-az", "-e", sshCmd, srcFile, `${host}:${remoteFile}`]);
+}
+
+function resolveArtifactPath(repoRoot: string, value: string): string {
+  return path.isAbsolute(value) ? value : path.join(repoRoot, value);
 }
 
 function section(title: string) {
@@ -309,6 +317,20 @@ async function triggerDiscovery(baseUrl: string, headers: Record<string, string>
   return jobId;
 }
 
+async function triggerCheckAll(baseUrl: string, headers: Record<string, string>) {
+  const r = await jsonRequest(baseUrl, { method: "POST", path: "/api/checks", body: { scope: "all", reason: "ui" }, headers });
+  if (r.status === 200) {
+    const checkId = r.data?.checkId || r.data?.check_id;
+    if (!checkId) throw new Error(`check response missing checkId: ${JSON.stringify(r.data)}`);
+    return { ok: true as const, checkId };
+  }
+  if (r.status === 409) {
+    const existingJobId = r.data?.error?.details?.existingJobId;
+    return { ok: false as const, status: 409, existingJobId, body: r.data };
+  }
+  return { ok: false as const, status: r.status, body: r.data };
+}
+
 async function waitForDiscoveryStack(baseUrl: string, headers: Record<string, string>, project: string, timeoutSeconds: number) {
   const deadline = Date.now() + timeoutSeconds * 1000;
   while (Date.now() < deadline) {
@@ -329,6 +351,9 @@ async function triggerVersionInferenceRefresh(baseUrl: string, serviceId: string
     body: {},
     headers,
   });
+  if (r.status === 400 && r.data?.error?.code === "invalid_argument") {
+    return null;
+  }
   if (r.status !== 202) {
     throw new Error(
       `POST /api/services/${serviceId}/version-inference/refresh failed: status=${r.status} body=${JSON.stringify(r.data)}`,
@@ -392,6 +417,8 @@ async function main() {
   const overallTimeoutSeconds = envInt("DOCKREV_TEST_TIMEOUT_SECONDS", 180);
   const jobWaitSeconds = envInt("DOCKREV_JOB_WAIT_SECONDS", 60);
   const sseWaitMs = envInt("DOCKREV_SSE_WAIT_MS", 45_000);
+  const smokeBinSetting = env("DOCKREV_SMOKE_BIN", "dist/ci/docker/amd64/dockrev")!;
+
   const authHeaderName = env("DOCKREV_AUTH_HEADER_NAME", "X-Forwarded-User")!;
   const authHeaderValue = env("DOCKREV_AUTH_HEADER_VALUE", "test")!;
   const apiHeaders = { [authHeaderName]: authHeaderValue };
@@ -411,11 +438,14 @@ async function main() {
   const gitSha = (await run(["git", "-C", repoRootReal, "rev-parse", "--short", "HEAD"], { allowFailure: true })).stdout.trim() || "nogit";
   const pathHash8 = createHash("sha256").update(repoRootReal).digest("hex").slice(0, 8);
   const runId = `${nowRunId(gitSha)}_sse`;
+  const smokeBinLocal = resolveArtifactPath(repoRootReal, smokeBinSetting);
+  const usePrebuiltSmokeBin = fs.existsSync(smokeBinLocal);
 
   const remoteUser = (await ssh(testboxHost, sshOpts, "whoami")).stdout.trim();
   assert(remoteUser.length > 0, "remote user is empty");
   const remoteWorkspace = `/srv/codex/workspaces/${remoteUser}/${repoName}__${pathHash8}`;
   const remoteRun = `${remoteWorkspace}/runs/${runId}`;
+  const remoteSmokeBin = usePrebuiltSmokeBin ? `${remoteRun}/bin/dockrev` : `${remoteWorkspace}/target/testbox/release/dockrev`;
 
   const composeProjectRaw = `codex_${repoName}__${pathHash8}_${runId}`;
   const composeProject = sanitizeComposeProject(composeProjectRaw);
@@ -466,6 +496,8 @@ PY
   info(`COMPOSE_PROJECT=${composeProject}`);
   info(`FIXTURES_PROJECT=${fixturesProject}`);
   info(`REMOTE_HTTP_PORT=${remoteHttpPort}`);
+  info(`DOCKREV_SMOKE_BIN=${usePrebuiltSmokeBin ? smokeBinLocal : "fallback:remote-build"}`);
+  info(`REMOTE_DOCKREV_BIN=${remoteSmokeBin}`);
 
   let remoteRunReady = false;
   const cleanupRemote = async (ok: boolean) => {
@@ -580,11 +612,33 @@ docker compose -p ${bashQuote(fixturesProject)} \\
 `,
     );
 
-    section("BUILD (remote)");
-    await ssh(
-      testboxHost,
-      sshOpts,
-      `
+    const buildStarted = Date.now();
+    if (usePrebuiltSmokeBin) {
+      section("STAGE PREBUILT");
+      await ssh(
+        testboxHost,
+        sshOpts,
+        `
+set -euo pipefail
+mkdir -p ${bashQuote(path.posix.dirname(remoteSmokeBin))}
+`,
+      );
+      await rsyncFileToRemote(testboxHost, sshOpts, smokeBinLocal, remoteSmokeBin);
+      await ssh(
+        testboxHost,
+        sshOpts,
+        `
+set -euo pipefail
+chmod 0755 ${bashQuote(remoteSmokeBin)}
+ls -la ${bashQuote(remoteSmokeBin)}
+`,
+      );
+    } else {
+      section("BUILD (remote)");
+      await ssh(
+        testboxHost,
+        sshOpts,
+        `
 set -euo pipefail
 cd ${bashQuote(remoteRun)}
 
@@ -611,17 +665,24 @@ caps=(
   --cap-add=AUDIT_WRITE
 )
 
-docker run --rm \\
-  --user "$uid:$gid" \\
-  "\${caps[@]}" \\
-  -e CARGO_HOME \\
-  -e CARGO_TARGET_DIR \\
-  -v ${bashQuote(remoteWorkspace)}:${bashQuote(remoteWorkspace)} \\
-  -w ${bashQuote(remoteRun)} \\
-  rust:1.91-bookworm \\
+docker run --rm \
+  --user "$uid:$gid" \
+  "\${caps[@]}" \
+  -e CARGO_HOME \
+  -e CARGO_TARGET_DIR \
+  -v ${bashQuote(remoteWorkspace)}:${bashQuote(remoteWorkspace)} \
+  -w ${bashQuote(remoteRun)} \
+  rust:1.91-bookworm \
   bash -c ${bashQuote("set -euo pipefail; export PATH=/usr/local/cargo/bin:$PATH; cargo build -p dockrev-api --bin dockrev --release --locked")}
+
+ls -la ${bashQuote(remoteSmokeBin)}
 `,
-    );
+      );
+    }
+    const buildDuration = Math.round((Date.now() - buildStarted) / 1000);
+    if (!usePrebuiltSmokeBin && buildDuration > buildTimeoutSeconds) {
+      throw new Error(`remote build exceeded timeout: duration=${buildDuration}s timeout=${buildTimeoutSeconds}s`);
+    }
 
     section("START (remote)");
     await ssh(
@@ -631,8 +692,7 @@ docker run --rm \\
 set -euo pipefail
 cd ${bashQuote(remoteRun)}
 
-export CARGO_TARGET_DIR=${bashQuote(`${remoteWorkspace}/target/testbox`)}
-bin="$CARGO_TARGET_DIR/release/dockrev"
+bin=${bashQuote(remoteSmokeBin)}
 rm -f dockrev.pid dockrev.log
 touch dockrev.log
 
@@ -670,18 +730,25 @@ echo "$!" > dockrev.pid
     const stackId = await waitForDiscoveryStack(baseUrl, apiHeaders, fixturesProject, Math.min(60, jobWaitSeconds));
     info(`stackId=${stackId}`);
 
+    section("CHECK");
+    const checkResp = await triggerCheckAll(baseUrl, apiHeaders);
+    const checkId = checkResp.ok ? checkResp.checkId : checkResp.existingJobId;
+    assert(!!checkId, `failed to start check(all): ${JSON.stringify(checkResp)}`);
+    info(`checkId=${checkId}`);
+    await waitForJob(baseUrl, checkId!, apiHeaders, jobWaitSeconds);
+
     const stackResp = await jsonRequest(baseUrl, { method: "GET", path: `/api/stacks/${encodeURIComponent(stackId)}`, headers: apiHeaders });
     assert(stackResp.status === 200, `GET /api/stacks/${stackId} failed status=${stackResp.status}`);
     const services: any[] = Array.isArray(stackResp.data?.stack?.services) ? stackResp.data.stack.services : [];
     assert(services.length >= 2, `expected >=2 services in fixture stack, got ${services.length}`);
     const serviceIds = services
-      .map((svc: any) => (typeof svc?.id === "string" ? svc.id : null))
-      .filter((id: string | null): id is string => !!id);
-    assert(serviceIds.length >= 2, `expected >=2 valid service ids, got ${serviceIds.length}`);
+      .filter((svc: any) => typeof svc?.id === "string" && typeof svc?.image?.digest === "string" && svc.image.digest)
+      .map((svc: any) => svc.id as string);
+    assert(serviceIds.length >= 2, `expected >=2 valid service ids with digest, got ${serviceIds.length}`);
     info(`serviceIds=${serviceIds.slice(0, 4).join(",")}`);
 
     // get_stack() may enqueue cache-miss tasks. Wait until idle to avoid "reason=running" refresh responses.
-    await waitForWorkerIdle(baseUrl, apiHeaders, Math.max(60, jobWaitSeconds));
+    await waitForWorkerIdle(baseUrl, apiHeaders, Math.max(180, jobWaitSeconds * 3));
 
     section("CASE A: live SSE receives task_enqueued + monotonic ids");
     streamA = await SseStream.open(`${baseUrl}/api/version-inference/events`, apiHeaders);
@@ -689,6 +756,7 @@ echo "$!" > dockrev.pid
     let serviceA = "";
     for (const candidate of serviceIds) {
       const next = await triggerVersionInferenceRefresh(baseUrl, candidate, apiHeaders);
+      if (!next) continue;
       if (next.reason === "force") {
         refreshA = next;
         serviceA = candidate;
@@ -727,6 +795,7 @@ echo "$!" > dockrev.pid
     for (const candidate of serviceIds) {
       if (candidate === serviceA) continue;
       const next = await triggerVersionInferenceRefresh(baseUrl, candidate, apiHeaders);
+      if (!next) continue;
       if (next.reason === "force") {
         refreshB = next;
         break;

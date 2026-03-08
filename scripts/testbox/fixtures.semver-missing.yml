@@ -1,6 +1,5 @@
 services:
-  # Regression fixture:
-  # use a floating tag, then rely on candidate digest from check.
-  # Old service-update code could derive semver tag (e.g. 0.13.3) and try pulling it.
+  # Template fixture for the semver-fallback regression.
+  # The scenario rewrites this into a run-scoped runtime compose file with a concrete image ref.
   semvercase:
-    image: ghcr.io/ivanli-cn/codex-vibe-monitor:latest
+    image: ghcr.io/ivanli-cn/dockrev:latest

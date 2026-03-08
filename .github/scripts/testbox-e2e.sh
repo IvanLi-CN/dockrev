@@ -30,10 +30,14 @@ fi
 case "$scenario" in
   all)
     scripts=(
+      "full-deploy-smoke.e2e.ts"
       "check-job-recovery.e2e.ts"
       "check-version-inference-sse.e2e.ts"
       "check-service-update-no-semver-pull.e2e.ts"
     )
+    ;;
+  full-deploy-smoke)
+    scripts=("full-deploy-smoke.e2e.ts")
     ;;
   check-job-recovery)
     scripts=("check-job-recovery.e2e.ts")

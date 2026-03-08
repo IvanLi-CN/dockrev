@@ -71,9 +71,8 @@ async function run(
     stderr: "pipe",
   });
   if (opts?.stdin) {
-    const w = p.stdin.getWriter();
-    await w.write(new TextEncoder().encode(opts.stdin));
-    await w.close();
+    p.stdin.write(opts.stdin);
+    p.stdin.end();
   }
   const [stdoutBuf, stderrBuf, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
   const out = { code, stdout: stdoutBuf.trimEnd(), stderr: stderrBuf.trimEnd() };
@@ -91,8 +90,8 @@ function bashQuote(s: string): string {
 }
 
 async function ssh(host: string, sshOpts: string[], script: string, allowFailure?: boolean) {
-  const cmd = ["ssh", ...sshOpts, host, "bash", "-lc", script];
-  return await run(cmd, { allowFailure });
+  const cmd = ["ssh", ...sshOpts, host, "bash", "-s", "--"];
+  return await run(cmd, { stdin: script, allowFailure });
 }
 
 async function rsyncToRemote(host: string, sshOpts: string[], srcDir: string, remoteDir: string) {
@@ -118,6 +117,15 @@ async function rsyncToRemote(host: string, sshOpts: string[], srcDir: string, re
     `${host}:${remoteDir.replace(/\/$/, "")}/`,
   ];
   await run(args);
+}
+
+async function rsyncFileToRemote(host: string, sshOpts: string[], srcFile: string, remoteFile: string) {
+  const sshCmd = ["ssh", ...sshOpts].join(" ");
+  await run(["rsync", "-az", "-e", sshCmd, srcFile, `${host}:${remoteFile}`]);
+}
+
+function resolveArtifactPath(repoRoot: string, value: string): string {
+  return path.isAbsolute(value) ? value : path.join(repoRoot, value);
 }
 
 function section(title: string) {
@@ -257,6 +265,7 @@ async function main() {
   const jobWaitSeconds = envInt("DOCKREV_JOB_WAIT_SECONDS", 60);
   const restartGraceSeconds = envInt("DOCKREV_RESTART_GRACE_SECONDS", 1);
   const restartMode = (env("DOCKREV_RESTART_MODE", "hard") || "hard").toLowerCase();
+  const smokeBinSetting = env("DOCKREV_SMOKE_BIN", "dist/ci/docker/amd64/dockrev")!;
 
   const authHeaderName = env("DOCKREV_AUTH_HEADER_NAME", "X-Forwarded-User")!;
   const authHeaderValue = env("DOCKREV_AUTH_HEADER_VALUE", "test")!;
@@ -278,11 +287,14 @@ async function main() {
   const gitSha = (await run(["git", "-C", repoRootReal, "rev-parse", "--short", "HEAD"], { allowFailure: true })).stdout.trim() || "nogit";
   const pathHash8 = createHash("sha256").update(repoRootReal).digest("hex").slice(0, 8);
   const runId = nowRunId(gitSha);
+  const smokeBinLocal = resolveArtifactPath(repoRootReal, smokeBinSetting);
+  const usePrebuiltSmokeBin = fs.existsSync(smokeBinLocal);
 
   const remoteUser = (await ssh(testboxHost, sshOpts, "whoami")).stdout.trim();
   assert(remoteUser.length > 0, "remote user is empty");
   const remoteWorkspace = `/srv/codex/workspaces/${remoteUser}/${repoName}__${pathHash8}`;
   const remoteRun = `${remoteWorkspace}/runs/${runId}`;
+  const remoteSmokeBin = usePrebuiltSmokeBin ? `${remoteRun}/bin/dockrev` : `${remoteWorkspace}/target/testbox/release/dockrev`;
 
   const composeProjectRaw = `codex_${repoName}__${pathHash8}_${runId}`;
   const composeProject = sanitizeComposeProject(composeProjectRaw);
@@ -335,6 +347,8 @@ PY
   info(`COMPOSE_PROJECT=${composeProject}`);
   info(`FIXTURES_PROJECT=${fixturesProject}`);
   info(`REMOTE_HTTP_PORT=${remoteHttpPort}`);
+  info(`DOCKREV_SMOKE_BIN=${usePrebuiltSmokeBin ? smokeBinLocal : "fallback:remote-build"}`);
+  info(`REMOTE_DOCKREV_BIN=${remoteSmokeBin}`);
 
   // Ensure remote dirs exist and attach a small metadata file.
   // We'll try to clean up even if setup fails.
@@ -459,14 +473,35 @@ docker compose -p ${bashQuote(fixturesProject)} \\
 `,
     );
 
-    // Build Dockrev binary on the testbox in a container (LXC quirk: host lacks pkg-config/openssl dev).
-    // Keep caches under /srv/codex/** and run the container as the remote user to avoid root-owned outputs.
-    section("BUILD (remote)");
     const buildStarted = Date.now();
-    await ssh(
-      testboxHost,
-      sshOpts,
-      `
+    if (usePrebuiltSmokeBin) {
+      section("STAGE PREBUILT");
+      await ssh(
+        testboxHost,
+        sshOpts,
+        `
+set -euo pipefail
+mkdir -p ${bashQuote(path.posix.dirname(remoteSmokeBin))}
+`,
+      );
+      await rsyncFileToRemote(testboxHost, sshOpts, smokeBinLocal, remoteSmokeBin);
+      await ssh(
+        testboxHost,
+        sshOpts,
+        `
+set -euo pipefail
+chmod 0755 ${bashQuote(remoteSmokeBin)}
+ls -la ${bashQuote(remoteSmokeBin)}
+`,
+      );
+    } else {
+      // Build Dockrev binary on the testbox in a container (LXC quirk: host lacks pkg-config/openssl dev).
+      // Keep caches under /srv/codex/** and run the container as the remote user to avoid root-owned outputs.
+      section("BUILD (remote)");
+      await ssh(
+        testboxHost,
+        sshOpts,
+        `
 set -euo pipefail
 cd ${bashQuote(remoteRun)}
 
@@ -495,21 +530,22 @@ caps=(
 )
 
 echo "[build] building dockrev-api (release) via rust:1.91-bookworm..."
-docker run --rm \\
-  --user "$uid:$gid" \\
-  "\${caps[@]}" \\
-  -e CARGO_HOME \\
-  -e CARGO_TARGET_DIR \\
-  -v ${bashQuote(remoteWorkspace)}:${bashQuote(remoteWorkspace)} \\
-  -w ${bashQuote(remoteRun)} \\
-  rust:1.91-bookworm \\
+docker run --rm \
+  --user "$uid:$gid" \
+  "\${caps[@]}" \
+  -e CARGO_HOME \
+  -e CARGO_TARGET_DIR \
+  -v ${bashQuote(remoteWorkspace)}:${bashQuote(remoteWorkspace)} \
+  -w ${bashQuote(remoteRun)} \
+  rust:1.91-bookworm \
   bash -c ${bashQuote("set -euo pipefail; export PATH=/usr/local/cargo/bin:$PATH; cargo build -p dockrev-api --bin dockrev --release --locked")}
 
-ls -la "$CARGO_TARGET_DIR/release/dockrev"
+ls -la ${bashQuote(remoteSmokeBin)}
 `,
-    );
+      );
+    }
     const buildDuration = Math.round((Date.now() - buildStarted) / 1000);
-    if (buildDuration > buildTimeoutSeconds) {
+    if (!usePrebuiltSmokeBin && buildDuration > buildTimeoutSeconds) {
       throw new Error(`remote build exceeded timeout: duration=${buildDuration}s timeout=${buildTimeoutSeconds}s`);
     }
 
@@ -523,8 +559,7 @@ ls -la "$CARGO_TARGET_DIR/release/dockrev"
 set -euo pipefail
 cd ${bashQuote(remoteRun)}
 
-export CARGO_TARGET_DIR=${bashQuote(`${remoteWorkspace}/target/testbox`)}
-bin="$CARGO_TARGET_DIR/release/dockrev"
+bin=${bashQuote(remoteSmokeBin)}
 
 rm -f dockrev.pid dockrev.log
 touch dockrev.log
@@ -660,8 +695,7 @@ else
   kill -9 "$pid" || true
 fi
 
-export CARGO_TARGET_DIR=${bashQuote(`${remoteWorkspace}/target/testbox`)}
-bin="$CARGO_TARGET_DIR/release/dockrev"
+bin=${bashQuote(remoteSmokeBin)}
 
 export DOCKREV_HTTP_ADDR="127.0.0.1:${remoteHttpPort}"
 export DOCKREV_DB_PATH=${bashQuote(`${remoteRun}/data/dockrev.sqlite3`)}

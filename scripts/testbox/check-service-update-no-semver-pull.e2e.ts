@@ -72,9 +72,8 @@ async function run(
     stderr: "pipe",
   });
   if (opts?.stdin) {
-    const w = p.stdin.getWriter();
-    await w.write(new TextEncoder().encode(opts.stdin));
-    await w.close();
+    p.stdin.write(opts.stdin);
+    p.stdin.end();
   }
   const [stdoutBuf, stderrBuf, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
   const out = { code, stdout: stdoutBuf.trimEnd(), stderr: stderrBuf.trimEnd() };
@@ -91,9 +90,20 @@ function bashQuote(s: string): string {
   return `'${s.replace(/'/g, `'\"'\"'`)}'`;
 }
 
+function imageRepoFromRef(ref: string): string {
+  const withoutDigest = ref.split("@")[0] || ref;
+  const lastSlash = withoutDigest.lastIndexOf("/");
+  const lastColon = withoutDigest.lastIndexOf(":");
+  return lastColon > lastSlash ? withoutDigest.slice(0, lastColon) : withoutDigest;
+}
+
+function escapeRegex(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 async function ssh(host: string, sshOpts: string[], script: string, allowFailure?: boolean) {
-  const cmd = ["ssh", ...sshOpts, host, "bash", "-lc", script];
-  return await run(cmd, { allowFailure });
+  const cmd = ["ssh", ...sshOpts, host, "bash", "-s", "--"];
+  return await run(cmd, { stdin: script, allowFailure });
 }
 
 async function rsyncToRemote(host: string, sshOpts: string[], srcDir: string, remoteDir: string) {
@@ -119,6 +129,15 @@ async function rsyncToRemote(host: string, sshOpts: string[], srcDir: string, re
     `${host}:${remoteDir.replace(/\/$/, "")}/`,
   ];
   await run(args);
+}
+
+async function rsyncFileToRemote(host: string, sshOpts: string[], srcFile: string, remoteFile: string) {
+  const sshCmd = ["ssh", ...sshOpts].join(" ");
+  await run(["rsync", "-az", "-e", sshCmd, srcFile, `${host}:${remoteFile}`]);
+}
+
+function resolveArtifactPath(repoRoot: string, value: string): string {
+  return path.isAbsolute(value) ? value : path.join(repoRoot, value);
 }
 
 function section(title: string) {
@@ -299,6 +318,8 @@ async function main() {
   const overallTimeoutSeconds = envInt("DOCKREV_TEST_TIMEOUT_SECONDS", 180);
   const jobWaitSeconds = envInt("DOCKREV_JOB_WAIT_SECONDS", 60);
 
+  const smokeBinSetting = env("DOCKREV_SMOKE_BIN", "dist/ci/docker/amd64/dockrev")!;
+
   const authHeaderName = env("DOCKREV_AUTH_HEADER_NAME", "X-Forwarded-User")!;
   const authHeaderValue = env("DOCKREV_AUTH_HEADER_VALUE", "test")!;
   const apiHeaders = { [authHeaderName]: authHeaderValue };
@@ -319,16 +340,20 @@ async function main() {
   const gitSha = (await run(["git", "-C", repoRootReal, "rev-parse", "--short", "HEAD"], { allowFailure: true })).stdout.trim() || "nogit";
   const pathHash8 = createHash("sha256").update(repoRootReal).digest("hex").slice(0, 8);
   const runId = nowRunId(gitSha);
+  const smokeBinLocal = resolveArtifactPath(repoRootReal, smokeBinSetting);
+  const usePrebuiltSmokeBin = fs.existsSync(smokeBinLocal);
 
   const remoteUser = (await ssh(testboxHost, sshOpts, "whoami")).stdout.trim();
   assert(remoteUser.length > 0, "remote user is empty");
   const remoteWorkspace = `/srv/codex/workspaces/${remoteUser}/${repoName}__${pathHash8}`;
   const remoteRun = `${remoteWorkspace}/runs/${runId}`;
+  const remoteSmokeBin = usePrebuiltSmokeBin ? `${remoteRun}/bin/dockrev` : `${remoteWorkspace}/target/testbox/release/dockrev`;
 
   const composeProjectRaw = `codex_${repoName}__${pathHash8}_${runId}`;
   const composeProject = sanitizeComposeProject(composeProjectRaw);
   const fixturesProject = sanitizeComposeProject(`${composeProject}_fixtures`);
-  const fixtureLockDir = "/srv/codex/.locks/dockrev-semver-fixture-codex-vibe-monitor-latest.lock";
+  const fixtureLockDir = "/srv/codex/.locks/dockrev-semver-fixture-local-registry.lock";
+  const fixtureComposeRuntimePath = "scripts/testbox/.fixtures.semver-missing.runtime.yml";
 
   // Select remote port (avoid conflicts on shared host).
   const forcedRemotePort = env("REMOTE_HTTP_PORT");
@@ -371,12 +396,19 @@ PY
     assert(remoteHttpPort.length > 0, "failed to probe a free remote port");
   }
 
+  const fixtureImageRef = env("SEMVER_FIXTURE_IMAGE_REF", "ghcr.io/ivanli-cn/dockrev:latest")!;
+  const fixtureImageRepo = imageRepoFromRef(fixtureImageRef);
+
   info(`repoRoot=${repoRootReal}`);
   info(`remoteUser=${remoteUser}`);
   info(`REMOTE_RUN=${remoteRun}`);
   info(`COMPOSE_PROJECT=${composeProject}`);
   info(`FIXTURES_PROJECT=${fixturesProject}`);
   info(`REMOTE_HTTP_PORT=${remoteHttpPort}`);
+  info(`FIXTURE_IMAGE_REF=${fixtureImageRef}`);
+  info(`FIXTURE_IMAGE_REPO=${fixtureImageRepo}`);
+  info(`DOCKREV_SMOKE_BIN=${usePrebuiltSmokeBin ? smokeBinLocal : "fallback:remote-build"}`);
+  info(`REMOTE_DOCKREV_BIN=${remoteSmokeBin}`);
 
   // Ensure remote dirs exist and attach a small metadata file.
   // We'll try to clean up even if setup fails.
@@ -391,7 +423,8 @@ PY
         `
 set -euo pipefail
 cd ${bashQuote(remoteRun)} || exit 0
-fixture_image_ref="ghcr.io/ivanli-cn/codex-vibe-monitor:latest"
+export SEMVER_FIXTURE_IMAGE=${bashQuote(fixtureImageRef)}
+fixture_image_ref=${bashQuote(fixtureImageRef)}
 if [[ -f .fixture_image_prev_id ]]; then
   prev_id="$(cat .fixture_image_prev_id || true)"
   if [[ -n "$prev_id" ]]; then
@@ -425,6 +458,8 @@ fi
       `
 set -euo pipefail
 cd ${bashQuote(remoteRun)}
+export SEMVER_FIXTURE_IMAGE=${bashQuote(fixtureImageRef)}
+fixture_compose_runtime=${bashQuote(fixtureComposeRuntimePath)}
 if [[ -f dockrev.pid ]]; then
   pid="$(cat dockrev.pid || true)"
   if [[ -n "$pid" ]]; then
@@ -433,8 +468,8 @@ if [[ -f dockrev.pid ]]; then
     kill -9 "$pid" >/dev/null 2>&1 || true
   fi
 fi
-docker compose -p ${bashQuote(fixturesProject)} -f scripts/testbox/fixtures.semver-missing.yml -f .codex.caps-compat.fixtures.yml down -v --remove-orphans || true
-fixture_image_ref="ghcr.io/ivanli-cn/codex-vibe-monitor:latest"
+docker compose -p ${bashQuote(fixturesProject)} -f ${bashQuote(fixtureComposeRuntimePath)} -f .codex.caps-compat.fixtures.yml down -v --remove-orphans || true
+fixture_image_ref=${bashQuote(fixtureImageRef)}
 if [[ -f .fixture_image_prev_id ]]; then
   prev_id="$(cat .fixture_image_prev_id || true)"
   if [[ -n "$prev_id" ]]; then
@@ -559,34 +594,76 @@ now_epoch="$(date +%s)"
 echo "$lock_owner" > "$fixture_lock_dir/owner"
 echo "$now_epoch" > "$fixture_lock_dir/created_at"
 echo "$lock_owner" > .fixture_lock_owner
-fixture_image_ref="ghcr.io/ivanli-cn/codex-vibe-monitor:latest"
+export SEMVER_FIXTURE_IMAGE=${bashQuote(fixtureImageRef)}
+fixture_image_ref=${bashQuote(fixtureImageRef)}
+fixture_compose_runtime=${bashQuote(fixtureComposeRuntimePath)}
+cat > "$fixture_compose_runtime" <<YAML
+services:
+  semvercase:
+    image: ${fixtureImageRef}
+YAML
 docker image inspect --format '{{.Id}}' "$fixture_image_ref" > .fixture_image_prev_id 2>/dev/null || : > .fixture_image_prev_id
-docker pull nginx:1.27-alpine >/dev/null
-docker tag nginx:1.27-alpine "$fixture_image_ref"
+for base_image in nginx:1.27-alpine; do
+  if ! docker image inspect "$base_image" >/dev/null 2>&1; then
+    pull_attempt=0
+    until docker pull "$base_image" >/dev/null; do
+      pull_attempt=$((pull_attempt + 1))
+      if (( pull_attempt >= 5 )); then
+        echo "failed to pull $base_image after \${pull_attempt} attempts" >&2
+        exit 1
+      fi
+      sleep 5
+      echo "retrying $base_image pull (\${pull_attempt}/5)" >&2
+    done
+  fi
+done
 
-services_fixtures="$(docker compose -f scripts/testbox/fixtures.semver-missing.yml config --services)"
+services_fixtures="$(docker compose -f "$fixture_compose_runtime" config --services)"
 gen_caps "$services_fixtures" .codex.caps-compat.fixtures.yml
 
-docker compose -p ${bashQuote(fixturesProject)} \\
-  -f scripts/testbox/fixtures.semver-missing.yml \\
-  -f .codex.caps-compat.fixtures.yml \\
-  up -d
+docker tag nginx:1.27-alpine "$fixture_image_ref"
 
-docker compose -p ${bashQuote(fixturesProject)} \\
-  -f scripts/testbox/fixtures.semver-missing.yml \\
-  -f .codex.caps-compat.fixtures.yml \\
+docker compose -p ${bashQuote(fixturesProject)} \
+  -f "$fixture_compose_runtime" \
+  -f .codex.caps-compat.fixtures.yml \
+  up -d semvercase
+
+docker compose -p ${bashQuote(fixturesProject)} \
+  -f "$fixture_compose_runtime" \
+  -f .codex.caps-compat.fixtures.yml \
   ps
 `,
     );
 
-    // Build Dockrev binary on the testbox in a container (LXC quirk: host lacks pkg-config/openssl dev).
-    // Keep caches under /srv/codex/** and run the container as the remote user to avoid root-owned outputs.
-    section("BUILD (remote)");
     const buildStarted = Date.now();
-    await ssh(
-      testboxHost,
-      sshOpts,
-      `
+    if (usePrebuiltSmokeBin) {
+      section("STAGE PREBUILT");
+      await ssh(
+        testboxHost,
+        sshOpts,
+        `
+set -euo pipefail
+mkdir -p ${bashQuote(path.posix.dirname(remoteSmokeBin))}
+`,
+      );
+      await rsyncFileToRemote(testboxHost, sshOpts, smokeBinLocal, remoteSmokeBin);
+      await ssh(
+        testboxHost,
+        sshOpts,
+        `
+set -euo pipefail
+chmod 0755 ${bashQuote(remoteSmokeBin)}
+ls -la ${bashQuote(remoteSmokeBin)}
+`,
+      );
+    } else {
+      // Build Dockrev binary on the testbox in a container (LXC quirk: host lacks pkg-config/openssl dev).
+      // Keep caches under /srv/codex/** and run the container as the remote user to avoid root-owned outputs.
+      section("BUILD (remote)");
+      await ssh(
+        testboxHost,
+        sshOpts,
+        `
 set -euo pipefail
 cd ${bashQuote(remoteRun)}
 
@@ -615,21 +692,22 @@ caps=(
 )
 
 echo "[build] building dockrev-api (release) via rust:1.91-bookworm..."
-docker run --rm \\
-  --user "$uid:$gid" \\
-  "\${caps[@]}" \\
-  -e CARGO_HOME \\
-  -e CARGO_TARGET_DIR \\
-  -v ${bashQuote(remoteWorkspace)}:${bashQuote(remoteWorkspace)} \\
-  -w ${bashQuote(remoteRun)} \\
-  rust:1.91-bookworm \\
+docker run --rm \
+  --user "$uid:$gid" \
+  "\${caps[@]}" \
+  -e CARGO_HOME \
+  -e CARGO_TARGET_DIR \
+  -v ${bashQuote(remoteWorkspace)}:${bashQuote(remoteWorkspace)} \
+  -w ${bashQuote(remoteRun)} \
+  rust:1.91-bookworm \
   bash -c ${bashQuote("set -euo pipefail; export PATH=/usr/local/cargo/bin:$PATH; cargo build -p dockrev-api --bin dockrev --release --locked")}
 
-ls -la "$CARGO_TARGET_DIR/release/dockrev"
+ls -la ${bashQuote(remoteSmokeBin)}
 `,
-    );
+      );
+    }
     const buildDuration = Math.round((Date.now() - buildStarted) / 1000);
-    if (buildDuration > buildTimeoutSeconds) {
+    if (!usePrebuiltSmokeBin && buildDuration > buildTimeoutSeconds) {
       throw new Error(`remote build exceeded timeout: duration=${buildDuration}s timeout=${buildTimeoutSeconds}s`);
     }
 
@@ -643,8 +721,7 @@ ls -la "$CARGO_TARGET_DIR/release/dockrev"
 set -euo pipefail
 cd ${bashQuote(remoteRun)}
 
-export CARGO_TARGET_DIR=${bashQuote(`${remoteWorkspace}/target/testbox`)}
-bin="$CARGO_TARGET_DIR/release/dockrev"
+bin=${bashQuote(remoteSmokeBin)}
 
 rm -f dockrev.pid dockrev.log
 touch dockrev.log
@@ -687,44 +764,54 @@ echo "$!" > dockrev.pid
     await waitForJob(baseUrl, discoveryJobId, apiHeaders, (j) => !!j?.finishedAt, jobWaitSeconds);
 
     // 2) check to persist latest candidate digest
-    const check = await triggerCheckAll(baseUrl, apiHeaders);
-    assert(check.ok, `expected check(all) to start, got: ${JSON.stringify(check)}`);
-    info(`checkId=${check.checkId}`);
-    await waitForJob(baseUrl, check.checkId, apiHeaders, (j) => !!j?.finishedAt, jobWaitSeconds);
-
-    // 3) locate the fixture service
-    const stacks = await listStacks(baseUrl, apiHeaders);
-    info(`discoveredStacks=${stacks.length}`);
     let stackId = "";
     let svc: any = null;
-    for (const s of stacks) {
-      if (!s?.id) continue;
-      const detail = await getStack(baseUrl, String(s.id), apiHeaders);
-      const found = (detail?.services || []).find((x: any) => {
-        if ((x?.name || "").toString() === "semvercase") return true;
-        const ref = (x?.image?.ref || x?.image?.reference || "").toString();
-        return ref.includes("ghcr.io/ivanli-cn/codex-vibe-monitor");
-      });
-      if (found) {
-        stackId = String(s.id);
-        svc = found;
+    let serviceId = "";
+    let targetTag = "";
+    let targetDigest = "";
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const check = await triggerCheckAll(baseUrl, apiHeaders);
+      const checkId = check.ok ? check.checkId : check.existingJobId;
+      assert(!!checkId, `expected check(all) to start, got: ${JSON.stringify(check)}`);
+      info(`checkId=${checkId} attempt=${attempt}`);
+      await waitForJob(baseUrl, checkId!, apiHeaders, (j) => !!j?.finishedAt, Math.max(jobWaitSeconds, 120));
+
+      // 3) locate the fixture service from this run's unique compose project
+      const stacks = await listStacks(baseUrl, apiHeaders);
+      info(`discoveredStacks=${stacks.length}`);
+      const fixtureStack = stacks.find((s: any) => String(s?.name || "") === fixturesProject);
+      assert(!!fixtureStack?.id, "target fixture stack not found in discovered stacks");
+      stackId = String(fixtureStack.id);
+      const detail = await getStack(baseUrl, stackId, apiHeaders);
+      svc = (detail?.services || []).find((x: any) => String(x?.name || "") === "semvercase");
+
+      assert(!!svc, "target fixture service not found in discovered stack");
+      info(`stackId=${stackId}`);
+
+      serviceId = (svc?.id || "").toString();
+      targetTag = (svc?.image?.tag || "").toString();
+      targetDigest = (svc?.candidate?.digest || "").toString();
+      info(`serviceId=${serviceId}`);
+      info(`targetTag=${targetTag}`);
+      info(`targetDigest=${targetDigest}`);
+
+      assert(targetTag.length > 0, "service image tag is empty");
+      for (let settle = 0; !targetDigest.startsWith("sha256:") && settle < 15; settle++) {
+        await sleep(1000);
+        const refreshed = await getStack(baseUrl, stackId, apiHeaders);
+        const refreshedSvc = (refreshed?.services || []).find((x: any) => x?.id === serviceId);
+        targetDigest = (refreshedSvc?.candidate?.digest || "").toString();
+      }
+      info(`targetDigest(final)=${targetDigest}`);
+      if (targetDigest.startsWith("sha256:")) {
         break;
+      }
+      if (attempt < 5) {
+        info(`candidate digest missing after check attempt=${attempt}; retrying`);
+        await sleep(2000);
       }
     }
 
-    assert(!!svc, "target fixture service not found in discovered stacks");
-    info(`stackId=${stackId}`);
-
-    assert(!!svc, "target service not found in stack detail");
-
-    const serviceId = svc.id as string;
-    const targetTag = (svc?.image?.tag || "").toString();
-    const targetDigest = (svc?.candidate?.digest || "").toString();
-    info(`serviceId=${serviceId}`);
-    info(`targetTag=${targetTag}`);
-    info(`targetDigest=${targetDigest}`);
-
-    assert(targetTag.length > 0, "service image tag is empty");
     assert(targetDigest.startsWith("sha256:"), "candidate digest missing after check");
 
     // 4) apply service update with explicit target lock
@@ -747,9 +834,10 @@ echo "$!" > dockrev.pid
     assert(updateJob?.status === "success", `expected update success, got: ${JSON.stringify(updateJob?.status)}`);
 
     const logs: any[] = Array.isArray(updateJob?.logs) ? updateJob.logs : [];
+    const semverPullPattern = new RegExp(`\$ docker pull ${escapeRegex(fixtureImageRepo)}:(?!${escapeRegex(targetTag)}\b)[^\s]+`);
     const semverPullLog = logs.find((l) => {
       const msg = typeof l?.msg === "string" ? l.msg : "";
-      return /\$ docker pull ghcr\.io\/ivanli-cn\/codex-vibe-monitor:(?!latest\b)[^\s]+/.test(msg);
+      return semverPullPattern.test(msg);
     });
     assert(!semverPullLog, `unexpected semver fallback pull log found: ${JSON.stringify(semverPullLog)}`);
 

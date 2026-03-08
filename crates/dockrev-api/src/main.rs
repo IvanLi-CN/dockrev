@@ -15,6 +15,7 @@ mod ghcr_webhook_jobs;
 mod github;
 mod ids;
 mod ignore;
+mod models;
 mod notify;
 mod preflight;
 mod registry;
