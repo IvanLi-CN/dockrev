@@ -6,7 +6,7 @@ import {
   type VersionInferenceOverviewResponse,
   type VersionInferenceTaskProgress,
 } from '../api'
-import { Button, Mono, Pill } from '../ui'
+import { Button, Input, Mono, Pill, SelectField, ToggleGroup, ToggleGroupItem } from '../ui'
 
 type StatusFilter = 'all' | 'queued' | 'running' | 'ready' | 'stale' | 'all_failed'
 
@@ -391,50 +391,51 @@ export function VersionInferencePage(props: {
           <div className="title">筛选与分页</div>
         </div>
         <div className="versionInferenceControls">
-          <input
+          <Input
             className="input versionInferenceSearch"
+            onChange={(e) => setQueryInput(e.target.value)}
             placeholder="搜索镜像仓库（q）"
             value={queryInput}
-            onChange={(e) => setQueryInput(e.target.value)}
           />
 
-          <div className="chipRow">
+          <ToggleGroup
+            className="chipRow"
+            onValueChange={(value) => {
+              if (!value) return
+              setStatusFilter(value as StatusFilter)
+              setPage(1)
+            }}
+            type="single"
+            value={statusFilter}
+          >
             {STATUS_FILTERS.map((key) => (
-              <button
+              <ToggleGroupItem
                 key={key}
-                type="button"
                 className={statusFilter === key ? 'chip chipActive' : 'chip'}
-                onClick={() => {
-                  setStatusFilter(key)
-                  setPage(1)
-                }}
+                value={key}
+                variant="outline"
               >
                 <span>{statusLabel(key)}</span>
                 <span className="chipCount">{statusCount(summary, key)}</span>
-              </button>
+              </ToggleGroupItem>
             ))}
-          </div>
+          </ToggleGroup>
 
           <div className="versionInferencePager">
             <label className="label" htmlFor="version-inference-per-page">
               每页
             </label>
-            <select
-              id="version-inference-per-page"
+            <SelectField
               className="select"
-              value={perPage}
-              onChange={(e) => {
-                const next = Number.parseInt(e.target.value, 10)
+              id="version-inference-per-page"
+              onChange={(value) => {
+                const next = Number.parseInt(value, 10)
                 setPerPage(Number.isFinite(next) && next > 0 ? next : 50)
                 setPage(1)
               }}
-            >
-              {PER_PAGE_OPTIONS.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-            </select>
+              options={PER_PAGE_OPTIONS.map((value) => ({ value: String(value), label: String(value) }))}
+              value={String(perPage)}
+            />
             <span className="muted">
               第 {currentPage} / {totalPages} 页（总计 {overview?.total ?? 0}）
             </span>

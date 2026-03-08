@@ -18,7 +18,7 @@ import {
   type StackDetail,
 } from '../api'
 import { navigate } from '../routes'
-import { ArrowRightIcon, Button, Mono, Pill, Switch } from '../ui'
+import { ArrowRightIcon, Button, Input, Mono, Pill, SelectField, Switch } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { isSemverDowngradeAnomaly, serviceRowStatus } from '../updateStatus'
@@ -339,7 +339,7 @@ export function ServiceDetailPage(props: {
                     setNoticeJobId(resp.jobId)
                   } catch (e: unknown) {
                     if (e instanceof ApiError) {
-                      if (e.status === 401) setError('需要登录/鉴权（forward header）')
+                      if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
                       else if (e.status === 409) {
                         setError('扫描结果已变化，请刷新并重新扫描后再更新')
                         await refresh()
@@ -537,7 +537,7 @@ export function ServiceDetailPage(props: {
                     if (applyActionKey) trackJob(applyActionKey, resp.jobId, 'queued')
                   } catch (e: unknown) {
                     if (e instanceof ApiError) {
-                      if (e.status === 401) setError('需要登录/鉴权（forward header）')
+                      if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
                       else if (e.status === 409) {
                         setError('扫描结果已变化，请刷新并重新扫描后再更新')
                         await refresh()
@@ -938,24 +938,25 @@ export function ServiceDetailPage(props: {
           <div className="formGrid">
             <label className="formField">
               <span className="label">Kind</span>
-              <select
+              <SelectField
                 className="input"
+                onChange={(value) => setNewRuleKind(value as 'exact' | 'prefix' | 'regex' | 'semver')}
+                options={[
+                  { value: 'exact', label: 'exact' },
+                  { value: 'prefix', label: 'prefix' },
+                  { value: 'regex', label: 'regex' },
+                  { value: 'semver', label: 'semver' },
+                ]}
                 value={newRuleKind}
-                onChange={(e) => setNewRuleKind(e.target.value as 'exact' | 'prefix' | 'regex' | 'semver')}
-              >
-                <option value="exact">exact</option>
-                <option value="prefix">prefix</option>
-                <option value="regex">regex</option>
-                <option value="semver">semver</option>
-              </select>
+              />
             </label>
             <label className="formField formSpan2">
               <span className="label">Value</span>
-              <input className="input" value={newRuleValue} onChange={(e) => setNewRuleValue(e.target.value)} />
+              <Input className="input" onChange={(e) => setNewRuleValue(e.target.value)} value={newRuleValue} />
             </label>
             <label className="formField formSpan2">
               <span className="label">Note</span>
-              <input className="input" value={newRuleNote} onChange={(e) => setNewRuleNote(e.target.value)} />
+              <Input className="input" onChange={(e) => setNewRuleNote(e.target.value)} value={newRuleNote} />
             </label>
             <div className="formActions formSpan2">
               <Button
@@ -1013,26 +1014,27 @@ export function ServiceDetailPage(props: {
             {bindTargets.map((t) => (
               <div key={t.key} className="kvRow">
                 <div className="mono">{t.key}</div>
-                <select
+                <SelectField
                   className="input"
-                  value={t.value}
-                  onChange={(e) =>
+                  onChange={(value) =>
                     setSettings({
                       ...settings,
                       backupTargets: {
                         ...settings.backupTargets,
                         bindPaths: {
                           ...settings.backupTargets.bindPaths,
-                          [t.key]: e.target.value as 'inherit' | 'skip' | 'force',
+                          [t.key]: value as 'inherit' | 'skip' | 'force',
                         },
                       },
                     })
                   }
-                >
-                  <option value="inherit">inherit</option>
-                  <option value="skip">skip</option>
-                  <option value="force">force</option>
-                </select>
+                  options={[
+                    { value: 'inherit', label: 'inherit' },
+                    { value: 'skip', label: 'skip' },
+                    { value: 'force', label: 'force' },
+                  ]}
+                  value={t.value}
+                />
               </div>
             ))}
 
@@ -1043,26 +1045,27 @@ export function ServiceDetailPage(props: {
             {volTargets.map((t) => (
               <div key={t.key} className="kvRow">
                 <div className="mono">{t.key}</div>
-                <select
+                <SelectField
                   className="input"
-                  value={t.value}
-                  onChange={(e) =>
+                  onChange={(value) =>
                     setSettings({
                       ...settings,
                       backupTargets: {
                         ...settings.backupTargets,
                         volumeNames: {
                           ...settings.backupTargets.volumeNames,
-                          [t.key]: e.target.value as 'inherit' | 'skip' | 'force',
+                          [t.key]: value as 'inherit' | 'skip' | 'force',
                         },
                       },
                     })
                   }
-                >
-                  <option value="inherit">inherit</option>
-                  <option value="skip">skip</option>
-                  <option value="force">force</option>
-                </select>
+                  options={[
+                    { value: 'inherit', label: 'inherit' },
+                    { value: 'skip', label: 'skip' },
+                    { value: 'force', label: 'force' },
+                  ]}
+                  value={t.value}
+                />
               </div>
             ))}
 

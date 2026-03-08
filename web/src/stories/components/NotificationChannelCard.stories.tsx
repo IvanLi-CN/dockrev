@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
+import { Input } from '../../ui'
 import {
   NotificationChannelCard,
   type NotificationChannelCardProps,
@@ -21,7 +22,7 @@ function notificationFields(channel: 'email' | 'webhook' | 'telegram' | 'webPush
     return (
       <div className="kvRow">
         <div className="label">SMTP URL</div>
-        <input className="input" defaultValue="smtp://user:pass@smtp.example.com:587" />
+        <Input className="input" defaultValue="smtp://user:pass@smtp.example.com:587" />
       </div>
     )
   }
@@ -30,7 +31,7 @@ function notificationFields(channel: 'email' | 'webhook' | 'telegram' | 'webPush
     return (
       <div className="kvRow">
         <div className="label">URL</div>
-        <input className="input" defaultValue="https://hooks.example.com/dockrev" />
+        <Input className="input" defaultValue="https://hooks.example.com/dockrev" />
       </div>
     )
   }
@@ -40,11 +41,11 @@ function notificationFields(channel: 'email' | 'webhook' | 'telegram' | 'webPush
       <>
         <div className="kvRow">
           <div className="label">Bot token</div>
-          <input className="input" defaultValue="123456:AAAbbbCCCDDD" />
+          <Input className="input" defaultValue="123456:AAAbbbCCCDDD" />
         </div>
         <div className="kvRow">
           <div className="label">Chat id</div>
-          <input className="input" defaultValue="-1001234567890" />
+          <Input className="input" defaultValue="-1001234567890" />
         </div>
       </>
     )
@@ -54,11 +55,11 @@ function notificationFields(channel: 'email' | 'webhook' | 'telegram' | 'webPush
     <>
       <div className="kvRow">
         <div className="label">Public Key</div>
-        <input className="input" defaultValue="BAnExamplePublicKey..." />
+        <Input className="input" defaultValue="BAnExamplePublicKey..." />
       </div>
       <div className="kvRow">
         <div className="label">Subject</div>
-        <input className="input" defaultValue="mailto:ops@example.com" />
+        <Input className="input" defaultValue="mailto:ops@example.com" />
       </div>
     </>
   )

@@ -10,6 +10,7 @@ export type Route =
   | { name: 'ghcr-webhook-inbox' }
   | { name: 'ghcr-webhook-registry' }
   | { name: 'deploy-check' }
+  | { name: 'unauthorized' }
   | { name: 'settings' }
   | { name: 'service'; stackId: string; serviceId: string }
   | { name: 'supervisor-misroute'; basePath: string; pathname: string }
@@ -38,6 +39,7 @@ export function parseRoute(pathname: string): Route {
   // Legacy compatibility: keep old path readable after route migration.
   if (parts.length === 1 && parts[0] === 'version-inference') return { name: 'version-inference' }
   if (parts.length === 1 && parts[0] === 'deploy-check') return { name: 'deploy-check' }
+  if (parts.length === 1 && parts[0] === 'unauthorized') return { name: 'unauthorized' }
   if (parts.length === 1 && parts[0] === 'settings') return { name: 'settings' }
   if (parts.length === 3 && parts[0] === 'services') {
     return { name: 'service', stackId: parts[1], serviceId: parts[2] }
@@ -65,6 +67,8 @@ export function href(route: Route): string {
       return '/settings/ghcr-webhooks'
     case 'deploy-check':
       return '/deploy-check'
+    case 'unauthorized':
+      return '/unauthorized'
     case 'settings':
       return '/settings'
     case 'service':

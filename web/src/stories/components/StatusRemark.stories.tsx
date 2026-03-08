@@ -6,6 +6,7 @@ import { serviceRowStatus } from '../../updateStatus'
 
 const meta: Meta<typeof StatusRemark> = {
   title: 'Components/StatusRemark',
+  tags: ['autodocs'],
   component: StatusRemark,
 }
 
@@ -122,5 +123,6 @@ export const AllStatusesLight: Story = {
   ...AllStatuses,
   globals: {
     theme: 'light',
+    backgrounds: { value: 'light' },
   },
 }

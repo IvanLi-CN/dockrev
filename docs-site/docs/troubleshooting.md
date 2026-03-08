@@ -9,15 +9,17 @@ description: Dockrev 常见问题的定位路径与修复建议。
 
 排查项：
 
-- 是否注入了 `DOCKREV_AUTH_FORWARD_HEADER_NAME` 指定的头
+- 是否注入了 `DOCKREV_AUTH_FORWARD_HEADER_NAME` 指定的用户头
+- 如启用组鉴权，是否同时注入了 `DOCKREV_AUTH_GROUP_HEADER_NAME` 指定的组头
+- `DOCKREV_AUTH_ALLOWED_USER` / `DOCKREV_AUTH_ALLOWED_GROUP` 是否与当前身份匹配
 - 生产环境是否误开启匿名开关
-- 反向代理是否丢失了透传头
 
 立即处理：
 
 1. 确认 `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV=false`（生产）。
-2. 在网关补齐 `DOCKREV_AUTH_FORWARD_HEADER_NAME` 对应头（默认 `X-Forwarded-User`）。
-3. 刷新后若仍 401，查看网关与 Dockrev 日志中的请求头透传情况。
+2. 在网关补齐 `DOCKREV_AUTH_FORWARD_HEADER_NAME`（默认 `X-Forwarded-User`），必要时再补齐 `DOCKREV_AUTH_GROUP_HEADER_NAME`（默认 `Remote-Groups`）。
+3. 确认 `DOCKREV_AUTH_ALLOWED_USER` / `DOCKREV_AUTH_ALLOWED_GROUP` 至少配置一个，且与当前身份命中其一。
+4. 刷新后若仍 401，查看网关与 Dockrev 日志中的请求头透传情况。
 
 ## 2) 自动发现不到 compose 项目
 
@@ -67,13 +69,13 @@ description: Dockrev 常见问题的定位路径与修复建议。
 排查项：
 
 - `/supervisor/self-upgrade` 是否可达
-- forward header 是否同时传到 supervisor 路径
+- Forward Auth 是否同时传到 supervisor 路径
 - `DOCKREV_SUPERVISOR_TARGET_IMAGE_REPO` 是否配置正确
 
 立即处理：
 
 1. 直接请求 `/supervisor/self-upgrade`，确认返回非 401。
-2. 若 401，仅修复 supervisor 路径的 forward header 透传。
+2. 若 401，仅修复 supervisor 路径的 Forward Auth 透传。
 3. 校验 `DOCKREV_IMAGE_REPO` 与 `DOCKREV_SUPERVISOR_TARGET_IMAGE_REPO` 是否一致。
 
 ## 6) Job 卡住 running

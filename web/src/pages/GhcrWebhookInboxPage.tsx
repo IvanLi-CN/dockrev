@@ -4,7 +4,7 @@ import {
   type ListGitHubPackagesWebhookDeliveriesResponse,
 } from '../api'
 import { navigate } from '../routes'
-import { Button, Chip, Mono, Pill } from '../ui'
+import { Button, Chip, Input, Mono, Pill, SelectField } from '../ui'
 
 type DeliveryFilter = 'all' | 'processed' | 'ignored' | 'rejected'
 
@@ -48,8 +48,15 @@ function responseTone(status?: number | null): 'ok' | 'warn' | 'bad' | 'muted' {
   return 'muted'
 }
 
-function taskLabel(jobId?: string | null): string {
-  if (jobId) return '查看扫描任务'
+function deliveryJobIds(jobId?: string | null, jobIds?: string[] | null): string[] {
+  if (Array.isArray(jobIds) && jobIds.length > 0) return jobIds
+  if (jobId) return [jobId]
+  return []
+}
+
+function taskLabel(jobIds: string[]): string {
+  if (jobIds.length > 1) return `查看 ${jobIds.length} 个任务`
+  if (jobIds.length === 1) return '查看扫描任务'
   return '无关联任务'
 }
 
@@ -225,10 +232,8 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
         </div>
 
         <div className="ghcrInboxSearchForm">
-          <input
+          <Input
             className="input ghcrInboxSearch"
-            placeholder="搜索仓库 / 原因 / 任务"
-            value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
             onKeyDown={(event) => {
               if (event.key !== 'Enter') return
@@ -236,6 +241,8 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
               setPage(1)
               setQuery(searchInput.trim())
             }}
+            placeholder="搜索仓库 / 原因 / 任务"
+            value={searchInput}
           />
           <Button
             variant="ghost"
@@ -263,22 +270,17 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
           <label className="label" htmlFor="ghcr-inbox-per-page">
             每页
           </label>
-          <select
-            id="ghcr-inbox-per-page"
+          <SelectField
             className="select"
-            value={perPage}
-            onChange={(event) => {
-              const next = Number.parseInt(event.target.value, 10)
+            id="ghcr-inbox-per-page"
+            onChange={(value) => {
+              const next = Number.parseInt(value, 10)
               setPerPage(Number.isFinite(next) && next > 0 ? next : 50)
               setPage(1)
             }}
-          >
-            {PER_PAGE_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
+            options={PER_PAGE_OPTIONS.map((option) => ({ value: String(option), label: String(option) }))}
+            value={String(perPage)}
+          />
           <span className="muted">
             第 {page} / {maxPage} 页（筛选后 {data.filteredTotal} / 总计 {data.total}）
           </span>
@@ -385,18 +387,39 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
               </Pill>
             </div>
             <div className="ghcrInboxCell ghcrInboxCellTask">
-              {delivery.jobId ? (
-                <button
-                  type="button"
-                  className="linkButton"
-                  title={`任务 ID: ${delivery.jobId}`}
-                  onClick={() => navigate({ name: 'job', jobId: delivery.jobId! })}
-                >
-                  {taskLabel(delivery.jobId)}
-                </button>
-              ) : (
-                <div className="muted">{taskLabel(delivery.jobId)}</div>
-              )}
+              {(() => {
+                const jobIds = deliveryJobIds(delivery.jobId, delivery.jobIds)
+                if (jobIds.length === 0) {
+                  return <div className="muted">{taskLabel(jobIds)}</div>
+                }
+                if (jobIds.length === 1) {
+                  return (
+                    <button
+                      type="button"
+                      className="linkButton"
+                      title={`任务 ID: ${jobIds[0]}`}
+                      onClick={() => navigate({ name: 'job', jobId: jobIds[0] })}
+                    >
+                      {taskLabel(jobIds)}
+                    </button>
+                  )
+                }
+                return (
+                  <div className="ghcrInboxTaskList" aria-label={`关联任务 ${jobIds.length} 个`}>
+                    {jobIds.map((jobId) => (
+                      <button
+                        key={jobId}
+                        type="button"
+                        className="linkButton ghcrInboxTaskLink"
+                        title={`任务 ID: ${jobId}`}
+                        onClick={() => navigate({ name: 'job', jobId })}
+                      >
+                        <span>{jobId}</span>
+                      </button>
+                    ))}
+                  </div>
+                )
+              })()}
             </div>
           </div>
         ))}

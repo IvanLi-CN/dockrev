@@ -63,7 +63,7 @@ export function useSupervisorHealth() {
     try {
       const url = resolveUrl('self-upgrade', baseUrl)
       const resp = await fetchWithTimeout(url, 1200)
-      if (resp.status === 401) throw new Error('需要登录/鉴权（forward header）')
+      if (resp.status === 401) throw new Error('需要登录/鉴权（Forward Auth）')
       if (!resp.ok) {
         const detail = await readErrorDetail(resp)
         throw new Error(detail ? `HTTP ${resp.status}: ${detail}` : `HTTP ${resp.status}`)

@@ -75,4 +75,4 @@ bun run dev
 
 - 容器启动失败：`docker compose logs --tail=200`
 - API 不通：确认 `50883` 未被占用（`lsof -iTCP:50883 -sTCP:LISTEN -n -P`）
-- 页面 401：检查反向代理是否注入了 `X-Forwarded-User`（或你自定义的 forward header）
+- 页面 401：检查反向代理是否注入了 `X-Forwarded-User`（以及你配置的组头，如 `Remote-Groups`），并确认 Dockrev 允许的用户/组配置正确

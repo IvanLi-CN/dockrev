@@ -505,7 +505,17 @@ function makeDefaultSettings(): SettingsResponse {
       updateCheck: { enabled: false, cron: '*/30 * * * *' },
       ghcrWebhookAudit: { enabled: true, cron: '0 3 * * *' },
     },
-    auth: { forwardHeaderName: 'X-Forwarded-User', allowAnonymousInDev: true },
+    auth: {
+      forwardHeaderName: 'X-Forwarded-User',
+      groupHeaderName: 'Remote-Groups',
+      allowAnonymousInDev: true,
+      authorizationMode: 'user_or_group',
+      allowedUserMasked: 'al***ce',
+      allowedGroupMasked: 'o**s',
+      currentUser: 'alice',
+      currentGroups: ['o**s'],
+      matchedBy: 'user',
+    },
     instance: { publicBaseUrl: null },
   }
 }

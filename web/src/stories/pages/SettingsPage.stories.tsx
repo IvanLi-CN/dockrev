@@ -27,7 +27,7 @@ function preparePublicBaseUrlSuggestionStorage(mode: 'clear' | 'dismissed' = 'cl
 }
 
 function renderSettingsPage(
-  pageSubtitle = '单用户 / Forward Header · 认证配置 · 通知配置 · 备份默认策略',
+  pageSubtitle = 'Forward Auth · 用户/组鉴权 · 通知配置 · 备份默认策略',
   options?: { publicBaseUrlSuggestion?: 'clear' | 'dismissed' },
 ) {
   preparePublicBaseUrlSuggestionStorage(options?.publicBaseUrlSuggestion ?? 'clear')
@@ -66,6 +66,7 @@ export const DefaultLight: Story = {
   ...Default,
   globals: {
     theme: 'light',
+    backgrounds: { value: 'light' },
   },
 }
 

@@ -7,7 +7,7 @@ import {
   type DeployCheckReportResponse,
 } from '../api'
 import { navigate } from '../routes'
-import { Button } from '../ui'
+import { Button, Label, Switch } from '../ui'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -298,15 +298,15 @@ export function DeployWelcomePage() {
         <section className="deployWelcomePanel deployWelcomeActionPanel">
           <div className="deployWelcomeActionLayout">
             <div className="deployWelcomeActionCopy">
-              <label className="deployNeverAutoCheckbox">
-                <input
-                  type="checkbox"
+              <div className="deployNeverAutoCheckbox">
+                <Switch
+                  id="deploy-never-auto-open"
                   checked={neverAutoOpen}
-                  onChange={(e) => setNeverAutoOpen(e.target.checked)}
                   disabled={saving || !welcomeLoaded}
+                  onChange={setNeverAutoOpen}
                 />
-                <span>不再自动显示此页面</span>
-              </label>
+                <Label htmlFor="deploy-never-auto-open">不再自动显示此页面</Label>
+              </div>
               <p className="deployWelcomeActionHint">勾选后，后续访问首页将直接进入 Dashboard；可在设置页手动重新打开本页面。</p>
             </div>
             <div className="deployWelcomeActions">

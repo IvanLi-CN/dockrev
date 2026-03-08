@@ -618,6 +618,7 @@ dependencies = [
  "serde_json",
  "time",
  "tokio",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "ulid",

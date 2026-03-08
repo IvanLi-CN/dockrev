@@ -15,7 +15,7 @@ import {
   type StackListItem,
 } from '../api'
 import { navigate } from '../routes'
-import { ArrowRightIcon, Button, Mono, Pill, StatusRemark } from '../ui'
+import { ArrowRightIcon, Button, Input, Mono, Pill, StatusRemark } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { isSemverDowngradeAnomaly, serviceRowStatus, type RowStatus } from '../updateStatus'
@@ -390,7 +390,7 @@ export function ServicesPage(props: {
                 await refresh()
               } catch (e: unknown) {
                 if (e instanceof ApiError) {
-                  if (e.status === 401) setError('需要登录/鉴权（forward header）')
+                  if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
                   else if (e.status === 409) {
                     const d = e.details
                     const existingJobId =
@@ -510,7 +510,7 @@ export function ServicesPage(props: {
         if (targetKey) trackJob(targetKey, resp.jobId, 'queued')
       } catch (e: unknown) {
         if (e instanceof ApiError) {
-          if (e.status === 401) setError('需要登录/鉴权（forward header）')
+          if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
           else if (e.status === 409) {
             setError('扫描结果已变化，请刷新并重新扫描后再更新')
             await refresh()
@@ -665,11 +665,11 @@ export function ServicesPage(props: {
 	        <div className="sectionRow">
 	          <div className="title">服务</div>
 	          <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
-            <input
+            <Input
               className="input"
-              value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="搜索 service / image / stack"
+              value={search}
             />
 	            <div className="muted">
 	              {totals.filtered}/{totals.total}

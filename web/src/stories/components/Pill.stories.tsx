@@ -3,6 +3,7 @@ import { Pill } from '../../ui'
 
 const meta: Meta<typeof Pill> = {
   title: 'Components/Pill',
+  tags: ['autodocs'],
   component: Pill,
   args: {
     children: 'Pill',

@@ -29,7 +29,7 @@ Purpose: turn internal paths (e.g. `queue/{jobId}`) into absolute URLs (e.g. `ht
 | kind | schema | Trigger (high level) |
 | --- | --- | --- |
 | `job_finished` | `dockrev.notification.job.v2` | An update job finishes (success / failed / rolled back) and is not filtered out |
-| `new_version_discovered` | `dockrev.notification.new_version_discovered.v2` | Scheduled update-check discovers new versions (aggregated per check job) |
+| `new_version_discovered` | `dockrev.notification.new_version_discovered.v2` | Scheduled checks or GHCR-webhook-triggered checks discover new versions (aggregated per check job) |
 | `ghcr_webhook_anomaly` | `dockrev.notification.ghcr_webhook_anomaly.v2` | Scheduled GHCR webhook audit (`audit_all`) detects missing/conflict/error repos |
 | `notification_test` | `dockrev.notification.test.v2` | `POST /api/notifications/test` |
 
@@ -42,7 +42,7 @@ Path: `Settings -> Notifications`
 Per-event switches:
 
 - `Update finished notification` -> controls `job_finished`
-- `New version discovered (scheduled check)` -> controls `new_version_discovered`
+- `New version discovered (scheduled / webhook check)` -> controls `new_version_discovered`
 - `GitHub webhook anomaly (audit)` -> controls `ghcr_webhook_anomaly`
 
 Behavior:
@@ -111,7 +111,7 @@ Uniquely mapped means:
 
 ## New version discovered (`dockrev.notification.new_version_discovered.v2`)
 
-Trigger: scheduled update checks only. A notification is sent when a check run discovers new versions.
+Trigger: scheduled update checks and GHCR-webhook-triggered service checks. A notification is sent when a check run discovers new versions. UI-triggered manual checks stay silent.
 
 Key fields:
 

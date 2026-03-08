@@ -4,6 +4,7 @@ import { Chip } from '../../ui'
 
 const meta: Meta<typeof Chip> = {
   title: 'Components/Chip',
+  tags: ['autodocs'],
   component: Chip,
   args: {
     children: 'Chip',
