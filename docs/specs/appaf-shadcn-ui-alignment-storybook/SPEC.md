@@ -160,3 +160,4 @@
 - 2026-03-07：本地验证通过：`bun --cwd web lint`、`bun --cwd web build`、`bun --cwd web build-storybook -- --quiet`、`bun --cwd web test-storybook`。
 - 2026-03-07：review-loop 修复 hover-open → click-pin 固定气泡回归，并恢复 `DeployWelcomePage` 中 switch 与 label 的可点击关联；Storybook smoke 新增 hover-pin 留存校验。
 - 2026-03-07：创建 PR #147，补齐 `type:patch` / `channel:stable` 标签并合入 `origin/main` 最新主干；review-loop 阻塞项已清零，远端 checks 通过。
+- 2026-03-08：补齐 Storybook 预览背景与 Docs 深色主题默认值，并为显式 light story 追加 `backgrounds.value`，避免 Docs 页白底吞掉浅色组件；本地再次验证 `lint/build/build-storybook/test-storybook` 通过。
