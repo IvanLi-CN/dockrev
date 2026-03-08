@@ -123,5 +123,6 @@ export const AllStatusesLight: Story = {
   ...AllStatuses,
   globals: {
     theme: 'light',
+    backgrounds: { value: 'light' },
   },
 }

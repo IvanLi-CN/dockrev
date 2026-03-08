@@ -50,6 +50,7 @@ export const DefaultLight: Story = {
   ...Default,
   globals: {
     theme: 'light',
+    backgrounds: { value: 'light' },
   },
 }
 
