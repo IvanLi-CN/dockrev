@@ -15,8 +15,11 @@ authentication_backend:
 access_control:
   default_policy: deny
   rules:
+    # Transparent Dockrev ingress: allow the request to pass so Dockrev can return
+    # its own 401/authz diagnostics, while Authelia still supplies trusted headers
+    # for requests that already carry an Authelia session.
     - domain: dockrev.example.com
-      policy: one_factor
+      policy: bypass
 
 session:
   secret: change-me-with-a-long-random-string

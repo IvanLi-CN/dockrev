@@ -1,13 +1,17 @@
 # Traefik + Authelia example
 
-This example keeps Dockrev's local `deploy/docker-compose.yml` unchanged and provides a production-oriented Forward Auth stack you can copy.
+This example keeps Dockrev's local `deploy/docker-compose.yml` unchanged and provides a production-oriented transparent identity-forwarding stack you can copy.
 
 ## What this example does
 
 - Traefik handles ingress and TLS. Use `traefik:v3.6.1` or newer when you rely on the Docker provider.
-- Authelia handles authentication via Traefik Forward Auth.
-- Dockrev and Supervisor perform project-side authorization using `Remote-User` / `Remote-Groups`.
-- Webhook endpoints are routed without Forward Auth middleware, so you do not need Authelia `bypass` rules for them.
+- Traefik sends every Dockrev and Supervisor request through the same Forward Auth middleware; there is no webhook split router.
+- Authelia provides the identity portal and trusted response headers, but it does not enforce Dockrev-specific user/group/path ACL in this topology.
+- Dockrev and Supervisor decide which routes are public and which forwarded identities are allowed.
+- Anonymous public routes stay limited to:
+  - `GET /api/health`
+  - `GET /api/version`
+  - `/api/webhooks/*`
 - Dockrev still validates webhook requests itself:
   - `/api/webhooks/trigger` via `DOCKREV_WEBHOOK_SECRET`
   - `/api/webhooks/github-packages` via GitHub signature
@@ -50,6 +54,13 @@ chmod 600 data/traefik/acme.json
 docker compose up -d
 ```
 
+## Transparent ingress contract
+
+- Sign in through `https://auth.example.com` when you want Authelia to attach `Remote-User` / `Remote-Groups`.
+- Requests without an Authelia session still reach Dockrev and Supervisor.
+- Protected APIs, protected UI routes, `/api/deploy-check/report`, and `/supervisor/*` return Dockrev-generated `401 auth_required` unless the forwarded identity matches `DOCKREV_AUTH_ALLOWED_USER` or `DOCKREV_AUTH_ALLOWED_GROUP`.
+- The gateway does not perform Dockrev-specific user/group/path ACL.
+
 ## Authorization examples
 
 Allow a single user:
@@ -74,6 +85,6 @@ environment:
   DOCKREV_AUTH_ALLOWED_GROUP: dockrev-users
 ```
 
-## Why webhooks are split at Traefik instead of Authelia bypass
+## Why there is no webhook split or gateway ACL
 
-This example keeps the protected application routes behind a single Forward Auth middleware and handles webhook openness in Traefik routing, not in Authelia policy rules. That keeps the Authelia policy simple while avoiding broad anonymous allowances for Dockrev pages or protected APIs.
+Dockrev owns the boundary: the application itself decides which routes stay anonymous and which requests must return `401 auth_required`. Traefik only routes traffic and forwards trusted identity headers from Authelia when a session exists.

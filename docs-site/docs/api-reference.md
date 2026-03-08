@@ -13,7 +13,7 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 ## 鉴权模型
 
 - **公开接口**：无需认证头。
-- **Forward Auth**：入口代理负责认证，并向 Dockrev 注入可信用户/组头。
+- **Forward Auth**：入口代理可透传来自身份提供方的可信用户/组头；Dockrev 仍自行决定受保护接口是返回数据还是 `401 auth_required`。
 - **Dockrev 鉴权**：Dockrev 读取 `DOCKREV_AUTH_ALLOWED_USER` 与 `DOCKREV_AUTH_ALLOWED_GROUP`；两者各只接受一个值，同时配置时命中任意一个即可通过。
 - **Webhook Secret**：`X-Dockrev-Webhook-Secret` 必须与服务端配置一致。
 - **GitHub Signature**：`X-Hub-Signature-256` + `X-GitHub-Event` + `X-GitHub-Delivery`。
@@ -114,7 +114,7 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 | DELETE | `/api/web-push/subscriptions` | Forward Auth | 删除 Web Push 订阅 | `200` `400` `401` |
 | POST | `/api/webhooks/trigger` | Webhook Secret | 外部触发 check/update 任务（`action=update` 仅支持 `all`/`stack`） | `200` `400` `401` |
 | POST | `/api/webhooks/github-packages` | GitHub Signature | 接收 GH package webhook 并触发 discovery | `200` `202` `400` `401` |
-| GET | `/api/deploy-check/report` | Forward Auth | 返回部署预检报告；未通过鉴权时返回仅含鉴权项的报告 | `200` |
+| GET | `/api/deploy-check/report` | Forward Auth | 返回部署预检报告；匿名或未命中 allowlist 时返回 Dockrev 生成的 `401 auth_required` | `200` `401` |
 | GET | `/api/deploy-welcome` | Forward Auth | 查询 deploy welcome 状态 | `200` `401` |
 | PUT | `/api/deploy-welcome` | Forward Auth | 更新 deploy welcome 状态 | `200` `400` `401` |
 
@@ -124,13 +124,13 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 
 | 方法 | 路径 | 鉴权 | 用途 | 关键状态码 |
 | --- | --- | --- | --- | --- |
-| GET | `/supervisor/health` | 公开 | Supervisor 健康探针 | `200` |
-| GET | `/supervisor/version` | 公开 | Supervisor 元信息（`version` + `repository` + `developerName` + `developerUrl`） | `200` |
+| GET | `/supervisor/health` | Forward Auth | Supervisor 健康探针（受保护） | `200` `401` |
+| GET | `/supervisor/version` | Forward Auth | Supervisor 元信息（`version` + `repository` + `developerName` + `developerUrl`） | `200` `401` |
 | GET | `/supervisor/self-upgrade` | Forward Auth | 查询当前自升级状态 | `200` `401` |
 | POST | `/supervisor/self-upgrade` | Forward Auth | 发起自升级（dry-run/apply） | `200` `400` `401` `409` |
 | POST | `/supervisor/self-upgrade/rollback` | Forward Auth | 回滚当前操作 | `200` `400` `401` |
 | GET | `/supervisor/favicon.png` | 公开 | UI favicon | `200` |
-| GET | `/supervisor/` | 公开 | Supervisor UI 页面 | `200` |
+| GET | `/supervisor/` | Forward Auth | Supervisor UI 页面 | `200` `401` |
 
 - `GET /supervisor/self-upgrade` 在 `state=running` 时会返回可选字段 `request`（`mode` + `rollbackOnFailure`），用于页面恢复当前运行按钮状态；空闲/历史状态下该字段可缺省。
 

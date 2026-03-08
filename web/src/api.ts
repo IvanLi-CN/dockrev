@@ -637,7 +637,6 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 export type AuthRequiredDetails = {
   reason?: string
   message?: string
-  redirectTo?: string
   forwardHeaderName?: string
   groupHeaderName?: string
   authorizationMode?: string
@@ -648,6 +647,16 @@ export type AuthRequiredDetails = {
 }
 
 export const AUTH_REQUIRED_EVENT = 'dockrev:auth-required'
+export const AUTH_RECOVERED_EVENT = 'dockrev:auth-recovered'
+
+export function isAnonymousPublicApiRequest(path: string, method = 'GET'): boolean {
+  const normalizedPath = path.split('?')[0] ?? path
+  const upperMethod = method.toUpperCase()
+  if (upperMethod === 'GET' && (normalizedPath === '/api/health' || normalizedPath === '/api/version')) {
+    return true
+  }
+  return normalizedPath.startsWith('/api/webhooks/')
+}
 
 export function asAuthRequiredDetails(details: unknown): AuthRequiredDetails | null {
   if (!isRecord(details)) return null
@@ -657,7 +666,6 @@ export function asAuthRequiredDetails(details: unknown): AuthRequiredDetails | n
   return {
     reason: typeof details.reason === 'string' ? details.reason : undefined,
     message: typeof details.message === 'string' ? details.message : undefined,
-    redirectTo: typeof details.redirectTo === 'string' ? details.redirectTo : undefined,
     forwardHeaderName: typeof details.forwardHeaderName === 'string' ? details.forwardHeaderName : undefined,
     groupHeaderName: typeof details.groupHeaderName === 'string' ? details.groupHeaderName : undefined,
     authorizationMode: typeof details.authorizationMode === 'string' ? details.authorizationMode : undefined,
@@ -692,6 +700,10 @@ function dispatchAuthRequired(error: ApiError) {
   )
 }
 
+function dispatchAuthRecovered() {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent(AUTH_RECOVERED_EVENT))
+}
 
 async function apiFetch(path: string, init?: RequestInit) {
   const resp = await fetch(`${API_BASE}${path}`, {
@@ -732,6 +744,9 @@ async function apiFetch(path: string, init?: RequestInit) {
     })
     dispatchAuthRequired(apiError)
     throw apiError
+  }
+  if (!isAnonymousPublicApiRequest(path, init?.method ?? 'GET')) {
+    dispatchAuthRecovered()
   }
   return resp
 }

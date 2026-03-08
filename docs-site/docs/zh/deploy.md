@@ -1,47 +1,32 @@
 ---
 title: 部署指南
-description: Dockrev 生产部署与反向代理接入说明。
+description: Dockrev 生产部署与透明 Forward Auth 接入说明。
 ---
 
 # 部署指南
 
-## 部署前确认
+## 最小拓扑
 
-- 目标主机已安装 Docker 与 Compose。
-- 域名/反向代理已就绪，且可转发 `/`、`/api/*`、`/supervisor/*`。
-- 持久化目录已规划（至少 DB 与 supervisor state）。
+`deploy/docker-compose.yml` 默认包含三个服务：
 
-## 部署拓扑（最小方案）
+- `gateway`（nginx）：外部入口
+- `dockrev`：API + 内嵌 Web UI
+- `supervisor`：自我升级执行器与控制台
 
-`deploy/docker-compose.yml` 默认包含 3 个服务：
-
-- `gateway` (nginx): 对外统一入口
-- `dockrev`: API + 内嵌 UI
-- `supervisor`: 自升级执行与控制台
-
-## 推荐部署步骤
+## 推荐上线步骤
 
 1. 准备目录与凭据文件（只读挂载 Docker config）。
-2. 校验反向代理是否可注入 Forward Auth 用户/组头。
-3. 启动 compose 并检查健康接口。
-4. 从 UI 完成首轮发现与检查。
+2. 校验反向代理能在已登录时注入可信 Forward Auth 用户/组头，并在未登录时仍让请求透传到 Dockrev。
+3. 启动 compose 并检查匿名健康接口。
+4. 使用命中 allowlist 的身份完成首轮 discovery/check 与 deploy-check 回归。
 
-最小启动命令：
+## 生产必备项
 
-```bash
-cd deploy
-mkdir -p data
-cp ~/.docker/config.json data/docker-config.json
-docker compose up -d --build
-```
-
-## 生产必要项
-
-- `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV=false`
-- 在网关注入 `DOCKREV_AUTH_FORWARD_HEADER_NAME` 与 `DOCKREV_AUTH_GROUP_HEADER_NAME`（如使用组鉴权）
-- 至少配置 `DOCKREV_AUTH_ALLOWED_USER` 或 `DOCKREV_AUTH_ALLOWED_GROUP` 之一
-- 使用持久化 DB 路径（例如 `/data/dockrev.sqlite3`）
-- 对 compose 文件目录做“同绝对路径只读挂载”
+- 设置 `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV=false`
+- 由入口注入 `DOCKREV_AUTH_FORWARD_HEADER_NAME`，如使用组鉴权再注入 `DOCKREV_AUTH_GROUP_HEADER_NAME`
+- 至少配置一个 `DOCKREV_AUTH_ALLOWED_USER` 或 `DOCKREV_AUTH_ALLOWED_GROUP`
+- 持久化 DB（`DOCKREV_DB_PATH`）与 supervisor state
+- 以只读方式把 compose 文件挂载到容器内相同绝对路径
 
 ## 可直接复制的示例文件
 
@@ -52,7 +37,7 @@ docker compose up -d --build
 - `deploy/examples/traefik-authelia/authelia/users.yml`
 - `deploy/examples/traefik-authelia/README.md`
 
-这套示例的特点是：保护页面/API 全部走同一套 Forward Auth，中间不靠 Authelia 路径例外；webhook 通过 Traefik 单独分流，因此仍然能被 GitHub 或外部系统访问，同时继续由 Dockrev 自己校验 secret / signature。
+这套示例的特点是：所有 Dockrev 请求都按 service/path 直接转发到 Dockrev 或 Supervisor；Traefik 不再通过 webhook 分流、用户/组 ACL、路径 ACL 表达权限边界。Authelia 只负责透明身份透传；Dockrev 自己决定哪些接口匿名、哪些模块返回 `401 auth_required`。
 
 如果你直接使用仓库里的 Traefik + Authelia 示例，建议保持 `traefik:v3.6.1` 或更新版本，避免旧版 Docker provider 在新 Docker Engine 上无法发现容器。
 
@@ -60,13 +45,23 @@ docker compose up -d --build
 
 ### 职责拆分
 
-- **Traefik / Authelia**：负责认证（是否已登录、是谁）。
-- **Dockrev**：负责鉴权（这个用户或组是否允许进入 Dockrev）。
-- `DOCKREV_AUTH_ALLOWED_USER` 与 `DOCKREV_AUTH_ALLOWED_GROUP` 各只接受一个值；两者同时配置时，命中任意一个即可通过。
+- **Traefik**：路由、TLS、转发 Forward Auth 子请求。
+- **Authelia**：登录会话与可信身份来源；在 Dockrev 拓扑里不承担用户/组/路径 ACL。
+- **Dockrev / Supervisor**：划分公共匿名面与受保护业务面，并根据 `DOCKREV_AUTH_ALLOWED_USER` / `DOCKREV_AUTH_ALLOWED_GROUP` 判定是否允许访问。
 
-### 推荐接法
+### 透明透传接法
 
-推荐把 Dockrev UI、受保护 API、`/supervisor/*` 都放在 Traefik `forwardAuth` 后面，由 Authelia 做 `one_factor`，再把可信的用户/组头转给 Dockrev。
+Authelia 侧保持 Dockrev 域名为透明放行：
+
+```yaml
+access_control:
+  default_policy: deny
+  rules:
+    - domain: dockrev.example.com
+      policy: bypass
+```
+
+Traefik 侧把同一套 Forward Auth middleware 挂到 Dockrev 与 Supervisor 路由：
 
 ```yaml
 http:
@@ -78,14 +73,9 @@ http:
         authResponseHeaders:
           - Remote-User
           - Remote-Groups
-
-  routers:
-    dockrev:
-      rule: Host(`dockrev.example.com`)
-      service: dockrev
-      middlewares:
-        - dockrev-forward-auth
 ```
+
+Dockrev / Supervisor 侧继续只信任透传头与单值 allowlist：
 
 ```env
 DOCKREV_AUTH_FORWARD_HEADER_NAME=Remote-User
@@ -95,15 +85,18 @@ DOCKREV_AUTH_ALLOWED_GROUP=ops
 DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV=false
 ```
 
-### 为什么不推荐“全站匿名放行 + 仅在已登录时带头”
+这套接法的运行语义是：
 
-Dockrev 需要稳定、可信的认证身份来执行项目侧鉴权。对于需要保护的页面/API，推荐始终经过 Forward Auth，并由 Dockrev决定是否允许该用户/组访问，而不是依赖匿名放行策略来“顺带”提供身份头。
+- 运维人员先访问 `https://auth.example.com` 建立 Authelia 会话；后续请求若带有会话，Traefik 会把可信 `Remote-*` 头传给 Dockrev。
+- 请求即便没有会话，也不会在网关被 Dockrev 专用 ACL 拦下；Dockrev 会对受保护 API、业务 UI、`/supervisor/*` 返回自己的 `401 auth_required`。
+- `DOCKREV_AUTH_ALLOWED_USER` 与 `DOCKREV_AUTH_ALLOWED_GROUP` 各只接受一个值；两者同时配置时，命中任意一个即可通过。
 
-### Webhook 说明
+### 路由边界
 
-- `/api/webhooks/trigger`：使用 `DOCKREV_WEBHOOK_SECRET`。
-- `/api/webhooks/github-packages`：使用 GitHub `X-Hub-Signature-256`。
-- 这两个端点不依赖 Forward Auth；如果它们和 UI 复用同一域名入口，需要在入口层单独保证 webhook 请求能到达 Dockrev。
+- **公共匿名 API**：`GET /api/health`、`GET /api/version`、`/api/webhooks/*`
+- **受保护 API**：除上述外的全部 `/api/**`，包括 `GET /api/deploy-check/report`
+- **受保护 UI / Supervisor**：全部 SPA 业务路由、`/supervisor/*`
+- **Webhook 校验**：仍由 Dockrev 自己处理，不依赖网关 ACL
 
 ## 使用已发布镜像
 
@@ -124,15 +117,15 @@ services:
 
 ## 反向代理与路径
 
-- Dockrev API/UI: `/` 与 `/api/*`
-- Supervisor: `/supervisor/*`
+- Dockrev API/UI：`/` 与 `/api/*`
+- Supervisor：`/supervisor/*`
 - 自升级跳转由 `DOCKREV_SELF_UPGRADE_URL` 控制，默认 `/supervisor/`
 
 ## 验收检查
 
-- `GET /api/health` 返回 `ok`
-- `GET /api/deploy-check/report` 可返回 deploy check 报告；未通过鉴权时也会返回仅含鉴权项的自检结果
-- `GET /supervisor/health` 通过网关可访问
+- 匿名访问 `GET /api/health` 与 `GET /api/version` 返回 `200`
+- 匿名访问 `GET /api/deploy-check/report`、`GET /supervisor/health`、`GET /supervisor/version` 返回 Dockrev 生成的 `401 auth_required`
+- 命中 allowlist 的透传身份可访问 deploy-check、业务 UI 与 `/supervisor/*`
 - 设置页中保存配置后，重新打开仍能看到 PAT/secret 掩码（说明已落库）
 
 ## 回滚建议

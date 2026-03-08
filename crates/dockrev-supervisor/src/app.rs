@@ -360,8 +360,12 @@ async fn mark_failed_if_running(app: &App, err: anyhow::Error) {
     }
 }
 
-async fn health() -> impl IntoResponse {
-    Json(json!({ "ok": true }))
+async fn health(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    let _user = require_user(&app, &headers)?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 const DEFAULT_REPOSITORY_URL: &str = "https://github.com/IvanLi-CN/dockrev";
@@ -386,14 +390,18 @@ struct VersionResponse {
     developer_url: String,
 }
 
-async fn version(State(_app): State<Arc<App>>) -> impl IntoResponse {
+async fn version(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    let _user = require_user(&app, &headers)?;
     let meta = supervisor_meta();
-    Json(VersionResponse {
+    Ok(Json(VersionResponse {
         version: meta.version,
         repository: meta.repository,
         developer_name: meta.developer_name,
         developer_url: meta.developer_url,
-    })
+    }))
 }
 
 fn supervisor_meta() -> SupervisorMeta {
@@ -2020,6 +2028,43 @@ mod tests {
         let headers = HeaderMap::new();
 
         assert!(require_user(app.as_ref(), &headers).is_err());
+    }
+
+    #[tokio::test]
+    async fn supervisor_health_requires_authorized_request() {
+        let app = test_app_for_authz(Some("alice"), None, false).await;
+        let router = app.clone().router();
+
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/supervisor/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn supervisor_version_allows_matching_identity() {
+        let app = test_app_for_authz(Some("alice"), None, false).await;
+        let router = app.clone().router();
+
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/supervisor/version")
+                    .header("X-Forwarded-User", "alice")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]

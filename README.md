@@ -97,6 +97,7 @@ Environment variables (API):
 - `DOCKREV_AUTH_ALLOWED_USER` (optional) single allowed user for Dockrev authorization
 - `DOCKREV_AUTH_ALLOWED_GROUP` (optional) single allowed group for Dockrev authorization
 - `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV` (default `true`; auto-disabled once `DOCKREV_AUTH_ALLOWED_USER` or `DOCKREV_AUTH_ALLOWED_GROUP` is set; still set it to `false` in production)
+- Anonymous public surface is intentionally limited to `GET /api/health`, `GET /api/version`, and `/api/webhooks/*`; all other API/UI/supervisor routes rely on Dockrev authorization even when the gateway transparently forwards anonymous requests.
 - `DOCKREV_SELF_UPGRADE_URL` (default `/supervisor/`) UI jump target for “升级 Dockrev”
 - `DOCKREV_IMAGE_REPO` (default `ghcr.io/ivanli-cn/dockrev`) image repo used by the UI to detect which service is “Dockrev” for showing “升级 Dockrev” (example: set to `dockrev` for local images like `dockrev:local`)
 - `DOCKREV_WEBHOOK_SECRET` (optional) shared secret for `/api/webhooks/trigger`

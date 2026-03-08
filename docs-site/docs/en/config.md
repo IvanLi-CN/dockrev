@@ -5,6 +5,16 @@ description: Runtime configuration reference for Dockrev API and Supervisor.
 
 # Configuration
 
+## Production must-haves
+
+1. `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV=false`
+2. `DOCKREV_AUTH_FORWARD_HEADER_NAME` (match your ingress Forward Auth user header)
+3. `DOCKREV_AUTH_GROUP_HEADER_NAME` (if you use group-based authorization)
+4. At least one of `DOCKREV_AUTH_ALLOWED_USER` or `DOCKREV_AUTH_ALLOWED_GROUP`
+5. `DOCKREV_DB_PATH` on durable storage
+6. `DOCKREV_SUPERVISOR_STATE_PATH` on durable storage
+7. `DOCKREV_IMAGE_REPO` matching the image repo you actually deploy
+
 ## API core config (`dockrev-api`)
 
 | Variable | Default | Purpose |
@@ -13,7 +23,10 @@ description: Runtime configuration reference for Dockrev API and Supervisor.
 | `DOCKREV_DB_PATH` | `./data/dockrev.sqlite3` | SQLite file path |
 | `DOCKREV_DOCKER_CONFIG` | empty | Docker registry credentials file |
 | `DOCKREV_COMPOSE_BIN` | `docker-compose` | Compose command selector |
-| `DOCKREV_AUTH_FORWARD_HEADER_NAME` | `X-Forwarded-User` | Forward auth header name |
+| `DOCKREV_AUTH_FORWARD_HEADER_NAME` | `X-Forwarded-User` | Forward Auth user header name |
+| `DOCKREV_AUTH_GROUP_HEADER_NAME` | `Remote-Groups` | Forward Auth group header name |
+| `DOCKREV_AUTH_ALLOWED_USER` | empty | Single allowed Dockrev username |
+| `DOCKREV_AUTH_ALLOWED_GROUP` | empty | Single allowed Dockrev group |
 | `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV` | `true` | Anonymous mode for dev; auto-disabled when an allowed user/group is configured |
 | `DOCKREV_SELF_UPGRADE_URL` | `/supervisor/` | Self-upgrade UI URL |
 | `DOCKREV_IMAGE_REPO` | `ghcr.io/ivanli-cn/dockrev` | Dockrev service image repo matcher |
@@ -21,6 +34,13 @@ description: Runtime configuration reference for Dockrev API and Supervisor.
 | `DOCKREV_HOST_PLATFORM` | empty | Host platform override |
 | `DOCKREV_DISCOVERY_INTERVAL_SECONDS` | `60` | Discovery interval |
 | `DOCKREV_DISCOVERY_MAX_ACTIONS` | `200` | Max actions per discovery run |
+
+Notes:
+
+- `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV` is for local development only; once `DOCKREV_AUTH_ALLOWED_USER` or `DOCKREV_AUTH_ALLOWED_GROUP` is set, the anonymous dev bypass is ignored.
+- `DOCKREV_AUTH_ALLOWED_USER` and `DOCKREV_AUTH_ALLOWED_GROUP` are single-value allowlists; Dockrev accepts either match when both are configured.
+- The anonymous public surface is intentionally fixed to `GET /api/health`, `GET /api/version`, and `/api/webhooks/*`. Every other API/UI/supervisor route is still authorized inside Dockrev.
+- A wrong `DOCKREV_IMAGE_REPO` breaks Dockrev self-upgrade detection in the UI.
 
 ## Check and retry controls
 
@@ -43,6 +63,11 @@ Fixed scheduler behavior:
 | --- | --- | --- |
 | `DOCKREV_SUPERVISOR_HTTP_ADDR` | `0.0.0.0:50884` | Supervisor bind address |
 | `DOCKREV_SUPERVISOR_BASE_PATH` | `/supervisor` | Mounted base path |
+| `DOCKREV_AUTH_FORWARD_HEADER_NAME` | `X-Forwarded-User` | Supervisor Forward Auth user header name |
+| `DOCKREV_AUTH_GROUP_HEADER_NAME` | `Remote-Groups` | Supervisor Forward Auth group header name |
+| `DOCKREV_AUTH_ALLOWED_USER` | empty | Single allowed Supervisor username |
+| `DOCKREV_AUTH_ALLOWED_GROUP` | empty | Single allowed Supervisor group |
+| `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV` | `true` | Anonymous dev mode; ignored once an allowed user/group is configured |
 | `DOCKREV_SUPERVISOR_TARGET_IMAGE_REPO` | `ghcr.io/ivanli-cn/dockrev` | Target image repo for self-upgrade |
 | `DOCKREV_SUPERVISOR_TARGET_CONTAINER_ID` | empty | Override auto-matched container |
 | `DOCKREV_SUPERVISOR_DOCKER_HOST` | empty | Docker endpoint override |
@@ -51,7 +76,8 @@ Fixed scheduler behavior:
 
 ## Production baseline
 
-- Disable anonymous mode (it is also ignored once an allowed user/group is configured)
-- Ensure forward auth header injection
-- Persist DB/state on durable volume
+- Disable anonymous mode
+- Ensure trusted Forward Auth header injection
+- Persist DB/state on durable volumes
 - Reduce Docker socket exposure (or use socket proxy)
+- After changes, run `GET /api/deploy-check/report` and `GET /supervisor/health` with an allowlist-matching forwarded identity

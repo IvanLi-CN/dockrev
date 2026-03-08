@@ -39,6 +39,7 @@ description: Dockrev API 与 Supervisor 运行参数说明。
 
 - `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV` 仅建议本地开发使用；一旦配置 `DOCKREV_AUTH_ALLOWED_USER` 或 `DOCKREV_AUTH_ALLOWED_GROUP`，匿名旁路会自动失效；生产仍必须显式关闭。
 - `DOCKREV_AUTH_ALLOWED_USER` 与 `DOCKREV_AUTH_ALLOWED_GROUP` 各只接受一个值；两者同时配置时，Dockrev 采用“用户或组命中其一即可通过”。
+- 生产匿名公共面固定为 `GET /api/health`、`GET /api/version`、`/api/webhooks/*`；其余 API/UI/`/supervisor/*` 即使走透明透传，也仍由 Dockrev 自己鉴权。
 - `DOCKREV_IMAGE_REPO` 配错会导致“升级 Dockrev”入口识别异常。
 
 ## 检查与重试参数
@@ -84,4 +85,4 @@ description: Dockrev API 与 Supervisor 运行参数说明。
 - 固定 Forward Auth 头并由入口网关注入
 - 使用持久卷保存 DB 与 supervisor state
 - 限制 Docker socket 暴露面（可改用 docker-socket-proxy）
-- 修改配置后，执行一次 `GET /api/deploy-check/report` 做回归核验
+- 修改配置后，以命中 allowlist 的身份执行 `GET /api/deploy-check/report` 与 `GET /supervisor/health` 做回归核验

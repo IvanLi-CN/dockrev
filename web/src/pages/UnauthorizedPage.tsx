@@ -1,5 +1,4 @@
 import type { AuthRequiredDetails } from '../api'
-import { navigate } from '../routes'
 import { Button } from '../ui'
 
 function reasonLabel(reason?: string): string {
@@ -22,7 +21,6 @@ function joinOrDash(values?: string[] | null): string {
 
 export function UnauthorizedPage(props: { authDetails?: AuthRequiredDetails | null }) {
   const auth = props.authDetails ?? null
-  const canOpenDeployCheck = auth?.redirectTo === 'deploy-check'
 
   return (
     <div className="deployWelcomeRoot">
@@ -71,11 +69,6 @@ export function UnauthorizedPage(props: { authDetails?: AuthRequiredDetails | nu
           </div>
 
           <div className="deployWelcomeActions" style={{ marginTop: 18 }}>
-            {canOpenDeployCheck ? (
-              <Button variant="primary" onClick={() => navigate({ name: 'deploy-check' })}>
-                打开自检页
-              </Button>
-            ) : null}
             <Button variant="ghost" onClick={() => window.location.reload()}>
               重新加载
             </Button>
