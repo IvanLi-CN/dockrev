@@ -27,7 +27,13 @@ import { ServiceResourcePanel } from '../components/ServiceResourcePanel'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { useConfirm } from '../confirm'
 import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, isStrictSemverTag } from '../versionDisplay'
-import { resolveUpdateActionTargetKey, useUpdateActionTracker } from '../updateActionTracking'
+import {
+  resolveUpdateActionTargetKey,
+  UPDATE_JOB_SETTLED_EVENT,
+  UPDATE_JOB_SETTLE_RETRY_MS,
+  type UpdateJobSettledDetail,
+  useUpdateActionTracker,
+} from '../updateActionTracking'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -177,6 +183,50 @@ export function ServiceDetailPage(props: {
       window.removeEventListener('dockrev:version-inference-refresh', onVersionRefresh)
     }
   }, [refreshStackOnly])
+
+  useEffect(() => {
+    let closed = false
+    const timers = new Set<number>()
+
+    const handleRefreshError = (error: unknown) => {
+      if (closed) return
+      setError(errorMessage(error))
+    }
+
+    const schedule = (task: () => Promise<void>) => {
+      const timer = window.setTimeout(() => {
+        timers.delete(timer)
+        void task().catch(handleRefreshError)
+      }, UPDATE_JOB_SETTLE_RETRY_MS)
+      timers.add(timer)
+    }
+
+    const onUpdateJobSettled = (evt: Event) => {
+      const detail = evt instanceof CustomEvent ? (evt.detail as UpdateJobSettledDetail | null) : null
+      if (!detail) return
+
+      const matchesCurrent =
+        detail.scope === 'all' ||
+        detail.target === 'all' ||
+        detail.stackId === stackId ||
+        detail.serviceId === serviceId ||
+        detail.target === `stack:${stackId}` ||
+        detail.target === `service:${serviceId}`
+      if (!matchesCurrent) return
+
+      void refreshStackOnly().catch(handleRefreshError)
+      schedule(async () => {
+        await refreshStackOnly()
+      })
+    }
+
+    window.addEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateJobSettled)
+    return () => {
+      closed = true
+      for (const timer of timers) window.clearTimeout(timer)
+      window.removeEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateJobSettled)
+    }
+  }, [refreshStackOnly, serviceId, stackId])
 
   useEffect(() => {
     if (service?.versionInference?.status !== 'pending') return

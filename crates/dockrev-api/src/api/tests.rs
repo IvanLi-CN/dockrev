@@ -821,6 +821,164 @@ impl CommandRunner for CheckAndRuntimeScanRunner {
     }
 }
 
+#[derive(Clone)]
+struct UpdateAndRuntimeScanRunner {
+    updated: Arc<std::sync::Mutex<bool>>,
+}
+
+impl UpdateAndRuntimeScanRunner {
+    fn new() -> Self {
+        Self {
+            updated: Arc::new(std::sync::Mutex::new(false)),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl CommandRunner for UpdateAndRuntimeScanRunner {
+    async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        let args = spec.args;
+        let updated_now = *self.updated.lock().unwrap();
+
+        let (status, stdout) = if args.first().map(|s| s.as_str()) == Some("ps")
+            && args.get(1).map(|s| s.as_str()) == Some("-q")
+            && args
+                .iter()
+                .any(|arg| arg.contains("com.docker.compose.project="))
+        {
+            (
+                0,
+                if updated_now {
+                    "container_new
+"
+                    .to_string()
+                } else {
+                    "container_old
+"
+                    .to_string()
+                },
+            )
+        } else if args.ends_with(&["ps".to_string(), "-q".to_string(), "web".to_string()]) {
+            (
+                0,
+                if updated_now {
+                    "container_new
+"
+                    .to_string()
+                } else {
+                    "container_old
+"
+                    .to_string()
+                },
+            )
+        } else if args.ends_with(&["pull".to_string(), "web".to_string()]) {
+            (0, String::new())
+        } else if args.ends_with(&["up".to_string(), "-d".to_string(), "web".to_string()]) {
+            *self.updated.lock().unwrap() = true;
+            (0, String::new())
+        } else if args.first().map(|s| s.as_str()) == Some("inspect")
+            && args.get(1).map(|s| s.as_str()) == Some("--format")
+            && args.get(2).map(|s| s.as_str()) == Some("{{.Image}}")
+        {
+            match args.get(3).map(|s| s.as_str()) {
+                Some("container_old") => (
+                    0,
+                    "img_old
+"
+                    .to_string(),
+                ),
+                Some("container_new") => (
+                    0,
+                    "img_new
+"
+                    .to_string(),
+                ),
+                _ => (
+                    0,
+                    "img_new
+"
+                    .to_string(),
+                ),
+            }
+        } else if args.first().map(|s| s.as_str()) == Some("inspect")
+            && args.get(1).map(|s| s.as_str()) == Some("--format")
+            && args
+                .get(2)
+                .map(|s| s.as_str())
+                .is_some_and(|s| s.contains("com.docker.compose.service"))
+        {
+            let image = if updated_now { "img_new" } else { "img_old" };
+            (
+                0,
+                format!(
+                    "web	{image}
+"
+                ),
+            )
+        } else if args.first().map(|s| s.as_str()) == Some("inspect")
+            && args.get(1).map(|s| s.as_str()) == Some("--format")
+            && args.get(2).map(|s| s.as_str()) == Some("{{if .State.Health}}1{{else}}0{{end}}")
+        {
+            (
+                0,
+                "0
+"
+                .to_string(),
+            )
+        } else if args.first().map(|s| s.as_str()) == Some("image")
+            && args.get(1).map(|s| s.as_str()) == Some("inspect")
+            && args.iter().any(|s| s.contains("RepoDigests"))
+        {
+            let emit = |image_id: &str| -> String {
+                let digest = if image_id == "img_old" {
+                    "sha256:old"
+                } else {
+                    "sha256:new"
+                };
+                format!("{image_id}	[\"ghcr.io/acme/web@{digest}\"]")
+            };
+            if args.iter().any(|s| s.contains("{{.Id}}")) {
+                let lines = args
+                    .iter()
+                    .filter(|arg| arg.as_str() == "img_old" || arg.as_str() == "img_new")
+                    .map(|arg| emit(arg))
+                    .collect::<Vec<_>>();
+                (
+                    0,
+                    format!(
+                        "{}
+",
+                        lines.join(
+                            "
+"
+                        )
+                    ),
+                )
+            } else {
+                let image_id = args
+                    .iter()
+                    .find(|arg| arg.as_str() == "img_old" || arg.as_str() == "img_new")
+                    .map(String::as_str)
+                    .unwrap_or("img_new");
+                let digest = if image_id == "img_old" {
+                    "sha256:old"
+                } else {
+                    "sha256:new"
+                };
+                (0, format!("[\"ghcr.io/acme/web@{digest}\"]"))
+            }
+        } else {
+            (0, String::new())
+        };
+
+        Ok(CommandOutput {
+            status,
+            stdout,
+            stderr: String::new(),
+        })
+    }
+}
+
 #[derive(Clone, Default)]
 struct CountingRegistry {
     calls: Arc<std::sync::Mutex<std::collections::BTreeMap<String, u32>>>,
@@ -5244,6 +5402,100 @@ services:
     }
 
     panic!("job did not finish in time");
+}
+
+#[tokio::test]
+async fn update_apply_settles_service_snapshot_before_job_terminal() {
+    let runner = Arc::new(UpdateAndRuntimeScanRunner::new());
+    let state = test_state_with(":memory:", Arc::new(DigestOnlyUpdateRegistry), runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-update-settle-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo-update-settle").await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let service = state
+        .db
+        .list_services_for_runtime_scan(&stack_id)
+        .await
+        .unwrap()[0]
+        .clone();
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            Some("sha256:old".to_string()),
+            None,
+            None,
+            Some("5.2".to_string()),
+            Some("5.2".to_string()),
+            Some("sha256:new".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let update = serde_json::json!({
+        "scope": "service",
+        "stackId": stack_id,
+        "serviceId": service.id,
+        "targetTag": "5.2",
+        "targetDigest": "sha256:new",
+        "mode": "apply",
+        "allowArchMismatch": false,
+        "backupMode": "skip",
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/updates")
+                .header("content-type", "application/json")
+                .body(Body::from(update.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let job_id = triggered["jobId"].as_str().unwrap().to_string();
+
+    let job = wait_for_job_terminal(&state, &job_id).await;
+    assert_eq!(job.status, "success");
+
+    let stack = state.db.get_stack(&stack_id).await.unwrap().unwrap();
+    let service = stack.services.iter().find(|svc| svc.name == "web").unwrap();
+    assert_eq!(service.image.digest.as_deref(), Some("sha256:new"));
+    assert!(
+        service.candidate.is_none(),
+        "candidate should be cleared after apply settle"
+    );
+
+    let logs = state.db.list_job_logs(&job_id).await.unwrap();
+    assert!(
+        logs.iter()
+            .any(|line| line.msg.contains("update_state_settled"))
+    );
 }
 
 #[tokio::test]

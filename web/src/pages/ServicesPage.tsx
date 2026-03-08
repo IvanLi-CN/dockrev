@@ -28,7 +28,13 @@ import {
   formatCurrentTagDisplay as formatTagDisplay,
   isStrictSemverTag,
 } from '../versionDisplay'
-import { resolveUpdateActionTargetKey, useUpdateActionTracker } from '../updateActionTracking'
+import {
+  resolveUpdateActionTargetKey,
+  UPDATE_JOB_SETTLED_EVENT,
+  UPDATE_JOB_SETTLE_RETRY_MS,
+  type UpdateJobSettledDetail,
+  useUpdateActionTracker,
+} from '../updateActionTracking'
 
 function formatShort(ts: string) {
   const d = new Date(ts)
@@ -179,9 +185,122 @@ export function ServicesPage(props: {
     setArchivedDetails(Object.fromEntries(aResults))
   }, [onLastScanHint])
 
+  const patchStackDetails = useCallback(async (stackIds: string[]) => {
+    const ids = [...new Set(stackIds.map((id) => id.trim()).filter(Boolean))]
+    if (ids.length === 0) return
+
+    const results = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          return [id, await getStack(id)] as const
+        } catch {
+          return [id, undefined] as const
+        }
+      }),
+    )
+
+    const patch = Object.fromEntries(results)
+    setDetails((prev) => ({ ...prev, ...patch }))
+    setArchivedDetails((prev) => ({ ...prev, ...patch }))
+  }, [])
+
+  const patchStackLists = useCallback(async (stackIds: string[]) => {
+    const ids = new Set(stackIds.map((id) => id.trim()).filter(Boolean))
+    if (ids.size === 0) return
+
+    const [nextStacks, nextArchived] = await Promise.all([listStacks(), listStacksArchived('only').catch(() => [])])
+    const nextById = new Map(nextStacks.map((item) => [item.id, item] as const))
+    const archivedById = new Map(nextArchived.map((item) => [item.id, item] as const))
+    const maxLastScan = nextStacks.map((item) => item.lastCheckAt).sort().at(-1)
+
+    setStacks((prev) => prev.map((item) => nextById.get(item.id) ?? item))
+    setArchivedStacks((prev) => prev.map((item) => archivedById.get(item.id) ?? item))
+    onLastScanHint(maxLastScan)
+    setCollapsed((prev) => {
+      const merged = { ...prev }
+      for (const item of nextStacks) {
+        if (merged[item.id] == null) merged[item.id] = false
+      }
+      return merged
+    })
+  }, [onLastScanHint])
+
+  const resolveSettledStackIds = useCallback(
+    (detail: UpdateJobSettledDetail): string[] => {
+      const explicitStackId = (detail.stackId ?? '').trim()
+      if (explicitStackId) return [explicitStackId]
+
+      const explicitServiceId = (detail.serviceId ?? '').trim()
+      if (explicitServiceId) {
+        const matched = [...Object.entries(details), ...Object.entries(archivedDetails)]
+          .filter(([, stack]) => stack?.services.some((svc) => svc.id === explicitServiceId))
+          .map(([stackId]) => stackId)
+        if (matched.length > 0) return [...new Set(matched)]
+      }
+
+      if (detail.target.startsWith('stack:')) return [detail.target.slice('stack:'.length)]
+      if (detail.target.startsWith('service:')) {
+        const serviceId = detail.target.slice('service:'.length)
+        return [...Object.entries(details), ...Object.entries(archivedDetails)]
+          .filter(([, stack]) => stack?.services.some((svc) => svc.id === serviceId))
+          .map(([stackId]) => stackId)
+      }
+
+      if (detail.scope === 'all' || detail.target === 'all') return stacks.map((stack) => stack.id)
+      return []
+    },
+    [archivedDetails, details, stacks],
+  )
+
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
   }, [refresh])
+
+  useEffect(() => {
+    let closed = false
+    const timers = new Set<number>()
+
+    const handleRefreshError = (error: unknown) => {
+      if (closed) return
+      setError(error instanceof Error ? error.message : String(error))
+    }
+
+    const schedule = (task: () => Promise<void>) => {
+      const timer = window.setTimeout(() => {
+        timers.delete(timer)
+        void task().catch(handleRefreshError)
+      }, UPDATE_JOB_SETTLE_RETRY_MS)
+      timers.add(timer)
+    }
+
+    const onUpdateJobSettled = (evt: Event) => {
+      const detail = evt instanceof CustomEvent ? (evt.detail as UpdateJobSettledDetail | null) : null
+      if (!detail) return
+
+      const isAll = detail.scope === 'all' || detail.target === 'all'
+      const stackIds = resolveSettledStackIds(detail)
+      if (isAll || stackIds.length === 0) {
+        void refresh().catch(handleRefreshError)
+        schedule(async () => {
+          await refresh()
+        })
+        return
+      }
+
+      void patchStackDetails(stackIds).catch(handleRefreshError)
+      schedule(async () => {
+        await patchStackDetails(stackIds)
+        await patchStackLists(stackIds)
+      })
+    }
+
+    window.addEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateJobSettled)
+    return () => {
+      closed = true
+      for (const timer of timers) window.clearTimeout(timer)
+      window.removeEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateJobSettled)
+    }
+  }, [patchStackDetails, patchStackLists, refresh, resolveSettledStackIds])
 
   useEffect(() => {
     let alive = true
