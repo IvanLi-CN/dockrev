@@ -512,6 +512,7 @@ pub async fn run_update_job(
 
         let has_health = has_health.trim() == "1";
         let mut rolled_back = false;
+        let mut rollback_failure_step: Option<&'static str> = None;
         let mut active_container_id = post_update_container_id;
         if has_health {
             emit_update_progress(
@@ -624,6 +625,7 @@ pub async fn run_update_job(
                     Ok(rollback_container_id) => {
                         active_container_id = rollback_container_id;
                         rolled_back = true;
+                        rollback_failure_step = Some("sync_configured_tag");
                         let final_image_id = run_to_string_with_retry(
                             runner,
                             docker_runner::inspect_image_id(&docker_cfg, &active_container_id),
@@ -675,16 +677,31 @@ pub async fn run_update_job(
                     message: format!("service {} rolled back", svc.name),
                 },
             );
+            let mut summary = serde_json::Map::new();
+            summary.insert("changedServices".to_string(), json!(changed));
+            summary.insert(
+                "oldDigests".to_string(),
+                serde_json::Value::Object(old_images),
+            );
+            summary.insert(
+                "newDigests".to_string(),
+                serde_json::Value::Object(new_images),
+            );
+            summary.insert("semverPulled".to_string(), json!(semver_pulled));
+            summary.insert(
+                "semverPullWarnings".to_string(),
+                serde_json::Value::Object(semver_pull_warnings),
+            );
+            summary.insert(
+                "skippedVersionAnomaly".to_string(),
+                json!(skipped_version_anomaly),
+            );
+            if let Some(step) = rollback_failure_step {
+                summary.insert("failureStep".to_string(), json!(step));
+            }
             return Ok(UpdateOutcome {
                 status: "rolled_back".to_string(),
-                summary_json: json!({
-                    "changedServices": changed,
-                    "oldDigests": old_images,
-                    "newDigests": new_images,
-                    "semverPulled": semver_pulled,
-                    "semverPullWarnings": semver_pull_warnings,
-                    "skippedVersionAnomaly": skipped_version_anomaly,
-                }),
+                summary_json: serde_json::Value::Object(summary),
             });
         }
 
@@ -1976,6 +1993,10 @@ mod tests {
         assert_eq!(
             outcome.summary_json["newDigests"]["svc_1"],
             json!("sha256:old")
+        );
+        assert_eq!(
+            outcome.summary_json["failureStep"].as_str(),
+            Some("sync_configured_tag")
         );
         assert_eq!(*runner.step.lock().unwrap(), 12);
     }
