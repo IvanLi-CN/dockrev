@@ -4400,6 +4400,78 @@ async fn version_inference_events_stream_emits_task_enqueued() {
 }
 
 #[tokio::test]
+async fn version_inference_events_stream_reconnects_after_last_event_id() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/version-inference/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let mut first_body = resp.into_body();
+
+    let first_enqueued = state
+        .snapshot_worker
+        .enqueue("ghcr.io/acme/web", "sha256:first", "linux/amd64", "force")
+        .await;
+    assert!(first_enqueued);
+
+    let first_evt = wait_for_sse_event(
+        &mut first_body,
+        "version_inference_event",
+        Duration::from_secs(3),
+    )
+    .await;
+    let first_id = first_evt.id.expect("first SSE event should include id");
+    let first_id_num = first_id.parse::<u64>().unwrap();
+
+    let reconnect = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/version-inference/events?afterId={first_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reconnect.status(), 200);
+    let mut reconnect_body = reconnect.into_body();
+
+    let second_enqueued = state
+        .snapshot_worker
+        .enqueue("ghcr.io/acme/api", "sha256:second", "linux/amd64", "force")
+        .await;
+    assert!(second_enqueued);
+
+    let second_evt = wait_for_sse_event(
+        &mut reconnect_body,
+        "version_inference_event",
+        Duration::from_secs(3),
+    )
+    .await;
+    let second_id = second_evt
+        .id
+        .expect("reconnected SSE event should include id");
+    let second_id_num = second_id.parse::<u64>().unwrap();
+    assert!(
+        second_id_num > first_id_num,
+        "expected reconnected stream to resume after {first_id_num}, got {second_id_num}"
+    );
+
+    let payload: serde_json::Value = serde_json::from_str(&second_evt.data).unwrap();
+    assert_eq!(payload["type"].as_str(), Some("task_enqueued"));
+    assert_eq!(payload["imageRepo"].as_str(), Some("ghcr.io/acme/api"));
+}
+
+#[tokio::test]
 async fn version_inference_events_stream_emits_resync_required_when_after_id_is_too_old() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());

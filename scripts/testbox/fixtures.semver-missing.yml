@@ -1,6 +1,0 @@
-services:
-  # Regression fixture:
-  # use a floating tag, then rely on candidate digest from check.
-  # Old service-update code could derive semver tag (e.g. 0.13.3) and try pulling it.
-  semvercase:
-    image: ghcr.io/ivanli-cn/codex-vibe-monitor:latest

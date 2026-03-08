@@ -1,0 +1,348 @@
+use super::*;
+
+impl Db {
+    pub async fn list_ignore_rules_for_service(
+        &self,
+        service_id: &str,
+    ) -> anyhow::Result<Vec<IgnoreRule>> {
+        let service_id = service_id.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT id, enabled, scope_type, scope_service_id, match_kind, match_value, note
+FROM ignore_rules
+WHERE enabled = 1 AND scope_type = 'service' AND scope_service_id = ?1
+ORDER BY created_at DESC
+"#,
+            )?;
+            let rows = stmt.query_map(params![service_id], |row| {
+                Ok(IgnoreRule {
+                    id: row.get(0)?,
+                    enabled: row.get::<_, i64>(1)? != 0,
+                    scope: IgnoreRuleScope {
+                        kind: row.get(2)?,
+                        service_id: row.get(3)?,
+                    },
+                    matcher: IgnoreRuleMatch {
+                        kind: row.get(4)?,
+                        value: row.get(5)?,
+                    },
+                    note: row.get(6)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list ignore rules for service")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_service_check_result(
+        &self,
+        service_id: &str,
+        current_digest: Option<String>,
+        current_resolved_tag: Option<String>,
+        current_resolved_tags_json: Option<String>,
+        candidate_tag: Option<String>,
+        candidate_resolved_tag: Option<String>,
+        candidate_digest: Option<String>,
+        candidate_arch_match: Option<String>,
+        candidate_arch_json: Option<String>,
+        ignore_rule_id: Option<String>,
+        ignore_reason: Option<String>,
+        checked_at: &str,
+        now: &str,
+    ) -> anyhow::Result<bool> {
+        let service_id = service_id.to_string();
+        let checked_at = checked_at.to_string();
+        let now = now.to_string();
+        self.call(move |conn| {
+            let changed = conn.execute(
+                r#"
+UPDATE services
+SET
+  current_digest = ?2,
+  current_resolved_tag = ?3,
+  current_resolved_tags_json = ?4,
+  candidate_tag = ?5,
+  candidate_resolved_tag = ?6,
+  candidate_digest = ?7,
+  candidate_arch_match = ?8,
+  candidate_arch_json = ?9,
+  ignore_rule_id = ?10,
+  ignore_reason = ?11,
+  checked_at = ?12,
+  updated_at = ?13
+WHERE id = ?1
+"#,
+                params![
+                    service_id,
+                    current_digest,
+                    current_resolved_tag,
+                    current_resolved_tags_json,
+                    candidate_tag,
+                    candidate_resolved_tag,
+                    candidate_digest,
+                    candidate_arch_match,
+                    candidate_arch_json,
+                    ignore_rule_id,
+                    ignore_reason,
+                    checked_at,
+                    now,
+                ],
+            )?;
+            Ok(changed > 0)
+        })
+        .await
+        .context("update service check result")
+    }
+
+    pub async fn upsert_service_digest_tags_snapshot(
+        &self,
+        service_id: &str,
+        digest: &str,
+        snapshot_json: &str,
+        checked_at: &str,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let service_id = service_id.to_string();
+        let digest = digest.to_string();
+        let snapshot_json = snapshot_json.to_string();
+        let checked_at = checked_at.to_string();
+        let now = now.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                r#"
+INSERT INTO service_digest_tags_snapshots (
+  service_id,
+  digest,
+  snapshot_json,
+  checked_at,
+  updated_at
+) VALUES (?1, ?2, ?3, ?4, ?5)
+ON CONFLICT(service_id, digest) DO UPDATE SET
+  snapshot_json = excluded.snapshot_json,
+  checked_at = excluded.checked_at,
+  updated_at = excluded.updated_at
+"#,
+                params![service_id, digest, snapshot_json, checked_at, now],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("upsert service digest tags snapshot")
+    }
+
+    #[allow(dead_code)]
+    pub async fn get_service_digest_tags_snapshot(
+        &self,
+        service_id: &str,
+        digest: &str,
+    ) -> anyhow::Result<Option<(String, String, String)>> {
+        let service_id = service_id.to_string();
+        let digest = digest.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    r#"
+SELECT snapshot_json, checked_at, updated_at
+FROM service_digest_tags_snapshots
+WHERE service_id = ?1 AND digest = ?2
+"#,
+                    params![service_id, digest],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()?)
+        })
+        .await
+        .context("get service digest tags snapshot")
+    }
+
+    #[allow(dead_code)]
+    pub async fn delete_service_digest_tags_snapshots_except(
+        &self,
+        service_id: &str,
+        allowed_digests: &[String],
+    ) -> anyhow::Result<usize> {
+        let service_id = service_id.to_string();
+        let mut allowed = allowed_digests.to_vec();
+        allowed.retain(|d| !d.trim().is_empty());
+        allowed.sort();
+        allowed.dedup();
+        if allowed.len() > 2 {
+            // Defensive: the caller is expected to pass at most {current, candidate}.
+            allowed.truncate(2);
+        }
+
+        self.call(move |conn| {
+            let deleted = match allowed.len() {
+                0 => conn.execute(
+                    r#"
+DELETE FROM service_digest_tags_snapshots
+WHERE service_id = ?1
+"#,
+                    params![service_id],
+                )?,
+                1 => conn.execute(
+                    r#"
+DELETE FROM service_digest_tags_snapshots
+WHERE service_id = ?1 AND digest != ?2
+"#,
+                    params![service_id, allowed[0]],
+                )?,
+                _ => conn.execute(
+                    r#"
+DELETE FROM service_digest_tags_snapshots
+WHERE service_id = ?1 AND digest NOT IN (?2, ?3)
+"#,
+                    params![service_id, allowed[0], allowed[1]],
+                )?,
+            };
+            Ok(deleted)
+        })
+        .await
+        .context("delete service digest tags snapshots except")
+    }
+
+    pub async fn upsert_image_digest_tags_snapshot(
+        &self,
+        image_repo: &str,
+        digest: &str,
+        host_platform: &str,
+        snapshot_json: &str,
+        checked_at: &str,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let image_repo = image_repo.to_string();
+        let digest = digest.to_string();
+        let host_platform = host_platform.to_string();
+        let snapshot_json = snapshot_json.to_string();
+        let checked_at = checked_at.to_string();
+        let now = now.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                r#"
+INSERT INTO image_digest_tags_snapshots (
+  image_repo,
+  digest,
+  host_platform,
+  snapshot_json,
+  checked_at,
+  updated_at
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+ON CONFLICT(image_repo, digest, host_platform) DO UPDATE SET
+  snapshot_json = excluded.snapshot_json,
+  checked_at = excluded.checked_at,
+  updated_at = excluded.updated_at
+"#,
+                params![
+                    image_repo,
+                    digest,
+                    host_platform,
+                    snapshot_json,
+                    checked_at,
+                    now
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("upsert image digest tags snapshot")
+    }
+
+    pub async fn get_image_digest_tags_snapshot(
+        &self,
+        image_repo: &str,
+        digest: &str,
+        host_platform: &str,
+    ) -> anyhow::Result<Option<(String, String, String)>> {
+        let image_repo = image_repo.to_string();
+        let digest = digest.to_string();
+        let host_platform = host_platform.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    r#"
+SELECT snapshot_json, checked_at, updated_at
+FROM image_digest_tags_snapshots
+WHERE image_repo = ?1 AND digest = ?2 AND host_platform = ?3
+"#,
+                    params![image_repo, digest, host_platform],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()?)
+        })
+        .await
+        .context("get image digest tags snapshot")
+    }
+
+    pub async fn list_image_digest_tags_snapshots(
+        &self,
+    ) -> anyhow::Result<Vec<ImageDigestTagsSnapshotRow>> {
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT image_repo, digest, host_platform, snapshot_json, checked_at, updated_at
+FROM image_digest_tags_snapshots
+ORDER BY updated_at DESC, image_repo ASC, digest ASC, host_platform ASC
+"#,
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(ImageDigestTagsSnapshotRow {
+                    image_repo: row.get(0)?,
+                    host_platform: row.get(2)?,
+                    snapshot_json: row.get(3)?,
+                    checked_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list image digest tags snapshots")
+    }
+
+    pub async fn delete_expired_image_digest_tags_snapshots(
+        &self,
+        cutoff_checked_at: &str,
+    ) -> anyhow::Result<u64> {
+        let cutoff_checked_at = cutoff_checked_at.to_string();
+        self.call(move |conn| {
+            let deleted = conn.execute(
+                r#"
+DELETE FROM image_digest_tags_snapshots
+WHERE checked_at < ?1
+"#,
+                params![cutoff_checked_at],
+            )?;
+            Ok(deleted as u64)
+        })
+        .await
+        .context("delete expired image digest tags snapshots")
+    }
+
+    pub async fn list_version_inference_service_targets(
+        &self,
+    ) -> anyhow::Result<Vec<VersionInferenceServiceTargetRow>> {
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT image_ref, image_tag, candidate_tag
+FROM services
+WHERE archived = 0
+ORDER BY image_ref ASC
+"#,
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(VersionInferenceServiceTargetRow {
+                    image_ref: row.get(0)?,
+                    image_tag: row.get(1)?,
+                    candidate_tag: row.get(2)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list version inference service targets")
+    }
+}
