@@ -82,6 +82,11 @@
 
 ![Settings Public Base URL 建议气泡（Mobile）](./assets/public-base-url-suggestion-mobile.png)
 
+## Visual Evidence (PR)
+
+![Settings Public Base URL 建议气泡（Desktop 1280）](./assets/public-base-url-suggestion-desktop.png)
+![Settings Public Base URL 建议气泡（Mobile）](./assets/public-base-url-suggestion-mobile.png)
+
 ## 里程碑（Milestones / checklist）
 
 - [x] M1: Settings 页新增 Public Base URL 建议值推导与 localStorage 拒绝偏好 helper（含 base path 保留）。
@@ -106,4 +111,5 @@
 - 2026-03-07: 根据最新视觉反馈收紧为单行气泡布局，保持文案与按钮同排，必要时对 URL 做省略。
 - 2026-03-07: 根据最新定位反馈将建议气泡改为相对输入框右对齐，并把尾巴固定到更贴近项目原生 bubble 的右侧锚点。
 - 2026-03-07: 检查移动端 DOM 后确认旧的 `.settingsInlineSuggestionActions { width: 100% }` 媒体查询导致文案宽度被压到 0；移除该覆盖并更新 Desktop / Mobile 验收截图。
+- 2026-03-08: 为 PR 正文补充固定 `Visual Evidence (PR)` 证据区，提供 1280 桌面图与移动端图作为远端渲染来源。
 - 2026-03-07: 记录快车道交付分支与 PR #145，规格与实现保持同步。
