@@ -5,12 +5,19 @@ description: Production operations, backup/restore, and upgrade/rollback.
 
 # Operations
 
+## Daily checks
+
+1. Check anonymous `/api/health` and `/api/version`.
+2. Check `/api/deploy-check/report` and `/supervisor/health` with an allowlist-matching identity.
+3. Review Queue for unusually long `running` jobs.
+4. If GHCR webhooks are enabled, verify there are no streaks of failed deliveries.
+
 ## Health checks
 
-- API health: `GET /api/health`
-- API version: `GET /api/version`
-- Deploy preflight: `GET /api/deploy-check/report`
+- Anonymous liveness: `GET /api/health`, `GET /api/version`
+- Operator preflight: `GET /api/deploy-check/report`
 - Supervisor health: `GET /supervisor/health`
+- Anonymous `401 auth_required` on protected routes is expected in the transparent Forward Auth model; treat it as an application boundary signal, not a gateway outage.
 
 ## Backup strategy
 

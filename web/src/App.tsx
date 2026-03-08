@@ -18,7 +18,7 @@ import { brandMarkUrl } from './publicAssetUrls'
 import { DeployWelcomePage } from './pages/DeployWelcomePage'
 import { UnauthorizedPage } from './pages/UnauthorizedPage'
 import { useRoute } from './useRoute'
-import { AUTH_REQUIRED_EVENT, getDeployWelcome, type AuthRequiredDetails } from './api'
+import { AUTH_RECOVERED_EVENT, AUTH_REQUIRED_EVENT, getDeployWelcome, type AuthRequiredDetails } from './api'
 
 function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbarHint?: string } {
   switch (route.name) {
@@ -72,8 +72,6 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
       }
     case 'service':
       return { title: '服务详情', topbarHint: '服务详情' }
-    case 'unauthorized':
-      return { title: '未授权', topbarHint: 'Forward Auth / 鉴权' }
     case 'supervisor-misroute':
       return { title: '部署问题', topbarHint: '自我升级（Supervisor）' }
   }
@@ -126,20 +124,19 @@ export default function App() {
 
     const onAuthRequired = (event: Event) => {
       const detail = (event as CustomEvent<{ details?: AuthRequiredDetails | null }>).detail
-      const next = detail?.details ?? null
-      setAuthFailure(next)
-
-      const redirectTo = next?.redirectTo === 'unauthorized' ? 'unauthorized' : 'deploy-check'
-      if (route.name !== redirectTo) {
-        navigate({ name: redirectTo })
-      }
+      setAuthFailure(detail?.details ?? null)
+    }
+    const onAuthRecovered = () => {
+      setAuthFailure(null)
     }
 
     window.addEventListener(AUTH_REQUIRED_EVENT, onAuthRequired)
+    window.addEventListener(AUTH_RECOVERED_EVENT, onAuthRecovered)
     return () => {
       window.removeEventListener(AUTH_REQUIRED_EVENT, onAuthRequired)
+      window.removeEventListener(AUTH_RECOVERED_EVENT, onAuthRecovered)
     }
-  }, [route.name])
+  }, [])
 
   if (route.name === 'supervisor-misroute') {
     return (
@@ -160,12 +157,23 @@ export default function App() {
     )
   }
 
-  if (route.name === 'deploy-check') {
-    return <DeployWelcomePage />
+  if (authFailure) {
+    return (
+      <AppShell
+        route={route}
+        title={head.title}
+        pageSubtitle={head.pageSubtitle}
+        topbarHint={head.topbarHint}
+        topActions={null}
+        lastScanHint={lastScanHint}
+      >
+        <UnauthorizedPage authDetails={authFailure} />
+      </AppShell>
+    )
   }
 
-  if (route.name === 'unauthorized') {
-    return <UnauthorizedPage authDetails={authFailure} />
+  if (route.name === 'deploy-check') {
+    return <DeployWelcomePage />
   }
 
   return (

@@ -29,6 +29,7 @@
 |-----:|-------|--------|------|------|-------|
 | myy3w | Dockrev：Settings 空 Public Base URL 当前地址建议气泡 | 已完成 | `myy3w-settings-public-base-url-suggest/SPEC.md` | 2026-03-07 | fast-track（当前页面根地址建议气泡 + localStorage 拒绝偏好 + storybook 覆盖，PR #145） |
 | qh1dx | Dockrev：Forward Auth 项目鉴权 + codex-testbox E2E 手动工作流 | 已完成 | `qh1dx-forward-auth-project-authz-and-testbox-e2e/SPEC.md` | 2026-03-07 | fast-track（review-loop 收敛 + PR 准备） |
+| 6rpkt | Dockrev：Forward Auth 透明透传边界修补 | 部分完成（4/5） | `6rpkt-forward-auth-transparent-boundary-repair/SPEC.md` | 2026-03-08 | fast-track（follow-up to #qh1dx；代码/文档/验证已完成，等待 PR + review-loop 收口） |
 | appaf | Dockrev：shadcn/ui 全量对齐与 Storybook Docs/Stories 补齐 | 已完成 | `appaf-shadcn-ui-alignment-storybook/SPEC.md` | 2026-03-07 | fast-track（PR #147；checks 通过；review-loop 无阻塞） |
 | b67fg | Dockrev：GitHub Pages 合并发布文档站与 Storybook | 已完成 | `b67fg-pages-storybook-entry/SPEC.md` | 2026-03-07 | fast-track（Pages 并行构建 + docs Storybook 入口 + redirect bridge） |
 | z3mw5 | Dockrev：GHCR Webhook 命中服务检查优先，零命中回退 Discovery | 已完成 | `z3mw5-ghcr-webhook-service-check/SPEC.md` | 2026-03-07 | fast-track（webhook check-first + fallback discovery + webhook notify + review-loop hardening） |

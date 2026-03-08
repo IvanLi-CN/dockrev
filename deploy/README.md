@@ -41,7 +41,7 @@ The `supervisor` container is designed to keep the self-upgrade console availabl
 
 Notes:
 
-- The Dockrev UI probes `GET /supervisor/self-upgrade` (same origin) before enabling the “升级 Dockrev” entry (401 means Forward Auth is missing or Dockrev authorization denied the request).
+- The Dockrev UI probes `GET /supervisor/self-upgrade` (same origin) before enabling the “升级 Dockrev” entry (a `401` means Dockrev authorization denied the request or no trusted identity reached Supervisor).
 - Self-upgrade uses Docker + Compose on the host via the mounted Docker socket. The target compose files must be readable inside the supervisor container too (same absolute path requirement).
 - Self-upgrade applies an extra Compose override file (image-only) and may cause containers in the same project to report different `com.docker.compose.project.config_files` label values. Dockrev will surface this as a warning (not invalid) and pick a stable canonical compose file list.
   - To let Dockrev read the override file (so discovery can reflect the self-upgraded image), store supervisor state in a mounted absolute path (e.g. set `DOCKREV_SUPERVISOR_STATE_PATH=/data/self-upgrade.json`) and mount that same `/data` path into the Dockrev container read-only.
@@ -55,30 +55,16 @@ If you want a production-oriented Forward Auth deployment you can copy directly,
 - `deploy/examples/traefik-authelia/authelia/users.yml`
 - `deploy/examples/traefik-authelia/README.md`
 
-This example keeps protected Dockrev routes behind Traefik `forwardAuth`, and exposes only the webhook endpoints by Traefik router split instead of Authelia `bypass` rules.
+This example keeps all Dockrev and Supervisor traffic on normal service/path routers. Traefik only forwards trusted identity headers from Authelia when a session exists; it does not perform Dockrev-specific user/group/path ACL and it does not split webhooks into special public routers.
 
 ## Forward Auth / reverse proxy
 
-- Production should use Forward Auth in front of Dockrev. Traefik / Authelia handle authentication; Dockrev authorizes the request by matching `DOCKREV_AUTH_ALLOWED_USER` and/or `DOCKREV_AUTH_ALLOWED_GROUP`.
+- Production should use trusted identity forwarding in front of Dockrev. Traefik / Authelia may establish identity, but Dockrev authorizes the request by matching `DOCKREV_AUTH_ALLOWED_USER` and/or `DOCKREV_AUTH_ALLOWED_GROUP`.
 - `DOCKREV_AUTH_ALLOWED_USER` and `DOCKREV_AUTH_ALLOWED_GROUP` each accept a single value. If both are set, Dockrev allows the request when either the user or the group matches.
+- Public anonymous surface is intentionally limited to `GET /api/health`, `GET /api/version`, and `/api/webhooks/*`. Other API/UI/supervisor routes rely on Dockrev authorization even when the gateway transparently forwards anonymous requests.
 - In the sample Compose, `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV=false` is set. You must inject the trusted Forward Auth user header and, if used, the group header in front of Dockrev.
-- For Traefik + Authelia, prefer protecting Dockrev UI / protected APIs / supervisor with `one_factor` and let Dockrev decide authorization. Webhook endpoints keep their own shared-secret / signature validation and are not part of Forward Auth.
+- For transparent Traefik + Authelia, apply the same `forwardAuth` middleware to Dockrev and Supervisor routes and keep the Authelia policy for `dockrev.example.com` at `bypass`, so Dockrev receives either trusted headers or no identity at all.
 
 ## Using a released image
 
-Replace the `build:` section with:
-
-```yaml
-services:
-  dockrev:
-    image: ghcr.io/ivanli-cn/dockrev:<semver>
-  supervisor:
-    # Supervisor is intentionally deployed as `latest` (executor/tooling image).
-    image: ghcr.io/ivanli-cn/dockrev-supervisor:latest
-```
-
-Notes:
-
-- `latest` is updated only by the automatic release path after `CI (main)` succeeds on `main`.
-- Use `0.3.5` or newer to avoid the historical exec-bit issue (`/usr/local/bin/dockrev`: permission denied).
-- The image supports both direct socket mount and `DOCKER_HOST` (e.g. `tcp://docker-socket-proxy:2375`).
+The root README documents the currently published images and runtime variables.

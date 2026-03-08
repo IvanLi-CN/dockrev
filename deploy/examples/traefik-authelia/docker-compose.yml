@@ -33,9 +33,9 @@ services:
       traefik.http.routers.authelia.entrypoints: websecure
       traefik.http.routers.authelia.tls.certresolver: letsencrypt
       traefik.http.services.authelia.loadbalancer.server.port: "9091"
-      traefik.http.middlewares.authelia.forwardauth.address: http://authelia:9091/api/authz/forward-auth
-      traefik.http.middlewares.authelia.forwardauth.trustforwardheader: "true"
-      traefik.http.middlewares.authelia.forwardauth.authresponseheaders: Remote-User,Remote-Groups,Remote-Name,Remote-Email
+      traefik.http.middlewares.dockrev-forward-auth.forwardauth.address: http://authelia:9091/api/authz/forward-auth
+      traefik.http.middlewares.dockrev-forward-auth.forwardauth.trustforwardheader: "true"
+      traefik.http.middlewares.dockrev-forward-auth.forwardauth.authresponseheaders: Remote-User,Remote-Groups
     networks:
       - proxy
 
@@ -68,12 +68,7 @@ services:
       traefik.http.routers.dockrev.rule: Host(`dockrev.example.com`)
       traefik.http.routers.dockrev.entrypoints: websecure
       traefik.http.routers.dockrev.tls.certresolver: letsencrypt
-      traefik.http.routers.dockrev.middlewares: authelia@docker
-      traefik.http.routers.dockrev.priority: "10"
-      traefik.http.routers.dockrev-webhooks.rule: Host(`dockrev.example.com`) && (Path(`/api/webhooks/trigger`) || Path(`/api/webhooks/github-packages`))
-      traefik.http.routers.dockrev-webhooks.entrypoints: websecure
-      traefik.http.routers.dockrev-webhooks.tls.certresolver: letsencrypt
-      traefik.http.routers.dockrev-webhooks.priority: "100"
+      traefik.http.routers.dockrev.middlewares: dockrev-forward-auth@docker
     networks:
       - proxy
 
@@ -104,7 +99,7 @@ services:
       traefik.http.routers.supervisor.rule: Host(`dockrev.example.com`) && PathPrefix(`/supervisor`)
       traefik.http.routers.supervisor.entrypoints: websecure
       traefik.http.routers.supervisor.tls.certresolver: letsencrypt
-      traefik.http.routers.supervisor.middlewares: authelia@docker
+      traefik.http.routers.supervisor.middlewares: dockrev-forward-auth@docker
       traefik.http.routers.supervisor.priority: "120"
     networks:
       - proxy
