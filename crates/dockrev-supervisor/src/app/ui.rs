@@ -1,5 +1,3 @@
-use serde_json;
-
 use super::meta::{SupervisorMeta, trimmed_non_empty};
 
 fn escape_html_text(input: &str) -> String {
