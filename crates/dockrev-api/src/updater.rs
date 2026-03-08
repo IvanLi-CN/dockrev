@@ -278,9 +278,9 @@ fn failed_summary_with_failure_step(
     serde_json::Value::Object(obj)
 }
 
-fn should_sync_local_tag(image_ref: &str) -> bool {
+fn should_sync_local_tag(image_ref: &str, target_digest: Option<&str>) -> bool {
     let trimmed = image_ref.trim();
-    !trimmed.is_empty() && !trimmed.contains('@')
+    target_digest.is_none() && !trimmed.is_empty() && !trimmed.contains('@')
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -381,6 +381,8 @@ pub async fn run_update_job(
             );
             continue;
         }
+
+        let sync_local_tag = should_sync_local_tag(&svc.image.reference, target_digest);
 
         let old_image_id = run_to_string_with_retry(
             runner,
@@ -540,6 +542,7 @@ pub async fn run_update_job(
                     &svc.name,
                     &svc.image.reference,
                     &old_image_id,
+                    sync_local_tag,
                     has_health,
                     idempotent_retry_policy,
                 )
@@ -583,7 +586,7 @@ pub async fn run_update_job(
         .await?;
         new_image_id = new_image_id.trim().to_string();
 
-        if !rolled_back && should_sync_local_tag(&svc.image.reference) {
+        if !rolled_back && sync_local_tag {
             emit_update_progress(
                 progress_events.as_ref(),
                 UpdateProgressEvent {
@@ -612,6 +615,7 @@ pub async fn run_update_job(
                     &svc.name,
                     &svc.image.reference,
                     &old_image_id,
+                    sync_local_tag,
                     has_health,
                     idempotent_retry_policy,
                 )
@@ -1045,10 +1049,11 @@ async fn rollback_service_after_failed_update(
     service_name: &str,
     configured_image_ref: &str,
     old_image_id: &str,
+    sync_local_tag: bool,
     has_health: bool,
     idempotent_retry_policy: IdempotentRetryPolicy,
 ) -> anyhow::Result<String> {
-    if should_sync_local_tag(configured_image_ref) {
+    if sync_local_tag {
         run_checked_with_retry(
             runner,
             docker_runner::tag_image(docker_cfg, old_image_id, configured_image_ref),
@@ -1973,6 +1978,32 @@ mod tests {
             json!("sha256:old")
         );
         assert_eq!(*runner.step.lock().unwrap(), 12);
+    }
+
+    #[tokio::test]
+    async fn explicit_target_digest_skips_local_tag_sync() {
+        let stack = single_service_stack("ghcr.io/org/web:1.0", None);
+        let runner = DigestPinnedRunner::default();
+
+        let outcome = run_update_job(
+            &runner,
+            "docker-compose",
+            IdempotentRetryPolicy::default(),
+            &stack,
+            &JobScope::Service,
+            Some("svc_1"),
+            "live",
+            None,
+            Some("sha256:explicit"),
+            false,
+            "ui",
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.status, "success");
+        assert_eq!(*runner.step.lock().unwrap(), 7);
     }
 
     #[tokio::test]
