@@ -136,15 +136,15 @@ Key fields:
 
 Human-readable summary rules:
 
-- single service, both sides readable: `blog / api 服务有新版本（1.0.0 -> 1.1.0）。`
-- single service, only one side readable: `blog / api 服务有新版本（1.0.0 -> latest）。`
-- single service, both sides still unreadable after settling: `blog / api 服务有新版本。` (never `latest -> latest`)
-- multi-service aggregate: `发现 3 个服务有新版本：blog / api、blog / worker（1.0.0 -> 1.1.0）、shop / gateway（2.4.0 -> 2.5.0）。`
+- single service, both sides readable: `blog / api has a new version available (1.0.0 -> 1.1.0).`
+- single service, only one side readable: `blog / api has a new version available (1.0.0 -> latest).`
+- single service, both sides still unreadable after settling: `blog / api has a new version available.` (never `latest -> latest`)
+- multi-service aggregate: `3 services have new versions available: blog / api, blog / worker (1.0.0 -> 1.1.0), shop / gateway (2.4.0 -> 2.5.0).`
 
 Channel rendering rules:
 
-- Telegram / Email (single service): title + first sentence + one `服务详情` action only; no trailing title `详情`, no `服务清单`, no duplicate link list
-- Telegram / Email (multi service): the aggregate list stays, but unreadable entries show only the service name without a transition suffix
+- Telegram / Email (single service): keep only the title, the first sentence, and one `Service details` action; no trailing `Details` suffix, no `Service list` block, and no duplicate link list
+- Telegram / Email (multi service): keep the aggregate list, but unreadable entries show only the service name without a transition suffix
 - Web Push: `body` is exactly `human.summary`, while the click target still uses `links.primaryUrl`
 
 Truncation:

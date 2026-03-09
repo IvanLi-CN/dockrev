@@ -595,9 +595,9 @@ async fn settle_new_version_display_tag(
     let display = best_notification_display_tag(
         raw_tag,
         &[
-            inferred.as_deref(),
             existing_resolved_tag,
             existing_display_tag,
+            inferred.as_deref(),
         ],
     );
     Ok((display, pending))
@@ -3760,6 +3760,13 @@ mod tests {
             summary,
             "blog / api 服务有新版本（15-alpine -> 16-alpine）。"
         );
+    }
+
+    #[test]
+    fn best_notification_display_tag_keeps_existing_resolved_before_stale_snapshot() {
+        let display =
+            best_notification_display_tag("latest", &[Some("5.2.0"), Some("5.2.0"), Some("5.1.0")]);
+        assert_eq!(display, "5.2.0");
     }
 
     #[test]
