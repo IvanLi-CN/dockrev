@@ -112,9 +112,10 @@ pub(crate) async fn check_service_and_persist(
             .await
             .ok();
     }
-    let current_digest_registry = current_manifest
+    let current_manifest_digest = current_manifest
         .as_ref()
         .and_then(|m| m.digest.clone().or(m.platform_digest.clone()));
+    let current_digest_registry = current_manifest_digest.clone();
     let effective_current_digest = runtime_digest.clone().or(current_digest_registry.clone());
     // Persist the best-known digest so that pinned tags and offline/missing compose projects
     // don't lose observability just because the runtime digest is unavailable.
@@ -169,6 +170,11 @@ pub(crate) async fn check_service_and_persist(
 
     let candidate_present = candidate_tag.is_some();
     let candidate_digest_changed = candidate_digest.as_deref() != svc.candidate_digest.as_deref();
+    // Only let an in-memory check supersede active notification records when the candidate state
+    // is authoritative. Missing runtime state or transient registry failures can clear the service
+    // row temporarily, but they should not reopen the same digest for re-notification.
+    let candidate_state_authoritative =
+        runtime_digest.is_some() && current_manifest_digest.is_some();
 
     let mut ignore_match: Option<(String, String)> = None;
     if let Some(ref tag) = candidate_tag
@@ -221,16 +227,18 @@ pub(crate) async fn check_service_and_persist(
             now,
         )
         .await?;
-    state
-        .db
-        .reconcile_service_new_version_notifications(
-            &svc.id,
-            &svc.image_ref,
-            &svc.image_tag,
-            candidate_digest.as_deref(),
-            now,
-        )
-        .await?;
+    if candidate_state_authoritative {
+        state
+            .db
+            .reconcile_service_new_version_notifications(
+                &svc.id,
+                &svc.image_ref,
+                &svc.image_tag,
+                candidate_digest.as_deref(),
+                now,
+            )
+            .await?;
+    }
 
     Ok(ServiceCheckOutcome {
         current_digest,
@@ -252,8 +260,8 @@ pub(crate) async fn check_service_and_persist(
 pub(crate) async fn persist_runtime_fallback_result(
     db: &crate::db::Db,
     service_id: &str,
-    image_ref: &str,
-    image_tag: &str,
+    _image_ref: &str,
+    _image_tag: &str,
     runtime_digest: &str,
     now: &str,
 ) -> anyhow::Result<()> {
@@ -273,9 +281,9 @@ pub(crate) async fn persist_runtime_fallback_result(
         now,
     )
     .await?;
-    // The fallback path clears the candidate, so any active sent record must be released.
-    db.reconcile_service_new_version_notifications(service_id, image_ref, image_tag, None, now)
-        .await?;
+    // This fallback means registry inference was inconclusive for the current runtime digest, so
+    // keep any active notification record until a later authoritative check confirms the candidate
+    // changed or truly disappeared.
     Ok(())
 }
 
@@ -799,7 +807,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn runtime_fallback_supersedes_sent_notification_when_candidate_clears() {
+    async fn runtime_fallback_keeps_sent_notification_active_until_authoritative_clear() {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
         let (_stack_id, service_id) = seed_service(&db).await;
         let now = "2026-03-09T00:00:00Z";
@@ -858,15 +866,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].status, "superseded");
-        assert_eq!(
-            rows[0].superseded_at.as_deref(),
-            Some("2026-03-09T00:01:00Z")
-        );
+        assert_eq!(rows[0].status, "sent");
+        assert_eq!(rows[0].superseded_at.as_deref(), None);
     }
 
     #[tokio::test]
-    async fn settle_fallback_reopens_same_digest_after_candidate_is_cleared() {
+    async fn settle_fallback_keeps_same_digest_deduped_until_authoritative_clear() {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
         let (stack_id, service_id) = seed_service(&db).await;
         let now = "2026-03-09T00:00:00Z";
@@ -942,7 +947,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             retried,
-            NewVersionNotificationReserveResult::Reserved("nvn_2".to_string())
+            NewVersionNotificationReserveResult::SkippedDuplicate
         );
     }
 }

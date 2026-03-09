@@ -9934,6 +9934,132 @@ services:
 }
 
 #[tokio::test]
+async fn transient_runtime_unknown_does_not_reopen_same_digest_notification() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(DigestOnlyUpdateRegistry),
+        Arc::new(FakeRunner),
+    )
+    .await;
+
+    let compose_path = format!("/tmp/dockrev-transient-runtime-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let manifest_digest_cache = crate::service_check::new_manifest_digest_cache();
+    let repo_tags_cache = crate::service_check::new_repo_tags_cache();
+
+    let first_check_now = "2026-03-09T00:00:00Z";
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    crate::service_check::check_service_and_persist(
+        &state,
+        "job-check-1",
+        &service,
+        Some("sha256:old".to_string()),
+        "linux/amd64",
+        first_check_now,
+        &manifest_digest_cache,
+        &repo_tags_cache,
+    )
+    .await
+    .unwrap();
+
+    let discovered = vec![crate::notify::NewVersionDiscoveredService {
+        stack_id: stack_id.clone(),
+        service_id: service.id.clone(),
+        image_ref: service.image_ref.clone(),
+        current_tag: "5.2".to_string(),
+        current_display_tag: "5.2".to_string(),
+        candidate_tag: "5.2".to_string(),
+        candidate_display_tag: "5.2".to_string(),
+        candidate_digest: "sha256:new".to_string(),
+    }];
+    let (mut rx, server) = configure_webhook_notifications(&state).await;
+
+    let first_job_id = insert_check_job(&state, "schedule", first_check_now).await;
+    crate::notify::notify_new_versions_discovered(
+        state.as_ref(),
+        &first_job_id,
+        "schedule",
+        first_check_now,
+        1,
+        &discovered,
+    )
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .expect("first webhook receive timeout")
+        .expect("first notification payload missing");
+
+    let uncertain_now = "2026-03-09T00:01:00Z";
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    crate::service_check::check_service_and_persist(
+        &state,
+        "job-check-2",
+        &service,
+        None,
+        "linux/amd64",
+        uncertain_now,
+        &manifest_digest_cache,
+        &repo_tags_cache,
+    )
+    .await
+    .unwrap();
+
+    let restored_now = "2026-03-09T00:02:00Z";
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    crate::service_check::check_service_and_persist(
+        &state,
+        "job-check-3",
+        &service,
+        Some("sha256:old".to_string()),
+        "linux/amd64",
+        restored_now,
+        &manifest_digest_cache,
+        &repo_tags_cache,
+    )
+    .await
+    .unwrap();
+
+    let second_job_id = insert_check_job(&state, "schedule", restored_now).await;
+    crate::notify::notify_new_versions_discovered(
+        state.as_ref(),
+        &second_job_id,
+        "schedule",
+        restored_now,
+        1,
+        &discovered,
+    )
+    .await
+    .unwrap();
+
+    let received = tokio::time::timeout(Duration::from_millis(300), rx.recv()).await;
+    assert!(
+        received.is_err(),
+        "same digest should remain deduped after an inconclusive runtime check"
+    );
+
+    let rows = state
+        .db
+        .list_new_version_notifications_for_service(&service.id)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].status, "sent");
+    assert_eq!(rows[0].superseded_at, None);
+
+    server.abort();
+}
+
+#[tokio::test]
 async fn failed_new_version_notification_record_retries_after_all_channels_fail() {
     let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
 
