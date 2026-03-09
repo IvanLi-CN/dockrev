@@ -323,7 +323,7 @@ pub(super) async fn handle_check_worker_result(
                 .snapshot_worker
                 .enqueue(
                     &image_repo,
-                    &current_digest,
+                    current_digest,
                     host_platform,
                     VERSION_INFERENCE_REASON_NEW_VERSION,
                 )
@@ -344,7 +344,7 @@ pub(super) async fn handle_check_worker_result(
                 .snapshot_worker
                 .enqueue(
                     &image_repo,
-                    &candidate_digest,
+                    candidate_digest,
                     host_platform,
                     VERSION_INFERENCE_REASON_NEW_VERSION,
                 )
