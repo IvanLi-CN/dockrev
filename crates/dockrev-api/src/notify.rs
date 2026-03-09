@@ -643,9 +643,12 @@ async fn infer_notification_display_tag_from_snapshot(
     if snapshot.checked_at.trim().is_empty() {
         snapshot.checked_at = checked_at;
     }
+    let ready = notification_snapshot_is_ready(&snapshot, snapshot.checked_at.as_str());
     Ok(NotificationSnapshotDisplayResult {
-        display_tag: infer_notification_semver_tag_from_snapshot(&snapshot, raw_tag),
-        ready: notification_snapshot_is_ready(&snapshot, snapshot.checked_at.as_str()),
+        display_tag: ready
+            .then(|| infer_notification_semver_tag_from_snapshot(&snapshot, raw_tag))
+            .flatten(),
+        ready,
     })
 }
 
@@ -709,7 +712,7 @@ fn notification_snapshot_checked_at_is_older_than(
     }
 }
 
-fn notification_snapshot_is_ready(
+pub(crate) fn notification_snapshot_is_ready(
     snapshot: &ServiceDigestTagsSnapshotResponse,
     checked_at: &str,
 ) -> bool {
@@ -725,6 +728,21 @@ fn notification_snapshot_is_ready(
             time::Duration::minutes(crate::snapshot_worker::SNAPSHOT_ALL_FAILED_RETRY_MINUTES),
         );
     !retryable_all_failed
+}
+
+pub(crate) fn notification_snapshot_is_ready_from_row(
+    snapshot_json: &str,
+    checked_at: &str,
+) -> Option<bool> {
+    let mut snapshot =
+        serde_json::from_str::<ServiceDigestTagsSnapshotResponse>(snapshot_json).ok()?;
+    if snapshot.checked_at.trim().is_empty() {
+        snapshot.checked_at = checked_at.to_string();
+    }
+    Some(notification_snapshot_is_ready(
+        &snapshot,
+        snapshot.checked_at.as_str(),
+    ))
 }
 
 async fn log_new_version_notification_skip(

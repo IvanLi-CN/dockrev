@@ -3678,6 +3678,115 @@ services:
 }
 
 #[tokio::test]
+async fn check_non_strict_semver_alias_skips_new_version_inference_when_snapshot_is_fresh() {
+    let registry = Arc::new(AliasDriftRegistry::new(Duration::from_millis(400)));
+    let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", registry, runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!(
+        "/tmp/dockrev-alias-fresh-snapshot-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let now = "2026-03-09T00:00:00Z";
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "demo".to_string(),
+            stack_id: Some(stack_id.clone()),
+            status: "active".to_string(),
+            last_seen_at: Some(now.to_string()),
+            last_scan_at: now.to_string(),
+            last_error: None,
+            last_config_files: Some(vec![compose_path.clone()]),
+            unarchive_if_active: true,
+        })
+        .await
+        .unwrap();
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:old",
+        "linux/amd64",
+        now,
+        vec!["5.2.0".to_string(), "5.2".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:new",
+        "linux/amd64",
+        now,
+        vec!["5.3.0".to_string(), "5.3".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+
+    let check = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/checks")
+                .header("content-type", "application/json")
+                .body(Body::from(check.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let check_id = triggered["checkId"].as_str().unwrap().to_string();
+
+    let job = wait_for_job_terminal(&state, &check_id).await;
+    assert_eq!(job.status, "success");
+
+    let events = state.snapshot_worker.events_since(0, 200).await;
+    let has_new_version_enqueue = events.events.iter().any(|event| {
+        event.data["type"].as_str() == Some("task_enqueued")
+            && event.data["reason"].as_str() == Some("new_version")
+            && matches!(
+                event.data["digest"].as_str(),
+                Some("sha256:old") | Some("sha256:new")
+            )
+    });
+    assert!(
+        !has_new_version_enqueue,
+        "fresh snapshots should suppress redundant new-version inference enqueues"
+    );
+}
+
+#[tokio::test]
 async fn check_candidate_digest_change_for_strict_semver_does_not_enqueue_inference() {
     let registry = Arc::new(StrictSemverDriftRegistry::new(Duration::from_millis(400)));
     let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
@@ -10552,6 +10661,152 @@ services:
     assert_eq!(
         payload["links"]["serviceUrls"][0]["candidateDisplayTag"].as_str(),
         Some("5.3.0")
+    );
+    notify_task.await.unwrap();
+    server.abort();
+}
+
+#[tokio::test]
+async fn schedule_new_version_notification_falls_back_when_stale_snapshot_times_out() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_secs(5)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+
+    let compose_path = format!(
+        "/tmp/dockrev-schedule-notify-stale-timeout-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            Some("sha256:old".to_string()),
+            None,
+            None,
+            Some("latest".to_string()),
+            None,
+            Some("sha256:new".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            "2026-03-09T00:00:00Z",
+            "2026-03-09T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:old",
+        "linux/amd64",
+        "2026-02-20T00:00:00Z",
+        vec!["5.1.0".to_string(), "latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:new",
+        "linux/amd64",
+        "2026-02-20T00:00:00Z",
+        vec!["5.2.0".to_string(), "latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+    let discovered = vec![crate::notify::NewVersionDiscoveredService {
+        stack_id: stack_id.clone(),
+        service_id: service.id.clone(),
+        image_ref: service.image_ref.clone(),
+        current_tag: "latest".to_string(),
+        current_display_tag: "latest".to_string(),
+        candidate_tag: "latest".to_string(),
+        candidate_display_tag: "latest".to_string(),
+        candidate_digest: "sha256:new".to_string(),
+    }];
+    let (mut rx, server) = configure_webhook_notifications(&state).await;
+
+    let now = "2026-03-09T00:00:00Z";
+    let job_id = insert_check_job(&state, "schedule", now).await;
+    state
+        .db
+        .finish_job(&job_id, "success", now, &serde_json::json!({}))
+        .await
+        .unwrap();
+    assert!(
+        state
+            .snapshot_worker
+            .enqueue(
+                "ghcr.io/acme/web",
+                "sha256:old",
+                "linux/amd64",
+                "cache_stale"
+            )
+            .await
+    );
+    assert!(
+        state
+            .snapshot_worker
+            .enqueue(
+                "ghcr.io/acme/web",
+                "sha256:new",
+                "linux/amd64",
+                "cache_stale"
+            )
+            .await
+    );
+
+    let notify_state = state.clone();
+    let notify_discovered = discovered.clone();
+    let notify_task = tokio::spawn(async move {
+        crate::notify::notify_new_versions_discovered(
+            notify_state.as_ref(),
+            &job_id,
+            "schedule",
+            now,
+            1,
+            &notify_discovered,
+        )
+        .await
+        .unwrap();
+    });
+
+    let payload = tokio::time::timeout(Duration::from_secs(4), rx.recv())
+        .await
+        .expect("notification should fall back after settle timeout")
+        .expect("notification payload missing");
+    let summary = payload["human"]["summary"].as_str().unwrap_or_default();
+    assert_eq!(summary, "demo / web 服务有新版本。");
+    assert_eq!(
+        payload["links"]["serviceUrls"][0]["currentDisplayTag"].as_str(),
+        Some("latest")
+    );
+    assert_eq!(
+        payload["links"]["serviceUrls"][0]["candidateDisplayTag"].as_str(),
+        Some("latest")
     );
     notify_task.await.unwrap();
     server.abort();

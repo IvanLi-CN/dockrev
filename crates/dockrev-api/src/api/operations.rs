@@ -255,6 +255,13 @@ pub(super) async fn handle_check_worker_result(
                 .current_digest
                 .as_deref()
                 .and_then(snapshot_worker::normalize_digest)
+            && should_enqueue_new_version_inference(
+                state.as_ref(),
+                &image_repo,
+                &current_digest,
+                host_platform,
+            )
+            .await?
         {
             let _ = state
                 .snapshot_worker
@@ -272,6 +279,13 @@ pub(super) async fn handle_check_worker_result(
                 .candidate_digest
                 .as_deref()
                 .and_then(snapshot_worker::normalize_digest)
+            && should_enqueue_new_version_inference(
+                state.as_ref(),
+                &image_repo,
+                &candidate_digest,
+                host_platform,
+            )
+            .await?
         {
             let _ = state
                 .snapshot_worker
@@ -375,6 +389,26 @@ fn preferred_display_tag(raw_tag: &str, resolved_tag: Option<&str>) -> String {
         .filter(|tag| !tag.is_empty())
         .unwrap_or_else(|| raw_tag.trim())
         .to_string()
+}
+
+async fn should_enqueue_new_version_inference(
+    state: &AppState,
+    image_repo: &str,
+    digest: &str,
+    host_platform: &str,
+) -> Result<bool, ApiError> {
+    let snapshot = state
+        .db
+        .get_image_digest_tags_snapshot(image_repo, digest, host_platform)
+        .await
+        .map_err(map_internal)?;
+    let Some((snapshot_json, checked_at, _updated_at)) = snapshot else {
+        return Ok(true);
+    };
+    Ok(
+        !crate::notify::notification_snapshot_is_ready_from_row(&snapshot_json, &checked_at)
+            .unwrap_or(false),
+    )
 }
 
 pub(super) fn new_version_notification_reason(
