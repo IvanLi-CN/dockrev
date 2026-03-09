@@ -27,6 +27,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| mmffn | Dockrev：聚合更新自升级保护 | 已完成 | `mmffn-dockrev-aggregate-self-upgrade-guard/SPEC.md` | 2026-03-09 | fast-track（aggregate guard: dockrev 改走 supervisor，自身不参与 all/stack update；cargo/web/storybook 回归通过） |
 | e3f83 | Dockrev：GHCR Webhook 收件箱 SSE 实时更新 | 已完成 | `e3f83-ghcr-webhook-inbox-sse/SPEC.md` | 2026-03-09 | fast-track（delivery SSE + inbox auto refresh） |
 | upjqw | Dockrev：更新后本地 Compose Tag 稳定化，消除手动 `docker compose up -d` 回退 | 已完成 | `upjqw-compose-tag-stability/SPEC.md` | 2026-03-08 | fast-track（普通更新 + supervisor 自升级稳定 tag，避免手工 up 回退） |
 | uupfm | Dockrev：更新完成后状态自动收敛 | 已验证 | `uupfm-update-status-settle-after-finish/SPEC.md` | 2026-03-08 | fast-track（后端状态收敛 + 前端终态定向刷新） |

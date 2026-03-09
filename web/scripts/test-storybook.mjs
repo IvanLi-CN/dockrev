@@ -888,7 +888,11 @@ async function runInteractive({ baseUrl, browser }) {
         if (!apiRow || !prodGroup) return false
         const rowText = apiRow.textContent ?? ''
         const groupText = prodGroup.textContent ?? ''
-        return rowText.includes('无更新') && !rowText.includes('可更新') && groupText.includes('updates 1')
+        return (
+          rowText.includes('无更新') &&
+          !rowText.includes('可更新') &&
+          (groupText.includes('updates 1') || groupText.includes('1 可更新'))
+        )
       }, null, { timeout: 10_000 })
     } finally {
       await page.close().catch(() => {})

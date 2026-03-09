@@ -1607,6 +1607,39 @@ html[data-theme='light'] .modalOverlay {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-warning) 18%, transparent);
 }
 
+.modalListItemGuarded {
+  opacity: 0.58;
+  filter: saturate(0.48);
+  border-color: rgba(229, 231, 235, 0.05);
+}
+
+.modalListGuardHintTrigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: help;
+}
+
+.modalListGuardHintTrigger:hover,
+.modalListGuardHintTrigger:focus-visible {
+  color: var(--text-secondary);
+}
+
+.modalListGuardHintIcon {
+  width: 15px;
+  height: 15px;
+}
+
+.btnTooltipAnchor {
+  display: inline-flex;
+}
+
 .modalListLeft {
   min-width: 0;
 }

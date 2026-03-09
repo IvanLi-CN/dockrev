@@ -22,12 +22,19 @@ import { navigate } from '../routes'
 import { ArrowRightIcon, Button, Mono, StatusRemark } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
+import {
+  DOCKREV_AGGREGATE_GUARD_HINT,
+  emptyAggregateUpdateCounts,
+  partitionAggregateUpdateServices,
+  resolveAggregateUpdateActionState,
+} from '../aggregateUpdateGuard'
 import { isSemverDowngradeAnomaly, serviceRowStatus, type RowStatus } from '../updateStatus'
 import { selectOverviewJobsForCard, toOverviewJobCardItem } from './overviewJobsCard'
 import { UpdateCandidateFilters, type UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
 import { useConfirm } from '../confirm'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
+import { AggregateUpdatePreviewList, type AggregateUpdatePreviewListItem } from '../components/AggregateUpdatePreviewList'
 import {
   formatCandidateTagDisplay,
   formatCurrentTagDisplay as formatTagDisplay,
@@ -136,6 +143,16 @@ function formatGroupSummary(services: number, counts: Record<Exclude<RowStatus, 
   if (counts.archMismatch > 0) parts.push(`${counts.archMismatch} 架构不匹配`)
   if (counts.blocked > 0) parts.push(`${counts.blocked} 被阻止`)
   return parts.join(' · ')
+}
+
+function withAggregateDisplayName(
+  items: Array<Pick<AggregateUpdatePreviewListItem, 'svc' | 'status' | 'guardedDockrev'>>,
+  stackName?: string,
+): AggregateUpdatePreviewListItem[] {
+  return items.map((item) => ({
+    ...item,
+    displayName: stackName ? `${stackName}/${item.svc.name}` : item.svc.name,
+  }))
 }
 
 function GroupGuide() {
@@ -788,20 +805,25 @@ export function OverviewPage(props: {
     return c
   }, [details, stacks])
 
-  const allCandidates = useMemo(() => {
-    const items: Array<{ stackName: string; svc: Service; status: RowStatus }> = []
+  const aggregateAll = useMemo(() => {
+    const counts = emptyAggregateUpdateCounts()
+    const actionablePreviewItems: AggregateUpdatePreviewListItem[] = []
+    const guardedPreviewItems: AggregateUpdatePreviewListItem[] = []
+
     for (const st of stacks) {
       const d = details[st.id]
       if (!d) continue
-      for (const svc of d.services) {
-        if (svc.archived) continue
-        const status = serviceRowStatus(svc)
-        if (status === 'updatable' || status === 'hint') {
-          items.push({ stackName: d.name, svc, status })
-        }
-      }
+
+      const partition = partitionAggregateUpdateServices(d.services)
+      counts.updatable += partition.counts.updatable
+      counts.hint += partition.counts.hint
+      counts.archMismatch += partition.counts.archMismatch
+      counts.blocked += partition.counts.blocked
+      actionablePreviewItems.push(...withAggregateDisplayName(partition.actionable, d.name))
+      guardedPreviewItems.push(...withAggregateDisplayName(partition.guardedDockrevPreview, d.name))
     }
-    return items
+
+    return { counts, actionablePreviewItems, guardedPreviewItems }
   }, [details, stacks])
 
   const totalServicesAll = useMemo(() => {
@@ -814,17 +836,14 @@ export function OverviewPage(props: {
     return total
   }, [details, stacks])
 
-  const allApply = useMemo(() => {
-    if (countsAll.updatable > 0) return { enabled: true, note: null as string | null, title: null as string | null }
-    if (countsAll.hint > 0) {
-      return {
-        enabled: true,
-        note: '存在需确认的候选；将由服务端计算是否实际变更',
-        title: '存在需确认的候选；将由服务端计算是否实际变更',
-      }
-    }
-    return { enabled: false, note: null as string | null, title: '无可更新服务' }
-  }, [countsAll.hint, countsAll.updatable])
+  const allApply = useMemo(
+    () =>
+      resolveAggregateUpdateActionState({
+        counts: aggregateAll.counts,
+        guardedDockrevPreview: aggregateAll.guardedPreviewItems,
+      }),
+    [aggregateAll],
+  )
 
   const jobsSummary = useMemo(() => {
     const total = jobs.length
@@ -1067,14 +1086,15 @@ export function OverviewPage(props: {
           loading={allApplyActionBusy}
           loadingClickable={Boolean(allApplyActiveJob)}
           title={allApplyActiveJob ? '任务进行中，点击查看任务详情' : (allApply.title ?? undefined)}
-          hint={allApplyActiveJob ? '任务进行中，点击查看任务详情' : undefined}
+          hint={allApplyActiveJob ? '任务进行中，点击查看任务详情' : (!allApply.enabled ? (allApply.hint ?? undefined) : undefined)}
           onClick={() => {
             if (allApplyActiveJob) {
               navigate({ name: 'job', jobId: allApplyActiveJob.jobId })
               return
             }
-            const totalCandidates = countsAll.updatable + countsAll.hint
-            const anomalyCount = allCandidates.filter((item) => isSemverDowngradeAnomaly(item.svc)).length
+            const previewItems = [...aggregateAll.actionablePreviewItems, ...aggregateAll.guardedPreviewItems]
+            const totalCandidates = aggregateAll.actionablePreviewItems.length
+            const anomalyCount = previewItems.filter((item) => isSemverDowngradeAnomaly(item.svc)).length
             const body = (
               <>
                 <div className="modalKvGrid">
@@ -1086,11 +1106,11 @@ export function OverviewPage(props: {
                   <div className="modalKvValue">{totalCandidates} 个（可更新/需确认）</div>
                   <div className="modalKvLabel">其中</div>
                   <div className="modalKvValue">
-                    可更新 {countsAll.updatable} · 需确认 {countsAll.hint}
+                    可更新 {aggregateAll.counts.updatable} · 需确认 {aggregateAll.counts.hint}
                   </div>
                   <div className="modalKvLabel">将跳过</div>
                   <div className="modalKvValue">
-                    架构不匹配 {countsAll.archMismatch} · 被阻止 {countsAll.blocked}
+                    架构不匹配 {aggregateAll.counts.archMismatch} · 被阻止 {aggregateAll.counts.blocked}
                   </div>
                 </div>
                 {anomalyCount > 0 ? (
@@ -1100,123 +1120,11 @@ export function OverviewPage(props: {
                 ) : null}
                 <div className="modalDivider" />
                 <div className="modalLead">将更新的服务（预览）</div>
-                <div className="modalList">
-                  {allCandidates.map((item) => {
-                    const currentDisplayTag = formatTagDisplay(
-                      item.svc.image.tag,
-                      item.svc.image.resolvedTag,
-                      item.svc.versionInference?.status,
-                    )
-                    const inferencePending = item.svc.versionInference?.status === 'pending'
-                    const rawTagTrim = (item.svc.image.tag ?? '').trim()
-                    const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
-                    const candidateTag =
-                      item.svc.candidate?.tag && item.svc.candidate.tag !== '-' ? item.svc.candidate.tag : null
-                    const candidateDisplayTag = candidateTag
-                      ? formatCandidateTagDisplay(
-                          candidateTag,
-                          item.svc.candidate?.resolvedTag ?? null,
-                          item.svc.versionInference?.status,
-                        )
-                      : null
-                    const semverAnomaly = isSemverDowngradeAnomaly(item.svc)
-                    const candidatePrefetchOnMount =
-                      candidateTag && candidateDisplayTag
-                        ? shouldPrefetchFloatingCandidate(
-                            candidateTag,
-                            item.svc.candidate?.resolvedTag ?? null,
-                            item.svc.candidate?.digest ?? null,
-                          )
-                        : false
-                    const arrowPulse = inferencePending
-                    return (
-                      <div
-                        key={`${item.stackName}/${item.svc.id}`}
-                        className={semverAnomaly ? 'modalListItem modalListItemAnomaly' : 'modalListItem'}
-                      >
-                        <div className="modalListLeft">
-                          <div className="modalListTitle">
-                            <span className="mono">{`${item.stackName}/${item.svc.name}`}</span>
-                            <span className="muted">{` · ${item.status}`}</span>
-                          </div>
-                          {(() => {
-                            const img = splitImageRef(item.svc.image.ref)
-                            const dn = splitImageNameForDisplay(img.name, item.svc.image.tag)
-                            return (
-                              <div className="cellTwoLine">
-                                <div
-                                  className="mono monoPrimary monoSplit"
-                                  title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}
-                                >
-                                  <span className="monoSplitBase">{dn.base}</span>
-                                </div>
-                                <div className="mono monoSecondary">{img.registry}</div>
-                              </div>
-                            )
-                          })()}
-                          {semverAnomaly ? (
-                            <div className="modalAnomalyNote">
-                              <span className="modalAnomalyIcon" aria-hidden="true">
-                                ⚠
-                              </span>
-                              <span>版本异常：候选版本低于当前版本</span>
-                            </div>
-                          ) : null}
-                        </div>
-                        <div className="modalListRight">
-                          <div className="cellTwoLine">
-                            <div className="versionLine">
-                              <CurrentVersionPopover
-                                serviceId={item.svc.id}
-                                displayTag={currentDisplayTag}
-                                imageTag={item.svc.image.tag}
-                                imageDigest={item.svc.image.digest ?? null}
-                                resolvedTag={item.svc.image.resolvedTag}
-                                resolvedTags={item.svc.image.resolvedTags}
-                                inferenceLoading={inferencePending}
-                              />
-                              <span className={arrowPulse ? 'inlineIconLoading' : 'inlineIconMuted'}>
-                                <ArrowRightIcon className="inlineIcon" />
-                              </span>
-                              {candidateTag && candidateDisplayTag ? (
-                                <VersionTagsPopover
-                                  serviceId={item.svc.id}
-                                  candidateTag={candidateTag}
-                                  candidateDigest={item.svc.candidate?.digest ?? null}
-                                  prefetchOnMount={candidatePrefetchOnMount}
-                                >
-                                  {candidateDisplayTag}
-                                </VersionTagsPopover>
-                              ) : (
-                                <span className="mono monoPrimary">-</span>
-                              )}
-                            </div>
-                            {showRawTag ? (
-                              <div>
-                                <CurrentVersionPopover
-                                  serviceId={item.svc.id}
-                                  displayTag={item.svc.image.tag}
-                                  imageTag={item.svc.image.tag}
-                                  imageDigest={item.svc.image.digest ?? null}
-                                  resolvedTag={item.svc.image.resolvedTag}
-                                  resolvedTags={item.svc.image.resolvedTags}
-                                  preferSource="rawTag"
-                                  triggerClassName="versionTagsTrigger mono monoSecondary"
-                                >
-                                  {item.svc.image.tag}
-                                </CurrentVersionPopover>
-                              </div>
-                            ) : null}
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
+                <AggregateUpdatePreviewList items={previewItems} dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT} />
                 <div className="modalDivider" />
               </>
             )
-            void triggerApply({ scope: 'all', targetLabel: '全部服务', confirmBody: body, confirmTitle: '确认更新全部服务？' })
+                        void triggerApply({ scope: 'all', targetLabel: '全部服务', confirmBody: body, confirmTitle: '确认更新全部服务？' })
           }}
         >
           {allApplyActiveJob?.status === 'queued'
@@ -1230,19 +1138,14 @@ export function OverviewPage(props: {
       </>,
     )
   }, [
+    aggregateAll,
+    allApply,
     allApplyActiveJob,
     allApplyActionBusy,
-    allApply.enabled,
     allApplySubmitting,
-    allApply.title,
-    allCandidates,
     busy,
-	    countsAll.archMismatch,
-	    countsAll.blocked,
-	    countsAll.hint,
-	    countsAll.updatable,
-	    onTopActions,
-	    refresh,
+    onTopActions,
+    refresh,
     triggerApply,
   ])
 
@@ -1405,28 +1308,15 @@ export function OverviewPage(props: {
 
 	            if (rows.length === 0) return null
 
-	            const counts: Record<Exclude<RowStatus, 'ok'>, number> = {
-	              updatable: 0,
-	              hint: 0,
-	              archMismatch: 0,
-              blocked: 0,
-            }
-            for (const svc of d.services) {
-              if (svc.archived) continue
-              const stt = serviceRowStatus(svc)
-              if (stt === 'ok') continue
-              counts[stt] += 1
-            }
-
+	            const aggregatePartition = partitionAggregateUpdateServices(d.services)
+            const aggregatePreviewItems = [
+              ...withAggregateDisplayName(aggregatePartition.actionable),
+              ...withAggregateDisplayName(aggregatePartition.guardedDockrevPreview),
+            ]
             const isCollapsed = collapsed[st.id] ?? false
             const totalServices = d.services.filter((svc) => !svc.archived).length
-            const groupSummary = formatGroupSummary(totalServices, counts)
-            const stackApply =
-              counts.updatable > 0
-                ? { enabled: true, title: null as string | null }
-                : counts.hint > 0
-                  ? { enabled: true, title: '存在需确认的候选；将由服务端计算是否实际变更' }
-                  : { enabled: false, title: '无可更新服务' }
+            const groupSummary = formatGroupSummary(totalServices, aggregatePartition.counts)
+            const stackApply = resolveAggregateUpdateActionState(aggregatePartition)
             const stackApplyActionKey = resolveUpdateActionTargetKey('stack', st.id, null)
             const stackApplyActiveJob = stackApplyActionKey ? getActiveJobByTarget(stackApplyActionKey) : null
             const stackApplySubmitting = stackApplyActionKey ? isTargetSubmitting(stackApplyActionKey) : false
@@ -1468,166 +1358,53 @@ export function OverviewPage(props: {
                       loading={stackApplyActionKey ? isTargetBusy(stackApplyActionKey) : false}
                       loadingClickable={Boolean(stackApplyActiveJob)}
                       title={stackApplyActiveJob ? '任务进行中，点击查看任务详情' : (stackApply.title ?? undefined)}
-                      hint={stackApplyActiveJob ? '任务进行中，点击查看任务详情' : undefined}
+                      hint={stackApplyActiveJob ? '任务进行中，点击查看任务详情' : (!stackApply.enabled ? (stackApply.hint ?? undefined) : undefined)}
                       onClick={() => {
                           if (stackApplyActiveJob) {
                             navigate({ name: 'job', jobId: stackApplyActiveJob.jobId })
                             return
                           }
-			                        const totalCandidates = counts.updatable + counts.hint
-			                        const candidateServices = d.services
-			                          .filter((svc) => !svc.archived)
-			                          .map((svc) => ({ svc, status: serviceRowStatus(svc) }))
-			                          .filter((x) => x.status === 'updatable' || x.status === 'hint')
-                                const anomalyCount = candidateServices.filter((item) =>
-                                  isSemverDowngradeAnomaly(item.svc),
-                                ).length
-			                        const body = (
-			                          <>
-		                            <div className="modalKvGrid">
-	                              <div className="modalKvLabel">范围</div>
-	                              <div className="modalKvValue">
-	                                <Mono>stack</Mono>
-	                              </div>
-	                              <div className="modalKvLabel">目标</div>
-	                              <div className="modalKvValue">
-	                                <Mono>{d.name}</Mono>
-		                              </div>
-		                              <div className="modalKvLabel">候选服务</div>
-		                              <div className="modalKvValue">{totalCandidates} 个（可更新/需确认）</div>
-		                              <div className="modalKvLabel">其中</div>
-		                              <div className="modalKvValue">
-		                                可更新 {counts.updatable} · 需确认 {counts.hint}
-		                              </div>
-		                              <div className="modalKvLabel">将跳过</div>
-		                              <div className="modalKvValue">
-		                                架构不匹配 {counts.archMismatch} · 被阻止 {counts.blocked}
-		                              </div>
-		                            </div>
-                                {anomalyCount > 0 ? (
-                                  <div className="muted" style={{ marginTop: 10 }}>
-                                    ⚠ 检测到 {anomalyCount} 个版本异常（候选低于当前）；手动确认后仍可继续更新。
-                                  </div>
-                                ) : null}
-		                            <div className="modalDivider" />
-		                            <div className="modalLead">将更新的服务（预览）</div>
-		                            <div className="modalList">
-		                              {candidateServices.map((item) => {
-		                                const currentDisplayTag = formatTagDisplay(
-                                      item.svc.image.tag,
-                                      item.svc.image.resolvedTag,
-                                      item.svc.versionInference?.status,
-                                    )
-		                                const inferencePending = item.svc.versionInference?.status === 'pending'
-		                                const rawTagTrim = (item.svc.image.tag ?? '').trim()
-		                                const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
-		                                const candidateTag =
-		                                  item.svc.candidate?.tag && item.svc.candidate.tag !== '-' ? item.svc.candidate.tag : null
-		                                const candidateDisplayTag = candidateTag
-		                                  ? formatCandidateTagDisplay(
-                                      candidateTag,
-                                      item.svc.candidate?.resolvedTag ?? null,
-                                      item.svc.versionInference?.status,
-                                    )
-		                                  : null
-                                    const semverAnomaly = isSemverDowngradeAnomaly(item.svc)
-		                                const candidatePrefetchOnMount =
-		                                  candidateTag && candidateDisplayTag
-		                                    ? shouldPrefetchFloatingCandidate(
-		                                        candidateTag,
-		                                        item.svc.candidate?.resolvedTag ?? null,
-		                                        item.svc.candidate?.digest ?? null,
-		                                      )
-		                                    : false
-		                                const arrowPulse = inferencePending
-		                                return (
-		                                  <div
-                                      key={item.svc.id}
-                                      className={semverAnomaly ? 'modalListItem modalListItemAnomaly' : 'modalListItem'}
-                                    >
-		                                    <div className="modalListLeft">
-		                                      <div className="modalListTitle">
-		                                        <span className="mono">{item.svc.name}</span>
-		                                        <span className="muted">{` · ${item.status}`}</span>
-		                                      </div>
-		                                      {(() => {
-		                                        const img = splitImageRef(item.svc.image.ref)
-		                                        const dn = splitImageNameForDisplay(img.name, item.svc.image.tag)
-		                                        return (
-		                                          <div className="cellTwoLine">
-		                                            <div
-		                                              className="mono monoPrimary monoSplit"
-		                                              title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}
-		                                            >
-		                                              <span className="monoSplitBase">{dn.base}</span>
-		                                            </div>
-		                                            <div className="mono monoSecondary">{img.registry}</div>
-		                                          </div>
-		                                        )
-		                                      })()}
-                                      {semverAnomaly ? (
-                                        <div className="modalAnomalyNote">
-                                          <span className="modalAnomalyIcon" aria-hidden="true">
-                                            ⚠
-                                          </span>
-                                          <span>版本异常：候选版本低于当前版本</span>
-                                        </div>
-                                      ) : null}
-		                                    </div>
-		                                    <div className="modalListRight">
-		                                      <div className="cellTwoLine">
-		                                        <div className="versionLine">
-		                                          <CurrentVersionPopover
-		                                            serviceId={item.svc.id}
-		                                            displayTag={currentDisplayTag}
-		                                            imageTag={item.svc.image.tag}
-		                                            imageDigest={item.svc.image.digest ?? null}
-		                                            resolvedTag={item.svc.image.resolvedTag}
-		                                            resolvedTags={item.svc.image.resolvedTags}
-		                                            inferenceLoading={inferencePending}
-		                                          />
-		                                          <span className={arrowPulse ? 'inlineIconLoading' : 'inlineIconMuted'}>
-		                                            <ArrowRightIcon className="inlineIcon" />
-		                                          </span>
-		                                          {candidateTag && candidateDisplayTag ? (
-		                                            <VersionTagsPopover
-		                                              serviceId={item.svc.id}
-		                                              candidateTag={candidateTag}
-		                                              candidateDigest={item.svc.candidate?.digest ?? null}
-		                                              prefetchOnMount={candidatePrefetchOnMount}
-		                                            >
-		                                              {candidateDisplayTag}
-		                                            </VersionTagsPopover>
-		                                          ) : (
-		                                            <span className="mono monoPrimary">-</span>
-		                                          )}
-		                                        </div>
-		                                        {showRawTag ? (
-		                                          <div>
-		                                            <CurrentVersionPopover
-		                                              serviceId={item.svc.id}
-		                                              displayTag={item.svc.image.tag}
-		                                              imageTag={item.svc.image.tag}
-		                                              imageDigest={item.svc.image.digest ?? null}
-		                                              resolvedTag={item.svc.image.resolvedTag}
-		                                              resolvedTags={item.svc.image.resolvedTags}
-		                                              preferSource="rawTag"
-		                                              triggerClassName="versionTagsTrigger mono monoSecondary"
-		                                            >
-		                                              {item.svc.image.tag}
-		                                            </CurrentVersionPopover>
-		                                          </div>
-		                                        ) : null}
-		                                      </div>
-		                                    </div>
-		                                  </div>
-		                                )
-		                              })}
-		                            </div>
-		                            <div className="modalDivider" />
-		                          </>
-		                        )
-	                        void triggerApply({
+			                        const totalCandidates = aggregatePartition.actionable.length
+                        const anomalyCount = aggregatePreviewItems.filter((item) =>
+                          isSemverDowngradeAnomaly(item.svc),
+                        ).length
+                        const body = (
+                          <>
+                            <div className="modalKvGrid">
+                              <div className="modalKvLabel">范围</div>
+                              <div className="modalKvValue">
+                                <Mono>stack</Mono>
+                              </div>
+                              <div className="modalKvLabel">目标</div>
+                              <div className="modalKvValue">
+                                <Mono>{d.name}</Mono>
+                              </div>
+                              <div className="modalKvLabel">候选服务</div>
+                              <div className="modalKvValue">{totalCandidates} 个（可更新/需确认）</div>
+                              <div className="modalKvLabel">其中</div>
+                              <div className="modalKvValue">
+                                可更新 {aggregatePartition.counts.updatable} · 需确认 {aggregatePartition.counts.hint}
+                              </div>
+                              <div className="modalKvLabel">将跳过</div>
+                              <div className="modalKvValue">
+                                架构不匹配 {aggregatePartition.counts.archMismatch} · 被阻止 {aggregatePartition.counts.blocked}
+                              </div>
+                            </div>
+                            {anomalyCount > 0 ? (
+                              <div className="muted" style={{ marginTop: 10 }}>
+                                ⚠ 检测到 {anomalyCount} 个版本异常（候选低于当前）；手动确认后仍可继续更新。
+                              </div>
+                            ) : null}
+                            <div className="modalDivider" />
+                            <div className="modalLead">将更新的服务（预览）</div>
+                            <AggregateUpdatePreviewList
+                              items={aggregatePreviewItems}
+                              dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
+                            />
+                            <div className="modalDivider" />
+                          </>
+                        )
+                                                void triggerApply({
 	                          scope: 'stack',
 	                          stackId: st.id,
 	                          targetLabel: `stack:${d.name}`,
