@@ -1144,6 +1144,7 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
 struct NotificationTagDisplay<'a> {
     label: &'a str,
     readable: bool,
+    raw_non_strict: bool,
 }
 
 fn notification_tag_display<'a>(
@@ -1157,21 +1158,25 @@ fn notification_tag_display<'a>(
             Some(NotificationTagDisplay {
                 label: display_tag,
                 readable: true,
+                raw_non_strict: false,
             })
         }
         (_, Some(raw_tag)) if crate::ignore::parse_version(raw_tag).is_some() => {
             Some(NotificationTagDisplay {
                 label: raw_tag,
                 readable: true,
+                raw_non_strict: !crate::ignore::is_strict_semver(raw_tag),
             })
         }
         (_, Some(raw_tag)) => Some(NotificationTagDisplay {
             label: raw_tag,
             readable: false,
+            raw_non_strict: !crate::ignore::is_strict_semver(raw_tag),
         }),
         (Some(display_tag), None) => Some(NotificationTagDisplay {
             label: display_tag,
             readable: true,
+            raw_non_strict: false,
         }),
         (None, None) => None,
     }
@@ -1187,7 +1192,13 @@ fn render_tag_transition(
     let candidate = notification_tag_display(candidate_display_tag, candidate_tag);
     match (current, candidate) {
         (Some(current), Some(candidate)) if !current.readable && !candidate.readable => None,
-        (Some(current), Some(candidate)) if current.label == candidate.label => None,
+        (Some(current), Some(candidate))
+            if current.label == candidate.label
+                && current.raw_non_strict
+                && candidate.raw_non_strict =>
+        {
+            None
+        }
         (Some(current), Some(candidate)) => {
             Some(format!("{} -> {}", current.label, candidate.label))
         }
@@ -3864,6 +3875,23 @@ mod tests {
         }];
         let summary = summarize_new_version_services(1, &services, 0);
         assert_eq!(summary, "blog / api 服务有新版本。");
+    }
+
+    #[test]
+    fn new_version_summary_single_service_keeps_same_strict_semver_transition() {
+        let services = vec![NewVersionNotificationServiceUrlV2 {
+            stack_id: "stk_blog".to_string(),
+            stack_name: "blog".to_string(),
+            service_id: "svc_api".to_string(),
+            service_name: "api".to_string(),
+            current_tag: Some("1.2.3".to_string()),
+            current_display_tag: Some("1.2.3".to_string()),
+            candidate_tag: Some("1.2.3".to_string()),
+            candidate_display_tag: Some("1.2.3".to_string()),
+            url: "https://dockrev.example.com/services/stk_blog/svc_api".to_string(),
+        }];
+        let summary = summarize_new_version_services(1, &services, 0);
+        assert_eq!(summary, "blog / api 服务有新版本（1.2.3 -> 1.2.3）。");
     }
 
     #[test]

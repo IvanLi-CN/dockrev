@@ -228,31 +228,60 @@ pub(super) async fn handle_check_worker_result(
         .candidate_digest
         .as_deref()
         .and_then(snapshot_worker::normalize_digest);
-    let current_snapshot_ready = if !crate::ignore::is_strict_semver(current_tag_trim) {
-        if let (Some(image_repo), Some(current_digest)) =
-            (image_repo.as_deref(), current_digest.as_deref())
-        {
-            notification_snapshot_ready_for_digest(
-                state.as_ref(),
-                image_repo,
-                current_digest,
-                host_platform,
-            )
-            .await?
-            .unwrap_or(false)
+    let current_snapshot =
+        if crate::notify::notification_tag_requires_settle(current_tag_trim, current_tag_trim) {
+            if let (Some(image_repo), Some(current_digest)) =
+                (image_repo.as_deref(), current_digest.as_deref())
+            {
+                notification_snapshot_display_for_digest(
+                    state.as_ref(),
+                    image_repo,
+                    current_digest,
+                    host_platform,
+                    current_tag_trim,
+                )
+                .await?
+            } else {
+                NotificationSnapshotDisplay::default()
+            }
         } else {
-            false
-        }
-    } else {
-        true
-    };
-    let current_display_tag = if current_snapshot_ready {
+            NotificationSnapshotDisplay::default()
+        };
+    let current_display_tag = if current_snapshot.ready {
+        current_snapshot
+            .display_tag
+            .unwrap_or_else(|| current_tag_trim.to_string())
+    } else if crate::ignore::is_strict_semver(current_tag_trim) {
         preferred_display_tag(&service_image_tag, outcome.current_resolved_tag.as_deref())
     } else {
         current_tag_trim.to_string()
     };
-    let candidate_display_tag =
-        preferred_display_tag(candidate_raw_tag, outcome.candidate_resolved_tag.as_deref());
+    let candidate_snapshot =
+        if crate::notify::notification_tag_requires_settle(candidate_raw_tag, candidate_raw_tag) {
+            if let (Some(image_repo), Some(candidate_digest)) =
+                (image_repo.as_deref(), candidate_digest.as_deref())
+            {
+                notification_snapshot_display_for_digest(
+                    state.as_ref(),
+                    image_repo,
+                    candidate_digest,
+                    host_platform,
+                    candidate_raw_tag,
+                )
+                .await?
+            } else {
+                NotificationSnapshotDisplay::default()
+            }
+        } else {
+            NotificationSnapshotDisplay::default()
+        };
+    let candidate_display_tag = if candidate_snapshot.ready {
+        candidate_snapshot
+            .display_tag
+            .unwrap_or_else(|| candidate_raw_tag.to_string())
+    } else {
+        preferred_display_tag(candidate_raw_tag, outcome.candidate_resolved_tag.as_deref())
+    };
     let current_needs_inference =
         crate::notify::notification_tag_requires_settle(current_tag_trim, &current_display_tag);
     let candidate_needs_inference =
@@ -412,6 +441,46 @@ fn preferred_display_tag(raw_tag: &str, resolved_tag: Option<&str>) -> String {
         .filter(|tag| !tag.is_empty())
         .unwrap_or_else(|| raw_tag.trim())
         .to_string()
+}
+
+#[derive(Default)]
+struct NotificationSnapshotDisplay {
+    display_tag: Option<String>,
+    ready: bool,
+}
+
+async fn notification_snapshot_display_for_digest(
+    state: &AppState,
+    image_repo: &str,
+    digest: &str,
+    host_platform: &str,
+    raw_tag: &str,
+) -> Result<NotificationSnapshotDisplay, ApiError> {
+    let snapshot = state
+        .db
+        .get_image_digest_tags_snapshot(image_repo, digest, host_platform)
+        .await
+        .map_err(map_internal)?;
+    let Some((snapshot_json, checked_at, _updated_at)) = snapshot else {
+        return Ok(NotificationSnapshotDisplay::default());
+    };
+    let Some(snapshot_entry) =
+        super::stacks::parse_digest_snapshot_row(&snapshot_json, &checked_at)
+    else {
+        return Ok(NotificationSnapshotDisplay::default());
+    };
+    let ready = crate::notify::notification_snapshot_is_ready(
+        &snapshot_entry.snapshot,
+        snapshot_entry.snapshot.checked_at.as_str(),
+    );
+    let display_tag = ready
+        .then(|| {
+            super::stacks::infer_semver_tags_from_snapshot(&snapshot_entry.snapshot, raw_tag)
+                .into_iter()
+                .next()
+        })
+        .flatten();
+    Ok(NotificationSnapshotDisplay { display_tag, ready })
 }
 
 async fn notification_snapshot_ready_for_digest(

@@ -3771,6 +3771,12 @@ services:
     let job = wait_for_job_terminal(&state, &check_id).await;
     assert_eq!(job.status, "success");
 
+    let services = job.summary_json["newVersions"]["services"]
+        .as_array()
+        .expect("new version services missing");
+    assert_eq!(services[0]["currentDisplayTag"].as_str(), Some("5.2.0"));
+    assert_eq!(services[0]["candidateDisplayTag"].as_str(), Some("5.3.0"));
+
     let events = state.snapshot_worker.events_since(0, 200).await;
     let has_new_version_enqueue = events.events.iter().any(|event| {
         event.data["type"].as_str() == Some("task_enqueued")
