@@ -57,6 +57,7 @@
 - 去重键为 `service_id + candidate_digest`，且仅对 active 记录（`pending` / `sent`）生效。
 - 发送流程必须为：先 reserve `pending`，再发送，最后 finalize 为 `sent` 或 `failed`；若记录在发送过程中已被判定失效，finalize 仍需保留审计字段但不得重新占用 active 去重位。
 - reserve 与实际发送前都必须按 service 当前持久化状态回读校验；若候选已清空、`image_ref/image_tag` 已变化、或 `candidate_digest` 已不再匹配，则本轮通知必须静默跳过。
+- compose / stack sync 仅能在 service 自身 `image_ref/image_tag` 基线发生变化时清空候选并 supersede active 记录；同栈其他未变化 service 不得被顺带释放 dedupe 位。
 - 当 service 候选被当前持久化状态权威地清空、`image_ref/image_tag` 变化、或候选 digest 变化时，旧 active 记录必须自动转为 `superseded`；若 runtime / registry 结果不足以证明候选已消失，则不得仅因一次不确定检查释放 active 去重位。
 - 若所有已启用渠道都发送失败，则该记录必须为 `failed`，不得继续占用 active 去重位。
 - `dockrev.notification.new_version_discovered.v2` 保持兼容；保留 `currentTag` / `candidateTag`，新增可选 `currentDisplayTag` / `candidateDisplayTag`。
@@ -86,6 +87,7 @@
 - Given 两个并发 job 同时命中同一 `service_id + candidate_digest`，When 执行 reserve，Then 只有一个 job 成功创建 `pending` 记录，另一个 job 被跳过且不先发送通知。
 - Given service 当前候选被权威地清空、或候选 digest 从 A 变成 B，When 后续再次出现可通知候选，Then 旧记录转为 `superseded`，新候选可以重新通知。
 - Given runtime digest 或 registry manifest 临时不可用，When 一次不确定 check 让 service 行上的 candidate 暂时消失，Then 既有 active 通知记录仍保持 active，且同一 digest 在后续恢复后继续被去重。
+- Given compose / stack sync 只变更了同栈中的其他 service，When 当前 service 的 `image_ref/image_tag` 未变化，Then 该 service 既有 active 新版本通知记录仍保持 active，后续同 digest 继续被去重。
 - Given 本次所有启用渠道都发送失败，When finalize 记录，Then 记录状态为 `failed`，后续 job 仍可再次尝试发送。
 - Given 当前/候选 raw tag 为浮动值且已存在 resolved tag，When 生成 `new_version_discovered` 通知，Then 通知正文与 payload display 字段优先展示 resolved version/tag，而不是仅展示 `latest -> latest`。
 
@@ -106,6 +108,7 @@
 - `cargo test -p dockrev-api runtime_fallback_keeps_sent_notification_active_until_authoritative_clear -- --nocapture`
 - `cargo test -p dockrev-api settle_fallback_keeps_same_digest_deduped_until_authoritative_clear -- --nocapture`
 - `cargo test -p dockrev-api transient_runtime_unknown_does_not_reopen_same_digest_notification -- --nocapture`
+- `cargo test -p dockrev-api sync_stack_from_compose_keeps_active_rows_for_unchanged_services -- --nocapture`
 - `cargo test -p dockrev-api new_version_notification -- --nocapture`
 - `cargo test -p dockrev-api notify -- --nocapture`
 - `cargo test -p dockrev-api`
@@ -117,3 +120,4 @@
 - 2026-03-09：创建规格，冻结“通知记录表去重 + display tag 版本展示”的实现边界与验收标准。
 - 2026-03-09：完成通知记录表、去重 reserve/finalize/reconcile 链路、payload display tag 扩展、中英文文档与回归测试。
 - 2026-03-09：补强失效候选的二次校验、`pending -> superseded` 审计保留、以及“仅在候选消失已被权威确认时才释放 active 记录”的 fallback 语义。
+- 2026-03-09：补充 compose sync 对未变化 service 保持 active dedupe 的约束，并记录 webhook 通知日志断言的异步收敛验证。
