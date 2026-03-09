@@ -70,8 +70,25 @@ pub async fn notify_new_versions_discovered(
         return Ok(());
     }
 
+    let discovered_total = discovered_services.len();
+    let discovered_services =
+        revalidate_new_version_discovered_services(state, discovered_services).await?;
+    if discovered_services.is_empty() {
+        log_new_version_notification_skip(
+            state,
+            check_job_id,
+            now_rfc3339,
+            format!(
+                "new-version notification skipped: all {} services no longer have matching active candidates",
+                discovered_total
+            ),
+        )
+        .await;
+        return Ok(());
+    }
+
     let mut reserved = Vec::<ReservedNewVersionNotification>::new();
-    for item in discovered_services {
+    for item in &discovered_services {
         let pending = crate::db::NewVersionNotificationPending {
             id: crate::ids::new_notification_id(),
             service_id: item.service_id.clone(),
@@ -98,24 +115,57 @@ pub async fn notify_new_versions_discovered(
     }
 
     if reserved.is_empty() {
-        let _ = state
-            .db
-            .insert_job_log(
-                check_job_id,
-                &JobLogLine {
-                    ts: now_rfc3339.to_string(),
-                    level: "info".to_string(),
-                    msg: format!(
-                        "new-version notification skipped: all {} services already have active records",
-                        discovered_services.len()
-                    ),
-                },
-            )
-            .await;
+        log_new_version_notification_skip(
+            state,
+            check_job_id,
+            now_rfc3339,
+            format!(
+                "new-version notification skipped: all {} services already have active records",
+                discovered_services.len()
+            ),
+        )
+        .await;
         return Ok(());
     }
 
-    let reserved_services = reserved
+    let revalidated_reserved_services = reserved
+        .iter()
+        .map(|item| item.service.clone())
+        .collect::<Vec<_>>();
+    let active_reserved_ids =
+        revalidate_new_version_discovered_services(state, &revalidated_reserved_services)
+            .await?
+            .into_iter()
+            .map(|service| service.service_id)
+            .collect::<std::collections::HashSet<_>>();
+
+    let mut sendable_reserved = Vec::<ReservedNewVersionNotification>::new();
+    for item in reserved {
+        if active_reserved_ids.contains(&item.service.service_id) {
+            sendable_reserved.push(item);
+        } else {
+            state
+                .db
+                .finalize_new_version_notification(&item.record_id, &[], None, now_rfc3339)
+                .await?;
+        }
+    }
+
+    if sendable_reserved.is_empty() {
+        log_new_version_notification_skip(
+            state,
+            check_job_id,
+            now_rfc3339,
+            format!(
+                "new-version notification skipped: all {} services no longer have matching active candidates",
+                discovered_total
+            ),
+        )
+        .await;
+        return Ok(());
+    }
+
+    let reserved_services = sendable_reserved
         .iter()
         .map(|item| item.service.clone())
         .collect::<Vec<_>>();
@@ -132,7 +182,7 @@ pub async fn notify_new_versions_discovered(
         Ok(results) => results,
         Err(err) => {
             let err_text = err.to_string();
-            for item in &reserved {
+            for item in &sendable_reserved {
                 let _ = state
                     .db
                     .finalize_new_version_notification(
@@ -149,7 +199,7 @@ pub async fn notify_new_versions_discovered(
 
     let sent_channels = successful_delivery_channels(&results);
     let last_error = failed_delivery_error(&results);
-    for item in &reserved {
+    for item in &sendable_reserved {
         let _ = state
             .db
             .finalize_new_version_notification(
@@ -330,6 +380,64 @@ fn should_send_channel(
 struct ReservedNewVersionNotification {
     record_id: String,
     service: NewVersionDiscoveredService,
+}
+
+fn new_version_candidate_matches_current_state(
+    item: &NewVersionDiscoveredService,
+    current: &crate::db::CurrentNewVersionNotificationTarget,
+) -> bool {
+    current.image_ref == item.image_ref
+        && current.image_tag == item.current_tag
+        && current.candidate_digest.as_deref() == Some(item.candidate_digest.as_str())
+}
+
+async fn revalidate_new_version_discovered_services(
+    state: &AppState,
+    discovered_services: &[NewVersionDiscoveredService],
+) -> anyhow::Result<Vec<NewVersionDiscoveredService>> {
+    let service_ids = discovered_services
+        .iter()
+        .map(|service| service.service_id.clone())
+        .collect::<Vec<_>>();
+    let current_targets = state
+        .db
+        .list_current_new_version_notification_targets(&service_ids)
+        .await?;
+    let current_by_service = current_targets
+        .into_iter()
+        .map(|target| (target.service_id.clone(), target))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    Ok(discovered_services
+        .iter()
+        .filter(|service| {
+            current_by_service
+                .get(&service.service_id)
+                .is_some_and(|current| {
+                    new_version_candidate_matches_current_state(service, current)
+                })
+        })
+        .cloned()
+        .collect())
+}
+
+async fn log_new_version_notification_skip(
+    state: &AppState,
+    check_job_id: &str,
+    now_rfc3339: &str,
+    msg: String,
+) {
+    let _ = state
+        .db
+        .insert_job_log(
+            check_job_id,
+            &JobLogLine {
+                ts: now_rfc3339.to_string(),
+                level: "info".to_string(),
+                msg,
+            },
+        )
+        .await;
 }
 
 fn has_enabled_delivery_channel(settings: &NotificationSettings) -> bool {

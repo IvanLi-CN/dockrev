@@ -452,6 +452,8 @@ WHERE id = ?1
 
             for svc in services {
                 if let Some(id) = existing_by_name.get(&svc.name) {
+                    let image_ref = svc.image_ref.clone();
+                    let image_tag = svc.image_tag.clone();
                     tx.execute(
                         r#"
 UPDATE services
@@ -472,7 +474,15 @@ SET
   updated_at = ?4
 WHERE id = ?1
 "#,
-                        params![id, svc.image_ref, svc.image_tag, now],
+                        params![id, image_ref, image_tag, now],
+                    )?;
+                    super::new_version_notifications::reconcile_service_new_version_notifications_tx(
+                        &tx,
+                        id,
+                        &svc.image_ref,
+                        &svc.image_tag,
+                        None,
+                        &now,
                     )?;
                     keep_ids.push(id.clone());
                 } else {

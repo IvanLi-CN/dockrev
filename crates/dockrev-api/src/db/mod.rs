@@ -156,6 +156,14 @@ pub enum NewVersionNotificationReserveResult {
     SkippedDuplicate,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CurrentNewVersionNotificationTarget {
+    pub service_id: String,
+    pub image_ref: String,
+    pub image_tag: String,
+    pub candidate_digest: Option<String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct GithubWebhookServiceTarget {
     pub stack_id: String,

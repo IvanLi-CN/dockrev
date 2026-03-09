@@ -55,7 +55,8 @@
   - `candidate_tag`、`candidate_display_tag`、`candidate_digest`
   - `status`、`sent_channels_json`、`created_at`、`sent_at`、`superseded_at`、`last_error`
 - 去重键为 `service_id + candidate_digest`，且仅对 active 记录（`pending` / `sent`）生效。
-- 发送流程必须为：先 reserve `pending`，再发送，最后 finalize 为 `sent` 或 `failed`。
+- 发送流程必须为：先 reserve `pending`，再发送，最后 finalize 为 `sent` 或 `failed`；若记录在发送过程中已被判定失效，finalize 仍需保留审计字段但不得重新占用 active 去重位。
+- reserve 与实际发送前都必须按 service 当前持久化状态回读校验；若候选已清空、`image_ref/image_tag` 已变化、或 `candidate_digest` 已不再匹配，则本轮通知必须静默跳过。
 - 当 service 候选清空、`image_ref/image_tag` 变化、或候选 digest 变化时，旧 active 记录必须自动转为 `superseded`。
 - 若所有已启用渠道都发送失败，则该记录必须为 `failed`，不得继续占用 active 去重位。
 - `dockrev.notification.new_version_discovered.v2` 保持兼容；保留 `currentTag` / `candidateTag`，新增可选 `currentDisplayTag` / `candidateDisplayTag`。
@@ -99,6 +100,8 @@
 
 ## 验证记录
 
+- `cargo test -p dockrev-api webhook_notifications_filter_to_matched_service_ids -- --nocapture`
+- `cargo test -p dockrev-api stale_new_version_notifications_are_skipped_when_candidate_was_cleared -- --nocapture`
 - `cargo test -p dockrev-api new_version_notification -- --nocapture`
 - `cargo test -p dockrev-api notify -- --nocapture`
 - `cargo test -p dockrev-api`
@@ -109,3 +112,4 @@
 
 - 2026-03-09：创建规格，冻结“通知记录表去重 + display tag 版本展示”的实现边界与验收标准。
 - 2026-03-09：完成通知记录表、去重 reserve/finalize/reconcile 链路、payload display tag 扩展、中英文文档与回归测试。
+- 2026-03-09：补强失效候选的二次校验、`pending -> superseded` 审计保留、以及 compose sync / runtime fallback 的活跃记录释放语义。

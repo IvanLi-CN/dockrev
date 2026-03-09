@@ -370,10 +370,6 @@ pub(super) fn new_version_notification_reason(
     }
 }
 
-pub(super) fn check_reason_emits_new_version_notification(reason: &str) -> bool {
-    reason.eq_ignore_ascii_case("schedule") || reason.eq_ignore_ascii_case("webhook")
-}
-
 pub(super) fn summary_emits_new_version_notification(summary: &serde_json::Value) -> bool {
     summary
         .get("source")
@@ -385,12 +381,13 @@ pub(super) fn summary_matched_service_ids(
     summary: &serde_json::Value,
 ) -> Option<std::collections::HashSet<String>> {
     let items = summary.get("matchedServiceIds")?.as_array()?;
-    let ids = items
-        .iter()
-        .filter_map(|value| value.as_str())
-        .map(ToString::to_string)
-        .collect::<std::collections::HashSet<_>>();
-    if ids.is_empty() { None } else { Some(ids) }
+    Some(
+        items
+            .iter()
+            .filter_map(|value| value.as_str())
+            .map(ToString::to_string)
+            .collect::<std::collections::HashSet<_>>(),
+    )
 }
 
 pub(super) fn merge_job_summary(
@@ -428,8 +425,7 @@ pub(super) async fn maybe_notify_check_new_versions(
         return Ok(());
     }
 
-    if !check_reason_emits_new_version_notification(reason)
-        && summary_emits_new_version_notification(summary)
+    if summary_emits_new_version_notification(summary)
         && let Some(matched_service_ids) = summary_matched_service_ids(summary)
     {
         discovered_services.retain(|service| matched_service_ids.contains(&service.service_id));
