@@ -33,3 +33,8 @@ build/
 !.codex/skills/ui-ux-pro-max/**
 .codex/skills/ui-ux-pro-max/scripts/__pycache__/
 .codex/skills/ui-ux-pro-max/scripts/**/*.pyc
+
+!.codex/skills/style-topic-quality-gates/
+!.codex/skills/style-topic-quality-gates/**
+.codex/skills/style-topic-quality-gates/scripts/__pycache__/
+.codex/skills/style-topic-quality-gates/scripts/**/*.pyc
