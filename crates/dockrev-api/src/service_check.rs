@@ -112,9 +112,10 @@ pub(crate) async fn check_service_and_persist(
             .await
             .ok();
     }
-    let current_digest_registry = current_manifest
+    let current_manifest_digest = current_manifest
         .as_ref()
         .and_then(|m| m.digest.clone().or(m.platform_digest.clone()));
+    let current_digest_registry = current_manifest_digest.clone();
     let effective_current_digest = runtime_digest.clone().or(current_digest_registry.clone());
     // Persist the best-known digest so that pinned tags and offline/missing compose projects
     // don't lose observability just because the runtime digest is unavailable.
@@ -169,6 +170,11 @@ pub(crate) async fn check_service_and_persist(
 
     let candidate_present = candidate_tag.is_some();
     let candidate_digest_changed = candidate_digest.as_deref() != svc.candidate_digest.as_deref();
+    // Only let an in-memory check supersede active notification records when the candidate state
+    // is authoritative. Missing runtime state or transient registry failures can clear the service
+    // row temporarily, but they should not reopen the same digest for re-notification.
+    let candidate_state_authoritative =
+        runtime_digest.is_some() && current_manifest_digest.is_some();
 
     let mut ignore_match: Option<(String, String)> = None;
     if let Some(ref tag) = candidate_tag
@@ -221,6 +227,18 @@ pub(crate) async fn check_service_and_persist(
             now,
         )
         .await?;
+    if candidate_state_authoritative {
+        state
+            .db
+            .reconcile_service_new_version_notifications(
+                &svc.id,
+                &svc.image_ref,
+                &svc.image_tag,
+                candidate_digest.as_deref(),
+                now,
+            )
+            .await?;
+    }
 
     Ok(ServiceCheckOutcome {
         current_digest,
@@ -237,6 +255,36 @@ pub(crate) async fn check_service_and_persist(
         candidate_present,
         candidate_digest_changed,
     })
+}
+
+pub(crate) async fn persist_runtime_fallback_result(
+    db: &crate::db::Db,
+    service_id: &str,
+    _image_ref: &str,
+    _image_tag: &str,
+    runtime_digest: &str,
+    now: &str,
+) -> anyhow::Result<()> {
+    db.update_service_check_result(
+        service_id,
+        Some(runtime_digest.to_string()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        now,
+        now,
+    )
+    .await?;
+    // This fallback means registry inference was inconclusive for the current runtime digest, so
+    // keep any active notification record until a later authoritative check confirms the candidate
+    // changed or truly disappeared.
+    Ok(())
 }
 
 #[allow(dead_code)]
@@ -647,7 +695,68 @@ async fn persist_digest_tags_snapshots_best_effort(
 
 #[cfg(test)]
 mod tests {
-    use super::pick_considered_tags_for_snapshot;
+    use std::{collections::BTreeMap, path::Path};
+
+    use super::{persist_runtime_fallback_result, pick_considered_tags_for_snapshot};
+    use crate::{
+        api::types::{BackupRetention, ComposeConfig, StackBackupConfig},
+        db::{Db, NewVersionNotificationPending, NewVersionNotificationReserveResult},
+        models::{ServiceSeed, StackRecord},
+    };
+
+    async fn seed_service(db: &Db) -> (String, String) {
+        let stack_id = "stack_1".to_string();
+        let service_id = "svc_1".to_string();
+        let now = "2026-03-09T00:00:00Z";
+        let stack = StackRecord {
+            id: stack_id.clone(),
+            name: "demo".to_string(),
+            archived: false,
+            compose: ComposeConfig {
+                kind: "compose".to_string(),
+                compose_files: vec!["/tmp/demo.yml".to_string()],
+                env_file: None,
+            },
+            backup: StackBackupConfig {
+                targets: Vec::new(),
+                retention: BackupRetention::default(),
+            },
+            services: Vec::new(),
+        };
+        let seeds = vec![ServiceSeed {
+            id: service_id.clone(),
+            name: "web".to_string(),
+            image_ref: "ghcr.io/acme/web:latest".to_string(),
+            image_tag: "latest".to_string(),
+            auto_rollback: false,
+            backup_bind_paths: BTreeMap::new(),
+            backup_volume_names: BTreeMap::new(),
+        }];
+        db.insert_stack(&stack, &seeds, now).await.unwrap();
+        (stack_id, service_id)
+    }
+
+    fn pending_notification(
+        id: &str,
+        service_id: &str,
+        candidate_digest: &str,
+        created_at: &str,
+    ) -> NewVersionNotificationPending {
+        NewVersionNotificationPending {
+            id: id.to_string(),
+            service_id: service_id.to_string(),
+            job_id: "job_1".to_string(),
+            reason: "schedule".to_string(),
+            image_ref: "ghcr.io/acme/web:latest".to_string(),
+            image_tag: "latest".to_string(),
+            current_tag: "latest".to_string(),
+            current_display_tag: "1.0.0".to_string(),
+            candidate_tag: "latest".to_string(),
+            candidate_display_tag: "1.1.0".to_string(),
+            candidate_digest: candidate_digest.to_string(),
+            created_at: created_at.to_string(),
+        }
+    }
 
     #[test]
     fn anchors_are_kept_even_if_non_parseable() {
@@ -694,6 +803,151 @@ mod tests {
             considered.last().map(String::as_str),
             Some("n05"),
             "fallback should include only top 20 non-parseable tags"
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_fallback_keeps_sent_notification_active_until_authoritative_clear() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let (_stack_id, service_id) = seed_service(&db).await;
+        let now = "2026-03-09T00:00:00Z";
+        db.update_service_check_result(
+            &service_id,
+            Some("sha256:old".to_string()),
+            Some("1.0.0".to_string()),
+            Some("[\"1.0.0\"]".to_string()),
+            Some("latest".to_string()),
+            Some("1.1.0".to_string()),
+            Some("sha256:new".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            now,
+            now,
+        )
+        .await
+        .unwrap();
+        let reserved = db
+            .reserve_new_version_notification(&pending_notification(
+                "nvn_1",
+                &service_id,
+                "sha256:new",
+                now,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            reserved,
+            NewVersionNotificationReserveResult::Reserved("nvn_1".to_string())
+        );
+        db.finalize_new_version_notification(
+            "nvn_1",
+            &["webhook".to_string()],
+            None,
+            "2026-03-09T00:00:30Z",
+        )
+        .await
+        .unwrap();
+
+        persist_runtime_fallback_result(
+            &db,
+            &service_id,
+            "ghcr.io/acme/web:latest",
+            "latest",
+            "sha256:runtime",
+            "2026-03-09T00:01:00Z",
+        )
+        .await
+        .unwrap();
+
+        let rows = db
+            .list_new_version_notifications_for_service(&service_id)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].status, "sent");
+        assert_eq!(rows[0].superseded_at.as_deref(), None);
+    }
+
+    #[tokio::test]
+    async fn settle_fallback_keeps_same_digest_deduped_until_authoritative_clear() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let (stack_id, service_id) = seed_service(&db).await;
+        let now = "2026-03-09T00:00:00Z";
+        db.update_service_check_result(
+            &service_id,
+            Some("sha256:old".to_string()),
+            Some("1.0.0".to_string()),
+            Some("[\"1.0.0\"]".to_string()),
+            Some("latest".to_string()),
+            Some("1.1.0".to_string()),
+            Some("sha256:new".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            now,
+            now,
+        )
+        .await
+        .unwrap();
+        let reserved = db
+            .reserve_new_version_notification(&pending_notification(
+                "nvn_1",
+                &service_id,
+                "sha256:new",
+                now,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            reserved,
+            NewVersionNotificationReserveResult::Reserved("nvn_1".to_string())
+        );
+        db.finalize_new_version_notification(
+            "nvn_1",
+            &["webhook".to_string()],
+            None,
+            "2026-03-09T00:00:30Z",
+        )
+        .await
+        .unwrap();
+
+        persist_runtime_fallback_result(
+            &db,
+            &service_id,
+            "ghcr.io/acme/web:latest",
+            "latest",
+            "sha256:runtime",
+            "2026-03-09T00:01:00Z",
+        )
+        .await
+        .unwrap();
+
+        let stack = db.get_stack(&stack_id).await.unwrap().unwrap();
+        let service = stack
+            .services
+            .iter()
+            .find(|svc| svc.id == service_id)
+            .unwrap();
+        assert_eq!(service.image.digest.as_deref(), Some("sha256:runtime"));
+        assert_eq!(service.image.resolved_tag, None);
+        assert_eq!(service.image.resolved_tags, None);
+        assert!(service.candidate.is_none());
+
+        let retried = db
+            .reserve_new_version_notification(&pending_notification(
+                "nvn_2",
+                &service_id,
+                "sha256:new",
+                "2026-03-09T00:02:00Z",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            retried,
+            NewVersionNotificationReserveResult::SkippedDuplicate
         );
     }
 }

@@ -1673,6 +1673,34 @@ async fn wait_for_job_terminal(
     panic!("timed out waiting for job {job_id} to finish");
 }
 
+async fn wait_for_job_log_contains(state: &Arc<AppState>, job_id: &str, needle: &str) {
+    for _ in 0..300 {
+        let logs = state.db.list_job_logs(job_id).await.unwrap();
+        if logs.iter().any(|line| line.msg.contains(needle)) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("timed out waiting for job {job_id} log containing {needle}");
+}
+
+async fn insert_check_job(state: &Arc<AppState>, reason: &str, now: &str) -> String {
+    let job_id = ids::new_check_id();
+    let mut job = crate::api::types::JobRecord::new_running(
+        job_id.clone(),
+        crate::api::types::JobType::Check,
+        crate::api::types::JobScope::All,
+        None,
+        None,
+        now,
+    )
+    .to_db();
+    job.created_by = reason.to_string();
+    job.reason = reason.to_string();
+    state.db.insert_job(job).await.unwrap();
+    job_id
+}
+
 async fn configure_webhook_notifications(
     state: &Arc<AppState>,
 ) -> (
@@ -9533,6 +9561,7 @@ services:
         job.summary_json["deliveryId"].as_str(),
         Some("notify-reuse-1")
     );
+    wait_for_job_log_contains(&state, &job_id, "notify: webhook=ok").await;
     let logs = state.db.list_job_logs(&job_id).await.unwrap();
     assert!(
         logs.iter()
@@ -9683,8 +9712,25 @@ services:
     assert_eq!(payload["kind"].as_str(), Some("new_version_discovered"));
     assert_eq!(payload["channel"].as_str(), Some("webhook"));
     assert_eq!(payload["check"]["jobId"].as_str(), Some(job_id.as_str()));
+    assert_eq!(
+        payload["links"]["serviceUrls"][0]["currentTag"].as_str(),
+        Some("5.2")
+    );
+    assert_eq!(
+        payload["links"]["serviceUrls"][0]["candidateTag"].as_str(),
+        Some("5.2")
+    );
+    assert_eq!(
+        payload["links"]["serviceUrls"][0]["currentDisplayTag"].as_str(),
+        Some("5.2")
+    );
+    assert_eq!(
+        payload["links"]["serviceUrls"][0]["candidateDisplayTag"].as_str(),
+        Some("5.2")
+    );
 
     let job = wait_for_job_terminal(&state, &job_id).await;
+    wait_for_job_log_contains(&state, &job_id, "notify: webhook=ok").await;
     let logs = state.db.list_job_logs(&job_id).await.unwrap();
     assert!(job.finished_at.is_some());
     assert!(
@@ -9692,6 +9738,616 @@ services:
             .any(|line| line.msg.contains("notify: webhook=ok"))
     );
     server.abort();
+}
+
+#[tokio::test]
+async fn schedule_new_version_notifications_are_deduped_by_active_record() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+
+    let compose_path = format!("/tmp/dockrev-schedule-notify-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            Some("sha256:old".to_string()),
+            Some("1.0.0".to_string()),
+            Some("[\"1.0.0\"]".to_string()),
+            Some("latest".to_string()),
+            Some("1.1.0".to_string()),
+            Some("sha256:new".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            "2026-03-09T00:00:00Z",
+            "2026-03-09T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    let discovered = vec![crate::notify::NewVersionDiscoveredService {
+        stack_id: stack_id.clone(),
+        service_id: service.id.clone(),
+        image_ref: service.image_ref.clone(),
+        current_tag: "latest".to_string(),
+        current_display_tag: "1.0.0".to_string(),
+        candidate_tag: "latest".to_string(),
+        candidate_display_tag: "1.1.0".to_string(),
+        candidate_digest: "sha256:new".to_string(),
+    }];
+    let (mut rx, server) = configure_webhook_notifications(&state).await;
+
+    let first_now = "2026-03-09T00:00:00Z";
+    let first_job_id = insert_check_job(&state, "schedule", first_now).await;
+    crate::notify::notify_new_versions_discovered(
+        state.as_ref(),
+        &first_job_id,
+        "schedule",
+        first_now,
+        1,
+        &discovered,
+    )
+    .await
+    .unwrap();
+
+    let first_payload = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .expect("webhook receive timeout")
+        .expect("notification payload missing");
+    assert_eq!(
+        first_payload["check"]["jobId"].as_str(),
+        Some(first_job_id.as_str())
+    );
+    let first_service = &first_payload["links"]["serviceUrls"][0];
+    assert_eq!(first_service["currentDisplayTag"].as_str(), Some("1.0.0"));
+    assert_eq!(first_service["candidateDisplayTag"].as_str(), Some("1.1.0"));
+    let summary = first_payload["human"]["summary"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(summary.contains("1.0.0 -> 1.1.0"));
+    assert!(!summary.contains("latest -> latest"));
+
+    let second_now = "2026-03-09T00:01:00Z";
+    let second_job_id = insert_check_job(&state, "schedule", second_now).await;
+    crate::notify::notify_new_versions_discovered(
+        state.as_ref(),
+        &second_job_id,
+        "schedule",
+        second_now,
+        1,
+        &discovered,
+    )
+    .await
+    .unwrap();
+
+    let received = tokio::time::timeout(Duration::from_millis(300), rx.recv()).await;
+    assert!(
+        received.is_err(),
+        "duplicate schedule notification should be skipped"
+    );
+
+    let rows = state
+        .db
+        .list_new_version_notifications_for_service(&service.id)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].status, "sent");
+    assert_eq!(rows[0].reason, "schedule");
+
+    let logs = state.db.list_job_logs(&second_job_id).await.unwrap();
+    assert!(logs.iter().any(|line| {
+        line.msg.contains(
+            "new-version notification skipped: all 1 services already have active records",
+        )
+    }));
+    server.abort();
+}
+
+#[tokio::test]
+async fn webhook_notifications_filter_to_matched_service_ids() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+
+    let compose_path = format!(
+        "/tmp/dockrev-webhook-filter-notify-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+  worker:
+    image: ghcr.io/acme/worker:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let web = services
+        .iter()
+        .find(|service| service.name == "web")
+        .unwrap()
+        .clone();
+    let worker = services
+        .iter()
+        .find(|service| service.name == "worker")
+        .unwrap()
+        .clone();
+    let now = "2026-03-09T00:00:00Z";
+    for (service, digest, current_display, candidate_display) in [
+        (&web, "sha256:web-new", "1.0.0", "1.1.0"),
+        (&worker, "sha256:worker-new", "2.0.0", "2.1.0"),
+    ] {
+        state
+            .db
+            .update_service_check_result(
+                &service.id,
+                Some(format!("sha256:{}-old", service.name)),
+                Some(current_display.to_string()),
+                Some(format!("[\"{current_display}\"]")),
+                Some(service.image_tag.clone()),
+                Some(candidate_display.to_string()),
+                Some(digest.to_string()),
+                Some("match".to_string()),
+                Some("[\"linux/amd64\"]".to_string()),
+                None,
+                None,
+                now,
+                now,
+            )
+            .await
+            .unwrap();
+    }
+    let (mut rx, server) = configure_webhook_notifications(&state).await;
+    let job_id = insert_check_job(&state, "webhook", now).await;
+    let summary = serde_json::json!({
+        "source": "github_webhook",
+        "matchedServiceIds": [web.id.clone()],
+        "servicesChecked": 2,
+        "newVersions": {
+            "services": [
+                {
+                    "stackId": stack_id.clone(),
+                    "serviceId": web.id.clone(),
+                    "imageRef": web.image_ref.clone(),
+                    "currentTag": web.image_tag.clone(),
+                    "currentDisplayTag": "1.0.0",
+                    "candidateTag": "latest",
+                    "candidateDisplayTag": "1.1.0",
+                    "candidateDigest": "sha256:web-new"
+                },
+                {
+                    "stackId": stack_id.clone(),
+                    "serviceId": worker.id.clone(),
+                    "imageRef": worker.image_ref.clone(),
+                    "currentTag": worker.image_tag.clone(),
+                    "currentDisplayTag": "2.0.0",
+                    "candidateTag": "latest",
+                    "candidateDisplayTag": "2.1.0",
+                    "candidateDigest": "sha256:worker-new"
+                }
+            ]
+        }
+    });
+
+    super::operations::maybe_notify_check_new_versions(&state, &job_id, "webhook", now, &summary)
+        .await
+        .unwrap();
+
+    let payload = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .expect("webhook receive timeout")
+        .expect("notification payload missing");
+    let service_urls = payload["links"]["serviceUrls"].as_array().unwrap();
+    assert_eq!(service_urls.len(), 1);
+    assert!(
+        service_urls[0]["url"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(&web.id)
+    );
+
+    let web_rows = state
+        .db
+        .list_new_version_notifications_for_service(&web.id)
+        .await
+        .unwrap();
+    let worker_rows = state
+        .db
+        .list_new_version_notifications_for_service(&worker.id)
+        .await
+        .unwrap();
+    assert_eq!(web_rows.len(), 1);
+    assert!(worker_rows.is_empty());
+    server.abort();
+}
+
+#[tokio::test]
+async fn stale_new_version_notifications_are_skipped_when_candidate_was_cleared() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+
+    let compose_path = format!("/tmp/dockrev-stale-notify-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            Some("sha256:old".to_string()),
+            Some("1.0.0".to_string()),
+            Some("[\"1.0.0\"]".to_string()),
+            Some("latest".to_string()),
+            Some("1.1.0".to_string()),
+            Some("sha256:new".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            "2026-03-09T00:00:00Z",
+            "2026-03-09T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    let discovered = vec![crate::notify::NewVersionDiscoveredService {
+        stack_id: stack_id.clone(),
+        service_id: service.id.clone(),
+        image_ref: service.image_ref.clone(),
+        current_tag: "latest".to_string(),
+        current_display_tag: "1.0.0".to_string(),
+        candidate_tag: "latest".to_string(),
+        candidate_display_tag: "1.1.0".to_string(),
+        candidate_digest: "sha256:new".to_string(),
+    }];
+    let (mut rx, server) = configure_webhook_notifications(&state).await;
+
+    let active_now = "2026-03-09T00:00:00Z";
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            Some("sha256:old".to_string()),
+            Some("1.0.0".to_string()),
+            Some("[\"1.0.0\"]".to_string()),
+            Some("latest".to_string()),
+            Some("1.1.0".to_string()),
+            Some("sha256:new".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            active_now,
+            active_now,
+        )
+        .await
+        .unwrap();
+
+    let cleared_now = "2026-03-09T00:01:00Z";
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            Some("sha256:old".to_string()),
+            Some("1.0.0".to_string()),
+            Some("[\"1.0.0\"]".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            cleared_now,
+            cleared_now,
+        )
+        .await
+        .unwrap();
+
+    let job_id = insert_check_job(&state, "schedule", cleared_now).await;
+    crate::notify::notify_new_versions_discovered(
+        state.as_ref(),
+        &job_id,
+        "schedule",
+        cleared_now,
+        1,
+        &discovered,
+    )
+    .await
+    .unwrap();
+
+    let received = tokio::time::timeout(Duration::from_millis(300), rx.recv()).await;
+    assert!(
+        received.is_err(),
+        "stale notification should be skipped after candidate clears"
+    );
+
+    let rows = state
+        .db
+        .list_new_version_notifications_for_service(&service.id)
+        .await
+        .unwrap();
+    assert!(rows.is_empty());
+
+    let logs = state.db.list_job_logs(&job_id).await.unwrap();
+    assert!(logs.iter().any(|line| {
+        line.msg.contains("new-version notification skipped: all 1 services no longer have matching active candidates")
+    }));
+    server.abort();
+}
+
+#[tokio::test]
+async fn transient_runtime_unknown_does_not_reopen_same_digest_notification() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(DigestOnlyUpdateRegistry),
+        Arc::new(FakeRunner),
+    )
+    .await;
+
+    let compose_path = format!("/tmp/dockrev-transient-runtime-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let manifest_digest_cache = crate::service_check::new_manifest_digest_cache();
+    let repo_tags_cache = crate::service_check::new_repo_tags_cache();
+
+    let first_check_now = "2026-03-09T00:00:00Z";
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    crate::service_check::check_service_and_persist(
+        &state,
+        "job-check-1",
+        &service,
+        Some("sha256:old".to_string()),
+        "linux/amd64",
+        first_check_now,
+        &manifest_digest_cache,
+        &repo_tags_cache,
+    )
+    .await
+    .unwrap();
+
+    let discovered = vec![crate::notify::NewVersionDiscoveredService {
+        stack_id: stack_id.clone(),
+        service_id: service.id.clone(),
+        image_ref: service.image_ref.clone(),
+        current_tag: "5.2".to_string(),
+        current_display_tag: "5.2".to_string(),
+        candidate_tag: "5.2".to_string(),
+        candidate_display_tag: "5.2".to_string(),
+        candidate_digest: "sha256:new".to_string(),
+    }];
+    let (mut rx, server) = configure_webhook_notifications(&state).await;
+
+    let first_job_id = insert_check_job(&state, "schedule", first_check_now).await;
+    crate::notify::notify_new_versions_discovered(
+        state.as_ref(),
+        &first_job_id,
+        "schedule",
+        first_check_now,
+        1,
+        &discovered,
+    )
+    .await
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .expect("first webhook receive timeout")
+        .expect("first notification payload missing");
+
+    let uncertain_now = "2026-03-09T00:01:00Z";
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    crate::service_check::check_service_and_persist(
+        &state,
+        "job-check-2",
+        &service,
+        None,
+        "linux/amd64",
+        uncertain_now,
+        &manifest_digest_cache,
+        &repo_tags_cache,
+    )
+    .await
+    .unwrap();
+
+    let restored_now = "2026-03-09T00:02:00Z";
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    crate::service_check::check_service_and_persist(
+        &state,
+        "job-check-3",
+        &service,
+        Some("sha256:old".to_string()),
+        "linux/amd64",
+        restored_now,
+        &manifest_digest_cache,
+        &repo_tags_cache,
+    )
+    .await
+    .unwrap();
+
+    let second_job_id = insert_check_job(&state, "schedule", restored_now).await;
+    crate::notify::notify_new_versions_discovered(
+        state.as_ref(),
+        &second_job_id,
+        "schedule",
+        restored_now,
+        1,
+        &discovered,
+    )
+    .await
+    .unwrap();
+
+    let received = tokio::time::timeout(Duration::from_millis(300), rx.recv()).await;
+    assert!(
+        received.is_err(),
+        "same digest should remain deduped after an inconclusive runtime check"
+    );
+
+    let rows = state
+        .db
+        .list_new_version_notifications_for_service(&service.id)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].status, "sent");
+    assert_eq!(rows[0].superseded_at, None);
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn failed_new_version_notification_record_retries_after_all_channels_fail() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+
+    let compose_path = format!("/tmp/dockrev-failed-notify-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            Some("sha256:old".to_string()),
+            Some("1.0.0".to_string()),
+            Some("[\"1.0.0\"]".to_string()),
+            Some("latest".to_string()),
+            Some("1.1.0".to_string()),
+            Some("sha256:new".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            "2026-03-09T00:00:00Z",
+            "2026-03-09T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    let discovered = vec![crate::notify::NewVersionDiscoveredService {
+        stack_id: stack_id.clone(),
+        service_id: service.id.clone(),
+        image_ref: service.image_ref.clone(),
+        current_tag: "latest".to_string(),
+        current_display_tag: "1.0.0".to_string(),
+        candidate_tag: "latest".to_string(),
+        candidate_display_tag: "1.1.0".to_string(),
+        candidate_digest: "sha256:new".to_string(),
+    }];
+
+    let failing_app = Router::new().route(
+        "/hook",
+        post(|| async { axum::http::StatusCode::INTERNAL_SERVER_ERROR }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let failing_server = tokio::spawn(async move {
+        axum::serve(listener, failing_app).await.unwrap();
+    });
+    let fail_now = "2026-03-09T00:00:00Z";
+    let mut notification = state.db.get_notification_settings().await.unwrap();
+    notification.webhook_enabled = true;
+    notification.webhook_url = Some(format!("http://{addr}/hook"));
+    notification.event_new_version_enabled = true;
+    state
+        .db
+        .put_notification_settings(&notification, fail_now)
+        .await
+        .unwrap();
+
+    let failed_job_id = insert_check_job(&state, "schedule", fail_now).await;
+    crate::notify::notify_new_versions_discovered(
+        state.as_ref(),
+        &failed_job_id,
+        "schedule",
+        fail_now,
+        1,
+        &discovered,
+    )
+    .await
+    .unwrap();
+
+    let rows = state
+        .db
+        .list_new_version_notifications_for_service(&service.id)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].status, "failed");
+    assert!(
+        rows[0]
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("webhook")
+    );
+
+    let (mut rx, success_server) = configure_webhook_notifications(&state).await;
+    let retry_now = "2026-03-09T00:01:00Z";
+    let retry_job_id = insert_check_job(&state, "schedule", retry_now).await;
+    crate::notify::notify_new_versions_discovered(
+        state.as_ref(),
+        &retry_job_id,
+        "schedule",
+        retry_now,
+        1,
+        &discovered,
+    )
+    .await
+    .unwrap();
+
+    let payload = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .expect("webhook receive timeout")
+        .expect("notification payload missing");
+    assert_eq!(
+        payload["check"]["jobId"].as_str(),
+        Some(retry_job_id.as_str())
+    );
+
+    let rows = state
+        .db
+        .list_new_version_notifications_for_service(&service.id)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].status, "failed");
+    assert_eq!(rows[1].status, "sent");
+
+    success_server.abort();
+    failing_server.abort();
 }
 
 #[tokio::test]

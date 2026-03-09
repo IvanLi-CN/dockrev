@@ -12,6 +12,7 @@ mod backups;
 mod discovery;
 mod github_packages;
 mod jobs;
+mod new_version_notifications;
 mod resource_usage;
 mod settings;
 mod snapshots;
@@ -110,6 +111,58 @@ pub struct ServiceResourceTarget {
     pub service_id: String,
     pub service_name: String,
     pub compose_project: String,
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewVersionNotificationRecord {
+    pub id: String,
+    pub service_id: String,
+    pub job_id: String,
+    pub reason: String,
+    pub image_ref: String,
+    pub image_tag: String,
+    pub current_tag: String,
+    pub current_display_tag: String,
+    pub candidate_tag: String,
+    pub candidate_display_tag: String,
+    pub candidate_digest: String,
+    pub status: String,
+    pub sent_channels: Vec<String>,
+    pub created_at: String,
+    pub sent_at: Option<String>,
+    pub superseded_at: Option<String>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct NewVersionNotificationPending {
+    pub id: String,
+    pub service_id: String,
+    pub job_id: String,
+    pub reason: String,
+    pub image_ref: String,
+    pub image_tag: String,
+    pub current_tag: String,
+    pub current_display_tag: String,
+    pub candidate_tag: String,
+    pub candidate_display_tag: String,
+    pub candidate_digest: String,
+    pub created_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NewVersionNotificationReserveResult {
+    Reserved(String),
+    SkippedDuplicate,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CurrentNewVersionNotificationTarget {
+    pub service_id: String,
+    pub image_ref: String,
+    pub image_tag: String,
+    pub candidate_digest: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -450,6 +503,7 @@ impl Db {
             ensure_schema_migrations_table(conn)?;
             apply_migration_0007_remove_manual_stacks(conn)?;
             apply_migration_0008_drop_version_inference_snapshots(conn)?;
+            apply_migration_0009_add_new_version_notifications(conn)?;
             auto_archive_missing_discovery_projects_on_startup(conn)?;
             Ok(())
         })
@@ -1167,6 +1221,48 @@ fn apply_migration_0008_drop_version_inference_snapshots(
     Ok(())
 }
 
+fn apply_migration_0009_add_new_version_notifications(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0009_add_new_version_notifications";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute_batch(
+        r#"
+CREATE TABLE IF NOT EXISTS new_version_notifications (
+  id TEXT PRIMARY KEY NOT NULL,
+  service_id TEXT NOT NULL,
+  job_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  image_ref TEXT NOT NULL,
+  image_tag TEXT NOT NULL,
+  current_tag TEXT NOT NULL,
+  current_display_tag TEXT NOT NULL,
+  candidate_tag TEXT NOT NULL,
+  candidate_display_tag TEXT NOT NULL,
+  candidate_digest TEXT NOT NULL,
+  status TEXT NOT NULL,
+  sent_channels_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  sent_at TEXT,
+  superseded_at TEXT,
+  last_error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_new_version_notifications_service_status
+  ON new_version_notifications(service_id, status, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_new_version_notifications_active_service_digest
+  ON new_version_notifications(service_id, candidate_digest)
+  WHERE status IN ('pending', 'sent');
+"#,
+    )?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
 fn auto_archive_missing_discovery_projects_on_startup(
     conn: &rusqlite::Connection,
 ) -> anyhow::Result<()> {
@@ -1363,6 +1459,31 @@ CREATE TABLE IF NOT EXISTS github_packages_delivery_events (
 );
 CREATE INDEX IF NOT EXISTS idx_github_packages_delivery_events_delivery_id
   ON github_packages_delivery_events(delivery_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS new_version_notifications (
+  id TEXT PRIMARY KEY NOT NULL,
+  service_id TEXT NOT NULL,
+  job_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  image_ref TEXT NOT NULL,
+  image_tag TEXT NOT NULL,
+  current_tag TEXT NOT NULL,
+  current_display_tag TEXT NOT NULL,
+  candidate_tag TEXT NOT NULL,
+  candidate_display_tag TEXT NOT NULL,
+  candidate_digest TEXT NOT NULL,
+  status TEXT NOT NULL,
+  sent_channels_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  sent_at TEXT,
+  superseded_at TEXT,
+  last_error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_new_version_notifications_service_status
+  ON new_version_notifications(service_id, status, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_new_version_notifications_active_service_digest
+  ON new_version_notifications(service_id, candidate_digest)
+  WHERE status IN ('pending', 'sent');
 
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY NOT NULL,

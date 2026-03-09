@@ -131,6 +131,13 @@ Dockrev 会生成两类路径（总能生成）：
 
 触发条件：由**定时检查更新任务**或 **GHCR webhook 触发的服务检查**触发；当某次检查发现新的可更新服务时，按任务聚合发送。UI 手动 check 保持静默，不发送该通知。
 
+去重与生命周期：
+
+- active 去重键为 `serviceId + candidateDigest`
+- 只有 `pending` / `sent` 状态会阻止重复通知
+- 当候选消失、候选 digest 变化、或服务基线 `imageRef:imageTag` 改变时，旧 active 记录会转成 `superseded`
+- 当本次所有已启用渠道都失败时，记录会落为 `failed`，后续任务仍可重试
+
 关键字段：
 
 - `check.jobId`：对应检查任务 ID
@@ -138,6 +145,8 @@ Dockrev 会生成两类路径（总能生成）：
 - `check.newVersions`：本次发现新版本的服务数
 - `links.jobUrl`：任务详情页（`/queue/{jobId}`）
 - `links.serviceUrls[]`：服务详情链接（`/services/{stackId}/{serviceId}`）
+- `links.serviceUrls[].currentTag` / `candidateTag`：保留 raw tag，兼容既有 webhook 消费方
+- `links.serviceUrls[].currentDisplayTag` / `candidateDisplayTag`：新增可选 display tag，优先使用 resolved version/tag，缺失时回退 raw tag
 - `links.primaryUrl`：若仅 1 个服务则指向服务详情，否则指向任务详情
 
 截断规则：
@@ -148,7 +157,7 @@ Dockrev 会生成两类路径（总能生成）：
 示例（摘要）：
 
 - 标题：`Dockrev：发现新版本`
-- 摘要：`发现 3 个服务有新版本：blog / api、blog / worker、shop / gateway。`
+- 摘要：`发现 3 个服务有新版本：blog / api（1.0.0 -> 1.1.0）、blog / worker（1.0.0 -> 1.1.0）、shop / gateway（2.4.0 -> 2.5.0）。`
 - 主链接：`https://dockrev.example.com/queue/job_...`（多服务）或服务详情（单服务）
 
 ## GHCR webhook anomaly（`dockrev.notification.ghcr_webhook_anomaly.v2`）
