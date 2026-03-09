@@ -46,6 +46,8 @@ export type DockrevApiScenario =
   | 'version-tags-popover-snapshot-pending'
   | 'version-tags-popover-snapshot-missing'
   | 'multi-stack-mixed'
+  | 'aggregate-dockrev-guard'
+  | 'aggregate-dockrev-only'
   | 'overview-jobs-card-heavy-inflight'
   | 'overview-jobs-card-running-progress-modes'
   | 'overview-jobs-card-terminal-only'
@@ -2267,6 +2269,97 @@ function buildSettingsConfigured(): Fixture {
   return f
 }
 
+function buildAggregateDockrevGuard(): Fixture {
+  const f = baseEmpty()
+  const lastCheckAt = '2026-01-18T06:10:00.000Z'
+  const stackId = 'stack-aggregate-guard'
+  const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
+
+  const appService = {
+    id: 'svc-aggregate-guard-api',
+    name: 'api',
+    image: { ref: 'ghcr.io/acme/api', tag: '5.2.1', digest: d('a', '01') },
+    candidate: { tag: '5.2.3', digest: d('b', '02'), archMatch: 'match', arch: ['linux/amd64'] },
+    ignore: null,
+    archived: false,
+    settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} } },
+  } satisfies StackDetail['services'][number]
+
+  const dockrevService = {
+    id: 'svc-aggregate-guard-dockrev',
+    name: 'dockrev',
+    image: { ref: 'ghcr.io/ivanli-cn/dockrev', tag: '0.5.0', digest: d('c', '03') },
+    candidate: { tag: '0.5.1', digest: d('d', '04'), archMatch: 'match', arch: ['linux/amd64'] },
+    ignore: null,
+    archived: false,
+    settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} } },
+  } satisfies StackDetail['services'][number]
+
+  const detail = {
+    id: stackId,
+    name: 'aggregate-demo',
+    compose: { type: 'path', composeFiles: ['/srv/aggregate-demo/compose.yml'], envFile: null },
+    services: [appService, dockrevService],
+  } satisfies StackDetail
+
+  f.stacks = [
+    {
+      id: stackId,
+      name: detail.name,
+      status: 'healthy',
+      services: detail.services.length,
+      updates: 2,
+      lastCheckAt,
+    } satisfies StackListItem,
+  ]
+  f.stackById = { [stackId]: detail }
+  f.serviceSettingsById = {
+    [appService.id]: appService.settings,
+    [dockrevService.id]: dockrevService.settings,
+  }
+
+  return f
+}
+
+function buildAggregateDockrevOnly(): Fixture {
+  const f = baseEmpty()
+  const lastCheckAt = '2026-01-18T06:10:00.000Z'
+  const stackId = 'stack-aggregate-dockrev-only'
+  const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
+
+  const dockrevService = {
+    id: 'svc-aggregate-dockrev-only',
+    name: 'dockrev',
+    image: { ref: 'ghcr.io/ivanli-cn/dockrev', tag: '0.5.0', digest: d('e', '05') },
+    candidate: { tag: '0.5.1', digest: d('f', '06'), archMatch: 'match', arch: ['linux/amd64'] },
+    ignore: null,
+    archived: false,
+    settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} } },
+  } satisfies StackDetail['services'][number]
+
+  const detail = {
+    id: stackId,
+    name: 'dockrev-only',
+    compose: { type: 'path', composeFiles: ['/srv/dockrev-only/compose.yml'], envFile: null },
+    services: [dockrevService],
+  } satisfies StackDetail
+
+  f.stacks = [
+    {
+      id: stackId,
+      name: detail.name,
+      status: 'healthy',
+      services: detail.services.length,
+      updates: 1,
+      lastCheckAt,
+    } satisfies StackListItem,
+  ]
+  f.stackById = { [stackId]: detail }
+  f.serviceSettingsById = { [dockrevService.id]: dockrevService.settings }
+
+  return f
+}
+
 function buildSettingsNotificationChannelErrors(): Fixture {
   const f = buildSettingsConfigured()
   f.notifications = {
@@ -2392,6 +2485,8 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'settings-configured' || scenario === 'settings-configured-resolve-slow') return buildSettingsConfigured()
   if (scenario === 'settings-notification-channel-errors') return buildSettingsNotificationChannelErrors()
   if (scenario === 'multi-stack-mixed') return buildMultiStackMixed()
+  if (scenario === 'aggregate-dockrev-guard') return buildAggregateDockrevGuard()
+  if (scenario === 'aggregate-dockrev-only') return buildAggregateDockrevOnly()
   return buildDashboardDemo()
 }
 

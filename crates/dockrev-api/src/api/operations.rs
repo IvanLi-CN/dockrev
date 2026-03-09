@@ -1509,6 +1509,7 @@ pub(super) async fn run_update_job(
                 req.service_id.as_deref(),
                 req.allow_arch_mismatch,
                 req.reason.as_str(),
+                Some(state.config.dockrev_image_repo.as_str()),
             );
             let skipped_version_anomaly = planned_selection.skipped_version_anomaly.clone();
             let planned_service_ids = planned_selection
@@ -1516,14 +1517,15 @@ pub(super) async fn run_update_job(
                 .iter()
                 .map(|svc| svc.id.clone())
                 .collect::<Vec<_>>();
-            let no_actionable_services_after_anomaly_skip = req.mode.as_str() == "apply"
+            let no_actionable_services =
+                req.mode.as_str() == "apply" && planned_selection.services.is_empty();
+            let no_actionable_services_after_anomaly_skip = no_actionable_services
                 && !req.reason.as_str().eq_ignore_ascii_case("ui")
-                && planned_selection.services.is_empty()
                 && !skipped_version_anomaly.is_empty();
 
             let mut backup_id_for_cleanup: Option<(String, u32)> = None;
             if req.mode.as_str() == "apply"
-                && !no_actionable_services_after_anomaly_skip
+                && !no_actionable_services
                 && backup::should_run_backup(&backup_settings, req.backup_mode.as_str())
             {
                 let backup_id = ids::new_backup_id();
@@ -1643,6 +1645,8 @@ pub(super) async fn run_update_job(
                     "backup".to_string(),
                     if no_actionable_services_after_anomaly_skip {
                         json!({"status":"skipped","reason":"no_actionable_services_after_anomaly_skip"})
+                    } else if no_actionable_services {
+                        json!({"status":"skipped","reason":"no_actionable_services"})
                     } else if req.mode.as_str() != "apply" {
                         json!({"status":"skipped","reason":"dry_run"})
                     } else {
@@ -1753,6 +1757,7 @@ pub(super) async fn run_update_job(
                 req.target_digest.as_deref(),
                 req.allow_arch_mismatch,
                 req.reason.as_str(),
+                Some(state.config.dockrev_image_repo.as_str()),
                 Some(progress_tx),
             )
             .await;

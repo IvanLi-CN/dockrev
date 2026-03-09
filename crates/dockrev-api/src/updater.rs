@@ -187,6 +187,18 @@ fn detect_semver_downgrade(svc: &crate::api::types::Service) -> Option<(String, 
     None
 }
 
+pub fn is_dockrev_image_ref(image_ref: &str, dockrev_image_repo: Option<&str>) -> bool {
+    let Some(repo) = dockrev_image_repo
+        .map(str::trim)
+        .filter(|repo| !repo.is_empty())
+    else {
+        return false;
+    };
+    image_ref == repo
+        || image_ref.starts_with(&format!("{repo}:"))
+        || image_ref.starts_with(&format!("{repo}@"))
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct UpdateServiceSelection<'a> {
     pub services: Vec<&'a crate::api::types::Service>,
@@ -199,6 +211,7 @@ pub fn select_update_services<'a>(
     service_id: Option<&str>,
     allow_arch_mismatch: bool,
     update_reason: &str,
+    dockrev_image_repo: Option<&str>,
 ) -> UpdateServiceSelection<'a> {
     let mut services = match scope {
         JobScope::All => stack.services.iter().collect::<Vec<_>>(),
@@ -225,6 +238,9 @@ pub fn select_update_services<'a>(
             if !allow_arch_mismatch
                 && matches!(candidate.arch_match, crate::api::types::ArchMatch::Mismatch)
             {
+                return false;
+            }
+            if is_dockrev_image_ref(&svc.image.reference, dockrev_image_repo) {
                 return false;
             }
             true
@@ -296,6 +312,7 @@ pub async fn run_update_job(
     target_digest: Option<&str>,
     allow_arch_mismatch: bool,
     update_reason: &str,
+    dockrev_image_repo: Option<&str>,
     progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
 ) -> anyhow::Result<UpdateOutcome> {
     let compose_cfg = ComposeRunnerConfig {
@@ -306,8 +323,14 @@ pub async fn run_update_job(
         compose: stack.compose.clone(),
     };
 
-    let selection =
-        select_update_services(stack, scope, service_id, allow_arch_mismatch, update_reason);
+    let selection = select_update_services(
+        stack,
+        scope,
+        service_id,
+        allow_arch_mismatch,
+        update_reason,
+        dockrev_image_repo,
+    );
     let services = selection.services;
     let skipped_version_anomaly = selection.skipped_version_anomaly;
 
@@ -1376,6 +1399,149 @@ mod tests {
         }
     }
 
+    fn selection_test_service(id: &str, name: &str, image_reference: &str) -> Service {
+        Service {
+            id: id.to_string(),
+            name: name.to_string(),
+            image: ComposeRef {
+                reference: image_reference.to_string(),
+                tag: "0.29.3".to_string(),
+                digest: None,
+                resolved_tag: None,
+                resolved_tags: None,
+            },
+            candidate: Some(Candidate {
+                tag: "latest".to_string(),
+                resolved_tag: Some("0.29.5".to_string()),
+                digest: "sha256:candidate".to_string(),
+                arch_match: ArchMatch::Match,
+                arch: vec!["linux/amd64".to_string()],
+            }),
+            ignore: None,
+            version_inference: None,
+            settings: ServiceSettings {
+                auto_rollback: true,
+                backup_targets: BackupTargetOverrides {
+                    bind_paths: BTreeMap::<String, TernaryChoice>::new(),
+                    volume_names: BTreeMap::<String, TernaryChoice>::new(),
+                },
+            },
+            archived: None,
+        }
+    }
+
+    #[test]
+    fn aggregate_selection_excludes_dockrev_but_keeps_supervisor() {
+        let stack = StackRecord {
+            id: "stk_guard".to_string(),
+            name: "dockrev-mod".to_string(),
+            archived: false,
+            compose: crate::api::types::ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec!["/srv/dockrev/docker-compose.yml".to_string()],
+                env_file: None,
+            },
+            backup: crate::api::types::StackBackupConfig::default(),
+            services: vec![
+                selection_test_service(
+                    "svc-dockrev",
+                    "dockrev",
+                    "ghcr.io/ivanli-cn/dockrev:0.29.3",
+                ),
+                selection_test_service(
+                    "svc-supervisor",
+                    "dockrev-supervisor",
+                    "ghcr.io/ivanli-cn/dockrev-supervisor:0.29.3",
+                ),
+            ],
+        };
+
+        let selection = select_update_services(
+            &stack,
+            &JobScope::Stack,
+            None,
+            false,
+            "ui",
+            Some("ghcr.io/ivanli-cn/dockrev"),
+        );
+        let ids = selection
+            .services
+            .iter()
+            .map(|svc| svc.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, vec!["svc-supervisor"]);
+    }
+
+    #[test]
+    fn service_scope_still_allows_dockrev_update_selection() {
+        let stack = StackRecord {
+            id: "stk_guard".to_string(),
+            name: "dockrev-mod".to_string(),
+            archived: false,
+            compose: crate::api::types::ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec!["/srv/dockrev/docker-compose.yml".to_string()],
+                env_file: None,
+            },
+            backup: crate::api::types::StackBackupConfig::default(),
+            services: vec![selection_test_service(
+                "svc-dockrev",
+                "dockrev",
+                "ghcr.io/ivanli-cn/dockrev:0.29.3",
+            )],
+        };
+
+        let selection = select_update_services(
+            &stack,
+            &JobScope::Service,
+            Some("svc-dockrev"),
+            false,
+            "ui",
+            Some("ghcr.io/ivanli-cn/dockrev"),
+        );
+
+        assert_eq!(selection.services.len(), 1);
+        assert_eq!(selection.services[0].id, "svc-dockrev");
+    }
+
+    #[tokio::test]
+    async fn aggregate_dockrev_only_update_becomes_noop() {
+        let stack = single_service_stack(
+            "ghcr.io/ivanli-cn/dockrev:0.29.3",
+            Some(Candidate {
+                tag: "latest".to_string(),
+                resolved_tag: Some("0.29.5".to_string()),
+                digest: "sha256:candidate".to_string(),
+                arch_match: ArchMatch::Match,
+                arch: vec!["linux/amd64".to_string()],
+            }),
+        );
+        let runner = FakeRunner::default();
+
+        let outcome = run_update_job(
+            &runner,
+            "docker-compose",
+            IdempotentRetryPolicy::default(),
+            &stack,
+            &JobScope::Stack,
+            None,
+            "live",
+            None,
+            None,
+            false,
+            "ui",
+            Some("ghcr.io/ivanli-cn/dockrev"),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.status, "success");
+        assert_eq!(outcome.summary_json["changedServices"].as_u64(), Some(0));
+        assert!(runner.calls.lock().unwrap().is_empty());
+    }
+
     #[derive(Default)]
     struct RefreshContainerIdRunner {
         step: Mutex<usize>,
@@ -1560,6 +1726,7 @@ mod tests {
             false,
             "ui",
             None,
+            None,
         )
         .await
         .unwrap();
@@ -1616,6 +1783,7 @@ mod tests {
             None,
             false,
             "ui",
+            None,
             None,
         )
         .await
@@ -1676,6 +1844,7 @@ mod tests {
             None,
             false,
             "ui",
+            None,
             Some(tx),
         )
         .await
@@ -2059,6 +2228,7 @@ mod tests {
             false,
             "ui",
             None,
+            None,
         )
         .await
         .unwrap();
@@ -2093,6 +2263,7 @@ mod tests {
             false,
             "ui",
             None,
+            None,
         )
         .await
         .unwrap();
@@ -2118,6 +2289,7 @@ mod tests {
             None,
             false,
             "ui",
+            None,
             None,
         )
         .await
@@ -2153,6 +2325,7 @@ mod tests {
             None,
             false,
             "ui",
+            None,
             None,
         )
         .await
@@ -2352,6 +2525,7 @@ mod tests {
             None,
             false,
             "ui",
+            None,
             None,
         )
         .await

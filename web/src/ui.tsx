@@ -183,7 +183,8 @@ export function Button(props: ButtonProps) {
     </PrimitiveButton>
   )
 
-  return maybeWithTooltip(button, props.hint)
+  const tooltipAnchor = props.hint && disabled ? <span className="btnTooltipAnchor">{button}</span> : button
+  return maybeWithTooltip(tooltipAnchor, props.hint)
 }
 
 export function IconButton(props: {

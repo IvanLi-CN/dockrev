@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { OverviewPage } from '../../pages/OverviewPage'
+import { DOCKREV_AGGREGATE_GUARD_HINT } from '../../aggregateUpdateGuard'
 import { PageHarness } from '../mocks/PageHarness'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 
@@ -53,6 +54,27 @@ const meta: Meta<typeof OverviewPage> = {
 
 export default meta
 type Story = StoryObj<typeof OverviewPage>
+
+const TOOLTIP_WAIT_MS = 240
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function expectStory(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new globalThis.Error(message)
+}
+
+function findButtonByText(root: ParentNode, text: string): HTMLButtonElement | null {
+  return Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.trim() === text) ?? null
+}
+
+async function openTooltip(trigger: HTMLElement): Promise<void> {
+  trigger.dispatchEvent(new PointerEvent('pointermove', { bubbles: true }))
+  trigger.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+  trigger.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+  await sleep(TOOLTIP_WAIT_MS)
+}
 
 export const Default: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
@@ -177,7 +199,7 @@ export const GuideLineLongNames: Story = {
   parameters: { dockrevApiScenario: 'guide-line-long-names' },
   render: () => {
     return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="对齐回归：长 service name（最多两行）">
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="对齐回归：长 stack / service 名称布局">
         {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
       </PageHarness>
     )
@@ -188,7 +210,7 @@ export const ResolvedTag: Story = {
   parameters: { dockrevApiScenario: 'resolved-tag-demo' },
   render: () => {
     return (
-      <PageHarness route={{ name: 'overview' }} title="概览">
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：resolvedTag 展示与触发器内容">
         {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
       </PageHarness>
     )
@@ -251,5 +273,65 @@ export const VersionAnomalyBatchList: Story = {
         {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
       </PageHarness>
     )
+  },
+}
+
+export const AggregateDockrevGuard: Story = {
+  parameters: { dockrevApiScenario: 'aggregate-dockrev-guard' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="聚合更新保护：Dockrev 预览保留但不会参与执行">
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await sleep(180)
+    const doc = canvasElement.ownerDocument
+    const updateAllButton = findButtonByText(canvasElement, '更新全部')
+    expectStory(updateAllButton, 'missing aggregate update-all button')
+
+    updateAllButton.click()
+    await sleep(160)
+
+    const dialog = doc.querySelector<HTMLElement>('[role="alertdialog"]')
+    expectStory(dialog, 'confirm dialog missing after opening aggregate update-all preview')
+    expectStory(dialog.textContent?.includes('1 个（可更新/需确认）'), 'aggregate candidate count should exclude guarded dockrev')
+
+    const guardedItems = doc.querySelectorAll('.modalListItemGuarded')
+    expectStory(guardedItems.length === 1, `expected 1 guarded dockrev preview row, got ${guardedItems.length}`)
+
+    const guardTrigger = doc.querySelector<HTMLButtonElement>('.modalListGuardHintTrigger')
+    expectStory(guardTrigger, 'guard tooltip trigger missing in aggregate preview row')
+    guardTrigger.focus()
+    await sleep(TOOLTIP_WAIT_MS)
+
+    const tooltip = doc.querySelector<HTMLElement>('[role="tooltip"]')
+    expectStory(tooltip?.textContent?.includes(DOCKREV_AGGREGATE_GUARD_HINT), 'guard tooltip text missing for preview row')
+  },
+}
+
+export const AggregateDockrevOnlyDisabled: Story = {
+  parameters: { dockrevApiScenario: 'aggregate-dockrev-only' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="聚合更新保护：仅剩 Dockrev 时直接禁用更新全部">
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await sleep(180)
+    const doc = canvasElement.ownerDocument
+    const updateAllButton = findButtonByText(canvasElement, '更新全部')
+    expectStory(updateAllButton, 'missing aggregate update-all button in dockrev-only story')
+    expectStory(updateAllButton.disabled, 'update-all button should be disabled when only dockrev is guardable')
+
+    const tooltipAnchor = updateAllButton.closest<HTMLElement>('.btnTooltipAnchor')
+    expectStory(tooltipAnchor, 'disabled aggregate button should be wrapped with tooltip anchor')
+    await openTooltip(tooltipAnchor)
+
+    const tooltip = doc.querySelector<HTMLElement>('[role="tooltip"]')
+    expectStory(tooltip?.textContent?.includes(DOCKREV_AGGREGATE_GUARD_HINT), 'disabled aggregate button tooltip missing')
   },
 }
