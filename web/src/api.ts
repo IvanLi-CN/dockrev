@@ -590,6 +590,32 @@ export type ListGitHubPackagesWebhookDeliveriesResponse = {
   deliveries: GitHubPackagesWebhookDelivery[]
 }
 
+export type GitHubPackagesWebhookDeliveryEventPayload = {
+  type: 'github_packages_delivery_event' | string
+  deliveryId: string
+  receivedAt: string
+  firstReceivedAt: string
+  owner?: string | null
+  repo?: string | null
+  fullName?: string | null
+  event?: string | null
+  action?: string | null
+  decision: 'processed' | 'ignored' | 'rejected' | string
+  reason?: string | null
+  responseStatus?: number | null
+  jobId?: string | null
+  jobIds?: string[]
+  attemptCount: number
+}
+
+export type GitHubPackagesWebhookDeliveryEventsErrorPayload = {
+  type: 'github_packages_delivery_events_error' | string
+  error: string
+  afterId: number
+  oldestId?: number | null
+  latestId?: number | null
+}
+
 export type AddGitHubPackagesTargetRequest = {
   input: string
 }
@@ -898,6 +924,19 @@ export function jobsEventsUrl(opts?: { afterId?: number }): string {
 
 export function newJobsEventsSource(opts?: { afterId?: number }): EventSource {
   return new EventSource(jobsEventsUrl(opts), { withCredentials: true })
+}
+
+export function githubPackagesWebhookDeliveriesEventsUrl(opts?: { afterId?: number }): string {
+  const base = apiBaseUrl().replace(/\/$/, '')
+  let url = `${base}/api/github-packages/webhook/deliveries/events`
+  if (opts && typeof opts.afterId === 'number' && Number.isFinite(opts.afterId)) {
+    url += `?afterId=${encodeURIComponent(String(opts.afterId))}`
+  }
+  return url
+}
+
+export function newGitHubPackagesWebhookDeliveriesEventsSource(opts?: { afterId?: number }): EventSource {
+  return new EventSource(githubPackagesWebhookDeliveriesEventsUrl(opts), { withCredentials: true })
 }
 
 export function versionInferenceEventsUrl(opts?: { afterId?: number }): string {

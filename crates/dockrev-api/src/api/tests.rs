@@ -1576,6 +1576,31 @@ fn sign_github_package_payload(secret: &str, payload: &serde_json::Value) -> (Ve
     (payload_bytes, sig)
 }
 
+fn github_delivery_event_payload(
+    delivery_id: &str,
+    received_at: &str,
+    decision: &str,
+    attempt_count: u32,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": "github_packages_delivery_event",
+        "deliveryId": delivery_id,
+        "receivedAt": received_at,
+        "firstReceivedAt": received_at,
+        "owner": "acme",
+        "repo": "widgets",
+        "fullName": "acme/widgets",
+        "event": "package",
+        "action": "published",
+        "decision": decision,
+        "reason": serde_json::Value::Null,
+        "responseStatus": 200,
+        "jobId": serde_json::Value::Null,
+        "jobIds": [],
+        "attemptCount": attempt_count,
+    })
+}
+
 async fn wait_for_job_terminal(
     state: &Arc<AppState>,
     job_id: &str,
@@ -11325,6 +11350,281 @@ async fn github_packages_webhook_deliveries_requires_auth_when_anonymous_disable
             Request::builder()
                 .method("GET")
                 .uri("/api/github-packages/webhook/deliveries")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+}
+
+#[tokio::test]
+async fn github_packages_webhook_delivery_events_stream_emits_new_event() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("text/event-stream")
+    );
+    let mut body = resp.into_body();
+
+    state
+        .db
+        .record_github_packages_delivery(crate::db::GitHubPackagesWebhookDeliveryRecordInput {
+            delivery_id: "evt-new".to_string(),
+            received_at: "2026-03-09T10:00:00Z".to_string(),
+            owner: Some("acme".to_string()),
+            repo: Some("widgets".to_string()),
+            event: Some("package".to_string()),
+            action: Some("published".to_string()),
+            decision: "processed".to_string(),
+            reason: None,
+            response_status: Some(200),
+            job_id: None,
+            job_ids: Vec::new(),
+        })
+        .await
+        .unwrap();
+    let event_id = state
+        .db
+        .insert_github_packages_delivery_event(
+            "evt-new",
+            "2026-03-09T10:00:00Z",
+            &github_delivery_event_payload("evt-new", "2026-03-09T10:00:00Z", "processed", 1)
+                .to_string(),
+        )
+        .await
+        .unwrap();
+
+    let evt = wait_for_sse_event(
+        &mut body,
+        "github_packages_delivery_event",
+        Duration::from_secs(3),
+    )
+    .await;
+    let event_id_s = event_id.to_string();
+    assert_eq!(evt.id.as_deref(), Some(event_id_s.as_str()));
+    let payload: serde_json::Value = serde_json::from_str(&evt.data).unwrap();
+    assert_eq!(payload["deliveryId"].as_str(), Some("evt-new"));
+    assert_eq!(payload["attemptCount"].as_u64(), Some(1));
+    assert_eq!(payload["decision"].as_str(), Some("processed"));
+}
+
+#[tokio::test]
+async fn github_packages_webhook_delivery_events_stream_honors_after_id_and_last_event_id() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    for (delivery_id, ts, attempt_count) in [
+        ("evt-1", "2026-03-09T10:00:00Z", 1_u32),
+        ("evt-2", "2026-03-09T10:05:00Z", 2_u32),
+    ] {
+        state
+            .db
+            .record_github_packages_delivery(crate::db::GitHubPackagesWebhookDeliveryRecordInput {
+                delivery_id: delivery_id.to_string(),
+                received_at: ts.to_string(),
+                owner: Some("acme".to_string()),
+                repo: Some("widgets".to_string()),
+                event: Some("package".to_string()),
+                action: Some("published".to_string()),
+                decision: "processed".to_string(),
+                reason: None,
+                response_status: Some(200),
+                job_id: None,
+                job_ids: Vec::new(),
+            })
+            .await
+            .unwrap();
+        state
+            .db
+            .insert_github_packages_delivery_event(
+                delivery_id,
+                ts,
+                &github_delivery_event_payload(delivery_id, ts, "processed", attempt_count)
+                    .to_string(),
+            )
+            .await
+            .unwrap();
+    }
+
+    let first_id = 1_i64;
+
+    let resp_query = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!(
+                    "/api/github-packages/webhook/deliveries/events?afterId={first_id}"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp_query.status(), 200);
+    let mut body_query = resp_query.into_body();
+    let evt_query = wait_for_sse_event(
+        &mut body_query,
+        "github_packages_delivery_event",
+        Duration::from_secs(3),
+    )
+    .await;
+    let payload_query: serde_json::Value = serde_json::from_str(&evt_query.data).unwrap();
+    assert_eq!(payload_query["deliveryId"].as_str(), Some("evt-2"));
+    assert_eq!(payload_query["attemptCount"].as_u64(), Some(2));
+
+    let resp_header = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries/events")
+                .header("Last-Event-ID", first_id.to_string())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp_header.status(), 200);
+    let mut body_header = resp_header.into_body();
+    let evt_header = wait_for_sse_event(
+        &mut body_header,
+        "github_packages_delivery_event",
+        Duration::from_secs(3),
+    )
+    .await;
+    let payload_header: serde_json::Value = serde_json::from_str(&evt_header.data).unwrap();
+    assert_eq!(payload_header["deliveryId"].as_str(), Some("evt-2"));
+}
+
+#[tokio::test]
+async fn github_packages_webhook_delivery_events_stream_emits_processed_and_duplicate_attempt_updates()
+ {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let mut settings = state.db.get_github_packages_settings().await.unwrap();
+    settings.enabled = true;
+    settings.callback_url = "https://dockrev.example.com/api/webhooks/github-packages".to_string();
+    settings.pat = Some("ghp_example".to_string());
+    settings.webhook_secret = Some("secret123".to_string());
+    state
+        .db
+        .put_github_packages_settings(&settings, &now)
+        .await
+        .unwrap();
+    state
+        .db
+        .put_github_packages_repos(
+            &[(String::from("acme"), String::from("widgets"), true)],
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let app = api::router(state.clone());
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let mut body = resp.into_body();
+
+    let payload = serde_json::json!({
+      "action": "published",
+      "repository": { "full_name": "acme/widgets", "owner": { "login": "acme" } }
+    });
+    let (payload_bytes, sig) = sign_github_package_payload("secret123", &payload);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "evt-dup")
+                .header("X-Hub-Signature-256", sig.clone())
+                .body(Body::from(payload_bytes.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let first_evt = wait_for_sse_event(
+        &mut body,
+        "github_packages_delivery_event",
+        Duration::from_secs(3),
+    )
+    .await;
+    let first_payload: serde_json::Value = serde_json::from_str(&first_evt.data).unwrap();
+    assert_eq!(first_payload["deliveryId"].as_str(), Some("evt-dup"));
+    assert_eq!(first_payload["decision"].as_str(), Some("processed"));
+    assert_eq!(first_payload["attemptCount"].as_u64(), Some(1));
+    assert_eq!(first_payload["responseStatus"].as_u64(), Some(200));
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "evt-dup")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let second_evt = wait_for_sse_event(
+        &mut body,
+        "github_packages_delivery_event",
+        Duration::from_secs(3),
+    )
+    .await;
+    let second_payload: serde_json::Value = serde_json::from_str(&second_evt.data).unwrap();
+    assert_eq!(second_payload["deliveryId"].as_str(), Some("evt-dup"));
+    assert_eq!(second_payload["decision"].as_str(), Some("processed"));
+    assert_eq!(second_payload["attemptCount"].as_u64(), Some(2));
+}
+
+#[tokio::test]
+async fn github_packages_webhook_delivery_events_requires_auth_when_anonymous_disabled() {
+    let state = test_state_auth_required(":memory:").await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/github-packages/webhook/deliveries/events")
                 .body(Body::empty())
                 .unwrap(),
         )

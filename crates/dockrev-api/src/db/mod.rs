@@ -210,6 +210,13 @@ pub struct JobEventLogRow {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub struct GitHubPackagesDeliveryEventRow {
+    pub id: i64,
+    pub payload_json: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct GitHubPackagesWebhookDeliveryRecordInput {
     pub delivery_id: String,
     pub received_at: String,
@@ -491,6 +498,7 @@ impl Db {
             ensure_discovery_schema(conn)?;
             ensure_github_packages_repos_webhook_columns(conn)?;
             ensure_github_packages_deliveries_columns(conn)?;
+            ensure_github_packages_delivery_events_schema(conn)?;
             ensure_schema_migrations_table(conn)?;
             apply_migration_0007_remove_manual_stacks(conn)?;
             apply_migration_0008_drop_version_inference_snapshots(conn)?;
@@ -1101,6 +1109,25 @@ WHERE job_ids_json IS NULL OR trim(job_ids_json) = ''
     Ok(())
 }
 
+fn ensure_github_packages_delivery_events_schema(
+    conn: &rusqlite::Connection,
+) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+CREATE TABLE IF NOT EXISTS github_packages_delivery_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  delivery_id TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  payload_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_github_packages_delivery_events_delivery_id
+  ON github_packages_delivery_events(delivery_id, id DESC);
+"#,
+    )?;
+
+    Ok(())
+}
+
 fn ensure_discovery_schema(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -1422,6 +1449,15 @@ CREATE TABLE IF NOT EXISTS github_packages_deliveries (
 );
 CREATE INDEX IF NOT EXISTS idx_github_packages_deliveries_received_delivery
   ON github_packages_deliveries(received_at DESC, delivery_id DESC);
+
+CREATE TABLE IF NOT EXISTS github_packages_delivery_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  delivery_id TEXT NOT NULL REFERENCES github_packages_deliveries(delivery_id) ON DELETE CASCADE,
+  received_at TEXT NOT NULL,
+  payload_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_github_packages_delivery_events_delivery_id
+  ON github_packages_delivery_events(delivery_id, id DESC);
 
 CREATE TABLE IF NOT EXISTS new_version_notifications (
   id TEXT PRIMARY KEY NOT NULL,

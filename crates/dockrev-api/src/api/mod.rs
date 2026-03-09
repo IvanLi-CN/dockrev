@@ -185,6 +185,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(list_github_packages_webhook_deliveries),
         )
         .route(
+            "/api/github-packages/webhook/deliveries/events",
+            get(github_packages_webhook_delivery_events),
+        )
+        .route(
             "/api/github-packages/sync",
             post(sync_github_packages_webhooks),
         )
