@@ -533,7 +533,7 @@ async fn load_new_version_notification_settle_targets(
             {
                 load_notification_snapshot_ready(state, image_repo, current_digest, host_platform)
                     .await?
-                    .unwrap_or(true)
+                    .unwrap_or(false)
             } else {
                 false
             };
@@ -726,15 +726,27 @@ fn best_notification_display_tag(raw_tag: &str, improved_candidates: &[Option<&s
     raw_tag.to_string()
 }
 
+fn notification_tag_supports_settle(raw_tag: &str) -> bool {
+    let raw_tag = raw_tag.trim();
+    if raw_tag.is_empty() || crate::ignore::is_strict_semver(raw_tag) {
+        return false;
+    }
+
+    crate::ignore::parse_version(raw_tag).is_some()
+        || matches!(
+            raw_tag.to_ascii_lowercase().as_str(),
+            "latest" | "stable" | "current" | "release" | "lts"
+        )
+}
+
 pub(crate) fn notification_tag_requires_settle(raw_tag: &str, display_tag: &str) -> bool {
     let raw_tag = raw_tag.trim();
     let display_tag = display_tag.trim();
     if raw_tag.is_empty() || display_tag != raw_tag {
         return false;
     }
-    // Tags like `15-alpine` are readable enough for fallback copy, but we still
-    // wait for an authoritative resolved version when the raw tag is not strict semver.
-    !crate::ignore::is_strict_semver(raw_tag)
+    // Only wait for aliases we can plausibly collapse back into a semver-like label.
+    notification_tag_supports_settle(raw_tag)
 }
 
 fn notification_now_rfc3339(fallback: &str) -> String {
@@ -3921,6 +3933,11 @@ mod tests {
         assert!(notification_tag_requires_settle("15-alpine", "15-alpine"));
         assert!(!notification_tag_requires_settle("15-alpine", "15.0.2"));
         assert!(!notification_tag_requires_settle("1.2.3", "1.2.3"));
+        assert!(!notification_tag_requires_settle("main", "main"));
+        assert!(!notification_tag_requires_settle(
+            "sha-abcdef0",
+            "sha-abcdef0"
+        ));
     }
 
     #[test]

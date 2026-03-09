@@ -239,7 +239,7 @@ pub(super) async fn handle_check_worker_result(
                 host_platform,
             )
             .await?
-            .unwrap_or(true)
+            .unwrap_or(false)
         } else {
             false
         }

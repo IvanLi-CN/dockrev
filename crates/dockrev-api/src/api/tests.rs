@@ -10151,6 +10151,38 @@ services:
         )
         .await
         .unwrap();
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:old",
+        "linux/amd64",
+        "2026-03-09T00:00:00Z",
+        vec!["1.0.0".to_string(), "latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:new",
+        "linux/amd64",
+        "2026-03-09T00:00:00Z",
+        vec!["1.1.0".to_string(), "latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
     let discovered = vec![crate::notify::NewVersionDiscoveredService {
         stack_id: stack_id.clone(),
         service_id: service.id.clone(),
@@ -10415,6 +10447,38 @@ services:
         )
         .await
         .unwrap();
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:old",
+        "linux/amd64",
+        "2026-03-09T00:00:00Z",
+        vec!["5.2.0".to_string(), "latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:new",
+        "linux/amd64",
+        "2026-03-09T00:00:00Z",
+        vec!["5.3.0".to_string(), "latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
     let discovered = vec![crate::notify::NewVersionDiscoveredService {
         stack_id: stack_id.clone(),
         service_id: service.id.clone(),
