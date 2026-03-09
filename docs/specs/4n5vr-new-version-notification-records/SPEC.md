@@ -121,3 +121,4 @@
 - 2026-03-09：完成通知记录表、去重 reserve/finalize/reconcile 链路、payload display tag 扩展、中英文文档与回归测试。
 - 2026-03-09：补强失效候选的二次校验、`pending -> superseded` 审计保留、以及“仅在候选消失已被权威确认时才释放 active 记录”的 fallback 语义。
 - 2026-03-09：补充 compose sync 对未变化 service 保持 active dedupe 的约束，并记录 webhook 通知日志断言的异步收敛验证。
+- 2026-03-09：合入最新 `main` 后重新同步规格，确认主线并入内容不改变本规格范围与验收口径。
