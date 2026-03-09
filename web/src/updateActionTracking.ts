@@ -9,10 +9,12 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { getJob } from './api'
+import { getJob, type JobDetail } from './api'
 
 const UPDATE_JOB_POLL_INTERVAL_MS = 1200
 const UPDATE_JOB_MAX_ERRORS = 3
+export const UPDATE_JOB_SETTLED_EVENT = 'dockrev:update-job-settled'
+export const UPDATE_JOB_SETTLE_RETRY_MS = 450
 
 export type UpdateActionTargetKey = 'all' | `stack:${string}` | `service:${string}`
 export type UpdateActionJobStatus = 'queued' | 'running' | string
@@ -20,6 +22,16 @@ export type UpdateActionJobStatus = 'queued' | 'running' | string
 export type ActiveUpdateJob = {
   jobId: string
   status: UpdateActionJobStatus
+}
+
+export type UpdateJobSettledDetail = {
+  target: UpdateActionTargetKey
+  jobId: string
+  status: string
+  scope: string
+  stackId?: string | null
+  serviceId?: string | null
+  summary: unknown
 }
 
 type UpdateActionTracker = {
@@ -52,6 +64,23 @@ export function resolveUpdateActionTargetKey(
 
 export function isUpdateJobActiveStatus(status: string): boolean {
   return status === 'queued' || status === 'running'
+}
+
+function toUpdateJobSettledDetail(target: UpdateActionTargetKey, job: JobDetail): UpdateJobSettledDetail {
+  return {
+    target,
+    jobId: job.id,
+    status: job.status,
+    scope: job.scope,
+    stackId: job.stackId ?? null,
+    serviceId: job.serviceId ?? null,
+    summary: job.summary,
+  }
+}
+
+export function publishUpdateJobSettled(detail: UpdateJobSettledDetail) {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent<UpdateJobSettledDetail>(UPDATE_JOB_SETTLED_EVENT, { detail }))
 }
 
 function useProvideUpdateActionTracker(): UpdateActionTracker {
@@ -107,6 +136,7 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
         }
         errorCountsRef.current.delete(jobId)
         if (!isUpdateJobActiveStatus(job.status)) {
+          publishUpdateJobSettled(toUpdateJobSettledDetail(target, job))
           clearRunningJob(target, jobId)
           return
         }

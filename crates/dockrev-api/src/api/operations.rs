@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::service_check;
+
 pub(super) const CHECK_PROGRESS_LOG_INTERVAL: Duration = Duration::from_millis(500);
 pub(super) const CHECK_PARALLELISM: usize = crate::config::FIXED_CHECK_PARALLELISM;
 pub(super) const CHECK_SPAWN_STAGGER: Duration = Duration::from_secs(1);
@@ -1380,24 +1382,26 @@ type UpdateJobOutcome = (
     JobProgress,
 );
 
+fn extract_changed_service_ids(update: &serde_json::Value) -> Option<Vec<String>> {
+    let ids = update
+        .get("newDigests")
+        .and_then(|v| v.as_object())
+        .map(|m| m.keys().cloned().collect::<Vec<_>>())?;
+    if ids.is_empty() { None } else { Some(ids) }
+}
+
 pub(super) async fn run_update_job(
     state: Arc<AppState>,
     job_id: String,
     req: TriggerUpdateRequest,
 ) -> anyhow::Result<()> {
-    fn extract_changed_service_ids(update: &serde_json::Value) -> Option<Vec<String>> {
-        let ids = update
-            .get("newDigests")
-            .and_then(|v| v.as_object())
-            .map(|m| m.keys().cloned().collect::<Vec<_>>())?;
-        if ids.is_empty() { None } else { Some(ids) }
-    }
-
     let outcome: anyhow::Result<UpdateJobOutcome> = async {
         let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
             .unwrap_or_else(|| "linux/amd64".to_string());
         let backup_settings = state.db.get_backup_settings().await?;
         let stack_ids = resolve_stack_ids_for_update(state.as_ref(), &req).await?;
+        let manifest_digest_cache = service_check::new_manifest_digest_cache();
+        let repo_tags_cache = service_check::new_repo_tags_cache();
         let total_stacks = stack_ids.len() as u32;
 
         let mut final_status = "success".to_string();
@@ -1465,6 +1469,11 @@ pub(super) async fn run_update_job(
                 req.reason.as_str(),
             );
             let skipped_version_anomaly = planned_selection.skipped_version_anomaly.clone();
+            let planned_service_ids = planned_selection
+                .services
+                .iter()
+                .map(|svc| svc.id.clone())
+                .collect::<Vec<_>>();
             let no_actionable_services_after_anomaly_skip = req.mode.as_str() == "apply"
                 && !req.reason.as_str().eq_ignore_ascii_case("ui")
                 && planned_selection.services.is_empty()
@@ -1708,16 +1717,15 @@ pub(super) async fn run_update_job(
             let _ = progress_task.await;
             match update_outcome {
                 Ok(outcome) => {
-                    if let Some(changed_service_ids) =
-                        extract_changed_service_ids(&outcome.summary_json)
+                    if outcome.status == "success"
+                        && !planned_service_ids.is_empty()
                         && let Some(project) = state.db.get_stack_compose_project(stack_id).await?
                     {
-                        for changed_service_id in changed_service_ids {
-                            let Some(svc) = stack
-                                .services
-                                .iter()
-                                .find(|svc| svc.id == changed_service_id)
-                            else {
+                        let settled_at = now_rfc3339()
+                            .unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+                        let mut settled_services = 0usize;
+                        for changed_service_id in &planned_service_ids {
+                            let Some(svc) = stack.services.iter().find(|svc| svc.id == *changed_service_id) else {
                                 continue;
                             };
                             let Ok(img) = registry::ImageRef::parse(&svc.image.reference) else {
@@ -1732,16 +1740,110 @@ pub(super) async fn run_update_job(
                             .await
                             .ok()
                             .flatten();
-                            if let Some(runtime_digest) = runtime_digest {
-                                enqueue_snapshot_for_image_ref(
-                                    &state,
-                                    &svc.image.reference,
-                                    &runtime_digest,
-                                    &host_platform,
-                                    "update_digest_changed",
-                                )
-                                .await;
+                            let Some(runtime_digest) = runtime_digest else {
+                                continue;
+                            };
+
+                            let svc_for_check = crate::db::ServiceForCheck {
+                                id: svc.id.clone(),
+                                name: svc.name.clone(),
+                                image_ref: svc.image.reference.clone(),
+                                image_tag: svc.image.tag.clone(),
+                                current_digest: svc.image.digest.clone(),
+                                current_resolved_tag: svc.image.resolved_tag.clone(),
+                                current_resolved_tags_json: svc
+                                    .image
+                                    .resolved_tags
+                                    .as_ref()
+                                    .and_then(|tags| serde_json::to_string(tags).ok()),
+                                candidate_digest: svc
+                                    .candidate
+                                    .as_ref()
+                                    .map(|candidate| candidate.digest.clone()),
+                                candidate_resolved_tag: svc
+                                    .candidate
+                                    .as_ref()
+                                    .and_then(|candidate| candidate.resolved_tag.clone()),
+                            };
+                            let mut settle_outcome = service_check::check_service_and_persist(
+                                &state,
+                                &job_id,
+                                &svc_for_check,
+                                Some(runtime_digest.clone()),
+                                &host_platform,
+                                &settled_at,
+                                &manifest_digest_cache,
+                                &repo_tags_cache,
+                            )
+                            .await?;
+                            let mut inference_ok = true;
+                            if settle_outcome.current_digest.is_none() {
+                                inference_ok = false;
+                                state
+                                    .db
+                                    .update_service_check_result(
+                                        &svc.id,
+                                        Some(runtime_digest.clone()),
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        &settled_at,
+                                        &settled_at,
+                                    )
+                                    .await?;
+                                settle_outcome.current_digest = Some(runtime_digest.clone());
+                                settle_outcome.current_resolved_tag = None;
+                                settle_outcome.current_resolved_tags_json = None;
+                                settle_outcome.candidate_tag = None;
+                                settle_outcome.candidate_resolved_tag = None;
+                                settle_outcome.candidate_digest = None;
+                                settle_outcome.candidate_arch_match = None;
+                                settle_outcome.candidate_arch_json = None;
+                                settle_outcome.ignore_rule_id = None;
+                                settle_outcome.ignore_reason = None;
+                                settle_outcome.candidate_present = false;
                             }
+                            let evt = json!({
+                                "type": "update_state_settled",
+                                "jobId": job_id,
+                                "ts": settled_at,
+                                "stackId": stack_id,
+                                "serviceId": svc.id,
+                                "serviceName": svc.name,
+                                "runtimeDigest": runtime_digest,
+                                "candidatePresent": settle_outcome.candidate_present,
+                                "inferenceOk": inference_ok,
+                            });
+                            state
+                                .db
+                                .insert_job_log(
+                                    &job_id,
+                                    &JobLogLine {
+                                        ts: settled_at.clone(),
+                                        level: "event".to_string(),
+                                        msg: evt.to_string(),
+                                    },
+                                )
+                                .await?;
+                            settled_services += 1;
+
+                            enqueue_snapshot_for_image_ref(
+                                &state,
+                                &svc.image.reference,
+                                &runtime_digest,
+                                &host_platform,
+                                "update_digest_changed",
+                            )
+                            .await;
+                        }
+                        if settled_services > 0 {
+                            state.db.update_stack_last_check_at(stack_id, &settled_at).await?;
                         }
                     }
                     final_status = outcome.status.clone();

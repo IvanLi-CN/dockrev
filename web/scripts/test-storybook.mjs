@@ -857,6 +857,44 @@ async function runInteractive({ baseUrl, browser }) {
     }
   }
 
+  // 5b2) Services page: row state and stack updates count should settle on the same screen after update success.
+  {
+    const page = await openStory('pages-servicespage--dashboard-demo')
+    try {
+      const apiRow = page.locator('.rowLine', { hasText: 'api' }).first()
+      const applyBtn = apiRow.getByRole('button', { name: '执行更新' })
+      await applyBtn.waitFor({ timeout: 10_000 })
+      await applyBtn.click()
+
+      const modal = getModal(page)
+      await modal.waitFor({ timeout: 10_000 })
+      await modal.getByRole('button', { name: '执行更新' }).click()
+
+      await page.waitForFunction(() => {
+        const rows = Array.from(document.querySelectorAll('.rowLine'))
+        const apiRow = rows.find((item) => item.textContent?.includes('api'))
+        if (!apiRow) return false
+        const btn = Array.from(apiRow.querySelectorAll('button')).find((item) =>
+          ['执行更新', '更新中…', '排队中…', '提交中…'].some((label) => item.textContent?.includes(label))
+        )
+        return Boolean(btn?.querySelector('.btnInlineSpinner'))
+      }, null, { timeout: 10_000 })
+
+      await page.waitForFunction(() => {
+        const rows = Array.from(document.querySelectorAll('.rowLine'))
+        const apiRow = rows.find((item) => item.textContent?.includes('api'))
+        const groups = Array.from(document.querySelectorAll('.tableGroup'))
+        const prodGroup = groups.find((item) => item.textContent?.includes('prod'))
+        if (!apiRow || !prodGroup) return false
+        const rowText = apiRow.textContent ?? ''
+        const groupText = prodGroup.textContent ?? ''
+        return rowText.includes('无更新') && !rowText.includes('可更新') && groupText.includes('updates 1')
+      }, null, { timeout: 10_000 })
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
   // 5c) Overview page: all-scope apply button should show spinner during queued/running and recover at terminal state.
   {
     const page = await openStory('pages-overviewpage--default')
@@ -910,6 +948,40 @@ async function runInteractive({ baseUrl, browser }) {
         )
         if (!btn) return false
         return !btn.querySelector('.btnInlineSpinner')
+      }, null, { timeout: 10_000 })
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
+  // 5c1) Overview page: row state and group summary should settle without manual refresh after all-scope success.
+  {
+    const page = await openStory('pages-overviewpage--default')
+    try {
+      const allBtn = page.getByRole('button', { name: '更新全部' })
+      await allBtn.waitFor({ timeout: 10_000 })
+      await allBtn.click()
+
+      const modal = getModal(page)
+      await modal.waitFor({ timeout: 10_000 })
+      await modal.getByRole('button', { name: '执行更新' }).click()
+
+      await page.waitForFunction(() => {
+        const btn = Array.from(document.querySelectorAll('button')).find((item) =>
+          ['更新全部', '更新中…', '排队中…', '提交中…'].includes(item.textContent?.trim() ?? '')
+        )
+        return Boolean(btn?.querySelector('.btnInlineSpinner'))
+      }, null, { timeout: 10_000 })
+
+      await page.waitForFunction(() => {
+        const rows = Array.from(document.querySelectorAll('.rowLine'))
+        const apiRow = rows.find((item) => item.textContent?.includes('api'))
+        const groups = Array.from(document.querySelectorAll('.tableGroup'))
+        const prodGroup = groups.find((item) => item.textContent?.includes('prod'))
+        if (!apiRow || !prodGroup) return false
+        const rowText = apiRow.textContent ?? ''
+        const groupText = prodGroup.textContent ?? ''
+        return rowText.includes('无更新') && !rowText.includes('可更新') && !groupText.includes('可更新')
       }, null, { timeout: 10_000 })
     } finally {
       await page.close().catch(() => {})
@@ -1029,6 +1101,34 @@ async function runInteractive({ baseUrl, browser }) {
       })
       if (!jumped) throw new Error('Expected active service-detail update button to be clickable for job detail navigation.')
       await page.waitForFunction(() => window.location.hash.startsWith('#/queue/job-ui-'), null, { timeout: 10_000 })
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
+  // 5d1) Service detail page: badge should settle after update success without leaving the page.
+  {
+    const page = await openStory('pages-servicedetailpage--updatable')
+    try {
+      const applyBtn = page.getByRole('button', { name: '执行更新' })
+      await applyBtn.waitFor({ timeout: 10_000 })
+      await applyBtn.click()
+
+      const modal = getModal(page)
+      await modal.waitFor({ timeout: 10_000 })
+      await modal.getByRole('button', { name: '执行更新' }).click()
+
+      await page.waitForFunction(() => {
+        const btn = Array.from(document.querySelectorAll('button')).find((item) =>
+          ['执行更新', '更新中…', '排队中…', '提交中…'].includes(item.textContent?.trim() ?? '')
+        )
+        return Boolean(btn?.querySelector('.btnInlineSpinner'))
+      }, null, { timeout: 10_000 })
+
+      await page.waitForFunction(() => {
+        const rootText = document.body.textContent ?? ''
+        return rootText.includes('无候选') && !rootText.includes(' 可更新 ')
+      }, null, { timeout: 10_000 })
     } finally {
       await page.close().catch(() => {})
     }
