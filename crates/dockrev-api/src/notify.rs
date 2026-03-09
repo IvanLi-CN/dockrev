@@ -94,6 +94,7 @@ pub async fn notify_new_versions_discovered(
 
     let discovered_services =
         settle_new_version_discovered_services(state, &discovered_services).await?;
+    let dispatch_now_rfc3339 = notification_now_rfc3339(now_rfc3339);
 
     let mut reserved = Vec::<ReservedNewVersionNotification>::new();
     for item in &discovered_services {
@@ -109,7 +110,7 @@ pub async fn notify_new_versions_discovered(
             candidate_tag: item.candidate_tag.clone(),
             candidate_display_tag: item.candidate_display_tag.clone(),
             candidate_digest: item.candidate_digest.clone(),
-            created_at: now_rfc3339.to_string(),
+            created_at: dispatch_now_rfc3339.clone(),
         };
         match state.db.reserve_new_version_notification(&pending).await? {
             crate::db::NewVersionNotificationReserveResult::Reserved(record_id) => {
@@ -126,7 +127,7 @@ pub async fn notify_new_versions_discovered(
         log_new_version_notification_skip(
             state,
             check_job_id,
-            now_rfc3339,
+            &dispatch_now_rfc3339,
             format!(
                 "new-version notification skipped: all {} services already have active records",
                 discovered_services.len()
@@ -154,7 +155,12 @@ pub async fn notify_new_versions_discovered(
         } else {
             state
                 .db
-                .finalize_new_version_notification(&item.record_id, &[], None, now_rfc3339)
+                .finalize_new_version_notification(
+                    &item.record_id,
+                    &[],
+                    None,
+                    &dispatch_now_rfc3339,
+                )
                 .await?;
         }
     }
@@ -163,7 +169,7 @@ pub async fn notify_new_versions_discovered(
         log_new_version_notification_skip(
             state,
             check_job_id,
-            now_rfc3339,
+            &dispatch_now_rfc3339,
             format!(
                 "new-version notification skipped: all {} services no longer have matching active candidates",
                 discovered_total
@@ -180,7 +186,7 @@ pub async fn notify_new_versions_discovered(
     let send_result = send_new_versions(
         state,
         check_job_id,
-        now_rfc3339,
+        &dispatch_now_rfc3339,
         services_checked,
         &reserved_services,
     )
@@ -197,7 +203,7 @@ pub async fn notify_new_versions_discovered(
                         &item.record_id,
                         &[],
                         Some(err_text.as_str()),
-                        now_rfc3339,
+                        &dispatch_now_rfc3339,
                     )
                     .await;
             }
@@ -214,7 +220,7 @@ pub async fn notify_new_versions_discovered(
                 &item.record_id,
                 &sent_channels,
                 last_error.as_deref(),
-                now_rfc3339,
+                &dispatch_now_rfc3339,
             )
             .await?;
     }
@@ -578,8 +584,9 @@ async fn settle_new_version_display_tag(
 
     let mut inferred = None;
     let mut in_flight_reason = None;
+    let mut snapshot_ready = false;
     if needs_inference && let (Some(image_repo), Some(digest)) = (image_repo, digest) {
-        inferred = infer_notification_display_tag_from_snapshot(
+        let snapshot_result = infer_notification_display_tag_from_snapshot(
             state,
             image_repo,
             digest,
@@ -587,6 +594,8 @@ async fn settle_new_version_display_tag(
             raw_tag,
         )
         .await?;
+        inferred = snapshot_result.display_tag;
+        snapshot_ready = snapshot_result.ready;
         in_flight_reason = state
             .snapshot_worker
             .in_flight_reason(image_repo, digest, host_platform)
@@ -601,8 +610,14 @@ async fn settle_new_version_display_tag(
             inferred.as_deref(),
         ],
     );
-    let pending = in_flight_reason.is_some() && notification_tag_requires_settle(raw_tag, &display);
+    let pending = in_flight_reason.is_some() && needs_inference && !snapshot_ready;
     Ok((display, pending))
+}
+
+#[derive(Default)]
+struct NotificationSnapshotDisplayResult {
+    display_tag: Option<String>,
+    ready: bool,
 }
 
 async fn infer_notification_display_tag_from_snapshot(
@@ -611,26 +626,27 @@ async fn infer_notification_display_tag_from_snapshot(
     digest: &str,
     host_platform: &str,
     raw_tag: &str,
-) -> anyhow::Result<Option<String>> {
+) -> anyhow::Result<NotificationSnapshotDisplayResult> {
     let Some((snapshot_json, checked_at, _updated_at)) = state
         .db
         .get_image_digest_tags_snapshot(image_repo, digest, host_platform)
         .await?
     else {
-        return Ok(None);
+        return Ok(NotificationSnapshotDisplayResult::default());
     };
 
     let mut snapshot =
         match serde_json::from_str::<ServiceDigestTagsSnapshotResponse>(&snapshot_json) {
             Ok(snapshot) => snapshot,
-            Err(_) => return Ok(None),
+            Err(_) => return Ok(NotificationSnapshotDisplayResult::default()),
         };
     if snapshot.checked_at.trim().is_empty() {
         snapshot.checked_at = checked_at;
     }
-    Ok(infer_notification_semver_tag_from_snapshot(
-        &snapshot, raw_tag,
-    ))
+    Ok(NotificationSnapshotDisplayResult {
+        display_tag: infer_notification_semver_tag_from_snapshot(&snapshot, raw_tag),
+        ready: notification_snapshot_is_ready(&snapshot, snapshot.checked_at.as_str()),
+    })
 }
 
 fn infer_notification_semver_tag_from_snapshot(
@@ -672,6 +688,43 @@ pub(crate) fn notification_tag_requires_settle(raw_tag: &str, display_tag: &str)
     // Tags like `15-alpine` are readable enough for fallback copy, but we still
     // wait for an authoritative resolved version when the raw tag is not strict semver.
     !crate::ignore::is_strict_semver(raw_tag)
+}
+
+fn notification_now_rfc3339(fallback: &str) -> String {
+    time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| fallback.to_string())
+}
+
+fn notification_snapshot_checked_at_is_older_than(
+    checked_at: &str,
+    min_age: time::Duration,
+) -> bool {
+    let parsed =
+        time::OffsetDateTime::parse(checked_at, &time::format_description::well_known::Rfc3339);
+    let now = time::OffsetDateTime::now_utc();
+    match parsed {
+        Ok(ts) => now - ts > min_age,
+        Err(_) => true,
+    }
+}
+
+fn notification_snapshot_is_ready(
+    snapshot: &ServiceDigestTagsSnapshotResponse,
+    checked_at: &str,
+) -> bool {
+    if notification_snapshot_checked_at_is_older_than(
+        checked_at,
+        time::Duration::days(crate::snapshot_worker::SNAPSHOT_CACHE_TTL_DAYS),
+    ) {
+        return false;
+    }
+    let retryable_all_failed = crate::snapshot_worker::snapshot_is_all_failed(snapshot)
+        && notification_snapshot_checked_at_is_older_than(
+            checked_at,
+            time::Duration::minutes(crate::snapshot_worker::SNAPSHOT_ALL_FAILED_RETRY_MINUTES),
+        );
+    !retryable_all_failed
 }
 
 async fn log_new_version_notification_skip(
