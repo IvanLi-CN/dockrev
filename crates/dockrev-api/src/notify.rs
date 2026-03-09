@@ -601,8 +601,7 @@ async fn settle_new_version_display_tag(
             inferred.as_deref(),
         ],
     );
-    let pending =
-        matches!(in_flight_reason.as_deref(), Some("new_version")) && stable_display == raw_tag;
+    let pending = in_flight_reason.is_some() && stable_display == raw_tag;
     Ok((display, pending))
 }
 

@@ -10070,20 +10070,31 @@ services:
                 "ghcr.io/acme/web",
                 "sha256:old",
                 "linux/amd64",
-                "new_version"
+                "cache_miss"
             )
             .await
     );
     assert!(
         state
             .snapshot_worker
-            .enqueue(
-                "ghcr.io/acme/web",
-                "sha256:new",
-                "linux/amd64",
-                "new_version"
-            )
+            .enqueue("ghcr.io/acme/web", "sha256:new", "linux/amd64", "force")
             .await
+    );
+    assert_eq!(
+        state
+            .snapshot_worker
+            .in_flight_reason("ghcr.io/acme/web", "sha256:old", "linux/amd64")
+            .await
+            .as_deref(),
+        Some("cache_miss")
+    );
+    assert_eq!(
+        state
+            .snapshot_worker
+            .in_flight_reason("ghcr.io/acme/web", "sha256:new", "linux/amd64")
+            .await
+            .as_deref(),
+        Some("force")
     );
 
     let notify_state = state.clone();
