@@ -217,6 +217,13 @@ pub(super) async fn handle_check_worker_result(
     if outcome.candidate_present {
         *services_with_candidate = (*services_with_candidate).saturating_add(1);
     }
+    let current_display_tag =
+        preferred_display_tag(&service_image_tag, outcome.current_resolved_tag.as_deref());
+    let candidate_display_tag = preferred_display_tag(
+        outcome.candidate_tag.as_deref().unwrap_or_default(),
+        outcome.candidate_resolved_tag.as_deref(),
+    );
+
     if outcome.candidate_present
         && outcome.candidate_digest_changed
         && let (Some(candidate_tag), Some(candidate_digest)) = (
@@ -230,37 +237,48 @@ pub(super) async fn handle_check_worker_result(
             service_name: service_name.clone(),
             image_ref: service_image_ref.clone(),
             current_tag: service_image_tag.clone(),
-            current_display_tag: preferred_display_tag(
-                &service_image_tag,
-                outcome.current_resolved_tag.as_deref(),
-            ),
+            current_display_tag: current_display_tag.clone(),
             candidate_tag,
-            candidate_display_tag: preferred_display_tag(
-                outcome.candidate_tag.as_deref().unwrap_or_default(),
-                outcome.candidate_resolved_tag.as_deref(),
-            ),
+            candidate_display_tag: candidate_display_tag.clone(),
             candidate_digest,
         });
     }
-    if outcome.candidate_digest_changed
-        && outcome.candidate_digest.is_some()
-        && needs_version_inference_for_tags(&service_image_tag, outcome.candidate_tag.as_deref())
-        && let Some(image_repo) =
-            crate::snapshot_worker::image_repo_from_image_ref(&service_image_ref)
-        && let Some(candidate_digest) = outcome
-            .candidate_digest
-            .as_deref()
-            .and_then(snapshot_worker::normalize_digest)
+    if let Some(image_repo) = crate::snapshot_worker::image_repo_from_image_ref(&service_image_ref)
     {
-        let _ = state
-            .snapshot_worker
-            .enqueue(
-                &image_repo,
-                &candidate_digest,
-                host_platform,
-                VERSION_INFERENCE_REASON_NEW_VERSION,
-            )
-            .await;
+        if outcome.candidate_digest_changed
+            && crate::ignore::parse_version(&current_display_tag).is_none()
+            && let Some(current_digest) = outcome
+                .current_digest
+                .as_deref()
+                .and_then(snapshot_worker::normalize_digest)
+        {
+            let _ = state
+                .snapshot_worker
+                .enqueue(
+                    &image_repo,
+                    &current_digest,
+                    host_platform,
+                    VERSION_INFERENCE_REASON_NEW_VERSION,
+                )
+                .await;
+        }
+        if outcome.candidate_digest_changed
+            && crate::ignore::parse_version(&candidate_display_tag).is_none()
+            && let Some(candidate_digest) = outcome
+                .candidate_digest
+                .as_deref()
+                .and_then(snapshot_worker::normalize_digest)
+        {
+            let _ = state
+                .snapshot_worker
+                .enqueue(
+                    &image_repo,
+                    &candidate_digest,
+                    host_platform,
+                    VERSION_INFERENCE_REASON_NEW_VERSION,
+                )
+                .await;
+        }
     }
 
     let now_instant = std::time::Instant::now();

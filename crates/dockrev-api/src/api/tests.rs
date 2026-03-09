@@ -3443,7 +3443,7 @@ services:
 }
 
 #[tokio::test]
-async fn check_candidate_digest_change_enqueues_new_version_inference() {
+async fn check_digest_changes_enqueue_new_version_inference_for_current_and_candidate() {
     let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(400)));
     let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
     let state = test_state_with(":memory:", registry, runner).await;
@@ -3460,6 +3460,24 @@ services:
     )
     .unwrap();
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "demo".to_string(),
+            stack_id: Some(stack_id.clone()),
+            status: "active".to_string(),
+            last_seen_at: Some(now.clone()),
+            last_scan_at: now.clone(),
+            last_error: None,
+            last_config_files: Some(vec![compose_path.clone()]),
+            unarchive_if_active: true,
+        })
+        .await
+        .unwrap();
 
     let now = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
@@ -3502,53 +3520,31 @@ services:
     let triggered = response_json(resp).await;
     let check_id = triggered["checkId"].as_str().unwrap().to_string();
 
-    let mut finished = false;
-    for _ in 0..200 {
-        let resp = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/api/jobs/{check_id}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), 200);
-        let job = response_json(resp).await;
-        if job["job"]["status"].as_str().unwrap() != "running" {
-            finished = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    assert!(finished, "check job did not finish in time");
+    let job = wait_for_job_terminal(&state, &check_id).await;
+    assert_eq!(job.status, "success");
 
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/stacks/{stack_id}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let detail = response_json(resp).await;
-    let status = detail["stack"]["services"][0]["versionInference"]["status"]
-        .as_str()
-        .unwrap_or("<none>");
-    assert!(
-        status == "pending" || status == "ready",
-        "unexpected stack detail: {detail}"
-    );
-    if status == "pending" {
-        assert_eq!(
-            detail["stack"]["services"][0]["versionInference"]["reason"]
-                .as_str()
-                .unwrap_or("<none>"),
-            "new_version"
+    for digest in ["sha256:old", "sha256:new"] {
+        let mut enqueued = false;
+        for _ in 0..300 {
+            let in_flight = state
+                .snapshot_worker
+                .in_flight_reason("ghcr.io/acme/web", digest, "linux/amd64")
+                .await;
+            let has_snapshot = state
+                .db
+                .get_image_digest_tags_snapshot("ghcr.io/acme/web", digest, "linux/amd64")
+                .await
+                .unwrap()
+                .is_some();
+            if in_flight.as_deref() == Some("new_version") || has_snapshot {
+                enqueued = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            enqueued,
+            "digest {digest} should be queued or cached for new-version inference"
         );
     }
 }
@@ -9906,8 +9902,8 @@ services:
         .update_service_check_result(
             &service.id,
             Some("sha256:old".to_string()),
-            Some("5.2.0".to_string()),
-            Some("[\"5.2.0\"]".to_string()),
+            None,
+            None,
             Some("latest".to_string()),
             None,
             Some("sha256:new".to_string()),
@@ -9925,7 +9921,7 @@ services:
         service_id: service.id.clone(),
         image_ref: service.image_ref.clone(),
         current_tag: "latest".to_string(),
-        current_display_tag: "5.2.0".to_string(),
+        current_display_tag: "latest".to_string(),
         candidate_tag: "latest".to_string(),
         candidate_display_tag: "latest".to_string(),
         candidate_digest: "sha256:new".to_string(),
@@ -9939,6 +9935,17 @@ services:
         .finish_job(&job_id, "success", now, &serde_json::json!({}))
         .await
         .unwrap();
+    assert!(
+        state
+            .snapshot_worker
+            .enqueue(
+                "ghcr.io/acme/web",
+                "sha256:old",
+                "linux/amd64",
+                "new_version"
+            )
+            .await
+    );
     assert!(
         state
             .snapshot_worker
@@ -9981,8 +9988,120 @@ services:
         Some("demo / web 服务有新版本（5.2.0 -> 5.3.0）。")
     );
     assert_eq!(
+        payload["links"]["serviceUrls"][0]["currentDisplayTag"].as_str(),
+        Some("5.2.0")
+    );
+    assert_eq!(
         payload["links"]["serviceUrls"][0]["candidateDisplayTag"].as_str(),
         Some("5.3.0")
+    );
+    notify_task.await.unwrap();
+    server.abort();
+}
+
+#[tokio::test]
+async fn schedule_new_version_notification_does_not_wait_for_parseable_raw_tags() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(250)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+
+    let compose_path = format!(
+        "/tmp/dockrev-schedule-notify-parseable-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:15-alpine
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            Some("sha256:old".to_string()),
+            None,
+            None,
+            Some("16-alpine".to_string()),
+            None,
+            Some("sha256:new".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            "2026-03-09T00:00:00Z",
+            "2026-03-09T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    let discovered = vec![crate::notify::NewVersionDiscoveredService {
+        stack_id: stack_id.clone(),
+        service_id: service.id.clone(),
+        image_ref: service.image_ref.clone(),
+        current_tag: "15-alpine".to_string(),
+        current_display_tag: "15-alpine".to_string(),
+        candidate_tag: "16-alpine".to_string(),
+        candidate_display_tag: "16-alpine".to_string(),
+        candidate_digest: "sha256:new".to_string(),
+    }];
+    let (mut rx, server) = configure_webhook_notifications(&state).await;
+
+    let now = "2026-03-09T00:00:00Z";
+    let job_id = insert_check_job(&state, "schedule", now).await;
+    state
+        .db
+        .finish_job(&job_id, "success", now, &serde_json::json!({}))
+        .await
+        .unwrap();
+    assert!(
+        state
+            .snapshot_worker
+            .enqueue(
+                "ghcr.io/acme/web",
+                "sha256:old",
+                "linux/amd64",
+                "new_version"
+            )
+            .await
+    );
+    assert!(
+        state
+            .snapshot_worker
+            .enqueue(
+                "ghcr.io/acme/web",
+                "sha256:new",
+                "linux/amd64",
+                "new_version"
+            )
+            .await
+    );
+
+    let notify_state = state.clone();
+    let notify_discovered = discovered.clone();
+    let notify_task = tokio::spawn(async move {
+        crate::notify::notify_new_versions_discovered(
+            notify_state.as_ref(),
+            &job_id,
+            "schedule",
+            now,
+            1,
+            &notify_discovered,
+        )
+        .await
+        .unwrap();
+    });
+
+    let payload = tokio::time::timeout(Duration::from_millis(120), rx.recv())
+        .await
+        .expect("parseable raw tags should not wait for inference")
+        .expect("notification payload missing");
+    assert_eq!(
+        payload["human"]["summary"].as_str(),
+        Some("demo / web 服务有新版本（15-alpine -> 16-alpine）。")
     );
     notify_task.await.unwrap();
     server.abort();

@@ -572,7 +572,7 @@ async fn settle_new_version_display_tag(
     let raw_tag = raw_tag.trim();
     let digest = digest.map(str::trim).filter(|digest| !digest.is_empty());
     let image_repo = image_repo.map(str::trim).filter(|repo| !repo.is_empty());
-    let needs_inference = !raw_tag.is_empty() && !crate::ignore::is_strict_semver(raw_tag);
+    let needs_inference = !raw_tag.is_empty() && crate::ignore::parse_version(raw_tag).is_none();
 
     let mut inferred = None;
     let mut pending = false;
