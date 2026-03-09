@@ -8,7 +8,7 @@ use crate::{
     config::Config,
     docker_exec::{
         TargetRuntime, compose_up, docker_image_repo_digest, docker_image_semver_tag_ref_to_pull,
-        docker_pull, resolve_target,
+        docker_pull, docker_tag, resolve_target,
     },
     state_store::{Progress, StateFile, now_rfc3339, store_atomic},
 };
@@ -147,6 +147,39 @@ pub(crate) async fn run_operation(app: Arc<App>, key: StartKey) -> anyhow::Resul
 
     let _ = fetch_dockrev_version(&post_target).await;
 
+    if let Some(configured_tag_ref) =
+        configured_tag_ref_for_request(&app.cfg.target_image_repo, &key)
+    {
+        update_state(&app, |st, now| {
+            st.progress = Progress {
+                step: "sync_tag".to_string(),
+                message: format!("syncing local tag {configured_tag_ref}"),
+            };
+            st.updated_at = now.to_string();
+            append_log_line(
+                st,
+                now,
+                "INFO",
+                format!(
+                    "sync local tag {configured_tag_ref} -> {}",
+                    post_target.current_image_id
+                ),
+            );
+        })
+        .await?;
+
+        if let Err(e) = docker_tag(
+            &app.cfg,
+            &post_target.current_image_id,
+            &configured_tag_ref,
+            Duration::from_secs(30),
+        )
+        .await
+        {
+            return fail_and_maybe_rollback(app, target, key, current_digest, e).await;
+        }
+    }
+
     update_state(&app, |st, now| {
         st.state = "succeeded".to_string();
         st.progress = Progress {
@@ -160,6 +193,27 @@ pub(crate) async fn run_operation(app: Arc<App>, key: StartKey) -> anyhow::Resul
 
     clear_running(&app).await;
     Ok(())
+}
+
+fn configured_tag_ref_for_request(target_image_repo: &str, key: &StartKey) -> Option<String> {
+    if key.digest.is_some() {
+        return None;
+    }
+    configured_tag_ref_from_image_ref(target_image_repo, &key.tag)
+}
+
+fn configured_tag_ref_from_image_ref(target_image_repo: &str, image_ref: &str) -> Option<String> {
+    let t = image_ref.trim();
+    if t.is_empty() || t == "unknown" || t.contains('@') {
+        return None;
+    }
+    if t == target_image_repo || t.starts_with(&format!("{target_image_repo}:")) {
+        return Some(t.to_string());
+    }
+    if t.contains('/') || t.contains(':') {
+        return None;
+    }
+    Some(format!("{target_image_repo}:{t}"))
 }
 
 pub(crate) fn rollback_image_ref(
@@ -197,7 +251,37 @@ pub(crate) async fn run_rollback_only(
         write_override(&override_path, &target.compose_service, &image_ref).await?;
 
         compose_up(&app.cfg, &target, &override_path, Duration::from_secs(600)).await?;
-        let _ = wait_dockrev_health(&app.cfg, Duration::from_secs(180)).await?;
+        let rollback_target = wait_dockrev_health(&app.cfg, Duration::from_secs(180)).await?;
+
+        if let Some(configured_tag_ref) =
+            configured_tag_ref_from_image_ref(&app.cfg.target_image_repo, &previous.tag)
+        {
+            update_state(&app, |st, now| {
+                st.progress = Progress {
+                    step: "sync_tag".to_string(),
+                    message: format!("syncing rollback tag {configured_tag_ref}"),
+                };
+                st.updated_at = now.to_string();
+                append_log_line(
+                    st,
+                    now,
+                    "WARN",
+                    format!(
+                        "restore local tag {configured_tag_ref} -> {}",
+                        rollback_target.current_image_id
+                    ),
+                );
+            })
+            .await?;
+
+            docker_tag(
+                &app.cfg,
+                &rollback_target.current_image_id,
+                &configured_tag_ref,
+                Duration::from_secs(30),
+            )
+            .await?;
+        }
 
         update_state(&app, |st, now| {
             st.state = "rolled_back".to_string();
@@ -351,4 +435,78 @@ async fn fetch_dockrev_version(target: &TargetRuntime) -> Option<String> {
         .get("version")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state_store::PreviousRef;
+
+    #[test]
+    fn configured_tag_ref_for_request_skips_digest_pins() {
+        let key = StartKey {
+            tag: "latest".to_string(),
+            digest: Some("sha256:abc".to_string()),
+            mode: "apply".to_string(),
+            rollback_on_failure: true,
+        };
+
+        assert_eq!(
+            configured_tag_ref_for_request("ghcr.io/ivanli-cn/dockrev", &key),
+            None
+        );
+    }
+
+    #[test]
+    fn configured_tag_ref_from_image_ref_normalizes_expected_inputs() {
+        assert_eq!(
+            configured_tag_ref_from_image_ref("ghcr.io/ivanli-cn/dockrev", "latest"),
+            Some("ghcr.io/ivanli-cn/dockrev:latest".to_string())
+        );
+        assert_eq!(
+            configured_tag_ref_from_image_ref(
+                "ghcr.io/ivanli-cn/dockrev",
+                "ghcr.io/ivanli-cn/dockrev:stable"
+            ),
+            Some("ghcr.io/ivanli-cn/dockrev:stable".to_string())
+        );
+        assert_eq!(
+            configured_tag_ref_from_image_ref(
+                "ghcr.io/ivanli-cn/dockrev",
+                "ghcr.io/ivanli-cn/dockrev"
+            ),
+            Some("ghcr.io/ivanli-cn/dockrev".to_string())
+        );
+        assert_eq!(
+            configured_tag_ref_from_image_ref(
+                "ghcr.io/ivanli-cn/dockrev",
+                "ghcr.io/ivanli-cn/dockrev@sha256:abc"
+            ),
+            None
+        );
+        assert_eq!(
+            configured_tag_ref_from_image_ref(
+                "ghcr.io/ivanli-cn/dockrev",
+                "ghcr.io/acme/other:latest"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn rollback_image_ref_prefers_digest_but_sync_target_uses_original_tag_ref() {
+        let previous = PreviousRef {
+            tag: "ghcr.io/ivanli-cn/dockrev:latest".to_string(),
+            digest: Some("sha256:abc".to_string()),
+        };
+
+        assert_eq!(
+            rollback_image_ref("ghcr.io/ivanli-cn/dockrev", &previous).unwrap(),
+            "ghcr.io/ivanli-cn/dockrev@sha256:abc"
+        );
+        assert_eq!(
+            configured_tag_ref_from_image_ref("ghcr.io/ivanli-cn/dockrev", &previous.tag),
+            Some("ghcr.io/ivanli-cn/dockrev:latest".to_string())
+        );
+    }
 }
