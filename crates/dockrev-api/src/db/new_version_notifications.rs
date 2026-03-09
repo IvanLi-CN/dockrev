@@ -684,6 +684,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sync_stack_from_compose_keeps_active_rows_for_unchanged_services() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(&db, "svc_1", Some("sha256:old")).await;
+        let first = pending("nvn_1", "svc_1", "sha256:old");
+        let second = pending("nvn_2", "svc_1", "sha256:old");
+
+        let reserved = db.reserve_new_version_notification(&first).await.unwrap();
+        assert_eq!(
+            reserved,
+            NewVersionNotificationReserveResult::Reserved("nvn_1".to_string())
+        );
+        let finalized = db
+            .finalize_new_version_notification(
+                "nvn_1",
+                &["webhook".to_string()],
+                None,
+                "2026-03-09T00:01:00Z",
+            )
+            .await
+            .unwrap();
+        assert!(finalized);
+
+        db.sync_stack_from_compose(
+            "stack_1",
+            &["/tmp/demo.yml".to_string()],
+            &[ComposeServiceSpec {
+                name: "web".to_string(),
+                image_ref: "ghcr.io/acme/web".to_string(),
+                image_tag: "latest".to_string(),
+            }],
+            "2026-03-09T00:02:00Z",
+        )
+        .await
+        .unwrap();
+
+        let retried = db.reserve_new_version_notification(&second).await.unwrap();
+        assert_eq!(
+            retried,
+            NewVersionNotificationReserveResult::SkippedDuplicate
+        );
+
+        let rows = db
+            .list_new_version_notifications_for_service("svc_1")
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].status, STATUS_SENT);
+        assert_eq!(rows[0].superseded_at, None);
+    }
+
+    #[tokio::test]
     async fn sync_stack_from_compose_supersedes_active_rows_when_baseline_changes() {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
         seed_service(&db, "svc_1", Some("sha256:old")).await;
