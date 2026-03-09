@@ -456,6 +456,64 @@ impl CommandRunner for FailAllRunner {
 }
 
 #[derive(Clone, Default)]
+struct ResourceUsageStreamRunner {
+    stats_calls: Arc<AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl CommandRunner for ResourceUsageStreamRunner {
+    async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        let args = spec.args;
+        if args.first().map(String::as_str) == Some("ps")
+            && args.get(1).map(String::as_str) == Some("-q")
+        {
+            return Ok(CommandOutput {
+                status: 0,
+                stdout: "cid1\n".to_string(),
+                stderr: String::new(),
+            });
+        }
+
+        if args.first().map(String::as_str) == Some("inspect")
+            && args.get(1).map(String::as_str) == Some("--format")
+            && args.get(2).map(String::as_str)
+                == Some("{{.Id}}\t{{index .Config.Labels \"com.docker.compose.service\"}}")
+        {
+            return Ok(CommandOutput {
+                status: 0,
+                stdout: "cid1\tweb\n".to_string(),
+                stderr: String::new(),
+            });
+        }
+
+        if args.first().map(String::as_str) == Some("stats")
+            && args.get(1).map(String::as_str) == Some("--no-stream")
+        {
+            let sample = self.stats_calls.fetch_add(1, Ordering::SeqCst) + 1;
+            let payload = serde_json::json!({
+                "ID": "cid1",
+                "CPUPerc": format!("{sample}.0%"),
+                "MemUsage": "10MiB / 1GiB",
+                "NetIO": format!("{}MiB / {}MiB", sample, sample + 1),
+                "BlockIO": format!("{}MiB / {}MiB", sample / 2, sample),
+                "PIDs": "5",
+            });
+            return Ok(CommandOutput {
+                status: 0,
+                stdout: format!("{}\n", payload),
+                stderr: String::new(),
+            });
+        }
+
+        Ok(CommandOutput {
+            status: 1,
+            stdout: String::new(),
+            stderr: format!("unexpected command args: {:?}", args),
+        })
+    }
+}
+
+#[derive(Clone, Default)]
 struct SemverRetryFailRunner {
     step: Arc<std::sync::Mutex<usize>>,
 }
@@ -7642,6 +7700,72 @@ services:
     let data: serde_json::Value = serde_json::from_str(&evt.data).unwrap();
     assert_eq!(data["serviceId"].as_str(), Some(service_id.as_str()));
     assert!(!data["error"].as_str().unwrap_or_default().is_empty());
+}
+
+#[tokio::test]
+async fn resource_usage_events_keep_streaming_past_sampler_idle_window() {
+    let runner = Arc::new(ResourceUsageStreamRunner::default());
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), runner.clone()).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!(
+        "/tmp/dockrev-resource-events-stream-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: nginx:1.27
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo-resource-stream").await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let service_id = services[0].id.clone();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/resource-usage/events"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let mut body = resp.into_body();
+    let snapshot =
+        wait_for_sse_event(&mut body, "resource_usage_snapshot", Duration::from_secs(2)).await;
+    let snapshot_data: serde_json::Value = serde_json::from_str(&snapshot.data).unwrap();
+    assert_eq!(
+        snapshot_data["serviceId"].as_str(),
+        Some(service_id.as_str())
+    );
+
+    let tick_ids = tokio::time::timeout(Duration::from_secs(20), async {
+        let mut ids = Vec::new();
+        while ids.len() < 12 {
+            let evt =
+                wait_for_sse_event(&mut body, "resource_usage_tick", Duration::from_secs(15)).await;
+            ids.push(
+                evt.id
+                    .as_deref()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or_default(),
+            );
+        }
+        ids
+    })
+    .await
+    .expect("resource usage SSE should stay alive past the sampler idle window");
+
+    assert!(tick_ids.last().copied().unwrap_or_default() >= 13);
+    assert!(runner.stats_calls.load(Ordering::SeqCst) >= 12);
 }
 
 #[tokio::test]

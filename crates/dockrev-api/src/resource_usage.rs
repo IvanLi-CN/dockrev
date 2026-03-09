@@ -61,8 +61,14 @@ pub enum RealtimeMessage {
 }
 
 pub struct RealtimeSubscription {
-    pub receiver: broadcast::Receiver<RealtimeMessage>,
+    receiver: broadcast::Receiver<RealtimeMessage>,
     _guard: SubscriptionGuard,
+}
+
+impl RealtimeSubscription {
+    pub async fn recv(&mut self) -> Result<RealtimeMessage, broadcast::error::RecvError> {
+        self.receiver.recv().await
+    }
 }
 
 struct SubscriptionGuard {
