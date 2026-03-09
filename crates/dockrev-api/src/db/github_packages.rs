@@ -1039,6 +1039,125 @@ LIMIT ?3 OFFSET ?4
         .context("list github packages deliveries page")
     }
 
+    pub async fn get_github_packages_delivery(
+        &self,
+        delivery_id: &str,
+    ) -> anyhow::Result<Option<GitHubPackagesWebhookDeliveryDb>> {
+        let delivery_id = delivery_id.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    r#"
+SELECT
+  delivery_id,
+  received_at,
+  first_received_at,
+  owner,
+  repo,
+  event,
+  action,
+  decision,
+  reason,
+  response_status,
+  job_id,
+  job_ids_json,
+  attempt_count
+FROM github_packages_deliveries
+WHERE delivery_id = ?1
+"#,
+                    params![delivery_id],
+                    |row| {
+                        let job_id: Option<String> = row.get(10)?;
+                        let job_ids_json: Option<String> = row.get(11)?;
+                        Ok(GitHubPackagesWebhookDeliveryDb {
+                            delivery_id: row.get(0)?,
+                            received_at: row.get(1)?,
+                            first_received_at: row.get(2)?,
+                            owner: row.get(3)?,
+                            repo: row.get(4)?,
+                            event: row.get(5)?,
+                            action: row.get(6)?,
+                            decision: row.get(7)?,
+                            reason: row.get(8)?,
+                            response_status: row
+                                .get::<_, Option<i64>>(9)?
+                                .and_then(|value| u16::try_from(value).ok()),
+                            job_ids: parse_github_packages_delivery_job_ids(
+                                job_id.as_deref(),
+                                job_ids_json.as_deref(),
+                            ),
+                            job_id,
+                            attempt_count: row.get::<_, i64>(12)?.max(1) as u32,
+                        })
+                    },
+                )
+                .optional()?)
+        })
+        .await
+        .context("get github packages delivery")
+    }
+
+    pub async fn insert_github_packages_delivery_event(
+        &self,
+        delivery_id: &str,
+        received_at: &str,
+        payload_json: &str,
+    ) -> anyhow::Result<i64> {
+        let delivery_id = delivery_id.to_string();
+        let received_at = received_at.to_string();
+        let payload_json = payload_json.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                "INSERT INTO github_packages_delivery_events (delivery_id, received_at, payload_json) VALUES (?1, ?2, ?3)",
+                params![delivery_id, received_at, payload_json],
+            )?;
+            Ok(conn.last_insert_rowid())
+        })
+        .await
+        .context("insert github packages delivery event")
+    }
+
+    pub async fn list_github_packages_delivery_events_since(
+        &self,
+        after_id: i64,
+        limit: u32,
+    ) -> anyhow::Result<Vec<GitHubPackagesDeliveryEventRow>> {
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT id, payload_json
+FROM github_packages_delivery_events
+WHERE id > ?1
+ORDER BY id ASC
+LIMIT ?2
+"#,
+            )?;
+
+            let rows = stmt.query_map(params![after_id, limit as i64], |row| {
+                Ok(GitHubPackagesDeliveryEventRow {
+                    id: row.get(0)?,
+                    payload_json: row.get(1)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list github packages delivery events since")
+    }
+
+    pub async fn get_github_packages_delivery_events_last_id(&self) -> anyhow::Result<i64> {
+        self.call(move |conn| {
+            let v: i64 = conn.query_row(
+                "SELECT COALESCE(MAX(id), 0) FROM github_packages_delivery_events",
+                [],
+                |row| row.get(0),
+            )?;
+            Ok(v)
+        })
+        .await
+        .context("get github packages delivery events last id")
+    }
+
     pub async fn record_github_packages_delivery(
         &self,
         input: GitHubPackagesWebhookDeliveryRecordInput,

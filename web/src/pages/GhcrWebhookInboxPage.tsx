@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   listGitHubPackagesWebhookDeliveries,
+  newGitHubPackagesWebhookDeliveriesEventsSource,
   type ListGitHubPackagesWebhookDeliveriesResponse,
 } from '../api'
 import { navigate } from '../routes'
@@ -108,6 +109,39 @@ export function GhcrWebhookInboxPage(props: { onTopActions: (node: React.ReactNo
 
   useEffect(() => {
     void refresh()
+  }, [refresh])
+
+  useEffect(() => {
+    let closed = false
+    let es: EventSource | null = null
+    let refreshTimer: number | null = null
+
+    const scheduleRefresh = (delayMs: number) => {
+      if (refreshTimer != null) return
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = null
+        void refresh()
+      }, delayMs)
+    }
+
+    const connect = () => {
+      if (closed) return
+      es = newGitHubPackagesWebhookDeliveriesEventsSource()
+      es.addEventListener('open', () => scheduleRefresh(0))
+      es.addEventListener('github_packages_delivery_event', () => scheduleRefresh(250))
+      es.addEventListener('github_packages_delivery_events_error', () => scheduleRefresh(0))
+      es.onerror = () => {
+        scheduleRefresh(0)
+      }
+    }
+
+    connect()
+
+    return () => {
+      closed = true
+      if (refreshTimer != null) window.clearTimeout(refreshTimer)
+      es?.close()
+    }
   }, [refresh])
 
   useEffect(() => {
