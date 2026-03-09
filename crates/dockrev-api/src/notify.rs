@@ -572,9 +572,9 @@ async fn settle_new_version_display_tag(
     let raw_tag = raw_tag.trim();
     let digest = digest.map(str::trim).filter(|digest| !digest.is_empty());
     let image_repo = image_repo.map(str::trim).filter(|repo| !repo.is_empty());
-    let needs_inference = !raw_tag.is_empty() && !crate::ignore::is_strict_semver(raw_tag);
     let stable_display =
         best_notification_display_tag(raw_tag, &[existing_resolved_tag, existing_display_tag]);
+    let needs_inference = notification_tag_requires_settle(raw_tag, &stable_display);
 
     let mut inferred = None;
     let mut in_flight_reason = None;
@@ -601,7 +601,7 @@ async fn settle_new_version_display_tag(
             inferred.as_deref(),
         ],
     );
-    let pending = in_flight_reason.is_some() && stable_display == raw_tag;
+    let pending = in_flight_reason.is_some() && notification_tag_requires_settle(raw_tag, &display);
     Ok((display, pending))
 }
 
@@ -661,6 +661,17 @@ fn best_notification_display_tag(raw_tag: &str, improved_candidates: &[Option<&s
         }
     }
     raw_tag.to_string()
+}
+
+pub(crate) fn notification_tag_requires_settle(raw_tag: &str, display_tag: &str) -> bool {
+    let raw_tag = raw_tag.trim();
+    let display_tag = display_tag.trim();
+    if raw_tag.is_empty() || display_tag != raw_tag {
+        return false;
+    }
+    // Tags like `15-alpine` are readable enough for fallback copy, but we still
+    // wait for an authoritative resolved version when the raw tag is not strict semver.
+    !crate::ignore::is_strict_semver(raw_tag)
 }
 
 async fn log_new_version_notification_skip(
@@ -3769,6 +3780,14 @@ mod tests {
         let display =
             best_notification_display_tag("latest", &[Some("5.2.0"), Some("5.2.0"), Some("5.1.0")]);
         assert_eq!(display, "5.2.0");
+    }
+
+    #[test]
+    fn notification_tag_requires_settle_only_for_unresolved_non_strict_tags() {
+        assert!(notification_tag_requires_settle("latest", "latest"));
+        assert!(notification_tag_requires_settle("15-alpine", "15-alpine"));
+        assert!(!notification_tag_requires_settle("15-alpine", "15.0.2"));
+        assert!(!notification_tag_requires_settle("1.2.3", "1.2.3"));
     }
 
     #[test]

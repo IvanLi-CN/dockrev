@@ -223,12 +223,10 @@ pub(super) async fn handle_check_worker_result(
     let candidate_display_tag =
         preferred_display_tag(candidate_raw_tag, outcome.candidate_resolved_tag.as_deref());
     let current_tag_trim = service_image_tag.trim();
-    let current_needs_inference = !current_tag_trim.is_empty()
-        && !crate::ignore::is_strict_semver(current_tag_trim)
-        && current_display_tag.trim() == current_tag_trim;
-    let candidate_needs_inference = !candidate_raw_tag.is_empty()
-        && !crate::ignore::is_strict_semver(candidate_raw_tag)
-        && candidate_display_tag.trim() == candidate_raw_tag;
+    let current_needs_inference =
+        crate::notify::notification_tag_requires_settle(current_tag_trim, &current_display_tag);
+    let candidate_needs_inference =
+        crate::notify::notification_tag_requires_settle(candidate_raw_tag, &candidate_display_tag);
 
     if outcome.candidate_present
         && outcome.candidate_digest_changed
