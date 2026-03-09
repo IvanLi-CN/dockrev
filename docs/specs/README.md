@@ -27,6 +27,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| bvxtm | Dockrev：Supervisor 暗色主题修复 + 同源主题偏好共享 | 已完成 | `bvxtm-supervisor-dark-theme-same-origin-share/SPEC.md` | 2026-03-09 | fast-track（PR #156；cargo test + browser smoke） |
 | 4n5vr | Dockrev：新版本通知记录表去重 + 通知内版本号展示 | 已完成 | `4n5vr-new-version-notification-records/SPEC.md` | 2026-03-09 | fast-track（notification record table + display tag version copy + review fixes + main sync） |
 | e3f83 | Dockrev：GHCR Webhook 收件箱 SSE 实时更新 | 已完成 | `e3f83-ghcr-webhook-inbox-sse/SPEC.md` | 2026-03-09 | fast-track（delivery SSE + inbox auto refresh） |
 | upjqw | Dockrev：更新后本地 Compose Tag 稳定化，消除手动 `docker compose up -d` 回退 | 已完成 | `upjqw-compose-tag-stability/SPEC.md` | 2026-03-08 | fast-track（普通更新 + supervisor 自升级稳定 tag，避免手工 up 回退） |
