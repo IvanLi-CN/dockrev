@@ -112,6 +112,8 @@ pub enum UpdateProgressStep {
     UpDone,
     HealthStart,
     HealthDone,
+    SyncTagStart,
+    SyncTagDone,
     ServiceDone,
 }
 
@@ -256,10 +258,29 @@ fn failed_summary_with_skipped_anomaly(
     reason: &str,
     skipped_version_anomaly: &[serde_json::Value],
 ) -> serde_json::Value {
-    json!({
-        "reason": reason,
-        "skippedVersionAnomaly": skipped_version_anomaly,
-    })
+    failed_summary_with_failure_step(reason, None, skipped_version_anomaly)
+}
+
+fn failed_summary_with_failure_step(
+    reason: &str,
+    failure_step: Option<&str>,
+    skipped_version_anomaly: &[serde_json::Value],
+) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("reason".to_string(), json!(reason));
+    if let Some(step) = failure_step {
+        obj.insert("failureStep".to_string(), json!(step));
+    }
+    obj.insert(
+        "skippedVersionAnomaly".to_string(),
+        serde_json::Value::Array(skipped_version_anomaly.to_vec()),
+    );
+    serde_json::Value::Object(obj)
+}
+
+fn should_sync_local_tag(image_ref: &str) -> bool {
+    let trimmed = image_ref.trim();
+    !trimmed.is_empty() && !trimmed.contains('@')
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -360,6 +381,8 @@ pub async fn run_update_job(
             );
             continue;
         }
+
+        let sync_local_tag = should_sync_local_tag(&svc.image.reference);
 
         let old_image_id = run_to_string_with_retry(
             runner,
@@ -489,6 +512,7 @@ pub async fn run_update_job(
 
         let has_health = has_health.trim() == "1";
         let mut rolled_back = false;
+        let mut rollback_failure_step: Option<&'static str> = None;
         let mut active_container_id = post_update_container_id;
         if has_health {
             emit_update_progress(
@@ -511,58 +535,34 @@ pub async fn run_update_job(
             )
             .await?;
             if !ok {
-                run_checked_with_retry(
+                match rollback_service_after_failed_update(
                     runner,
-                    docker_runner::tag_image(&docker_cfg, &old_image_id, &svc.image.reference),
-                    Duration::from_secs(30),
-                    "tag_image",
-                    idempotent_retry_policy,
-                )
-                .await?;
-                run_checked(
-                    runner,
-                    compose_stack.up_service_no_pull(&compose_cfg, &svc.name),
-                    Duration::from_secs(300),
-                )
-                .await?;
-
-                // Rollback `up -d` can also recreate the container.
-                let rollback_container_id = run_to_string(
-                    runner,
-                    compose_stack.ps_q_service(&compose_cfg, &svc.name),
-                    Duration::from_secs(30),
-                )
-                .await?;
-                let rollback_container_id = rollback_container_id.trim().to_string();
-                if rollback_container_id.is_empty() {
-                    return Ok(UpdateOutcome {
-                        status: "failed".to_string(),
-                        summary_json: failed_summary_with_skipped_anomaly(
-                            "container_missing_after_rollback",
-                            &skipped_version_anomaly,
-                        ),
-                    });
-                }
-                active_container_id = rollback_container_id;
-
-                let ok2 = wait_healthy(
-                    runner,
+                    &compose_cfg,
+                    &compose_stack,
                     &docker_cfg,
-                    &active_container_id,
-                    Duration::from_secs(90),
+                    &svc.name,
+                    &svc.image.reference,
+                    &old_image_id,
+                    sync_local_tag,
+                    has_health,
                     idempotent_retry_policy,
                 )
-                .await?;
-                if !ok2 {
-                    return Ok(UpdateOutcome {
-                        status: "failed".to_string(),
-                        summary_json: failed_summary_with_skipped_anomaly(
-                            "rollback_failed",
-                            &skipped_version_anomaly,
-                        ),
-                    });
+                .await
+                {
+                    Ok(rollback_container_id) => {
+                        active_container_id = rollback_container_id;
+                        rolled_back = true;
+                    }
+                    Err(err) => {
+                        return Ok(UpdateOutcome {
+                            status: "failed".to_string(),
+                            summary_json: failed_summary_with_skipped_anomaly(
+                                err.to_string().as_str(),
+                                &skipped_version_anomaly,
+                            ),
+                        });
+                    }
                 }
-                rolled_back = true;
             }
             emit_update_progress(
                 progress_events.as_ref(),
@@ -577,7 +577,7 @@ pub async fn run_update_job(
             );
         }
 
-        let new_image_id = run_to_string_with_retry(
+        let mut new_image_id = run_to_string_with_retry(
             runner,
             docker_runner::inspect_image_id(&docker_cfg, &active_container_id),
             Duration::from_secs(10),
@@ -585,7 +585,83 @@ pub async fn run_update_job(
             idempotent_retry_policy,
         )
         .await?;
-        let new_image_id = new_image_id.trim().to_string();
+        new_image_id = new_image_id.trim().to_string();
+
+        if !rolled_back && sync_local_tag {
+            emit_update_progress(
+                progress_events.as_ref(),
+                UpdateProgressEvent {
+                    step: UpdateProgressStep::SyncTagStart,
+                    service_name: svc.name.clone(),
+                    service_index,
+                    service_total,
+                    pull_fraction: None,
+                    message: format!("syncing compose tag for {}", svc.name),
+                },
+            );
+            if let Err(_sync_err) = run_checked_with_retry(
+                runner,
+                docker_runner::tag_image(&docker_cfg, &new_image_id, &svc.image.reference),
+                Duration::from_secs(30),
+                "sync_configured_tag",
+                idempotent_retry_policy,
+            )
+            .await
+            {
+                match rollback_service_after_failed_update(
+                    runner,
+                    &compose_cfg,
+                    &compose_stack,
+                    &docker_cfg,
+                    &svc.name,
+                    &svc.image.reference,
+                    &old_image_id,
+                    sync_local_tag,
+                    has_health,
+                    idempotent_retry_policy,
+                )
+                .await
+                {
+                    Ok(rollback_container_id) => {
+                        active_container_id = rollback_container_id;
+                        rolled_back = true;
+                        rollback_failure_step = Some("sync_configured_tag");
+                        let final_image_id = run_to_string_with_retry(
+                            runner,
+                            docker_runner::inspect_image_id(&docker_cfg, &active_container_id),
+                            Duration::from_secs(10),
+                            "inspect_image_id",
+                            idempotent_retry_policy,
+                        )
+                        .await?;
+                        new_image_id = final_image_id.trim().to_string();
+                    }
+                    Err(err) => {
+                        return Ok(UpdateOutcome {
+                            status: "failed".to_string(),
+                            summary_json: failed_summary_with_failure_step(
+                                err.to_string().as_str(),
+                                Some("sync_configured_tag"),
+                                &skipped_version_anomaly,
+                            ),
+                        });
+                    }
+                }
+            } else {
+                emit_update_progress(
+                    progress_events.as_ref(),
+                    UpdateProgressEvent {
+                        step: UpdateProgressStep::SyncTagDone,
+                        service_name: svc.name.clone(),
+                        service_index,
+                        service_total,
+                        pull_fraction: None,
+                        message: format!("compose tag synced for {}", svc.name),
+                    },
+                );
+            }
+        }
+
         new_images.insert(svc.id.clone(), json!(&new_image_id));
         changed += 1;
 
@@ -601,16 +677,31 @@ pub async fn run_update_job(
                     message: format!("service {} rolled back", svc.name),
                 },
             );
+            let mut summary = serde_json::Map::new();
+            summary.insert("changedServices".to_string(), json!(changed));
+            summary.insert(
+                "oldDigests".to_string(),
+                serde_json::Value::Object(old_images),
+            );
+            summary.insert(
+                "newDigests".to_string(),
+                serde_json::Value::Object(new_images),
+            );
+            summary.insert("semverPulled".to_string(), json!(semver_pulled));
+            summary.insert(
+                "semverPullWarnings".to_string(),
+                serde_json::Value::Object(semver_pull_warnings),
+            );
+            summary.insert(
+                "skippedVersionAnomaly".to_string(),
+                json!(skipped_version_anomaly),
+            );
+            if let Some(step) = rollback_failure_step {
+                summary.insert("failureStep".to_string(), json!(step));
+            }
             return Ok(UpdateOutcome {
                 status: "rolled_back".to_string(),
-                summary_json: json!({
-                    "changedServices": changed,
-                    "oldDigests": old_images,
-                    "newDigests": new_images,
-                    "semverPulled": semver_pulled,
-                    "semverPullWarnings": semver_pull_warnings,
-                    "skippedVersionAnomaly": skipped_version_anomaly,
-                }),
+                summary_json: serde_json::Value::Object(summary),
             });
         }
 
@@ -966,6 +1057,65 @@ where
     )))
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn rollback_service_after_failed_update(
+    runner: &dyn CommandRunner,
+    compose_cfg: &ComposeRunnerConfig,
+    compose_stack: &ComposeStack,
+    docker_cfg: &docker_runner::DockerRunnerConfig,
+    service_name: &str,
+    configured_image_ref: &str,
+    old_image_id: &str,
+    sync_local_tag: bool,
+    has_health: bool,
+    idempotent_retry_policy: IdempotentRetryPolicy,
+) -> anyhow::Result<String> {
+    if sync_local_tag {
+        run_checked_with_retry(
+            runner,
+            docker_runner::tag_image(docker_cfg, old_image_id, configured_image_ref),
+            Duration::from_secs(30),
+            "tag_image",
+            idempotent_retry_policy,
+        )
+        .await?;
+    }
+
+    run_checked(
+        runner,
+        compose_stack.up_service_no_pull(compose_cfg, service_name),
+        Duration::from_secs(300),
+    )
+    .await?;
+
+    let rollback_container_id = run_to_string(
+        runner,
+        compose_stack.ps_q_service(compose_cfg, service_name),
+        Duration::from_secs(30),
+    )
+    .await?;
+    let rollback_container_id = rollback_container_id.trim().to_string();
+    if rollback_container_id.is_empty() {
+        return Err(anyhow::anyhow!("container_missing_after_rollback"));
+    }
+
+    if has_health {
+        let ok = wait_healthy(
+            runner,
+            docker_cfg,
+            &rollback_container_id,
+            Duration::from_secs(90),
+            idempotent_retry_policy,
+        )
+        .await?;
+        if !ok {
+            return Err(anyhow::anyhow!("rollback_failed"));
+        }
+    }
+
+    Ok(rollback_container_id)
+}
+
 async fn wait_healthy(
     runner: &dyn CommandRunner,
     docker_cfg: &docker_runner::DockerRunnerConfig,
@@ -1147,7 +1297,10 @@ fn sanitize_project_name(name: &str) -> String {
 mod tests {
     use super::*;
     use crate::{
-        api::types::{BackupTargetOverrides, ComposeRef, Service, ServiceSettings, TernaryChoice},
+        api::types::{
+            ArchMatch, BackupTargetOverrides, Candidate, ComposeRef, Service, ServiceSettings,
+            TernaryChoice,
+        },
         runner::{CommandOutput, CommandRunner},
     };
     use std::{collections::BTreeMap, sync::Mutex};
@@ -1185,6 +1338,42 @@ mod tests {
             .iter()
             .enumerate()
             .all(|(i, s)| args[start + i] == *s)
+    }
+
+    fn single_service_stack(image_reference: &str, candidate: Option<Candidate>) -> StackRecord {
+        StackRecord {
+            id: "stk_1".to_string(),
+            name: "App".to_string(),
+            archived: false,
+            compose: crate::api::types::ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec!["/srv/docker-compose.yml".to_string()],
+                env_file: None,
+            },
+            backup: crate::api::types::StackBackupConfig::default(),
+            services: vec![Service {
+                id: "svc_1".to_string(),
+                name: "web".to_string(),
+                image: ComposeRef {
+                    reference: image_reference.to_string(),
+                    tag: "1.0".to_string(),
+                    digest: None,
+                    resolved_tag: None,
+                    resolved_tags: None,
+                },
+                candidate,
+                ignore: None,
+                version_inference: None,
+                settings: ServiceSettings {
+                    auto_rollback: true,
+                    backup_targets: BackupTargetOverrides {
+                        bind_paths: BTreeMap::<String, TernaryChoice>::new(),
+                        volume_names: BTreeMap::<String, TernaryChoice>::new(),
+                    },
+                },
+                archived: None,
+            }],
+        }
     }
 
     #[derive(Default)]
@@ -1291,6 +1480,22 @@ mod tests {
                     CommandOutput {
                         status: 0,
                         stdout: "sha256:new\n".to_string(),
+                        stderr: String::new(),
+                    }
+                }
+                // docker image tag after successful update
+                7 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec!["image", "tag", "sha256:new", "ghcr.io/org/web:1.0"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
                         stderr: String::new(),
                     }
                 }
@@ -1418,7 +1623,7 @@ mod tests {
 
         assert_eq!(outcome.status, "success");
         assert_eq!(outcome.summary_json["changedServices"].as_u64().unwrap(), 1);
-        assert_eq!(*runner.step.lock().unwrap(), 7);
+        assert_eq!(*runner.step.lock().unwrap(), 8);
     }
 
     #[tokio::test]
@@ -1485,7 +1690,497 @@ mod tests {
         assert!(steps.contains(&UpdateProgressStep::PullStart));
         assert!(steps.contains(&UpdateProgressStep::PullDone));
         assert!(steps.contains(&UpdateProgressStep::UpDone));
+        assert!(steps.contains(&UpdateProgressStep::SyncTagStart));
+        assert!(steps.contains(&UpdateProgressStep::SyncTagDone));
         assert!(steps.contains(&UpdateProgressStep::ServiceDone));
+    }
+
+    #[derive(Default)]
+    struct SyncTagRollbackRunner {
+        step: Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for SyncTagRollbackRunner {
+        async fn run(
+            &self,
+            spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            let mut step = self.step.lock().unwrap();
+            let out = match *step {
+                0 => CommandOutput {
+                    status: 0,
+                    stdout: "old_container\n".to_string(),
+                    stderr: String::new(),
+                },
+                1 => CommandOutput {
+                    status: 0,
+                    stdout: "sha256:old\n".to_string(),
+                    stderr: String::new(),
+                },
+                2 => CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+                3 => CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+                4 => CommandOutput {
+                    status: 0,
+                    stdout: "new_container\n".to_string(),
+                    stderr: String::new(),
+                },
+                5 => CommandOutput {
+                    status: 0,
+                    stdout: "0\n".to_string(),
+                    stderr: String::new(),
+                },
+                6 => CommandOutput {
+                    status: 0,
+                    stdout: "sha256:new\n".to_string(),
+                    stderr: String::new(),
+                },
+                7 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec!["image", "tag", "sha256:new", "ghcr.io/org/web:1.0"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: "cannot sync tag".to_string(),
+                    }
+                }
+                8 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec!["image", "tag", "sha256:old", "ghcr.io/org/web:1.0"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                }
+                9 => {
+                    assert_eq!(spec.program, "docker-compose");
+                    assert!(args_end_with(
+                        &spec.args,
+                        &["up", "-d", "--pull", "never", "web"]
+                    ));
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                }
+                10 => CommandOutput {
+                    status: 0,
+                    stdout: "rollback_container\n".to_string(),
+                    stderr: String::new(),
+                },
+                11 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec!["inspect", "--format", "{{.Image}}", "rollback_container"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: "sha256:old\n".to_string(),
+                        stderr: String::new(),
+                    }
+                }
+                _ => panic!(
+                    "unexpected extra command: program={} args={:?}",
+                    spec.program, spec.args
+                ),
+            };
+            *step += 1;
+            Ok(out)
+        }
+    }
+
+    #[derive(Default)]
+    struct DigestPinnedRunner {
+        step: Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for DigestPinnedRunner {
+        async fn run(
+            &self,
+            spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            let mut step = self.step.lock().unwrap();
+            let out = match *step {
+                0 => CommandOutput {
+                    status: 0,
+                    stdout: "old_container\n".to_string(),
+                    stderr: String::new(),
+                },
+                1 => CommandOutput {
+                    status: 0,
+                    stdout: "sha256:old\n".to_string(),
+                    stderr: String::new(),
+                },
+                2 => CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+                3 => CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+                4 => CommandOutput {
+                    status: 0,
+                    stdout: "new_container\n".to_string(),
+                    stderr: String::new(),
+                },
+                5 => CommandOutput {
+                    status: 0,
+                    stdout: "0\n".to_string(),
+                    stderr: String::new(),
+                },
+                6 => CommandOutput {
+                    status: 0,
+                    stdout: "sha256:new\n".to_string(),
+                    stderr: String::new(),
+                },
+                _ => panic!(
+                    "unexpected extra command: program={} args={:?}",
+                    spec.program, spec.args
+                ),
+            };
+            *step += 1;
+            Ok(out)
+        }
+    }
+
+    #[derive(Default)]
+    struct ExplicitTargetDigestSyncRunner {
+        step: Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for ExplicitTargetDigestSyncRunner {
+        async fn run(
+            &self,
+            spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            let mut step = self.step.lock().unwrap();
+            let out = match *step {
+                0 => CommandOutput {
+                    status: 0,
+                    stdout: "old_container\n".to_string(),
+                    stderr: String::new(),
+                },
+                1 => CommandOutput {
+                    status: 0,
+                    stdout: "sha256:old\n".to_string(),
+                    stderr: String::new(),
+                },
+                2 => CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+                3 => CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+                4 => CommandOutput {
+                    status: 0,
+                    stdout: "new_container\n".to_string(),
+                    stderr: String::new(),
+                },
+                5 => CommandOutput {
+                    status: 0,
+                    stdout: "0\n".to_string(),
+                    stderr: String::new(),
+                },
+                6 => CommandOutput {
+                    status: 0,
+                    stdout: "sha256:new\n".to_string(),
+                    stderr: String::new(),
+                },
+                7 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec!["image", "tag", "sha256:new", "ghcr.io/org/web:1.0"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                }
+                _ => panic!(
+                    "unexpected extra command: program={} args={:?}",
+                    spec.program, spec.args
+                ),
+            };
+            *step += 1;
+            Ok(out)
+        }
+    }
+
+    #[derive(Default)]
+    struct SyncBeforeSemverRunner {
+        calls: Mutex<Vec<(String, Vec<String>)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for SyncBeforeSemverRunner {
+        async fn run(
+            &self,
+            spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((spec.program.clone(), spec.args.clone()));
+            let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
+            let out = if spec.program == "docker-compose"
+                && args_end_with(&spec.args, &["ps", "-q", "web"])
+            {
+                CommandOutput {
+                    status: 0,
+                    stdout: "new_container\n".to_string(),
+                    stderr: String::new(),
+                }
+            } else if spec.program == "docker"
+                && args == vec!["inspect", "--format", "{{.Image}}", "new_container"]
+            {
+                CommandOutput {
+                    status: 0,
+                    stdout: "sha256:new\n".to_string(),
+                    stderr: String::new(),
+                }
+            } else if spec.program == "docker"
+                && args
+                    == vec![
+                        "inspect",
+                        "--format",
+                        "{{if .State.Health}}1{{else}}0{{end}}",
+                        "new_container",
+                    ]
+            {
+                CommandOutput {
+                    status: 0,
+                    stdout: "0\n".to_string(),
+                    stderr: String::new(),
+                }
+            } else if spec.program == "docker"
+                && args
+                    == vec![
+                        "image",
+                        "inspect",
+                        "--format",
+                        r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
+                        "sha256:new",
+                    ]
+            {
+                CommandOutput {
+                    status: 0,
+                    stdout: "0.7.7\n".to_string(),
+                    stderr: String::new(),
+                }
+            } else if spec.program == "docker"
+                && args
+                    == vec![
+                        "image",
+                        "inspect",
+                        "--format",
+                        "{{json .RepoTags}}",
+                        "sha256:new",
+                    ]
+            {
+                CommandOutput {
+                    status: 0,
+                    stdout: "[]\n".to_string(),
+                    stderr: String::new(),
+                }
+            } else {
+                CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }
+            };
+            Ok(out)
+        }
+    }
+
+    #[tokio::test]
+    async fn sync_tag_failure_rolls_back_instead_of_reporting_success() {
+        let stack = single_service_stack("ghcr.io/org/web:1.0", None);
+        let runner = SyncTagRollbackRunner::default();
+
+        let outcome = run_update_job(
+            &runner,
+            "docker-compose",
+            IdempotentRetryPolicy {
+                max_attempts: 1,
+                base_ms: 1,
+                max_ms: 2,
+            },
+            &stack,
+            &JobScope::Service,
+            Some("svc_1"),
+            "live",
+            None,
+            None,
+            false,
+            "ui",
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.status, "rolled_back");
+        assert_eq!(
+            outcome.summary_json["newDigests"]["svc_1"],
+            json!("sha256:old")
+        );
+        assert_eq!(
+            outcome.summary_json["failureStep"].as_str(),
+            Some("sync_configured_tag")
+        );
+        assert_eq!(*runner.step.lock().unwrap(), 12);
+    }
+
+    #[tokio::test]
+    async fn explicit_target_digest_still_syncs_tag_based_service() {
+        let stack = single_service_stack("ghcr.io/org/web:1.0", None);
+        let runner = ExplicitTargetDigestSyncRunner::default();
+
+        let outcome = run_update_job(
+            &runner,
+            "docker-compose",
+            IdempotentRetryPolicy::default(),
+            &stack,
+            &JobScope::Service,
+            Some("svc_1"),
+            "live",
+            None,
+            Some("sha256:explicit"),
+            false,
+            "ui",
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.status, "success");
+        assert_eq!(*runner.step.lock().unwrap(), 8);
+    }
+
+    #[tokio::test]
+    async fn digest_pinned_service_skips_local_tag_sync() {
+        let stack = single_service_stack("ghcr.io/org/web@sha256:old", None);
+        let runner = DigestPinnedRunner::default();
+
+        let outcome = run_update_job(
+            &runner,
+            "docker-compose",
+            IdempotentRetryPolicy::default(),
+            &stack,
+            &JobScope::Service,
+            Some("svc_1"),
+            "live",
+            None,
+            None,
+            false,
+            "ui",
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.status, "success");
+        assert_eq!(*runner.step.lock().unwrap(), 7);
+    }
+
+    #[tokio::test]
+    async fn stack_update_syncs_local_tag_before_semver_pull() {
+        let stack = single_service_stack(
+            "ghcr.io/org/web:1.0",
+            Some(Candidate {
+                tag: "1.0".to_string(),
+                resolved_tag: Some("0.7.7".to_string()),
+                digest: "sha256:candidate".to_string(),
+                arch_match: ArchMatch::Match,
+                arch: vec!["linux/amd64".to_string()],
+            }),
+        );
+        let runner = SyncBeforeSemverRunner::default();
+
+        let outcome = run_update_job(
+            &runner,
+            "docker-compose",
+            IdempotentRetryPolicy::default(),
+            &stack,
+            &JobScope::Stack,
+            None,
+            "live",
+            None,
+            None,
+            false,
+            "ui",
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.status, "success");
+        let calls = runner.calls.lock().unwrap();
+        let sync_idx = calls
+            .iter()
+            .position(|(program, args)| {
+                program == "docker"
+                    && args
+                        == &vec![
+                            "image".to_string(),
+                            "tag".to_string(),
+                            "sha256:new".to_string(),
+                            "ghcr.io/org/web:1.0".to_string(),
+                        ]
+            })
+            .expect("sync tag command should exist");
+        let semver_idx = calls
+            .iter()
+            .position(|(program, args)| {
+                program == "docker"
+                    && args == &vec!["pull".to_string(), "ghcr.io/org/web:0.7.7".to_string()]
+            })
+            .expect("semver pull should exist");
+        assert!(sync_idx < semver_idx);
     }
 
     #[test]
