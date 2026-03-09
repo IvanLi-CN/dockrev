@@ -217,12 +217,42 @@ pub(super) async fn handle_check_worker_result(
     if outcome.candidate_present {
         *services_with_candidate = (*services_with_candidate).saturating_add(1);
     }
-    let current_display_tag =
-        preferred_display_tag(&service_image_tag, outcome.current_resolved_tag.as_deref());
+    let current_tag_trim = service_image_tag.trim();
     let candidate_raw_tag = outcome.candidate_tag.as_deref().unwrap_or_default().trim();
+    let image_repo = crate::snapshot_worker::image_repo_from_image_ref(&service_image_ref);
+    let current_digest = outcome
+        .current_digest
+        .as_deref()
+        .and_then(snapshot_worker::normalize_digest);
+    let candidate_digest = outcome
+        .candidate_digest
+        .as_deref()
+        .and_then(snapshot_worker::normalize_digest);
+    let current_snapshot_ready = if !crate::ignore::is_strict_semver(current_tag_trim) {
+        if let (Some(image_repo), Some(current_digest)) =
+            (image_repo.as_deref(), current_digest.as_deref())
+        {
+            notification_snapshot_ready_for_digest(
+                state.as_ref(),
+                image_repo,
+                current_digest,
+                host_platform,
+            )
+            .await?
+            .unwrap_or(true)
+        } else {
+            false
+        }
+    } else {
+        true
+    };
+    let current_display_tag = if current_snapshot_ready {
+        preferred_display_tag(&service_image_tag, outcome.current_resolved_tag.as_deref())
+    } else {
+        current_tag_trim.to_string()
+    };
     let candidate_display_tag =
         preferred_display_tag(candidate_raw_tag, outcome.candidate_resolved_tag.as_deref());
-    let current_tag_trim = service_image_tag.trim();
     let current_needs_inference =
         crate::notify::notification_tag_requires_settle(current_tag_trim, &current_display_tag);
     let candidate_needs_inference =
@@ -247,18 +277,14 @@ pub(super) async fn handle_check_worker_result(
             candidate_digest,
         });
     }
-    if let Some(image_repo) = crate::snapshot_worker::image_repo_from_image_ref(&service_image_ref)
-    {
+    if let Some(image_repo) = image_repo {
         if outcome.candidate_digest_changed
             && current_needs_inference
-            && let Some(current_digest) = outcome
-                .current_digest
-                .as_deref()
-                .and_then(snapshot_worker::normalize_digest)
+            && let Some(current_digest) = current_digest.as_deref()
             && should_enqueue_new_version_inference(
                 state.as_ref(),
                 &image_repo,
-                &current_digest,
+                current_digest,
                 host_platform,
             )
             .await?
@@ -275,14 +301,11 @@ pub(super) async fn handle_check_worker_result(
         }
         if outcome.candidate_digest_changed
             && candidate_needs_inference
-            && let Some(candidate_digest) = outcome
-                .candidate_digest
-                .as_deref()
-                .and_then(snapshot_worker::normalize_digest)
+            && let Some(candidate_digest) = candidate_digest.as_deref()
             && should_enqueue_new_version_inference(
                 state.as_ref(),
                 &image_repo,
-                &candidate_digest,
+                candidate_digest,
                 host_platform,
             )
             .await?
@@ -391,23 +414,35 @@ fn preferred_display_tag(raw_tag: &str, resolved_tag: Option<&str>) -> String {
         .to_string()
 }
 
-async fn should_enqueue_new_version_inference(
+async fn notification_snapshot_ready_for_digest(
     state: &AppState,
     image_repo: &str,
     digest: &str,
     host_platform: &str,
-) -> Result<bool, ApiError> {
+) -> Result<Option<bool>, ApiError> {
     let snapshot = state
         .db
         .get_image_digest_tags_snapshot(image_repo, digest, host_platform)
         .await
         .map_err(map_internal)?;
     let Some((snapshot_json, checked_at, _updated_at)) = snapshot else {
-        return Ok(true);
+        return Ok(None);
     };
-    Ok(
-        !crate::notify::notification_snapshot_is_ready_from_row(&snapshot_json, &checked_at)
+    Ok(Some(
+        crate::notify::notification_snapshot_is_ready_from_row(&snapshot_json, &checked_at)
             .unwrap_or(false),
+    ))
+}
+
+async fn should_enqueue_new_version_inference(
+    state: &AppState,
+    image_repo: &str,
+    digest: &str,
+    host_platform: &str,
+) -> Result<bool, ApiError> {
+    Ok(
+        notification_snapshot_ready_for_digest(state, image_repo, digest, host_platform).await?
+            != Some(true),
     )
 }
 

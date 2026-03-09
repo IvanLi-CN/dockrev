@@ -439,6 +439,7 @@ async fn revalidate_new_version_discovered_services(
 struct NewVersionNotificationSettleTarget {
     image_repo: Option<String>,
     current_digest: Option<String>,
+    current_snapshot_ready: bool,
     current_resolved_tag: Option<String>,
     candidate_resolved_tag: Option<String>,
 }
@@ -455,7 +456,8 @@ async fn settle_new_version_discovered_services(
         crate::registry::host_platform_override(state.config.host_platform.as_deref())
             .unwrap_or_else(|| "linux/amd64".to_string());
     let settle_targets =
-        load_new_version_notification_settle_targets(state, discovered_services).await?;
+        load_new_version_notification_settle_targets(state, discovered_services, &host_platform)
+            .await?;
     let deadline = tokio::time::Instant::now() + NEW_VERSION_NOTIFY_SETTLE_TIMEOUT;
 
     loop {
@@ -473,9 +475,28 @@ async fn settle_new_version_discovered_services(
     }
 }
 
+async fn load_notification_snapshot_ready(
+    state: &AppState,
+    image_repo: &str,
+    digest: &str,
+    host_platform: &str,
+) -> anyhow::Result<Option<bool>> {
+    let Some((snapshot_json, checked_at, _updated_at)) = state
+        .db
+        .get_image_digest_tags_snapshot(image_repo, digest, host_platform)
+        .await?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(
+        notification_snapshot_is_ready_from_row(&snapshot_json, &checked_at).unwrap_or(false),
+    ))
+}
+
 async fn load_new_version_notification_settle_targets(
     state: &AppState,
     discovered_services: &[NewVersionDiscoveredService],
+    host_platform: &str,
 ) -> anyhow::Result<std::collections::HashMap<String, NewVersionNotificationSettleTarget>> {
     let mut out = std::collections::HashMap::new();
     let mut stack_cache =
@@ -495,28 +516,47 @@ async fn load_new_version_notification_settle_targets(
         };
 
         let image_repo = crate::snapshot_worker::image_repo_from_image_ref(&item.image_ref);
-        let target = stack
+        let target = if let Some(service) = stack
             .as_ref()
             .and_then(|stack| stack.services.iter().find(|svc| svc.id == item.service_id))
-            .map(|service| NewVersionNotificationSettleTarget {
-                image_repo: image_repo.clone().or_else(|| {
-                    crate::snapshot_worker::image_repo_from_image_ref(&service.image.reference)
-                }),
-                current_digest: service
+        {
+            let image_repo = image_repo.clone().or_else(|| {
+                crate::snapshot_worker::image_repo_from_image_ref(&service.image.reference)
+            });
+            let current_digest = service
+                .image
+                .digest
+                .as_deref()
+                .and_then(crate::snapshot_worker::normalize_digest);
+            let current_snapshot_ready = if let (Some(image_repo), Some(current_digest)) =
+                (image_repo.as_deref(), current_digest.as_deref())
+            {
+                load_notification_snapshot_ready(state, image_repo, current_digest, host_platform)
+                    .await?
+                    .unwrap_or(true)
+            } else {
+                false
+            };
+            NewVersionNotificationSettleTarget {
+                image_repo,
+                current_digest,
+                current_snapshot_ready,
+                current_resolved_tag: service
                     .image
-                    .digest
-                    .as_deref()
-                    .and_then(crate::snapshot_worker::normalize_digest),
-                current_resolved_tag: service.image.resolved_tag.clone(),
+                    .resolved_tag
+                    .clone()
+                    .filter(|_| current_snapshot_ready),
                 candidate_resolved_tag: service
                     .candidate
                     .as_ref()
                     .and_then(|candidate| candidate.resolved_tag.clone()),
-            })
-            .unwrap_or_else(|| NewVersionNotificationSettleTarget {
+            }
+        } else {
+            NewVersionNotificationSettleTarget {
                 image_repo,
                 ..NewVersionNotificationSettleTarget::default()
-            });
+            }
+        };
         out.insert(item.service_id.clone(), target);
     }
 
@@ -540,7 +580,11 @@ async fn settle_new_version_discovered_services_once(
             image_repo,
             &item.current_tag,
             target.and_then(|target| target.current_resolved_tag.as_deref()),
-            Some(item.current_display_tag.as_str()),
+            target.and_then(|target| {
+                target
+                    .current_snapshot_ready
+                    .then_some(item.current_display_tag.as_str())
+            }),
             target.and_then(|target| target.current_digest.as_deref()),
             host_platform,
         )
@@ -1131,6 +1175,7 @@ fn render_tag_transition(
     let candidate = notification_tag_display(candidate_display_tag, candidate_tag);
     match (current, candidate) {
         (Some(current), Some(candidate)) if !current.readable && !candidate.readable => None,
+        (Some(current), Some(candidate)) if current.label == candidate.label => None,
         (Some(current), Some(candidate)) => {
             Some(format!("{} -> {}", current.label, candidate.label))
         }
@@ -3803,6 +3848,23 @@ mod tests {
             current_display_tag: Some("latest".to_string()),
             candidate_tag: Some("latest".to_string()),
             candidate_display_tag: Some("latest".to_string()),
+            url: "https://dockrev.example.com/services/stk_blog/svc_api".to_string(),
+        }];
+        let summary = summarize_new_version_services(1, &services, 0);
+        assert_eq!(summary, "blog / api 服务有新版本。");
+    }
+
+    #[test]
+    fn new_version_summary_single_service_omits_same_alias_transition() {
+        let services = vec![NewVersionNotificationServiceUrlV2 {
+            stack_id: "stk_blog".to_string(),
+            stack_name: "blog".to_string(),
+            service_id: "svc_api".to_string(),
+            service_name: "api".to_string(),
+            current_tag: Some("5.2".to_string()),
+            current_display_tag: Some("5.2".to_string()),
+            candidate_tag: Some("5.2".to_string()),
+            candidate_display_tag: Some("5.2".to_string()),
             url: "https://dockrev.example.com/services/stk_blog/svc_api".to_string(),
         }];
         let summary = summarize_new_version_services(1, &services, 0);
