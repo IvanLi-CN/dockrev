@@ -600,7 +600,17 @@ async fn settle_new_version_display_tag(
             existing_display_tag,
         ],
     );
+    if pending && notification_display_is_readable(raw_tag, &display) {
+        pending = false;
+    }
     Ok((display, pending))
+}
+
+fn notification_display_is_readable(raw_tag: &str, display_tag: &str) -> bool {
+    let raw_tag = raw_tag.trim();
+    let display_tag = display_tag.trim();
+    crate::ignore::is_strict_semver(display_tag)
+        || (!display_tag.is_empty() && !raw_tag.is_empty() && display_tag != raw_tag)
 }
 
 async fn infer_notification_display_tag_from_snapshot(
@@ -1444,7 +1454,7 @@ fn to_web_push_ghcr_webhook_anomaly_value(
         );
         map.insert(
             "body".to_string(),
-            Value::String(payload.human.summary.clone()),
+            Value::String(format!("{}\n点击通知查看详情", payload.human.summary)),
         );
         map.insert(
             "url".to_string(),
@@ -3970,6 +3980,13 @@ mod tests {
         assert_eq!(
             ghcr_value["url"].as_str(),
             Some("https://dockrev.example.com/queue/job_ghcr_123")
+        );
+        assert_eq!(
+            ghcr_value["body"].as_str(),
+            Some(
+                "巡检发现 2 个异常仓库：acme/api [missing]、acme/worker [error]。
+点击通知查看详情"
+            )
         );
     }
 
