@@ -600,17 +600,7 @@ async fn settle_new_version_display_tag(
             existing_display_tag,
         ],
     );
-    if pending && notification_display_is_readable(raw_tag, &display) {
-        pending = false;
-    }
     Ok((display, pending))
-}
-
-fn notification_display_is_readable(raw_tag: &str, display_tag: &str) -> bool {
-    let raw_tag = raw_tag.trim();
-    let display_tag = display_tag.trim();
-    crate::ignore::is_strict_semver(display_tag)
-        || (!display_tag.is_empty() && !raw_tag.is_empty() && display_tag != raw_tag)
 }
 
 async fn infer_notification_display_tag_from_snapshot(
@@ -1029,7 +1019,7 @@ fn notification_tag_display<'a>(
                 readable: true,
             })
         }
-        (_, Some(raw_tag)) if crate::ignore::is_strict_semver(raw_tag) => {
+        (_, Some(raw_tag)) if crate::ignore::parse_version(raw_tag).is_some() => {
             Some(NotificationTagDisplay {
                 label: raw_tag,
                 readable: true,
@@ -3750,6 +3740,26 @@ mod tests {
         }];
         let summary = summarize_new_version_services(1, &services, 0);
         assert_eq!(summary, "blog / api 服务有新版本（latest -> 1.1.0）。");
+    }
+
+    #[test]
+    fn new_version_summary_keeps_parseable_non_strict_transitions() {
+        let services = vec![NewVersionNotificationServiceUrlV2 {
+            stack_id: "stk_blog".to_string(),
+            stack_name: "blog".to_string(),
+            service_id: "svc_api".to_string(),
+            service_name: "api".to_string(),
+            current_tag: Some("15-alpine".to_string()),
+            current_display_tag: Some("15-alpine".to_string()),
+            candidate_tag: Some("16-alpine".to_string()),
+            candidate_display_tag: Some("16-alpine".to_string()),
+            url: "https://dockrev.example.com/services/stk_blog/svc_api".to_string(),
+        }];
+        let summary = summarize_new_version_services(1, &services, 0);
+        assert_eq!(
+            summary,
+            "blog / api 服务有新版本（15-alpine -> 16-alpine）。"
+        );
     }
 
     #[test]
