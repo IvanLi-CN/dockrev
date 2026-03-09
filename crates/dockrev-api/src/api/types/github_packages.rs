@@ -330,6 +330,23 @@ pub struct ListGitHubPackagesWebhookDeliveriesResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GitHubPackagesWebhookDeliveryEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    #[serde(flatten)]
+    pub delivery: GitHubPackagesWebhookDelivery,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubPackagesWebhookDeliveryEventsErrorPayload {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub error: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeleteWebPushSubscriptionRequest {
     pub endpoint: String,
 }

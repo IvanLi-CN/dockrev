@@ -102,9 +102,17 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 | POST | `/api/github-packages/targets/remove` | Forward Auth | 删除 target | `200` `400` `401` |
 | POST | `/api/github-packages/resolve` | Forward Auth | 解析 repo/owner 输入并返回仓库候选 | `200` `400` `401` `422` |
 | GET | `/api/github-packages/webhook/overview` | Forward Auth | GHCR webhook 状态聚合（repo + job） | `200` `401` |
+| GET | `/api/github-packages/webhook/deliveries/events` | Forward Auth | GHCR webhook 收件箱事件流（SSE） | `200` `401` |
 | POST | `/api/github-packages/webhook/sync-all` | Forward Auth | 触发全量 webhook 状态同步（复用未完成任务） | `200` `400` `401` |
 | POST | `/api/github-packages/webhook/sync-repo` | Forward Auth | 触发单仓库 webhook 状态同步（同仓库未完成任务复用） | `200` `400` `401` `404` `409` |
 | POST | `/api/github-packages/sync` | Forward Auth | 与 GitHub webhook 状态同步 | `200` `400` `401` |
+
+#### GHCR webhook deliveries SSE
+
+- `GET /api/github-packages/webhook/deliveries/events` 返回 `text/event-stream`，事件名固定为 `github_packages_delivery_event` 与 `github_packages_delivery_events_error`。
+- 支持 query `afterId` 与 `Last-Event-ID` 续传；服务端取两者最大值作为 cursor。
+- 未提供 cursor 时，默认 tail-follow：从当前最新 delivery event id 开始，仅追随后续新事件。
+- 建议前端在收到 delivery 事件或 error 事件后重新请求当前收件箱列表，以保持分页、筛选和 summary 一致。
 
 ### 7) Web Push / Webhooks / Deploy checks
 
