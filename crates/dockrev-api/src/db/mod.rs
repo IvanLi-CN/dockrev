@@ -113,6 +113,7 @@ pub struct ServiceResourceTarget {
     pub compose_project: String,
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewVersionNotificationRecord {
     pub id: String,

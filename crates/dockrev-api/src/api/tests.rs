@@ -1615,6 +1615,17 @@ async fn wait_for_job_terminal(
     panic!("timed out waiting for job {job_id} to finish");
 }
 
+async fn wait_for_job_log_contains(state: &Arc<AppState>, job_id: &str, needle: &str) {
+    for _ in 0..300 {
+        let logs = state.db.list_job_logs(job_id).await.unwrap();
+        if logs.iter().any(|line| line.msg.contains(needle)) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("timed out waiting for job {job_id} log containing {needle}");
+}
+
 async fn insert_check_job(state: &Arc<AppState>, reason: &str, now: &str) -> String {
     let job_id = ids::new_check_id();
     let mut job = crate::api::types::JobRecord::new_running(
@@ -9426,6 +9437,7 @@ services:
         job.summary_json["deliveryId"].as_str(),
         Some("notify-reuse-1")
     );
+    wait_for_job_log_contains(&state, &job_id, "notify: webhook=ok").await;
     let logs = state.db.list_job_logs(&job_id).await.unwrap();
     assert!(
         logs.iter()
@@ -9594,6 +9606,7 @@ services:
     );
 
     let job = wait_for_job_terminal(&state, &job_id).await;
+    wait_for_job_log_contains(&state, &job_id, "notify: webhook=ok").await;
     let logs = state.db.list_job_logs(&job_id).await.unwrap();
     assert!(job.finished_at.is_some());
     assert!(

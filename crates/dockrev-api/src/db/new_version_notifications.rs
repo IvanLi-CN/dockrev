@@ -6,6 +6,7 @@ const STATUS_FAILED: &str = "failed";
 const STATUS_SUPERSEDED: &str = "superseded";
 const ACTIVE_INDEX_NAME: &str = "idx_new_version_notifications_active_service_digest";
 
+#[cfg(test)]
 fn map_new_version_notification_row(
     row: &rusqlite::Row<'_>,
 ) -> rusqlite::Result<NewVersionNotificationRecord> {
@@ -348,6 +349,7 @@ WHERE id IN ({placeholders})
         .context("list current new version notification targets")
     }
 
+    #[cfg(test)]
     pub async fn list_new_version_notifications_for_service(
         &self,
         service_id: &str,

@@ -463,9 +463,7 @@ fn successful_delivery_channels(results: &Value) -> Vec<String> {
 }
 
 fn failed_delivery_error(results: &Value) -> Option<String> {
-    let Some(map) = results.as_object() else {
-        return None;
-    };
+    let map = results.as_object()?;
     let failures = map
         .iter()
         .filter_map(|(channel, result)| {
