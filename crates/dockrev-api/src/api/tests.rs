@@ -1590,6 +1590,23 @@ async fn wait_for_job_terminal(
     panic!("timed out waiting for job {job_id} to finish");
 }
 
+async fn insert_check_job(state: &Arc<AppState>, reason: &str, now: &str) -> String {
+    let job_id = ids::new_check_id();
+    let mut job = crate::api::types::JobRecord::new_running(
+        job_id.clone(),
+        crate::api::types::JobType::Check,
+        crate::api::types::JobScope::All,
+        None,
+        None,
+        now,
+    )
+    .to_db();
+    job.created_by = reason.to_string();
+    job.reason = reason.to_string();
+    state.db.insert_job(job).await.unwrap();
+    job_id
+}
+
 async fn configure_webhook_notifications(
     state: &Arc<AppState>,
 ) -> (
@@ -9534,6 +9551,22 @@ services:
     assert_eq!(payload["kind"].as_str(), Some("new_version_discovered"));
     assert_eq!(payload["channel"].as_str(), Some("webhook"));
     assert_eq!(payload["check"]["jobId"].as_str(), Some(job_id.as_str()));
+    assert_eq!(
+        payload["links"]["serviceUrls"][0]["currentTag"].as_str(),
+        Some("5.2")
+    );
+    assert_eq!(
+        payload["links"]["serviceUrls"][0]["candidateTag"].as_str(),
+        Some("5.2")
+    );
+    assert_eq!(
+        payload["links"]["serviceUrls"][0]["currentDisplayTag"].as_str(),
+        Some("5.2")
+    );
+    assert_eq!(
+        payload["links"]["serviceUrls"][0]["candidateDisplayTag"].as_str(),
+        Some("5.2")
+    );
 
     let job = wait_for_job_terminal(&state, &job_id).await;
     let logs = state.db.list_job_logs(&job_id).await.unwrap();
@@ -9543,6 +9576,211 @@ services:
             .any(|line| line.msg.contains("notify: webhook=ok"))
     );
     server.abort();
+}
+
+#[tokio::test]
+async fn schedule_new_version_notifications_are_deduped_by_active_record() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+
+    let compose_path = format!("/tmp/dockrev-schedule-notify-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    let discovered = vec![crate::notify::NewVersionDiscoveredService {
+        stack_id: stack_id.clone(),
+        service_id: service.id.clone(),
+        image_ref: service.image_ref.clone(),
+        current_tag: "latest".to_string(),
+        current_display_tag: "1.0.0".to_string(),
+        candidate_tag: "latest".to_string(),
+        candidate_display_tag: "1.1.0".to_string(),
+        candidate_digest: "sha256:new".to_string(),
+    }];
+    let (mut rx, server) = configure_webhook_notifications(&state).await;
+
+    let first_now = "2026-03-09T00:00:00Z";
+    let first_job_id = insert_check_job(&state, "schedule", first_now).await;
+    crate::notify::notify_new_versions_discovered(
+        state.as_ref(),
+        &first_job_id,
+        "schedule",
+        first_now,
+        1,
+        &discovered,
+    )
+    .await
+    .unwrap();
+
+    let first_payload = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .expect("webhook receive timeout")
+        .expect("notification payload missing");
+    assert_eq!(
+        first_payload["check"]["jobId"].as_str(),
+        Some(first_job_id.as_str())
+    );
+    let first_service = &first_payload["links"]["serviceUrls"][0];
+    assert_eq!(first_service["currentDisplayTag"].as_str(), Some("1.0.0"));
+    assert_eq!(first_service["candidateDisplayTag"].as_str(), Some("1.1.0"));
+    let summary = first_payload["human"]["summary"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(summary.contains("1.0.0 -> 1.1.0"));
+    assert!(!summary.contains("latest -> latest"));
+
+    let second_now = "2026-03-09T00:01:00Z";
+    let second_job_id = insert_check_job(&state, "schedule", second_now).await;
+    crate::notify::notify_new_versions_discovered(
+        state.as_ref(),
+        &second_job_id,
+        "schedule",
+        second_now,
+        1,
+        &discovered,
+    )
+    .await
+    .unwrap();
+
+    let received = tokio::time::timeout(Duration::from_millis(300), rx.recv()).await;
+    assert!(
+        received.is_err(),
+        "duplicate schedule notification should be skipped"
+    );
+
+    let rows = state
+        .db
+        .list_new_version_notifications_for_service(&service.id)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].status, "sent");
+    assert_eq!(rows[0].reason, "schedule");
+
+    let logs = state.db.list_job_logs(&second_job_id).await.unwrap();
+    assert!(logs.iter().any(|line| {
+        line.msg.contains(
+            "new-version notification skipped: all 1 services already have active records",
+        )
+    }));
+    server.abort();
+}
+
+#[tokio::test]
+async fn failed_new_version_notification_record_retries_after_all_channels_fail() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+
+    let compose_path = format!("/tmp/dockrev-failed-notify-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    let discovered = vec![crate::notify::NewVersionDiscoveredService {
+        stack_id: stack_id.clone(),
+        service_id: service.id.clone(),
+        image_ref: service.image_ref.clone(),
+        current_tag: "latest".to_string(),
+        current_display_tag: "1.0.0".to_string(),
+        candidate_tag: "latest".to_string(),
+        candidate_display_tag: "1.1.0".to_string(),
+        candidate_digest: "sha256:new".to_string(),
+    }];
+
+    let failing_app = Router::new().route(
+        "/hook",
+        post(|| async { axum::http::StatusCode::INTERNAL_SERVER_ERROR }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let failing_server = tokio::spawn(async move {
+        axum::serve(listener, failing_app).await.unwrap();
+    });
+    let fail_now = "2026-03-09T00:00:00Z";
+    let mut notification = state.db.get_notification_settings().await.unwrap();
+    notification.webhook_enabled = true;
+    notification.webhook_url = Some(format!("http://{addr}/hook"));
+    notification.event_new_version_enabled = true;
+    state
+        .db
+        .put_notification_settings(&notification, fail_now)
+        .await
+        .unwrap();
+
+    let failed_job_id = insert_check_job(&state, "schedule", fail_now).await;
+    crate::notify::notify_new_versions_discovered(
+        state.as_ref(),
+        &failed_job_id,
+        "schedule",
+        fail_now,
+        1,
+        &discovered,
+    )
+    .await
+    .unwrap();
+
+    let rows = state
+        .db
+        .list_new_version_notifications_for_service(&service.id)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].status, "failed");
+    assert!(
+        rows[0]
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("webhook")
+    );
+
+    let (mut rx, success_server) = configure_webhook_notifications(&state).await;
+    let retry_now = "2026-03-09T00:01:00Z";
+    let retry_job_id = insert_check_job(&state, "schedule", retry_now).await;
+    crate::notify::notify_new_versions_discovered(
+        state.as_ref(),
+        &retry_job_id,
+        "schedule",
+        retry_now,
+        1,
+        &discovered,
+    )
+    .await
+    .unwrap();
+
+    let payload = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .expect("webhook receive timeout")
+        .expect("notification payload missing");
+    assert_eq!(
+        payload["check"]["jobId"].as_str(),
+        Some(retry_job_id.as_str())
+    );
+
+    let rows = state
+        .db
+        .list_new_version_notifications_for_service(&service.id)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].status, "failed");
+    assert_eq!(rows[1].status, "sent");
+
+    success_server.abort();
+    failing_server.abort();
 }
 
 #[tokio::test]

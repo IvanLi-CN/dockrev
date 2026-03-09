@@ -54,6 +54,7 @@ pub async fn notify_job_updated(
 pub async fn notify_new_versions_discovered(
     state: &AppState,
     check_job_id: &str,
+    reason: &str,
     now_rfc3339: &str,
     services_checked: u32,
     discovered_services: &[NewVersionDiscoveredService],
@@ -61,14 +62,104 @@ pub async fn notify_new_versions_discovered(
     if discovered_services.is_empty() {
         return Ok(());
     }
-    send_new_versions(
+
+    let settings = state.db.get_notification_settings().await?;
+    if !is_event_enabled(&settings, NotificationEventKind::NewVersionDiscovered)
+        || !has_enabled_delivery_channel(&settings)
+    {
+        return Ok(());
+    }
+
+    let mut reserved = Vec::<ReservedNewVersionNotification>::new();
+    for item in discovered_services {
+        let pending = crate::db::NewVersionNotificationPending {
+            id: crate::ids::new_notification_id(),
+            service_id: item.service_id.clone(),
+            job_id: check_job_id.to_string(),
+            reason: reason.to_string(),
+            image_ref: item.image_ref.clone(),
+            image_tag: item.current_tag.clone(),
+            current_tag: item.current_tag.clone(),
+            current_display_tag: item.current_display_tag.clone(),
+            candidate_tag: item.candidate_tag.clone(),
+            candidate_display_tag: item.candidate_display_tag.clone(),
+            candidate_digest: item.candidate_digest.clone(),
+            created_at: now_rfc3339.to_string(),
+        };
+        match state.db.reserve_new_version_notification(&pending).await? {
+            crate::db::NewVersionNotificationReserveResult::Reserved(record_id) => {
+                reserved.push(ReservedNewVersionNotification {
+                    record_id,
+                    service: item.clone(),
+                });
+            }
+            crate::db::NewVersionNotificationReserveResult::SkippedDuplicate => {}
+        }
+    }
+
+    if reserved.is_empty() {
+        let _ = state
+            .db
+            .insert_job_log(
+                check_job_id,
+                &JobLogLine {
+                    ts: now_rfc3339.to_string(),
+                    level: "info".to_string(),
+                    msg: format!(
+                        "new-version notification skipped: all {} services already have active records",
+                        discovered_services.len()
+                    ),
+                },
+            )
+            .await;
+        return Ok(());
+    }
+
+    let reserved_services = reserved
+        .iter()
+        .map(|item| item.service.clone())
+        .collect::<Vec<_>>();
+    let send_result = send_new_versions(
         state,
         check_job_id,
         now_rfc3339,
         services_checked,
-        discovered_services,
+        &reserved_services,
     )
-    .await?;
+    .await;
+
+    let results = match send_result {
+        Ok(results) => results,
+        Err(err) => {
+            let err_text = err.to_string();
+            for item in &reserved {
+                let _ = state
+                    .db
+                    .finalize_new_version_notification(
+                        &item.record_id,
+                        &[],
+                        Some(err_text.as_str()),
+                        now_rfc3339,
+                    )
+                    .await;
+            }
+            return Err(err);
+        }
+    };
+
+    let sent_channels = successful_delivery_channels(&results);
+    let last_error = failed_delivery_error(&results);
+    for item in &reserved {
+        let _ = state
+            .db
+            .finalize_new_version_notification(
+                &item.record_id,
+                &sent_channels,
+                last_error.as_deref(),
+                now_rfc3339,
+            )
+            .await?;
+    }
     Ok(())
 }
 
@@ -124,8 +215,12 @@ enum NotificationEventKind {
 pub struct NewVersionDiscoveredService {
     pub stack_id: String,
     pub service_id: String,
-    pub current_tag: Option<String>,
-    pub candidate_tag: Option<String>,
+    pub image_ref: String,
+    pub current_tag: String,
+    pub current_display_tag: String,
+    pub candidate_tag: String,
+    pub candidate_display_tag: String,
+    pub candidate_digest: String,
 }
 
 pub fn extract_new_versions_discovered(summary: &Value) -> Vec<NewVersionDiscoveredService> {
@@ -145,17 +240,35 @@ pub fn extract_new_versions_discovered(summary: &Value) -> Vec<NewVersionDiscove
         let Some(service_id) = item.get("serviceId").and_then(|v| v.as_str()) else {
             continue;
         };
+        let Some(image_ref) = item.get("imageRef").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(current_tag) = item.get("currentTag").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(candidate_tag) = item.get("candidateTag").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(candidate_digest) = item.get("candidateDigest").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let current_display_tag = item
+            .get("currentDisplayTag")
+            .and_then(|v| v.as_str())
+            .unwrap_or(current_tag);
+        let candidate_display_tag = item
+            .get("candidateDisplayTag")
+            .and_then(|v| v.as_str())
+            .unwrap_or(candidate_tag);
         out.push(NewVersionDiscoveredService {
             stack_id: stack_id.to_string(),
             service_id: service_id.to_string(),
-            current_tag: item
-                .get("currentTag")
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string),
-            candidate_tag: item
-                .get("candidateTag")
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string),
+            image_ref: image_ref.to_string(),
+            current_tag: current_tag.to_string(),
+            current_display_tag: current_display_tag.to_string(),
+            candidate_tag: candidate_tag.to_string(),
+            candidate_display_tag: candidate_display_tag.to_string(),
+            candidate_digest: candidate_digest.to_string(),
         });
     }
     out
@@ -210,6 +323,64 @@ fn should_send_channel(
             ..
         } => *target == channel,
         NotifySendMode::Test { channel: None, .. } => enabled,
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ReservedNewVersionNotification {
+    record_id: String,
+    service: NewVersionDiscoveredService,
+}
+
+fn has_enabled_delivery_channel(settings: &NotificationSettings) -> bool {
+    settings.webhook_enabled
+        || settings.telegram_enabled
+        || settings.email_enabled
+        || settings.webpush_enabled
+}
+
+fn successful_delivery_channels(results: &Value) -> Vec<String> {
+    let Some(map) = results.as_object() else {
+        return Vec::new();
+    };
+    map.iter()
+        .filter_map(|(channel, result)| {
+            result
+                .get("ok")
+                .and_then(|value| value.as_bool())
+                .filter(|ok| *ok)
+                .map(|_| channel.clone())
+        })
+        .collect()
+}
+
+fn failed_delivery_error(results: &Value) -> Option<String> {
+    let Some(map) = results.as_object() else {
+        return None;
+    };
+    let failures = map
+        .iter()
+        .filter_map(|(channel, result)| {
+            let ok = result
+                .get("ok")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            if ok {
+                return None;
+            }
+            let error = result
+                .get("error")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("unknown delivery error");
+            Some(format!("{channel}: {error}"))
+        })
+        .collect::<Vec<_>>();
+    if failures.is_empty() {
+        None
+    } else {
+        Some(failures.join("; "))
     }
 }
 
@@ -329,7 +500,11 @@ struct NewVersionNotificationServiceUrlV2 {
     #[serde(skip_serializing_if = "Option::is_none")]
     current_tag: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    current_display_tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     candidate_tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    candidate_display_tag: Option<String>,
     url: String,
 }
 
@@ -480,8 +655,25 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
     out
 }
 
-fn render_tag_transition(current_tag: Option<&str>, candidate_tag: Option<&str>) -> Option<String> {
-    match (current_tag, candidate_tag) {
+fn notification_tag_display<'a>(
+    display_tag: Option<&'a str>,
+    raw_tag: Option<&'a str>,
+) -> Option<&'a str> {
+    display_tag
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .or_else(|| raw_tag.map(str::trim).filter(|tag| !tag.is_empty()))
+}
+
+fn render_tag_transition(
+    current_display_tag: Option<&str>,
+    candidate_display_tag: Option<&str>,
+    current_tag: Option<&str>,
+    candidate_tag: Option<&str>,
+) -> Option<String> {
+    let current = notification_tag_display(current_display_tag, current_tag);
+    let candidate = notification_tag_display(candidate_display_tag, candidate_tag);
+    match (current, candidate) {
         (Some(current), Some(candidate)) => Some(format!("{current} -> {candidate}")),
         (None, Some(candidate)) => Some(format!("-> {candidate}")),
         _ => None,
@@ -499,10 +691,14 @@ fn summarize_new_version_services(
 
     if total_new_versions == 1 {
         if let Some(svc) = visible_services.first() {
-            let transition =
-                render_tag_transition(svc.current_tag.as_deref(), svc.candidate_tag.as_deref())
-                    .map(|t| format!("，{t}"))
-                    .unwrap_or_default();
+            let transition = render_tag_transition(
+                svc.current_display_tag.as_deref(),
+                svc.candidate_display_tag.as_deref(),
+                svc.current_tag.as_deref(),
+                svc.candidate_tag.as_deref(),
+            )
+            .map(|t| format!("，{t}"))
+            .unwrap_or_default();
             return format!(
                 "发现 1 个服务有新版本（{} / {}{}）。",
                 svc.stack_name, svc.service_name, transition
@@ -513,7 +709,17 @@ fn summarize_new_version_services(
 
     let preview = visible_services
         .iter()
-        .map(|svc| format!("{} / {}", svc.stack_name, svc.service_name))
+        .map(|svc| {
+            let transition = render_tag_transition(
+                svc.current_display_tag.as_deref(),
+                svc.candidate_display_tag.as_deref(),
+                svc.current_tag.as_deref(),
+                svc.candidate_tag.as_deref(),
+            )
+            .map(|t| format!("（{t}）"))
+            .unwrap_or_default();
+            format!("{} / {}{}", svc.stack_name, svc.service_name, transition)
+        })
         .collect::<Vec<_>>()
         .join("、");
     if preview.is_empty() {
@@ -1175,9 +1381,12 @@ fn render_telegram_new_version_html(payload: &NewVersionNotificationPayloadV2) -
         lines.push("<b>服务清单</b>".to_string());
         for svc in &payload.links.service_urls {
             let mut label = format!("{} / {}", svc.stack_name, svc.service_name);
-            if let Some(transition) =
-                render_tag_transition(svc.current_tag.as_deref(), svc.candidate_tag.as_deref())
-            {
+            if let Some(transition) = render_tag_transition(
+                svc.current_display_tag.as_deref(),
+                svc.candidate_display_tag.as_deref(),
+                svc.current_tag.as_deref(),
+                svc.candidate_tag.as_deref(),
+            ) {
                 label.push_str(&format!(" ({transition})"));
             }
             lines.push(format!(
@@ -1214,9 +1423,12 @@ fn render_telegram_new_version_plain(payload: &NewVersionNotificationPayloadV2) 
         lines.push("服务清单".to_string());
         for svc in &payload.links.service_urls {
             let mut label = format!("{} / {}", svc.stack_name, svc.service_name);
-            if let Some(transition) =
-                render_tag_transition(svc.current_tag.as_deref(), svc.candidate_tag.as_deref())
-            {
+            if let Some(transition) = render_tag_transition(
+                svc.current_display_tag.as_deref(),
+                svc.candidate_display_tag.as_deref(),
+                svc.current_tag.as_deref(),
+                svc.candidate_tag.as_deref(),
+            ) {
                 label.push_str(&format!(" ({transition})"));
             }
             lines.push(format!("- {}: {}", label, svc.url));
@@ -1250,9 +1462,12 @@ fn render_email_new_version_html(payload: &NewVersionNotificationPayloadV2) -> S
         items.push_str("<ul>");
         for svc in &payload.links.service_urls {
             let mut label = format!("{} / {}", svc.stack_name, svc.service_name);
-            if let Some(transition) =
-                render_tag_transition(svc.current_tag.as_deref(), svc.candidate_tag.as_deref())
-            {
+            if let Some(transition) = render_tag_transition(
+                svc.current_display_tag.as_deref(),
+                svc.candidate_display_tag.as_deref(),
+                svc.current_tag.as_deref(),
+                svc.candidate_tag.as_deref(),
+            ) {
                 label.push_str(&format!(" ({transition})"));
             }
             let label = escape_html(&label);
@@ -1868,8 +2083,10 @@ async fn build_new_version_payload_v2(
             stack_name,
             service_id: item.service_id.clone(),
             service_name,
-            current_tag: item.current_tag.clone(),
-            candidate_tag: item.candidate_tag.clone(),
+            current_tag: Some(item.current_tag.clone()),
+            current_display_tag: Some(item.current_display_tag.clone()),
+            candidate_tag: Some(item.candidate_tag.clone()),
+            candidate_display_tag: Some(item.candidate_display_tag.clone()),
             url,
         });
     }
@@ -3019,7 +3236,9 @@ mod tests {
                     service_id: "svc_1".to_string(),
                     service_name: "api".to_string(),
                     current_tag: Some("latest".to_string()),
+                    current_display_tag: Some("1.0.0".to_string()),
                     candidate_tag: Some("latest".to_string()),
+                    candidate_display_tag: Some("1.1.0".to_string()),
                     url: "https://dockrev.example.com/services/stk_1/svc_1".to_string(),
                 }],
                 truncated: JobNotificationTruncatedV2 {
@@ -3048,7 +3267,9 @@ mod tests {
             service_id: format!("svc_{service_name}"),
             service_name: service_name.to_string(),
             current_tag: Some("v1.0.0".to_string()),
+            current_display_tag: Some("1.0.0".to_string()),
             candidate_tag: Some("v1.1.0".to_string()),
+            candidate_display_tag: Some("1.1.0".to_string()),
             url: format!(
                 "https://dockrev.example.com/services/stk_{stack_name}/svc_{service_name}"
             ),
