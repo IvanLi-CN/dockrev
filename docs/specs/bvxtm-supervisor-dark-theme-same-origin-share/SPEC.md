@@ -119,6 +119,10 @@
 
 ## Visual Evidence (PR)
 
+- Supervisor 同一组 operation/logs 数据下的主题对比（左 dark / 右 light）。
+
+  ![Supervisor light-dark compare](./assets/supervisor-theme-light-dark-compare.png)
+
 ## 资产晋升（Asset promotion）
 
 - None
