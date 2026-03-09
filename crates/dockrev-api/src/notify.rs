@@ -281,6 +281,7 @@ pub struct NewVersionDiscoveredService {
     pub service_id: String,
     pub image_ref: String,
     pub current_tag: String,
+    pub current_digest: Option<String>,
     pub current_display_tag: String,
     pub candidate_tag: String,
     pub candidate_display_tag: String,
@@ -316,6 +317,10 @@ pub fn extract_new_versions_discovered(summary: &Value) -> Vec<NewVersionDiscove
         let Some(candidate_digest) = item.get("candidateDigest").and_then(|v| v.as_str()) else {
             continue;
         };
+        let current_digest = item
+            .get("currentDigest")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
         let current_display_tag = item
             .get("currentDisplayTag")
             .and_then(|v| v.as_str())
@@ -329,6 +334,7 @@ pub fn extract_new_versions_discovered(summary: &Value) -> Vec<NewVersionDiscove
             service_id: service_id.to_string(),
             image_ref: image_ref.to_string(),
             current_tag: current_tag.to_string(),
+            current_digest,
             current_display_tag: current_display_tag.to_string(),
             candidate_tag: candidate_tag.to_string(),
             candidate_display_tag: candidate_display_tag.to_string(),
@@ -523,13 +529,18 @@ async fn load_new_version_notification_settle_targets(
             let image_repo = image_repo.clone().or_else(|| {
                 crate::snapshot_worker::image_repo_from_image_ref(&service.image.reference)
             });
-            let current_digest = service
+            let live_current_digest = service
                 .image
                 .digest
                 .as_deref()
                 .and_then(crate::snapshot_worker::normalize_digest);
+            let frozen_current_digest = item
+                .current_digest
+                .as_deref()
+                .and_then(crate::snapshot_worker::normalize_digest)
+                .or_else(|| live_current_digest.clone());
             let current_snapshot_ready = if let (Some(image_repo), Some(current_digest)) =
-                (image_repo.as_deref(), current_digest.as_deref())
+                (image_repo.as_deref(), frozen_current_digest.as_deref())
             {
                 load_notification_snapshot_ready(state, image_repo, current_digest, host_platform)
                     .await?
@@ -537,19 +548,22 @@ async fn load_new_version_notification_settle_targets(
             } else {
                 false
             };
+            let current_digest_matches_live = live_current_digest == frozen_current_digest;
             NewVersionNotificationSettleTarget {
                 image_repo,
-                current_digest,
+                current_digest: frozen_current_digest,
                 current_snapshot_ready,
                 current_resolved_tag: service
                     .image
                     .resolved_tag
                     .clone()
-                    .filter(|_| current_snapshot_ready),
-                candidate_resolved_tag: service
-                    .candidate
-                    .as_ref()
-                    .and_then(|candidate| candidate.resolved_tag.clone()),
+                    .filter(|_| current_snapshot_ready)
+                    .filter(|_| current_digest_matches_live),
+                candidate_resolved_tag: service.candidate.as_ref().and_then(|candidate| {
+                    crate::snapshot_worker::normalize_digest(&candidate.digest)
+                        .filter(|digest| digest == item.candidate_digest.as_str())
+                        .and_then(|_| candidate.resolved_tag.clone())
+                }),
             }
         } else {
             NewVersionNotificationSettleTarget {
@@ -727,16 +741,7 @@ fn best_notification_display_tag(raw_tag: &str, improved_candidates: &[Option<&s
 }
 
 fn notification_tag_supports_settle(raw_tag: &str) -> bool {
-    let raw_tag = raw_tag.trim();
-    if raw_tag.is_empty() || crate::ignore::is_strict_semver(raw_tag) {
-        return false;
-    }
-
-    crate::ignore::parse_version(raw_tag).is_some()
-        || matches!(
-            raw_tag.to_ascii_lowercase().as_str(),
-            "latest" | "stable" | "current" | "release" | "lts"
-        )
+    crate::api::needs_version_inference_for_tags(raw_tag.trim(), None)
 }
 
 pub(crate) fn notification_tag_requires_settle(raw_tag: &str, display_tag: &str) -> bool {
@@ -3949,6 +3954,14 @@ mod tests {
     }
 
     #[test]
+    fn notification_tag_requires_settle_reuses_shared_non_strict_semver_rules() {
+        assert!(notification_tag_requires_settle("main", "main"));
+        assert!(notification_tag_requires_settle("nightly", "nightly"));
+        assert!(!notification_tag_requires_settle("1.2.3", "1.2.3"));
+        assert!(!notification_tag_requires_settle("main", "5.3.0"));
+    }
+
+    #[test]
     fn best_notification_display_tag_keeps_existing_resolved_before_stale_snapshot() {
         let display =
             best_notification_display_tag("latest", &[Some("5.2.0"), Some("5.2.0"), Some("5.1.0")]);
@@ -3961,8 +3974,8 @@ mod tests {
         assert!(notification_tag_requires_settle("15-alpine", "15-alpine"));
         assert!(!notification_tag_requires_settle("15-alpine", "15.0.2"));
         assert!(!notification_tag_requires_settle("1.2.3", "1.2.3"));
-        assert!(!notification_tag_requires_settle("main", "main"));
-        assert!(!notification_tag_requires_settle(
+        assert!(notification_tag_requires_settle("main", "main"));
+        assert!(notification_tag_requires_settle(
             "sha-abcdef0",
             "sha-abcdef0"
         ));

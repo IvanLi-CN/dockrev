@@ -96,7 +96,7 @@ pub(super) fn checked_at_is_retryable_all_failed(checked_at: Option<&str>) -> bo
     })
 }
 
-pub(super) fn needs_version_inference_for_tags(
+pub(crate) fn needs_version_inference_for_tags(
     current_tag: &str,
     candidate_tag: Option<&str>,
 ) -> bool {

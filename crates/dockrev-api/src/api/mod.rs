@@ -63,6 +63,7 @@ use jobs::*;
 use notifications::*;
 use operations::*;
 use services::*;
+pub(crate) use stacks::needs_version_inference_for_tags;
 use stacks::*;
 use webhooks::*;
 pub fn router(state: Arc<AppState>) -> Router {
