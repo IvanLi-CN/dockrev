@@ -638,7 +638,7 @@ pub(super) async fn service_resource_usage_events(
         }
 
         loop {
-            match subscription.receiver.recv().await {
+            match subscription.recv().await {
                 Ok(resource_usage::RealtimeMessage::Tick(sample)) => {
                     event_id = event_id.saturating_add(1);
                     let data = json!({
