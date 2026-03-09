@@ -131,8 +131,10 @@ Dockrev 会生成两类路径（总能生成）：
 
 触发条件：由**定时检查更新任务**或 **GHCR webhook 触发的服务检查**触发；当某次检查发现新的可更新服务时，按任务聚合发送。UI 手动 check 保持静默，不发送该通知。
 
-去重与生命周期：
+发送时机、去重与生命周期：
 
+- check job 会先写入 `success` 终态；通知只在 dispatch 前等待，不回退任务终态
+- 对仍依赖 floating tag 推测的服务，会按 digest snapshot + snapshot worker 在途状态等待版本推测收敛；固定等待上限为 **3 秒**
 - active 去重键为 `serviceId + candidateDigest`
 - 只有 `pending` / `sent` 状态会阻止重复通知
 - 当候选消失、候选 digest 变化、或服务基线 `imageRef:imageTag` 改变时，旧 active 记录会转成 `superseded`
@@ -146,19 +148,27 @@ Dockrev 会生成两类路径（总能生成）：
 - `links.jobUrl`：任务详情页（`/queue/{jobId}`）
 - `links.serviceUrls[]`：服务详情链接（`/services/{stackId}/{serviceId}`）
 - `links.serviceUrls[].currentTag` / `candidateTag`：保留 raw tag，兼容既有 webhook 消费方
-- `links.serviceUrls[].currentDisplayTag` / `candidateDisplayTag`：新增可选 display tag，优先使用 resolved version/tag，缺失时回退 raw tag
+- `links.serviceUrls[].currentDisplayTag` / `candidateDisplayTag`：优先使用已解析的 resolved version/tag；若最终仍不可读，raw 字段仍保持不变
 - `links.primaryUrl`：若仅 1 个服务则指向服务详情，否则指向任务详情
+- `human.summary`：只收敛人类可读文案，不改变 schema version
+
+摘要 / 人类可读渲染规则：
+
+- 单服务，双侧都可读：`blog / api 服务有新版本（1.0.0 -> 1.1.0）。`
+- 单服务，仅一侧可读：`blog / api 服务有新版本（1.0.0 -> latest）。`
+- 单服务，双侧最终都不可读：`blog / api 服务有新版本。`（不会发送 `latest -> latest`）
+- 多服务聚合：`发现 3 个服务有新版本：blog / api、blog / worker（1.0.0 -> 1.1.0）、shop / gateway（2.4.0 -> 2.5.0）。`
+
+渠道渲染规则：
+
+- Telegram / Email（单服务）：只保留标题、正文首句和一个 `服务详情` 动作；不再追加标题尾 `详情`、`服务清单` 或重复链接列表
+- Telegram / Email（多服务）：继续保留聚合清单；某条服务若双侧都不可读，则只显示服务名，不附迁移括号
+- Web Push：`body` 直接等于 `human.summary`，点击目标仍使用 `links.primaryUrl`
 
 截断规则：
 
 - `links.serviceUrls` 最多 10 条
 - 超出计入 `links.truncated.serviceUrlsOmitted`
-
-示例（摘要）：
-
-- 标题：`Dockrev：发现新版本`
-- 摘要：`发现 3 个服务有新版本：blog / api（1.0.0 -> 1.1.0）、blog / worker（1.0.0 -> 1.1.0）、shop / gateway（2.4.0 -> 2.5.0）。`
-- 主链接：`https://dockrev.example.com/queue/job_...`（多服务）或服务详情（单服务）
 
 ## GHCR webhook anomaly（`dockrev.notification.ghcr_webhook_anomaly.v2`）
 
