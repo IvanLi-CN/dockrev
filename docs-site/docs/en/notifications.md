@@ -113,6 +113,13 @@ Uniquely mapped means:
 
 Trigger: scheduled update checks and GHCR-webhook-triggered service checks. A notification is sent when a check run discovers new versions. UI-triggered manual checks stay silent.
 
+Deduplication and lifecycle:
+
+- active dedupe is keyed by `serviceId + candidateDigest`
+- only `pending` / `sent` records block repeats
+- when the candidate disappears, the candidate digest changes, or the service baseline `imageRef:imageTag` changes, the previous active record is marked `superseded`
+- when every enabled delivery channel fails, the record is finalized as `failed` and later jobs may retry
+
 Key fields:
 
 - `check.jobId`: check job id
@@ -120,8 +127,10 @@ Key fields:
 - `check.newVersions`: number of services with newly discovered versions
 - `links.jobUrl`: `/queue/{jobId}`
 - `links.serviceUrls[]`: `/services/{stackId}/{serviceId}`
+- `links.serviceUrls[].currentTag` / `candidateTag`: raw tags kept for backward compatibility
+- `links.serviceUrls[].currentDisplayTag` / `candidateDisplayTag`: optional display tags that prefer resolved version/tag and fall back to raw tags
 - `links.primaryUrl`: service URL when exactly one service is affected, otherwise job URL
-- `human.summary`: includes affected service names directly (for example: `Found 3 services with new versions: blog/api, blog/worker, shop/gateway.`)
+- `human.summary`: includes affected service names together with the visible transition (for example: `Found 3 services with new versions: blog/api (1.0.0 -> 1.1.0), blog/worker (1.0.0 -> 1.1.0), shop/gateway (2.4.0 -> 2.5.0).`)
 
 Truncation:
 

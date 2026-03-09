@@ -640,6 +640,38 @@ fn render_ui_contains_supervisor_meta_links() {
 }
 
 #[test]
+fn render_ui_bootstraps_theme_before_styles() {
+    let html = render_ui("/supervisor", &test_meta());
+    let theme_bootstrap_idx = html.find("window.__dockrevSupervisorTheme").unwrap();
+    let style_idx = html.find("<style>").unwrap();
+
+    assert!(theme_bootstrap_idx < style_idx);
+    assert!(html.contains("root.dataset.theme = theme;"));
+    assert!(html.contains("root.style.colorScheme = theme;"));
+    assert!(html.contains("const theme = storedTheme || preferredTheme();"));
+}
+
+#[test]
+fn render_ui_reuses_dockrev_theme_storage_contract() {
+    let html = render_ui("/supervisor", &test_meta());
+    assert!(html.contains(r#"const STORAGE_KEY = "dockrev:theme";"#));
+    assert!(html.contains("window.localStorage.getItem(STORAGE_KEY)"));
+    assert!(html.contains("return value === 'light' || value === 'dark' ? value : null;"));
+}
+
+#[test]
+fn render_ui_syncs_theme_on_storage_and_system_changes() {
+    let html = render_ui("/supervisor", &test_meta());
+    assert!(html.contains("const themeController = window.__dockrevSupervisorTheme;"));
+    assert!(html.contains(r#"window.addEventListener('storage'"#));
+    assert!(html.contains("themeMedia.addEventListener('change', handleSystemThemeChange);"));
+    assert!(html.contains("themeMedia.addListener(handleSystemThemeChange);"));
+    assert!(html.contains(
+        "if (themeController?.hasStoredTheme && themeController.hasStoredTheme()) return;"
+    ));
+}
+
+#[test]
 fn build_supervisor_meta_uses_fallbacks_when_metadata_missing() {
     let meta = build_supervisor_meta(None, "0.3.0", None, None, None);
     assert_eq!(meta.version, "0.3.0");

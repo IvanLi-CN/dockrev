@@ -218,6 +218,7 @@ async fn trigger_scheduled_check(state: Arc<AppState>) -> anyhow::Result<()> {
                             let _ = notify::notify_new_versions_discovered(
                                 notify_state.as_ref(),
                                 &notify_job_id,
+                                "schedule",
                                 &notify_finished_at,
                                 services_checked,
                                 &discovered_services,

@@ -217,13 +217,29 @@ pub(super) async fn handle_check_worker_result(
     if outcome.candidate_present {
         *services_with_candidate = (*services_with_candidate).saturating_add(1);
     }
-    if outcome.candidate_present && outcome.candidate_digest_changed {
+    if outcome.candidate_present
+        && outcome.candidate_digest_changed
+        && let (Some(candidate_tag), Some(candidate_digest)) = (
+            outcome.candidate_tag.clone(),
+            outcome.candidate_digest.clone(),
+        )
+    {
         discovered_versions.push(CheckDiscoveredVersion {
             stack_id: stack_id.clone(),
             service_id: service_id.clone(),
             service_name: service_name.clone(),
-            current_tag: Some(service_image_tag.clone()),
-            candidate_tag: outcome.candidate_tag.clone(),
+            image_ref: service_image_ref.clone(),
+            current_tag: service_image_tag.clone(),
+            current_display_tag: preferred_display_tag(
+                &service_image_tag,
+                outcome.current_resolved_tag.as_deref(),
+            ),
+            candidate_tag,
+            candidate_display_tag: preferred_display_tag(
+                outcome.candidate_tag.as_deref().unwrap_or_default(),
+                outcome.candidate_resolved_tag.as_deref(),
+            ),
+            candidate_digest,
         });
     }
     if outcome.candidate_digest_changed
@@ -304,8 +320,12 @@ pub(super) struct CheckDiscoveredVersion {
     stack_id: String,
     service_id: String,
     service_name: String,
-    current_tag: Option<String>,
-    candidate_tag: Option<String>,
+    image_ref: String,
+    current_tag: String,
+    current_display_tag: String,
+    candidate_tag: String,
+    candidate_display_tag: String,
+    candidate_digest: String,
 }
 
 pub(super) fn check_job_is_stale(
@@ -327,8 +347,27 @@ pub(super) fn check_job_is_stale(
         .is_some_and(|age| age > stale_threshold)
 }
 
-pub(super) fn check_reason_emits_new_version_notification(reason: &str) -> bool {
-    reason.eq_ignore_ascii_case("schedule") || reason.eq_ignore_ascii_case("webhook")
+fn preferred_display_tag(raw_tag: &str, resolved_tag: Option<&str>) -> String {
+    resolved_tag
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .unwrap_or_else(|| raw_tag.trim())
+        .to_string()
+}
+
+pub(super) fn new_version_notification_reason(
+    reason: &str,
+    summary: &serde_json::Value,
+) -> Option<&'static str> {
+    if reason.eq_ignore_ascii_case("schedule") {
+        Some("schedule")
+    } else if reason.eq_ignore_ascii_case("webhook")
+        || summary_emits_new_version_notification(summary)
+    {
+        Some("webhook")
+    } else {
+        None
+    }
 }
 
 pub(super) fn summary_emits_new_version_notification(summary: &serde_json::Value) -> bool {
@@ -342,12 +381,13 @@ pub(super) fn summary_matched_service_ids(
     summary: &serde_json::Value,
 ) -> Option<std::collections::HashSet<String>> {
     let items = summary.get("matchedServiceIds")?.as_array()?;
-    let ids = items
-        .iter()
-        .filter_map(|value| value.as_str())
-        .map(ToString::to_string)
-        .collect::<std::collections::HashSet<_>>();
-    if ids.is_empty() { None } else { Some(ids) }
+    Some(
+        items
+            .iter()
+            .filter_map(|value| value.as_str())
+            .map(ToString::to_string)
+            .collect::<std::collections::HashSet<_>>(),
+    )
 }
 
 pub(super) fn merge_job_summary(
@@ -376,19 +416,16 @@ pub(super) async fn maybe_notify_check_new_versions(
     finished_at: &str,
     summary: &serde_json::Value,
 ) -> anyhow::Result<()> {
-    if !check_reason_emits_new_version_notification(reason)
-        && !summary_emits_new_version_notification(summary)
-    {
+    let Some(notification_reason) = new_version_notification_reason(reason, summary) else {
         return Ok(());
-    }
+    };
 
     let mut discovered_services = notify::extract_new_versions_discovered(summary);
     if discovered_services.is_empty() {
         return Ok(());
     }
 
-    if !check_reason_emits_new_version_notification(reason)
-        && summary_emits_new_version_notification(summary)
+    if summary_emits_new_version_notification(summary)
         && let Some(matched_service_ids) = summary_matched_service_ids(summary)
     {
         discovered_services.retain(|service| matched_service_ids.contains(&service.service_id));
@@ -405,6 +442,7 @@ pub(super) async fn maybe_notify_check_new_versions(
     notify::notify_new_versions_discovered(
         state.as_ref(),
         job_id,
+        notification_reason,
         finished_at,
         services_checked,
         &discovered_services,
@@ -1003,8 +1041,12 @@ pub(crate) async fn run_check_for_job(
                 "stackId": item.stack_id,
                 "serviceId": item.service_id,
                 "serviceName": item.service_name,
+                "imageRef": item.image_ref,
                 "currentTag": item.current_tag,
+                "currentDisplayTag": item.current_display_tag,
                 "candidateTag": item.candidate_tag,
+                "candidateDisplayTag": item.candidate_display_tag,
+                "candidateDigest": item.candidate_digest,
             })
         })
         .collect::<Vec<_>>();
@@ -1784,24 +1826,15 @@ pub(super) async fn run_update_job(
                             let mut inference_ok = true;
                             if settle_outcome.current_digest.is_none() {
                                 inference_ok = false;
-                                state
-                                    .db
-                                    .update_service_check_result(
-                                        &svc.id,
-                                        Some(runtime_digest.clone()),
-                                        None,
-                                        None,
-                                        None,
-                                        None,
-                                        None,
-                                        None,
-                                        None,
-                                        None,
-                                        None,
-                                        &settled_at,
-                                        &settled_at,
-                                    )
-                                    .await?;
+                                service_check::persist_runtime_fallback_result(
+                                    &state.db,
+                                    &svc.id,
+                                    &svc.image.reference,
+                                    &svc.image.tag,
+                                    &runtime_digest,
+                                    &settled_at,
+                                )
+                                .await?;
                                 settle_outcome.current_digest = Some(runtime_digest.clone());
                                 settle_outcome.current_resolved_tag = None;
                                 settle_outcome.current_resolved_tags_json = None;

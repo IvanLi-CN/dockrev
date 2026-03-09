@@ -436,14 +436,21 @@ WHERE id = ?1
             )?;
 
             let existing_by_name = {
-                let mut stmt = tx.prepare("SELECT id, name FROM services WHERE stack_id = ?1")?;
+                let mut stmt = tx.prepare(
+                    "SELECT id, name, image_ref, image_tag FROM services WHERE stack_id = ?1",
+                )?;
                 let existing_rows = stmt.query_map(params![stack_id.clone()], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
                 })?;
-                let mut m = BTreeMap::<String, String>::new();
+                let mut m = BTreeMap::<String, (String, String, String)>::new();
                 for r in existing_rows {
-                    let (id, name) = r?;
-                    m.insert(name, id);
+                    let (id, name, image_ref, image_tag) = r?;
+                    m.insert(name, (id, image_ref, image_tag));
                 }
                 m
             };
@@ -451,7 +458,24 @@ WHERE id = ?1
             let mut keep_ids = Vec::<String>::new();
 
             for svc in services {
-                if let Some(id) = existing_by_name.get(&svc.name) {
+                if let Some((id, existing_image_ref, existing_image_tag)) =
+                    existing_by_name.get(&svc.name)
+                {
+                    if existing_image_ref == &svc.image_ref && existing_image_tag == &svc.image_tag {
+                        tx.execute(
+                            r#"
+UPDATE services
+SET updated_at = ?2
+WHERE id = ?1
+"#,
+                            params![id, now],
+                        )?;
+                        keep_ids.push(id.clone());
+                        continue;
+                    }
+
+                    let image_ref = svc.image_ref.clone();
+                    let image_tag = svc.image_tag.clone();
                     tx.execute(
                         r#"
 UPDATE services
@@ -472,7 +496,15 @@ SET
   updated_at = ?4
 WHERE id = ?1
 "#,
-                        params![id, svc.image_ref, svc.image_tag, now],
+                        params![id, image_ref, image_tag, now],
+                    )?;
+                    super::new_version_notifications::reconcile_service_new_version_notifications_tx(
+                        &tx,
+                        id,
+                        &svc.image_ref,
+                        &svc.image_tag,
+                        None,
+                        &now,
                     )?;
                     keep_ids.push(id.clone());
                 } else {
