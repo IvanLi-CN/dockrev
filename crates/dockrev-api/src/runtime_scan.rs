@@ -477,24 +477,15 @@ async fn run_runtime_scan_for_job(
                 // it is available; otherwise, we fall back to persisting the runtime digest
                 // and clearing resolved/candidate fields to avoid showing stale data.
                 inference_ok = false;
-                state
-                    .db
-                    .update_service_check_result(
-                        &svc.id,
-                        Some(runtime_digest.clone()),
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        now,
-                        now,
-                    )
-                    .await?;
+                service_check::persist_runtime_fallback_result(
+                    &state.db,
+                    &svc.id,
+                    &svc.image_ref,
+                    &svc.image_tag,
+                    &runtime_digest,
+                    now,
+                )
+                .await?;
 
                 outcome.current_digest = Some(runtime_digest.clone());
                 outcome.current_resolved_tag = None;

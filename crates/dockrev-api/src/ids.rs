@@ -27,3 +27,7 @@ pub fn new_discovery_id() -> String {
 pub fn new_backup_id() -> String {
     format!("bkp_{}", Ulid::new())
 }
+
+pub fn new_notification_id() -> String {
+    format!("ntf_{}", Ulid::new())
+}
