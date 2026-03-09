@@ -95,6 +95,42 @@
 - 2026-03-09：创建规格，冻结 `dockrev` 聚合更新 guard 的范围、交互约束与验收口径。
 - 2026-03-09：完成前后端 aggregate guard、Overview/Services 聚合入口、Storybook 场景与回归测试。
 
+
+## Visual Evidence (PR)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: browser-viewport
+  sensitive_exclusion: N/A
+  submission_gate: approved
+  story_id_or_title: Pages/OverviewPage/AggregateDockrevGuard
+  state: confirm-dialog-open + guard-tooltip-visible
+  evidence_note: verifies Overview `更新全部` excludes `dockrev` from actionable count while keeping a disabled preview row with tooltip in the confirmation dialog.
+  image:
+  ![Overview aggregate guard dialog](./assets/overview-aggregate-dockrev-guard.png)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: browser-viewport
+  sensitive_exclusion: N/A
+  submission_gate: approved
+  story_id_or_title: Pages/OverviewPage/AggregateDockrevOnlyDisabled
+  state: dockrev-only-disabled
+  evidence_note: verifies Overview aggregate actions are disabled when the range only contains guarded `dockrev`, with the supervisor tooltip still visible.
+  image:
+  ![Overview aggregate dockrev-only disabled](./assets/overview-aggregate-dockrev-only-disabled.png)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: browser-viewport
+  sensitive_exclusion: N/A
+  submission_gate: approved
+  story_id_or_title: Pages/ServicesPage/AggregateDockrevGuard
+  state: confirm-dialog-open + guard-tooltip-visible
+  evidence_note: verifies Services `更新此 stack` keeps `dockrev` as a read-only guarded preview row and only counts the normal service as actionable.
+  image:
+  ![Services aggregate guard dialog](./assets/services-aggregate-dockrev-guard.png)
+
 ## 参考（References）
 
 - `crates/dockrev-api/src/updater.rs`
