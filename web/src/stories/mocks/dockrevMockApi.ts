@@ -2451,6 +2451,62 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
     return null
   }
 
+  function canApplyMockUpdate(service: StackDetail['services'][number]) {
+    return Boolean(service.candidate && !service.archived && !service.ignore && service.candidate.archMatch === 'match')
+  }
+
+  function countMockUpdates(stack: StackDetail) {
+    return stack.services.filter((service) => canApplyMockUpdate(service)).length
+  }
+
+  function syncStackListItem(stackId: string) {
+    if (!state) return
+    const detail = state.stackById[stackId]
+    if (!detail) return
+    const item = state.stacks.find((stack) => stack.id === stackId)
+    if (!item) return
+    item.updates = countMockUpdates(detail)
+  }
+
+  function selectUpdateServiceIds(scope: string, stackId: string | null, serviceId: string | null) {
+    if (!state) return []
+    if (scope === 'service') return serviceId ? [serviceId] : []
+    if (scope === 'stack') {
+      const stack = stackId ? state.stackById[stackId] : null
+      return stack ? stack.services.filter((service) => canApplyMockUpdate(service)).map((service) => service.id) : []
+    }
+    return Object.values(state.stackById).flatMap((stack) =>
+      stack.services.filter((service) => canApplyMockUpdate(service)).map((service) => service.id),
+    )
+  }
+
+  function applyMockUpdateSettlement(serviceId: string, targetTag?: string | null, targetDigest?: string | null) {
+    const found = findService(serviceId)
+    if (!found || !found.svc.candidate) return
+
+    const candidate = found.svc.candidate
+    const nextTag = (targetTag ?? '').trim() || candidate.resolvedTag?.trim() || candidate.tag
+    const nextDigest = (targetDigest ?? '').trim() || candidate.digest
+    const nextResolvedTag = candidate.resolvedTag?.trim() || nextTag
+
+    found.svc.image = {
+      ...found.svc.image,
+      tag: nextTag,
+      digest: nextDigest,
+      resolvedTag: nextResolvedTag,
+      resolvedTags: Array.from(new Set([nextResolvedTag, ...(found.svc.image.resolvedTags ?? [])].filter(Boolean))),
+    }
+    found.svc.candidate = null
+    if (found.svc.versionInference) {
+      found.svc.versionInference = {
+        ...found.svc.versionInference,
+        status: 'ready',
+        checkedAt: nowIso(),
+      }
+    }
+    syncStackListItem(found.stack.id)
+  }
+
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
     const urlString = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
@@ -3173,7 +3229,9 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         ],
         logsLastId: 2,
       }
+      const affectedServiceIds = selectUpdateServiceIds(scope, stackId, serviceId)
       const updateFinishDelayMs = scenario === 'dashboard-demo-slow-update' ? 4_500 : 1_400
+      const settleDelayMs = scenario === 'dashboard-demo-slow-update' ? 280 : 220
       window.setTimeout(() => {
         const live = f.jobById[jobId]
         if (!live || (live.status !== 'queued' && live.status !== 'running')) return
@@ -3188,6 +3246,14 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         }
         f.jobById[jobId] = finalJob
         f.jobs = f.jobs.map((row) => (row.id === jobId ? { ...row, status: 'success', finishedAt } : row))
+
+        window.setTimeout(() => {
+          if (!state) return
+          for (const affectedId of affectedServiceIds) {
+            const isRequestedService = scope === 'service' && affectedId === serviceId
+            applyMockUpdateSettlement(affectedId, isRequestedService ? targetTag : null, isRequestedService ? targetDigest : null)
+          }
+        }, settleDelayMs)
       }, updateFinishDelayMs)
       return json({ jobId })
     }
