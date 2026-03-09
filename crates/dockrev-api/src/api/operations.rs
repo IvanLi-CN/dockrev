@@ -219,10 +219,16 @@ pub(super) async fn handle_check_worker_result(
     }
     let current_display_tag =
         preferred_display_tag(&service_image_tag, outcome.current_resolved_tag.as_deref());
-    let candidate_display_tag = preferred_display_tag(
-        outcome.candidate_tag.as_deref().unwrap_or_default(),
-        outcome.candidate_resolved_tag.as_deref(),
-    );
+    let candidate_raw_tag = outcome.candidate_tag.as_deref().unwrap_or_default().trim();
+    let candidate_display_tag =
+        preferred_display_tag(candidate_raw_tag, outcome.candidate_resolved_tag.as_deref());
+    let current_tag_trim = service_image_tag.trim();
+    let current_needs_inference = !current_tag_trim.is_empty()
+        && !crate::ignore::is_strict_semver(current_tag_trim)
+        && current_display_tag.trim() == current_tag_trim;
+    let candidate_needs_inference = !candidate_raw_tag.is_empty()
+        && !crate::ignore::is_strict_semver(candidate_raw_tag)
+        && candidate_display_tag.trim() == candidate_raw_tag;
 
     if outcome.candidate_present
         && outcome.candidate_digest_changed
@@ -246,7 +252,7 @@ pub(super) async fn handle_check_worker_result(
     if let Some(image_repo) = crate::snapshot_worker::image_repo_from_image_ref(&service_image_ref)
     {
         if outcome.candidate_digest_changed
-            && crate::ignore::parse_version(&current_display_tag).is_none()
+            && current_needs_inference
             && let Some(current_digest) = outcome
                 .current_digest
                 .as_deref()
@@ -263,7 +269,7 @@ pub(super) async fn handle_check_worker_result(
                 .await;
         }
         if outcome.candidate_digest_changed
-            && crate::ignore::parse_version(&candidate_display_tag).is_none()
+            && candidate_needs_inference
             && let Some(candidate_digest) = outcome
                 .candidate_digest
                 .as_deref()

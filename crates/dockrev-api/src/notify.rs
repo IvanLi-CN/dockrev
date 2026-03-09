@@ -572,10 +572,12 @@ async fn settle_new_version_display_tag(
     let raw_tag = raw_tag.trim();
     let digest = digest.map(str::trim).filter(|digest| !digest.is_empty());
     let image_repo = image_repo.map(str::trim).filter(|repo| !repo.is_empty());
-    let needs_inference = !raw_tag.is_empty() && crate::ignore::parse_version(raw_tag).is_none();
+    let needs_inference = !raw_tag.is_empty() && !crate::ignore::is_strict_semver(raw_tag);
+    let stable_display =
+        best_notification_display_tag(raw_tag, &[existing_resolved_tag, existing_display_tag]);
 
     let mut inferred = None;
-    let mut pending = false;
+    let mut in_flight_reason = None;
     if needs_inference && let (Some(image_repo), Some(digest)) = (image_repo, digest) {
         inferred = infer_notification_display_tag_from_snapshot(
             state,
@@ -585,11 +587,10 @@ async fn settle_new_version_display_tag(
             raw_tag,
         )
         .await?;
-        pending = state
+        in_flight_reason = state
             .snapshot_worker
             .in_flight_reason(image_repo, digest, host_platform)
-            .await
-            .is_some();
+            .await;
     }
 
     let display = best_notification_display_tag(
@@ -600,6 +601,8 @@ async fn settle_new_version_display_tag(
             inferred.as_deref(),
         ],
     );
+    let pending =
+        matches!(in_flight_reason.as_deref(), Some("new_version")) && stable_display == raw_tag;
     Ok((display, pending))
 }
 
