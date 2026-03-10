@@ -217,6 +217,76 @@ pub(super) async fn handle_check_worker_result(
     if outcome.candidate_present {
         *services_with_candidate = (*services_with_candidate).saturating_add(1);
     }
+    let current_tag_trim = service_image_tag.trim();
+    let candidate_raw_tag = outcome.candidate_tag.as_deref().unwrap_or_default().trim();
+    let image_repo = crate::snapshot_worker::image_repo_from_image_ref(&service_image_ref);
+    let current_digest = outcome
+        .current_digest
+        .as_deref()
+        .and_then(snapshot_worker::normalize_digest);
+    let candidate_digest = outcome
+        .candidate_digest
+        .as_deref()
+        .and_then(snapshot_worker::normalize_digest);
+    let current_snapshot =
+        if crate::notify::notification_tag_requires_settle(current_tag_trim, current_tag_trim) {
+            if let (Some(image_repo), Some(current_digest)) =
+                (image_repo.as_deref(), current_digest.as_deref())
+            {
+                notification_snapshot_display_for_digest(
+                    state.as_ref(),
+                    image_repo,
+                    current_digest,
+                    host_platform,
+                    current_tag_trim,
+                )
+                .await?
+            } else {
+                NotificationSnapshotDisplay::default()
+            }
+        } else {
+            NotificationSnapshotDisplay::default()
+        };
+    let current_display_tag = if current_snapshot.ready {
+        current_snapshot
+            .display_tag
+            .unwrap_or_else(|| current_tag_trim.to_string())
+    } else if crate::ignore::is_strict_semver(current_tag_trim) {
+        preferred_display_tag(&service_image_tag, outcome.current_resolved_tag.as_deref())
+    } else {
+        current_tag_trim.to_string()
+    };
+    let candidate_snapshot =
+        if crate::notify::notification_tag_requires_settle(candidate_raw_tag, candidate_raw_tag) {
+            if let (Some(image_repo), Some(candidate_digest)) =
+                (image_repo.as_deref(), candidate_digest.as_deref())
+            {
+                notification_snapshot_display_for_digest(
+                    state.as_ref(),
+                    image_repo,
+                    candidate_digest,
+                    host_platform,
+                    candidate_raw_tag,
+                )
+                .await?
+            } else {
+                NotificationSnapshotDisplay::default()
+            }
+        } else {
+            NotificationSnapshotDisplay::default()
+        };
+    let candidate_display_tag = if candidate_snapshot.ready {
+        candidate_snapshot
+            .display_tag
+            .unwrap_or_else(|| candidate_raw_tag.to_string())
+    } else {
+        preferred_display_tag(candidate_raw_tag, outcome.candidate_resolved_tag.as_deref())
+    };
+    let current_needs_inference =
+        crate::notify::notification_tag_requires_settle(current_tag_trim, &current_display_tag);
+    let candidate_needs_inference =
+        crate::notify::notification_tag_requires_settle(candidate_raw_tag, &candidate_display_tag);
+
     if outcome.candidate_present
         && outcome.candidate_digest_changed
         && let (Some(candidate_tag), Some(candidate_digest)) = (
@@ -230,37 +300,56 @@ pub(super) async fn handle_check_worker_result(
             service_name: service_name.clone(),
             image_ref: service_image_ref.clone(),
             current_tag: service_image_tag.clone(),
-            current_display_tag: preferred_display_tag(
-                &service_image_tag,
-                outcome.current_resolved_tag.as_deref(),
-            ),
+            current_digest: outcome.current_digest.clone(),
+            current_display_tag: current_display_tag.clone(),
             candidate_tag,
-            candidate_display_tag: preferred_display_tag(
-                outcome.candidate_tag.as_deref().unwrap_or_default(),
-                outcome.candidate_resolved_tag.as_deref(),
-            ),
+            candidate_display_tag: candidate_display_tag.clone(),
             candidate_digest,
         });
     }
-    if outcome.candidate_digest_changed
-        && outcome.candidate_digest.is_some()
-        && needs_version_inference_for_tags(&service_image_tag, outcome.candidate_tag.as_deref())
-        && let Some(image_repo) =
-            crate::snapshot_worker::image_repo_from_image_ref(&service_image_ref)
-        && let Some(candidate_digest) = outcome
-            .candidate_digest
-            .as_deref()
-            .and_then(snapshot_worker::normalize_digest)
-    {
-        let _ = state
-            .snapshot_worker
-            .enqueue(
+    if let Some(image_repo) = image_repo {
+        if outcome.candidate_digest_changed
+            && current_needs_inference
+            && let Some(current_digest) = current_digest.as_deref()
+            && should_enqueue_new_version_inference(
+                state.as_ref(),
                 &image_repo,
-                &candidate_digest,
+                current_digest,
                 host_platform,
-                VERSION_INFERENCE_REASON_NEW_VERSION,
             )
-            .await;
+            .await?
+        {
+            let _ = state
+                .snapshot_worker
+                .enqueue(
+                    &image_repo,
+                    current_digest,
+                    host_platform,
+                    VERSION_INFERENCE_REASON_NEW_VERSION,
+                )
+                .await;
+        }
+        if outcome.candidate_digest_changed
+            && candidate_needs_inference
+            && let Some(candidate_digest) = candidate_digest.as_deref()
+            && should_enqueue_new_version_inference(
+                state.as_ref(),
+                &image_repo,
+                candidate_digest,
+                host_platform,
+            )
+            .await?
+        {
+            let _ = state
+                .snapshot_worker
+                .enqueue(
+                    &image_repo,
+                    candidate_digest,
+                    host_platform,
+                    VERSION_INFERENCE_REASON_NEW_VERSION,
+                )
+                .await;
+        }
     }
 
     let now_instant = std::time::Instant::now();
@@ -322,6 +411,7 @@ pub(super) struct CheckDiscoveredVersion {
     service_name: String,
     image_ref: String,
     current_tag: String,
+    current_digest: Option<String>,
     current_display_tag: String,
     candidate_tag: String,
     candidate_display_tag: String,
@@ -353,6 +443,78 @@ fn preferred_display_tag(raw_tag: &str, resolved_tag: Option<&str>) -> String {
         .filter(|tag| !tag.is_empty())
         .unwrap_or_else(|| raw_tag.trim())
         .to_string()
+}
+
+#[derive(Default)]
+struct NotificationSnapshotDisplay {
+    display_tag: Option<String>,
+    ready: bool,
+}
+
+async fn notification_snapshot_display_for_digest(
+    state: &AppState,
+    image_repo: &str,
+    digest: &str,
+    host_platform: &str,
+    raw_tag: &str,
+) -> Result<NotificationSnapshotDisplay, ApiError> {
+    let snapshot = state
+        .db
+        .get_image_digest_tags_snapshot(image_repo, digest, host_platform)
+        .await
+        .map_err(map_internal)?;
+    let Some((snapshot_json, checked_at, _updated_at)) = snapshot else {
+        return Ok(NotificationSnapshotDisplay::default());
+    };
+    let Some(snapshot_entry) =
+        super::stacks::parse_digest_snapshot_row(&snapshot_json, &checked_at)
+    else {
+        return Ok(NotificationSnapshotDisplay::default());
+    };
+    let ready = crate::notify::notification_snapshot_is_ready(
+        &snapshot_entry.snapshot,
+        snapshot_entry.snapshot.checked_at.as_str(),
+    );
+    let display_tag = ready
+        .then(|| {
+            super::stacks::infer_semver_tags_from_snapshot(&snapshot_entry.snapshot, raw_tag)
+                .into_iter()
+                .next()
+        })
+        .flatten();
+    Ok(NotificationSnapshotDisplay { display_tag, ready })
+}
+
+async fn notification_snapshot_ready_for_digest(
+    state: &AppState,
+    image_repo: &str,
+    digest: &str,
+    host_platform: &str,
+) -> Result<Option<bool>, ApiError> {
+    let snapshot = state
+        .db
+        .get_image_digest_tags_snapshot(image_repo, digest, host_platform)
+        .await
+        .map_err(map_internal)?;
+    let Some((snapshot_json, checked_at, _updated_at)) = snapshot else {
+        return Ok(None);
+    };
+    Ok(Some(
+        crate::notify::notification_snapshot_is_ready_from_row(&snapshot_json, &checked_at)
+            .unwrap_or(false),
+    ))
+}
+
+async fn should_enqueue_new_version_inference(
+    state: &AppState,
+    image_repo: &str,
+    digest: &str,
+    host_platform: &str,
+) -> Result<bool, ApiError> {
+    Ok(
+        notification_snapshot_ready_for_digest(state, image_repo, digest, host_platform).await?
+            != Some(true),
+    )
 }
 
 pub(super) fn new_version_notification_reason(
@@ -1043,6 +1205,7 @@ pub(crate) async fn run_check_for_job(
                 "serviceName": item.service_name,
                 "imageRef": item.image_ref,
                 "currentTag": item.current_tag,
+                "currentDigest": item.current_digest,
                 "currentDisplayTag": item.current_display_tag,
                 "candidateTag": item.candidate_tag,
                 "candidateDisplayTag": item.candidate_display_tag,
