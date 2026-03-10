@@ -369,9 +369,9 @@ fn render_ui_distinguishes_cached_and_uncached_offline_states() {
 #[test]
 fn render_ui_constrains_history_rail_height() {
     let html = render_ui("/supervisor", &test_meta());
-    assert!(html.contains("max-height: min(680px, calc(100vh - 220px));"));
+    assert!(html.contains("max-height: min(560px, calc(100vh - 190px));"));
     assert!(html.contains("overscroll-behavior: contain;"));
-    assert!(html.contains("max-height: min(420px, 50vh);"));
+    assert!(html.contains("max-height: min(360px, 44vh);"));
 }
 
 #[test]
