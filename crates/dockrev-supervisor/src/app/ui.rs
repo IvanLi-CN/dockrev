@@ -271,7 +271,8 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         white-space: pre-wrap;
         word-break: break-word;
         color: var(--text);
-        line-height: 1.58;
+        font-size: 13px;
+        line-height: 1.52;
         font-family: 'IBM Plex Mono', 'JetBrains Mono', 'SFMono-Regular', 'Menlo', monospace;
       }}
       .shell {{
@@ -472,18 +473,23 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         margin-bottom: 10px;
       }}
       .logTitle {{
-        margin-top: 4px;
-        font-size: 18px;
+        margin-top: 2px;
+        font-size: 16px;
         line-height: 1.08;
         font-weight: 600;
       }}
       .logSummary {{
-        max-width: 320px;
+        max-width: 300px;
         text-align: right;
+        font-size: 11px;
+        line-height: 1.42;
       }}
       #logs {{
         height: 100%;
         min-height: 270px;
+        padding: 10px 12px;
+        font-size: 13px;
+        line-height: 1.48;
         background: var(--console-bg);
         border: 1px solid var(--panel-border);
       }}
@@ -793,7 +799,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           width: 100%;
         }}
         .logTitle {{
-          font-size: 16px;
+          font-size: 15px;
         }}
         .popCard {{
           left: 0;

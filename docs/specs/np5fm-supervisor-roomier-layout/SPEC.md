@@ -95,3 +95,4 @@
 - 2026-03-10: 基于真实 DOM 复测继续压缩 masthead/action/status/workspace 的实际块高，将桌面端 masthead/action/status 从约 278/209/509px 收紧到约 220/181/410px，确保缩小效果肉眼可感。
 - 2026-03-10: 用户对“房间更松”方案仍不满意后，改为重新实现视觉骨架：切换为 command-center 风格的双区 masthead、非对称 status board 与更克制的 history/log 控制台，同时保留所有既有 DOM id、状态机与接口 contract。
 - 2026-03-11: 按“日志优先”要求再次重做布局，把 workspace 提前到 status 之前，并在桌面端改为按钮首屏可见 + 日志正文首屏可见的结构；Chrome DevTools 实测 1440 宽度下 `apply` 与 `#logs` 同时位于首屏内。
+- 2026-03-11: 根据日志控制台视觉反馈，下调 console 标题、摘要与正文的字号/行高，避免首屏日志区在宽屏下显得过于膨胀。
