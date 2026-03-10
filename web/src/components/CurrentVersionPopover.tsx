@@ -91,6 +91,11 @@ type DigestTagsState = {
 
 type SnapshotFetchPhase = 'idle' | 'loading' | 'ready' | 'missing' | 'error'
 
+function scanHasFailures(scan: ServiceDigestTagsScanSummary | null | undefined): boolean {
+  if (!scan) return false
+  return scan.manifestsTimeout > 0 || scan.manifestsError > 0
+}
+
 function moveToFront(tags: string[], tag: string): string[] {
   const t = tag.trim()
   if (!t) return tags
@@ -174,10 +179,14 @@ export function CurrentVersionPopover(props: {
   const snapshotPhaseRef = useRef<SnapshotFetchPhase>(snapshotPhase)
   snapshotPhaseRef.current = snapshotPhase
   const ignoreInvalidationTokenRef = useRef<number>(0)
+  const suppressLoadingLabelRef = useRef(false)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null)
   const [refreshError, setRefreshError] = useState<string | null>(null)
   const [localRefreshKey, setLocalRefreshKey] = useState<string | null>(null)
+  const [externalRefreshKey, setExternalRefreshKey] = useState<string | null>(
+    null,
+  )
   const [snapshotFetchToken, setSnapshotFetchToken] = useState(0)
   const [localDisplayTag, setLocalDisplayTag] = useState<{
     key: string
@@ -234,9 +243,9 @@ export function CurrentVersionPopover(props: {
         return
       }
 
+      suppressLoadingLabelRef.current = true
       setDigestState((prev) => {
         if (prev.key !== digestKey) return prev
-        if (prev.tags == null) return prev
         return {
           key: digestKey,
           tags: null,
@@ -246,9 +255,9 @@ export function CurrentVersionPopover(props: {
           error: null,
         }
       })
-      if (snapshotPhaseRef.current !== 'loading') {
-        setSnapshotPhase('idle')
-      }
+      setExternalRefreshKey(digestKey)
+      setSnapshotFetchToken((value) => value + 1)
+      setSnapshotPhase('loading')
     })
   }, [digestKey, digestNorm])
 
@@ -284,6 +293,7 @@ export function CurrentVersionPopover(props: {
         missingSnapshot: false,
         error: null,
       })
+      suppressLoadingLabelRef.current = false
       setSnapshotPhase('loading')
       const nextToken = getDigestSnapshotInvalidationToken(digestKey) + 1
       ignoreInvalidationTokenRef.current = nextToken
@@ -339,20 +349,31 @@ export function CurrentVersionPopover(props: {
               missingSnapshot: false,
               error: null,
             })
-            if (localRefreshKey === digestKey) {
+            const isLocalRefresh = localRefreshKey === digestKey
+            const isExternalRefresh = externalRefreshKey === digestKey
+            if (isLocalRefresh || isExternalRefresh) {
               const inferred = inferResolvedTagsFromSnapshot(data.tags, imageTag)
               const inferredFirst = inferred[0] ?? null
-              setLocalDisplayTag({
-                key: digestKey,
-                value: inferredFirst,
-              })
-              if (onLocalResolvedTags) {
-                onLocalResolvedTags({
-                  resolvedTag: inferredFirst,
-                  resolvedTags: inferred.length > 1 ? inferred : null,
+              const failures = scanHasFailures(data.scan)
+
+              // Only clear inferred tags when the snapshot scan is successful; preserve last-known
+              // good inference values for all_failed/error snapshots.
+              if (inferredFirst) {
+                setLocalDisplayTag({
+                  key: digestKey,
+                  value: inferredFirst,
                 })
               }
-              setLocalRefreshKey(null)
+              if (isLocalRefresh && onLocalResolvedTags) {
+                if (inferredFirst || !failures) {
+                  onLocalResolvedTags({
+                    resolvedTag: inferredFirst,
+                    resolvedTags: inferred.length > 1 ? inferred : null,
+                  })
+                }
+              }
+              if (isLocalRefresh) setLocalRefreshKey(null)
+              if (isExternalRefresh) setExternalRefreshKey(null)
             }
             setSnapshotPhase('ready')
           })
@@ -407,12 +428,15 @@ export function CurrentVersionPopover(props: {
     preferSource,
     onLocalResolvedTags,
     serviceId,
+    externalRefreshKey,
   ])
 
   useEffect(() => {
     setSnapshotPhase('idle')
     setLocalRefreshKey(null)
     setLocalDisplayTag({ key: digestKey, value: null })
+    setExternalRefreshKey(null)
+    suppressLoadingLabelRef.current = false
   }, [digestKey])
 
   useEffect(() => {
@@ -578,7 +602,8 @@ export function CurrentVersionPopover(props: {
   const showSnapshotLoadingTriggerLabel =
     preferSource !== 'rawTag' &&
     Boolean(digestNorm) &&
-    snapshotPhase === 'loading'
+    snapshotPhase === 'loading' &&
+    (open || !suppressLoadingLabelRef.current)
   const showLoadingStyle =
     showSnapshotLoadingTriggerLabel || showInferenceLoadingStyle
   const triggerClassNameBase =
