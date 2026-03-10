@@ -54,7 +54,7 @@
 - 仅对仍需版本推测的服务等待收敛：基于当前 `image_tag/candidate_tag`、digest snapshot 缓存与 snapshot worker in-flight 状态判断；若已有可用 snapshot，则直接重算 display tag，不做额外等待。
 - 等待结束后必须按与 UI 一致的 semver 推断规则重算 display tag；不得把 `latest -> latest` 直接暴露到 `human.summary`、Telegram、Email 或 Web Push body。
 - 单服务摘要固定为 `<stack> / <service> 服务有新版本（<from> -> <to>）`；若只有一侧可读，则允许 resolved + raw 混排；若双侧都不可读，则改为 `<stack> / <service> 服务有新版本。`
-- 单服务 Telegram/Email 正文去掉聚合态 `服务清单` 区块与重复列表，只保留标题、正文首句和一个 `服务详情` 动作。
+- 单服务 Telegram/Email 正文去掉聚合态 `服务清单` 区块与重复列表，直接从正文首句开始，只保留一个 `服务详情` 动作；不再显示泛化标题。
 - 多服务通知仍按聚合发送；其中某条服务若双侧都不可读，则该条只显示服务名，不附迁移括号。
 - `dockrev.notification.new_version_discovered.v2` 的 raw/display tag 字段、`links.primaryUrl`/`jobUrl`/`serviceUrls[]` 与跳转目标保持兼容。
 - 必须设置固定等待上限；达到上限后若双侧仍不可读，按“无版本号正文”发送，不新增用户配置项。

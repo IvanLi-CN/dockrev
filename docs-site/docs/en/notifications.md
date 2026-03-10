@@ -132,6 +132,7 @@ Key fields:
 - `links.serviceUrls[].currentTag` / `candidateTag`: raw tags kept for backward compatibility
 - `links.serviceUrls[].currentDisplayTag` / `candidateDisplayTag`: prefer resolved version/tag when available; raw fields remain unchanged for compatibility
 - `links.primaryUrl`: service URL when exactly one service is affected, otherwise job URL
+- `human.title`: a compact headline for the Email subject / Web Push title; single-service payloads use the service name, while multi-service payloads use an aggregate count
 - `human.summary`: the human-facing copy is tightened without changing the schema version
 
 Human-readable summary rules:
@@ -143,9 +144,9 @@ Human-readable summary rules:
 
 Channel rendering rules:
 
-- Telegram / Email (single service): keep only the title, the first sentence, and one `Service details` action; no trailing `Details` suffix, no `Service list` block, and no duplicate link list
+- Telegram / Email (single service): start directly with the summary sentence and keep only one `Service details` action; no generic banner title, no trailing `Details` suffix, no `Service list` block, and no duplicate link list
 - Telegram / Email (multi service): keep the aggregate list, but unreadable entries show only the service name without a transition suffix
-- Web Push: `body` is exactly `human.summary`, while the click target still uses `links.primaryUrl`
+- Web Push: `title` uses the compact `human.title` headline, `body` is exactly `human.summary`, and the click target still uses `links.primaryUrl`
 
 Truncation:
 

@@ -1225,6 +1225,24 @@ fn render_new_version_service_label(svc: &NewVersionNotificationServiceUrlV2) ->
     label
 }
 
+fn headline_new_version_services(
+    total_new_versions: usize,
+    visible_services: &[NewVersionNotificationServiceUrlV2],
+) -> String {
+    if total_new_versions == 0 {
+        return "发现新版本服务数为 0".to_string();
+    }
+
+    if total_new_versions == 1 {
+        if let Some(svc) = visible_services.first() {
+            return format!("{} / {} 服务有新版本", svc.stack_name, svc.service_name);
+        }
+        return "发现 1 个服务有新版本".to_string();
+    }
+
+    format!("发现 {total_new_versions} 个服务有新版本")
+}
+
 fn summarize_new_version_services(
     total_new_versions: usize,
     visible_services: &[NewVersionNotificationServiceUrlV2],
@@ -1910,18 +1928,21 @@ fn render_service_detail_action_plain(url: &str) -> String {
     format!("服务详情：{url}")
 }
 
+fn render_check_job_action_html(url: &str) -> String {
+    if is_absolute_http_url(url) {
+        format!("检查任务：<a href=\"{}\">检查任务</a>", escape_html(url))
+    } else {
+        format!("检查任务：<code>{}</code>", escape_html(url))
+    }
+}
+
+fn render_check_job_action_plain(url: &str) -> String {
+    format!("检查任务：{url}")
+}
+
 fn render_telegram_new_version_html(payload: &NewVersionNotificationPayloadV2) -> String {
     let mut lines: Vec<String> = Vec::new();
     let single = is_single_new_version_payload(payload);
-    if single {
-        lines.push(format!("<b>{}</b>", escape_html(&payload.human.title)));
-    } else {
-        lines.push(format!(
-            "<b>{}</b> {}",
-            escape_html(&payload.human.title),
-            render_open_link_html(&payload.links.primary_url, "详情")
-        ));
-    }
     lines.push(escape_html(&payload.human.summary));
 
     if !is_absolute_http_url(&payload.links.primary_url) {
@@ -1934,6 +1955,8 @@ fn render_telegram_new_version_html(payload: &NewVersionNotificationPayloadV2) -
         }
         return lines.join("\n");
     }
+
+    lines.push(render_check_job_action_html(&payload.links.primary_url));
 
     if !payload.links.service_urls.is_empty() {
         lines.push(String::new());
@@ -1959,14 +1982,6 @@ fn render_telegram_new_version_html(payload: &NewVersionNotificationPayloadV2) -
 fn render_telegram_new_version_plain(payload: &NewVersionNotificationPayloadV2) -> String {
     let mut lines: Vec<String> = Vec::new();
     let single = is_single_new_version_payload(payload);
-    if single {
-        lines.push(payload.human.title.clone());
-    } else {
-        lines.push(format!(
-            "{} 详情：{}",
-            payload.human.title, payload.links.primary_url
-        ));
-    }
     lines.push(payload.human.summary.clone());
 
     if !is_absolute_http_url(&payload.links.primary_url) {
@@ -1979,6 +1994,8 @@ fn render_telegram_new_version_plain(payload: &NewVersionNotificationPayloadV2) 
         }
         return lines.join("\n");
     }
+
+    lines.push(render_check_job_action_plain(&payload.links.primary_url));
 
     if !payload.links.service_urls.is_empty() {
         lines.push(String::new());
@@ -2011,7 +2028,6 @@ fn render_email_new_version_plain(payload: &NewVersionNotificationPayloadV2) -> 
 }
 
 fn render_email_new_version_html(payload: &NewVersionNotificationPayloadV2) -> String {
-    let title = escape_html(&payload.human.title);
     let summary = escape_html(&payload.human.summary);
     let single = is_single_new_version_payload(payload);
 
@@ -2027,7 +2043,7 @@ fn render_email_new_version_html(payload: &NewVersionNotificationPayloadV2) -> S
             .first()
             .map(|svc| render_service_detail_action_html(&svc.url))
             .unwrap_or_else(|| render_service_detail_action_html(&payload.links.primary_url));
-        return format!("<h2>{title}</h2><p>{summary}</p>{note}<p>{action}</p>");
+        return format!("<p>{summary}</p>{note}<p>{action}</p>");
     }
 
     let mut items = String::new();
@@ -2076,9 +2092,7 @@ fn render_email_new_version_html(payload: &NewVersionNotificationPayloadV2) -> S
         format!("<code>{}</code>", escape_html(&payload.links.primary_url))
     };
 
-    format!(
-        "<h2>{title}</h2><p>{summary}</p>{note}<p>检查任务：{check_link}</p><p>打开：{open_primary}</p>{items}",
-    )
+    format!("<p>{summary}</p>{note}<p>检查任务：{check_link}</p><p>打开：{open_primary}</p>{items}",)
 }
 
 fn render_telegram_ghcr_webhook_anomaly_html(payload: &GhcrWebhookAnomalyPayloadV2) -> String {
@@ -2274,7 +2288,7 @@ async fn send_email_new_version(
     let smtp_url = smtp_url.context("email.smtpUrl missing")?;
     let (dsn, from, to) = parse_smtp_dsn(smtp_url)?;
 
-    let subject = "[dockrev] 发现新版本".to_string();
+    let subject = format!("[dockrev] {}", payload.human.title);
     let plain_text = render_email_new_version_plain(payload);
     let html_text = render_email_new_version_html(payload);
 
@@ -2678,6 +2692,7 @@ async fn build_new_version_payload_v2(
         job_url.clone()
     };
 
+    let title = headline_new_version_services(total_new_versions, &service_urls_full);
     let summary = summarize_new_version_services(total_new_versions, &service_urls_full, omitted);
 
     let mut detail_lines = vec![
@@ -2713,7 +2728,7 @@ async fn build_new_version_payload_v2(
             },
         },
         human: JobNotificationHumanV2 {
-            title: "Dockrev：发现新版本".to_string(),
+            title,
             summary,
             detail: detail_lines.join("\n"),
         },
@@ -3805,7 +3820,7 @@ mod tests {
                 },
             },
             human: JobNotificationHumanV2 {
-                title: "Dockrev：发现新版本".to_string(),
+                title: "blog / api 服务有新版本".to_string(),
                 summary: "blog / api 服务有新版本（1.0.0 -> 1.1.0）。".to_string(),
                 detail: "test".to_string(),
             },
@@ -3814,6 +3829,21 @@ mod tests {
                 source: "dockrev-api",
             },
         }
+    }
+
+    fn sample_multi_new_version_payload() -> NewVersionNotificationPayloadV2 {
+        let mut payload = sample_new_version_payload();
+        payload.check.new_versions = 2;
+        payload.links.primary_url = "https://dockrev.example.com/queue/job_check_123".to_string();
+        payload
+            .links
+            .service_urls
+            .push(make_new_version_service("shop", "gateway"));
+        payload.human.title = "发现 2 个服务有新版本".to_string();
+        payload.human.summary =
+            "发现 2 个服务有新版本：blog / api (1.0.0 -> 1.1.0)、shop / gateway (1.0.0 -> 1.1.0)。"
+                .to_string();
+        payload
     }
 
     fn make_new_version_service(
@@ -4056,7 +4086,7 @@ mod tests {
     fn new_version_telegram_render_uses_single_service_action_copy() {
         let payload = sample_new_version_payload();
         let html = render_telegram_new_version_html(&payload);
-        assert!(html.contains("<b>Dockrev：发现新版本</b>"));
+        assert!(!html.contains("Dockrev：发现新版本"));
         assert!(html.contains("blog / api 服务有新版本（1.0.0 -&gt; 1.1.0）。"));
         assert!(
             html.contains(
@@ -4075,7 +4105,7 @@ mod tests {
         payload.links.service_urls[0].url = "services/stk_1/svc_1".to_string();
 
         let html = render_telegram_new_version_html(&payload);
-        assert!(html.contains("<b>Dockrev：发现新版本</b>"));
+        assert!(!html.contains("Dockrev：发现新版本"));
         assert!(html.contains("<code>services/stk_1/svc_1</code>"));
         assert!(!html.contains("\n详情："));
         assert!(!html.contains("<b>服务清单</b>"));
@@ -4087,13 +4117,13 @@ mod tests {
         let plain = render_email_new_version_plain(&payload);
         let html = render_email_new_version_html(&payload);
 
-        assert!(plain.contains("Dockrev：发现新版本"));
+        assert!(!plain.contains("Dockrev：发现新版本"));
         assert!(plain.contains("blog / api 服务有新版本（1.0.0 -> 1.1.0）。"));
         assert!(plain.contains("服务详情：https://dockrev.example.com/services/stk_1/svc_1"));
         assert!(!plain.contains("服务清单"));
         assert!(!plain.contains("检查任务："));
 
-        assert!(html.contains("<h2>Dockrev：发现新版本</h2>"));
+        assert!(!html.contains("<h2>"));
         assert!(html.contains("blog / api 服务有新版本（1.0.0 -&gt; 1.1.0）。"));
         assert!(
             html.contains(
@@ -4102,6 +4132,39 @@ mod tests {
         );
         assert!(!html.contains("服务清单"));
         assert!(!html.contains("检查任务："));
+    }
+
+    #[test]
+    fn new_version_multi_service_render_starts_from_summary_without_banner() {
+        let payload = sample_multi_new_version_payload();
+        let telegram_html = render_telegram_new_version_html(&payload);
+        let telegram_plain = render_telegram_new_version_plain(&payload);
+        let email_html = render_email_new_version_html(&payload);
+
+        assert!(!telegram_html.contains("<b>发现 2 个服务有新版本</b>"));
+        assert!(telegram_html.starts_with(
+            "发现 2 个服务有新版本：blog / api (1.0.0 -&gt; 1.1.0)、shop / gateway (1.0.0 -&gt; 1.1.0)。"
+        ));
+        assert!(telegram_html.contains(
+            r#"检查任务：<a href="https://dockrev.example.com/queue/job_check_123">检查任务</a>"#
+        ));
+        assert!(telegram_html.contains("<b>服务清单</b>"));
+
+        assert!(telegram_plain.starts_with(
+            "发现 2 个服务有新版本：blog / api (1.0.0 -> 1.1.0)、shop / gateway (1.0.0 -> 1.1.0)。"
+        ));
+        assert!(!telegram_plain.starts_with("发现 2 个服务有新版本\n"));
+        assert!(
+            telegram_plain.contains("检查任务：https://dockrev.example.com/queue/job_check_123")
+        );
+
+        assert!(!email_html.contains("<h2>"));
+        assert!(email_html.starts_with(
+            "<p>发现 2 个服务有新版本：blog / api (1.0.0 -&gt; 1.1.0)、shop / gateway (1.0.0 -&gt; 1.1.0)。</p>"
+        ));
+        assert!(email_html.contains(
+            r#"检查任务：<a href="https://dockrev.example.com/queue/job_check_123">查看检查任务</a>"#
+        ));
     }
 
     #[test]
@@ -4198,6 +4261,10 @@ mod tests {
         assert_eq!(
             new_version_value["url"].as_str(),
             Some("https://dockrev.example.com/services/stk_1/svc_1")
+        );
+        assert_eq!(
+            new_version_value["title"].as_str(),
+            Some("blog / api 服务有新版本")
         );
         assert_eq!(
             new_version_value["body"].as_str(),

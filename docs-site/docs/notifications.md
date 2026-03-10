@@ -150,6 +150,7 @@ Dockrev 会生成两类路径（总能生成）：
 - `links.serviceUrls[].currentTag` / `candidateTag`：保留 raw tag，兼容既有 webhook 消费方
 - `links.serviceUrls[].currentDisplayTag` / `candidateDisplayTag`：优先使用已解析的 resolved version/tag；若最终仍不可读，raw 字段仍保持不变
 - `links.primaryUrl`：若仅 1 个服务则指向服务详情，否则指向任务详情
+- `human.title`：用于 Email subject / Web Push title 的精简标题；单服务为服务名，多服务为聚合计数
 - `human.summary`：只收敛人类可读文案，不改变 schema version
 
 摘要 / 人类可读渲染规则：
@@ -161,9 +162,9 @@ Dockrev 会生成两类路径（总能生成）：
 
 渠道渲染规则：
 
-- Telegram / Email（单服务）：只保留标题、正文首句和一个 `服务详情` 动作；不再追加标题尾 `详情`、`服务清单` 或重复链接列表
+- Telegram / Email（单服务）：直接从正文首句开始，只保留一句 `某服务有新版本...` 和一个 `服务详情` 动作；不再显示泛标题、标题尾 `详情`、`服务清单` 或重复链接列表
 - Telegram / Email（多服务）：继续保留聚合清单；某条服务若双侧都不可读，则只显示服务名，不附迁移括号
-- Web Push：`body` 直接等于 `human.summary`，点击目标仍使用 `links.primaryUrl`
+- Web Push：`title` 使用 `human.title` 的精简标题，`body` 直接等于 `human.summary`，点击目标仍使用 `links.primaryUrl`
 
 截断规则：
 
