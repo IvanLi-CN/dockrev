@@ -1447,6 +1447,42 @@ async function runInteractive({ baseUrl, browser }) {
       await page.close().catch(() => {})
     }
   }
+
+  // 12) ServicesPage: local refresh should backfill resolvedTag into host state.
+  {
+    const page = await openStory('pages-servicespage--version-tags-popover-demo')
+    try {
+      const line = page.locator('.versionLine').first()
+      const currentTrigger = line.locator('.versionTagsTrigger').nth(0)
+      const rawTrigger = page.getByRole('button', { name: '0.8' }).first()
+
+      await currentTrigger.waitFor({ timeout: 10_000 })
+      await currentTrigger.click()
+
+      const popover = page.locator(".versionTagsPopover[data-state='open']")
+      await popover.waitFor({ timeout: 10_000 })
+      await popover.getByRole('button', { name: '强制刷新' }).click()
+
+      await page.waitForFunction(() => {
+        const trigger = Array.from(document.querySelectorAll('button.versionTagsTrigger'))
+          .map((node) => node.textContent?.trim() ?? '')
+          .find((text) => text === 'v0.8.7' || text === '加载中…') ?? ''
+        return trigger === 'v0.8.7'
+      }, null, { timeout: 10_000 })
+
+      // Close the popover so we can assert the raw-tag popover reflects resolvedTag.
+      await currentTrigger.click()
+
+      await rawTrigger.waitFor({ timeout: 10_000 })
+      await rawTrigger.click()
+      const rawPopover = page.locator(".versionTagsPopover[data-state='open']")
+      await rawPopover.waitFor({ timeout: 10_000 })
+      await rawPopover.getByText('resolvedTag').waitFor({ timeout: 10_000 })
+      await rawPopover.getByText('v0.8.7').waitFor({ timeout: 10_000 })
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
 }
 
 async function main() {

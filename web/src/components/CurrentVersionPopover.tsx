@@ -16,7 +16,7 @@ import {
 } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 import { useHoverPinnedPopover } from './HoverPinnedPopover'
-import { pickSnapshotDisplayTag } from '../versionDisplay'
+import { inferResolvedTagsFromSnapshot } from '../versionDisplay'
 
 type TagSeries = {
   major: number
@@ -107,6 +107,10 @@ export function CurrentVersionPopover(props: {
   imageDigest?: string | null
   resolvedTag?: string | null
   resolvedTags?: string[] | null
+  onLocalResolvedTags?: (update: {
+    resolvedTag: string
+    resolvedTags: string[] | null
+  }) => void
   preferSource?: 'resolvedTag' | 'rawTag'
   // When true, treat the current display as a loading state caused by version inference pending.
   // This is intentionally separate from the digest snapshot pending/loading phase.
@@ -114,7 +118,8 @@ export function CurrentVersionPopover(props: {
   triggerClassName?: string
   children?: ReactNode
 }) {
-  const { imageTag, imageDigest, resolvedTag } = props
+  const { imageTag, imageDigest, onLocalResolvedTags, resolvedTag, serviceId } =
+    props
   const preferSource = props.preferSource ?? 'resolvedTag'
   const fetchTimer = useRef<number | null>(null)
   const {
@@ -142,8 +147,8 @@ export function CurrentVersionPopover(props: {
   const rawSeries = useMemo(() => parseTagSeries(imageTag), [imageTag])
 
   const digestKey = useMemo(
-    () => `${props.serviceId}:${digestNorm ?? ''}`,
-    [digestNorm, props.serviceId],
+    () => `${serviceId}:${digestNorm ?? ''}`,
+    [digestNorm, serviceId],
   )
   const [digestState, setDigestState] = useState<DigestTagsState>(() => ({
     key: digestKey,
@@ -227,7 +232,7 @@ export function CurrentVersionPopover(props: {
 
     try {
       const resp = await forceRefreshServiceVersionInference(
-        props.serviceId,
+        serviceId,
         digestNorm,
       )
       setRefreshNotice(
@@ -252,7 +257,7 @@ export function CurrentVersionPopover(props: {
     } finally {
       setRefreshing(false)
     }
-  }, [digestKey, digestNorm, props.serviceId, refreshing])
+  }, [digestKey, digestNorm, refreshing, serviceId])
 
   useEffect(() => {
     const shouldPollSnapshot = open || snapshotPhaseRef.current === 'loading'
@@ -275,7 +280,7 @@ export function CurrentVersionPopover(props: {
       if (fetchTimer.current === timerId) fetchTimer.current = null
 
       const poll = () => {
-        getServiceDigestTagsSnapshot(props.serviceId, digestNorm)
+        getServiceDigestTagsSnapshot(serviceId, digestNorm)
           .then((data) => {
             if (!alive) return
             if (isServiceDigestTagsSnapshotPending(data)) {
@@ -299,10 +304,18 @@ export function CurrentVersionPopover(props: {
               error: null,
             })
             if (localRefreshKey === digestKey) {
+              const inferred = inferResolvedTagsFromSnapshot(data.tags, imageTag)
+              const inferredFirst = inferred[0] ?? null
               setLocalDisplayTag({
                 key: digestKey,
-                value: pickSnapshotDisplayTag(data.tags, imageTag),
+                value: inferredFirst,
               })
+              if (inferredFirst && onLocalResolvedTags) {
+                onLocalResolvedTags({
+                  resolvedTag: inferredFirst,
+                  resolvedTags: inferred.length > 1 ? inferred : null,
+                })
+              }
               setLocalRefreshKey(null)
             }
             setSnapshotPhase('ready')
@@ -356,7 +369,8 @@ export function CurrentVersionPopover(props: {
     snapshotFetchToken,
     pinned,
     preferSource,
-    props.serviceId,
+    onLocalResolvedTags,
+    serviceId,
   ])
 
   useEffect(() => {

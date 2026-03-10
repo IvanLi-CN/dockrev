@@ -378,6 +378,30 @@ export function OverviewPage(props: {
     [onLastScanHint],
   )
 
+  const patchServiceInStackDetails = useCallback(
+    (stackId: string, serviceId: string, patch: (svc: Service) => Service) => {
+      setDetails((prev) => {
+        const stack = prev[stackId]
+        if (!stack) return prev
+        let changed = false
+        const nextServices = stack.services.map((svc) => {
+          if (svc.id !== serviceId) return svc
+          changed = true
+          return patch(svc)
+        })
+        if (!changed) return prev
+        return {
+          ...prev,
+          [stackId]: {
+            ...stack,
+            services: nextServices,
+          },
+        }
+      })
+    },
+    [],
+  )
+
   const resolveSettledStackIds = useCallback(
     (detail: UpdateJobSettledDetail): string[] => {
       const explicitStackId = (detail.stackId ?? '').trim()
@@ -1487,6 +1511,16 @@ export function OverviewPage(props: {
                                   imageDigest={svc.image.digest ?? null}
                                   resolvedTag={svc.image.resolvedTag}
                                   resolvedTags={svc.image.resolvedTags}
+                                  onLocalResolvedTags={(update) => {
+                                    patchServiceInStackDetails(st.id, svc.id, (prev) => ({
+                                      ...prev,
+                                      image: {
+                                        ...prev.image,
+                                        resolvedTag: update.resolvedTag,
+                                        resolvedTags: update.resolvedTags,
+                                      },
+                                    }))
+                                  }}
                                   inferenceLoading={inferencePending}
                                 />
                                 {showCandidate ? (
@@ -1499,6 +1533,17 @@ export function OverviewPage(props: {
                                       candidateTag={candidateTag}
                                       candidateDigest={svc.candidate?.digest ?? null}
                                       prefetchOnMount={candidatePrefetchOnMount}
+                                      onLocalResolvedTag={(resolvedTag) => {
+                                        patchServiceInStackDetails(st.id, svc.id, (prev) => ({
+                                          ...prev,
+                                          candidate: prev.candidate
+                                            ? {
+                                                ...prev.candidate,
+                                                resolvedTag,
+                                              }
+                                            : prev.candidate,
+                                        }))
+                                      }}
                                     >
                                       {candidateDisplayTag}
                                     </VersionTagsPopover>
@@ -1614,15 +1659,25 @@ export function OverviewPage(props: {
 		                                        <div className="modalKvValue">
                                           <div className="cellTwoLine">
                                             <div className="versionLine">
-                                              <CurrentVersionPopover
-                                                serviceId={svc.id}
-                                                displayTag={currentDisplayTag}
-                                                imageTag={svc.image.tag}
-                                                imageDigest={svc.image.digest ?? null}
-                                                resolvedTag={svc.image.resolvedTag}
-                                                resolvedTags={svc.image.resolvedTags}
-                                                inferenceLoading={inferencePending}
-                                              />
+	                                              <CurrentVersionPopover
+	                                                serviceId={svc.id}
+	                                                displayTag={currentDisplayTag}
+	                                                imageTag={svc.image.tag}
+	                                                imageDigest={svc.image.digest ?? null}
+	                                                resolvedTag={svc.image.resolvedTag}
+	                                                resolvedTags={svc.image.resolvedTags}
+	                                                onLocalResolvedTags={(update) => {
+	                                                  patchServiceInStackDetails(d.id, svc.id, (prev) => ({
+	                                                    ...prev,
+	                                                    image: {
+	                                                      ...prev.image,
+	                                                      resolvedTag: update.resolvedTag,
+	                                                      resolvedTags: update.resolvedTags,
+	                                                    },
+	                                                  }))
+	                                                }}
+	                                                inferenceLoading={inferencePending}
+	                                              />
 	                                              <span
 	                                                className={arrowPulse ? 'inlineIconLoading' : 'inlineIconMuted'}
 	                                                style={arrowPulse ? { margin: '0 6px' } : { opacity: 0.8, margin: '0 6px' }}
@@ -1630,12 +1685,23 @@ export function OverviewPage(props: {
 	                                                <ArrowRightIcon className="inlineIcon" />
 	                                              </span>
 	                                              {svc.candidate?.tag ? (
-	                                                <VersionTagsPopover
-	                                                  serviceId={svc.id}
-	                                                  candidateTag={svc.candidate.tag}
-	                                                  candidateDigest={svc.candidate.digest ?? null}
-	                                                  prefetchOnMount={candidatePrefetchOnMount}
-	                                                >
+		                                                <VersionTagsPopover
+		                                                  serviceId={svc.id}
+		                                                  candidateTag={svc.candidate.tag}
+		                                                  candidateDigest={svc.candidate.digest ?? null}
+		                                                  prefetchOnMount={candidatePrefetchOnMount}
+		                                                  onLocalResolvedTag={(resolvedTag) => {
+		                                                    patchServiceInStackDetails(d.id, svc.id, (prev) => ({
+		                                                      ...prev,
+		                                                      candidate: prev.candidate
+		                                                        ? {
+		                                                            ...prev.candidate,
+		                                                            resolvedTag,
+		                                                          }
+		                                                        : prev.candidate,
+		                                                    }))
+		                                                  }}
+		                                                >
 	                                                  {formatCandidateTagDisplay(
 	                                                    svc.candidate.tag,
 	                                                    svc.candidate.resolvedTag ?? null,

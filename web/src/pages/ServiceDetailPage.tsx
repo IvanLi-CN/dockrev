@@ -170,6 +170,28 @@ export function ServiceDetailPage(props: {
     setService(svc)
   }, [serviceId, stackId])
 
+  const patchServiceInStack = useCallback(
+    (patch: (svc: Service) => Service) => {
+      setStack((prev) => {
+        if (!prev) return prev
+        let changed = false
+        const nextServices = prev.services.map((svc) => {
+          if (svc.id !== serviceId) return svc
+          changed = true
+          return patch(svc)
+        })
+        if (!changed) return prev
+        return { ...prev, services: nextServices }
+      })
+
+      setService((prev) => {
+        if (!prev || prev.id !== serviceId) return prev
+        return patch(prev)
+      })
+    },
+    [serviceId],
+  )
+
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(errorMessage(e)))
   }, [refresh])
@@ -486,29 +508,50 @@ export function ServiceDetailPage(props: {
 		                          <div className="modalKvValue">
                                 <div className="cellTwoLine">
                                 <div className="versionLine">
-                                  <CurrentVersionPopover
-                                    serviceId={service.id}
-                                    displayTag={currentDisplayTag}
-                                    imageTag={service.image.tag}
-                                    imageDigest={service.image.digest ?? null}
-                                    resolvedTag={service.image.resolvedTag}
-                                    resolvedTags={service.image.resolvedTags}
-                                    inferenceLoading={inferencePending}
-	                                  />
+	                                  <CurrentVersionPopover
+	                                    serviceId={service.id}
+	                                    displayTag={currentDisplayTag}
+	                                    imageTag={service.image.tag}
+	                                    imageDigest={service.image.digest ?? null}
+	                                    resolvedTag={service.image.resolvedTag}
+	                                    resolvedTags={service.image.resolvedTags}
+	                                    onLocalResolvedTags={(update) => {
+	                                      patchServiceInStack((prev) => ({
+	                                        ...prev,
+	                                        image: {
+	                                          ...prev.image,
+	                                          resolvedTag: update.resolvedTag,
+	                                          resolvedTags: update.resolvedTags,
+	                                        },
+	                                      }))
+	                                    }}
+	                                    inferenceLoading={inferencePending}
+		                                  />
 	                                  <span
 	                                    className={inferencePending ? 'inlineIconLoading' : 'inlineIconMuted'}
 	                                    style={inferencePending ? { margin: '0 6px' } : { opacity: 0.8, margin: '0 6px' }}
 	                                  >
 	                                    <ArrowRightIcon className="inlineIcon" />
 	                                  </span>
-	                                  <VersionTagsPopover
-	                                    serviceId={service.id}
-	                                    candidateTag={service.candidate.tag}
-	                                    candidateDigest={service.candidate.digest ?? null}
-                                      prefetchOnMount={candidatePrefetchOnMount}
-	                                  >
-	                                    {candidateDisplayTag}
-	                                  </VersionTagsPopover>
+		                                  <VersionTagsPopover
+		                                    serviceId={service.id}
+		                                    candidateTag={service.candidate.tag}
+		                                    candidateDigest={service.candidate.digest ?? null}
+	                                      prefetchOnMount={candidatePrefetchOnMount}
+	                                    onLocalResolvedTag={(resolvedTag) => {
+	                                      patchServiceInStack((prev) => ({
+	                                        ...prev,
+	                                        candidate: prev.candidate
+	                                          ? {
+	                                              ...prev.candidate,
+	                                              resolvedTag,
+	                                            }
+	                                          : prev.candidate,
+	                                      }))
+	                                    }}
+		                                  >
+		                                    {candidateDisplayTag}
+		                                  </VersionTagsPopover>
 	                                </div>
 	                                {showRawTag ? (
                                   <div>
@@ -665,6 +708,7 @@ export function ServiceDetailPage(props: {
     confirm,
     endSubmitting,
     onTopActions,
+    patchServiceInStack,
     refresh,
     selfUpgradeUrl,
     service,
@@ -723,6 +767,16 @@ export function ServiceDetailPage(props: {
         imageDigest={service.image.digest ?? null}
         resolvedTag={service.image.resolvedTag}
         resolvedTags={service.image.resolvedTags}
+        onLocalResolvedTags={(update) => {
+          patchServiceInStack((prev) => ({
+            ...prev,
+            image: {
+              ...prev.image,
+              resolvedTag: update.resolvedTag,
+              resolvedTags: update.resolvedTags,
+            },
+          }))
+        }}
         inferenceLoading={inferencePending}
       />
     )
@@ -794,19 +848,30 @@ export function ServiceDetailPage(props: {
         {currentDigestNode}
         {rawTagNode}
 	        {' \u2192 '}候选:{' '}
-	        <VersionTagsPopover
-	          serviceId={service.id}
-	          candidateTag={service.candidate.tag}
-	          candidateDigest={service.candidate.digest ?? null}
-            prefetchOnMount={candidatePrefetchOnMount}
-	        >
-	          {candidateDisplayTag}
-	        </VersionTagsPopover>
+		        <VersionTagsPopover
+		          serviceId={service.id}
+		          candidateTag={service.candidate.tag}
+		          candidateDigest={service.candidate.digest ?? null}
+	            prefetchOnMount={candidatePrefetchOnMount}
+		          onLocalResolvedTag={(resolvedTag) => {
+		            patchServiceInStack((prev) => ({
+		              ...prev,
+		              candidate: prev.candidate
+		                ? {
+		                    ...prev.candidate,
+		                    resolvedTag,
+		                  }
+		                : prev.candidate,
+		            }))
+		          }}
+		        >
+		          {candidateDisplayTag}
+		        </VersionTagsPopover>
 	        <span className="mono">{`@${shortDigest(service.candidate.digest)}`}</span>
 	        {archNode}
 	      </>
     )
-  }, [service])
+  }, [patchServiceInStack, service])
 
   if (!stack || !service || !settings) {
     return <div className="muted">加载中…</div>

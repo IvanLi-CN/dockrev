@@ -148,6 +148,19 @@ export function isStrictSemverTag(tag: string | null | undefined): boolean {
   return t.length > 0 && parseStrictSemver(t) != null
 }
 
+export function inferResolvedTagsFromSnapshot(
+  tags: Array<string | null | undefined> | null | undefined,
+  rawTag: string | null | undefined,
+): string[] {
+  const rawTrim = trimOrEmpty(rawTag)
+  if (!rawTrim) return inferSemverTagsFromSnapshot(tags, rawTrim)
+
+  // Backend inference only runs for floating (non-strict-semver) tags.
+  if (parseStrictSemver(rawTrim) != null) return []
+
+  return inferSemverTagsFromSnapshot(tags, rawTrim)
+}
+
 export function pickSnapshotDisplayTag(
   tags: Array<string | null | undefined> | null | undefined,
   rawTag: string | null | undefined,
@@ -161,7 +174,7 @@ export function pickSnapshotDisplayTag(
   // another tag pointing at it.
   if (rawStrict) return null
 
-  const inferred = inferSemverTagsFromSnapshot(tags, rawTrim)
+  const inferred = inferResolvedTagsFromSnapshot(tags, rawTrim)
   return inferred[0] ?? null
 }
 

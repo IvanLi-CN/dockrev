@@ -3840,7 +3840,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         return json(
           {
             error: {
-              code: 'bad_request',
+              code: 'invalid_argument',
               message: 'digest is required',
             },
           },

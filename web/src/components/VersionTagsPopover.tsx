@@ -16,7 +16,7 @@ import {
 } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 import { useHoverPinnedPopover } from './HoverPinnedPopover'
-import { pickSnapshotDisplayTag } from '../versionDisplay'
+import { inferResolvedTagsFromSnapshot } from '../versionDisplay'
 
 function uniquePreserveOrder(
   values: Array<string | null | undefined> | null | undefined,
@@ -70,6 +70,7 @@ export function VersionTagsPopover(props: {
   candidateTag: string | null
   candidateDigest: string | null
   prefetchOnMount?: boolean
+  onLocalResolvedTag?: (resolvedTag: string) => void
   children: ReactNode
 }) {
   const {
@@ -77,6 +78,7 @@ export function VersionTagsPopover(props: {
     candidateTag,
     candidateDigest,
     prefetchOnMount = false,
+    onLocalResolvedTag,
     children,
   } = props
   const fetchTimer = useRef<number | null>(null)
@@ -243,10 +245,18 @@ export function VersionTagsPopover(props: {
               error: null,
             })
             if (localRefreshKey === digestKey) {
+              const inferred = inferResolvedTagsFromSnapshot(
+                data.tags,
+                candidateTagTrim,
+              )
+              const inferredFirst = inferred[0] ?? null
               setLocalDisplayTag({
                 key: digestKey,
-                value: pickSnapshotDisplayTag(data.tags, candidateTagTrim),
+                value: inferredFirst,
               })
+              if (inferredFirst && onLocalResolvedTag) {
+                onLocalResolvedTag(inferredFirst)
+              }
               setLocalRefreshKey(null)
             }
             setSnapshotPhase('ready')
@@ -300,6 +310,7 @@ export function VersionTagsPopover(props: {
     pinned,
     snapshotFetchToken,
     prefetchOnMount,
+    onLocalResolvedTag,
     serviceId,
   ])
 
