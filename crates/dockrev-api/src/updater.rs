@@ -38,21 +38,39 @@ impl Drop for TempDirCleanup {
 
 #[derive(Clone, Debug)]
 struct DockerCliAuthBridge {
-    home_dir: PathBuf,
     docker_config_dir: PathBuf,
     _cleanup: TempDirCleanup,
 }
 
 impl DockerCliAuthBridge {
     fn stage(docker_config_path: &Path) -> anyhow::Result<Self> {
-        let home_dir = std::env::temp_dir().join(format!("dockrev-auth-home-{}", Ulid::new()));
-        let docker_config_dir = home_dir.join(".docker");
-        std::fs::create_dir_all(&docker_config_dir).with_context(|| {
-            format!(
-                "create docker auth workspace {}",
-                docker_config_dir.display()
-            )
-        })?;
+        let temp_root = std::env::temp_dir().join(format!("dockrev-auth-config-{}", Ulid::new()));
+        let docker_config_dir = temp_root.join(".docker");
+        let source_dir = docker_config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."));
+        let source_file_name = docker_config_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+
+        if source_file_name == "config.json" {
+            copy_dir_recursively(source_dir, &docker_config_dir).with_context(|| {
+                format!(
+                    "stage docker config directory {} -> {}",
+                    source_dir.display(),
+                    docker_config_dir.display()
+                )
+            })?;
+        } else {
+            std::fs::create_dir_all(&docker_config_dir).with_context(|| {
+                format!(
+                    "create docker auth workspace {}",
+                    docker_config_dir.display()
+                )
+            })?;
+        }
+
         let staged_config_path = docker_config_dir.join("config.json");
         std::fs::copy(docker_config_path, &staged_config_path).with_context(|| {
             format!(
@@ -63,24 +81,33 @@ impl DockerCliAuthBridge {
         })?;
 
         Ok(Self {
-            home_dir: home_dir.clone(),
             docker_config_dir,
-            _cleanup: TempDirCleanup(home_dir),
+            _cleanup: TempDirCleanup(temp_root),
         })
     }
 
     fn env(&self) -> Vec<(String, String)> {
-        vec![
-            (
-                "HOME".to_string(),
-                self.home_dir.to_string_lossy().to_string(),
-            ),
-            (
-                "DOCKER_CONFIG".to_string(),
-                self.docker_config_dir.to_string_lossy().to_string(),
-            ),
-        ]
+        // Keep compose `${HOME}` interpolation untouched; only point Docker CLI tools at the staged config.
+        vec![(
+            "DOCKER_CONFIG".to_string(),
+            self.docker_config_dir.to_string_lossy().to_string(),
+        )]
     }
+}
+
+fn copy_dir_recursively(src: &Path, dest: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dest)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let dest_path = dest.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_recursively(&entry.path(), &dest_path)?;
+        } else if file_type.is_file() {
+            std::fs::copy(entry.path(), dest_path)?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -1478,30 +1505,56 @@ mod tests {
         (path, TempDirCleanup(root))
     }
 
+    fn write_test_default_named_docker_config() -> (PathBuf, TempDirCleanup) {
+        let root =
+            std::env::temp_dir().join(format!("dockrev-test-auth-default-{}", ulid::Ulid::new()));
+        let contexts_dir = root.join("contexts/meta");
+        fs::create_dir_all(&contexts_dir).unwrap();
+        let path = root.join("config.json");
+        fs::write(&path, r#"{"auths":{"ghcr.io":{"auth":"Zm9vOmJhcg=="}}}"#).unwrap();
+        fs::write(
+            contexts_dir.join("state.json"),
+            r#"{"currentContext":"desktop-linux"}"#,
+        )
+        .unwrap();
+        (path, TempDirCleanup(root))
+    }
+
     #[test]
-    fn docker_cli_auth_bridge_stages_config_in_default_docker_home() {
+    fn docker_cli_auth_bridge_stages_custom_config_as_config_json() {
         let (source_path, _source_cleanup) = write_test_docker_config();
 
         let bridge = DockerCliAuthBridge::stage(&source_path).expect("auth bridge should stage");
         let staged_path = bridge.docker_config_dir.join("config.json");
 
-        assert_eq!(bridge.home_dir.join(".docker"), bridge.docker_config_dir);
         assert_eq!(
             fs::read_to_string(&staged_path).unwrap(),
             fs::read_to_string(&source_path).unwrap()
         );
         assert_eq!(
             bridge.env(),
-            vec![
-                (
-                    "HOME".to_string(),
-                    bridge.home_dir.to_string_lossy().to_string()
-                ),
-                (
-                    "DOCKER_CONFIG".to_string(),
-                    bridge.docker_config_dir.to_string_lossy().to_string(),
-                ),
-            ]
+            vec![(
+                "DOCKER_CONFIG".to_string(),
+                bridge.docker_config_dir.to_string_lossy().to_string(),
+            )]
+        );
+    }
+
+    #[test]
+    fn docker_cli_auth_bridge_copies_sibling_metadata_for_real_config_json() {
+        let (source_path, _source_cleanup) = write_test_default_named_docker_config();
+
+        let bridge = DockerCliAuthBridge::stage(&source_path).expect("auth bridge should stage");
+        let staged_path = bridge.docker_config_dir.join("config.json");
+        let staged_context = bridge.docker_config_dir.join("contexts/meta/state.json");
+
+        assert_eq!(
+            fs::read_to_string(&staged_path).unwrap(),
+            fs::read_to_string(&source_path).unwrap()
+        );
+        assert_eq!(
+            fs::read_to_string(&staged_context).unwrap(),
+            r#"{"currentContext":"desktop-linux"}"#
         );
     }
 
@@ -1816,12 +1869,8 @@ mod tests {
             .expect("docker tag command should exist");
 
         for spec in [compose_pull, compose_up, docker_tag] {
-            assert_eq!(spec.env.len(), 2);
-            assert!(
-                spec.env
-                    .iter()
-                    .any(|(k, v)| k == "HOME" && v.contains("dockrev-auth-home-"))
-            );
+            assert_eq!(spec.env.len(), 1);
+            assert!(spec.env.iter().all(|(k, _)| k == "DOCKER_CONFIG"));
             assert!(
                 spec.env
                     .iter()
@@ -3108,9 +3157,8 @@ mod tests {
         assert_eq!(semver_pulled, vec!["ghcr.io/org/web:0.7.7".to_string()]);
 
         for spec in runner.specs.lock().unwrap().iter() {
-            assert_eq!(spec.env.len(), 2);
-            assert!(spec.env.iter().any(|(k, _)| k == "HOME"));
-            assert!(spec.env.iter().any(|(k, _)| k == "DOCKER_CONFIG"));
+            assert_eq!(spec.env.len(), 1);
+            assert!(spec.env.iter().all(|(k, _)| k == "DOCKER_CONFIG"));
         }
     }
 

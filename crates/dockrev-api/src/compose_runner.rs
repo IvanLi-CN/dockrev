@@ -151,13 +151,10 @@ mod tests {
         };
         let cfg = ComposeRunnerConfig {
             compose_bin: "docker".to_string(),
-            env: vec![
-                ("HOME".to_string(), "/tmp/dockrev-auth-home".to_string()),
-                (
-                    "DOCKER_CONFIG".to_string(),
-                    "/tmp/dockrev-auth-home/.docker".to_string(),
-                ),
-            ],
+            env: vec![(
+                "DOCKER_CONFIG".to_string(),
+                "/tmp/dockrev-auth-config/.docker".to_string(),
+            )],
         };
 
         let cmd = stack.pull_service_with_progress(&cfg, "web");
@@ -165,10 +162,9 @@ mod tests {
         assert_eq!(
             cmd.env,
             vec![
-                ("HOME".to_string(), "/tmp/dockrev-auth-home".to_string()),
                 (
                     "DOCKER_CONFIG".to_string(),
-                    "/tmp/dockrev-auth-home/.docker".to_string()
+                    "/tmp/dockrev-auth-config/.docker".to_string()
                 ),
                 ("COMPOSE_PROGRESS".to_string(), "plain".to_string()),
             ]

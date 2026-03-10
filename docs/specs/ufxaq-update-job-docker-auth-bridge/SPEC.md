@@ -31,7 +31,7 @@
 
 ### In scope
 
-- `crates/dockrev-api/src/updater.rs`：为单次 update job 创建临时 Docker CLI home，把 `DOCKREV_DOCKER_CONFIG` 投影到 `<tmp-home>/.docker/config.json`，并统一生成 `HOME` / `DOCKER_CONFIG` env overlay。
+- `crates/dockrev-api/src/updater.rs`：为单次 update job 创建临时 Docker CLI 配置目录，把 `DOCKREV_DOCKER_CONFIG` 投影到 `<tmp-dir>/config.json`；若源路径本身就是 `config.json`，则连同同目录元数据一起复制，并统一生成 `DOCKER_CONFIG` env overlay。
 - `crates/dockrev-api/src/compose_runner.rs` 与 `crates/dockrev-api/src/docker_runner.rs`：让 compose/docker 子命令继承统一 env overlay。
 - `crates/dockrev-api/src/api/operations.rs`：把 `docker_config_path` 传入 updater 执行路径。
 - 回归测试：覆盖 auth bridge staging、compose/docker env 注入、unset config 无回归、plugin 进度 env 共存。
@@ -47,10 +47,11 @@
 
 ### MUST
 
-- 当 `DOCKREV_DOCKER_CONFIG` 已配置时，update job 在真正执行命令前必须生成单次 job 级别的临时目录，并将原文件复制到 `<tmp-home>/.docker/config.json`。
-- 所有由 updater 发出的 compose/docker CLI 命令都必须继承同一组 `HOME` 与 `DOCKER_CONFIG` env。
+- 当 `DOCKREV_DOCKER_CONFIG` 已配置时，update job 在真正执行命令前必须生成单次 job 级别的临时 Docker CLI 配置目录，并将原文件复制到 `<tmp-dir>/config.json`。
+- 所有由 updater 发出的 compose/docker CLI 命令都必须继承同一组 `DOCKER_CONFIG` env，且不得覆写进程原有 `HOME`。
 - `docker` plugin 模式下原有 `COMPOSE_PROGRESS=plain` 不能丢失，必须与 auth env 共存。
 - `DOCKREV_DOCKER_CONFIG` 未配置时，update job 命令环境保持当前行为，不额外注入 auth env。
+- 若 `DOCKREV_DOCKER_CONFIG` 指向真实文件名 `config.json`，临时 Docker CLI 配置目录还必须复制其同级元数据（例如 `contexts/`）。
 - 相关临时目录必须在 job 生命周期结束后清理，不引入新的持久状态。
 
 ### SHOULD
@@ -63,8 +64,8 @@
 ### Core flows
 
 - update job 启动后，在 dry-run 之外先根据 `DOCKREV_DOCKER_CONFIG` 决定是否创建 auth bridge。
-- auth bridge 生成的 env overlay 会同时挂到 compose runner 与 docker runner，因此 `ps/pull/up/tag/pull semver` 全部走同一份 Docker CLI 认证环境。
-- 命令执行结束后，临时 auth workspace 自动清理，不影响容器内其他进程的默认 `HOME`。
+- auth bridge 生成的 `DOCKER_CONFIG` env overlay 会同时挂到 compose runner 与 docker runner，因此 `ps/pull/up/tag/pull semver` 全部走同一份 Docker CLI 认证环境。
+- 命令执行结束后，临时 auth workspace 自动清理，不影响容器内其他进程的默认 `HOME` 与 compose 变量插值。
 
 ### Edge cases / errors
 
@@ -87,10 +88,11 @@ None
 
 ## 验收标准（Acceptance Criteria）
 
-- Given `DOCKREV_DOCKER_CONFIG=/data/docker-config.json` 这类非默认文件路径，When update job 生成 `docker-compose pull/up` 与 `docker pull`，Then 命令都带有可复用的 `HOME` 与 `DOCKER_CONFIG` env，而不是依赖 `/root/.docker/config.json`。
+- Given `DOCKREV_DOCKER_CONFIG=/data/docker-config.json` 这类非默认文件路径，When update job 生成 `docker-compose pull/up` 与 `docker pull`，Then 命令都带有可复用的 `DOCKER_CONFIG` env，而不是依赖 `/root/.docker/config.json`。
 - Given `DOCKREV_COMPOSE_BIN=docker`，When 执行带流式进度的 pull，Then `COMPOSE_PROGRESS=plain` 与 auth env 同时存在。
 - Given `DOCKREV_DOCKER_CONFIG` 未配置，When 执行同一条 update job，Then 命令 env 不新增 auth 相关变量。
 - Given dry-run 模式，When 触发 update job，Then 不执行命令，也不创建 auth workspace。
+- Given `DOCKREV_DOCKER_CONFIG` 指向真实文件名 `config.json`，When update job 创建 auth bridge，Then `config.json` 旁边的 Docker CLI 元数据目录也会被复制到临时 workspace。
 - Given semver fallback 需要额外 `docker pull <repo>:<semver>`，When 命令发出，Then 同样继承 auth env。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
@@ -103,6 +105,7 @@ None
 
 - 2026-03-10：创建规格，冻结 `DOCKREV_DOCKER_CONFIG` 的 update-job auth bridge 范围、兼容性承诺与测试口径。
 - 2026-03-10：完成 updater auth bridge、compose/docker env 透传、回归测试与部署文档同步。
+- 2026-03-10：根据 review 收敛，改为仅注入 `DOCKER_CONFIG` 以避免 compose `${HOME}` 插值副作用，并补充真实 `config.json` 同目录元数据复制约束。
 
 ## 参考（References）
 

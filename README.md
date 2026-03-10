@@ -25,7 +25,7 @@ Back-end (Rust):
 - HTTP API: Axum
 - Logging: tracing + tracing-subscriber
 - Docker Engine access: via `docker` CLI (typically through docker-socket-proxy via `DOCKER_HOST`)
-- Registry auth: reads `~/.docker/config.json`
+- Registry auth: reads `DOCKREV_DOCKER_CONFIG` when configured
 - State: SQLite (planned)
 
 Front-end (React + TypeScript):
@@ -89,7 +89,7 @@ Environment variables (API):
 - `APP_EFFECTIVE_VERSION` (optional) effective version used by `/api/version` (defaults to `CARGO_PKG_VERSION`)
 - `DOCKREV_HTTP_ADDR` (default `0.0.0.0:50883`)
 - `DOCKREV_DB_PATH` (default `./data/dockrev.sqlite3`)
-- `DOCKREV_DOCKER_CONFIG` (optional) path to Docker `config.json` for registry credentials; Dockrev also stages this file into a temporary Docker CLI home for update-job `docker compose` / `docker pull` auth
+- `DOCKREV_DOCKER_CONFIG` (optional) path to a Docker `config.json`; Dockrev stages it into a temporary Docker CLI config directory for update-job `docker compose` / `docker pull` auth, and copies sibling Docker config metadata when the configured path is a real `config.json`
 - `DOCKREV_COMPOSE_BIN` (default `docker-compose`; set to `docker` to use the plugin)
 - `DOCKREV_DEPLOY_CHECK_LOCAL_COMMAND_TIMEOUT_SECONDS` (default `12`; must be `>= 1`) timeout for local `docker info` / `compose version` probes used by `GET /api/deploy-check/report`
 - `DOCKREV_AUTH_FORWARD_HEADER_NAME` (default `X-Forwarded-User`) trusted Forward Auth user header
