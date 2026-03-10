@@ -22,6 +22,7 @@ import {
   invalidateDigestSnapshot,
   subscribeDigestSnapshotInvalidation,
 } from '../digestSnapshotBus'
+import { trackDigestInferenceRefresh } from '../digestInferenceTracker'
 
 function uniquePreserveOrder(
   values: Array<string | null | undefined> | null | undefined,
@@ -231,12 +232,18 @@ export function VersionTagsPopover(props: {
       const nextToken = getDigestSnapshotInvalidationToken(digestKey) + 1
       ignoreInvalidationTokenRef.current = nextToken
       invalidateDigestSnapshot(digestKey)
+      trackDigestInferenceRefresh({
+        serviceId,
+        digest: candidateDigestNorm,
+        rawTag: candidateTagTrim,
+        scope: 'candidate',
+      })
     } catch (e: unknown) {
       setRefreshError(e instanceof Error ? e.message : String(e))
     } finally {
       setRefreshing(false)
     }
-  }, [candidateDigestNorm, digestKey, refreshing, serviceId])
+  }, [candidateDigestNorm, candidateTagTrim, digestKey, refreshing, serviceId])
 
   useEffect(() => {
     const shouldPollSnapshot =

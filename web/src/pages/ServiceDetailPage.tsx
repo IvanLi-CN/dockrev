@@ -28,6 +28,11 @@ import { ServiceResourcePanel } from '../components/ServiceResourcePanel'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { useConfirm } from '../confirm'
 import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, isStrictSemverTag } from '../versionDisplay'
+import { normalizeDigest } from '../components/digest'
+import {
+  DIGEST_INFERENCE_UPDATED_EVENT,
+  type DigestInferenceUpdatedDetail,
+} from '../digestInferenceTracker'
 import {
   resolveUpdateActionTargetKey,
   UPDATE_JOB_SETTLED_EVENT,
@@ -240,6 +245,58 @@ export function ServiceDetailPage(props: {
       window.removeEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateJobSettled)
     }
   }, [refreshStackOnly, serviceId, stackId])
+
+  const applyDigestInferenceUpdate = useCallback(
+    (detail: DigestInferenceUpdatedDetail) => {
+      const targetServiceId = (detail.serviceId ?? '').trim()
+      if (!targetServiceId || targetServiceId !== serviceId) return
+      const digestNorm = normalizeDigest(detail.digest)
+      if (!digestNorm) return
+
+      patchServiceInStack((prev) => {
+        if (detail.scope === 'candidate') {
+          if (!prev.candidate) return prev
+          const candDigestNorm = normalizeDigest(prev.candidate.digest)
+          if (candDigestNorm !== digestNorm) return prev
+          return {
+            ...prev,
+            candidate: {
+              ...prev.candidate,
+              resolvedTag: detail.resolvedTag,
+            },
+          }
+        }
+
+        const svcDigestNorm = normalizeDigest(prev.image.digest)
+        if (svcDigestNorm !== digestNorm) return prev
+        return {
+          ...prev,
+          image: {
+            ...prev.image,
+            resolvedTag: detail.resolvedTag,
+            resolvedTags: detail.resolvedTags ?? null,
+          },
+        }
+      })
+    },
+    [patchServiceInStack, serviceId],
+  )
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const onDigestInferenceUpdated = (evt: Event) => {
+      const detail =
+        evt instanceof CustomEvent
+          ? (evt.detail as DigestInferenceUpdatedDetail | null)
+          : null
+      if (!detail) return
+      applyDigestInferenceUpdate(detail)
+    }
+    window.addEventListener(DIGEST_INFERENCE_UPDATED_EVENT, onDigestInferenceUpdated)
+    return () => {
+      window.removeEventListener(DIGEST_INFERENCE_UPDATED_EVENT, onDigestInferenceUpdated)
+    }
+  }, [applyDigestInferenceUpdate])
 
   useEffect(() => {
     if (service?.versionInference?.status !== 'pending') return
