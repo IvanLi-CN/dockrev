@@ -354,6 +354,23 @@ fn render_ui_contains_status_tiles_and_textual_history_markup() {
 }
 
 #[test]
+fn render_ui_marks_status_cards_stale_when_offline() {
+    let html = render_ui("/supervisor", &test_meta());
+    assert!(html.contains("const lastSeen = lastKnownSelfUpgradeState?.updatedAt"));
+    assert!(html.contains("statusOpIdEl.textContent = 'stale';"));
+    assert!(html.contains("statusTargetEl.textContent = 'stale while offline';"));
+    assert!(html.contains("statusPreviousEl.textContent = 'stale while offline';"));
+}
+
+#[test]
+fn render_ui_constrains_history_rail_height() {
+    let html = render_ui("/supervisor", &test_meta());
+    assert!(html.contains("max-height: min(680px, calc(100vh - 220px));"));
+    assert!(html.contains("overscroll-behavior: contain;"));
+    assert!(html.contains("max-height: min(420px, 50vh);"));
+}
+
+#[test]
 fn render_ui_disables_dry_and_apply_during_running_operation() {
     let html = render_ui("/supervisor", &test_meta());
     assert!(html.contains("function syncUpgradeActionState(st)"));

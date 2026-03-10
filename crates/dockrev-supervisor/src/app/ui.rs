@@ -545,6 +545,9 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
       .historyRail {{
         padding: 16px;
+        max-height: min(680px, calc(100vh - 220px));
+        overflow: auto;
+        overscroll-behavior: contain;
       }}
       .historyList {{
         display: grid;
@@ -720,6 +723,9 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         .historyRail,
         .logPanel {{
           min-height: auto;
+        }}
+        .historyRail {{
+          max-height: min(420px, 50vh);
         }}
         .logSummary {{
           text-align: left;
@@ -1098,10 +1104,21 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
 
       function renderOffline(error) {{
+        const lastSeen = lastKnownSelfUpgradeState?.updatedAt
+          ? formatTimestamp(lastKnownSelfUpgradeState.updatedAt)
+          : '-';
         statusToneEl.className = 'statusTone state-offline';
         statusToneEl.textContent = 'offline';
         statusStateEl.textContent = 'offline';
-        statusSummaryEl.textContent = `auto-refresh 1.5s · ${{String(error.message || error)}}`;
+        statusSummaryEl.textContent = `poll failed · ${{String(error.message || error)}}`;
+        statusOpIdEl.textContent = 'stale';
+        statusStepEl.textContent = 'stale';
+        statusModeEl.textContent = `last seen ${{lastSeen}}`;
+        statusStartedAtEl.textContent = '-';
+        statusUpdatedAtEl.textContent = `last seen ${{lastSeen}}`;
+        statusProgressMessageEl.textContent = 'offline; waiting for supervisor to respond again';
+        statusTargetEl.textContent = 'stale while offline';
+        statusPreviousEl.textContent = 'stale while offline';
       }}
 
       function createStateBadge(state) {{
