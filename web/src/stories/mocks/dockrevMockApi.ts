@@ -23,6 +23,7 @@ import type {
   StackListItem,
   SyncGitHubPackagesWebhooksResponse,
 } from '../../api'
+import { imageRepoFromImageRef } from '../../imageRepo'
 
 export type DockrevApiScenario =
   | 'default'
@@ -3865,7 +3866,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         {
           status: 'pending',
           serviceId,
-          imageRepo: found.svc.image.ref,
+          imageRepo: imageRepoFromImageRef(found.svc.image.ref) ?? found.svc.image.ref,
           digest: digestNorm,
           reason,
         },

@@ -22,7 +22,10 @@ import {
   invalidateDigestSnapshot,
   subscribeDigestSnapshotInvalidation,
 } from '../digestSnapshotBus'
-import { trackDigestSnapshotRefresh } from '../digestInferenceTracker'
+import {
+  publishDigestSnapshotRefreshRequested,
+  trackDigestSnapshotRefresh,
+} from '../digestInferenceTracker'
 
 function uniquePreserveOrder(
   values: Array<string | null | undefined> | null | undefined,
@@ -177,6 +180,11 @@ export function VersionTagsPopover(props: {
         return
       }
 
+      if (fetchTimer.current != null) {
+        window.clearTimeout(fetchTimer.current)
+        fetchTimer.current = null
+      }
+
       suppressLoadingLabelRef.current = true
       setDigestState((prev) => {
         if (prev.key !== digestKey) return prev
@@ -234,6 +242,11 @@ export function VersionTagsPopover(props: {
       invalidateDigestSnapshot(digestKey)
       trackDigestSnapshotRefresh({
         serviceId,
+        imageRepo: resp.imageRepo,
+        digest: candidateDigestNorm,
+      })
+      publishDigestSnapshotRefreshRequested({
+        triggerServiceId: serviceId,
         imageRepo: resp.imageRepo,
         digest: candidateDigestNorm,
       })

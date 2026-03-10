@@ -22,7 +22,10 @@ import {
   invalidateDigestSnapshot,
   subscribeDigestSnapshotInvalidation,
 } from '../digestSnapshotBus'
-import { trackDigestSnapshotRefresh } from '../digestInferenceTracker'
+import {
+  publishDigestSnapshotRefreshRequested,
+  trackDigestSnapshotRefresh,
+} from '../digestInferenceTracker'
 
 type TagSeries = {
   major: number
@@ -249,6 +252,11 @@ export function CurrentVersionPopover(props: {
         return
       }
 
+      if (fetchTimer.current != null) {
+        window.clearTimeout(fetchTimer.current)
+        fetchTimer.current = null
+      }
+
       suppressLoadingLabelRef.current = true
       setDigestState((prev) => {
         if (prev.key !== digestKey) return prev
@@ -305,6 +313,11 @@ export function CurrentVersionPopover(props: {
       ignoreInvalidationTokenRef.current = nextToken
       invalidateDigestSnapshot(digestKey)
       trackDigestSnapshotRefresh({ serviceId, imageRepo: resp.imageRepo, digest: digestNorm })
+      publishDigestSnapshotRefreshRequested({
+        triggerServiceId: serviceId,
+        imageRepo: resp.imageRepo,
+        digest: digestNorm,
+      })
     } catch (e: unknown) {
       setRefreshError(e instanceof Error ? e.message : String(e))
     } finally {
