@@ -283,8 +283,12 @@ pub(super) async fn enrich_stack_with_version_inference(
                 reason
             };
             if let Some(in_flight_reason) = in_flight_reason {
-                pending = true;
-                pending_reason.get_or_insert(in_flight_reason);
+                // `force` tasks are user-triggered best-effort refreshes for a single digest.
+                // They must not leak into the stack/service-level pending/loading UX.
+                if in_flight_reason != VERSION_INFERENCE_REASON_FORCE {
+                    pending = true;
+                    pending_reason.get_or_insert(in_flight_reason);
+                }
             }
 
             if let Some(snapshot_entry) = snapshot_entry.as_ref() {
@@ -300,13 +304,11 @@ pub(super) async fn enrich_stack_with_version_inference(
                 };
                 let inferred_first = tags.first().cloned();
                 if for_candidate {
-                    if let Some(candidate) = svc.candidate.as_mut()
-                        && let Some(inferred) = inferred_first
-                    {
-                        candidate.resolved_tag = Some(inferred);
+                    if let Some(candidate) = svc.candidate.as_mut() {
+                        candidate.resolved_tag = inferred_first;
                     }
-                } else if let Some(inferred) = inferred_first {
-                    svc.image.resolved_tag = Some(inferred);
+                } else {
+                    svc.image.resolved_tag = inferred_first;
                     svc.image.resolved_tags = if tags.len() > 1 { Some(tags) } else { None };
                 }
             }

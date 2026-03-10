@@ -3613,6 +3613,208 @@ services:
 }
 
 #[tokio::test]
+async fn stack_detail_does_not_go_pending_when_only_force_task_is_in_flight() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(300)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        Some("sha256:current"),
+        Some("latest"),
+        Some("sha256:candidate"),
+    )
+    .await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:current",
+        "linux/amd64",
+        &now,
+        vec!["v1.0.0".to_string(), "latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:candidate",
+        "linux/amd64",
+        &now,
+        vec!["v1.1.0".to_string(), "latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+
+    // Trigger a digest-scoped force refresh (manual), which should stay local to the popover UX
+    // and must not flip stack-level `versionInference.status` to `pending`.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/services/{}/version-inference/refresh",
+                    service_id
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"digest":"sha256:candidate"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    assert_eq!(
+        detail["stack"]["services"][0]["versionInference"]["status"]
+            .as_str()
+            .unwrap_or("<none>"),
+        "ready"
+    );
+}
+
+#[tokio::test]
+async fn stack_detail_clears_resolved_tag_when_snapshot_has_no_semver_tags() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(300)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let _service_id =
+        set_single_service_check_result(&state, &stack_id, Some("sha256:current"), None, None)
+            .await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:current",
+        "linux/amd64",
+        &now,
+        vec!["v0.8.7".to_string(), "latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let image = &detail["stack"]["services"][0]["image"];
+    assert_eq!(image["resolvedTag"].as_str().unwrap_or("<none>"), "v0.8.7");
+
+    // Snapshot refreshed, but it no longer contains any semver tags.
+    let now2 = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:current",
+        "linux/amd64",
+        &now2,
+        vec!["latest".to_string(), "stable".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let image = &detail["stack"]["services"][0]["image"];
+    assert!(
+        image.get("resolvedTag").is_none(),
+        "expected resolvedTag to be cleared when snapshot has no semver tags: {detail}"
+    );
+    assert!(
+        image.get("resolvedTags").is_none(),
+        "expected resolvedTags to be cleared when snapshot has no semver tags: {detail}"
+    );
+}
+
+#[tokio::test]
 async fn check_candidate_digest_change_enqueues_new_version_inference() {
     let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(400)));
     let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
