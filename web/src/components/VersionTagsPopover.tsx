@@ -304,33 +304,19 @@ export function VersionTagsPopover(props: {
   ])
 
   useEffect(() => {
-    const shouldPrimeLoading =
-      prefetchOnMount &&
-      candidateTagTrim.length > 0 &&
-      candidateTagTrim !== '-' &&
-      Boolean(candidateDigestNorm) &&
-      digestTags == null
-    setSnapshotPhase(shouldPrimeLoading ? 'loading' : 'idle')
-  }, [
-    candidateDigestNorm,
-    candidateTagTrim,
-    digestKey,
-    digestTags,
-    prefetchOnMount,
-  ])
-
-  useEffect(() => {
+    setSnapshotPhase('idle')
     setLocalRefreshKey(null)
     setLocalDisplayTag({ key: digestKey, value: null })
   }, [digestKey])
 
   useEffect(() => {
-    // Same idea as CurrentVersionPopover: once the parent catches up with a strict semver
-    // candidate display, drop the popover-local override to avoid masking updates forever.
+    // Only release the override once the parent actually reflects the same inferred value.
+    // Otherwise we'd flash the new tag for a render and immediately snap back.
     if (localDisplayTag.key !== digestKey || !localDisplayTag.value) return
     if (typeof children !== 'string') return
     const t = children.trim()
     if (!t || !isStrictSemverTag(t)) return
+    if (t !== localDisplayTag.value.trim()) return
     setLocalDisplayTag({ key: digestKey, value: null })
   }, [children, digestKey, localDisplayTag.key, localDisplayTag.value])
 
