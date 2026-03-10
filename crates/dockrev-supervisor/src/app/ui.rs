@@ -107,10 +107,13 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           radial-gradient(880px 460px at 115% -12%, rgba(48, 161, 211, 0.14) 0%, rgba(48, 161, 211, 0) 56%),
           linear-gradient(160deg, #040b1a 0%, #061227 48%, #040f21 100%);
         --text: rgba(232, 241, 255, 0.96);
-        --muted: rgba(220, 234, 254, 0.78);
-        --panel: rgba(13, 35, 66, 0.92);
+        --muted: rgba(220, 234, 254, 0.76);
+        --panel: rgba(10, 28, 54, 0.88);
+        --panel-strong: rgba(12, 34, 66, 0.96);
         --panel-border: rgba(156, 192, 232, 0.24);
-        --panel-shadow: 0 24px 68px rgba(1, 10, 24, 0.54);
+        --panel-shadow: 0 26px 74px rgba(1, 10, 24, 0.52);
+        --surface: rgba(255, 255, 255, 0.055);
+        --surface-strong: rgba(255, 255, 255, 0.08);
         --button-bg: rgba(255, 255, 255, 0.05);
         --button-hover: rgba(54, 191, 250, 0.16);
         --button-border: rgba(188, 223, 255, 0.22);
@@ -118,21 +121,20 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         --input-bg: rgba(255, 255, 255, 0.05);
         --input-border: rgba(188, 223, 255, 0.2);
         --input-shadow: 0 0 0 1px rgba(255, 255, 255, 0.01);
-        --pre-bg: rgba(4, 11, 26, 0.72);
-        --tab-bg: rgba(255, 255, 255, 0.06);
-        --tab-active-bg: rgba(54, 191, 250, 0.16);
-        --tab-active-border: rgba(54, 191, 250, 0.42);
+        --pre-bg: rgba(4, 11, 26, 0.76);
+        --console-bg: rgba(2, 10, 24, 0.88);
         --pop-bg: rgba(7, 20, 42, 0.98);
         --link: #7dd3fc;
         --link-hover: #bae6fd;
         --code-bg: rgba(255, 255, 255, 0.08);
+        --accent: rgba(54, 191, 250, 0.18);
+        --accent-strong: #36bffa;
         --spinner-track: rgba(232, 241, 255, 0.24);
         --spinner-head: rgba(232, 241, 255, 0.84);
         --ok: #22c55e;
         --bad: #f87171;
-        --new-badge-fg: #fbbf24;
-        --new-badge-border: rgba(251, 191, 36, 0.28);
-        --new-badge-bg: rgba(251, 191, 36, 0.16);
+        --warn: #fbbf24;
+        --info: #60a5fa;
         --selection: rgba(54, 191, 250, 0.22);
       }}
       html[data-theme='light'] {{
@@ -143,10 +145,13 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           radial-gradient(900px 460px at 112% -14%, rgba(57, 156, 228, 0.025) 0%, rgba(57, 156, 228, 0) 56%),
           linear-gradient(160deg, #ffffff 0%, #f8fcff 46%, #f3f9ff 100%);
         --text: rgba(16, 40, 66, 0.96);
-        --muted: rgba(58, 86, 118, 0.88);
+        --muted: rgba(58, 86, 118, 0.84);
         --panel: rgba(255, 255, 255, 0.94);
+        --panel-strong: rgba(255, 255, 255, 0.985);
         --panel-border: rgba(14, 56, 100, 0.14);
         --panel-shadow: 0 22px 50px rgba(17, 62, 112, 0.14);
+        --surface: rgba(12, 121, 207, 0.05);
+        --surface-strong: rgba(12, 121, 207, 0.09);
         --button-bg: rgba(255, 255, 255, 0.92);
         --button-hover: rgba(12, 121, 207, 0.1);
         --button-border: rgba(14, 56, 100, 0.16);
@@ -155,30 +160,29 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         --input-border: rgba(14, 56, 100, 0.16);
         --input-shadow: 0 0 0 1px rgba(12, 121, 207, 0.03);
         --pre-bg: rgba(12, 121, 207, 0.06);
-        --tab-bg: rgba(12, 121, 207, 0.05);
-        --tab-active-bg: rgba(12, 121, 207, 0.12);
-        --tab-active-border: rgba(12, 121, 207, 0.34);
+        --console-bg: rgba(245, 250, 255, 0.98);
         --pop-bg: rgba(255, 255, 255, 0.98);
         --link: #0c79cf;
         --link-hover: #095ea0;
         --code-bg: rgba(12, 121, 207, 0.08);
+        --accent: rgba(12, 121, 207, 0.12);
+        --accent-strong: #0c79cf;
         --spinner-track: rgba(16, 40, 66, 0.16);
         --spinner-head: rgba(16, 40, 66, 0.72);
         --ok: #138347;
         --bad: #bf1240;
-        --new-badge-fg: #a55706;
-        --new-badge-border: rgba(180, 83, 9, 0.28);
-        --new-badge-bg: rgba(251, 191, 36, 0.18);
+        --warn: #a55706;
+        --info: #2563eb;
         --selection: rgba(12, 121, 207, 0.18);
       }}
       * {{ box-sizing: border-box; }}
       html {{ background: var(--bg); }}
       body {{
-        font-family: 'Avenir Next', 'Avenir', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
-        padding: 18px 18px 32px;
-        max-width: 960px;
+        font-family: 'Avenir Next', 'Avenir', 'SF Pro Display', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
         min-height: 100vh;
         margin: 0 auto;
+        padding: 0 20px 40px;
+        max-width: 1240px;
         background: var(--bg-layered);
         background-attachment: fixed;
         color: var(--text);
@@ -186,124 +190,739 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       ::selection {{ background: var(--selection); }}
       a {{ color: var(--link); text-decoration: none; }}
       a:hover {{ color: var(--link-hover); text-decoration: underline; }}
-      code {{ background: var(--code-bg); padding: 1px 6px; border-radius: 999px; }}
-      .row {{ display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }}
-      .card {{
-        border: 1px solid var(--panel-border);
-        border-radius: 12px;
-        padding: 14px;
-        margin-top: 12px;
-        background: var(--panel);
-        box-shadow: var(--panel-shadow);
-        backdrop-filter: blur(14px);
+      code {{
+        background: var(--code-bg);
+        padding: 2px 7px;
+        border-radius: 999px;
+        word-break: break-all;
       }}
-      .muted {{ color: var(--muted); font-size: 12px; }}
+      button,
+      input,
+      textarea,
+      select {{ font: inherit; }}
       button {{
-        padding: 8px 12px;
-        border-radius: 10px;
+        min-height: 44px;
+        padding: 10px 14px;
+        border-radius: 14px;
         border: 1px solid var(--button-border);
         background: var(--button-bg);
         color: var(--button-text);
         cursor: pointer;
-        transition: background-color 140ms ease, border-color 140ms ease, transform 140ms ease;
+        transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
       }}
-      button:hover:not([disabled]) {{ background: var(--button-hover); border-color: var(--tab-active-border); }}
-      button:focus-visible, input:focus-visible {{ outline: 2px solid var(--tab-active-border); outline-offset: 2px; }}
-      button[disabled] {{ opacity: 0.5; cursor: not-allowed; }}
-      button.btnRunning {{ display: inline-flex; align-items: center; gap: 8px; }}
-      button.btnRunning::before {{ content: ''; width: 12px; height: 12px; border-radius: 999px; border: 2px solid var(--spinner-track); border-top-color: var(--spinner-head); animation: supervisorButtonSpin 0.8s linear infinite; }}
+      button:hover:not([disabled]) {{
+        background: var(--button-hover);
+        border-color: rgba(54, 191, 250, 0.36);
+        box-shadow: 0 0 0 1px rgba(54, 191, 250, 0.08);
+      }}
+      button:focus-visible,
+      input:focus-visible {{
+        outline: 2px solid rgba(54, 191, 250, 0.42);
+        outline-offset: 2px;
+      }}
+      button[disabled] {{
+        opacity: 0.52;
+        cursor: not-allowed;
+        box-shadow: none;
+      }}
+      button.primary {{
+        background: linear-gradient(180deg, rgba(54, 191, 250, 0.28) 0%, rgba(23, 118, 196, 0.34) 100%);
+        border-color: rgba(93, 209, 255, 0.42);
+      }}
+      html[data-theme='light'] button.primary {{
+        background: linear-gradient(180deg, rgba(12, 121, 207, 0.18) 0%, rgba(12, 121, 207, 0.12) 100%);
+        border-color: rgba(12, 121, 207, 0.3);
+      }}
+      button.btnRunning {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+      }}
+      button.btnRunning::before {{
+        content: '';
+        width: 12px;
+        height: 12px;
+        border-radius: 999px;
+        border: 2px solid var(--spinner-track);
+        border-top-color: var(--spinner-head);
+        animation: supervisorButtonSpin 0.8s linear infinite;
+      }}
       input {{
-        padding: 8px 10px;
-        border-radius: 10px;
+        width: 100%;
+        min-width: 0;
+        padding: 12px 14px;
+        border-radius: 14px;
         border: 1px solid var(--input-border);
         background: var(--input-bg);
         color: var(--text);
         box-shadow: var(--input-shadow);
       }}
       pre {{
-        background: var(--pre-bg);
-        padding: 10px;
-        border-radius: 10px;
+        margin: 0;
+        padding: 16px;
+        border-radius: 18px;
         overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
         color: var(--text);
+        line-height: 1.62;
+        font-family: 'SFMono-Regular', 'JetBrains Mono', 'Fira Code', 'IBM Plex Mono', 'Menlo', monospace;
+      }}
+      .shell {{
+        display: grid;
+        gap: 20px;
+        padding-top: 28px;
+      }}
+      .panel {{
+        border: 1px solid var(--panel-border);
+        border-radius: 24px;
+        padding: 22px;
+        background: var(--panel);
+        box-shadow: var(--panel-shadow);
+        backdrop-filter: blur(18px);
+      }}
+      .muted {{
+        color: var(--muted);
+        font-size: 13px;
         line-height: 1.55;
       }}
-      .tabsPanel {{ margin-top: 10px; }}
-      .opTabs {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; max-height: 40px; overflow: hidden; }}
-      .opTabs.expanded {{ max-height: none; overflow: visible; }}
-      .opTab {{ display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--button-border); background: var(--tab-bg); font-size: 12px; color: var(--text); }}
-      .opTab.active {{ border-color: var(--tab-active-border); background: var(--tab-active-bg); }}
-      .opDot {{ width: 8px; height: 8px; border-radius: 999px; flex: 0 0 auto; }}
-      .opDot-running {{ background: #2563eb; }}
-      .opDot-succeeded {{ background: #16a34a; }}
-      .opDot-failed {{ background: #dc2626; }}
-      .opDot-rolled_back {{ background: #dc2626; }}
-      .opDot-unknown {{ background: #6b7280; }}
-      .newBadge {{ color: var(--new-badge-fg); border: 1px solid var(--new-badge-border); background: var(--new-badge-bg); border-radius: 999px; padding: 1px 6px; font-size: 11px; }}
-      #tabsToggle {{ padding: 4px 10px; font-size: 12px; }}
-      .popWrap {{ position: relative; display: inline-flex; align-items: center; }}
-      .popCard {{ position: absolute; top: calc(100% + 8px); left: 0; width: min(320px, calc(100vw - 36px)); border: 1px solid var(--button-border); border-radius: 12px; background: var(--pop-bg); box-shadow: var(--panel-shadow); padding: 10px; z-index: 20; }}
-      .popTitle {{ margin: 0 0 6px; font-size: 13px; font-weight: 700; }}
-      .popActions {{ display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }}
-      .danger {{ border-color: #dc2626; background: #dc2626; color: #fff; }}
-      .ok {{ color: var(--ok); }}
-      .bad {{ color: var(--bad); }}
-      .metaLine {{ margin-top: 6px; display: flex; flex-wrap: wrap; gap: 8px 16px; }}
-      .metaItem {{ color: var(--muted); font-size: 12px; }}
-      .metaItem code {{ font-size: 12px; }}
-      @keyframes supervisorButtonSpin {{ from {{ transform: rotate(0deg); }} to {{ transform: rotate(360deg); }} }}
+      .eyebrow,
+      .sectionEyebrow {{
+        color: var(--muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }}
+      .sectionHeadingRow {{
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 14px;
+        flex-wrap: wrap;
+        margin-bottom: 18px;
+      }}
+      .sectionHeadingRow h2 {{
+        margin: 6px 0 0;
+        font-size: 24px;
+        line-height: 1.1;
+      }}
+      .masthead {{
+        padding-top: 26px;
+        padding-bottom: 24px;
+      }}
+      .mastheadTop {{
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 20px;
+      }}
+      .brandRow {{
+        display: flex;
+        gap: 16px;
+        align-items: center;
+      }}
+      .brandMark {{
+        width: 52px;
+        height: 52px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 18px;
+        background: linear-gradient(160deg, rgba(54, 191, 250, 0.18), rgba(54, 191, 250, 0.04));
+        border: 1px solid rgba(54, 191, 250, 0.22);
+        flex: 0 0 auto;
+      }}
+      .brandMark img {{
+        display: block;
+      }}
+      .masthead h1 {{
+        margin: 6px 0 0;
+        font-size: clamp(34px, 4.6vw, 64px);
+        line-height: 0.96;
+        letter-spacing: -0.04em;
+      }}
+      .intro {{
+        max-width: 760px;
+        margin: 16px 0 0;
+        color: var(--muted);
+        font-size: clamp(15px, 1.8vw, 18px);
+        line-height: 1.65;
+      }}
+      .metaGrid {{
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 24px;
+      }}
+      .metaCard {{
+        padding: 14px 16px;
+        border-radius: 18px;
+        border: 1px solid var(--panel-border);
+        background: var(--surface);
+      }}
+      .metaLabel {{
+        color: var(--muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }}
+      .metaValue {{
+        margin-top: 8px;
+        font-size: 15px;
+        line-height: 1.45;
+        word-break: break-word;
+      }}
+      .linkButton {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        padding: 10px 16px;
+        border-radius: 14px;
+        border: 1px solid var(--button-border);
+        background: var(--surface);
+        color: var(--link);
+        flex: 0 0 auto;
+      }}
+      .linkButton:hover {{
+        background: var(--button-hover);
+        text-decoration: none;
+      }}
+      .actionDeckGrid {{
+        display: grid;
+        grid-template-columns: minmax(220px, 280px) minmax(0, 1fr) auto;
+        gap: 16px;
+        align-items: end;
+      }}
+      .fieldBlock {{
+        display: grid;
+        gap: 10px;
+      }}
+      .fieldLabel {{
+        font-size: 13px;
+        color: var(--muted);
+        letter-spacing: 0.02em;
+      }}
+      .fieldHint {{
+        font-size: 12px;
+        color: var(--muted);
+      }}
+      .buttonGroup {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+      }}
+      .buttonGroup > * {{
+        flex: 0 0 auto;
+      }}
+      .buttonGroup-aux {{
+        justify-content: flex-end;
+      }}
+      .statusGrid {{
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 14px;
+      }}
+      .statusTile {{
+        min-height: 122px;
+        padding: 16px;
+        border-radius: 20px;
+        border: 1px solid var(--panel-border);
+        background: var(--surface);
+        display: grid;
+        gap: 10px;
+        align-content: start;
+      }}
+      .statusTile-hero {{
+        background: linear-gradient(180deg, rgba(54, 191, 250, 0.14) 0%, rgba(54, 191, 250, 0.05) 100%);
+      }}
+      html[data-theme='light'] .statusTile-hero {{
+        background: linear-gradient(180deg, rgba(12, 121, 207, 0.12) 0%, rgba(12, 121, 207, 0.05) 100%);
+      }}
+      .statusTile-wide {{
+        grid-column: span 2;
+        min-height: 156px;
+      }}
+      .statusTile-full {{
+        grid-column: 1 / -1;
+        min-height: auto;
+      }}
+      .statusLabel {{
+        color: var(--muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }}
+      .statusValue {{
+        font-size: 17px;
+        line-height: 1.42;
+        font-weight: 600;
+        word-break: break-word;
+      }}
+      .statusValue-lg {{
+        font-size: clamp(26px, 4vw, 38px);
+        line-height: 1;
+        letter-spacing: -0.04em;
+      }}
+      .statusMeta {{
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.55;
+      }}
+      .statusTone {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 36px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        border: 1px solid var(--panel-border);
+        background: var(--surface-strong);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }}
+      .statusTone.state-running,
+      .stateBadge-running {{
+        color: var(--info);
+        border-color: rgba(96, 165, 250, 0.32);
+        background: rgba(96, 165, 250, 0.12);
+      }}
+      .statusTone.state-succeeded,
+      .stateBadge-succeeded {{
+        color: var(--ok);
+        border-color: rgba(34, 197, 94, 0.28);
+        background: rgba(34, 197, 94, 0.12);
+      }}
+      .statusTone.state-failed,
+      .statusTone.state-rolled_back,
+      .statusTone.state-offline,
+      .stateBadge-failed,
+      .stateBadge-rolled_back,
+      .stateBadge-offline {{
+        color: var(--bad);
+        border-color: rgba(248, 113, 113, 0.28);
+        background: rgba(248, 113, 113, 0.12);
+      }}
+      .statusTone.state-idle,
+      .statusTone.state-unknown,
+      .stateBadge-idle,
+      .stateBadge-unknown {{
+        color: var(--muted);
+        border-color: var(--panel-border);
+        background: var(--surface-strong);
+      }}
+      .statusCode,
+      .statusCodeInline {{
+        background: var(--pre-bg);
+        border: 1px solid var(--panel-border);
+        border-radius: 16px;
+        padding: 14px;
+        color: var(--text);
+        font-family: 'SFMono-Regular', 'JetBrains Mono', 'Fira Code', 'IBM Plex Mono', 'Menlo', monospace;
+        font-size: 13px;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }}
+      .statusCodeInline {{
+        min-height: 64px;
+      }}
+      .workspaceGrid {{
+        display: grid;
+        grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+        gap: 16px;
+        align-items: stretch;
+      }}
+      .historyRail,
+      .logPanel {{
+        min-height: 420px;
+        border-radius: 22px;
+        border: 1px solid var(--panel-border);
+        background: var(--surface);
+      }}
+      .historyRail {{
+        padding: 16px;
+      }}
+      .historyList {{
+        display: grid;
+        gap: 12px;
+      }}
+      .historyCard {{
+        width: 100%;
+        min-height: 96px;
+        padding: 14px 16px;
+        border-radius: 18px;
+        border: 1px solid var(--panel-border);
+        background: var(--panel-strong);
+        color: var(--text);
+        text-align: left;
+        display: grid;
+        gap: 10px;
+      }}
+      .historyCard.active {{
+        border-color: rgba(54, 191, 250, 0.38);
+        background: linear-gradient(180deg, rgba(54, 191, 250, 0.16) 0%, rgba(54, 191, 250, 0.07) 100%);
+        box-shadow: 0 0 0 1px rgba(54, 191, 250, 0.08);
+      }}
+      html[data-theme='light'] .historyCard.active {{
+        background: linear-gradient(180deg, rgba(12, 121, 207, 0.12) 0%, rgba(12, 121, 207, 0.04) 100%);
+      }}
+      .historyTop,
+      .historyBottom {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }}
+      .historyTime {{
+        font-size: 15px;
+        font-weight: 600;
+      }}
+      .historyMeta,
+      .historyTail {{
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }}
+      .historyBadges {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: flex-end;
+      }}
+      .stateBadge {{
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--panel-border);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }}
+      .stateDot {{
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        flex: 0 0 auto;
+      }}
+      .stateDot-running {{ background: var(--info); }}
+      .stateDot-succeeded {{ background: var(--ok); }}
+      .stateDot-failed,
+      .stateDot-rolled_back,
+      .stateDot-offline {{ background: var(--bad); }}
+      .stateDot-idle,
+      .stateDot-unknown {{ background: #6b7280; }}
+      .newBadge {{
+        color: var(--warn);
+        border: 1px solid rgba(251, 191, 36, 0.28);
+        background: rgba(251, 191, 36, 0.16);
+        border-radius: 999px;
+        padding: 4px 8px;
+        font-size: 11px;
+      }}
+      .logPanel {{
+        display: grid;
+        grid-template-rows: auto 1fr;
+        padding: 16px;
+      }}
+      .logHeader {{
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 14px;
+      }}
+      .logTitle {{
+        margin-top: 6px;
+        font-size: 20px;
+        line-height: 1.1;
+        font-weight: 600;
+      }}
+      .logSummary {{
+        max-width: 320px;
+        text-align: right;
+      }}
+      #logs {{
+        height: 100%;
+        min-height: 300px;
+        background: var(--console-bg);
+      }}
+      .popWrap {{
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+      }}
+      .popCard {{
+        position: absolute;
+        top: calc(100% + 10px);
+        right: 0;
+        left: auto;
+        width: min(340px, calc(100vw - 48px));
+        border: 1px solid var(--button-border);
+        border-radius: 18px;
+        background: var(--pop-bg);
+        box-shadow: var(--panel-shadow);
+        padding: 14px;
+        z-index: 20;
+      }}
+      .popTitle {{
+        margin: 0 0 6px;
+        font-size: 14px;
+        font-weight: 700;
+      }}
+      .popActions {{
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        margin-top: 12px;
+      }}
+      .danger {{
+        border-color: rgba(220, 38, 38, 0.92);
+        background: rgba(220, 38, 38, 0.92);
+        color: #fff;
+      }}
+      @keyframes supervisorButtonSpin {{
+        from {{ transform: rotate(0deg); }}
+        to {{ transform: rotate(360deg); }}
+      }}
       @media (prefers-reduced-motion: reduce) {{
+        button,
+        .linkButton {{ transition: none; }}
         button.btnRunning::before {{ animation: none; }}
+      }}
+      @media (max-width: 1024px) {{
+        body {{
+          padding-left: 18px;
+          padding-right: 18px;
+        }}
+        .panel {{
+          padding: 20px;
+        }}
+        .metaGrid,
+        .statusGrid,
+        .actionDeckGrid,
+        .workspaceGrid {{
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }}
+        .actionDeckGrid > :last-child {{
+          grid-column: 1 / -1;
+        }}
+        .workspaceGrid {{
+          grid-template-columns: 1fr;
+        }}
+        .historyRail,
+        .logPanel {{
+          min-height: auto;
+        }}
+        .logSummary {{
+          text-align: left;
+          max-width: none;
+        }}
+      }}
+      @media (max-width: 720px) {{
+        body {{
+          padding-left: 14px;
+          padding-right: 14px;
+        }}
+        .shell {{
+          gap: 16px;
+          padding-top: 16px;
+        }}
+        .panel {{
+          padding: 16px;
+          border-radius: 20px;
+        }}
+        .mastheadTop,
+        .brandRow,
+        .sectionHeadingRow,
+        .historyTop,
+        .historyBottom,
+        .logHeader {{
+          align-items: flex-start;
+        }}
+        .mastheadTop,
+        .brandRow {{
+          flex-direction: column;
+        }}
+        .metaGrid,
+        .statusGrid,
+        .actionDeckGrid,
+        .workspaceGrid {{
+          grid-template-columns: 1fr;
+        }}
+        .statusTile-wide,
+        .statusTile-full {{
+          grid-column: auto;
+        }}
+        .buttonGroup,
+        .buttonGroup-aux {{
+          width: 100%;
+          justify-content: stretch;
+        }}
+        .buttonGroup > *,
+        .buttonGroup-aux > *,
+        .linkButton,
+        .popWrap,
+        .popWrap > button {{
+          width: 100%;
+        }}
+        .logTitle {{
+          font-size: 18px;
+        }}
+        .popCard {{
+          left: 0;
+          right: auto;
+          width: min(340px, calc(100vw - 40px));
+        }}
       }}
     </style>
   </head>
   <body>
-    <div class="row" style="gap:12px;">
-      <img src="{base_path}/favicon.png" alt="" aria-hidden="true" width="24" height="24" style="display:block" />
-      <h1 style="margin:0;">Dockrev 自我升级（Supervisor）</h1>
-    </div>
-    <div class="muted">该页面独立于 Dockrev 生命周期；Dockrev 重启期间仍可用。</div>
-    <div class="metaLine">
-      <div class="metaItem">Supervisor 版本：{version_html}</div>
-      <div class="metaItem">开源仓库：{repository_html}</div>
-      <div class="metaItem">开发者：{developer_html}</div>
-    </div>
-
-    <div class="card">
-      <div class="row">
-        <div>Target tag:</div>
-        <input id="tag" value="latest" />
-        <button id="dry">预览（dry-run）</button>
-        <button id="apply">开始升级（apply）</button>
-        <div id="rollbackWrap" class="popWrap">
-          <button id="rollback" aria-haspopup="dialog" aria-expanded="false">回滚</button>
-          <div id="rollbackPop" class="popCard" role="dialog" aria-modal="false" hidden>
-            <div class="popTitle">确认手动回滚？</div>
-            <div class="muted">将尝试回滚到 previous digest，并可能触发容器重启。</div>
-            <div class="muted">opId: <code id="rollbackOpId">-</code></div>
-            <div class="popActions">
-              <button id="rollbackCancel">取消</button>
-              <button id="rollbackConfirm" class="danger">确认回滚</button>
+    <main class="shell">
+      <section class="panel masthead" data-panel="masthead">
+        <div class="mastheadTop">
+          <div>
+            <div class="brandRow">
+              <div class="brandMark">
+                <img src="{base_path}/favicon.png" alt="" aria-hidden="true" width="26" height="26" />
+              </div>
+              <div>
+                <div class="eyebrow">Supervisor Console</div>
+                <h1>Dockrev 自我升级（Supervisor）</h1>
+              </div>
             </div>
+            <p class="intro">该页面独立于 Dockrev 生命周期；Dockrev 重启期间仍可用。这里会持续轮询升级状态，并保留最近 operation 的上下文供排障使用。</p>
+          </div>
+          <a class="linkButton" href="/">返回 Dockrev</a>
+        </div>
+        <div class="metaGrid">
+          <div class="metaCard">
+            <div class="metaLabel">Supervisor 版本</div>
+            <div class="metaValue">{version_html}</div>
+          </div>
+          <div class="metaCard">
+            <div class="metaLabel">开源仓库</div>
+            <div class="metaValue">{repository_html}</div>
+          </div>
+          <div class="metaCard">
+            <div class="metaLabel">开发者</div>
+            <div class="metaValue">{developer_html}</div>
           </div>
         </div>
-        <button id="refresh">刷新</button>
-        <a href="/" style="margin-left:auto">返回 Dockrev</a>
-      </div>
-      <div class="muted">提示：失败将尝试回滚到 previous digest（如可用）。</div>
-    </div>
+      </section>
 
-    <div class="card">
-      <div id="status" class="muted">loading…</div>
-      <div class="tabsPanel">
-        <div class="row" style="justify-content: space-between; gap: 8px;">
-          <div id="tabHint" class="muted">loading…</div>
-          <button id="tabsToggle" hidden>展开</button>
+      <section class="panel actionDeck" data-panel="action-deck">
+        <div class="sectionHeadingRow">
+          <div>
+            <div class="sectionEyebrow">Action deck</div>
+            <h2>升级控制台</h2>
+          </div>
+          <div class="muted">失败将尝试回滚到 previous digest（如可用），所有请求都会在同一页面保留运行态。</div>
         </div>
-        <div id="opTabs" class="opTabs"></div>
-      </div>
-      <pre id="logs"></pre>
-    </div>
+        <div class="actionDeckGrid">
+          <label class="fieldBlock" for="tag">
+            <span class="fieldLabel">Target tag</span>
+            <input id="tag" value="latest" />
+            <span class="fieldHint">默认使用 <code>latest</code>，也支持输入固定 tag 进行验证或升级。</span>
+          </label>
+          <div class="buttonGroup buttonGroup-main">
+            <button id="dry">预览（dry-run）</button>
+            <button id="apply" class="primary">开始升级（apply）</button>
+          </div>
+          <div class="buttonGroup buttonGroup-aux">
+            <div id="rollbackWrap" class="popWrap">
+              <button id="rollback" aria-haspopup="dialog" aria-expanded="false">回滚</button>
+              <div id="rollbackPop" class="popCard" role="dialog" aria-modal="false" hidden>
+                <div class="popTitle">确认手动回滚？</div>
+                <div class="muted">将尝试回滚到 previous digest，并可能触发容器重启。</div>
+                <div class="muted">opId: <code id="rollbackOpId">-</code></div>
+                <div class="popActions">
+                  <button id="rollbackCancel">取消</button>
+                  <button id="rollbackConfirm" class="danger">确认回滚</button>
+                </div>
+              </div>
+            </div>
+            <button id="refresh">刷新</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel statusPanel" data-panel="status-grid">
+        <div class="sectionHeadingRow">
+          <div>
+            <div class="sectionEyebrow">Live status</div>
+            <h2>当前状态</h2>
+          </div>
+          <div id="statusTone" class="statusTone" aria-live="polite">loading…</div>
+        </div>
+        <div class="statusGrid">
+          <article class="statusTile statusTile-hero">
+            <div class="statusLabel">State</div>
+            <div id="statusState" class="statusValue statusValue-lg">loading…</div>
+            <div id="statusSummary" class="statusMeta">等待首次轮询结果…</div>
+          </article>
+          <article class="statusTile">
+            <div class="statusLabel">Current opId</div>
+            <div id="statusOpId" class="statusValue">-</div>
+            <div class="statusMeta">当前正在追踪的 operation 标识。</div>
+          </article>
+          <article class="statusTile">
+            <div class="statusLabel">Current step</div>
+            <div id="statusStep" class="statusValue">-</div>
+            <div id="statusMode" class="statusMeta">mode -</div>
+          </article>
+          <article class="statusTile">
+            <div class="statusLabel">Timestamps</div>
+            <div id="statusStartedAt" class="statusValue">-</div>
+            <div id="statusUpdatedAt" class="statusMeta">updated -</div>
+          </article>
+          <article class="statusTile statusTile-full">
+            <div class="statusLabel">Progress message</div>
+            <div id="statusProgressMessage" class="statusCodeInline">-</div>
+          </article>
+          <article class="statusTile statusTile-wide">
+            <div class="statusLabel">Target</div>
+            <pre id="statusTarget" class="statusCode">-</pre>
+          </article>
+          <article class="statusTile statusTile-wide">
+            <div class="statusLabel">Previous</div>
+            <pre id="statusPrevious" class="statusCode">-</pre>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel workspacePanel" data-panel="workspace">
+        <div class="sectionHeadingRow">
+          <div>
+            <div class="sectionEyebrow">History & logs</div>
+            <h2>操作历史与日志</h2>
+          </div>
+          <div id="historyHint" class="muted">loading…</div>
+        </div>
+        <div class="workspaceGrid">
+          <aside class="historyRail">
+            <div id="historyList" class="historyList"></div>
+          </aside>
+          <section class="logPanel">
+            <div class="logHeader">
+              <div>
+                <div class="sectionEyebrow">Console</div>
+                <div id="logTitle" class="logTitle">loading…</div>
+              </div>
+              <div id="logSummary" class="logSummary muted">等待日志…</div>
+            </div>
+            <pre id="logs"></pre>
+          </section>
+        </div>
+      </section>
+    </main>
 
     <script>
       const base = {base_path_json};
@@ -311,11 +930,36 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       const themeMedia = themeController?.mediaQuery || window.matchMedia('(prefers-color-scheme: dark)');
       let activeOpId = null;
       let latestOpId = null;
-      let tabsExpanded = false;
-      let tabsCanExpand = false;
       let latestHasNewer = false;
       let lastKnownSelfUpgradeState = null;
+
+      const dryBtn = document.getElementById('dry');
+      const applyBtn = document.getElementById('apply');
+      const rollbackBtn = document.getElementById('rollback');
+      const rollbackWrap = document.getElementById('rollbackWrap');
+      const rollbackPop = document.getElementById('rollbackPop');
+      const rollbackOpId = document.getElementById('rollbackOpId');
+      const rollbackConfirmBtn = document.getElementById('rollbackConfirm');
+      const rollbackCancelBtn = document.getElementById('rollbackCancel');
+      const statusToneEl = document.getElementById('statusTone');
+      const statusStateEl = document.getElementById('statusState');
+      const statusSummaryEl = document.getElementById('statusSummary');
+      const statusOpIdEl = document.getElementById('statusOpId');
+      const statusStepEl = document.getElementById('statusStep');
+      const statusModeEl = document.getElementById('statusMode');
+      const statusStartedAtEl = document.getElementById('statusStartedAt');
+      const statusUpdatedAtEl = document.getElementById('statusUpdatedAt');
+      const statusProgressMessageEl = document.getElementById('statusProgressMessage');
+      const statusTargetEl = document.getElementById('statusTarget');
+      const statusPreviousEl = document.getElementById('statusPrevious');
+      const historyListEl = document.getElementById('historyList');
+      const historyHintEl = document.getElementById('historyHint');
+      const logTitleEl = document.getElementById('logTitle');
+      const logSummaryEl = document.getElementById('logSummary');
+      const logsEl = document.getElementById('logs');
       const toUrl = (p) => base.replace(/\/$/, '') + '/' + p.replace(/^\//, '');
+      let rollbackPopOpen = false;
+      let rollbackPendingOpId = null;
 
       function syncTheme() {{
         if (themeController?.syncThemeFromPreference) {{
@@ -328,45 +972,40 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         syncTheme();
       }}
 
-	      async function fetchJson(path, init) {{
-	        const resp = await fetch(toUrl(path), {{ ...init, headers: {{ 'Content-Type': 'application/json' }} }});
-	        const text = await resp.text();
-	        if (!resp.ok) throw new Error(`HTTP ${{resp.status}}: ${{text}}`);
-	        return text ? JSON.parse(text) : null;
-	      }}
+      async function fetchJson(path, init = {{}}) {{
+        const res = await fetch(toUrl(path), {{
+          headers: {{ 'content-type': 'application/json' }},
+          ...init,
+        }});
+        if (!res.ok) {{
+          const text = await res.text();
+          throw new Error(`${{res.status}} ${{text}}`);
+        }}
+        return res.json();
+      }}
 
-	      const rollbackWrap = document.getElementById('rollbackWrap');
-	      const dryBtn = document.getElementById('dry');
-	      const applyBtn = document.getElementById('apply');
-	      const rollbackBtn = document.getElementById('rollback');
-	      const rollbackPop = document.getElementById('rollbackPop');
-	      const rollbackOpId = document.getElementById('rollbackOpId');
-	      const rollbackCancelBtn = document.getElementById('rollbackCancel');
-	      const rollbackConfirmBtn = document.getElementById('rollbackConfirm');
-	      let rollbackPopOpen = false;
-	      let rollbackPendingOpId = null;
+      function canRollback(st) {{
+        return !!st.opId && (st.state === 'failed' || st.state === 'rolled_back' || st.state === 'succeeded');
+      }}
 
-	      function canRollback(st) {{
-	        return !!st.opId && (st.state === 'failed' || st.state === 'rolled_back' || st.state === 'succeeded');
-	      }}
+      function setRollbackPopOpen(open) {{
+        rollbackPopOpen = open;
+        rollbackPop.hidden = !open;
+        rollbackBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (!open) rollbackPendingOpId = null;
+      }}
 
-	      function setRollbackPopOpen(open) {{
-	        rollbackPopOpen = open;
-	        rollbackPop.hidden = !open;
-	        rollbackBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-	        if (!open) rollbackPendingOpId = null;
-	      }}
+      function syncRollbackState(st) {{
+        const allowed = canRollback(st);
+        rollbackBtn.disabled = !allowed;
+        if (!allowed) {{
+          setRollbackPopOpen(false);
+          rollbackOpId.textContent = '-';
+          return;
+        }}
+        if (rollbackPopOpen) rollbackOpId.textContent = st.opId || '-';
+      }}
 
-	      function syncRollbackState(st) {{
-	        const allowed = canRollback(st);
-	        rollbackBtn.disabled = !allowed;
-	        if (!allowed) {{
-	          setRollbackPopOpen(false);
-	          rollbackOpId.textContent = '-';
-	          return;
-	        }}
-	        if (rollbackPopOpen) rollbackOpId.textContent = st.opId || '-';
-	      }}
       function setRunningButton(button, running) {{
         button.classList.toggle('btnRunning', running);
         button.setAttribute('aria-busy', running ? 'true' : 'false');
@@ -381,72 +1020,116 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         setRunningButton(dryBtn, runningUpgrade && mode === 'dry-run');
         setRunningButton(applyBtn, runningUpgrade && mode === 'apply');
       }}
-      function statusClass(st) {{
-        const s = st && st.state;
-        return s === 'succeeded' ? 'ok' : (s === 'failed' || s === 'rolled_back') ? 'bad' : '';
+
+      function normalizeState(value) {{
+        return value || 'unknown';
       }}
 
-      function renderStatusText(st) {{
-        const target = `${{st.target?.image}}:${{st.target?.tag}}${{st.target?.digest ? '@'+st.target.digest : ''}}`;
-        const prev = `${{st.previous?.tag}}${{st.previous?.digest ? '@'+st.previous.digest : ''}}`;
-        return `${{st.state}} · opId=${{st.opId||'-'}} · step=${{st.progress?.step}} · target=${{target}} · previous=${{prev}}`;
+      function statusToneClass(state) {{
+        const normalized = normalizeState(state);
+        if (normalized === 'failed' || normalized === 'rolled_back' || normalized === 'offline') return `statusTone state-${{normalized}}`;
+        if (normalized === 'running' || normalized === 'succeeded' || normalized === 'idle' || normalized === 'unknown') return `statusTone state-${{normalized}}`;
+        return 'statusTone state-unknown';
       }}
 
-      function formatLogs(logs) {{
-        return (logs || []).map(l => `[${{l.ts}}] ${{l.level}} ${{l.msg}}`).join('\n');
+      function stateBadgeClass(state) {{
+        const normalized = normalizeState(state);
+        if (normalized === 'failed' || normalized === 'rolled_back') return `stateBadge stateBadge-${{normalized}}`;
+        if (normalized === 'running' || normalized === 'succeeded' || normalized === 'idle' || normalized === 'unknown') return `stateBadge stateBadge-${{normalized}}`;
+        return 'stateBadge stateBadge-unknown';
+      }}
+
+      function stateDotClass(state) {{
+        const normalized = normalizeState(state);
+        if (normalized === 'failed' || normalized === 'rolled_back') return `stateDot stateDot-${{normalized}}`;
+        if (normalized === 'running' || normalized === 'succeeded' || normalized === 'idle' || normalized === 'unknown') return `stateDot stateDot-${{normalized}}`;
+        return 'stateDot stateDot-unknown';
       }}
 
       function pad2(v) {{
         return String(v).padStart(2, '0');
       }}
 
-      function formatTabTime(ts) {{
+      function formatTimestamp(ts) {{
+        const d = new Date(ts || '');
+        if (Number.isNaN(d.getTime())) return '-';
+        return `${{d.getFullYear()}}-${{pad2(d.getMonth() + 1)}}-${{pad2(d.getDate())}} ${{pad2(d.getHours())}}:${{pad2(d.getMinutes())}}:${{pad2(d.getSeconds())}}`;
+      }}
+
+      function formatHistoryTime(ts) {{
         const d = new Date(ts || '');
         if (Number.isNaN(d.getTime())) return '-- --:--';
         return `${{pad2(d.getMonth() + 1)}}-${{pad2(d.getDate())}} ${{pad2(d.getHours())}}:${{pad2(d.getMinutes())}}`;
       }}
 
-      function formatTabLabel(opId, startedAt) {{
-        const suffix = String(opId || '-').slice(-6);
-        return `${{formatTabTime(startedAt)}} · ${{suffix}}`;
+      function shortOpId(opId) {{
+        return String(opId || '-').slice(-6);
       }}
 
-      function measureTabsOverflow(tabsEl) {{
-        const wasExpanded = tabsEl.classList.contains('expanded');
-        if (wasExpanded) tabsEl.classList.remove('expanded');
-        const overflow = tabsEl.scrollHeight > tabsEl.clientHeight + 1;
-        if (wasExpanded) tabsEl.classList.add('expanded');
-        return overflow;
+      function formatTargetRef(target) {{
+        const image = target?.image || '-';
+        const tag = target?.tag ? `:${{target.tag}}` : '';
+        const digest = target?.digest ? `@${{target.digest}}` : '';
+        return `${{image}}${{tag}}${{digest}}`;
       }}
 
-      function syncTabsToggle() {{
-        const tabsEl = document.getElementById('opTabs');
-        const toggleEl = document.getElementById('tabsToggle');
-        if (!tabsEl || !toggleEl) return;
-        tabsEl.classList.toggle('expanded', tabsExpanded);
-        tabsCanExpand = measureTabsOverflow(tabsEl);
-        if (!tabsCanExpand) {{
-          tabsExpanded = false;
-          tabsEl.classList.remove('expanded');
-        }}
-        toggleEl.hidden = !tabsCanExpand;
-        toggleEl.textContent = tabsExpanded ? '收起' : '展开';
+      function formatPreviousRef(previous) {{
+        const tag = previous?.tag || '-';
+        return `${{tag}}${{previous?.digest ? '@' + previous.digest : ''}}`;
+      }}
+
+      function formatLogs(logs) {{
+        return (logs || []).map((line) => `[${{line.ts}}] ${{line.level}} ${{line.msg}}`).join('\n');
+      }}
+
+      function renderStatus(st) {{
+        statusToneEl.className = statusToneClass(st?.state);
+        statusToneEl.textContent = normalizeState(st?.state);
+        statusStateEl.textContent = normalizeState(st?.state);
+        statusSummaryEl.textContent = `${{st?.request?.mode || 'mode -'}} · auto-refresh 1.5s`;
+        statusOpIdEl.textContent = st?.opId || '-';
+        statusStepEl.textContent = st?.progress?.step || '-';
+        statusModeEl.textContent = `mode ${{st?.request?.mode || '-'}}`;
+        statusStartedAtEl.textContent = formatTimestamp(st?.startedAt);
+        statusUpdatedAtEl.textContent = `updated ${{formatTimestamp(st?.updatedAt)}}`;
+        statusProgressMessageEl.textContent = st?.progress?.message || '-';
+        statusTargetEl.textContent = formatTargetRef(st?.target);
+        statusPreviousEl.textContent = formatPreviousRef(st?.previous);
+      }}
+
+      function renderOffline(error) {{
+        statusToneEl.className = 'statusTone state-offline';
+        statusToneEl.textContent = 'offline';
+        statusStateEl.textContent = 'offline';
+        statusSummaryEl.textContent = `auto-refresh 1.5s · ${{String(error.message || error)}}`;
+      }}
+
+      function createStateBadge(state) {{
+        const badge = document.createElement('span');
+        badge.className = stateBadgeClass(state);
+
+        const dot = document.createElement('span');
+        dot.className = stateDotClass(state);
+        badge.appendChild(dot);
+
+        const text = document.createElement('span');
+        text.textContent = normalizeState(state);
+        badge.appendChild(text);
+        return badge;
       }}
 
       function renderOperations(st) {{
         const operations = Array.isArray(st.operations) ? st.operations : [];
-        const tabsEl = document.getElementById('opTabs');
-        const hintEl = document.getElementById('tabHint');
-        const logsEl = document.getElementById('logs');
-        tabsEl.textContent = '';
+        historyListEl.textContent = '';
 
         if (!operations.length) {{
           activeOpId = null;
           latestOpId = null;
           latestHasNewer = false;
-          hintEl.textContent = '暂无分组日志';
-          logsEl.textContent = formatLogs(st.logs || []);
-          requestAnimationFrame(syncTabsToggle);
+          historyHintEl.textContent = '暂无 operation 历史，已回退到扁平日志视图。';
+          logTitleEl.textContent = '当前日志';
+          logSummaryEl.textContent = '未发现按 operation 分组的历史记录。';
+          logsEl.textContent = formatLogs(st.logs || []) || '暂无日志';
           return;
         }}
 
@@ -468,13 +1151,13 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
 
         for (let i = 0; i < operations.length; i += 1) {{
           const op = operations[i];
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'opTab';
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'historyCard';
           if (op.opId === activeOpId) {{
-            btn.classList.add('active');
+            button.classList.add('active');
           }}
-          btn.onclick = () => {{
+          button.onclick = () => {{
             activeOpId = op.opId;
             if (activeOpId === latestOpId) {{
               latestHasNewer = false;
@@ -482,44 +1165,69 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
             renderOperations(st);
           }};
 
-          const dot = document.createElement('span');
-          dot.className = `opDot opDot-${{op.state || 'unknown'}}`;
-          btn.appendChild(dot);
+          const top = document.createElement('div');
+          top.className = 'historyTop';
 
-          const text = document.createElement('span');
-          text.textContent = formatTabLabel(op.opId, op.startedAt);
-          btn.appendChild(text);
+          const time = document.createElement('div');
+          time.className = 'historyTime';
+          time.textContent = formatHistoryTime(op.startedAt);
+          top.appendChild(time);
 
-          if (i === 0 && latestHasNewer && activeOpId !== op.opId) {{
-            const badge = document.createElement('span');
-            badge.className = 'newBadge';
-            badge.textContent = '新';
-            btn.appendChild(badge);
+          const badges = document.createElement('div');
+          badges.className = 'historyBadges';
+          badges.appendChild(createStateBadge(op.state));
+          if (i === 0) {{
+            const latest = document.createElement('span');
+            latest.className = 'newBadge';
+            latest.textContent = '最新';
+            badges.appendChild(latest);
           }}
+          if (i === 0 && latestHasNewer && activeOpId !== op.opId) {{
+            const newer = document.createElement('span');
+            newer.className = 'newBadge';
+            newer.textContent = '新日志';
+            badges.appendChild(newer);
+          }}
+          top.appendChild(badges);
+          button.appendChild(top);
 
-          tabsEl.appendChild(btn);
+          const bottom = document.createElement('div');
+          bottom.className = 'historyBottom';
+
+          const meta = document.createElement('div');
+          meta.className = 'historyMeta';
+          meta.textContent = `${{shortOpId(op.opId)}} · ${{(op.logs || []).length}} lines`;
+          bottom.appendChild(meta);
+
+          const tail = document.createElement('div');
+          tail.className = 'historyTail';
+          tail.textContent = `updated ${{formatHistoryTime(op.updatedAt)}}`;
+          bottom.appendChild(tail);
+          button.appendChild(bottom);
+
+          historyListEl.appendChild(button);
         }}
 
         const active = operations.find((op) => op.opId === activeOpId) || operations[0];
-        logsEl.textContent = formatLogs(active.logs || []);
-        hintEl.textContent = `operations: ${{operations.length}}（当前 ${{active.opId}}）`;
-        requestAnimationFrame(syncTabsToggle);
+        historyHintEl.textContent = `最近 ${{operations.length}} 次 operation · 当前 ${{active.opId}}`;
+        logTitleEl.textContent = `${{formatHistoryTime(active.startedAt)}} · ${{shortOpId(active.opId)}}`;
+        logSummaryEl.textContent = `${{normalizeState(active.state)}} · updated ${{formatTimestamp(active.updatedAt)}} · ${{(active.logs || []).length}} lines`;
+        logsEl.textContent = formatLogs(active.logs || []) || '暂无日志';
       }}
 
       async function refresh() {{
-        const statusEl = document.getElementById('status');
         try {{
           const st = await fetchJson('self-upgrade');
           lastKnownSelfUpgradeState = st;
-          statusEl.className = `muted ${{statusClass(st)}}`.trim();
-          statusEl.textContent = renderStatusText(st);
+          renderStatus(st);
           syncUpgradeActionState(st);
           renderOperations(st);
           syncRollbackState(st);
-        }} catch (e) {{
-          statusEl.className = 'muted bad';
-          statusEl.textContent = `offline ${{String(e.message||e)}}`;
-          if (lastKnownSelfUpgradeState) syncUpgradeActionState(lastKnownSelfUpgradeState);
+        }} catch (error) {{
+          renderOffline(error);
+          if (lastKnownSelfUpgradeState) {{
+            syncUpgradeActionState(lastKnownSelfUpgradeState);
+          }}
           setRollbackPopOpen(false);
         }}
       }}
@@ -550,22 +1258,14 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         if (rollbackBtn.disabled) return;
         const st = await fetchJson('self-upgrade');
         syncRollbackState(st);
-	        if (!canRollback(st)) {{
-	          await refresh();
-	          return;
-	        }}
-	        rollbackPendingOpId = st.opId || null;
-	        rollbackOpId.textContent = rollbackPendingOpId || '-';
-	        setRollbackPopOpen(true);
-	      }};
-      document.getElementById('tabsToggle').onclick = () => {{
-        if (!tabsCanExpand) return;
-        tabsExpanded = !tabsExpanded;
-        syncTabsToggle();
+        if (!canRollback(st)) {{
+          await refresh();
+          return;
+        }}
+        rollbackPendingOpId = st.opId || null;
+        rollbackOpId.textContent = rollbackPendingOpId || '-';
+        setRollbackPopOpen(true);
       }};
-      window.addEventListener('resize', () => {{
-        requestAnimationFrame(syncTabsToggle);
-      }});
       rollbackCancelBtn.onclick = () => {{
         setRollbackPopOpen(false);
       }};

@@ -330,10 +330,26 @@ fn legacy_group_ids_stay_stable_after_retention() {
 }
 
 #[test]
-fn render_ui_contains_operation_tabs_markup() {
+fn render_ui_contains_roomier_four_panel_markup() {
     let html = render_ui("/supervisor", &test_meta());
-    assert!(html.contains("id=\"opTabs\""));
-    assert!(html.contains("id=\"tabsToggle\""));
+    assert!(html.contains(r#"data-panel="masthead""#));
+    assert!(html.contains(r#"data-panel="action-deck""#));
+    assert!(html.contains(r#"data-panel="status-grid""#));
+    assert!(html.contains(r#"data-panel="workspace""#));
+    assert!(html.contains("id=\"historyList\""));
+    assert!(!html.contains("id=\"opTabs\""));
+    assert!(!html.contains("id=\"tabsToggle\""));
+}
+
+#[test]
+fn render_ui_contains_status_tiles_and_textual_history_markup() {
+    let html = render_ui("/supervisor", &test_meta());
+    assert!(html.contains("id=\"statusTarget\""));
+    assert!(html.contains("id=\"statusPrevious\""));
+    assert!(html.contains("id=\"statusProgressMessage\""));
+    assert!(html.contains("function renderStatus(st)"));
+    assert!(html.contains("function createStateBadge(state)"));
+    assert!(html.contains("stateBadge stateBadge-"));
     assert!(html.contains("latestHasNewer"));
 }
 
@@ -352,9 +368,8 @@ fn render_ui_shows_mode_specific_spinner_for_running_operation() {
     assert!(html.contains("mode === 'dry-run'"));
     assert!(html.contains("mode === 'apply'"));
     assert!(html.contains("st?.progress?.step !== 'rollback'"));
-    assert!(html.contains(
-        "if (lastKnownSelfUpgradeState) syncUpgradeActionState(lastKnownSelfUpgradeState);"
-    ));
+    assert!(html.contains("if (lastKnownSelfUpgradeState) {"));
+    assert!(html.contains("syncUpgradeActionState(lastKnownSelfUpgradeState);"));
     assert!(html.contains("setRunningButton(dryBtn"));
     assert!(html.contains("setRunningButton(applyBtn"));
 }
