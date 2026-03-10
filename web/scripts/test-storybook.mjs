@@ -1375,6 +1375,7 @@ async function runInteractive({ baseUrl, browser }) {
 
       await candidateTrigger.waitFor({ timeout: 10_000 })
       const currentBefore = (await currentTrigger.textContent())?.trim() ?? ''
+      const candidateBefore = (await candidateTrigger.textContent())?.trim() ?? ''
 
       await candidateTrigger.click()
       const popover = page.locator(".versionTagsPopover[data-state='open']")
@@ -1389,13 +1390,13 @@ async function runInteractive({ baseUrl, browser }) {
         return triggers[1]?.textContent?.trim() === '加载中…'
       }, null, { timeout: 10_000 })
 
-      await page.waitForFunction(() => {
+      await page.waitForFunction((expected) => {
         const line = document.querySelector('.versionLine')
         if (!line) return false
         const triggers = line.querySelectorAll('.versionTagsTrigger')
         if (triggers.length < 2) return false
-        return triggers[1]?.textContent?.trim() === 'v0.8.8'
-      }, null, { timeout: 10_000 })
+        return triggers[1]?.textContent?.trim() === expected
+      }, candidateBefore, { timeout: 10_000 })
 
       const currentAfter = (await currentTrigger.textContent())?.trim() ?? ''
       if (currentAfter !== currentBefore) {

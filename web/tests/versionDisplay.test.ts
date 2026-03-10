@@ -30,8 +30,19 @@ describe('versionDisplay', () => {
     expect(formatCandidateTagDisplay('latest', null, 'pending')).toBe('latest')
   })
 
-  test('picks the first strict semver tag from a snapshot tag list', () => {
-    expect(pickSnapshotDisplayTag(['latest', 'v0.2.51', '0.2.50'])).toBe('v0.2.51')
-    expect(pickSnapshotDisplayTag(['stable', 'latest'])).toBeNull()
+  test('picks the best semver-ish tag from a snapshot tag list', () => {
+    expect(pickSnapshotDisplayTag(['latest', 'v0.2.51', '0.2.50'], 'latest')).toBe('v0.2.51')
+    expect(pickSnapshotDisplayTag(['stable', 'latest'], 'latest')).toBeNull()
+
+    // Prefer canonical release tags over prereleases when deriving from a floating raw tag.
+    expect(
+      pickSnapshotDisplayTag(
+        ['v0.8.8-arm64', 'v0.8.8', '0.8.8', 'stable', 'latest'],
+        'latest',
+      ),
+    ).toBe('v0.8.8')
+
+    // Avoid rewriting already-stable semver tags.
+    expect(pickSnapshotDisplayTag(['v1.2.3', '1.2.3'], 'v1.2.3')).toBeNull()
   })
 })

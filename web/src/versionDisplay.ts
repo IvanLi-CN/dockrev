@@ -155,9 +155,11 @@ export function pickSnapshotDisplayTag(
   const rawTrim = trimOrEmpty(rawTag)
   const rawStrict = rawTrim ? parseStrictSemver(rawTrim) : null
 
-  // Avoid rewriting already-stable semver tags (e.g. `v1.2.3`), but allow prerelease tags
-  // to be upgraded to a more canonical tag pointing at the same digest when available.
-  if (rawStrict && rawStrict.prerelease.length === 0) return null
+  // Align with backend inference: only derive a local display tag when the raw tag itself is
+  // not already strict semver (including prerelease). Otherwise we risk rewriting the
+  // deployment semantics (e.g. `v1.2.3-rc.1` -> `v1.2.3`) just because the digest also has
+  // another tag pointing at it.
+  if (rawStrict) return null
 
   const inferred = inferSemverTagsFromSnapshot(tags, rawTrim)
   return inferred[0] ?? null
