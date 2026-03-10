@@ -15,6 +15,7 @@ cd deploy
 mkdir -p data
 
 # Copy your Docker credentials (read-only). This is optional, but required for private registries.
+# Dockrev will stage this file for update jobs, so you do not need to also mount /root/.docker/config.json.
 cp ~/.docker/config.json data/docker-config.json
 
 docker compose up --build

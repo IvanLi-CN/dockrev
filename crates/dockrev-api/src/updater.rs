@@ -1,12 +1,15 @@
 use std::{
     collections::HashSet,
+    path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use anyhow::Context;
 use semver::Version;
 use serde::Serialize;
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedSender;
+use ulid::Ulid;
 
 use crate::{
     api::types::{JobScope, StackRecord},
@@ -21,6 +24,62 @@ struct TempFileCleanup(std::path::PathBuf);
 impl Drop for TempFileCleanup {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+#[derive(Clone, Debug)]
+struct TempDirCleanup(PathBuf);
+
+impl Drop for TempDirCleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[derive(Clone, Debug)]
+struct DockerCliAuthBridge {
+    home_dir: PathBuf,
+    docker_config_dir: PathBuf,
+    _cleanup: TempDirCleanup,
+}
+
+impl DockerCliAuthBridge {
+    fn stage(docker_config_path: &Path) -> anyhow::Result<Self> {
+        let home_dir = std::env::temp_dir().join(format!("dockrev-auth-home-{}", Ulid::new()));
+        let docker_config_dir = home_dir.join(".docker");
+        std::fs::create_dir_all(&docker_config_dir).with_context(|| {
+            format!(
+                "create docker auth workspace {}",
+                docker_config_dir.display()
+            )
+        })?;
+        let staged_config_path = docker_config_dir.join("config.json");
+        std::fs::copy(docker_config_path, &staged_config_path).with_context(|| {
+            format!(
+                "stage docker config {} -> {}",
+                docker_config_path.display(),
+                staged_config_path.display()
+            )
+        })?;
+
+        Ok(Self {
+            home_dir: home_dir.clone(),
+            docker_config_dir,
+            _cleanup: TempDirCleanup(home_dir),
+        })
+    }
+
+    fn env(&self) -> Vec<(String, String)> {
+        vec![
+            (
+                "HOME".to_string(),
+                self.home_dir.to_string_lossy().to_string(),
+            ),
+            (
+                "DOCKER_CONFIG".to_string(),
+                self.docker_config_dir.to_string_lossy().to_string(),
+            ),
+        ]
     }
 }
 
@@ -303,6 +362,7 @@ fn should_sync_local_tag(image_ref: &str) -> bool {
 pub async fn run_update_job(
     runner: &dyn CommandRunner,
     compose_bin: &str,
+    docker_config_path: Option<&Path>,
     idempotent_retry_policy: IdempotentRetryPolicy,
     stack: &StackRecord,
     scope: &JobScope,
@@ -315,14 +375,6 @@ pub async fn run_update_job(
     dockrev_image_repo: Option<&str>,
     progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
 ) -> anyhow::Result<UpdateOutcome> {
-    let compose_cfg = ComposeRunnerConfig {
-        compose_bin: compose_bin.to_string(),
-    };
-    let compose_stack = ComposeStack {
-        project_name: sanitize_project_name(&stack.name),
-        compose: stack.compose.clone(),
-    };
-
     let selection = select_update_services(
         stack,
         scope,
@@ -345,6 +397,22 @@ pub async fn run_update_job(
         });
     }
 
+    let auth_bridge = docker_config_path
+        .map(DockerCliAuthBridge::stage)
+        .transpose()?;
+    let command_env = auth_bridge
+        .as_ref()
+        .map(DockerCliAuthBridge::env)
+        .unwrap_or_default();
+    let compose_cfg = ComposeRunnerConfig {
+        compose_bin: compose_bin.to_string(),
+        env: command_env.clone(),
+    };
+    let compose_stack = ComposeStack {
+        project_name: sanitize_project_name(&stack.name),
+        compose: stack.compose.clone(),
+    };
+
     let override_path = build_override_file(stack, &services, target_tag, target_digest)?;
     let _override_cleanup = override_path.as_ref().map(|p| TempFileCleanup(p.clone()));
     let override_stack = override_path.as_ref().map(|p| ComposeStack {
@@ -356,7 +424,10 @@ pub async fn run_update_job(
         },
     });
 
-    let docker_cfg = docker_runner::DockerRunnerConfig::default();
+    let docker_cfg = docker_runner::DockerRunnerConfig {
+        docker_bin: "docker".to_string(),
+        env: command_env,
+    };
 
     let mut changed = 0u32;
     let mut old_images = serde_json::Map::new();
@@ -1326,7 +1397,7 @@ mod tests {
         },
         runner::{CommandOutput, CommandRunner},
     };
-    use std::{collections::BTreeMap, sync::Mutex};
+    use std::{collections::BTreeMap, fs, sync::Mutex};
 
     #[derive(Default)]
     struct FakeRunner {
@@ -1396,6 +1467,166 @@ mod tests {
                 },
                 archived: None,
             }],
+        }
+    }
+
+    fn write_test_docker_config() -> (PathBuf, TempDirCleanup) {
+        let root = std::env::temp_dir().join(format!("dockrev-test-auth-{}", ulid::Ulid::new()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("docker-config.custom.json");
+        fs::write(&path, r#"{"auths":{"ghcr.io":{"auth":"Zm9vOmJhcg=="}}}"#).unwrap();
+        (path, TempDirCleanup(root))
+    }
+
+    #[test]
+    fn docker_cli_auth_bridge_stages_config_in_default_docker_home() {
+        let (source_path, _source_cleanup) = write_test_docker_config();
+
+        let bridge = DockerCliAuthBridge::stage(&source_path).expect("auth bridge should stage");
+        let staged_path = bridge.docker_config_dir.join("config.json");
+
+        assert_eq!(bridge.home_dir.join(".docker"), bridge.docker_config_dir);
+        assert_eq!(
+            fs::read_to_string(&staged_path).unwrap(),
+            fs::read_to_string(&source_path).unwrap()
+        );
+        assert_eq!(
+            bridge.env(),
+            vec![
+                (
+                    "HOME".to_string(),
+                    bridge.home_dir.to_string_lossy().to_string()
+                ),
+                (
+                    "DOCKER_CONFIG".to_string(),
+                    bridge.docker_config_dir.to_string_lossy().to_string(),
+                ),
+            ]
+        );
+    }
+
+    #[derive(Default)]
+    struct EnvCaptureUpdateRunner {
+        step: Mutex<usize>,
+        specs: Mutex<Vec<CommandSpec>>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for EnvCaptureUpdateRunner {
+        async fn run(
+            &self,
+            spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            self.specs.lock().unwrap().push(spec.clone());
+            let mut step = self.step.lock().unwrap();
+            let out = match *step {
+                0 => CommandOutput {
+                    status: 0,
+                    stdout: "old_container\n".to_string(),
+                    stderr: String::new(),
+                },
+                1 => CommandOutput {
+                    status: 0,
+                    stdout: "sha256:old\n".to_string(),
+                    stderr: String::new(),
+                },
+                2 => CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+                3 => CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+                4 => CommandOutput {
+                    status: 0,
+                    stdout: "new_container\n".to_string(),
+                    stderr: String::new(),
+                },
+                5 => CommandOutput {
+                    status: 0,
+                    stdout: "0\n".to_string(),
+                    stderr: String::new(),
+                },
+                6 => CommandOutput {
+                    status: 0,
+                    stdout: "sha256:new\n".to_string(),
+                    stderr: String::new(),
+                },
+                7 => CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+                _ => panic!(
+                    "unexpected extra command: program={} args={:?}",
+                    spec.program, spec.args
+                ),
+            };
+            *step += 1;
+            Ok(out)
+        }
+    }
+
+    #[derive(Default)]
+    struct EnvCaptureSemverRunner {
+        specs: Mutex<Vec<CommandSpec>>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for EnvCaptureSemverRunner {
+        async fn run(
+            &self,
+            spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            self.specs.lock().unwrap().push(spec.clone());
+            let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
+            if args
+                == vec![
+                    "image",
+                    "inspect",
+                    "--format",
+                    r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
+                    "sha256:new",
+                ]
+            {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: "0.7.7\n".to_string(),
+                    stderr: String::new(),
+                });
+            }
+            if args
+                == vec![
+                    "image",
+                    "inspect",
+                    "--format",
+                    "{{json .RepoTags}}",
+                    "sha256:new",
+                ]
+            {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: "[]\n".to_string(),
+                    stderr: String::new(),
+                });
+            }
+            if args == vec!["pull", "ghcr.io/org/web:0.7.7"] {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                });
+            }
+            Ok(CommandOutput {
+                status: 1,
+                stdout: String::new(),
+                stderr: format!("unexpected args: {:?}", spec.args),
+            })
         }
     }
 
@@ -1522,6 +1753,7 @@ mod tests {
         let outcome = run_update_job(
             &runner,
             "docker-compose",
+            None,
             IdempotentRetryPolicy::default(),
             &stack,
             &JobScope::Stack,
@@ -1540,6 +1772,97 @@ mod tests {
         assert_eq!(outcome.status, "success");
         assert_eq!(outcome.summary_json["changedServices"].as_u64(), Some(0));
         assert!(runner.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn update_job_injects_docker_auth_env_into_compose_and_docker_commands() {
+        let stack = single_service_stack("ghcr.io/org/web:1.0", None);
+        let runner = EnvCaptureUpdateRunner::default();
+        let (docker_config_path, _docker_config_cleanup) = write_test_docker_config();
+
+        let outcome = run_update_job(
+            &runner,
+            "docker-compose",
+            Some(docker_config_path.as_path()),
+            IdempotentRetryPolicy::default(),
+            &stack,
+            &JobScope::Service,
+            Some("svc_1"),
+            "live",
+            None,
+            None,
+            false,
+            "ui",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.status, "success");
+
+        let specs = runner.specs.lock().unwrap();
+        let compose_pull = specs
+            .iter()
+            .find(|spec| args_end_with(&spec.args, &["pull", "web"]))
+            .expect("compose pull command should exist");
+        let compose_up = specs
+            .iter()
+            .find(|spec| args_end_with(&spec.args, &["up", "-d", "web"]))
+            .expect("compose up command should exist");
+        let docker_tag = specs
+            .iter()
+            .find(|spec| spec.args == vec!["image", "tag", "sha256:new", "ghcr.io/org/web:1.0"])
+            .expect("docker tag command should exist");
+
+        for spec in [compose_pull, compose_up, docker_tag] {
+            assert_eq!(spec.env.len(), 2);
+            assert!(
+                spec.env
+                    .iter()
+                    .any(|(k, v)| k == "HOME" && v.contains("dockrev-auth-home-"))
+            );
+            assert!(
+                spec.env
+                    .iter()
+                    .any(|(k, v)| k == "DOCKER_CONFIG" && v.ends_with("/.docker"))
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn update_job_without_docker_config_keeps_command_env_empty() {
+        let stack = single_service_stack("ghcr.io/org/web:1.0", None);
+        let runner = EnvCaptureUpdateRunner::default();
+
+        let outcome = run_update_job(
+            &runner,
+            "docker-compose",
+            None,
+            IdempotentRetryPolicy::default(),
+            &stack,
+            &JobScope::Service,
+            Some("svc_1"),
+            "live",
+            None,
+            None,
+            false,
+            "ui",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.status, "success");
+        assert!(
+            runner
+                .specs
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|spec| spec.env.is_empty())
+        );
     }
 
     #[derive(Default)]
@@ -1716,6 +2039,7 @@ mod tests {
         let outcome = run_update_job(
             &runner,
             "docker-compose",
+            None,
             IdempotentRetryPolicy::default(),
             &stack,
             &JobScope::Stack,
@@ -1774,6 +2098,7 @@ mod tests {
         let outcome = run_update_job(
             &runner,
             "docker-compose",
+            None,
             IdempotentRetryPolicy::default(),
             &stack,
             &JobScope::Service,
@@ -1835,6 +2160,7 @@ mod tests {
         let outcome = run_update_job(
             &runner,
             "docker-compose",
+            None,
             IdempotentRetryPolicy::default(),
             &stack,
             &JobScope::Service,
@@ -2214,6 +2540,7 @@ mod tests {
         let outcome = run_update_job(
             &runner,
             "docker-compose",
+            None,
             IdempotentRetryPolicy {
                 max_attempts: 1,
                 base_ms: 1,
@@ -2253,6 +2580,7 @@ mod tests {
         let outcome = run_update_job(
             &runner,
             "docker-compose",
+            None,
             IdempotentRetryPolicy::default(),
             &stack,
             &JobScope::Service,
@@ -2280,6 +2608,7 @@ mod tests {
         let outcome = run_update_job(
             &runner,
             "docker-compose",
+            None,
             IdempotentRetryPolicy::default(),
             &stack,
             &JobScope::Service,
@@ -2316,6 +2645,7 @@ mod tests {
         let outcome = run_update_job(
             &runner,
             "docker-compose",
+            None,
             IdempotentRetryPolicy::default(),
             &stack,
             &JobScope::Stack,
@@ -2512,6 +2842,7 @@ mod tests {
         let err = run_update_job(
             &runner,
             "docker-compose",
+            None,
             IdempotentRetryPolicy {
                 max_attempts: 5,
                 base_ms: 1,
@@ -2739,6 +3070,48 @@ mod tests {
         assert!(semver_pulled_set.is_empty());
         assert_eq!(*runner.inspect_repo_tags_calls.lock().unwrap(), 0);
         assert_eq!(*runner.pull_calls.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn semver_pull_uses_docker_auth_env_when_configured() {
+        let runner = EnvCaptureSemverRunner::default();
+        let (docker_config_path, _docker_config_cleanup) = write_test_docker_config();
+        let auth_bridge = DockerCliAuthBridge::stage(&docker_config_path).unwrap();
+        let docker_cfg = docker_runner::DockerRunnerConfig {
+            docker_bin: "docker".to_string(),
+            env: auth_bridge.env(),
+        };
+
+        let mut semver_pulled: Vec<String> = Vec::new();
+        let mut semver_pulled_set: HashSet<String> = HashSet::new();
+        let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
+            serde_json::Map::new();
+
+        maybe_pull_semver_tag_for_image(
+            &runner,
+            &docker_cfg,
+            IdempotentRetryPolicy {
+                max_attempts: 1,
+                base_ms: 1,
+                max_ms: 2,
+            },
+            "svc_1",
+            "ghcr.io/org/web",
+            "sha256:new",
+            &mut semver_pulled,
+            &mut semver_pulled_set,
+            &mut semver_pull_warnings,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(semver_pulled, vec!["ghcr.io/org/web:0.7.7".to_string()]);
+
+        for spec in runner.specs.lock().unwrap().iter() {
+            assert_eq!(spec.env.len(), 2);
+            assert!(spec.env.iter().any(|(k, _)| k == "HOME"));
+            assert!(spec.env.iter().any(|(k, _)| k == "DOCKER_CONFIG"));
+        }
     }
 
     #[test]

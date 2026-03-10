@@ -3,6 +3,7 @@ use crate::{api::types::ComposeConfig, runner::CommandSpec};
 #[derive(Clone, Debug)]
 pub struct ComposeRunnerConfig {
     pub compose_bin: String,
+    pub env: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug)]
@@ -35,7 +36,7 @@ impl ComposeStack {
         CommandSpec {
             program: cfg.compose_bin.clone(),
             args,
-            env: Vec::new(),
+            env: cfg.env.clone(),
         }
     }
 
@@ -107,11 +108,16 @@ mod tests {
         };
         let cfg = ComposeRunnerConfig {
             compose_bin: "docker".to_string(),
+            env: vec![("DOCKER_CONFIG".to_string(), "/tmp/auth/.docker".to_string())],
         };
         let cmd = stack.pull_service(&cfg, "web");
         assert_eq!(cmd.program, "docker");
         assert_eq!(cmd.args[0], "compose");
         assert!(cmd.args.iter().any(|a| a == "--project-name"));
+        assert_eq!(
+            cmd.env,
+            vec![("DOCKER_CONFIG".to_string(), "/tmp/auth/.docker".to_string())]
+        );
     }
 
     #[test]
@@ -126,9 +132,46 @@ mod tests {
         };
         let cfg = ComposeRunnerConfig {
             compose_bin: "docker-compose".to_string(),
+            env: Vec::new(),
         };
         let cmd = stack.ps_q_service(&cfg, "web");
         assert_eq!(cmd.program, "docker-compose");
         assert_ne!(cmd.args[0], "compose");
+    }
+
+    #[test]
+    fn docker_compose_plugin_progress_env_keeps_auth_env() {
+        let stack = ComposeStack {
+            project_name: "myproj".to_string(),
+            compose: ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec!["/srv/app/docker-compose.yml".to_string()],
+                env_file: None,
+            },
+        };
+        let cfg = ComposeRunnerConfig {
+            compose_bin: "docker".to_string(),
+            env: vec![
+                ("HOME".to_string(), "/tmp/dockrev-auth-home".to_string()),
+                (
+                    "DOCKER_CONFIG".to_string(),
+                    "/tmp/dockrev-auth-home/.docker".to_string(),
+                ),
+            ],
+        };
+
+        let cmd = stack.pull_service_with_progress(&cfg, "web");
+
+        assert_eq!(
+            cmd.env,
+            vec![
+                ("HOME".to_string(), "/tmp/dockrev-auth-home".to_string()),
+                (
+                    "DOCKER_CONFIG".to_string(),
+                    "/tmp/dockrev-auth-home/.docker".to_string()
+                ),
+                ("COMPOSE_PROGRESS".to_string(), "plain".to_string()),
+            ]
+        );
     }
 }

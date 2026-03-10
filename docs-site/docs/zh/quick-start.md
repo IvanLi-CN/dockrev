@@ -19,6 +19,7 @@ description: 在本地快速启动 Dockrev 并完成第一轮扫描。
 ```bash
 cd deploy
 mkdir -p data
+# Dockrev 会复用该文件作为 update job 的 Docker/Compose 鉴权来源，无需额外挂载 /root/.docker/config.json。
 cp ~/.docker/config.json data/docker-config.json
 
 docker compose up --build
