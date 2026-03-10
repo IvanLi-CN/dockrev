@@ -91,3 +91,4 @@
 - 2026-03-10: 完成 Supervisor 四区重构、history 列表化、render_ui 回归测试，以及本地 `cargo test` + Chrome DevTools 多断点主题 smoke。
 - 2026-03-10: 根据 review-loop 收敛离线缓存态与无 history fallback，补充 uncached offline / logs-only 回归断言，并完成 PR #160、GitHub checks 全绿与 spec 回写。
 - 2026-03-10: 修复查看旧 operation 时，同一最新 op 持续追加日志不会点亮“新日志”提示的问题，并补充对应前端状态机回归断言。
+- 2026-03-10: 按一档比例下调整体视觉尺度，收紧容器宽度、卡片 padding、标题字号、状态块高度与历史/日志最小高度，消除页面“像被放大”的观感。

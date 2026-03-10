@@ -181,8 +181,8 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         font-family: 'Avenir Next', 'Avenir', 'SF Pro Display', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
         min-height: 100vh;
         margin: 0 auto;
-        padding: 0 20px 40px;
-        max-width: 1240px;
+        padding: 0 16px 32px;
+        max-width: 1180px;
         background: var(--bg-layered);
         background-attachment: fixed;
         color: var(--text);
@@ -201,8 +201,8 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       textarea,
       select {{ font: inherit; }}
       button {{
-        min-height: 44px;
-        padding: 10px 14px;
+        min-height: 40px;
+        padding: 9px 13px;
         border-radius: 14px;
         border: 1px solid var(--button-border);
         background: var(--button-bg);
@@ -251,8 +251,8 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       input {{
         width: 100%;
         min-width: 0;
-        padding: 12px 14px;
-        border-radius: 14px;
+        padding: 10px 13px;
+        border-radius: 12px;
         border: 1px solid var(--input-border);
         background: var(--input-bg);
         color: var(--text);
@@ -260,8 +260,8 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
       pre {{
         margin: 0;
-        padding: 16px;
-        border-radius: 18px;
+        padding: 14px;
+        border-radius: 16px;
         overflow: auto;
         white-space: pre-wrap;
         word-break: break-word;
@@ -271,13 +271,13 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
       .shell {{
         display: grid;
-        gap: 20px;
-        padding-top: 28px;
+        gap: 16px;
+        padding-top: 22px;
       }}
       .panel {{
         border: 1px solid var(--panel-border);
-        border-radius: 24px;
-        padding: 22px;
+        border-radius: 20px;
+        padding: 18px;
         background: var(--panel);
         box-shadow: var(--panel-shadow);
         backdrop-filter: blur(18px);
@@ -298,37 +298,37 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
-        gap: 14px;
+        gap: 12px;
         flex-wrap: wrap;
-        margin-bottom: 18px;
+        margin-bottom: 14px;
       }}
       .sectionHeadingRow h2 {{
-        margin: 6px 0 0;
-        font-size: 24px;
+        margin: 4px 0 0;
+        font-size: 22px;
         line-height: 1.1;
       }}
       .masthead {{
-        padding-top: 26px;
-        padding-bottom: 24px;
+        padding-top: 22px;
+        padding-bottom: 20px;
       }}
       .mastheadTop {{
         display: flex;
         justify-content: space-between;
         align-items: flex-start;
-        gap: 20px;
+        gap: 16px;
       }}
       .brandRow {{
         display: flex;
-        gap: 16px;
+        gap: 14px;
         align-items: center;
       }}
       .brandMark {{
-        width: 52px;
-        height: 52px;
+        width: 46px;
+        height: 46px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        border-radius: 18px;
+        border-radius: 16px;
         background: linear-gradient(160deg, rgba(54, 191, 250, 0.18), rgba(54, 191, 250, 0.04));
         border: 1px solid rgba(54, 191, 250, 0.22);
         flex: 0 0 auto;
@@ -337,27 +337,27 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         display: block;
       }}
       .masthead h1 {{
-        margin: 6px 0 0;
-        font-size: clamp(34px, 4.6vw, 64px);
+        margin: 4px 0 0;
+        font-size: clamp(30px, 4vw, 56px);
         line-height: 0.96;
         letter-spacing: -0.04em;
       }}
       .intro {{
-        max-width: 760px;
-        margin: 16px 0 0;
+        max-width: 720px;
+        margin: 14px 0 0;
         color: var(--muted);
-        font-size: clamp(15px, 1.8vw, 18px);
+        font-size: clamp(14px, 1.5vw, 17px);
         line-height: 1.65;
       }}
       .metaGrid {{
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 14px;
-        margin-top: 24px;
+        gap: 12px;
+        margin-top: 20px;
       }}
       .metaCard {{
-        padding: 14px 16px;
-        border-radius: 18px;
+        padding: 12px 14px;
+        border-radius: 16px;
         border: 1px solid var(--panel-border);
         background: var(--surface);
       }}
@@ -368,8 +368,8 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         letter-spacing: 0.08em;
       }}
       .metaValue {{
-        margin-top: 8px;
-        font-size: 15px;
+        margin-top: 6px;
+        font-size: 14px;
         line-height: 1.45;
         word-break: break-word;
       }}
@@ -377,9 +377,9 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-height: 44px;
-        padding: 10px 16px;
-        border-radius: 14px;
+        min-height: 40px;
+        padding: 9px 14px;
+        border-radius: 12px;
         border: 1px solid var(--button-border);
         background: var(--surface);
         color: var(--link);
@@ -392,12 +392,12 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       .actionDeckGrid {{
         display: grid;
         grid-template-columns: minmax(220px, 280px) minmax(0, 1fr) auto;
-        gap: 16px;
+        gap: 14px;
         align-items: end;
       }}
       .fieldBlock {{
         display: grid;
-        gap: 10px;
+        gap: 8px;
       }}
       .fieldLabel {{
         font-size: 13px;
@@ -411,7 +411,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       .buttonGroup {{
         display: flex;
         flex-wrap: wrap;
-        gap: 12px;
+        gap: 10px;
         align-items: center;
       }}
       .buttonGroup > * {{
@@ -423,12 +423,12 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       .statusGrid {{
         display: grid;
         grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 14px;
+        gap: 12px;
       }}
       .statusTile {{
-        min-height: 122px;
-        padding: 16px;
-        border-radius: 20px;
+        min-height: 104px;
+        padding: 14px;
+        border-radius: 18px;
         border: 1px solid var(--panel-border);
         background: var(--surface);
         display: grid;
@@ -443,7 +443,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
       .statusTile-wide {{
         grid-column: span 2;
-        min-height: 156px;
+        min-height: 136px;
       }}
       .statusTile-full {{
         grid-column: 1 / -1;
@@ -456,27 +456,27 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         letter-spacing: 0.08em;
       }}
       .statusValue {{
-        font-size: 17px;
+        font-size: 16px;
         line-height: 1.42;
         font-weight: 600;
         word-break: break-word;
       }}
       .statusValue-lg {{
-        font-size: clamp(26px, 4vw, 38px);
+        font-size: clamp(22px, 3.4vw, 32px);
         line-height: 1;
         letter-spacing: -0.04em;
       }}
       .statusMeta {{
         color: var(--muted);
-        font-size: 13px;
+        font-size: 12px;
         line-height: 1.55;
       }}
       .statusTone {{
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-height: 36px;
-        padding: 6px 12px;
+        min-height: 32px;
+        padding: 5px 10px;
         border-radius: 999px;
         border: 1px solid var(--panel-border);
         background: var(--surface-strong);
@@ -518,8 +518,8 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       .statusCodeInline {{
         background: var(--pre-bg);
         border: 1px solid var(--panel-border);
-        border-radius: 16px;
-        padding: 14px;
+        border-radius: 14px;
+        padding: 12px;
         color: var(--text);
         font-family: 'SFMono-Regular', 'JetBrains Mono', 'Fira Code', 'IBM Plex Mono', 'Menlo', monospace;
         font-size: 13px;
@@ -528,12 +528,12 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         word-break: break-word;
       }}
       .statusCodeInline {{
-        min-height: 64px;
+        min-height: 56px;
       }}
       .workspaceGrid {{
         display: grid;
-        grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
-        gap: 16px;
+        grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+        gap: 14px;
         align-items: stretch;
       }}
       .workspaceGrid.workspaceGrid-logsOnly {{
@@ -541,26 +541,26 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
       .historyRail,
       .logPanel {{
-        min-height: 420px;
-        border-radius: 22px;
+        min-height: 360px;
+        border-radius: 18px;
         border: 1px solid var(--panel-border);
         background: var(--surface);
       }}
       .historyRail {{
-        padding: 16px;
+        padding: 14px;
         max-height: min(680px, calc(100vh - 220px));
         overflow: auto;
         overscroll-behavior: contain;
       }}
       .historyList {{
         display: grid;
-        gap: 12px;
+        gap: 10px;
       }}
       .historyCard {{
         width: 100%;
-        min-height: 96px;
-        padding: 14px 16px;
-        border-radius: 18px;
+        min-height: 84px;
+        padding: 12px 14px;
+        border-radius: 16px;
         border: 1px solid var(--panel-border);
         background: var(--panel-strong);
         color: var(--text);
@@ -585,7 +585,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         flex-wrap: wrap;
       }}
       .historyTime {{
-        font-size: 15px;
+        font-size: 14px;
         font-weight: 600;
       }}
       .historyMeta,
@@ -604,7 +604,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        padding: 4px 8px;
+        padding: 3px 7px;
         border-radius: 999px;
         border: 1px solid var(--panel-border);
         font-size: 11px;
@@ -635,19 +635,19 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       .logPanel {{
         display: grid;
         grid-template-rows: auto 1fr;
-        padding: 16px;
+        padding: 14px;
       }}
       .logHeader {{
         display: flex;
         justify-content: space-between;
         align-items: flex-start;
-        gap: 12px;
+        gap: 10px;
         flex-wrap: wrap;
-        margin-bottom: 14px;
+        margin-bottom: 12px;
       }}
       .logTitle {{
-        margin-top: 6px;
-        font-size: 20px;
+        margin-top: 4px;
+        font-size: 18px;
         line-height: 1.1;
         font-weight: 600;
       }}
@@ -657,7 +657,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
       #logs {{
         height: 100%;
-        min-height: 300px;
+        min-height: 260px;
         background: var(--console-bg);
       }}
       .popWrap {{
@@ -670,12 +670,12 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         top: calc(100% + 10px);
         right: 0;
         left: auto;
-        width: min(340px, calc(100vw - 48px));
+        width: min(320px, calc(100vw - 48px));
         border: 1px solid var(--button-border);
-        border-radius: 18px;
+        border-radius: 16px;
         background: var(--pop-bg);
         box-shadow: var(--panel-shadow);
-        padding: 14px;
+        padding: 12px;
         z-index: 20;
       }}
       .popTitle {{
@@ -705,11 +705,11 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
       @media (max-width: 1024px) {{
         body {{
-          padding-left: 18px;
-          padding-right: 18px;
+          padding-left: 16px;
+          padding-right: 16px;
         }}
         .panel {{
-          padding: 20px;
+          padding: 18px;
         }}
         .metaGrid,
         .statusGrid,
@@ -737,16 +737,16 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
       @media (max-width: 720px) {{
         body {{
-          padding-left: 14px;
-          padding-right: 14px;
+          padding-left: 12px;
+          padding-right: 12px;
         }}
         .shell {{
-          gap: 16px;
-          padding-top: 16px;
+          gap: 14px;
+          padding-top: 14px;
         }}
         .panel {{
-          padding: 16px;
-          border-radius: 20px;
+          padding: 14px;
+          border-radius: 18px;
         }}
         .mastheadTop,
         .brandRow,
@@ -783,12 +783,12 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           width: 100%;
         }}
         .logTitle {{
-          font-size: 18px;
+          font-size: 17px;
         }}
         .popCard {{
           left: 0;
           right: auto;
-          width: min(340px, calc(100vw - 40px));
+          width: min(320px, calc(100vw - 36px));
         }}
       }}
     </style>
