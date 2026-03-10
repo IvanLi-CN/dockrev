@@ -553,7 +553,7 @@ export function ServiceDetailPage(props: {
 		                                    {candidateDisplayTag}
 		                                  </VersionTagsPopover>
 	                                </div>
-	                                {showRawTag ? (
+                                {showRawTag ? (
                                   <div>
                                     <CurrentVersionPopover
                                       serviceId={service.id}
@@ -562,6 +562,16 @@ export function ServiceDetailPage(props: {
                                       imageDigest={service.image.digest ?? null}
                                       resolvedTag={service.image.resolvedTag}
                                       resolvedTags={service.image.resolvedTags}
+                                      onLocalResolvedTags={(update) => {
+                                        patchServiceInStack((prev) => ({
+                                          ...prev,
+                                          image: {
+                                            ...prev.image,
+                                            resolvedTag: update.resolvedTag,
+                                            resolvedTags: update.resolvedTags,
+                                          },
+                                        }))
+                                      }}
                                       preferSource="rawTag"
                                       triggerClassName="versionTagsTrigger mono monoSecondary"
                                     >
@@ -793,6 +803,16 @@ export function ServiceDetailPage(props: {
           imageDigest={service.image.digest ?? null}
           resolvedTag={service.image.resolvedTag}
           resolvedTags={service.image.resolvedTags}
+          onLocalResolvedTags={(update) => {
+            patchServiceInStack((prev) => ({
+              ...prev,
+              image: {
+                ...prev.image,
+                resolvedTag: update.resolvedTag,
+                resolvedTags: update.resolvedTags,
+              },
+            }))
+          }}
           preferSource="rawTag"
           triggerClassName="versionTagsTrigger mono monoSecondary"
         >

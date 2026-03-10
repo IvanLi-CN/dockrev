@@ -17,6 +17,7 @@ export type AggregateUpdatePreviewListItem = {
   status: Extract<RowStatus, 'updatable' | 'hint'>
   guardedDockrev?: boolean
   displayName?: string
+  stackId?: string
 }
 
 function splitImageRef(ref: string): { registry: string; name: string } {
@@ -56,6 +57,17 @@ function shouldPrefetchFloatingCandidate(
 export function AggregateUpdatePreviewList(props: {
   items: AggregateUpdatePreviewListItem[]
   dockrevGuardHint: string
+  onServiceResolvedTags?: (update: {
+    stackId?: string
+    serviceId: string
+    resolvedTag: string
+    resolvedTags: string[] | null
+  }) => void
+  onServiceCandidateResolvedTag?: (update: {
+    stackId?: string
+    serviceId: string
+    resolvedTag: string
+  }) => void
 }) {
   return (
     <div className="modalList">
@@ -140,6 +152,17 @@ export function AggregateUpdatePreviewList(props: {
                     imageDigest={item.svc.image.digest ?? null}
                     resolvedTag={item.svc.image.resolvedTag}
                     resolvedTags={item.svc.image.resolvedTags}
+                    onLocalResolvedTags={
+                      props.onServiceResolvedTags
+                        ? (update) => {
+                            props.onServiceResolvedTags?.({
+                              stackId: item.stackId,
+                              serviceId: item.svc.id,
+                              ...update,
+                            })
+                          }
+                        : undefined
+                    }
                     inferenceLoading={inferencePending}
                   />
                   <span className={arrowPulse ? 'inlineIconLoading' : 'inlineIconMuted'}>
@@ -154,6 +177,17 @@ export function AggregateUpdatePreviewList(props: {
                       candidateTag={candidateTag}
                       candidateDigest={item.svc.candidate?.digest ?? null}
                       prefetchOnMount={candidatePrefetchOnMount}
+                      onLocalResolvedTag={
+                        props.onServiceCandidateResolvedTag
+                          ? (resolvedTag) => {
+                              props.onServiceCandidateResolvedTag?.({
+                                stackId: item.stackId,
+                                serviceId: item.svc.id,
+                                resolvedTag,
+                              })
+                            }
+                          : undefined
+                      }
                     >
                       {candidateDisplayTag}
                     </VersionTagsPopover>
@@ -170,6 +204,17 @@ export function AggregateUpdatePreviewList(props: {
                       imageDigest={item.svc.image.digest ?? null}
                       resolvedTag={item.svc.image.resolvedTag}
                       resolvedTags={item.svc.image.resolvedTags}
+                      onLocalResolvedTags={
+                        props.onServiceResolvedTags
+                          ? (update) => {
+                              props.onServiceResolvedTags?.({
+                                stackId: item.stackId,
+                                serviceId: item.svc.id,
+                                ...update,
+                              })
+                            }
+                          : undefined
+                      }
                       preferSource="rawTag"
                       triggerClassName="versionTagsTrigger mono monoSecondary"
                     >

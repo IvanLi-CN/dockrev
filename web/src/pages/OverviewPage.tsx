@@ -148,10 +148,12 @@ function formatGroupSummary(services: number, counts: Record<Exclude<RowStatus, 
 function withAggregateDisplayName(
   items: Array<Pick<AggregateUpdatePreviewListItem, 'svc' | 'status' | 'guardedDockrev'>>,
   stackName?: string,
+  stackId?: string,
 ): AggregateUpdatePreviewListItem[] {
   return items.map((item) => ({
     ...item,
     displayName: stackName ? `${stackName}/${item.svc.name}` : item.svc.name,
+    stackId,
   }))
 }
 
@@ -804,8 +806,8 @@ export function OverviewPage(props: {
       counts.hint += partition.counts.hint
       counts.archMismatch += partition.counts.archMismatch
       counts.blocked += partition.counts.blocked
-      actionablePreviewItems.push(...withAggregateDisplayName(partition.actionable, d.name))
-      guardedPreviewItems.push(...withAggregateDisplayName(partition.guardedDockrevPreview, d.name))
+      actionablePreviewItems.push(...withAggregateDisplayName(partition.actionable, d.name, st.id))
+      guardedPreviewItems.push(...withAggregateDisplayName(partition.guardedDockrevPreview, d.name, st.id))
     }
 
     return { counts, actionablePreviewItems, guardedPreviewItems }
@@ -1105,7 +1107,33 @@ export function OverviewPage(props: {
                 ) : null}
                 <div className="modalDivider" />
                 <div className="modalLead">将更新的服务（预览）</div>
-                <AggregateUpdatePreviewList items={previewItems} dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT} />
+                <AggregateUpdatePreviewList
+                  items={previewItems}
+                  dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
+                  onServiceResolvedTags={(update) => {
+                    if (!update.stackId) return
+                    patchServiceInStackDetails(update.stackId, update.serviceId, (prev) => ({
+                      ...prev,
+                      image: {
+                        ...prev.image,
+                        resolvedTag: update.resolvedTag,
+                        resolvedTags: update.resolvedTags,
+                      },
+                    }))
+                  }}
+                  onServiceCandidateResolvedTag={(update) => {
+                    if (!update.stackId) return
+                    patchServiceInStackDetails(update.stackId, update.serviceId, (prev) => ({
+                      ...prev,
+                      candidate: prev.candidate
+                        ? {
+                            ...prev.candidate,
+                            resolvedTag: update.resolvedTag,
+                          }
+                        : prev.candidate,
+                    }))
+                  }}
+                />
                 <div className="modalDivider" />
               </>
             )
@@ -1122,17 +1150,18 @@ export function OverviewPage(props: {
         </Button>
       </>,
     )
-  }, [
-    aggregateAll,
-    allApply,
-    allApplyActiveJob,
-    allApplyActionBusy,
-    allApplySubmitting,
-    busy,
-    onTopActions,
-    refresh,
-    triggerApply,
-  ])
+	  }, [
+	    aggregateAll,
+	    allApply,
+	    allApplyActiveJob,
+	    allApplyActionBusy,
+	    allApplySubmitting,
+	    busy,
+	    onTopActions,
+	    patchServiceInStackDetails,
+	    refresh,
+	    triggerApply,
+	  ])
 
   return (
     <div className="page">
@@ -1293,10 +1322,10 @@ export function OverviewPage(props: {
 
 	            if (rows.length === 0) return null
 
-	            const aggregatePartition = partitionAggregateUpdateServices(d.services)
+            const aggregatePartition = partitionAggregateUpdateServices(d.services)
             const aggregatePreviewItems = [
-              ...withAggregateDisplayName(aggregatePartition.actionable),
-              ...withAggregateDisplayName(aggregatePartition.guardedDockrevPreview),
+              ...withAggregateDisplayName(aggregatePartition.actionable, undefined, st.id),
+              ...withAggregateDisplayName(aggregatePartition.guardedDockrevPreview, undefined, st.id),
             ]
             const isCollapsed = collapsed[st.id] ?? false
             const totalServices = d.services.filter((svc) => !svc.archived).length
@@ -1385,6 +1414,27 @@ export function OverviewPage(props: {
                             <AggregateUpdatePreviewList
                               items={aggregatePreviewItems}
                               dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
+                              onServiceResolvedTags={(update) => {
+                                patchServiceInStackDetails(st.id, update.serviceId, (prev) => ({
+                                  ...prev,
+                                  image: {
+                                    ...prev.image,
+                                    resolvedTag: update.resolvedTag,
+                                    resolvedTags: update.resolvedTags,
+                                  },
+                                }))
+                              }}
+                              onServiceCandidateResolvedTag={(update) => {
+                                patchServiceInStackDetails(st.id, update.serviceId, (prev) => ({
+                                  ...prev,
+                                  candidate: prev.candidate
+                                    ? {
+                                        ...prev.candidate,
+                                        resolvedTag: update.resolvedTag,
+                                      }
+                                    : prev.candidate,
+                                }))
+                              }}
                             />
                             <div className="modalDivider" />
                           </>
@@ -1559,6 +1609,16 @@ export function OverviewPage(props: {
                                     imageDigest={svc.image.digest ?? null}
                                     resolvedTag={svc.image.resolvedTag}
                                     resolvedTags={svc.image.resolvedTags}
+                                    onLocalResolvedTags={(update) => {
+                                      patchServiceInStackDetails(st.id, svc.id, (prev) => ({
+                                        ...prev,
+                                        image: {
+                                          ...prev.image,
+                                          resolvedTag: update.resolvedTag,
+                                          resolvedTags: update.resolvedTags,
+                                        },
+                                      }))
+                                    }}
                                     preferSource="rawTag"
                                     triggerClassName="versionTagsTrigger mono monoSecondary"
                                   >
@@ -1729,6 +1789,16 @@ export function OverviewPage(props: {
                                                     imageDigest={svc.image.digest ?? null}
                                                     resolvedTag={svc.image.resolvedTag}
                                                     resolvedTags={svc.image.resolvedTags}
+                                                    onLocalResolvedTags={(update) => {
+                                                      patchServiceInStackDetails(d.id, svc.id, (prev) => ({
+                                                        ...prev,
+                                                        image: {
+                                                          ...prev.image,
+                                                          resolvedTag: update.resolvedTag,
+                                                          resolvedTags: update.resolvedTags,
+                                                        },
+                                                      }))
+                                                    }}
                                                     preferSource="rawTag"
                                                     triggerClassName="versionTagsTrigger mono monoSecondary"
                                                   >

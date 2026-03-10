@@ -862,10 +862,12 @@ export function ServicesPage(props: {
                           ...g.aggregatePartition.actionable.map((item) => ({
                             ...item,
                             displayName: item.svc.name,
+                            stackId: g.stackId,
                           })),
                           ...g.aggregatePartition.guardedDockrevPreview.map((item) => ({
                             ...item,
                             displayName: item.svc.name,
+                            stackId: g.stackId,
                           })),
                         ]
                         const anomalyCount = previewItems.filter((item) =>
@@ -904,6 +906,27 @@ export function ServicesPage(props: {
                             <AggregateUpdatePreviewList
                               items={previewItems}
                               dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
+                              onServiceResolvedTags={(update) => {
+                                patchServiceInStackDetails(g.stackId, update.serviceId, (prev) => ({
+                                  ...prev,
+                                  image: {
+                                    ...prev.image,
+                                    resolvedTag: update.resolvedTag,
+                                    resolvedTags: update.resolvedTags,
+                                  },
+                                }))
+                              }}
+                              onServiceCandidateResolvedTag={(update) => {
+                                patchServiceInStackDetails(g.stackId, update.serviceId, (prev) => ({
+                                  ...prev,
+                                  candidate: prev.candidate
+                                    ? {
+                                        ...prev.candidate,
+                                        resolvedTag: update.resolvedTag,
+                                      }
+                                    : prev.candidate,
+                                }))
+                              }}
                             />
                             <div className="modalDivider" />
                           </>
@@ -1083,6 +1106,20 @@ export function ServicesPage(props: {
                                     imageDigest={svc.image.digest ?? null}
                                     resolvedTag={svc.image.resolvedTag}
                                     resolvedTags={svc.image.resolvedTags}
+                                    onLocalResolvedTags={(update) => {
+                                      patchServiceInStackDetails(
+                                        g.stackId,
+                                        svc.id,
+                                        (prev) => ({
+                                          ...prev,
+                                          image: {
+                                            ...prev.image,
+                                            resolvedTag: update.resolvedTag,
+                                            resolvedTags: update.resolvedTags,
+                                          },
+                                        }),
+                                      )
+                                    }}
                                     preferSource="rawTag"
                                     triggerClassName="versionTagsTrigger mono monoSecondary"
                                   >
@@ -1246,6 +1283,20 @@ export function ServicesPage(props: {
                                                     imageDigest={svc.image.digest ?? null}
                                                     resolvedTag={svc.image.resolvedTag}
                                                     resolvedTags={svc.image.resolvedTags}
+                                                    onLocalResolvedTags={(update) => {
+                                                      patchServiceInStackDetails(
+                                                        g.stackId,
+                                                        svc.id,
+                                                        (prev) => ({
+                                                          ...prev,
+                                                          image: {
+                                                            ...prev.image,
+                                                            resolvedTag: update.resolvedTag,
+                                                            resolvedTags: update.resolvedTags,
+                                                          },
+                                                        }),
+                                                      )
+                                                    }}
                                                     preferSource="rawTag"
                                                     triggerClassName="versionTagsTrigger mono monoSecondary"
                                                   >
