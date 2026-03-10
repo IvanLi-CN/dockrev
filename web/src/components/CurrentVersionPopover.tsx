@@ -16,19 +16,13 @@ import {
 } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 import { useHoverPinnedPopover } from './HoverPinnedPopover'
-import { inferResolvedTagsFromSnapshot } from '../versionDisplay'
+import { inferResolvedTagsFromSnapshot, isStrictSemverTag } from '../versionDisplay'
 
 type TagSeries = {
   major: number
   minor: number | null
   patch: number | null
   precision: 1 | 2 | 3
-}
-
-function isStrictSemverTag(tag: string): boolean {
-  const t = tag.trim()
-  if (!t) return false
-  return /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(t)
 }
 
 function parseTagSeries(tag: string): TagSeries | null {

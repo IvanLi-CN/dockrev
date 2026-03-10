@@ -1,8 +1,19 @@
 import { describe, expect, test } from 'bun:test'
 
-import { formatCandidateTagDisplay, formatCurrentTagDisplay, pickSnapshotDisplayTag } from '../src/versionDisplay'
+import {
+  formatCandidateTagDisplay,
+  formatCurrentTagDisplay,
+  isStrictSemverTag,
+  pickSnapshotDisplayTag,
+} from '../src/versionDisplay'
 
 describe('versionDisplay', () => {
+  test('treats leading zeros in numeric identifiers as non-strict semver', () => {
+    expect(isStrictSemverTag('01.2.3')).toBe(false)
+    expect(isStrictSemverTag('1.2.3-01')).toBe(false)
+    expect(isStrictSemverTag('1.2.3-0')).toBe(true)
+  })
+
   test('prefers resolved current tag when it is strict semver', () => {
     expect(formatCurrentTagDisplay('latest', 'v0.2.51')).toBe('v0.2.51')
   })
