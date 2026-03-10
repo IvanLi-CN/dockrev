@@ -101,85 +101,83 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
     <style>
       :root {{
         color-scheme: dark;
-        --bg: #070b10;
+        --bg: #081019;
         --bg-layered:
-          linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
-          radial-gradient(72% 80% at 10% 0%, rgba(79, 209, 255, 0.18) 0%, rgba(79, 209, 255, 0) 60%),
-          radial-gradient(56% 64% at 100% 0%, rgba(255, 157, 106, 0.14) 0%, rgba(255, 157, 106, 0) 50%),
-          linear-gradient(180deg, #05080c 0%, #0a1118 42%, #0d151d 100%);
-        --text: rgba(238, 244, 249, 0.96);
-        --muted: rgba(193, 205, 217, 0.78);
-        --panel: rgba(10, 17, 24, 0.84);
-        --panel-strong: rgba(12, 21, 30, 0.98);
-        --panel-border: rgba(134, 154, 176, 0.22);
-        --panel-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
+          linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+          radial-gradient(66% 80% at 0% 0%, rgba(64, 180, 255, 0.14) 0%, rgba(64, 180, 255, 0) 58%),
+          radial-gradient(54% 70% at 100% 0%, rgba(255, 176, 87, 0.11) 0%, rgba(255, 176, 87, 0) 48%),
+          linear-gradient(180deg, #071018 0%, #0a141d 45%, #0d1823 100%);
+        --text: rgba(236, 242, 248, 0.97);
+        --muted: rgba(187, 198, 210, 0.78);
+        --panel: rgba(10, 18, 26, 0.86);
+        --panel-strong: rgba(10, 17, 24, 0.96);
+        --panel-border: rgba(139, 157, 177, 0.2);
+        --panel-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
         --surface: rgba(255, 255, 255, 0.035);
-        --surface-strong: rgba(255, 255, 255, 0.055);
-        --surface-accent: rgba(79, 209, 255, 0.11);
+        --surface-strong: rgba(255, 255, 255, 0.05);
         --button-bg: rgba(255, 255, 255, 0.04);
-        --button-hover: rgba(79, 209, 255, 0.12);
-        --button-border: rgba(167, 189, 212, 0.2);
+        --button-hover: rgba(64, 180, 255, 0.11);
+        --button-border: rgba(160, 178, 198, 0.18);
         --button-text: var(--text);
         --input-bg: rgba(255, 255, 255, 0.04);
-        --input-border: rgba(167, 189, 212, 0.2);
-        --input-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.015);
-        --console-bg: rgba(4, 10, 15, 0.94);
-        --pop-bg: rgba(9, 16, 22, 0.98);
+        --input-border: rgba(160, 178, 198, 0.18);
+        --input-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.012);
+        --console-bg: rgba(5, 10, 16, 0.94);
+        --pop-bg: rgba(9, 15, 22, 0.98);
         --code-bg: rgba(255, 255, 255, 0.08);
-        --link: #9ae6ff;
+        --link: #91dfff;
         --link-hover: #c8f1ff;
-        --accent: #4fd1ff;
-        --accent-strong: #22b8f5;
-        --accent-warm: #ff9d6a;
-        --spinner-track: rgba(238, 244, 249, 0.2);
-        --spinner-head: rgba(238, 244, 249, 0.88);
+        --accent: #40b4ff;
+        --accent-strong: #1687d9;
+        --accent-warm: #ffb057;
+        --spinner-track: rgba(236, 242, 248, 0.2);
+        --spinner-head: rgba(236, 242, 248, 0.88);
         --ok: #32c96c;
         --bad: #ff7b7b;
         --warn: #ffb155;
         --info: #53a9ff;
-        --selection: rgba(79, 209, 255, 0.2);
+        --selection: rgba(64, 180, 255, 0.18);
       }}
       html[data-theme='light'] {{
         color-scheme: light;
-        --bg: #f5f7fa;
+        --bg: #f4f7fb;
         --bg-layered:
-          linear-gradient(rgba(8, 23, 39, 0.035) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(8, 23, 39, 0.035) 1px, transparent 1px),
-          radial-gradient(72% 80% at 10% 0%, rgba(79, 209, 255, 0.12) 0%, rgba(79, 209, 255, 0) 60%),
-          radial-gradient(56% 64% at 100% 0%, rgba(255, 157, 106, 0.1) 0%, rgba(255, 157, 106, 0) 50%),
-          linear-gradient(180deg, #fbfdff 0%, #f5f8fb 42%, #eef3f7 100%);
+          linear-gradient(rgba(10, 24, 40, 0.03) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(10, 24, 40, 0.03) 1px, transparent 1px),
+          radial-gradient(66% 80% at 0% 0%, rgba(64, 180, 255, 0.1) 0%, rgba(64, 180, 255, 0) 58%),
+          radial-gradient(54% 70% at 100% 0%, rgba(255, 176, 87, 0.09) 0%, rgba(255, 176, 87, 0) 48%),
+          linear-gradient(180deg, #fbfdff 0%, #f4f8fb 45%, #edf3f8 100%);
         --text: rgba(14, 24, 37, 0.96);
-        --muted: rgba(71, 89, 110, 0.82);
-        --panel: rgba(255, 255, 255, 0.88);
+        --muted: rgba(83, 98, 116, 0.82);
+        --panel: rgba(255, 255, 255, 0.9);
         --panel-strong: rgba(255, 255, 255, 0.98);
-        --panel-border: rgba(12, 34, 58, 0.13);
-        --panel-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
-        --surface: rgba(12, 34, 58, 0.035);
-        --surface-strong: rgba(12, 34, 58, 0.055);
-        --surface-accent: rgba(34, 184, 245, 0.09);
+        --panel-border: rgba(12, 30, 52, 0.13);
+        --panel-shadow: 0 16px 38px rgba(15, 23, 42, 0.08);
+        --surface: rgba(12, 30, 52, 0.035);
+        --surface-strong: rgba(12, 30, 52, 0.055);
         --button-bg: rgba(255, 255, 255, 0.86);
-        --button-hover: rgba(34, 184, 245, 0.08);
-        --button-border: rgba(12, 34, 58, 0.13);
+        --button-hover: rgba(22, 135, 217, 0.08);
+        --button-border: rgba(12, 30, 52, 0.13);
         --button-text: rgba(14, 24, 37, 0.96);
         --input-bg: rgba(255, 255, 255, 0.92);
-        --input-border: rgba(12, 34, 58, 0.14);
-        --input-shadow: inset 0 0 0 1px rgba(34, 184, 245, 0.02);
-        --console-bg: rgba(243, 247, 251, 0.98);
+        --input-border: rgba(12, 30, 52, 0.13);
+        --input-shadow: inset 0 0 0 1px rgba(22, 135, 217, 0.02);
+        --console-bg: rgba(242, 247, 252, 0.98);
         --pop-bg: rgba(255, 255, 255, 0.98);
-        --code-bg: rgba(12, 34, 58, 0.07);
+        --code-bg: rgba(12, 30, 52, 0.07);
         --link: #0f87bb;
         --link-hover: #0b668f;
-        --accent: #22b8f5;
-        --accent-strong: #0f87bb;
-        --accent-warm: #d97745;
+        --accent: #1687d9;
+        --accent-strong: #0f6aa9;
+        --accent-warm: #cc7a29;
         --spinner-track: rgba(14, 24, 37, 0.18);
         --spinner-head: rgba(14, 24, 37, 0.8);
         --ok: #15803d;
         --bad: #c24141;
         --warn: #a16207;
         --info: #2563eb;
-        --selection: rgba(34, 184, 245, 0.16);
+        --selection: rgba(22, 135, 217, 0.15);
       }}
       * {{ box-sizing: border-box; }}
       html {{ background: var(--bg); }}
@@ -187,8 +185,8 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         font-family: 'IBM Plex Sans', 'Avenir Next', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
         min-height: 100vh;
         margin: 0 auto;
-        padding: 0 18px 44px;
-        max-width: 1240px;
+        padding: 0 18px 36px;
+        max-width: 1280px;
         background: var(--bg-layered);
         background-size: 24px 24px, 24px 24px, auto, auto, auto;
         background-attachment: fixed;
@@ -215,32 +213,30 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         background: var(--button-bg);
         color: var(--button-text);
         cursor: pointer;
-        transition: transform 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
+        transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
       }}
       button:hover:not([disabled]) {{
         background: var(--button-hover);
-        border-color: rgba(79, 209, 255, 0.34);
-        box-shadow: inset 0 0 0 1px rgba(79, 209, 255, 0.08);
-        transform: translateY(-1px);
+        border-color: rgba(64, 180, 255, 0.34);
+        box-shadow: inset 0 0 0 1px rgba(64, 180, 255, 0.08);
       }}
       button:focus-visible,
       input:focus-visible {{
-        outline: 2px solid rgba(79, 209, 255, 0.38);
+        outline: 2px solid rgba(64, 180, 255, 0.38);
         outline-offset: 2px;
       }}
       button[disabled] {{
-        opacity: 0.5;
+        opacity: 0.52;
         cursor: not-allowed;
         box-shadow: none;
-        transform: none;
       }}
       button.primary {{
-        background: linear-gradient(135deg, rgba(79, 209, 255, 0.22), rgba(255, 157, 106, 0.18));
-        border-color: rgba(79, 209, 255, 0.42);
+        background: linear-gradient(135deg, rgba(64, 180, 255, 0.2), rgba(255, 176, 87, 0.16));
+        border-color: rgba(64, 180, 255, 0.4);
       }}
       html[data-theme='light'] button.primary {{
-        background: linear-gradient(135deg, rgba(34, 184, 245, 0.16), rgba(217, 119, 69, 0.12));
-        border-color: rgba(15, 135, 187, 0.24);
+        background: linear-gradient(135deg, rgba(22, 135, 217, 0.14), rgba(204, 122, 41, 0.12));
+        border-color: rgba(15, 106, 169, 0.22);
       }}
       button.btnRunning {{
         display: inline-flex;
@@ -260,7 +256,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       input {{
         width: 100%;
         min-width: 0;
-        padding: 10px 12px;
+        padding: 9px 12px;
         border-radius: 12px;
         border: 1px solid var(--input-border);
         background: var(--input-bg);
@@ -275,38 +271,25 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         white-space: pre-wrap;
         word-break: break-word;
         color: var(--text);
-        line-height: 1.6;
+        line-height: 1.58;
         font-family: 'IBM Plex Mono', 'JetBrains Mono', 'SFMono-Regular', 'Menlo', monospace;
       }}
       .shell {{
         display: grid;
-        gap: 18px;
-        padding-top: 20px;
+        gap: 14px;
+        padding-top: 18px;
       }}
       .panel {{
-        position: relative;
         border: 1px solid var(--panel-border);
-        border-radius: 22px;
-        padding: 18px;
+        border-radius: 20px;
+        padding: 16px;
         background: var(--panel);
         box-shadow: var(--panel-shadow);
-        overflow: hidden;
-      }}
-      .panel::before {{
-        content: '';
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 28%);
-      }}
-      .panel > * {{
-        position: relative;
-        z-index: 1;
       }}
       .muted {{
         color: var(--muted);
         font-size: 12px;
-        line-height: 1.5;
+        line-height: 1.48;
       }}
       .eyebrow,
       .sectionEyebrow {{
@@ -318,69 +301,93 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
       .sectionHeadingRow {{
         display: flex;
-        align-items: flex-end;
+        align-items: center;
         justify-content: space-between;
-        gap: 14px;
+        gap: 10px;
         flex-wrap: wrap;
-        margin-bottom: 14px;
+        margin-bottom: 12px;
       }}
       .sectionHeadingRow h2 {{
-        margin: 6px 0 0;
-        font-size: 20px;
-        line-height: 1.05;
-        letter-spacing: -0.03em;
+        margin: 5px 0 0;
+        font-size: 18px;
+        line-height: 1.08;
+        letter-spacing: -0.02em;
       }}
-      .sectionHeadingNote {{
-        max-width: 40ch;
+      .sectionHeadingMeta {{
         text-align: right;
       }}
       .masthead {{
-        padding-top: 22px;
+        padding-top: 14px;
+        padding-bottom: 14px;
       }}
-      .mastheadGrid {{
+      .mastheadRow {{
         display: grid;
-        grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr);
-        gap: 18px;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 14px;
         align-items: start;
+      }}
+      .titleBlock {{
+        display: grid;
+        gap: 10px;
       }}
       .brandRow {{
         display: flex;
-        gap: 14px;
-        align-items: flex-start;
+        gap: 12px;
+        align-items: center;
       }}
       .brandMark {{
-        width: 44px;
-        height: 44px;
+        width: 40px;
+        height: 40px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        border-radius: 14px;
-        background: linear-gradient(145deg, rgba(79, 209, 255, 0.16), rgba(255, 157, 106, 0.08));
-        border: 1px solid rgba(79, 209, 255, 0.22);
+        border-radius: 12px;
+        background: linear-gradient(145deg, rgba(64, 180, 255, 0.16), rgba(255, 176, 87, 0.08));
+        border: 1px solid rgba(64, 180, 255, 0.2);
         flex: 0 0 auto;
       }}
       .brandMark img {{
         display: block;
-        width: 24px;
-        height: 24px;
+        width: 22px;
+        height: 22px;
       }}
       .masthead h1 {{
-        margin: 6px 0 0;
-        font-size: clamp(30px, 3.6vw, 44px);
-        line-height: 0.95;
-        letter-spacing: -0.05em;
+        margin: 4px 0 0;
+        font-size: clamp(26px, 3vw, 38px);
+        line-height: 0.98;
+        letter-spacing: -0.045em;
       }}
       .intro {{
-        max-width: 52ch;
-        margin: 12px 0 0;
+        margin: 0;
+        max-width: 68ch;
         color: var(--muted);
-        font-size: 14px;
-        line-height: 1.62;
+        font-size: 13px;
+        line-height: 1.52;
       }}
-      .mastheadAside {{
-        display: grid;
-        gap: 12px;
-        align-content: start;
+      .metaStrip {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }}
+      .metaPill {{
+        display: inline-flex;
+        align-items: baseline;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        border: 1px solid var(--panel-border);
+        background: var(--surface);
+      }}
+      .metaLabel {{
+        color: var(--muted);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }}
+      .metaValue {{
+        font-size: 13px;
+        line-height: 1.35;
+        word-break: break-word;
       }}
       .linkButton {{
         display: inline-flex;
@@ -392,50 +399,20 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         border: 1px solid var(--button-border);
         background: var(--surface);
         color: var(--link);
-        justify-self: end;
       }}
       .linkButton:hover {{
         background: var(--button-hover);
         text-decoration: none;
       }}
-      .metaStack {{
+      .actionDeckGrid {{
         display: grid;
-        gap: 10px;
-      }}
-      .metaRow {{
-        display: grid;
-        grid-template-columns: 104px minmax(0, 1fr);
+        grid-template-columns: minmax(220px, 250px) minmax(0, 1fr) auto;
         gap: 12px;
-        align-items: start;
-        padding: 12px 14px;
-        border-radius: 16px;
-        border: 1px solid var(--panel-border);
-        background: var(--surface);
-      }}
-      .metaLabel {{
-        color: var(--muted);
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 0.12em;
-      }}
-      .metaValue {{
-        font-size: 13px;
-        line-height: 1.5;
-        word-break: break-word;
-      }}
-      .actionDeckShell {{
-        display: grid;
-        grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
-        gap: 14px;
-        align-items: start;
+        align-items: center;
       }}
       .fieldBlock {{
         display: grid;
-        gap: 8px;
-        padding: 14px;
-        border-radius: 18px;
-        border: 1px solid var(--panel-border);
-        background: var(--surface);
+        gap: 7px;
       }}
       .fieldLabel {{
         font-size: 11px;
@@ -446,17 +423,10 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       .fieldHint {{
         font-size: 11px;
         color: var(--muted);
-        line-height: 1.45;
       }}
-      .actionRail {{
+      .actionControls {{
         display: grid;
-        gap: 12px;
-      }}
-      .buttonRow {{
-        display: flex;
-        flex-wrap: wrap;
         gap: 10px;
-        align-items: center;
       }}
       .buttonGroup {{
         display: flex;
@@ -464,165 +434,17 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         gap: 10px;
         align-items: center;
       }}
-      .buttonGroup > * {{
-        flex: 0 0 auto;
-      }}
-      .buttonGroup-aux {{
-        justify-content: flex-end;
-      }}
-      .actionNote {{
-        padding: 12px 14px;
-        border-radius: 16px;
-        border: 1px dashed var(--panel-border);
-        background: linear-gradient(135deg, var(--surface-accent), transparent 70%);
-      }}
-      .statusBoard {{
-        display: grid;
-        grid-template-columns: minmax(0, 1.18fr) minmax(320px, 0.82fr);
-        gap: 14px;
-      }}
-      .statusHero,
-      .statusFact,
-      .progressCard,
-      .artifactCard {{
-        border: 1px solid var(--panel-border);
-        border-radius: 18px;
-        background: var(--surface);
-      }}
-      .statusHero {{
-        padding: 18px;
-        background: linear-gradient(145deg, rgba(79, 209, 255, 0.12), rgba(255, 157, 106, 0.08) 50%, transparent 100%);
-      }}
-      html[data-theme='light'] .statusHero {{
-        background: linear-gradient(145deg, rgba(34, 184, 245, 0.1), rgba(217, 119, 69, 0.06) 50%, rgba(255, 255, 255, 0.65) 100%);
-      }}
-      .statusHeroTop {{
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 14px;
-      }}
-      .statusValue {{
-        font-size: 15px;
-        line-height: 1.38;
-        font-weight: 600;
-        word-break: break-word;
-      }}
-      .statusValue-lg {{
-        margin-top: 8px;
-        font-size: clamp(24px, 3vw, 34px);
-        line-height: 0.95;
-        letter-spacing: -0.05em;
-      }}
-      .statusLabel {{
-        color: var(--muted);
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 0.12em;
-      }}
-      .statusMeta {{
-        color: var(--muted);
-        font-size: 12px;
-        line-height: 1.5;
-      }}
-      .statusHeroSummary {{
-        margin-top: 14px;
-        max-width: 40ch;
-      }}
-      .statusFacts {{
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 12px;
-      }}
-      .statusFact {{
-        padding: 14px;
-        display: grid;
-        gap: 8px;
-        align-content: start;
-      }}
-      .statusFact-wide {{
-        grid-column: 1 / -1;
-      }}
-      .statusTone {{
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 30px;
-        padding: 5px 10px;
-        border-radius: 999px;
-        border: 1px solid var(--panel-border);
-        background: var(--surface-strong);
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 0.12em;
-        white-space: nowrap;
-      }}
-      .statusTone.state-running,
-      .stateBadge-running {{
-        color: var(--info);
-        border-color: rgba(83, 169, 255, 0.32);
-        background: rgba(83, 169, 255, 0.12);
-      }}
-      .statusTone.state-succeeded,
-      .stateBadge-succeeded {{
-        color: var(--ok);
-        border-color: rgba(50, 201, 108, 0.28);
-        background: rgba(50, 201, 108, 0.12);
-      }}
-      .statusTone.state-failed,
-      .statusTone.state-rolled_back,
-      .statusTone.state-offline,
-      .stateBadge-failed,
-      .stateBadge-rolled_back,
-      .stateBadge-offline {{
-        color: var(--bad);
-        border-color: rgba(255, 123, 123, 0.28);
-        background: rgba(255, 123, 123, 0.12);
-      }}
-      .statusTone.state-idle,
-      .statusTone.state-unknown,
-      .stateBadge-idle,
-      .stateBadge-unknown {{
-        color: var(--muted);
-        border-color: var(--panel-border);
-        background: var(--surface-strong);
-      }}
-      .progressCard {{
-        grid-column: 1 / -1;
-        padding: 14px;
-        display: grid;
-        gap: 8px;
-      }}
-      .artifactGrid {{
-        grid-column: 1 / -1;
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 12px;
-      }}
-      .artifactCard {{
-        padding: 14px;
-        display: grid;
-        gap: 8px;
-      }}
-      .statusCode,
-      .statusCodeInline {{
-        background: var(--console-bg);
-        border: 1px solid var(--panel-border);
-        border-radius: 14px;
+      .buttonGroup > * {{ flex: 0 0 auto; }}
+      .buttonGroup-aux {{ justify-content: flex-end; }}
+      .actionCallout {{
         padding: 10px 12px;
-        color: var(--text);
-        font-family: 'IBM Plex Mono', 'JetBrains Mono', 'SFMono-Regular', 'Menlo', monospace;
-        font-size: 12px;
-        line-height: 1.58;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }}
-      .statusCodeInline {{
-        min-height: 44px;
+        border-radius: 14px;
+        border: 1px dashed var(--panel-border);
+        background: var(--surface);
       }}
       .workspaceGrid {{
         display: grid;
-        grid-template-columns: minmax(250px, 310px) minmax(0, 1fr);
+        grid-template-columns: minmax(0, 1fr) 280px;
         gap: 14px;
         align-items: stretch;
       }}
@@ -631,10 +453,39 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
       .historyRail,
       .logPanel {{
-        min-height: 340px;
+        min-height: 360px;
         border-radius: 18px;
         border: 1px solid var(--panel-border);
         background: var(--surface);
+      }}
+      .logPanel {{
+        display: grid;
+        grid-template-rows: auto 1fr;
+        padding: 14px;
+      }}
+      .logHeader {{
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+      }}
+      .logTitle {{
+        margin-top: 4px;
+        font-size: 18px;
+        line-height: 1.08;
+        font-weight: 600;
+      }}
+      .logSummary {{
+        max-width: 320px;
+        text-align: right;
+      }}
+      #logs {{
+        height: 100%;
+        min-height: 270px;
+        background: var(--console-bg);
+        border: 1px solid var(--panel-border);
       }}
       .historyRail {{
         padding: 12px;
@@ -659,12 +510,12 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         gap: 10px;
       }}
       .historyCard.active {{
-        border-color: rgba(79, 209, 255, 0.34);
-        box-shadow: inset 3px 0 0 var(--accent), 0 0 0 1px rgba(79, 209, 255, 0.08);
-        background: linear-gradient(180deg, rgba(79, 209, 255, 0.08), rgba(255, 255, 255, 0.02));
+        border-color: rgba(64, 180, 255, 0.34);
+        box-shadow: inset 3px 0 0 var(--accent), 0 0 0 1px rgba(64, 180, 255, 0.08);
+        background: linear-gradient(180deg, rgba(64, 180, 255, 0.08), rgba(255, 255, 255, 0.015));
       }}
       html[data-theme='light'] .historyCard.active {{
-        background: linear-gradient(180deg, rgba(34, 184, 245, 0.09), rgba(255, 255, 255, 0.65));
+        background: linear-gradient(180deg, rgba(22, 135, 217, 0.08), rgba(255, 255, 255, 0.62));
       }}
       .historyTop,
       .historyBottom {{
@@ -675,7 +526,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         flex-wrap: wrap;
       }}
       .historyTime {{
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 600;
       }}
       .historyMeta,
@@ -722,36 +573,112 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         padding: 3px 8px;
         font-size: 10px;
       }}
-      .logPanel {{
+      .statusGrid {{
         display: grid;
-        grid-template-rows: auto 1fr;
-        padding: 14px;
-      }}
-      .logHeader {{
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
+        grid-template-columns: 1.15fr repeat(3, minmax(0, 0.7fr));
         gap: 12px;
-        flex-wrap: wrap;
-        margin-bottom: 12px;
       }}
-      .logTitle {{
-        margin-top: 4px;
-        font-size: 18px;
-        line-height: 1.1;
+      .statusTile {{
+        padding: 14px;
+        border-radius: 18px;
+        border: 1px solid var(--panel-border);
+        background: var(--surface);
+        display: grid;
+        gap: 8px;
+        align-content: start;
+      }}
+      .statusHero {{
+        background: linear-gradient(135deg, rgba(64, 180, 255, 0.12), rgba(255, 176, 87, 0.08));
+      }}
+      html[data-theme='light'] .statusHero {{
+        background: linear-gradient(135deg, rgba(22, 135, 217, 0.1), rgba(204, 122, 41, 0.07));
+      }}
+      .statusHero,
+      .statusTile-wide {{
+        grid-column: span 2;
+      }}
+      .statusTile-full {{
+        grid-column: 1 / -1;
+      }}
+      .statusLabel {{
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }}
+      .statusValue {{
+        font-size: 14px;
+        line-height: 1.35;
         font-weight: 600;
-        letter-spacing: -0.02em;
+        word-break: break-word;
       }}
-      .logSummary {{
-        max-width: 340px;
-        text-align: right;
+      .statusValue-lg {{
+        font-size: clamp(22px, 2.8vw, 30px);
+        line-height: 0.96;
+        letter-spacing: -0.05em;
       }}
-      #logs {{
-        height: 100%;
-        min-height: 250px;
+      .statusMeta {{
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.48;
+      }}
+      .statusTone {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 30px;
+        padding: 5px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--panel-border);
+        background: var(--surface-strong);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }}
+      .statusTone.state-running,
+      .stateBadge-running {{
+        color: var(--info);
+        border-color: rgba(83, 169, 255, 0.32);
+        background: rgba(83, 169, 255, 0.12);
+      }}
+      .statusTone.state-succeeded,
+      .stateBadge-succeeded {{
+        color: var(--ok);
+        border-color: rgba(50, 201, 108, 0.28);
+        background: rgba(50, 201, 108, 0.12);
+      }}
+      .statusTone.state-failed,
+      .statusTone.state-rolled_back,
+      .statusTone.state-offline,
+      .stateBadge-failed,
+      .stateBadge-rolled_back,
+      .stateBadge-offline {{
+        color: var(--bad);
+        border-color: rgba(255, 123, 123, 0.28);
+        background: rgba(255, 123, 123, 0.12);
+      }}
+      .statusTone.state-idle,
+      .statusTone.state-unknown,
+      .stateBadge-idle,
+      .stateBadge-unknown {{
+        color: var(--muted);
+        border-color: var(--panel-border);
+        background: var(--surface-strong);
+      }}
+      .statusCode,
+      .statusCodeInline {{
         background: var(--console-bg);
         border: 1px solid var(--panel-border);
+        border-radius: 14px;
+        padding: 10px 12px;
+        color: var(--text);
+        font-family: 'IBM Plex Mono', 'JetBrains Mono', 'SFMono-Regular', 'Menlo', monospace;
+        font-size: 12px;
+        line-height: 1.58;
+        white-space: pre-wrap;
+        word-break: break-word;
       }}
+      .statusCodeInline {{ min-height: 44px; }}
       .popWrap {{
         position: relative;
         display: inline-flex;
@@ -800,23 +727,20 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           padding-left: 16px;
           padding-right: 16px;
         }}
-        .panel {{
-          padding: 16px;
-        }}
-        .mastheadGrid,
-        .actionDeckShell,
-        .statusBoard,
-        .workspaceGrid {{
+        .panel {{ padding: 15px; }}
+        .mastheadRow,
+        .actionDeckGrid,
+        .workspaceGrid,
+        .statusGrid {{
           grid-template-columns: 1fr;
         }}
-        .statusFacts {{
-          grid-template-columns: repeat(3, minmax(0, 1fr));
+        .statusHero,
+        .statusTile-wide,
+        .statusTile-full {{
+          grid-column: auto;
         }}
-        .artifactGrid {{
-          grid-template-columns: 1fr;
-        }}
-        .linkButton {{
-          justify-self: start;
+        .buttonGroup-aux {{
+          justify-content: flex-start;
         }}
         .historyRail,
         .logPanel {{
@@ -826,7 +750,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           max-height: min(360px, 44vh);
         }}
         .logSummary,
-        .sectionHeadingNote {{
+        .sectionHeadingMeta {{
           text-align: left;
           max-width: none;
         }}
@@ -837,35 +761,29 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           padding-right: 12px;
         }}
         .shell {{
-          gap: 14px;
-          padding-top: 14px;
+          gap: 12px;
+          padding-top: 12px;
         }}
         .panel {{
           padding: 14px;
           border-radius: 18px;
         }}
+        .mastheadRow,
         .brandRow,
         .sectionHeadingRow,
-        .statusHeroTop,
         .historyTop,
         .historyBottom,
         .logHeader {{
           align-items: flex-start;
         }}
-        .brandRow,
-        .metaRow {{
-          grid-template-columns: 1fr;
-        }}
         .brandRow {{
           flex-direction: column;
+          align-items: flex-start;
         }}
-        .statusFacts {{
-          grid-template-columns: 1fr;
-        }}
+        .metaStrip,
         .buttonGroup,
         .buttonGroup-aux {{
           width: 100%;
-          justify-content: flex-start;
         }}
         .buttonGroup > *,
         .buttonGroup-aux > *,
@@ -888,8 +806,8 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
   <body>
     <main class="shell">
       <section class="panel masthead" data-panel="masthead">
-        <div class="mastheadGrid">
-          <div>
+        <div class="mastheadRow">
+          <div class="titleBlock">
             <div class="eyebrow">Supervisor Console</div>
             <div class="brandRow">
               <div class="brandMark">
@@ -897,27 +815,25 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
               </div>
               <div>
                 <h1>Dockrev 自我升级（Supervisor）</h1>
-                <p class="intro">该页面独立于 Dockrev 生命周期；Dockrev 重启期间仍可用，并保留最近 operation 上下文供排障。</p>
+                <p class="intro">该页面独立于 Dockrev 生命周期；Dockrev 重启期间仍可用。日志与主要操作保持首屏可见，方便你边执行边排障。</p>
+              </div>
+            </div>
+            <div class="metaStrip">
+              <div class="metaPill">
+                <span class="metaLabel">Supervisor 版本</span>
+                <span class="metaValue">{version_html}</span>
+              </div>
+              <div class="metaPill">
+                <span class="metaLabel">开源仓库</span>
+                <span class="metaValue">{repository_html}</span>
+              </div>
+              <div class="metaPill">
+                <span class="metaLabel">开发者</span>
+                <span class="metaValue">{developer_html}</span>
               </div>
             </div>
           </div>
-          <div class="mastheadAside">
-            <a class="linkButton" href="/">返回 Dockrev</a>
-            <div class="metaStack">
-              <div class="metaRow">
-                <div class="metaLabel">Supervisor 版本</div>
-                <div class="metaValue">{version_html}</div>
-              </div>
-              <div class="metaRow">
-                <div class="metaLabel">开源仓库</div>
-                <div class="metaValue">{repository_html}</div>
-              </div>
-              <div class="metaRow">
-                <div class="metaLabel">开发者</div>
-                <div class="metaValue">{developer_html}</div>
-              </div>
-            </div>
-          </div>
+          <a class="linkButton" href="/">返回 Dockrev</a>
         </div>
       </section>
 
@@ -925,38 +841,63 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         <div class="sectionHeadingRow">
           <div>
             <div class="sectionEyebrow">Action deck</div>
-            <h2>升级控制台</h2>
+            <h2>升级控制</h2>
           </div>
-          <div class="muted sectionHeadingNote">失败会尝试回滚到 previous digest（如可用）；操作过程会持续留在当前页。</div>
+          <div class="muted sectionHeadingMeta">失败会尝试回滚到 previous digest（如可用）；操作过程会持续留在当前页。</div>
         </div>
-        <div class="actionDeckShell">
+        <div class="actionDeckGrid">
           <label class="fieldBlock" for="tag">
             <span class="fieldLabel">Target tag</span>
             <input id="tag" value="latest" />
             <span class="fieldHint">默认使用 <code>latest</code>，也支持输入固定 tag 进行验证或升级。</span>
           </label>
-          <div class="actionRail">
+          <div class="actionControls">
             <div class="buttonGroup buttonGroup-main">
               <button id="dry">预览（dry-run）</button>
               <button id="apply" class="primary">开始升级（apply）</button>
             </div>
-            <div class="buttonGroup buttonGroup-aux">
-              <div id="rollbackWrap" class="popWrap">
-                <button id="rollback" aria-haspopup="dialog" aria-expanded="false">回滚</button>
-                <div id="rollbackPop" class="popCard" role="dialog" aria-modal="false" hidden>
-                  <div class="popTitle">确认手动回滚？</div>
-                  <div class="muted">将尝试回滚到 previous digest，并可能触发容器重启。</div>
-                  <div class="muted">opId: <code id="rollbackOpId">-</code></div>
-                  <div class="popActions">
-                    <button id="rollbackCancel">取消</button>
-                    <button id="rollbackConfirm" class="danger">确认回滚</button>
-                  </div>
+            <div class="actionCallout muted">先用 dry-run 看目标 tag 与 digest，再决定 apply；operation 结束后可直接回滚。</div>
+          </div>
+          <div class="buttonGroup buttonGroup-aux">
+            <div id="rollbackWrap" class="popWrap">
+              <button id="rollback" aria-haspopup="dialog" aria-expanded="false">回滚</button>
+              <div id="rollbackPop" class="popCard" role="dialog" aria-modal="false" hidden>
+                <div class="popTitle">确认手动回滚？</div>
+                <div class="muted">将尝试回滚到 previous digest，并可能触发容器重启。</div>
+                <div class="muted">opId: <code id="rollbackOpId">-</code></div>
+                <div class="popActions">
+                  <button id="rollbackCancel">取消</button>
+                  <button id="rollbackConfirm" class="danger">确认回滚</button>
                 </div>
               </div>
-              <button id="refresh">刷新</button>
             </div>
-            <div class="actionNote muted">建议先用 dry-run 确认 tag 与 digest，再执行 apply；operation 结束后可直接回滚。</div>
+            <button id="refresh">刷新</button>
           </div>
+        </div>
+      </section>
+
+      <section class="panel workspacePanel" data-panel="workspace">
+        <div class="sectionHeadingRow">
+          <div>
+            <div class="sectionEyebrow">History & logs</div>
+            <h2>日志控制台</h2>
+          </div>
+          <div id="historyHint" class="muted sectionHeadingMeta">loading…</div>
+        </div>
+        <div id="workspaceGrid" class="workspaceGrid">
+          <section class="logPanel">
+            <div class="logHeader">
+              <div>
+                <div class="sectionEyebrow">Console</div>
+                <div id="logTitle" class="logTitle">loading…</div>
+              </div>
+              <div id="logSummary" class="logSummary muted">等待日志…</div>
+            </div>
+            <pre id="logs"></pre>
+          </section>
+          <aside id="historyRail" class="historyRail">
+            <div id="historyList" class="historyList"></div>
+          </aside>
         </div>
       </section>
 
@@ -968,73 +909,39 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           </div>
           <div id="statusTone" class="statusTone" aria-live="polite">loading…</div>
         </div>
-        <div class="statusBoard">
-          <article class="statusHero">
+        <div class="statusGrid">
+          <article class="statusTile statusHero">
             <div class="statusLabel">State</div>
-            <div class="statusHeroTop">
-              <div>
-                <div id="statusState" class="statusValue statusValue-lg">loading…</div>
-              </div>
-              <div class="statusMeta">operation stream</div>
-            </div>
-            <div id="statusSummary" class="statusMeta statusHeroSummary">等待首次轮询结果…</div>
+            <div id="statusState" class="statusValue statusValue-lg">loading…</div>
+            <div id="statusSummary" class="statusMeta">等待首次轮询结果…</div>
           </article>
-          <div class="statusFacts">
-            <article class="statusFact">
-              <div class="statusLabel">Current opId</div>
-              <div id="statusOpId" class="statusValue">-</div>
-              <div class="statusMeta">当前正在追踪的 operation 标识。</div>
-            </article>
-            <article class="statusFact">
-              <div class="statusLabel">Current step</div>
-              <div id="statusStep" class="statusValue">-</div>
-              <div id="statusMode" class="statusMeta">mode -</div>
-            </article>
-            <article class="statusFact statusFact-wide">
-              <div class="statusLabel">Timestamps</div>
-              <div id="statusStartedAt" class="statusValue">-</div>
-              <div id="statusUpdatedAt" class="statusMeta">updated -</div>
-            </article>
-          </div>
-          <article class="progressCard">
+          <article class="statusTile">
+            <div class="statusLabel">Current opId</div>
+            <div id="statusOpId" class="statusValue">-</div>
+            <div class="statusMeta">当前正在追踪的 operation 标识。</div>
+          </article>
+          <article class="statusTile">
+            <div class="statusLabel">Current step</div>
+            <div id="statusStep" class="statusValue">-</div>
+            <div id="statusMode" class="statusMeta">mode -</div>
+          </article>
+          <article class="statusTile">
+            <div class="statusLabel">Timestamps</div>
+            <div id="statusStartedAt" class="statusValue">-</div>
+            <div id="statusUpdatedAt" class="statusMeta">updated -</div>
+          </article>
+          <article class="statusTile statusTile-full">
             <div class="statusLabel">Progress message</div>
             <div id="statusProgressMessage" class="statusCodeInline">-</div>
           </article>
-          <div class="artifactGrid">
-            <article class="artifactCard">
-              <div class="statusLabel">Target</div>
-              <pre id="statusTarget" class="statusCode">-</pre>
-            </article>
-            <article class="artifactCard">
-              <div class="statusLabel">Previous</div>
-              <pre id="statusPrevious" class="statusCode">-</pre>
-            </article>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel workspacePanel" data-panel="workspace">
-        <div class="sectionHeadingRow">
-          <div>
-            <div class="sectionEyebrow">History & logs</div>
-            <h2>操作历史与日志</h2>
-          </div>
-          <div id="historyHint" class="muted sectionHeadingNote">loading…</div>
-        </div>
-        <div id="workspaceGrid" class="workspaceGrid">
-          <aside id="historyRail" class="historyRail">
-            <div id="historyList" class="historyList"></div>
-          </aside>
-          <section class="logPanel">
-            <div class="logHeader">
-              <div>
-                <div class="sectionEyebrow">Console</div>
-                <div id="logTitle" class="logTitle">loading…</div>
-              </div>
-              <div id="logSummary" class="logSummary muted">等待日志…</div>
-            </div>
-            <pre id="logs"></pre>
-          </section>
+          <article class="statusTile statusTile-wide">
+            <div class="statusLabel">Target</div>
+            <pre id="statusTarget" class="statusCode">-</pre>
+          </article>
+          <article class="statusTile statusTile-wide">
+            <div class="statusLabel">Previous</div>
+            <pre id="statusPrevious" class="statusCode">-</pre>
+          </article>
         </div>
       </section>
     </main>
