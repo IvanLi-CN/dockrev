@@ -17,6 +17,10 @@ import {
 import { normalizeDigest, shortenDigest } from './digest'
 import { useHoverPinnedPopover } from './HoverPinnedPopover'
 import { inferResolvedTagsFromSnapshot, isStrictSemverTag } from '../versionDisplay'
+import {
+  invalidateDigestSnapshot,
+  subscribeDigestSnapshotInvalidation,
+} from '../digestSnapshotBus'
 
 type TagSeries = {
   major: number
@@ -131,6 +135,8 @@ export function CurrentVersionPopover(props: {
     togglePinned,
     triggerProps,
   } = useHoverPinnedPopover()
+  const openRef = useRef(open)
+  openRef.current = open
 
   const digestNorm = useMemo(() => normalizeDigest(imageDigest), [imageDigest])
 
@@ -220,6 +226,25 @@ export function CurrentVersionPopover(props: {
     }
   }, [])
 
+  useEffect(() => {
+    if (!digestNorm) return
+    return subscribeDigestSnapshotInvalidation(digestKey, () => {
+      // Do not invalidate an open popover; keep refresh effects local and predictable.
+      if (openRef.current) return
+      if (snapshotPhaseRef.current === 'loading') return
+
+      setDigestState({
+        key: digestKey,
+        tags: null,
+        scan: null,
+        checkedAt: null,
+        missingSnapshot: false,
+        error: null,
+      })
+      setSnapshotPhase('idle')
+    })
+  }, [digestKey, digestNorm])
+
   const triggerForceRefresh = useCallback(async () => {
     if (refreshing || !digestNorm) return
     setRefreshing(true)
@@ -253,6 +278,7 @@ export function CurrentVersionPopover(props: {
         error: null,
       })
       setSnapshotPhase('loading')
+      invalidateDigestSnapshot(digestKey)
     } catch (e: unknown) {
       setRefreshError(e instanceof Error ? e.message : String(e))
     } finally {

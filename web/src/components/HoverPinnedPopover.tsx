@@ -94,18 +94,8 @@ export function useHoverPinnedPopover(options: HoverPinnedPopoverOptions = {}) {
     onPointerLeave: () => {
       scheduleHoverClose()
     },
-    onPointerDownOutside: (event) => {
-      // Allow clicks on other version popover triggers to proceed; the trigger click handler
-      // decides whether to close/open. Closing here can cause a close+reopen race.
-      const target = event.target as Element | null
-      if (target?.closest?.('button.versionTagsTrigger')) return
-      close()
-    },
-    onFocusOutside: (event) => {
-      const target = event.target as Element | null
-      if (target?.closest?.('button.versionTagsTrigger')) return
-      close()
-    },
+    onPointerDownOutside: () => close(),
+    onFocusOutside: () => close(),
     onEscapeKeyDown: () => close(),
     onOpenAutoFocus: (event) => event.preventDefault(),
     onCloseAutoFocus: (event) => event.preventDefault(),
