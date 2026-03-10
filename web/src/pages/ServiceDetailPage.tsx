@@ -508,73 +508,42 @@ export function ServiceDetailPage(props: {
 		                          <div className="modalKvValue">
                                 <div className="cellTwoLine">
                                 <div className="versionLine">
-	                                  <CurrentVersionPopover
-	                                    serviceId={service.id}
-	                                    displayTag={currentDisplayTag}
-	                                    imageTag={service.image.tag}
-	                                    imageDigest={service.image.digest ?? null}
-	                                    resolvedTag={service.image.resolvedTag}
-	                                    resolvedTags={service.image.resolvedTags}
-	                                    onLocalResolvedTags={(update) => {
-	                                      patchServiceInStack((prev) => ({
-	                                        ...prev,
-	                                        image: {
-	                                          ...prev.image,
-	                                          resolvedTag: update.resolvedTag,
-	                                          resolvedTags: update.resolvedTags,
-	                                        },
-	                                      }))
-	                                    }}
-	                                    inferenceLoading={inferencePending}
-		                                  />
+		                                  <CurrentVersionPopover
+		                                    serviceId={service.id}
+		                                    displayTag={currentDisplayTag}
+		                                    imageTag={service.image.tag}
+		                                    imageDigest={service.image.digest ?? null}
+		                                    resolvedTag={service.image.resolvedTag}
+		                                    resolvedTags={service.image.resolvedTags}
+		                                    inferenceLoading={inferencePending}
+			                                  />
 	                                  <span
 	                                    className={inferencePending ? 'inlineIconLoading' : 'inlineIconMuted'}
 	                                    style={inferencePending ? { margin: '0 6px' } : { opacity: 0.8, margin: '0 6px' }}
 	                                  >
 	                                    <ArrowRightIcon className="inlineIcon" />
 	                                  </span>
-		                                  <VersionTagsPopover
-		                                    serviceId={service.id}
-		                                    candidateTag={service.candidate.tag}
-		                                    candidateDigest={service.candidate.digest ?? null}
-	                                      prefetchOnMount={candidatePrefetchOnMount}
-	                                    onLocalResolvedTag={(resolvedTag) => {
-	                                      patchServiceInStack((prev) => ({
-	                                        ...prev,
-	                                        candidate: prev.candidate
-	                                          ? {
-	                                              ...prev.candidate,
-	                                              resolvedTag,
-	                                            }
-	                                          : prev.candidate,
-	                                      }))
-	                                    }}
-		                                  >
-		                                    {candidateDisplayTag}
-		                                  </VersionTagsPopover>
+			                                  <VersionTagsPopover
+			                                    serviceId={service.id}
+			                                    candidateTag={service.candidate.tag}
+			                                    candidateDigest={service.candidate.digest ?? null}
+		                                      prefetchOnMount={candidatePrefetchOnMount}
+			                                  >
+			                                    {candidateDisplayTag}
+			                                  </VersionTagsPopover>
 	                                </div>
                                 {showRawTag ? (
                                   <div>
-                                    <CurrentVersionPopover
-                                      serviceId={service.id}
-                                      displayTag={service.image.tag}
-                                      imageTag={service.image.tag}
-                                      imageDigest={service.image.digest ?? null}
-                                      resolvedTag={service.image.resolvedTag}
-                                      resolvedTags={service.image.resolvedTags}
-                                      onLocalResolvedTags={(update) => {
-                                        patchServiceInStack((prev) => ({
-                                          ...prev,
-                                          image: {
-                                            ...prev.image,
-                                            resolvedTag: update.resolvedTag,
-                                            resolvedTags: update.resolvedTags,
-                                          },
-                                        }))
-                                      }}
-                                      preferSource="rawTag"
-                                      triggerClassName="versionTagsTrigger mono monoSecondary"
-                                    >
+	                                    <CurrentVersionPopover
+	                                      serviceId={service.id}
+	                                      displayTag={service.image.tag}
+	                                      imageTag={service.image.tag}
+	                                      imageDigest={service.image.digest ?? null}
+	                                      resolvedTag={service.image.resolvedTag}
+	                                      resolvedTags={service.image.resolvedTags}
+	                                      preferSource="rawTag"
+	                                      triggerClassName="versionTagsTrigger mono monoSecondary"
+	                                    >
                                       {service.image.tag}
                                     </CurrentVersionPopover>
                                   </div>

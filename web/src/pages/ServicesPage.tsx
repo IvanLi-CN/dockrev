@@ -901,36 +901,15 @@ export function ServicesPage(props: {
                                 ⚠ 检测到 {anomalyCount} 个版本异常（候选低于当前）；手动确认后仍可继续更新。
                               </div>
                             ) : null}
-                            <div className="modalDivider" />
-                            <div className="modalLead">将更新的服务（预览）</div>
-                            <AggregateUpdatePreviewList
-                              items={previewItems}
-                              dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
-                              onServiceResolvedTags={(update) => {
-                                patchServiceInStackDetails(g.stackId, update.serviceId, (prev) => ({
-                                  ...prev,
-                                  image: {
-                                    ...prev.image,
-                                    resolvedTag: update.resolvedTag,
-                                    resolvedTags: update.resolvedTags,
-                                  },
-                                }))
-                              }}
-                              onServiceCandidateResolvedTag={(update) => {
-                                patchServiceInStackDetails(g.stackId, update.serviceId, (prev) => ({
-                                  ...prev,
-                                  candidate: prev.candidate
-                                    ? {
-                                        ...prev.candidate,
-                                        resolvedTag: update.resolvedTag,
-                                      }
-                                    : prev.candidate,
-                                }))
-                              }}
-                            />
-                            <div className="modalDivider" />
-                          </>
-                        )
+	                            <div className="modalDivider" />
+	                            <div className="modalLead">将更新的服务（预览）</div>
+	                            <AggregateUpdatePreviewList
+	                              items={previewItems}
+	                              dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
+	                            />
+	                            <div className="modalDivider" />
+	                          </>
+	                        )
                                                 void triggerApply({
 	                          scope: 'stack',
 	                          stackId: g.stackId,
@@ -1224,20 +1203,6 @@ export function ServicesPage(props: {
 	                                                  imageDigest={svc.image.digest ?? null}
 	                                                  resolvedTag={svc.image.resolvedTag}
 	                                                  resolvedTags={svc.image.resolvedTags}
-	                                                  onLocalResolvedTags={(update) => {
-	                                                    patchServiceInStackDetails(
-	                                                      g.stackId,
-	                                                      svc.id,
-	                                                      (prev) => ({
-	                                                        ...prev,
-	                                                        image: {
-	                                                          ...prev.image,
-	                                                          resolvedTag: update.resolvedTag,
-	                                                          resolvedTags: update.resolvedTags,
-	                                                        },
-	                                                      }),
-	                                                    )
-	                                                  }}
 	                                                  inferenceLoading={inferencePending}
 	                                                />
 	                                                <span
@@ -1252,21 +1217,6 @@ export function ServicesPage(props: {
 			                                                    candidateTag={candidateRawTag}
 			                                                    candidateDigest={svc.candidate?.digest ?? null}
 			                                                    prefetchOnMount={candidatePrefetchOnMount}
-			                                                    onLocalResolvedTag={(resolvedTag) => {
-			                                                      patchServiceInStackDetails(
-			                                                        g.stackId,
-			                                                        svc.id,
-			                                                        (prev) => ({
-			                                                          ...prev,
-			                                                          candidate: prev.candidate
-			                                                            ? {
-			                                                                ...prev.candidate,
-			                                                                resolvedTag,
-			                                                              }
-			                                                            : prev.candidate,
-			                                                        }),
-			                                                      )
-			                                                    }}
 			                                                  >
 			                                                    {candidateDisplayTag}
 			                                                  </VersionTagsPopover>
@@ -1283,20 +1233,6 @@ export function ServicesPage(props: {
                                                     imageDigest={svc.image.digest ?? null}
                                                     resolvedTag={svc.image.resolvedTag}
                                                     resolvedTags={svc.image.resolvedTags}
-                                                    onLocalResolvedTags={(update) => {
-                                                      patchServiceInStackDetails(
-                                                        g.stackId,
-                                                        svc.id,
-                                                        (prev) => ({
-                                                          ...prev,
-                                                          image: {
-                                                            ...prev.image,
-                                                            resolvedTag: update.resolvedTag,
-                                                            resolvedTags: update.resolvedTags,
-                                                          },
-                                                        }),
-                                                      )
-                                                    }}
                                                     preferSource="rawTag"
                                                     triggerClassName="versionTagsTrigger mono monoSecondary"
                                                   >

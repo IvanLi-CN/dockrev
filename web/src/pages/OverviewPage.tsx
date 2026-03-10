@@ -1105,38 +1105,15 @@ export function OverviewPage(props: {
                     ⚠ 检测到 {anomalyCount} 个版本异常（候选低于当前）；手动确认后仍可继续更新。
                   </div>
                 ) : null}
-                <div className="modalDivider" />
-                <div className="modalLead">将更新的服务（预览）</div>
-                <AggregateUpdatePreviewList
-                  items={previewItems}
-                  dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
-                  onServiceResolvedTags={(update) => {
-                    if (!update.stackId) return
-                    patchServiceInStackDetails(update.stackId, update.serviceId, (prev) => ({
-                      ...prev,
-                      image: {
-                        ...prev.image,
-                        resolvedTag: update.resolvedTag,
-                        resolvedTags: update.resolvedTags,
-                      },
-                    }))
-                  }}
-                  onServiceCandidateResolvedTag={(update) => {
-                    if (!update.stackId) return
-                    patchServiceInStackDetails(update.stackId, update.serviceId, (prev) => ({
-                      ...prev,
-                      candidate: prev.candidate
-                        ? {
-                            ...prev.candidate,
-                            resolvedTag: update.resolvedTag,
-                          }
-                        : prev.candidate,
-                    }))
-                  }}
-                />
-                <div className="modalDivider" />
-              </>
-            )
+	                <div className="modalDivider" />
+	                <div className="modalLead">将更新的服务（预览）</div>
+	                <AggregateUpdatePreviewList
+	                  items={previewItems}
+	                  dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
+	                />
+	                <div className="modalDivider" />
+	              </>
+	            )
                         void triggerApply({ scope: 'all', targetLabel: '全部服务', confirmBody: body, confirmTitle: '确认更新全部服务？' })
           }}
         >
@@ -1409,36 +1386,15 @@ export function OverviewPage(props: {
                                 ⚠ 检测到 {anomalyCount} 个版本异常（候选低于当前）；手动确认后仍可继续更新。
                               </div>
                             ) : null}
-                            <div className="modalDivider" />
-                            <div className="modalLead">将更新的服务（预览）</div>
-                            <AggregateUpdatePreviewList
-                              items={aggregatePreviewItems}
-                              dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
-                              onServiceResolvedTags={(update) => {
-                                patchServiceInStackDetails(st.id, update.serviceId, (prev) => ({
-                                  ...prev,
-                                  image: {
-                                    ...prev.image,
-                                    resolvedTag: update.resolvedTag,
-                                    resolvedTags: update.resolvedTags,
-                                  },
-                                }))
-                              }}
-                              onServiceCandidateResolvedTag={(update) => {
-                                patchServiceInStackDetails(st.id, update.serviceId, (prev) => ({
-                                  ...prev,
-                                  candidate: prev.candidate
-                                    ? {
-                                        ...prev.candidate,
-                                        resolvedTag: update.resolvedTag,
-                                      }
-                                    : prev.candidate,
-                                }))
-                              }}
-                            />
-                            <div className="modalDivider" />
-                          </>
-                        )
+	                            <div className="modalDivider" />
+	                            <div className="modalLead">将更新的服务（预览）</div>
+	                            <AggregateUpdatePreviewList
+	                              items={aggregatePreviewItems}
+	                              dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
+	                            />
+	                            <div className="modalDivider" />
+	                          </>
+	                        )
                                                 void triggerApply({
 	                          scope: 'stack',
 	                          stackId: st.id,
@@ -1719,25 +1675,15 @@ export function OverviewPage(props: {
 		                                        <div className="modalKvValue">
                                           <div className="cellTwoLine">
                                             <div className="versionLine">
-	                                              <CurrentVersionPopover
-	                                                serviceId={svc.id}
-	                                                displayTag={currentDisplayTag}
-	                                                imageTag={svc.image.tag}
-	                                                imageDigest={svc.image.digest ?? null}
-	                                                resolvedTag={svc.image.resolvedTag}
-	                                                resolvedTags={svc.image.resolvedTags}
-	                                                onLocalResolvedTags={(update) => {
-	                                                  patchServiceInStackDetails(d.id, svc.id, (prev) => ({
-	                                                    ...prev,
-	                                                    image: {
-	                                                      ...prev.image,
-	                                                      resolvedTag: update.resolvedTag,
-	                                                      resolvedTags: update.resolvedTags,
-	                                                    },
-	                                                  }))
-	                                                }}
-	                                                inferenceLoading={inferencePending}
-	                                              />
+		                                              <CurrentVersionPopover
+		                                                serviceId={svc.id}
+		                                                displayTag={currentDisplayTag}
+		                                                imageTag={svc.image.tag}
+		                                                imageDigest={svc.image.digest ?? null}
+		                                                resolvedTag={svc.image.resolvedTag}
+		                                                resolvedTags={svc.image.resolvedTags}
+		                                                inferenceLoading={inferencePending}
+		                                              />
 	                                              <span
 	                                                className={arrowPulse ? 'inlineIconLoading' : 'inlineIconMuted'}
 	                                                style={arrowPulse ? { margin: '0 6px' } : { opacity: 0.8, margin: '0 6px' }}
@@ -1745,26 +1691,15 @@ export function OverviewPage(props: {
 	                                                <ArrowRightIcon className="inlineIcon" />
 	                                              </span>
 	                                              {svc.candidate?.tag ? (
-		                                                <VersionTagsPopover
-		                                                  serviceId={svc.id}
-		                                                  candidateTag={svc.candidate.tag}
-		                                                  candidateDigest={svc.candidate.digest ?? null}
-		                                                  prefetchOnMount={candidatePrefetchOnMount}
-		                                                  onLocalResolvedTag={(resolvedTag) => {
-		                                                    patchServiceInStackDetails(d.id, svc.id, (prev) => ({
-		                                                      ...prev,
-		                                                      candidate: prev.candidate
-		                                                        ? {
-		                                                            ...prev.candidate,
-		                                                            resolvedTag,
-		                                                          }
-		                                                        : prev.candidate,
-		                                                    }))
-		                                                  }}
-		                                                >
-	                                                  {formatCandidateTagDisplay(
-	                                                    svc.candidate.tag,
-	                                                    svc.candidate.resolvedTag ?? null,
+			                                                <VersionTagsPopover
+			                                                  serviceId={svc.id}
+			                                                  candidateTag={svc.candidate.tag}
+			                                                  candidateDigest={svc.candidate.digest ?? null}
+			                                                  prefetchOnMount={candidatePrefetchOnMount}
+			                                                >
+		                                                  {formatCandidateTagDisplay(
+		                                                    svc.candidate.tag,
+		                                                    svc.candidate.resolvedTag ?? null,
                                                       svc.versionInference?.status,
 	                                                  )}
 	                                                </VersionTagsPopover>
@@ -1780,28 +1715,18 @@ export function OverviewPage(props: {
                                               )
                                               const rawTrim = (svc.image.tag ?? '').trim()
                                               const showRaw = Boolean(rawTrim && rawTrim !== currentTag)
-                                              return showRaw ? (
-                                                <div>
-                                                  <CurrentVersionPopover
-                                                    serviceId={svc.id}
-                                                    displayTag={svc.image.tag}
-                                                    imageTag={svc.image.tag}
-                                                    imageDigest={svc.image.digest ?? null}
-                                                    resolvedTag={svc.image.resolvedTag}
-                                                    resolvedTags={svc.image.resolvedTags}
-                                                    onLocalResolvedTags={(update) => {
-                                                      patchServiceInStackDetails(d.id, svc.id, (prev) => ({
-                                                        ...prev,
-                                                        image: {
-                                                          ...prev.image,
-                                                          resolvedTag: update.resolvedTag,
-                                                          resolvedTags: update.resolvedTags,
-                                                        },
-                                                      }))
-                                                    }}
-                                                    preferSource="rawTag"
-                                                    triggerClassName="versionTagsTrigger mono monoSecondary"
-                                                  >
+		                                              return showRaw ? (
+		                                                <div>
+		                                                  <CurrentVersionPopover
+		                                                    serviceId={svc.id}
+		                                                    displayTag={svc.image.tag}
+		                                                    imageTag={svc.image.tag}
+		                                                    imageDigest={svc.image.digest ?? null}
+		                                                    resolvedTag={svc.image.resolvedTag}
+		                                                    resolvedTags={svc.image.resolvedTags}
+		                                                    preferSource="rawTag"
+		                                                    triggerClassName="versionTagsTrigger mono monoSecondary"
+		                                                  >
                                                     {svc.image.tag}
                                                   </CurrentVersionPopover>
                                                 </div>
