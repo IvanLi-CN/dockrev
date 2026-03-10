@@ -35,6 +35,7 @@ import { useConfirm } from '../confirm'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
 import { AggregateUpdatePreviewList, type AggregateUpdatePreviewListItem } from '../components/AggregateUpdatePreviewList'
+import { ConfirmServiceVersionCell } from '../components/ConfirmServiceVersionCell'
 import {
   formatCandidateTagDisplay,
   formatCurrentTagDisplay as formatTagDisplay,
@@ -1721,97 +1722,39 @@ export function OverviewPage(props: {
 		                                        </div>
 		                                        <div className="modalKvLabel">目标版本</div>
 		                                        <div className="modalKvValue">
-                                          <div className="cellTwoLine">
-                                            <div className="versionLine">
-		                                              <CurrentVersionPopover
-		                                                serviceId={svc.id}
-		                                                displayTag={currentDisplayTag}
-		                                                imageTag={svc.image.tag}
-		                                                imageDigest={svc.image.digest ?? null}
-		                                                resolvedTag={svc.image.resolvedTag}
-		                                                resolvedTags={svc.image.resolvedTags}
-                                                    onLocalResolvedTags={(update) => {
-                                                      patchServiceInStackDetails(st.id, svc.id, (prev) => ({
-                                                        ...prev,
-                                                        image: {
-                                                          ...prev.image,
-                                                          resolvedTag: update.resolvedTag,
-                                                          resolvedTags: update.resolvedTags,
-                                                        },
-                                                      }))
-                                                    }}
-		                                                inferenceLoading={inferencePending}
-		                                              />
-	                                              <span
-	                                                className={arrowPulse ? 'inlineIconLoading' : 'inlineIconMuted'}
-	                                                style={arrowPulse ? { margin: '0 6px' } : { opacity: 0.8, margin: '0 6px' }}
-	                                              >
-	                                                <ArrowRightIcon className="inlineIcon" />
-	                                              </span>
-	                                              {svc.candidate?.tag ? (
-			                                                <VersionTagsPopover
-			                                                  serviceId={svc.id}
-			                                                  candidateTag={svc.candidate.tag}
-			                                                  candidateDigest={svc.candidate.digest ?? null}
-			                                                  prefetchOnMount={candidatePrefetchOnMount}
-                                                    onLocalResolvedTag={(resolvedTag) => {
-                                                      patchServiceInStackDetails(st.id, svc.id, (prev) => ({
-                                                        ...prev,
-                                                        candidate: prev.candidate
-                                                          ? {
-                                                              ...prev.candidate,
-                                                              resolvedTag,
-                                                            }
-                                                          : prev.candidate,
-                                                      }))
-                                                    }}
-			                                                >
-		                                                  {formatCandidateTagDisplay(
-		                                                    svc.candidate.tag,
-		                                                    svc.candidate.resolvedTag ?? null,
-                                                      svc.versionInference?.status,
-	                                                  )}
-	                                                </VersionTagsPopover>
-	                                              ) : (
-	                                                <span className="mono monoPrimary">-</span>
-	                                              )}
-	                                            </div>
-                                            {(() => {
-                                              const currentTag = formatTagDisplay(
-                                                svc.image.tag,
-                                                svc.image.resolvedTag,
-                                                svc.versionInference?.status,
-                                              )
-                                              const rawTrim = (svc.image.tag ?? '').trim()
-                                              const showRaw = Boolean(rawTrim && rawTrim !== currentTag)
-		                                              return showRaw ? (
-		                                                <div>
-		                                                  <CurrentVersionPopover
-		                                                    serviceId={svc.id}
-		                                                    displayTag={svc.image.tag}
-		                                                    imageTag={svc.image.tag}
-		                                                    imageDigest={svc.image.digest ?? null}
-		                                                    resolvedTag={svc.image.resolvedTag}
-		                                                    resolvedTags={svc.image.resolvedTags}
-                                                      onLocalResolvedTags={(update) => {
-                                                        patchServiceInStackDetails(st.id, svc.id, (prev) => ({
-                                                          ...prev,
-                                                          image: {
-                                                            ...prev.image,
-                                                            resolvedTag: update.resolvedTag,
-                                                            resolvedTags: update.resolvedTags,
-                                                          },
-                                                        }))
-                                                      }}
-		                                                    preferSource="rawTag"
-		                                                    triggerClassName="versionTagsTrigger mono monoSecondary"
-		                                                  >
-                                                    {svc.image.tag}
-                                                  </CurrentVersionPopover>
-                                                </div>
-                                              ) : null
-                                            })()}
-                                          </div>
+                                          <ConfirmServiceVersionCell
+                                            serviceId={svc.id}
+                                            imageTag={svc.image.tag}
+                                            imageDigest={svc.image.digest ?? null}
+                                            resolvedTag={svc.image.resolvedTag}
+                                            resolvedTags={svc.image.resolvedTags}
+                                            inferenceStatus={svc.versionInference?.status}
+                                            candidateTag={svc.candidate?.tag}
+                                            candidateDigest={svc.candidate?.digest ?? null}
+                                            candidateResolvedTag={svc.candidate?.resolvedTag}
+                                            prefetchOnMount={candidatePrefetchOnMount}
+                                            onHostResolvedTags={(update) => {
+                                              patchServiceInStackDetails(st.id, svc.id, (prev) => ({
+                                                ...prev,
+                                                image: {
+                                                  ...prev.image,
+                                                  resolvedTag: update.resolvedTag,
+                                                  resolvedTags: update.resolvedTags,
+                                                },
+                                              }))
+                                            }}
+                                            onHostCandidateResolvedTag={(resolvedTag) => {
+                                              patchServiceInStackDetails(st.id, svc.id, (prev) => ({
+                                                ...prev,
+                                                candidate: prev.candidate
+                                                  ? {
+                                                      ...prev.candidate,
+                                                      resolvedTag,
+                                                    }
+                                                  : prev.candidate,
+                                              }))
+                                            }}
+                                          />
 	                                        </div>
                                         <div className="modalKvLabel">状态</div>
                                         <div className="modalKvValue">

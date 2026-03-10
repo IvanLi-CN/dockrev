@@ -18,11 +18,12 @@ import {
   type StackDetail,
 } from '../api'
 import { navigate } from '../routes'
-import { ArrowRightIcon, Button, Input, Mono, Pill, SelectField, Switch } from '../ui'
+import { Button, Input, Mono, Pill, SelectField, Switch } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { isSemverDowngradeAnomaly, serviceRowStatus } from '../updateStatus'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
+import { ConfirmServiceVersionCell } from '../components/ConfirmServiceVersionCell'
 import { ServiceResourcePanel } from '../components/ServiceResourcePanel'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { useConfirm } from '../confirm'
@@ -448,34 +449,21 @@ export function ServiceDetailPage(props: {
               }
               onClick={() => {
                 void (async () => {
-                  if (applyActiveJob) {
-                    navigate({ name: 'job', jobId: applyActiveJob.jobId })
-                    return
-                  }
-                  if (!service || !service.candidate) return
-                  const semverDowngradeAnomaly = isSemverDowngradeAnomaly(service)
-                  const currentDisplayTag = formatTagDisplay(
-                    service.image.tag,
-                    service.image.resolvedTag,
-                    service.versionInference?.status,
-                  )
-                  const inferencePending = service.versionInference?.status === 'pending'
-                  const candidatePrefetchOnMount = shouldPrefetchFloatingCandidate(
-                    service.candidate.tag,
-                    service.candidate.resolvedTag ?? null,
-                    service.candidate.digest ?? null,
-                  )
-                  const candidateDisplayTag = formatCandidateTagDisplay(
-                    service.candidate.tag,
-                    service.candidate.resolvedTag ?? null,
-                    service.versionInference?.status,
-                  )
-                  const rawTagTrim = (service.image.tag ?? '').trim()
-                    const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
-	                  const ok = await confirm({
-	                    title: `确认更新服务 ${service.name}？`,
-	                    body: (
-	                      <>
+	                  if (applyActiveJob) {
+	                    navigate({ name: 'job', jobId: applyActiveJob.jobId })
+	                    return
+	                  }
+	                  if (!service || !service.candidate) return
+	                  const semverDowngradeAnomaly = isSemverDowngradeAnomaly(service)
+	                  const candidatePrefetchOnMount = shouldPrefetchFloatingCandidate(
+	                    service.candidate.tag,
+	                    service.candidate.resolvedTag ?? null,
+	                    service.candidate.digest ?? null,
+	                  )
+		                  const ok = await confirm({
+		                    title: `确认更新服务 ${service.name}？`,
+		                    body: (
+		                      <>
 	                        <div className="modalLead">将对该服务执行更新（apply）。</div>
 	                        <div className="modalKvGrid">
 	                          <div className="modalKvLabel">范围</div>
@@ -506,80 +494,39 @@ export function ServiceDetailPage(props: {
 		                          </div>
 		                          <div className="modalKvLabel">目标版本</div>
 		                          <div className="modalKvValue">
-                                <div className="cellTwoLine">
-                                <div className="versionLine">
-		                                  <CurrentVersionPopover
-		                                    serviceId={service.id}
-		                                    displayTag={currentDisplayTag}
-		                                    imageTag={service.image.tag}
-		                                    imageDigest={service.image.digest ?? null}
-		                                    resolvedTag={service.image.resolvedTag}
-		                                    resolvedTags={service.image.resolvedTags}
-                                        onLocalResolvedTags={(update) => {
-                                          patchServiceInStack((prev) => ({
-                                            ...prev,
-                                            image: {
-                                              ...prev.image,
-                                              resolvedTag: update.resolvedTag,
-                                              resolvedTags: update.resolvedTags,
-                                            },
-                                          }))
-                                        }}
-		                                    inferenceLoading={inferencePending}
-			                                  />
-	                                  <span
-	                                    className={inferencePending ? 'inlineIconLoading' : 'inlineIconMuted'}
-	                                    style={inferencePending ? { margin: '0 6px' } : { opacity: 0.8, margin: '0 6px' }}
-	                                  >
-	                                    <ArrowRightIcon className="inlineIcon" />
-	                                  </span>
-			                                  <VersionTagsPopover
-			                                    serviceId={service.id}
-			                                    candidateTag={service.candidate.tag}
-			                                    candidateDigest={service.candidate.digest ?? null}
-		                                      prefetchOnMount={candidatePrefetchOnMount}
-                                        onLocalResolvedTag={(resolvedTag) => {
-                                          patchServiceInStack((prev) => ({
-                                            ...prev,
-                                            candidate: prev.candidate
-                                              ? {
-                                                  ...prev.candidate,
-                                                  resolvedTag,
-                                                }
-                                              : prev.candidate,
-                                          }))
-                                        }}
-			                                  >
-			                                    {candidateDisplayTag}
-			                                  </VersionTagsPopover>
-	                                </div>
-                                {showRawTag ? (
-                                  <div>
-	                                    <CurrentVersionPopover
-	                                      serviceId={service.id}
-	                                      displayTag={service.image.tag}
-	                                      imageTag={service.image.tag}
-	                                      imageDigest={service.image.digest ?? null}
-	                                      resolvedTag={service.image.resolvedTag}
-	                                      resolvedTags={service.image.resolvedTags}
-                                        onLocalResolvedTags={(update) => {
-                                          patchServiceInStack((prev) => ({
-                                            ...prev,
-                                            image: {
-                                              ...prev.image,
-                                              resolvedTag: update.resolvedTag,
-                                              resolvedTags: update.resolvedTags,
-                                            },
-                                          }))
-                                        }}
-	                                      preferSource="rawTag"
-	                                      triggerClassName="versionTagsTrigger mono monoSecondary"
-	                                    >
-                                      {service.image.tag}
-                                    </CurrentVersionPopover>
-                                  </div>
-                                ) : null}
-                              </div>
+                                <ConfirmServiceVersionCell
+                                  serviceId={service.id}
+                                  imageTag={service.image.tag}
+                                  imageDigest={service.image.digest ?? null}
+                                  resolvedTag={service.image.resolvedTag}
+                                  resolvedTags={service.image.resolvedTags}
+                                  inferenceStatus={service.versionInference?.status}
+                                  candidateTag={service.candidate.tag}
+                                  candidateDigest={service.candidate.digest ?? null}
+                                  candidateResolvedTag={service.candidate.resolvedTag}
+                                  prefetchOnMount={candidatePrefetchOnMount}
+                                  onHostResolvedTags={(update) => {
+                                    patchServiceInStack((prev) => ({
+                                      ...prev,
+                                      image: {
+                                        ...prev.image,
+                                        resolvedTag: update.resolvedTag,
+                                        resolvedTags: update.resolvedTags,
+                                      },
+                                    }))
+                                  }}
+                                  onHostCandidateResolvedTag={(resolvedTag) => {
+                                    patchServiceInStack((prev) => ({
+                                      ...prev,
+                                      candidate: prev.candidate
+                                        ? {
+                                            ...prev.candidate,
+                                            resolvedTag,
+                                          }
+                                        : prev.candidate,
+                                    }))
+                                  }}
+                                />
 		                          </div>
 	                          <div className="modalKvLabel">状态</div>
 	                          <div className="modalKvValue">
