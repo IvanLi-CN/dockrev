@@ -104,7 +104,7 @@
 
 - 风险：`GET /digest-tags-snapshot` 对 in-flight 返回 `pending` 后，已有旧 snapshot 的 UI 会更多看到局部 loading；前端必须只在本组件范围内消费该 loading，避免回退到整页联动。
 - 风险：refresh API 语义变更后，外部若存在旧调用方发送 `{}` 将收到 `400`；需同步 API reference 并在 PR 描述中注明 breaking semantic change。
-- 假设：popover 的局部刷新只需要影响本组件 trigger，不要求同步回写页面父级 service 数据。
+- 假设：popover 的局部刷新不触发整页/全局联动；但允许在 snapshot ready 后，以 in-memory patch 的方式回填同一 service 的 `resolvedTag/resolvedTags`（仅限本 digest），用于同屏其它展示的一致性。
 
 ## 变更记录（Change log）
 
