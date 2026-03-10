@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Icon } from '@iconify/react'
 import helpCircleOutline from '@iconify-icons/mdi/help-circle-outline'
 
@@ -6,16 +6,12 @@ import type { Service } from '../api'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui'
 import { isSemverDowngradeAnomaly, type RowStatus } from '../updateStatus'
 import { CurrentVersionPopover } from './CurrentVersionPopover'
-import { normalizeDigest } from './digest'
 import { VersionTagsPopover } from './VersionTagsPopover'
 import {
   formatCandidateTagDisplay,
   formatCurrentTagDisplay as formatTagDisplay,
-  inferResolvedTagsFromSnapshot,
   isStrictSemverTag,
 } from '../versionDisplay'
-import { DIGEST_SNAPSHOT_UPDATED_EVENT, type DigestSnapshotUpdatedDetail } from '../digestInferenceTracker'
-import { imageRepoFromImageRef } from '../imageRepo'
 
 export type AggregateUpdatePreviewListItem = {
   svc: Service
@@ -59,18 +55,6 @@ function shouldPrefetchFloatingCandidate(
   return (candidateDigest ?? '').trim().length > 0
 }
 
-type ScanSummary = DigestSnapshotUpdatedDetail['scan']
-
-function scanHasFailures(scan: ScanSummary | null | undefined): boolean {
-  if (!scan) return false
-  return scan.manifestsTimeout > 0 || scan.manifestsError > 0
-}
-
-function scanIsComplete(scan: ScanSummary | null | undefined): boolean {
-  if (!scan) return false
-  return scan.repoTagsConsidered >= scan.repoTagsTotal
-}
-
 export function AggregateUpdatePreviewList(props: {
   items: AggregateUpdatePreviewListItem[]
   dockrevGuardHint: string
@@ -92,86 +76,6 @@ export function AggregateUpdatePreviewList(props: {
   // can update sibling rows inside the same modal (raw tag row, candidate trigger, etc.).
   const [imageOverrides, setImageOverrides] = useState<Map<string, ImageOverride>>(() => new Map())
   const [candidateOverrides, setCandidateOverrides] = useState<Map<string, string | null>>(() => new Map())
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const onDigestSnapshotUpdated = (evt: Event) => {
-      const detail =
-        evt instanceof CustomEvent
-          ? (evt.detail as DigestSnapshotUpdatedDetail | null)
-          : null
-      if (!detail) return
-
-      const imageRepo = (detail.imageRepo ?? '').trim().toLowerCase()
-      const digestNorm = normalizeDigest(detail.digest)?.toLowerCase() ?? null
-      if (!imageRepo || !digestNorm) return
-
-      const failures = scanHasFailures(detail.scan)
-      const complete = scanIsComplete(detail.scan)
-
-      setImageOverrides((prev) => {
-        let changed = false
-        const next = new Map(prev)
-
-        for (const item of props.items) {
-          const svc = item.svc
-          const svcRepo = imageRepoFromImageRef(svc.image.ref)
-          if (!svcRepo || svcRepo !== imageRepo) continue
-
-          const currentDigest = normalizeDigest(svc.image.digest)?.toLowerCase() ?? null
-          if (currentDigest !== digestNorm) continue
-
-          const inferred = inferResolvedTagsFromSnapshot(detail.tags, svc.image.tag)
-          const inferredFirst = inferred[0] ?? null
-          if (!inferredFirst && (failures || !complete)) continue
-
-          const existing = next.get(svc.id)
-          const nextResolvedTags = inferred.length > 1 ? inferred : null
-          if (
-            existing?.resolvedTag === inferredFirst &&
-            JSON.stringify(existing?.resolvedTags ?? null) === JSON.stringify(nextResolvedTags)
-          ) {
-            continue
-          }
-
-          changed = true
-          next.set(svc.id, { resolvedTag: inferredFirst, resolvedTags: nextResolvedTags })
-        }
-
-        return changed ? next : prev
-      })
-
-      setCandidateOverrides((prev) => {
-        let changed = false
-        const next = new Map(prev)
-
-        for (const item of props.items) {
-          const svc = item.svc
-          const svcRepo = imageRepoFromImageRef(svc.image.ref)
-          if (!svcRepo || svcRepo !== imageRepo) continue
-
-          const candidate = svc.candidate
-          const candidateDigest = candidate ? normalizeDigest(candidate.digest)?.toLowerCase() ?? null : null
-          if (!candidate || candidateDigest !== digestNorm) continue
-
-          const inferred = inferResolvedTagsFromSnapshot(detail.tags, candidate.tag)
-          const inferredFirst = inferred[0] ?? null
-          if (!inferredFirst && (failures || !complete)) continue
-
-          if (next.get(svc.id) === inferredFirst) continue
-          changed = true
-          next.set(svc.id, inferredFirst)
-        }
-
-        return changed ? next : prev
-      })
-    }
-
-    window.addEventListener(DIGEST_SNAPSHOT_UPDATED_EVENT, onDigestSnapshotUpdated)
-    return () => {
-      window.removeEventListener(DIGEST_SNAPSHOT_UPDATED_EVENT, onDigestSnapshotUpdated)
-    }
-  }, [props.items])
 
   return (
     <div className="modalList">

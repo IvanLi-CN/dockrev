@@ -23,7 +23,6 @@ import {
   subscribeDigestSnapshotInvalidation,
 } from '../digestSnapshotBus'
 import {
-  publishDigestSnapshotRefreshRequested,
   trackDigestSnapshotRefresh,
 } from '../digestInferenceTracker'
 
@@ -313,11 +312,6 @@ export function CurrentVersionPopover(props: {
       ignoreInvalidationTokenRef.current = nextToken
       invalidateDigestSnapshot(digestKey)
       trackDigestSnapshotRefresh({ serviceId, imageRepo: resp.imageRepo, digest: digestNorm })
-      publishDigestSnapshotRefreshRequested({
-        triggerServiceId: serviceId,
-        imageRepo: resp.imageRepo,
-        digest: digestNorm,
-      })
     } catch (e: unknown) {
       setRefreshError(e instanceof Error ? e.message : String(e))
     } finally {

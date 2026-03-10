@@ -6,7 +6,6 @@ import {
 } from './api'
 
 export const DIGEST_SNAPSHOT_UPDATED_EVENT = 'dockrev:digest-snapshot-updated'
-export const DIGEST_SNAPSHOT_REFRESH_REQUESTED_EVENT = 'dockrev:digest-snapshot-refresh-requested'
 
 export type DigestSnapshotUpdatedDetail = {
   triggerServiceId: string
@@ -17,12 +16,6 @@ export type DigestSnapshotUpdatedDetail = {
   scan: ServiceDigestTagsScanSummary | null
 }
 
-export type DigestSnapshotRefreshRequestedDetail = {
-  triggerServiceId: string
-  imageRepo: string
-  digest: string
-}
-
 type TrackDigestSnapshotRefreshInput = {
   serviceId: string
   imageRepo: string
@@ -31,11 +24,9 @@ type TrackDigestSnapshotRefreshInput = {
 
 type TrackedRefresh = {
   key: string
-  triggerServiceId: string
+  serviceId: string
   imageRepo: string
   digest: string
-  serviceIds: Set<string>
-  activeServiceId: string
   errors: number
   startedAtMs: number
   timer: number | null
@@ -51,15 +42,6 @@ function publishDigestSnapshotUpdated(detail: DigestSnapshotUpdatedDetail) {
   if (typeof window === 'undefined') return
   window.dispatchEvent(
     new CustomEvent<DigestSnapshotUpdatedDetail>(DIGEST_SNAPSHOT_UPDATED_EVENT, { detail }),
-  )
-}
-
-export function publishDigestSnapshotRefreshRequested(detail: DigestSnapshotRefreshRequestedDetail) {
-  if (typeof window === 'undefined') return
-  window.dispatchEvent(
-    new CustomEvent<DigestSnapshotRefreshRequestedDetail>(DIGEST_SNAPSHOT_REFRESH_REQUESTED_EVENT, {
-      detail,
-    }),
   )
 }
 
@@ -80,7 +62,7 @@ async function pollTracked(key: string) {
   }
 
   try {
-    const data = await getServiceDigestTagsSnapshot(tracked.activeServiceId, tracked.digest)
+    const data = await getServiceDigestTagsSnapshot(tracked.serviceId, tracked.digest)
     const latest = trackedByKey.get(key)
     if (!latest) return
 
@@ -97,7 +79,7 @@ async function pollTracked(key: string) {
     }
 
     publishDigestSnapshotUpdated({
-      triggerServiceId: tracked.triggerServiceId,
+      triggerServiceId: tracked.serviceId,
       imageRepo: tracked.imageRepo,
       digest: tracked.digest,
       tags: data.tags ?? [],
@@ -111,16 +93,6 @@ async function pollTracked(key: string) {
     if (!latest) return
 
     if (e instanceof ApiError && e.status === 404) {
-      latest.serviceIds.delete(latest.activeServiceId)
-      const next = latest.serviceIds.values().next().value as string | undefined
-      if (next) {
-        latest.activeServiceId = next
-        latest.errors = 0
-        latest.timer = window.setTimeout(() => {
-          void pollTracked(key)
-        }, 0)
-        return
-      }
       clearTracked(key)
       return
     }
@@ -145,24 +117,18 @@ export function trackDigestSnapshotRefresh(input: TrackDigestSnapshotRefreshInpu
   const digest = input.digest.trim().toLowerCase()
   if (!serviceId || !imageRepo || !digest) return
 
-  const key = `${imageRepo}@${digest}`
+  const key = `${serviceId}:${digest}`
   const existing = trackedByKey.get(key)
   if (existing) {
-    existing.triggerServiceId = serviceId
-    existing.serviceIds.add(serviceId)
-    existing.activeServiceId = serviceId
+    existing.imageRepo = imageRepo
     return
   }
 
-  const serviceIds = new Set<string>()
-  serviceIds.add(serviceId)
   trackedByKey.set(key, {
     key,
-    triggerServiceId: serviceId,
+    serviceId,
     imageRepo,
     digest,
-    serviceIds,
-    activeServiceId: serviceId,
     errors: 0,
     startedAtMs: Date.now(),
     timer: window.setTimeout(() => {

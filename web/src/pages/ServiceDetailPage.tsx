@@ -36,10 +36,7 @@ import {
 } from '../versionDisplay'
 import { normalizeDigest } from '../components/digest'
 import {
-  DIGEST_SNAPSHOT_REFRESH_REQUESTED_EVENT,
   DIGEST_SNAPSHOT_UPDATED_EVENT,
-  trackDigestSnapshotRefresh,
-  type DigestSnapshotRefreshRequestedDetail,
   type DigestSnapshotUpdatedDetail,
 } from '../digestInferenceTracker'
 import { imageRepoFromImageRef } from '../imageRepo'
@@ -334,42 +331,6 @@ export function ServiceDetailPage(props: {
       window.removeEventListener(DIGEST_SNAPSHOT_UPDATED_EVENT, onDigestSnapshotUpdated)
     }
   }, [applyDigestSnapshotUpdate])
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const onDigestSnapshotRefreshRequested = (evt: Event) => {
-      const detail =
-        evt instanceof CustomEvent
-          ? (evt.detail as DigestSnapshotRefreshRequestedDetail | null)
-          : null
-      if (!detail) return
-
-      const imageRepo = (detail.imageRepo ?? '').trim().toLowerCase()
-      const digestNorm = normalizeDigest(detail.digest)?.toLowerCase() ?? null
-      if (!imageRepo || !digestNorm) return
-
-      const digest = normalizeDigest(detail.digest) ?? detail.digest.trim()
-      for (const svc of stack?.services ?? []) {
-        const svcRepo = imageRepoFromImageRef(svc.image.ref)
-        if (!svcRepo || svcRepo !== imageRepo) continue
-        const currentDigest = normalizeDigest(svc.image.digest)?.toLowerCase() ?? null
-        const candidateDigest = svc.candidate ? normalizeDigest(svc.candidate.digest)?.toLowerCase() ?? null : null
-        if (currentDigest !== digestNorm && candidateDigest !== digestNorm) continue
-        trackDigestSnapshotRefresh({ serviceId: svc.id, imageRepo, digest })
-      }
-    }
-
-    window.addEventListener(
-      DIGEST_SNAPSHOT_REFRESH_REQUESTED_EVENT,
-      onDigestSnapshotRefreshRequested,
-    )
-    return () => {
-      window.removeEventListener(
-        DIGEST_SNAPSHOT_REFRESH_REQUESTED_EVENT,
-        onDigestSnapshotRefreshRequested,
-      )
-    }
-  }, [stack])
 
   useEffect(() => {
     if (service?.versionInference?.status !== 'pending') return

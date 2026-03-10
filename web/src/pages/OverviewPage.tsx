@@ -45,14 +45,9 @@ import {
 } from '../versionDisplay'
 import { normalizeDigest } from '../components/digest'
 import {
-  DIGEST_SNAPSHOT_REFRESH_REQUESTED_EVENT,
   DIGEST_SNAPSHOT_UPDATED_EVENT,
-  trackDigestSnapshotRefresh,
-  type DigestSnapshotRefreshRequestedDetail,
   type DigestSnapshotUpdatedDetail,
 } from '../digestInferenceTracker'
-import { invalidateDigestSnapshot } from '../digestSnapshotBus'
-import { imageRepoFromImageRef } from '../imageRepo'
 import {
   resolveUpdateActionTargetKey,
   UPDATE_JOB_SETTLED_EVENT,
@@ -622,16 +617,15 @@ export function OverviewPage(props: {
 
   const applyDigestSnapshotUpdate = useCallback(
     (detail: DigestSnapshotUpdatedDetail) => {
-      const imageRepo = (detail.imageRepo ?? '').trim().toLowerCase()
       const digestNorm = normalizeDigest(detail.digest)?.toLowerCase() ?? null
-      if (!imageRepo || !digestNorm) return
+      const triggerServiceId = (detail.triggerServiceId ?? '').trim()
+      if (!triggerServiceId || !digestNorm) return
 
       const failures = scanHasFailures(detail.scan)
       const complete = scanIsComplete(detail.scan)
 
       const patchService = (svc: Service): Service => {
-        const svcRepo = imageRepoFromImageRef(svc.image.ref)
-        if (!svcRepo || svcRepo !== imageRepo) return svc
+        if (svc.id !== triggerServiceId) return svc
 
         let changed = false
         let next: Service = svc
@@ -689,23 +683,8 @@ export function OverviewPage(props: {
 
         return changed ? next : prev
       })
-
-      // Refresh cached popover tag lists for sibling services that share the same snapshot.
-      const triggerServiceId = (detail.triggerServiceId ?? '').trim()
-      const digestKeyDigest = normalizeDigest(detail.digest) ?? detail.digest.trim()
-      for (const stack of Object.values(details)) {
-        for (const svc of stack?.services ?? []) {
-          if (svc.id === triggerServiceId) continue
-          const svcRepo = imageRepoFromImageRef(svc.image.ref)
-          if (!svcRepo || svcRepo !== imageRepo) continue
-          const currentDigest = normalizeDigest(svc.image.digest)?.toLowerCase() ?? null
-          const candidateDigest = svc.candidate ? normalizeDigest(svc.candidate.digest)?.toLowerCase() ?? null : null
-          if (currentDigest !== digestNorm && candidateDigest !== digestNorm) continue
-          invalidateDigestSnapshot(`${svc.id}:${digestKeyDigest}`)
-        }
-      }
     },
-    [details],
+    [],
   )
 
   useEffect(() => {
@@ -723,38 +702,6 @@ export function OverviewPage(props: {
       window.removeEventListener(DIGEST_SNAPSHOT_UPDATED_EVENT, onDigestSnapshotUpdated)
     }
   }, [applyDigestSnapshotUpdate])
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const onDigestSnapshotRefreshRequested = (evt: Event) => {
-      const detail =
-        evt instanceof CustomEvent
-          ? (evt.detail as DigestSnapshotRefreshRequestedDetail | null)
-          : null
-      if (!detail) return
-
-      const imageRepo = (detail.imageRepo ?? '').trim().toLowerCase()
-      const digestNorm = normalizeDigest(detail.digest)?.toLowerCase() ?? null
-      if (!imageRepo || !digestNorm) return
-
-      const digest = normalizeDigest(detail.digest) ?? detail.digest.trim()
-      for (const stack of Object.values(details)) {
-        for (const svc of stack?.services ?? []) {
-          const svcRepo = imageRepoFromImageRef(svc.image.ref)
-          if (!svcRepo || svcRepo !== imageRepo) continue
-          const currentDigest = normalizeDigest(svc.image.digest)?.toLowerCase() ?? null
-          const candidateDigest = svc.candidate ? normalizeDigest(svc.candidate.digest)?.toLowerCase() ?? null : null
-          if (currentDigest !== digestNorm && candidateDigest !== digestNorm) continue
-          trackDigestSnapshotRefresh({ serviceId: svc.id, imageRepo, digest })
-        }
-      }
-    }
-
-    window.addEventListener(DIGEST_SNAPSHOT_REFRESH_REQUESTED_EVENT, onDigestSnapshotRefreshRequested)
-    return () => {
-      window.removeEventListener(DIGEST_SNAPSHOT_REFRESH_REQUESTED_EVENT, onDigestSnapshotRefreshRequested)
-    }
-  }, [details])
 
   const pendingInferenceStackIds = useMemo(() => {
     const ids: string[] = []

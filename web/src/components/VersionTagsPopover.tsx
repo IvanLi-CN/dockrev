@@ -23,7 +23,6 @@ import {
   subscribeDigestSnapshotInvalidation,
 } from '../digestSnapshotBus'
 import {
-  publishDigestSnapshotRefreshRequested,
   trackDigestSnapshotRefresh,
 } from '../digestInferenceTracker'
 
@@ -242,11 +241,6 @@ export function VersionTagsPopover(props: {
       invalidateDigestSnapshot(digestKey)
       trackDigestSnapshotRefresh({
         serviceId,
-        imageRepo: resp.imageRepo,
-        digest: candidateDigestNorm,
-      })
-      publishDigestSnapshotRefreshRequested({
-        triggerServiceId: serviceId,
         imageRepo: resp.imageRepo,
         digest: candidateDigestNorm,
       })
