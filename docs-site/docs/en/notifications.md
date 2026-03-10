@@ -140,12 +140,18 @@ Human-readable summary rules:
 - single service, both sides readable: `blog / api has a new version available (1.0.0 -> 1.1.0).`
 - single service, only one side readable: `blog / api has a new version available (1.0.0 -> latest).`
 - single service, both sides still unreadable after settling: `blog / api has a new version available.` (never `latest -> latest`)
-- multi-service aggregate: `3 services have new versions available: blog / api, blog / worker (1.0.0 -> 1.1.0), shop / gateway (2.4.0 -> 2.5.0).`
+- multi-service aggregate:
+  ```text
+  3 services have new versions available:
+  - blog / api
+  - blog / worker (1.0.0 -> 1.1.0)
+  - shop / gateway (2.4.0 -> 2.5.0)
+  ```
 
 Channel rendering rules:
 
 - Telegram / Email (single service): start directly with the summary sentence and keep only one `Service details` action; no generic banner title, no trailing `Details` suffix, no `Service list` block, and no duplicate link list
-- Telegram / Email (multi service): keep the aggregate list, but unreadable entries show only the service name without a transition suffix
+- Telegram / Email (multi service): keep the aggregate notification, but render one service per line; unreadable entries show only the service name without a transition suffix
 - Web Push: `title` uses the compact `human.title` headline, `body` is exactly `human.summary`, and the click target still uses `links.primaryUrl`
 
 Truncation:

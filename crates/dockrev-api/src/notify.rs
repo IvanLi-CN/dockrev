@@ -1284,23 +1284,20 @@ fn summarize_new_version_services(
         return "发现 1 个服务有新版本。".to_string();
     }
 
-    let preview = visible_services
-        .iter()
-        .map(render_new_version_service_label)
-        .collect::<Vec<_>>()
-        .join("、");
-    if preview.is_empty() {
+    if visible_services.is_empty() {
         return format!("发现 {total_new_versions} 个服务有新版本。");
     }
 
+    let mut lines = vec![format!("发现 {total_new_versions} 个服务有新版本：")];
+    lines.extend(
+        visible_services
+            .iter()
+            .map(|svc| format!("- {}", render_new_version_service_label(svc))),
+    );
     if omitted > 0 {
-        return format!(
-            "发现 {total_new_versions} 个服务有新版本：{preview}（通知正文仅展示前 {} 条）。",
-            visible_services.len()
-        );
+        lines.push(format!("... 以及其他 {omitted} 个服务（已省略）"));
     }
-
-    format!("发现 {total_new_versions} 个服务有新版本：{preview}。")
+    lines.join("\n")
 }
 
 fn summarize_ghcr_anomaly_repos(
@@ -1971,25 +1968,6 @@ fn render_telegram_new_version_html(payload: &NewVersionNotificationPayloadV2) -
     }
 
     lines.push(render_check_job_action_html(&payload.links.primary_url));
-
-    if !payload.links.service_urls.is_empty() {
-        lines.push(String::new());
-        lines.push("<b>服务清单</b>".to_string());
-        for svc in &payload.links.service_urls {
-            lines.push(format!(
-                "- {}：{}",
-                escape_html(&render_new_version_service_label(svc)),
-                render_open_link_html(&svc.url, "服务详情"),
-            ));
-        }
-        if payload.links.truncated.service_urls_omitted > 0 {
-            lines.push(format!(
-                "... 以及其他 {} 个服务（已省略）",
-                payload.links.truncated.service_urls_omitted
-            ));
-        }
-    }
-
     lines.join("\n")
 }
 
@@ -2010,25 +1988,6 @@ fn render_telegram_new_version_plain(payload: &NewVersionNotificationPayloadV2) 
     }
 
     lines.push(render_check_job_action_plain(&payload.links.primary_url));
-
-    if !payload.links.service_urls.is_empty() {
-        lines.push(String::new());
-        lines.push("服务清单".to_string());
-        for svc in &payload.links.service_urls {
-            lines.push(format!(
-                "- {}: {}",
-                render_new_version_service_label(svc),
-                svc.url
-            ));
-        }
-        if payload.links.truncated.service_urls_omitted > 0 {
-            lines.push(format!(
-                "... 以及其他 {} 个服务（已省略）",
-                payload.links.truncated.service_urls_omitted
-            ));
-        }
-    }
-
     lines.join("\n")
 }
 
@@ -2042,7 +2001,7 @@ fn render_email_new_version_plain(payload: &NewVersionNotificationPayloadV2) -> 
 }
 
 fn render_email_new_version_html(payload: &NewVersionNotificationPayloadV2) -> String {
-    let summary = escape_html(&payload.human.summary);
+    let summary = escape_html(&payload.human.summary).replace('\n', "<br>");
     let single = is_single_new_version_payload(payload);
 
     let mut note = String::new();
@@ -2060,32 +2019,6 @@ fn render_email_new_version_html(payload: &NewVersionNotificationPayloadV2) -> S
         return format!("<p>{summary}</p>{note}<p>{action}</p>");
     }
 
-    let mut items = String::new();
-    if !payload.links.service_urls.is_empty() {
-        items.push_str("<ul>");
-        for svc in &payload.links.service_urls {
-            let label = escape_html(&render_new_version_service_label(svc));
-            if is_absolute_http_url(&svc.url) {
-                items.push_str(&format!(
-                    "<li>{label}: <a href=\"{}\">服务详情</a></li>",
-                    escape_html(&svc.url)
-                ));
-            } else {
-                items.push_str(&format!(
-                    "<li>{label}: <code>{}</code></li>",
-                    escape_html(&svc.url)
-                ));
-            }
-        }
-        if payload.links.truncated.service_urls_omitted > 0 {
-            items.push_str(&format!(
-                "<li>... 以及其他 {} 个服务（已省略）</li>",
-                payload.links.truncated.service_urls_omitted
-            ));
-        }
-        items.push_str("</ul>");
-    }
-
     let check_link = if is_absolute_http_url(&payload.links.job_url) {
         format!(
             "<a href=\"{}\">{}</a>",
@@ -2096,17 +2029,7 @@ fn render_email_new_version_html(payload: &NewVersionNotificationPayloadV2) -> S
         format!("<code>{}</code>", escape_html(&payload.links.job_url))
     };
 
-    let open_primary = if is_absolute_http_url(&payload.links.primary_url) {
-        format!(
-            "<a href=\"{}\">{}</a>",
-            escape_html(&payload.links.primary_url),
-            escape_html(&payload.links.primary_url)
-        )
-    } else {
-        format!("<code>{}</code>", escape_html(&payload.links.primary_url))
-    };
-
-    format!("<p>{summary}</p>{note}<p>检查任务：{check_link}</p><p>打开：{open_primary}</p>{items}",)
+    format!("<p>{summary}</p>{note}<p>检查任务：{check_link}</p>")
 }
 
 fn render_telegram_ghcr_webhook_anomaly_html(payload: &GhcrWebhookAnomalyPayloadV2) -> String {
@@ -3855,7 +3778,7 @@ mod tests {
             .push(make_new_version_service("shop", "gateway"));
         payload.human.title = "发现 2 个服务有新版本".to_string();
         payload.human.summary =
-            "发现 2 个服务有新版本：blog / api (1.0.0 -> 1.1.0)、shop / gateway (1.0.0 -> 1.1.0)。"
+            "发现 2 个服务有新版本：\n- blog / api (1.0.0 -> 1.1.0)\n- shop / gateway (1.0.0 -> 1.1.0)"
                 .to_string();
         payload
     }
@@ -3887,10 +3810,10 @@ mod tests {
             make_new_version_service("shop", "gateway"),
         ];
         let summary = summarize_new_version_services(3, &services, 0);
-        assert!(summary.contains("blog / api"));
-        assert!(summary.contains("blog / worker"));
-        assert!(summary.contains("shop / gateway"));
-        assert!(summary.starts_with("发现 3 个服务有新版本："));
+        assert!(summary.starts_with("发现 3 个服务有新版本：\n"));
+        assert!(summary.contains("\n- blog / api (1.0.0 -> 1.1.0)"));
+        assert!(summary.contains("\n- blog / worker (1.0.0 -> 1.1.0)"));
+        assert!(summary.contains("\n- shop / gateway (1.0.0 -> 1.1.0)"));
     }
 
     #[test]
@@ -3902,11 +3825,12 @@ mod tests {
             make_new_version_service("shop", "sync"),
         ];
         let summary = summarize_new_version_services(14, &services, 10);
-        assert!(summary.contains("blog / api"));
-        assert!(summary.contains("blog / worker"));
-        assert!(summary.contains("shop / gateway"));
-        assert!(summary.contains("shop / sync"));
-        assert!(summary.contains("仅展示前 4 条"));
+        assert!(summary.starts_with("发现 14 个服务有新版本：\n"));
+        assert!(summary.contains("\n- blog / api (1.0.0 -> 1.1.0)"));
+        assert!(summary.contains("\n- blog / worker (1.0.0 -> 1.1.0)"));
+        assert!(summary.contains("\n- shop / gateway (1.0.0 -> 1.1.0)"));
+        assert!(summary.contains("\n- shop / sync (1.0.0 -> 1.1.0)"));
+        assert!(summary.contains("\n... 以及其他 10 个服务（已省略）"));
     }
 
     #[test]
@@ -4160,7 +4084,7 @@ mod tests {
     }
 
     #[test]
-    fn new_version_multi_service_render_starts_from_summary_without_banner() {
+    fn new_version_multi_service_render_puts_each_service_on_its_own_line() {
         let payload = sample_multi_new_version_payload();
         let telegram_html = render_telegram_new_version_html(&payload);
         let telegram_plain = render_telegram_new_version_plain(&payload);
@@ -4168,28 +4092,29 @@ mod tests {
 
         assert!(!telegram_html.contains("<b>发现 2 个服务有新版本</b>"));
         assert!(telegram_html.starts_with(
-            "发现 2 个服务有新版本：blog / api (1.0.0 -&gt; 1.1.0)、shop / gateway (1.0.0 -&gt; 1.1.0)。"
+            "发现 2 个服务有新版本：\n- blog / api (1.0.0 -&gt; 1.1.0)\n- shop / gateway (1.0.0 -&gt; 1.1.0)"
         ));
         assert!(telegram_html.contains(
             r#"检查任务：<a href="https://dockrev.example.com/queue/job_check_123">检查任务</a>"#
         ));
-        assert!(telegram_html.contains("<b>服务清单</b>"));
+        assert!(!telegram_html.contains("<b>服务清单</b>"));
 
         assert!(telegram_plain.starts_with(
-            "发现 2 个服务有新版本：blog / api (1.0.0 -> 1.1.0)、shop / gateway (1.0.0 -> 1.1.0)。"
+            "发现 2 个服务有新版本：\n- blog / api (1.0.0 -> 1.1.0)\n- shop / gateway (1.0.0 -> 1.1.0)"
         ));
-        assert!(!telegram_plain.starts_with("发现 2 个服务有新版本\n"));
         assert!(
-            telegram_plain.contains("检查任务：https://dockrev.example.com/queue/job_check_123")
+            telegram_plain.contains("\n检查任务：https://dockrev.example.com/queue/job_check_123")
         );
+        assert!(!telegram_plain.contains("\n服务清单\n"));
 
         assert!(!email_html.contains("<h2>"));
         assert!(email_html.starts_with(
-            "<p>发现 2 个服务有新版本：blog / api (1.0.0 -&gt; 1.1.0)、shop / gateway (1.0.0 -&gt; 1.1.0)。</p>"
+            "<p>发现 2 个服务有新版本：<br>- blog / api (1.0.0 -&gt; 1.1.0)<br>- shop / gateway (1.0.0 -&gt; 1.1.0)</p>"
         ));
         assert!(email_html.contains(
             r#"检查任务：<a href="https://dockrev.example.com/queue/job_check_123">查看检查任务</a>"#
         ));
+        assert!(!email_html.contains("<ul>"));
     }
 
     #[test]

@@ -55,7 +55,7 @@
 - 等待结束后必须按与 UI 一致的 semver 推断规则重算 display tag；不得把 `latest -> latest` 直接暴露到 `human.summary`、Telegram、Email 或 Web Push body。
 - 单服务摘要固定为 `<stack> / <service> 服务有新版本（<from> -> <to>）`；若只有一侧可读，则允许 resolved + raw 混排；若双侧都不可读，则改为 `<stack> / <service> 服务有新版本。`
 - 单服务 Telegram/Email 正文去掉聚合态 `服务清单` 区块与重复列表，直接从正文首句开始，只保留一个 `服务详情` 动作；不再显示泛化标题。
-- 多服务通知仍按聚合发送；其中某条服务若双侧都不可读，则该条只显示服务名，不附迁移括号。
+- 多服务通知仍按聚合发送，正文中每个服务必须单独一行；其中某条服务若双侧都不可读，则该条只显示服务名，不附迁移括号。
 - `dockrev.notification.new_version_discovered.v2` 的 raw/display tag 字段、`links.primaryUrl`/`jobUrl`/`serviceUrls[]` 与跳转目标保持兼容。
 - 必须设置固定等待上限；达到上限后若双侧仍不可读，按“无版本号正文”发送，不新增用户配置项。
 
@@ -71,7 +71,8 @@
 - Given 单服务只解析出一侧版本，When 发送通知，Then 正文允许 resolved + raw 混排。
 - Given 单服务等待到上限后双侧都仍不可读，When 发送通知，Then 正文只显示“某服务有新版本”，但 `serviceUrls[]` raw/display 字段与 `primaryUrl` 仍保持兼容。
 - Given 单服务 Telegram/Email 渲染，When 通知生成，Then 不再出现标题尾重复“详情”+“服务清单”+重复服务详情列表。
-- Given 多服务聚合通知中某条服务双侧都不可读，When 摘要/清单生成，Then 该条只显示服务名，不附迁移括号；其他可读条目保持原样。
+- Given 多服务聚合通知，When 摘要/body 生成，Then 每条服务单独占一行。
+- Given 多服务聚合通知中某条服务双侧都不可读，When 摘要/body 生成，Then 该条只显示服务名，不附迁移括号；其他可读条目保持原样。
 
 ## 实现里程碑（Milestones / Delivery checklist）
 
