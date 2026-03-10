@@ -354,12 +354,15 @@ fn render_ui_contains_status_tiles_and_textual_history_markup() {
 }
 
 #[test]
-fn render_ui_marks_status_cards_stale_when_offline() {
+fn render_ui_distinguishes_cached_and_uncached_offline_states() {
     let html = render_ui("/supervisor", &test_meta());
-    assert!(html.contains("const lastSeen = lastKnownSelfUpgradeState?.updatedAt"));
-    assert!(html.contains("statusOpIdEl.textContent = 'stale';"));
-    assert!(html.contains("statusTargetEl.textContent = 'stale while offline';"));
-    assert!(html.contains("statusPreviousEl.textContent = 'stale while offline';"));
+    assert!(html.contains("const cached = lastKnownSelfUpgradeState;"));
+    assert!(html.contains("const hasCachedState = !!cached;"));
+    assert!(html.contains("if (!hasCachedState) {"));
+    assert!(html.contains("statusOpIdEl.textContent = 'unavailable';"));
+    assert!(html.contains("statusTargetEl.textContent = 'unavailable while offline';"));
+    assert!(html.contains("statusOpIdEl.textContent = cached.opId"));
+    assert!(html.contains("statusTargetEl.textContent = cached.target"));
 }
 
 #[test]
@@ -368,6 +371,20 @@ fn render_ui_constrains_history_rail_height() {
     assert!(html.contains("max-height: min(680px, calc(100vh - 220px));"));
     assert!(html.contains("overscroll-behavior: contain;"));
     assert!(html.contains("max-height: min(420px, 50vh);"));
+}
+
+#[test]
+fn render_ui_collapses_history_rail_when_operation_groups_are_absent() {
+    let html = render_ui("/supervisor", &test_meta());
+    assert!(html.contains("id=\"workspaceGrid\""));
+    assert!(html.contains("id=\"historyRail\""));
+    assert!(
+        html.contains(
+            "workspaceGridEl.classList.toggle('workspaceGrid-logsOnly', !hasOperations);"
+        )
+    );
+    assert!(html.contains("historyRailEl.hidden = !hasOperations;"));
+    assert!(html.contains("暂无 operation 历史，已回退到扁平日志视图。"));
 }
 
 #[test]

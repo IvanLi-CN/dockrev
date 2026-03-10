@@ -536,6 +536,9 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         gap: 16px;
         align-items: stretch;
       }}
+      .workspaceGrid.workspaceGrid-logsOnly {{
+        grid-template-columns: minmax(0, 1fr);
+      }}
       .historyRail,
       .logPanel {{
         min-height: 420px;
@@ -912,8 +915,8 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           </div>
           <div id="historyHint" class="muted">loading…</div>
         </div>
-        <div class="workspaceGrid">
-          <aside class="historyRail">
+        <div id="workspaceGrid" class="workspaceGrid">
+          <aside id="historyRail" class="historyRail">
             <div id="historyList" class="historyList"></div>
           </aside>
           <section class="logPanel">
@@ -958,8 +961,10 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       const statusProgressMessageEl = document.getElementById('statusProgressMessage');
       const statusTargetEl = document.getElementById('statusTarget');
       const statusPreviousEl = document.getElementById('statusPrevious');
+      const historyRailEl = document.getElementById('historyRail');
       const historyListEl = document.getElementById('historyList');
       const historyHintEl = document.getElementById('historyHint');
+      const workspaceGridEl = document.getElementById('workspaceGrid');
       const logTitleEl = document.getElementById('logTitle');
       const logSummaryEl = document.getElementById('logSummary');
       const logsEl = document.getElementById('logs');
@@ -1104,21 +1109,43 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
 
       function renderOffline(error) {{
-        const lastSeen = lastKnownSelfUpgradeState?.updatedAt
-          ? formatTimestamp(lastKnownSelfUpgradeState.updatedAt)
-          : '-';
+        const cached = lastKnownSelfUpgradeState;
+        const hasCachedState = !!cached;
+        const lastSeen = cached?.updatedAt ? formatTimestamp(cached.updatedAt) : '-';
         statusToneEl.className = 'statusTone state-offline';
         statusToneEl.textContent = 'offline';
         statusStateEl.textContent = 'offline';
         statusSummaryEl.textContent = `poll failed · ${{String(error.message || error)}}`;
-        statusOpIdEl.textContent = 'stale';
-        statusStepEl.textContent = 'stale';
-        statusModeEl.textContent = `last seen ${{lastSeen}}`;
-        statusStartedAtEl.textContent = '-';
+        if (!hasCachedState) {{
+          statusOpIdEl.textContent = 'unavailable';
+          statusStepEl.textContent = 'waiting for reconnect';
+          statusModeEl.textContent = 'no cached state yet';
+          statusStartedAtEl.textContent = '-';
+          statusUpdatedAtEl.textContent = 'last seen -';
+          statusProgressMessageEl.textContent = 'supervisor unreachable on first poll; retrying…';
+          statusTargetEl.textContent = 'unavailable while offline';
+          statusPreviousEl.textContent = 'unavailable while offline';
+          return;
+        }}
+        statusOpIdEl.textContent = cached.opId ? `${{cached.opId}} · stale` : 'stale';
+        statusStepEl.textContent = cached.progress?.step ? `${{cached.progress.step}} · stale` : 'stale';
+        statusModeEl.textContent = `last seen ${{lastSeen}} · cached`;
+        statusStartedAtEl.textContent = cached.startedAt ? `${{formatTimestamp(cached.startedAt)}} · stale` : '-';
         statusUpdatedAtEl.textContent = `last seen ${{lastSeen}}`;
-        statusProgressMessageEl.textContent = 'offline; waiting for supervisor to respond again';
-        statusTargetEl.textContent = 'stale while offline';
-        statusPreviousEl.textContent = 'stale while offline';
+        statusProgressMessageEl.textContent = cached.progress?.message
+          ? `${{cached.progress.message}} · stale while offline`
+          : 'offline; waiting for supervisor to respond again';
+        statusTargetEl.textContent = cached.target
+          ? `${{formatTargetRef(cached.target)}} · stale`
+          : 'stale while offline';
+        statusPreviousEl.textContent = cached.previous
+          ? `${{formatPreviousRef(cached.previous)}} · stale`
+          : 'stale while offline';
+      }}
+
+      function syncWorkspaceMode(hasOperations) {{
+        workspaceGridEl.classList.toggle('workspaceGrid-logsOnly', !hasOperations);
+        historyRailEl.hidden = !hasOperations;
       }}
 
       function createStateBadge(state) {{
@@ -1140,6 +1167,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         historyListEl.textContent = '';
 
         if (!operations.length) {{
+          syncWorkspaceMode(false);
           activeOpId = null;
           latestOpId = null;
           latestHasNewer = false;
@@ -1150,6 +1178,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           return;
         }}
 
+        syncWorkspaceMode(true);
         const previousLatest = latestOpId;
         const nextLatest = operations[0]?.opId || null;
         const wasViewingLatest = !activeOpId || (previousLatest && activeOpId === previousLatest);
@@ -1244,6 +1273,16 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           renderOffline(error);
           if (lastKnownSelfUpgradeState) {{
             syncUpgradeActionState(lastKnownSelfUpgradeState);
+            renderOperations(lastKnownSelfUpgradeState);
+            syncRollbackState(lastKnownSelfUpgradeState);
+          }} else {{
+            syncWorkspaceMode(false);
+            historyListEl.textContent = '';
+            historyHintEl.textContent = 'Supervisor 暂时离线，尚未拿到可展示的 operation 历史。';
+            logTitleEl.textContent = '等待 supervisor 响应';
+            logSummaryEl.textContent = '首次轮询失败；暂无可复用的缓存日志。';
+            logsEl.textContent = '等待日志…';
+            syncRollbackState({{}});
           }}
           setRollbackPopOpen(false);
         }}
