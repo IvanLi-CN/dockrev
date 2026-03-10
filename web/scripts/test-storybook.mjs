@@ -1454,7 +1454,9 @@ async function runInteractive({ baseUrl, browser }) {
     try {
       const line = page.locator('.versionLine').first()
       const currentTrigger = line.locator('.versionTagsTrigger').nth(0)
-      const rawTrigger = page.getByRole('button', { name: '0.8' }).first()
+      // `getByRole(..., { name })` does substring matching by default and may match the
+      // row container / candidate button as well. Require an exact match for the raw tag trigger.
+      const rawTrigger = page.getByRole('button', { name: '0.8', exact: true }).first()
 
       await currentTrigger.waitFor({ timeout: 10_000 })
       await currentTrigger.click()
@@ -1477,8 +1479,12 @@ async function runInteractive({ baseUrl, browser }) {
       await rawTrigger.click()
       const rawPopover = page.locator(".versionTagsPopover[data-state='open']")
       await rawPopover.waitFor({ timeout: 10_000 })
-      await rawPopover.getByText('resolvedTag').waitFor({ timeout: 10_000 })
-      await rawPopover.getByText('v0.8.7').waitFor({ timeout: 10_000 })
+      // `resolvedTag` can also appear in the inference section ("来源: resolvedTag"), so scope
+      // the assertion to the "当前镜像" section.
+      const imageSection = rawPopover.locator('.versionTagsPopoverSection', { hasText: '当前镜像' })
+      const resolvedLine = imageSection.locator('.muted', { hasText: 'resolvedTag' })
+      await resolvedLine.waitFor({ timeout: 10_000 })
+      await resolvedLine.getByText('v0.8.7', { exact: true }).waitFor({ timeout: 10_000 })
     } finally {
       await page.close().catch(() => {})
     }

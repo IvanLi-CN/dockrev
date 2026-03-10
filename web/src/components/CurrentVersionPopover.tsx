@@ -6,7 +6,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   ApiError,
   forceRefreshServiceVersionInference,
@@ -102,7 +102,7 @@ export function CurrentVersionPopover(props: {
   resolvedTag?: string | null
   resolvedTags?: string[] | null
   onLocalResolvedTags?: (update: {
-    resolvedTag: string
+    resolvedTag: string | null
     resolvedTags: string[] | null
   }) => void
   preferSource?: 'resolvedTag' | 'rawTag'
@@ -123,6 +123,7 @@ export function CurrentVersionPopover(props: {
   const preferSource = props.preferSource ?? 'resolvedTag'
   const fetchTimer = useRef<number | null>(null)
   const {
+    close,
     contentProps,
     open,
     pinned,
@@ -310,7 +311,7 @@ export function CurrentVersionPopover(props: {
                 key: digestKey,
                 value: inferredFirst,
               })
-              if (inferredFirst && onLocalResolvedTags) {
+              if (onLocalResolvedTags) {
                 onLocalResolvedTags({
                   resolvedTag: inferredFirst,
                   resolvedTags: inferred.length > 1 ? inferred : null,
@@ -516,6 +517,10 @@ export function CurrentVersionPopover(props: {
   ])
 
   const handleTriggerClick = () => {
+    if (pinned) {
+      close()
+      return
+    }
     const next = togglePinned()
     if (next && (missingSnapshot || loadError)) {
       setDigestState({
@@ -552,7 +557,7 @@ export function CurrentVersionPopover(props: {
 
   return (
     <Popover {...popoverProps}>
-      <PopoverAnchor asChild>
+      <PopoverTrigger asChild>
         <button
           {...triggerProps}
           type="button"
@@ -562,7 +567,7 @@ export function CurrentVersionPopover(props: {
         >
           {triggerLabel}
         </button>
-      </PopoverAnchor>
+      </PopoverTrigger>
       <PopoverContent
         {...contentProps}
         align="start"

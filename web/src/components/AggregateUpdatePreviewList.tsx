@@ -60,13 +60,13 @@ export function AggregateUpdatePreviewList(props: {
   onServiceResolvedTags?: (update: {
     stackId?: string
     serviceId: string
-    resolvedTag: string
+    resolvedTag: string | null
     resolvedTags: string[] | null
   }) => void
   onServiceCandidateResolvedTag?: (update: {
     stackId?: string
     serviceId: string
-    resolvedTag: string
+    resolvedTag: string | null
   }) => void
 }) {
   return (

@@ -58,9 +58,10 @@ export function useHoverPinnedPopover(options: HoverPinnedPopoverOptions = {}) {
 
   const popoverProps = {
     open,
-    onOpenChange: (next: boolean) => {
-      if (!next) close()
-    },
+    // Open/close is driven by the hover+pin state machine. Radix will still call
+    // `onOpenChange` for trigger clicks / outside interactions, but we intentionally
+    // ignore it here and handle dismissal explicitly via content event handlers.
+    onOpenChange: () => {},
   }
 
   const triggerProps = {
@@ -78,7 +79,13 @@ export function useHoverPinnedPopover(options: HoverPinnedPopoverOptions = {}) {
 
   const contentProps: Pick<
     ComponentPropsWithoutRef<typeof PopoverContent>,
-    'onPointerEnter' | 'onPointerLeave' | 'onEscapeKeyDown' | 'onOpenAutoFocus' | 'onCloseAutoFocus'
+    | 'onPointerEnter'
+    | 'onPointerLeave'
+    | 'onEscapeKeyDown'
+    | 'onOpenAutoFocus'
+    | 'onCloseAutoFocus'
+    | 'onPointerDownOutside'
+    | 'onFocusOutside'
   > = {
     onPointerEnter: () => {
       clearHoverCloseTimer()
@@ -86,6 +93,18 @@ export function useHoverPinnedPopover(options: HoverPinnedPopoverOptions = {}) {
     },
     onPointerLeave: () => {
       scheduleHoverClose()
+    },
+    onPointerDownOutside: (event) => {
+      // Allow clicks on other version popover triggers to proceed; the trigger click handler
+      // decides whether to close/open. Closing here can cause a close+reopen race.
+      const target = event.target as Element | null
+      if (target?.closest?.('button.versionTagsTrigger')) return
+      close()
+    },
+    onFocusOutside: (event) => {
+      const target = event.target as Element | null
+      if (target?.closest?.('button.versionTagsTrigger')) return
+      close()
     },
     onEscapeKeyDown: () => close(),
     onOpenAutoFocus: (event) => event.preventDefault(),

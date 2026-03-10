@@ -6,7 +6,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   ApiError,
   forceRefreshServiceVersionInference,
@@ -70,7 +70,7 @@ export function VersionTagsPopover(props: {
   candidateTag: string | null
   candidateDigest: string | null
   prefetchOnMount?: boolean
-  onLocalResolvedTag?: (resolvedTag: string) => void
+  onLocalResolvedTag?: (resolvedTag: string | null) => void
   children: ReactNode
 }) {
   const {
@@ -83,6 +83,7 @@ export function VersionTagsPopover(props: {
   } = props
   const fetchTimer = useRef<number | null>(null)
   const {
+    close,
     contentProps,
     open,
     pinned,
@@ -254,13 +255,11 @@ export function VersionTagsPopover(props: {
                 key: digestKey,
                 value: inferredFirst,
               })
-              if (inferredFirst && onLocalResolvedTag) {
-                onLocalResolvedTag(inferredFirst)
-              }
+              if (onLocalResolvedTag) onLocalResolvedTag(inferredFirst)
               setLocalRefreshKey(null)
             }
             setSnapshotPhase('ready')
-          })
+            })
           .catch((e: unknown) => {
             if (!alive) return
             if (e instanceof ApiError && e.status === 404) {
@@ -359,6 +358,10 @@ export function VersionTagsPopover(props: {
   }, [])
 
   const handleTriggerClick = () => {
+    if (pinned) {
+      close()
+      return
+    }
     const next = togglePinned()
     if (next && (missingSnapshot || loadError)) {
       setDigestState({
@@ -391,7 +394,7 @@ export function VersionTagsPopover(props: {
 
   return (
     <Popover {...popoverProps}>
-      <PopoverAnchor asChild>
+      <PopoverTrigger asChild>
         <button
           {...triggerProps}
           type="button"
@@ -401,7 +404,7 @@ export function VersionTagsPopover(props: {
         >
           {triggerLabel}
         </button>
-      </PopoverAnchor>
+      </PopoverTrigger>
       <PopoverContent
         {...contentProps}
         align="start"
