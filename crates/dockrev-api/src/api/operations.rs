@@ -1907,6 +1907,7 @@ pub(super) async fn run_update_job(
             let update_outcome = updater::run_update_job(
                 &logging_runner,
                 &state.config.compose_bin,
+                state.config.docker_config_path.as_deref(),
                 updater::IdempotentRetryPolicy {
                     max_attempts: state.config.update_idempotent_retry_max_attempts,
                     base_ms: state.config.update_idempotent_retry_base_ms,

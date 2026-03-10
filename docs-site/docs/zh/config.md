@@ -21,7 +21,7 @@ description: Dockrev API 与 Supervisor 运行参数说明。
 | --- | --- | --- |
 | `DOCKREV_HTTP_ADDR` | `0.0.0.0:50883` | API 监听地址 |
 | `DOCKREV_DB_PATH` | `./data/dockrev.sqlite3` | SQLite 文件路径 |
-| `DOCKREV_DOCKER_CONFIG` | 空 | Docker registry 凭据文件 |
+| `DOCKREV_DOCKER_CONFIG` | 空 | Docker `config.json` 文件路径；Dockrev 会在 update job 中自动桥接为临时 Docker CLI 配置目录，若路径本身就是 `config.json` 还会一并复制 Docker contexts 元数据 |
 | `DOCKREV_COMPOSE_BIN` | `docker-compose` | Compose 命令选择 |
 | `DOCKREV_AUTH_FORWARD_HEADER_NAME` | `X-Forwarded-User` | Forward Auth 用户头名 |
 | `DOCKREV_AUTH_GROUP_HEADER_NAME` | `Remote-Groups` | Forward Auth 组头名 |

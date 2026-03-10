@@ -196,6 +196,7 @@ async fn stack_is_healthy_now(
 ) -> anyhow::Result<bool> {
     let compose_cfg = ComposeRunnerConfig {
         compose_bin: compose_bin.to_string(),
+        env: Vec::new(),
     };
     let compose_stack = ComposeStack {
         project_name: sanitize_project_name(&stack.name),
