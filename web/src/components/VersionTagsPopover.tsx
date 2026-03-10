@@ -350,8 +350,10 @@ export function VersionTagsPopover(props: {
 
     return () => {
       alive = false
-      if (fetchTimer.current != null) {
-        window.clearTimeout(fetchTimer.current)
+      // Preserve server-directed retry timers (set after 202 pending) across re-renders.
+      // Only cancel the debounce timer created by this effect instance.
+      if (fetchTimer.current === timerId) {
+        window.clearTimeout(timerId)
         fetchTimer.current = null
       }
     }
