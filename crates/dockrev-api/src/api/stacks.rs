@@ -303,13 +303,21 @@ pub(super) async fn enrich_stack_with_version_inference(
                     infer_semver_tags_from_snapshot(&snapshot_entry.snapshot, &svc.image.tag)
                 };
                 let inferred_first = tags.first().cloned();
-                if for_candidate {
-                    if let Some(candidate) = svc.candidate.as_mut() {
-                        candidate.resolved_tag = inferred_first;
+                let scan_has_failures = snapshot_entry.snapshot.scan.manifests_timeout > 0
+                    || snapshot_entry.snapshot.scan.manifests_error > 0;
+
+                // Only clear inferred tags when the snapshot scan completed without failures.
+                // Error/all_failed snapshots are persisted best-effort and must not wipe the last
+                // known good inference values.
+                if inferred_first.is_some() || !scan_has_failures {
+                    if for_candidate {
+                        if let Some(candidate) = svc.candidate.as_mut() {
+                            candidate.resolved_tag = inferred_first;
+                        }
+                    } else {
+                        svc.image.resolved_tag = inferred_first;
+                        svc.image.resolved_tags = if tags.len() > 1 { Some(tags) } else { None };
                     }
-                } else {
-                    svc.image.resolved_tag = inferred_first;
-                    svc.image.resolved_tags = if tags.len() > 1 { Some(tags) } else { None };
                 }
             }
         }

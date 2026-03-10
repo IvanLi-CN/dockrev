@@ -3815,6 +3815,90 @@ services:
 }
 
 #[tokio::test]
+async fn stack_detail_preserves_resolved_tag_when_snapshot_is_all_failed() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(300)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let service = services.first().expect("service must exist");
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    // Seed a last-known-good resolved tag on the service itself. This should not be wiped when
+    // the latest snapshot is an all_failed/error snapshot.
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            crate::snapshot_worker::normalize_digest("sha256:current"),
+            Some("v0.8.7".to_string()),
+            Some(serde_json::to_string(&vec!["v0.8.7"]).unwrap()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:current",
+        "linux/amd64",
+        &now,
+        vec![],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 0,
+            repo_tags_considered: 0,
+            manifests_ok: 0,
+            manifests_timeout: 0,
+            manifests_error: 1,
+        },
+    )
+    .await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let image = &detail["stack"]["services"][0]["image"];
+    assert_eq!(
+        image["resolvedTag"].as_str().unwrap_or("<none>"),
+        "v0.8.7",
+        "expected resolvedTag to be preserved for all_failed snapshot: {detail}"
+    );
+}
+
+#[tokio::test]
 async fn check_candidate_digest_change_enqueues_new_version_inference() {
     let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(400)));
     let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
