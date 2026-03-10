@@ -21,7 +21,7 @@ description: Runtime configuration reference for Dockrev API and Supervisor.
 | --- | --- | --- |
 | `DOCKREV_HTTP_ADDR` | `0.0.0.0:50883` | API bind address |
 | `DOCKREV_DB_PATH` | `./data/dockrev.sqlite3` | SQLite file path |
-| `DOCKREV_DOCKER_CONFIG` | empty | Path to a Docker `config.json`; Dockrev stages it into a temporary Docker CLI config directory for update jobs and also copies sibling metadata when the path is a real `config.json` |
+| `DOCKREV_DOCKER_CONFIG` | empty | Path to a Docker `config.json`; Dockrev stages it into a temporary Docker CLI config directory for update jobs and also copies Docker context metadata (`contexts/`) when the path is a real `config.json` |
 | `DOCKREV_COMPOSE_BIN` | `docker-compose` | Compose command selector |
 | `DOCKREV_AUTH_FORWARD_HEADER_NAME` | `X-Forwarded-User` | Forward Auth user header name |
 | `DOCKREV_AUTH_GROUP_HEADER_NAME` | `Remote-Groups` | Forward Auth group header name |

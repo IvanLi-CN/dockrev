@@ -54,21 +54,15 @@ impl DockerCliAuthBridge {
             .and_then(|name| name.to_str())
             .unwrap_or_default();
 
+        std::fs::create_dir_all(&docker_config_dir).with_context(|| {
+            format!(
+                "create docker auth workspace {}",
+                docker_config_dir.display()
+            )
+        })?;
+
         if source_file_name == "config.json" {
-            copy_dir_recursively(source_dir, &docker_config_dir).with_context(|| {
-                format!(
-                    "stage docker config directory {} -> {}",
-                    source_dir.display(),
-                    docker_config_dir.display()
-                )
-            })?;
-        } else {
-            std::fs::create_dir_all(&docker_config_dir).with_context(|| {
-                format!(
-                    "create docker auth workspace {}",
-                    docker_config_dir.display()
-                )
-            })?;
+            copy_selected_docker_config_metadata(source_dir, &docker_config_dir)?;
         }
 
         let staged_config_path = docker_config_dir.join("config.json");
@@ -93,6 +87,20 @@ impl DockerCliAuthBridge {
             self.docker_config_dir.to_string_lossy().to_string(),
         )]
     }
+}
+
+fn copy_selected_docker_config_metadata(src: &Path, dest: &Path) -> anyhow::Result<()> {
+    let contexts_src = src.join("contexts");
+    if contexts_src.is_dir() {
+        copy_dir_recursively(&contexts_src, &dest.join("contexts")).with_context(|| {
+            format!(
+                "stage docker config contexts {} -> {}",
+                contexts_src.display(),
+                dest.join("contexts").display()
+            )
+        })?;
+    }
+    Ok(())
 }
 
 fn copy_dir_recursively(src: &Path, dest: &Path) -> anyhow::Result<()> {
@@ -419,6 +427,20 @@ pub async fn run_update_job(
             summary_json: json!({
                 "mode": "dry-run",
                 "changedServices": services.len(),
+                "skippedVersionAnomaly": skipped_version_anomaly,
+            }),
+        });
+    }
+
+    if services.is_empty() {
+        return Ok(UpdateOutcome {
+            status: "success".to_string(),
+            summary_json: json!({
+                "changedServices": 0,
+                "oldDigests": serde_json::Map::<String, serde_json::Value>::new(),
+                "newDigests": serde_json::Map::<String, serde_json::Value>::new(),
+                "semverPulled": Vec::<String>::new(),
+                "semverPullWarnings": serde_json::Map::<String, serde_json::Value>::new(),
                 "skippedVersionAnomaly": skipped_version_anomaly,
             }),
         });
@@ -1509,7 +1531,9 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("dockrev-test-auth-default-{}", ulid::Ulid::new()));
         let contexts_dir = root.join("contexts/meta");
+        let buildx_dir = root.join("buildx");
         fs::create_dir_all(&contexts_dir).unwrap();
+        fs::create_dir_all(&buildx_dir).unwrap();
         let path = root.join("config.json");
         fs::write(&path, r#"{"auths":{"ghcr.io":{"auth":"Zm9vOmJhcg=="}}}"#).unwrap();
         fs::write(
@@ -1517,6 +1541,8 @@ mod tests {
             r#"{"currentContext":"desktop-linux"}"#,
         )
         .unwrap();
+        fs::write(buildx_dir.join("state.json"), "cache-state").unwrap();
+        fs::write(root.join("notes.txt"), "not-for-auth-bridge").unwrap();
         (path, TempDirCleanup(root))
     }
 
@@ -1541,7 +1567,7 @@ mod tests {
     }
 
     #[test]
-    fn docker_cli_auth_bridge_copies_sibling_metadata_for_real_config_json() {
+    fn docker_cli_auth_bridge_copies_context_metadata_for_real_config_json() {
         let (source_path, _source_cleanup) = write_test_default_named_docker_config();
 
         let bridge = DockerCliAuthBridge::stage(&source_path).expect("auth bridge should stage");
@@ -1555,6 +1581,26 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&staged_context).unwrap(),
             r#"{"currentContext":"desktop-linux"}"#
+        );
+        assert!(!bridge.docker_config_dir.join("buildx/state.json").exists());
+        assert!(!bridge.docker_config_dir.join("notes.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn docker_cli_auth_bridge_handles_read_only_real_config_json() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (source_path, _source_cleanup) = write_test_default_named_docker_config();
+        let mut permissions = fs::metadata(&source_path).unwrap().permissions();
+        permissions.set_mode(0o444);
+        fs::set_permissions(&source_path, permissions).unwrap();
+
+        let bridge = DockerCliAuthBridge::stage(&source_path).expect("auth bridge should stage");
+
+        assert_eq!(
+            fs::read_to_string(bridge.docker_config_dir.join("config.json")).unwrap(),
+            fs::read_to_string(&source_path).unwrap()
         );
     }
 
@@ -1877,6 +1923,38 @@ mod tests {
                     .any(|(k, v)| k == "DOCKER_CONFIG" && v.ends_with("/.docker"))
             );
         }
+    }
+
+    #[tokio::test]
+    async fn noop_update_with_broken_docker_config_path_stays_noop() {
+        let stack = single_service_stack("ghcr.io/ivanli-cn/dockrev:1.0", None);
+        let runner = FakeRunner::default();
+        let missing_path = std::env::temp_dir()
+            .join(format!("dockrev-missing-config-{}", ulid::Ulid::new()))
+            .join("config.json");
+
+        let outcome = run_update_job(
+            &runner,
+            "docker-compose",
+            Some(missing_path.as_path()),
+            IdempotentRetryPolicy::default(),
+            &stack,
+            &JobScope::Stack,
+            None,
+            "live",
+            None,
+            None,
+            false,
+            "ui",
+            Some("ghcr.io/ivanli-cn/dockrev"),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.status, "success");
+        assert_eq!(outcome.summary_json["changedServices"].as_u64(), Some(0));
+        assert!(runner.calls.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

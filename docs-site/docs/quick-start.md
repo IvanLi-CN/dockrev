@@ -21,7 +21,7 @@ cd deploy
 mkdir -p data
 # Dockrev stages this file for update-job Docker/Compose auth; no extra /root/.docker/config.json mount is required.
 cp ~/.docker/config.json data/docker-config.json
-# If you rely on sibling Docker CLI metadata (for example contexts/), configure DOCKREV_DOCKER_CONFIG with a real config.json path instead of a renamed copy.
+# If you rely on Docker contexts, configure DOCKREV_DOCKER_CONFIG with a real config.json path instead of a renamed copy.
 
 docker compose up --build
 ```
