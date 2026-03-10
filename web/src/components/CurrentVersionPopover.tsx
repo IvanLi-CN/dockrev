@@ -112,8 +112,14 @@ export function CurrentVersionPopover(props: {
   triggerClassName?: string
   children?: ReactNode
 }) {
-  const { imageTag, imageDigest, onLocalResolvedTags, resolvedTag, serviceId } =
-    props
+  const {
+    children,
+    imageTag,
+    imageDigest,
+    onLocalResolvedTags,
+    resolvedTag,
+    serviceId,
+  } = props
   const preferSource = props.preferSource ?? 'resolvedTag'
   const fetchTimer = useRef<number | null>(null)
   const {
@@ -378,10 +384,12 @@ export function CurrentVersionPopover(props: {
     // Only release the override once the parent actually reflects the same inferred value.
     // Otherwise we'd flash the new tag for a render and immediately snap back to the old one.
     if (localDisplayTag.key !== digestKey || !localDisplayTag.value) return
-    if (!resolvedTagTrim) return
-    if (resolvedTagTrim !== localDisplayTag.value.trim()) return
+    const base =
+      typeof children === 'string' ? children.trim() : displayTag.trim()
+    if (!base) return
+    if (base !== localDisplayTag.value.trim()) return
     setLocalDisplayTag({ key: digestKey, value: null })
-  }, [digestKey, localDisplayTag.key, localDisplayTag.value, resolvedTagTrim])
+  }, [children, digestKey, displayTag, localDisplayTag.key, localDisplayTag.value])
 
   const inferenceBlock = useMemo<ReactNode>(() => {
     const rawTrim = (imageTag ?? '').trim()
@@ -522,13 +530,15 @@ export function CurrentVersionPopover(props: {
     }
   }
 
-  const effectiveDisplayTag = snapshotDisplayOverride ?? displayTag
+  const showInferenceLoadingStyle =
+    preferSource !== 'rawTag' && Boolean(props.inferenceLoading)
+  const effectiveDisplayTag = showInferenceLoadingStyle
+    ? displayTag
+    : (snapshotDisplayOverride ?? displayTag)
   const showSnapshotLoadingTriggerLabel =
     preferSource !== 'rawTag' &&
     Boolean(digestNorm) &&
     snapshotPhase === 'loading'
-  const showInferenceLoadingStyle =
-    preferSource !== 'rawTag' && Boolean(props.inferenceLoading)
   const showLoadingStyle =
     showSnapshotLoadingTriggerLabel || showInferenceLoadingStyle
   const triggerClassNameBase =
@@ -538,7 +548,7 @@ export function CurrentVersionPopover(props: {
     : triggerClassNameBase
   const triggerLabel = showSnapshotLoadingTriggerLabel
     ? '加载中…'
-    : (props.children ?? effectiveDisplayTag)
+    : (children ?? effectiveDisplayTag)
 
   return (
     <Popover {...popoverProps}>
