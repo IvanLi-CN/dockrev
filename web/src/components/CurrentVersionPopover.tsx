@@ -364,6 +364,15 @@ export function CurrentVersionPopover(props: {
     setLocalDisplayTag({ key: digestKey, value: null })
   }, [digestKey])
 
+  useEffect(() => {
+    // The popover-local snapshot-derived display tag is only meant as a temporary UX bridge.
+    // Once the parent service data catches up (resolvedTag becomes a strict semver),
+    // drop the override so we don't mask authoritative updates indefinitely.
+    if (localDisplayTag.key !== digestKey || !localDisplayTag.value) return
+    if (!resolvedTagTrim || !isStrictSemverTag(resolvedTagTrim)) return
+    setLocalDisplayTag({ key: digestKey, value: null })
+  }, [digestKey, localDisplayTag.key, localDisplayTag.value, resolvedTagTrim])
+
   const inferenceBlock = useMemo<ReactNode>(() => {
     const rawTrim = (imageTag ?? '').trim()
     const resolved = resolvedTagTrim

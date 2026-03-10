@@ -16,7 +16,7 @@ import {
 } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 import { useHoverPinnedPopover } from './HoverPinnedPopover'
-import { pickSnapshotDisplayTag } from '../versionDisplay'
+import { isStrictSemverTag, pickSnapshotDisplayTag } from '../versionDisplay'
 
 function uniquePreserveOrder(
   values: Array<string | null | undefined> | null | undefined,
@@ -323,6 +323,16 @@ export function VersionTagsPopover(props: {
     setLocalRefreshKey(null)
     setLocalDisplayTag({ key: digestKey, value: null })
   }, [digestKey])
+
+  useEffect(() => {
+    // Same idea as CurrentVersionPopover: once the parent catches up with a strict semver
+    // candidate display, drop the popover-local override to avoid masking updates forever.
+    if (localDisplayTag.key !== digestKey || !localDisplayTag.value) return
+    if (typeof children !== 'string') return
+    const t = children.trim()
+    if (!t || !isStrictSemverTag(t)) return
+    setLocalDisplayTag({ key: digestKey, value: null })
+  }, [children, digestKey, localDisplayTag.key, localDisplayTag.value])
 
   const digestTagsUnique = useMemo(
     () => uniquePreserveOrder(digestTags),
