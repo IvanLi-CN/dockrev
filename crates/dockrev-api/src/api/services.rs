@@ -31,10 +31,15 @@ pub(super) async fn trigger_service_version_inference_refresh(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(service_id): Path<String>,
-    Json(body): Json<TriggerVersionInferenceRefreshRequest>,
+    body: Bytes,
 ) -> Result<Response, ApiError> {
     let _user = require_user(&state, &headers).await?;
 
+    let body: TriggerVersionInferenceRefreshRequest = if body.is_empty() {
+        TriggerVersionInferenceRefreshRequest::default()
+    } else {
+        serde_json::from_slice(&body).map_err(|_| ApiError::invalid_argument("invalid json"))?
+    };
     let digest_input = body.digest.unwrap_or_default();
     let digest_trimmed = digest_input.trim();
     if digest_trimmed.is_empty() {

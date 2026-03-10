@@ -3470,6 +3470,27 @@ services:
                     "/api/services/{}/version-inference/refresh",
                     service_id
                 ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let body = response_json(resp).await;
+    assert_eq!(
+        body["error"]["code"].as_str().unwrap_or("<none>"),
+        "invalid_argument"
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/services/{}/version-inference/refresh",
+                    service_id
+                ))
                 .header("content-type", "application/json")
                 .body(Body::from("{}"))
                 .unwrap(),

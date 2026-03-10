@@ -179,13 +179,15 @@ export function CurrentVersionPopover(props: {
     () => uniquePreserveOrder(digestTags),
     [digestTags],
   )
-  const snapshotDisplayOverride =
-    preferSource !== 'rawTag' &&
-    localDisplayTag.key === digestKey &&
-    localDisplayTag.value
+  const snapshotInferredDisplayTag =
+    localDisplayTag.key === digestKey && localDisplayTag.value
       ? localDisplayTag.value
       : null
-  const preferredResolvedTagTrim = snapshotDisplayOverride ?? resolvedTagTrim
+  const snapshotDisplayOverride =
+    preferSource !== 'rawTag' && snapshotInferredDisplayTag
+      ? snapshotInferredDisplayTag
+      : null
+  const preferredResolvedTagTrim = snapshotInferredDisplayTag ?? resolvedTagTrim
 
   const effectiveTags = useMemo(() => {
     if (!digestNorm) return []
@@ -297,12 +299,10 @@ export function CurrentVersionPopover(props: {
               error: null,
             })
             if (localRefreshKey === digestKey) {
-              if (preferSource !== 'rawTag') {
-                setLocalDisplayTag({
-                  key: digestKey,
-                  value: pickSnapshotDisplayTag(data.tags),
-                })
-              }
+              setLocalDisplayTag({
+                key: digestKey,
+                value: pickSnapshotDisplayTag(data.tags),
+              })
               setLocalRefreshKey(null)
             }
             setSnapshotPhase('ready')
@@ -368,11 +368,12 @@ export function CurrentVersionPopover(props: {
     const rawTrim = (imageTag ?? '').trim()
     const resolved = resolvedTagTrim
 
-    if (snapshotDisplayOverride) {
+    if (snapshotInferredDisplayTag) {
       return (
         <div className="muted" style={{ display: 'grid', gap: 4 }}>
           <div>
-            推测 semver: <span className="mono">{snapshotDisplayOverride}</span>
+            推测 semver:{' '}
+            <span className="mono">{snapshotInferredDisplayTag}</span>
             {' · '}来源: <span className="mono">digest snapshot</span>
           </div>
         </div>
@@ -484,7 +485,7 @@ export function CurrentVersionPopover(props: {
     preferSource,
     rawSeries,
     resolvedTagTrim,
-    snapshotDisplayOverride,
+    snapshotInferredDisplayTag,
   ])
 
   const handleTriggerClick = () => {
