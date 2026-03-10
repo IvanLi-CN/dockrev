@@ -41,8 +41,8 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 | POST | `/api/services/{service_id}/archive` | Forward Auth | 归档 service | `200` `404` `401` |
 | POST | `/api/services/{service_id}/restore` | Forward Auth | 取消归档 service | `200` `404` `401` |
 | GET | `/api/services/{service_id}/digest-tags` | Forward Auth | 查询 digest 对应 tags | `200` `404` `401` |
-| GET | `/api/services/{service_id}/digest-tags-snapshot` | Forward Auth | 查询 digest tags 快照 | `200` `404` `401` |
-| POST | `/api/services/{service_id}/version-inference/refresh` | Forward Auth | 触发单服务版本推断刷新 | `200` `404` `401` |
+| GET | `/api/services/{service_id}/digest-tags-snapshot` | Forward Auth | 查询 digest tags 快照（目标 digest 正在刷新时返回 `202 pending`） | `200` `202` `404` `401` |
+| POST | `/api/services/{service_id}/version-inference/refresh` | Forward Auth | 触发指定 digest 的局部版本推断刷新（请求体必须带 `digest`） | `202` `400` `404` `401` |
 | GET | `/api/version-inference/overview` | Forward Auth | 版本推断总览 | `200` `401` |
 | GET | `/api/version-inference/events` | Forward Auth | 版本推断事件流（SSE） | `200` `401` |
 

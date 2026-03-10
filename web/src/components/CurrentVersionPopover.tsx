@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import {
   ApiError,
@@ -9,6 +16,7 @@ import {
 } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 import { useHoverPinnedPopover } from './HoverPinnedPopover'
+import { pickSnapshotDisplayTag } from '../versionDisplay'
 
 type TagSeries = {
   major: number
@@ -46,7 +54,10 @@ function parseTagSeries(tag: string): TagSeries | null {
   }
 }
 
-function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefined): string {
+function inferredTagForDisplay(
+  tag: string,
+  resolvedTag: string | null | undefined,
+): string {
   const r = (resolvedTag ?? '').trim()
   if (r && isStrictSemverTag(r)) return r
   const t = tag.trim()
@@ -106,7 +117,14 @@ export function CurrentVersionPopover(props: {
   const { imageTag, imageDigest, resolvedTag } = props
   const preferSource = props.preferSource ?? 'resolvedTag'
   const fetchTimer = useRef<number | null>(null)
-  const { contentProps, open, pinned, popoverProps, togglePinned, triggerProps } = useHoverPinnedPopover()
+  const {
+    contentProps,
+    open,
+    pinned,
+    popoverProps,
+    togglePinned,
+    triggerProps,
+  } = useHoverPinnedPopover()
 
   const digestNorm = useMemo(() => normalizeDigest(imageDigest), [imageDigest])
 
@@ -116,11 +134,17 @@ export function CurrentVersionPopover(props: {
     return inferredTagForDisplay(imageTag, resolvedTag)
   }, [imageTag, props.displayTag, resolvedTag])
 
-  const resolvedTagTrim = useMemo(() => (resolvedTag ?? '').trim(), [resolvedTag])
+  const resolvedTagTrim = useMemo(
+    () => (resolvedTag ?? '').trim(),
+    [resolvedTag],
+  )
 
   const rawSeries = useMemo(() => parseTagSeries(imageTag), [imageTag])
 
-  const digestKey = useMemo(() => `${props.serviceId}:${digestNorm ?? ''}`, [digestNorm, props.serviceId])
+  const digestKey = useMemo(
+    () => `${props.serviceId}:${digestNorm ?? ''}`,
+    [digestNorm, props.serviceId],
+  )
   const [digestState, setDigestState] = useState<DigestTagsState>(() => ({
     key: digestKey,
     tags: null,
@@ -132,7 +156,8 @@ export function CurrentVersionPopover(props: {
   const digestTags = digestState.key === digestKey ? digestState.tags : null
   const scan = digestState.key === digestKey ? digestState.scan : null
   const checkedAt = digestState.key === digestKey ? digestState.checkedAt : null
-  const missingSnapshot = digestState.key === digestKey ? digestState.missingSnapshot : false
+  const missingSnapshot =
+    digestState.key === digestKey ? digestState.missingSnapshot : false
   const loadError = digestState.key === digestKey ? digestState.error : null
   const [snapshotPhase, setSnapshotPhase] = useState<SnapshotFetchPhase>('idle')
   const snapshotPhaseRef = useRef<SnapshotFetchPhase>(snapshotPhase)
@@ -140,16 +165,43 @@ export function CurrentVersionPopover(props: {
   const [refreshing, setRefreshing] = useState(false)
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null)
   const [refreshError, setRefreshError] = useState<string | null>(null)
+  const [localRefreshKey, setLocalRefreshKey] = useState<string | null>(null)
+  const [snapshotFetchToken, setSnapshotFetchToken] = useState(0)
+  const [localDisplayTag, setLocalDisplayTag] = useState<{
+    key: string
+    value: string | null
+  }>({
+    key: digestKey,
+    value: null,
+  })
 
-  const digestTagsList = useMemo(() => uniquePreserveOrder(digestTags), [digestTags])
+  const digestTagsList = useMemo(
+    () => uniquePreserveOrder(digestTags),
+    [digestTags],
+  )
+  const snapshotDisplayOverride =
+    preferSource !== 'rawTag' &&
+    localDisplayTag.key === digestKey &&
+    localDisplayTag.value
+      ? localDisplayTag.value
+      : null
+  const preferredResolvedTagTrim = snapshotDisplayOverride ?? resolvedTagTrim
 
   const effectiveTags = useMemo(() => {
     if (!digestNorm) return []
-    return resolvedTagTrim ? moveToFront(digestTagsList, resolvedTagTrim) : digestTagsList
-  }, [digestNorm, digestTagsList, resolvedTagTrim])
+    return preferredResolvedTagTrim
+      ? moveToFront(digestTagsList, preferredResolvedTagTrim)
+      : digestTagsList
+  }, [digestNorm, digestTagsList, preferredResolvedTagTrim])
 
-  const tagsPreview = useMemo(() => effectiveTags.slice(0, TAGS_PREVIEW_MAX), [effectiveTags])
-  const tagsMore = useMemo(() => Math.max(0, effectiveTags.length - tagsPreview.length), [effectiveTags.length, tagsPreview.length])
+  const tagsPreview = useMemo(
+    () => effectiveTags.slice(0, TAGS_PREVIEW_MAX),
+    [effectiveTags],
+  )
+  const tagsMore = useMemo(
+    () => Math.max(0, effectiveTags.length - tagsPreview.length),
+    [effectiveTags.length, tagsPreview.length],
+  )
 
   useEffect(() => {
     return () => {
@@ -161,18 +213,29 @@ export function CurrentVersionPopover(props: {
   }, [])
 
   const triggerForceRefresh = useCallback(async () => {
-    if (refreshing) return
+    if (refreshing || !digestNorm) return
     setRefreshing(true)
     setRefreshError(null)
     setRefreshNotice(null)
 
+    if (fetchTimer.current != null) {
+      window.clearTimeout(fetchTimer.current)
+      fetchTimer.current = null
+    }
+
     try {
-      const resp = await forceRefreshServiceVersionInference(props.serviceId)
+      const resp = await forceRefreshServiceVersionInference(
+        props.serviceId,
+        digestNorm,
+      )
       setRefreshNotice(
         resp.reason === 'running'
-          ? '已有版本推测任务在进行中。'
-          : '已触发强制刷新，版本推测进行中。',
+          ? '当前 digest 已有刷新任务在进行中。'
+          : '已触发当前 digest 的强制刷新。',
       )
+      setLocalRefreshKey(digestKey)
+      setLocalDisplayTag({ key: digestKey, value: null })
+      setSnapshotFetchToken((value) => value + 1)
       setDigestState({
         key: digestKey,
         tags: null,
@@ -181,18 +244,13 @@ export function CurrentVersionPopover(props: {
         missingSnapshot: false,
         error: null,
       })
-      setSnapshotPhase('idle')
-      window.dispatchEvent(
-        new CustomEvent('dockrev:version-inference-refresh', {
-          detail: { serviceId: props.serviceId },
-        }),
-      )
+      setSnapshotPhase('loading')
     } catch (e: unknown) {
       setRefreshError(e instanceof Error ? e.message : String(e))
     } finally {
       setRefreshing(false)
     }
-  }, [digestKey, props.serviceId, refreshing])
+  }, [digestKey, digestNorm, props.serviceId, refreshing])
 
   useEffect(() => {
     const shouldPollSnapshot = open || snapshotPhaseRef.current === 'loading'
@@ -220,7 +278,10 @@ export function CurrentVersionPopover(props: {
             if (!alive) return
             if (isServiceDigestTagsSnapshotPending(data)) {
               setSnapshotPhase('loading')
-              const retryAfterMs = Math.max(200, Math.min(5000, Number(data.retryAfterMs) || FETCH_DEBOUNCE_MS))
+              const retryAfterMs = Math.max(
+                200,
+                Math.min(5000, Number(data.retryAfterMs) || FETCH_DEBOUNCE_MS),
+              )
               fetchTimer.current = window.setTimeout(() => {
                 if (fetchTimer.current != null) fetchTimer.current = null
                 poll()
@@ -235,6 +296,15 @@ export function CurrentVersionPopover(props: {
               missingSnapshot: false,
               error: null,
             })
+            if (localRefreshKey === digestKey) {
+              if (preferSource !== 'rawTag') {
+                setLocalDisplayTag({
+                  key: digestKey,
+                  value: pickSnapshotDisplayTag(data.tags),
+                })
+              }
+              setLocalRefreshKey(null)
+            }
             setSnapshotPhase('ready')
           })
           .catch((e: unknown) => {
@@ -248,6 +318,7 @@ export function CurrentVersionPopover(props: {
                 missingSnapshot: true,
                 error: null,
               })
+              if (localRefreshKey === digestKey) setLocalRefreshKey(null)
               setSnapshotPhase('missing')
               return
             }
@@ -259,6 +330,7 @@ export function CurrentVersionPopover(props: {
               missingSnapshot: false,
               error: e instanceof Error ? e.message : String(e),
             })
+            if (localRefreshKey === digestKey) setLocalRefreshKey(null)
             setSnapshotPhase('error')
           })
       }
@@ -274,17 +346,42 @@ export function CurrentVersionPopover(props: {
         fetchTimer.current = null
       }
     }
-  }, [digestKey, digestNorm, digestTags, open, pinned, props.serviceId])
+  }, [
+    digestKey,
+    digestNorm,
+    digestTags,
+    localRefreshKey,
+    open,
+    snapshotFetchToken,
+    pinned,
+    preferSource,
+    props.serviceId,
+  ])
 
   useEffect(() => {
     setSnapshotPhase('idle')
+    setLocalRefreshKey(null)
+    setLocalDisplayTag({ key: digestKey, value: null })
   }, [digestKey])
 
   const inferenceBlock = useMemo<ReactNode>(() => {
     const rawTrim = (imageTag ?? '').trim()
     const resolved = resolvedTagTrim
 
-    const canUseResolvedSemver = Boolean(resolved && isStrictSemverTag(resolved))
+    if (snapshotDisplayOverride) {
+      return (
+        <div className="muted" style={{ display: 'grid', gap: 4 }}>
+          <div>
+            推测 semver: <span className="mono">{snapshotDisplayOverride}</span>
+            {' · '}来源: <span className="mono">digest snapshot</span>
+          </div>
+        </div>
+      )
+    }
+
+    const canUseResolvedSemver = Boolean(
+      resolved && isStrictSemverTag(resolved),
+    )
     const canUseRawSemver = Boolean(rawTrim && isStrictSemverTag(rawTrim))
 
     if (preferSource === 'rawTag') {
@@ -304,7 +401,9 @@ export function CurrentVersionPopover(props: {
             <div>
               推测 semver: <span className="mono">{resolved}</span>
               {' · '}来源: <span className="mono">resolvedTag</span>
-              {rawTrim ? `（raw tag 非 semver：${rawTrim}）` : '（raw tag 为空）'}
+              {rawTrim
+                ? `（raw tag 非 semver：${rawTrim}）`
+                : '（raw tag 为空）'}
             </div>
           </div>
         )
@@ -326,7 +425,9 @@ export function CurrentVersionPopover(props: {
             <div>
               推测 semver: <span className="mono">{rawTrim}</span>
               {' · '}来源: <span className="mono">raw tag</span>
-              {resolved ? `（resolvedTag 非 semver：${resolved}）` : '（resolvedTag 缺失）'}
+              {resolved
+                ? `（resolvedTag 非 semver：${resolved}）`
+                : '（resolvedTag 缺失）'}
             </div>
           </div>
         )
@@ -335,13 +436,16 @@ export function CurrentVersionPopover(props: {
 
     const reasons: string[] = []
     if (!resolved) reasons.push('resolvedTag 缺失')
-    else if (!isStrictSemverTag(resolved)) reasons.push(`resolvedTag 非严格 semver（${resolved}）`)
+    else if (!isStrictSemverTag(resolved))
+      reasons.push(`resolvedTag 非严格 semver（${resolved}）`)
 
     if (!rawTrim) reasons.push('raw tag 为空')
     else if (!isStrictSemverTag(rawTrim)) {
       if (rawSeries && rawSeries.precision !== 3) {
         const series =
-          rawSeries.precision === 1 || rawSeries.minor == null ? `${rawSeries.major}` : `${rawSeries.major}.${rawSeries.minor}`
+          rawSeries.precision === 1 || rawSeries.minor == null
+            ? `${rawSeries.major}`
+            : `${rawSeries.major}.${rawSeries.minor}`
         reasons.push(`raw tag 缺少 patch（${rawTrim} -> ${series}.*）`)
       } else {
         reasons.push(`raw tag 非严格 semver（${rawTrim}）`)
@@ -357,11 +461,7 @@ export function CurrentVersionPopover(props: {
       </div>,
     )
     if (reasons.length > 0) {
-      lines.push(
-        <div key="l2">
-          原因:
-        </div>,
-      )
+      lines.push(<div key="l2">原因:</div>)
       lines.push(
         <div key="reasons" className="versionTagsPopoverChips">
           {reasons.map((r) => (
@@ -378,7 +478,14 @@ export function CurrentVersionPopover(props: {
         {lines}
       </div>
     )
-  }, [digestNorm, imageTag, preferSource, rawSeries, resolvedTagTrim])
+  }, [
+    digestNorm,
+    imageTag,
+    preferSource,
+    rawSeries,
+    resolvedTagTrim,
+    snapshotDisplayOverride,
+  ])
 
   const handleTriggerClick = () => {
     const next = togglePinned()
@@ -395,14 +502,23 @@ export function CurrentVersionPopover(props: {
     }
   }
 
-  const showSnapshotLoadingTriggerLabel = preferSource !== 'rawTag' && Boolean(digestNorm) && snapshotPhase === 'loading'
-  const showInferenceLoadingStyle = preferSource !== 'rawTag' && Boolean(props.inferenceLoading)
-  const showLoadingStyle = showSnapshotLoadingTriggerLabel || showInferenceLoadingStyle
-  const triggerClassNameBase = props.triggerClassName ?? 'versionTagsTrigger mono monoPrimary'
+  const effectiveDisplayTag = snapshotDisplayOverride ?? displayTag
+  const showSnapshotLoadingTriggerLabel =
+    preferSource !== 'rawTag' &&
+    Boolean(digestNorm) &&
+    snapshotPhase === 'loading'
+  const showInferenceLoadingStyle =
+    preferSource !== 'rawTag' && Boolean(props.inferenceLoading)
+  const showLoadingStyle =
+    showSnapshotLoadingTriggerLabel || showInferenceLoadingStyle
+  const triggerClassNameBase =
+    props.triggerClassName ?? 'versionTagsTrigger mono monoPrimary'
   const triggerClassName = showLoadingStyle
     ? `${triggerClassNameBase} versionTagsTriggerLoading`
     : triggerClassNameBase
-  const triggerLabel = showSnapshotLoadingTriggerLabel ? '加载中…' : (props.children ?? displayTag)
+  const triggerLabel = showSnapshotLoadingTriggerLabel
+    ? '加载中…'
+    : (props.children ?? effectiveDisplayTag)
 
   return (
     <Popover {...popoverProps}>
@@ -427,11 +543,9 @@ export function CurrentVersionPopover(props: {
       >
         <div className="versionTagsPopoverHeader">
           <div className="versionTagsPopoverTitle">
-            <span className="mono monoPrimary">{displayTag}</span>
+            <span className="mono monoPrimary">{effectiveDisplayTag}</span>
             {digestNorm ? (
-              <span className="mono muted">
-                {shortenDigest(digestNorm)}
-              </span>
+              <span className="mono muted">{shortenDigest(digestNorm)}</span>
             ) : (
               <span className="mono muted">digest 未知</span>
             )}
@@ -440,7 +554,7 @@ export function CurrentVersionPopover(props: {
             <button
               type="button"
               className="versionTagsPopoverAction"
-              disabled={refreshing}
+              disabled={refreshing || !digestNorm}
               onClick={() => {
                 void triggerForceRefresh()
               }}
@@ -451,7 +565,9 @@ export function CurrentVersionPopover(props: {
         </div>
 
         {refreshNotice ? <div className="muted">{refreshNotice}</div> : null}
-        {refreshError ? <div className="muted">触发失败：{refreshError}</div> : null}
+        {refreshError ? (
+          <div className="muted">触发失败：{refreshError}</div>
+        ) : null}
 
         <div className="versionTagsPopoverSection">
           <div className="label">推测</div>
@@ -461,10 +577,14 @@ export function CurrentVersionPopover(props: {
         <div className="versionTagsPopoverSection">
           <div className="label">当前镜像</div>
           <div className="muted">
-            raw tag <span className="mono">{imageTag.trim() ? imageTag : '（空）'}</span>
+            raw tag{' '}
+            <span className="mono">
+              {imageTag.trim() ? imageTag : '（空）'}
+            </span>
           </div>
           <div className="muted">
-            resolvedTag <span className="mono">{resolvedTagTrim || '（缺失）'}</span>
+            resolvedTag{' '}
+            <span className="mono">{resolvedTagTrim || '（缺失）'}</span>
           </div>
         </div>
 
@@ -473,7 +593,9 @@ export function CurrentVersionPopover(props: {
           {!digestNorm && effectiveTags.length === 0 ? (
             <div className="muted">digest 未知，暂无 tags 信息</div>
           ) : digestNorm && missingSnapshot ? (
-            <div className="muted">快照缺失：请先执行一次 check（本气泡不再实时扫描 registry）</div>
+            <div className="muted">
+              快照缺失：请先执行一次 check（本气泡不再实时扫描 registry）
+            </div>
           ) : digestNorm && digestTags == null && effectiveTags.length === 0 ? (
             <div className="muted">读取扫描快照中…</div>
           ) : loadError && effectiveTags.length === 0 ? (
@@ -490,28 +612,45 @@ export function CurrentVersionPopover(props: {
                 </div>
               ) : null}
 
-              {scan && digestNorm && scan.repoTagsConsidered < scan.repoTagsTotal ? (
+              {scan &&
+              digestNorm &&
+              scan.repoTagsConsidered < scan.repoTagsTotal ? (
                 <div className="muted">
-                  注意：仅比对最近 {scan.repoTagsConsidered} / {scan.repoTagsTotal} 个 tags，结果可能不完整
+                  注意：仅比对最近 {scan.repoTagsConsidered} /{' '}
+                  {scan.repoTagsTotal} 个 tags，结果可能不完整
                 </div>
               ) : null}
 
-              {scan && digestNorm && (scan.manifestsTimeout > 0 || scan.manifestsError > 0) ? (
+              {scan &&
+              digestNorm &&
+              (scan.manifestsTimeout > 0 || scan.manifestsError > 0) ? (
                 <div className="muted">
-                  注意：digest tags 可能不完整（ok {scan.manifestsOk} / {scan.repoTagsConsidered}
-                  {scan.manifestsTimeout > 0 ? ` · timeout ${scan.manifestsTimeout}` : ''}
-                  {scan.manifestsError > 0 ? ` · error ${scan.manifestsError}` : ''}
+                  注意：digest tags 可能不完整（ok {scan.manifestsOk} /{' '}
+                  {scan.repoTagsConsidered}
+                  {scan.manifestsTimeout > 0
+                    ? ` · timeout ${scan.manifestsTimeout}`
+                    : ''}
+                  {scan.manifestsError > 0
+                    ? ` · error ${scan.manifestsError}`
+                    : ''}
                   ）
                 </div>
               ) : null}
 
               <div className="muted">
-                tags 预览：{tagsMore > 0 ? `显示 ${tagsPreview.length}，另有 ${tagsMore} 个` : '全部'}
+                tags 预览：
+                {tagsMore > 0
+                  ? `显示 ${tagsPreview.length}，另有 ${tagsMore} 个`
+                  : '全部'}
               </div>
               <div className="versionTagsPopoverChips">
                 {tagsPreview.map((t) => (
                   <span key={t} className="versionTagsChip">
-                    <span className={`mono${t === resolvedTagTrim ? ' monoPrimary' : ''}`}>{t}</span>
+                    <span
+                      className={`mono${t === preferredResolvedTagTrim ? ' monoPrimary' : ''}`}
+                    >
+                      {t}
+                    </span>
                   </span>
                 ))}
               </div>

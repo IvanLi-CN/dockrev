@@ -1364,6 +1364,88 @@ async function runInteractive({ baseUrl, browser }) {
       await page.close().catch(() => {})
     }
   }
+
+  // 10) Candidate popover force refresh must stay local (current trigger unchanged).
+  {
+    const page = await openStory('components-versiontagspopover--multi-tags')
+    try {
+      const line = page.locator('.versionLine').first()
+      const currentTrigger = line.locator('.versionTagsTrigger').nth(0)
+      const candidateTrigger = line.locator('.versionTagsTrigger').nth(1)
+
+      await candidateTrigger.waitFor({ timeout: 10_000 })
+      const currentBefore = (await currentTrigger.textContent())?.trim() ?? ''
+
+      await candidateTrigger.click()
+      const popover = page.locator(".versionTagsPopover[data-state='open']")
+      await popover.waitFor({ timeout: 10_000 })
+      await popover.getByRole('button', { name: '强制刷新' }).click()
+
+      await page.waitForFunction(() => {
+        const line = document.querySelector('.versionLine')
+        if (!line) return false
+        const triggers = line.querySelectorAll('.versionTagsTrigger')
+        if (triggers.length < 2) return false
+        return triggers[1]?.textContent?.trim() === '加载中…'
+      }, null, { timeout: 10_000 })
+
+      await page.waitForFunction(() => {
+        const line = document.querySelector('.versionLine')
+        if (!line) return false
+        const triggers = line.querySelectorAll('.versionTagsTrigger')
+        if (triggers.length < 2) return false
+        return triggers[1]?.textContent?.trim() === 'v0.8.8'
+      }, null, { timeout: 10_000 })
+
+      const currentAfter = (await currentTrigger.textContent())?.trim() ?? ''
+      if (currentAfter !== currentBefore) {
+        throw new Error(`Expected current trigger to stay unchanged (${currentBefore} -> ${currentAfter}).`)
+      }
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
+  // 11) Current popover force refresh must stay local (candidate trigger unchanged).
+  {
+    const page = await openStory('components-versiontagspopover--multi-tags')
+    try {
+      const line = page.locator('.versionLine').first()
+      const currentTrigger = line.locator('.versionTagsTrigger').nth(0)
+      const candidateTrigger = line.locator('.versionTagsTrigger').nth(1)
+
+      await candidateTrigger.waitFor({ timeout: 10_000 })
+      const candidateBefore = (await candidateTrigger.textContent())?.trim() ?? ''
+
+      await currentTrigger.click()
+      const popover = page.locator(".versionTagsPopover[data-state='open']")
+      await popover.waitFor({ timeout: 10_000 })
+      await popover.getByRole('button', { name: '强制刷新' }).click()
+
+      await page.waitForFunction(() => {
+        const line = document.querySelector('.versionLine')
+        if (!line) return false
+        const triggers = line.querySelectorAll('.versionTagsTrigger')
+        if (triggers.length < 2) return false
+        return triggers[0]?.textContent?.trim() === '加载中…'
+      }, null, { timeout: 10_000 })
+
+      await page.waitForFunction(() => {
+        const line = document.querySelector('.versionLine')
+        if (!line) return false
+        const triggers = line.querySelectorAll('.versionTagsTrigger')
+        if (triggers.length < 2) return false
+        return triggers[0]?.textContent?.trim() === 'v0.8.7'
+      }, null, { timeout: 10_000 })
+
+      const candidateAfter = (await candidateTrigger.textContent())?.trim() ?? ''
+      if (candidateAfter !== candidateBefore) {
+        throw new Error(`Expected candidate trigger to stay unchanged (${candidateBefore} -> ${candidateAfter}).`)
+      }
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
 }
 
 async function main() {

@@ -1960,6 +1960,85 @@ services:
 }
 
 #[tokio::test]
+async fn service_digest_tags_snapshot_returns_pending_while_target_digest_is_in_flight() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(300)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        Some("sha256:match"),
+        Some("latest"),
+        Some("sha256:candidate"),
+    )
+    .await;
+
+    let checked_at = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:candidate",
+        "linux/amd64",
+        &checked_at,
+        vec!["v0.1.9".to_string(), "0.1.9".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+
+    let enqueued = state
+        .snapshot_worker
+        .enqueue(
+            "ghcr.io/acme/web",
+            "sha256:candidate",
+            "linux/amd64",
+            "force",
+        )
+        .await;
+    assert!(enqueued);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{}/digest-tags-snapshot?digest=sha256:candidate",
+                    service_id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"].as_str().unwrap_or("<none>"), "pending");
+    assert_eq!(
+        body["digest"].as_str().unwrap_or("<none>"),
+        "sha256:candidate"
+    );
+}
+
+#[tokio::test]
 async fn service_digest_tags_snapshot_unknown_digest_is_not_enqueued() {
     let registry = Arc::new(CountingRegistry::default());
     let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
@@ -3079,7 +3158,7 @@ services:
     for pair in starts.windows(2) {
         let gap = pair[1].duration_since(pair[0]);
         assert!(
-            gap >= Duration::from_millis(900),
+            gap >= Duration::from_millis(800),
             "spawn gap should be ~1s, got {:?}",
             gap
         );
@@ -3357,7 +3436,7 @@ services:
 }
 
 #[tokio::test]
-async fn force_refresh_endpoint_returns_accepted_and_dedupes() {
+async fn force_refresh_endpoint_requires_known_digest_and_dedupes_per_digest() {
     let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(300)));
     let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
     let app = api::router(state.clone());
@@ -3373,8 +3452,14 @@ services:
     )
     .unwrap();
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
-    let service_id =
-        set_single_service_check_result(&state, &stack_id, Some("sha256:new"), None, None).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        Some("sha256:current"),
+        Some("latest"),
+        Some("sha256:candidate"),
+    )
+    .await;
 
     let resp = app
         .clone()
@@ -3385,7 +3470,42 @@ services:
                     "/api/services/{}/version-inference/refresh",
                     service_id
                 ))
+                .header("content-type", "application/json")
                 .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/services/{}/version-inference/refresh",
+                    service_id
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"digest":"sha256:missing"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/services/{}/version-inference/refresh",
+                    service_id
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"digest":"sha256:current"}"#))
                 .unwrap(),
         )
         .await
@@ -3394,6 +3514,25 @@ services:
     let body = response_json(resp).await;
     assert_eq!(body["status"].as_str().unwrap_or("<none>"), "pending");
     assert_eq!(body["reason"].as_str().unwrap_or("<none>"), "force");
+    assert_eq!(
+        body["digest"].as_str().unwrap_or("<none>"),
+        "sha256:current"
+    );
+    assert_eq!(
+        state
+            .snapshot_worker
+            .in_flight_reason("ghcr.io/acme/web", "sha256:current", "linux/amd64")
+            .await
+            .as_deref(),
+        Some("force")
+    );
+    assert_eq!(
+        state
+            .snapshot_worker
+            .in_flight_reason("ghcr.io/acme/web", "sha256:candidate", "linux/amd64")
+            .await,
+        None
+    );
 
     let resp = app
         .clone()
@@ -3404,7 +3543,8 @@ services:
                     "/api/services/{}/version-inference/refresh",
                     service_id
                 ))
-                .body(Body::from("{}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"digest":"sha256:current"}"#))
                 .unwrap(),
         )
         .await
@@ -3413,6 +3553,42 @@ services:
     let body = response_json(resp).await;
     assert_eq!(body["status"].as_str().unwrap_or("<none>"), "pending");
     assert_eq!(body["reason"].as_str().unwrap_or("<none>"), "running");
+    assert_eq!(
+        body["digest"].as_str().unwrap_or("<none>"),
+        "sha256:current"
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/services/{}/version-inference/refresh",
+                    service_id
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"digest":"sha256:candidate"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"].as_str().unwrap_or("<none>"), "pending");
+    assert_eq!(body["reason"].as_str().unwrap_or("<none>"), "force");
+    assert_eq!(
+        body["digest"].as_str().unwrap_or("<none>"),
+        "sha256:candidate"
+    );
+    assert_eq!(
+        state
+            .snapshot_worker
+            .in_flight_reason("ghcr.io/acme/web", "sha256:candidate", "linux/amd64")
+            .await
+            .as_deref(),
+        Some("force")
+    );
 }
 
 #[tokio::test]

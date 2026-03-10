@@ -21,67 +21,64 @@ pub(super) async fn get_service_settings(
     }))
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct TriggerVersionInferenceRefreshRequest {
+    digest: Option<String>,
+}
+
 pub(super) async fn trigger_service_version_inference_refresh(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(service_id): Path<String>,
+    Json(body): Json<TriggerVersionInferenceRefreshRequest>,
 ) -> Result<Response, ApiError> {
     let _user = require_user(&state, &headers).await?;
-    let stack_id = state
+
+    let digest_input = body.digest.unwrap_or_default();
+    let digest_trimmed = digest_input.trim();
+    if digest_trimmed.is_empty() {
+        return Err(ApiError::invalid_argument("digest is required"));
+    }
+    let digest = snapshot_worker::normalize_digest(digest_trimmed)
+        .ok_or_else(|| ApiError::invalid_argument("digest is required"))?;
+
+    let snapshot_target = state
         .db
-        .get_service_stack_id(&service_id)
+        .get_service_snapshot_target(&service_id)
         .await
         .map_err(map_internal)?;
-    let Some(stack_id) = stack_id else {
+    let Some(snapshot_target) = snapshot_target else {
         return Err(ApiError::not_found("service not found"));
     };
-    let stack = state.db.get_stack(&stack_id).await.map_err(map_internal)?;
-    let Some(stack) = stack else {
-        return Err(ApiError::not_found("stack not found"));
-    };
-    let Some(service) = stack.services.iter().find(|svc| svc.id == service_id) else {
-        return Err(ApiError::not_found("service not found"));
-    };
-    let Some(image_repo) = snapshot_worker::image_repo_from_image_ref(&service.image.reference)
-    else {
-        return Err(ApiError::invalid_argument("invalid service image ref"));
-    };
-    let mut digests: Vec<String> = Vec::new();
-    if let Some(current_digest) = service
-        .image
-        .digest
+
+    let known_digest = snapshot_target
+        .current_digest
         .as_deref()
         .and_then(snapshot_worker::normalize_digest)
-    {
-        digests.push(current_digest);
-    }
-    if let Some(candidate_digest) = service
-        .candidate
-        .as_ref()
-        .and_then(|candidate| snapshot_worker::normalize_digest(&candidate.digest))
-        && !digests.iter().any(|digest| digest == &candidate_digest)
-    {
-        digests.push(candidate_digest);
-    }
-    if digests.is_empty() {
-        return Err(ApiError::invalid_argument("service digest is missing"));
+        .is_some_and(|d| d.eq_ignore_ascii_case(&digest))
+        || snapshot_target
+            .candidate_digest
+            .as_deref()
+            .and_then(snapshot_worker::normalize_digest)
+            .is_some_and(|d| d.eq_ignore_ascii_case(&digest));
+    if !known_digest {
+        return Err(ApiError::not_found("digest snapshot not found"));
     }
 
+    let image_repo = snapshot_worker::image_repo_from_image_ref(&snapshot_target.image_ref)
+        .ok_or_else(|| ApiError::invalid_argument("invalid service image ref"))?;
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
-    let mut inserted = false;
-    for digest in digests {
-        let enqueued = state
-            .snapshot_worker
-            .enqueue(
-                &image_repo,
-                &digest,
-                &host_platform,
-                VERSION_INFERENCE_REASON_FORCE,
-            )
-            .await;
-        inserted = inserted || enqueued;
-    }
+    let inserted = state
+        .snapshot_worker
+        .enqueue(
+            &image_repo,
+            &digest,
+            &host_platform,
+            VERSION_INFERENCE_REASON_FORCE,
+        )
+        .await;
     let reason = if inserted {
         VERSION_INFERENCE_REASON_FORCE
     } else {
@@ -91,6 +88,7 @@ pub(super) async fn trigger_service_version_inference_refresh(
         status: "pending".to_string(),
         service_id,
         image_repo,
+        digest,
         reason: reason.to_string(),
     };
     Ok((StatusCode::ACCEPTED, Json(resp)).into_response())
@@ -755,6 +753,20 @@ pub(super) async fn get_service_digest_tags_snapshot(
         .ok_or_else(|| ApiError::invalid_argument("invalid service image ref"))?;
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
+
+    if state
+        .snapshot_worker
+        .in_flight_reason(&image_repo, &digest, &host_platform)
+        .await
+        .is_some()
+    {
+        let pending = ServiceDigestTagsSnapshotPendingResponse {
+            status: "pending".to_string(),
+            digest: digest.clone(),
+            retry_after_ms: snapshot_worker::SNAPSHOT_PENDING_RETRY_AFTER_MS,
+        };
+        return Ok((StatusCode::ACCEPTED, Json(pending)).into_response());
+    }
 
     let snapshot = state
         .db

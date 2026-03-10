@@ -27,6 +27,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| 6epk6 | Dockrev：Popover 局部刷新边界收敛 + Snapshot 并发调整 | 已完成 | `6epk6-popover-local-refresh-snapshot-concurrency/SPEC.md` | 2026-03-10 | fast-track |
 | bvxtm | Dockrev：Supervisor 暗色主题修复 + 同源主题偏好共享 | 已完成 | `bvxtm-supervisor-dark-theme-same-origin-share/SPEC.md` | 2026-03-09 | fast-track（PR #156；cargo test + browser smoke） |
 | 4n5vr | Dockrev：新版本通知记录表去重 + 通知内版本号展示 | 已完成 | `4n5vr-new-version-notification-records/SPEC.md` | 2026-03-09 | fast-track（notification record table + display tag version copy + review fixes + main sync） |
 | mmffn | Dockrev：聚合更新自升级保护 | 已完成 | `mmffn-dockrev-aggregate-self-upgrade-guard/SPEC.md` | 2026-03-09 | fast-track（aggregate guard: dockrev 改走 supervisor，自身不参与 all/stack update；cargo/web/storybook 回归通过） |

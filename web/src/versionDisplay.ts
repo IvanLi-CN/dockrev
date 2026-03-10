@@ -9,6 +9,14 @@ export function isStrictSemverTag(tag: string | null | undefined): boolean {
   return t.length > 0 && STRICT_SEMVER_PATTERN.test(t)
 }
 
+export function pickSnapshotDisplayTag(tags: Array<string | null | undefined> | null | undefined): string | null {
+  for (const tag of tags ?? []) {
+    const trimmed = trimOrEmpty(tag)
+    if (isStrictSemverTag(trimmed)) return trimmed
+  }
+  return null
+}
+
 function isPending(status: string | null | undefined): boolean {
   return trimOrEmpty(status) === 'pending'
 }

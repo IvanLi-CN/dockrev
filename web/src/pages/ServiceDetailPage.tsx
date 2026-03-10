@@ -175,16 +175,6 @@ export function ServiceDetailPage(props: {
   }, [refresh])
 
   useEffect(() => {
-    const onVersionRefresh = () => {
-      void refreshStackOnly().catch(() => {})
-    }
-    window.addEventListener('dockrev:version-inference-refresh', onVersionRefresh)
-    return () => {
-      window.removeEventListener('dockrev:version-inference-refresh', onVersionRefresh)
-    }
-  }, [refreshStackOnly])
-
-  useEffect(() => {
     let closed = false
     const timers = new Set<number>()
 

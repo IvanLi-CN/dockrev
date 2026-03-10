@@ -117,7 +117,7 @@ pub struct HttpRegistryClientOptions {
 impl Default for HttpRegistryClientOptions {
     fn default() -> Self {
         Self {
-            per_host_concurrency: 3,
+            per_host_concurrency: 7,
             retry_max_attempts: 3,
             retry_base_ms: 250,
             retry_max_ms: 2000,

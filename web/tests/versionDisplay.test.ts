@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { formatCandidateTagDisplay, formatCurrentTagDisplay } from '../src/versionDisplay'
+import { formatCandidateTagDisplay, formatCurrentTagDisplay, pickSnapshotDisplayTag } from '../src/versionDisplay'
 
 describe('versionDisplay', () => {
   test('prefers resolved current tag when it is strict semver', () => {
@@ -28,5 +28,10 @@ describe('versionDisplay', () => {
   test('keeps candidate visible during pending state', () => {
     expect(formatCandidateTagDisplay('latest', 'v0.2.51', 'pending')).toBe('v0.2.51')
     expect(formatCandidateTagDisplay('latest', null, 'pending')).toBe('latest')
+  })
+
+  test('picks the first strict semver tag from a snapshot tag list', () => {
+    expect(pickSnapshotDisplayTag(['latest', 'v0.2.51', '0.2.50'])).toBe('v0.2.51')
+    expect(pickSnapshotDisplayTag(['stable', 'latest'])).toBeNull()
   })
 })

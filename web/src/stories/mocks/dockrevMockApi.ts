@@ -203,6 +203,9 @@ type MockDebug = {
   digestTagsCalls: number
   lastDigestTagsSnapshotUrl: string | null
   lastDigestTagsUrl: string | null
+  versionInferenceRefreshCalls: number
+  lastVersionInferenceRefreshUrl: string | null
+  lastVersionInferenceRefreshDigest: string | null
 }
 
 type VersionInferenceTaskProgressMock = {
@@ -496,6 +499,9 @@ function makeMockDebug(): MockDebug {
     digestTagsCalls: 0,
     lastDigestTagsSnapshotUrl: null,
     lastDigestTagsUrl: null,
+    versionInferenceRefreshCalls: 0,
+    lastVersionInferenceRefreshUrl: null,
+    lastVersionInferenceRefreshDigest: null,
   }
 }
 
@@ -2495,6 +2501,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
   let ignoreSeq = 0
   let jobSeq = 0
   const digestSnapshotPendingAttempts = new Map<string, number>()
+  const forcedDigestSnapshotPendingAttempts = new Map<string, number>()
   let jobsEventsSeq = 4_000
   const queueProgressDemoSteps = [40, 44, 48, 52, 56, 60, 65, 70, 75, 80, 85, 90, 94, 97]
   let queueProgressDemoStep = 0
@@ -2544,6 +2551,69 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       if (svc) return { stack: st, svc }
     }
     return null
+  }
+
+  function normalizeDigestValue(value: string | null | undefined): string {
+    const trimmed = (value ?? '').trim()
+    if (!trimmed) return ''
+    return trimmed.includes(':') ? trimmed : `sha256:${trimmed}`
+  }
+
+  function buildMockDigestTagData(
+    serviceId: string,
+    imageTag: string,
+    digestNorm: string,
+    refreshed: boolean,
+  ): { repoTags: string[]; tags: string[] } {
+    const isVersionTagsDemoScenario =
+      scenario === 'version-tags-popover-demo' ||
+      scenario === 'version-tags-popover-snapshot-pending'
+    const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
+
+    const repoTags =
+      serviceId === 'svc-prod-api'
+        ? ['5.2.1', '5.2.3', '5.2.4', '5.3.0', 'v5.2.1', 'v5.2.3', 'stable', 'latest']
+        : serviceId === 'svc-prod-web'
+          ? (() => {
+              const out: string[] = ['5.1', '5.1.10', '5.1.11', '5.1.12', '5.2', 'v5.2.1', 'stable', 'latest']
+              for (let i = 0; i < 40; i++) out.push(`5.2.${i}`)
+              return out
+            })()
+          : serviceId === 'svc-resolved-web'
+            ? (() => {
+                const out: string[] = ['5.1', '5.1.10', '5.1.11', '5.1.12', '5.2', 'v5.2.1', 'v5.2.3', 'stable', 'latest']
+                for (let i = 0; i < 40; i++) out.push(`5.2.${i}`)
+                return out
+              })()
+            : isVersionTagsDemoScenario && serviceId === 'svc-version-tags'
+              ? ['v0.8.9-arm64', 'v0.8.8-arm64', 'v0.8.8', 'v0.8.7', '0.8.8', '0.8.7', 'stable', 'latest']
+              : digestNorm === `sha256:${'a'.repeat(64)}`
+                ? ['v0.1.8', '0.1.8']
+                : [imageTag]
+
+    const tags = !digestNorm
+      ? []
+      : serviceId === 'svc-version-tags' && isVersionTagsDemoScenario && digestNorm === d('a', 'b1')
+        ? ['v0.8.7', '0.8.7', 'stable', 'latest']
+        : serviceId === 'svc-version-tags' && isVersionTagsDemoScenario && digestNorm === d('b', '9f')
+          ? refreshed
+            ? ['v0.8.8', 'v0.8.8-arm64', '0.8.8', 'stable', 'latest']
+            : ['v0.8.8-arm64', 'v0.8.8', '0.8.8', 'stable', 'latest']
+          : digestNorm === d('c', 'c2')
+            ? ['v5.2.1', '5.2.1', '5.2', 'stable', 'latest']
+            : digestNorm === d('a', 'b1') && serviceId === 'svc-resolved-web'
+              ? ['5.2.1', 'v5.2.1', 'stable', 'latest']
+              : digestNorm === d('b', '9f') && serviceId === 'svc-resolved-web'
+                ? ['5.2.3', 'v5.2.3']
+                : digestNorm === d('a', 'b1')
+                  ? ['5.2.1', 'v5.2.1']
+                  : digestNorm === d('b', '9f') && serviceId === 'svc-prod-api'
+                    ? ['5.2.3', 'v5.2.3', 'stable', 'latest']
+                    : digestNorm === `sha256:${'a'.repeat(64)}`
+                      ? ['v0.1.8', '0.1.8']
+                      : [imageTag]
+
+    return { repoTags, tags }
   }
 
   function canApplyMockUpdate(service: StackDetail['services'][number]) {
@@ -3651,22 +3721,37 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         return json({ error: 'not found' }, { status: 404 })
       }
 
-      const digest = (url?.searchParams.get('digest') ?? '').trim()
-      const digestNorm = digest ? (digest.includes(':') ? digest : `sha256:${digest}`) : ''
-      const isVersionTagsDemoScenario =
-        scenario === 'version-tags-popover-demo' || scenario === 'version-tags-popover-snapshot-pending'
+      const digestNorm = normalizeDigestValue(url?.searchParams.get('digest'))
+      const pendingKey = `${serviceId}:${digestNorm || '<missing-digest>'}`
 
-      const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
+      const forcedPendingAttempts =
+        forcedDigestSnapshotPendingAttempts.get(pendingKey) ?? 0
+      if (forcedPendingAttempts > 0) {
+        if (forcedPendingAttempts <= 1)
+          forcedDigestSnapshotPendingAttempts.delete(pendingKey)
+        else
+          forcedDigestSnapshotPendingAttempts.set(
+            pendingKey,
+            forcedPendingAttempts - 1,
+          )
+        return json(
+          {
+            status: 'pending',
+            digest: digestNorm,
+            retryAfterMs: 450,
+          },
+          { status: 202 },
+        )
+      }
 
       if (
         scenario === 'version-tags-popover-snapshot-pending' ||
         scenario === 'services-inference-pending-candidate-loading'
       ) {
-        const pendingKey = `${serviceId}:${digestNorm || '<missing-digest>'}`
         const attempt = (digestSnapshotPendingAttempts.get(pendingKey) ?? 0) + 1
         digestSnapshotPendingAttempts.set(pendingKey, attempt)
-        // Keep pending visible for Storybook verification.
-        const maxPendingAttempts = scenario === 'services-inference-pending-candidate-loading' ? 999 : 4
+        const maxPendingAttempts =
+          scenario === 'services-inference-pending-candidate-loading' ? 999 : 4
         if (attempt <= maxPendingAttempts) {
           return json(
             {
@@ -3679,49 +3764,13 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         }
       }
 
-      // Keep it deterministic:
-      // - `repoTags`: all registry tags for the image (superset).
-      // - `tags`: tags that match the requested digest (subset).
-      const repoTags =
-        serviceId === 'svc-prod-api'
-          ? ['5.2.1', '5.2.3', '5.2.4', '5.3.0', 'v5.2.1', 'v5.2.3', 'stable', 'latest']
-          : serviceId === 'svc-prod-web'
-            ? (() => {
-                const out: string[] = ['5.1', '5.1.10', '5.1.11', '5.1.12', '5.2', 'v5.2.1', 'stable', 'latest']
-                for (let i = 0; i < 40; i++) out.push(`5.2.${i}`)
-                return out
-              })()
-            : serviceId === 'svc-resolved-web'
-              ? (() => {
-                  // Mimic a real repo: lots of patch tags, plus a few named aliases.
-                  const out: string[] = ['5.1', '5.1.10', '5.1.11', '5.1.12', '5.2', 'v5.2.1', 'v5.2.3', 'stable', 'latest']
-                  for (let i = 0; i < 40; i++) out.push(`5.2.${i}`)
-                  return out
-                })()
-            : isVersionTagsDemoScenario && serviceId === 'svc-version-tags'
-              ? ['v0.8.9-arm64', 'v0.8.8-arm64', 'v0.8.8', '0.8.8', 'stable', 'latest']
-              : digestNorm === `sha256:${'a'.repeat(64)}`
-                ? ['v0.1.8', '0.1.8']
-                : [found.svc.image.tag]
-
-      const tags = !digestNorm
-        ? []
-        : digestNorm === d('c', 'c2')
-          ? ['v5.2.1', '5.2.1', '5.2', 'stable', 'latest']
-          : digestNorm === d('a', 'b1') && serviceId === 'svc-resolved-web'
-            ? ['5.2.1', 'v5.2.1', 'stable', 'latest']
-          : digestNorm === d('b', '9f') && serviceId === 'svc-resolved-web'
-            ? ['5.2.3', 'v5.2.3']
-          : digestNorm === d('a', 'b1')
-            ? ['5.2.1', 'v5.2.1']
-          : digestNorm === d('b', '9f') && serviceId === 'svc-prod-api'
-            ? ['5.2.3', 'v5.2.3', 'stable', 'latest']
-            : digestNorm === d('b', '9f') && isVersionTagsDemoScenario && serviceId === 'svc-version-tags'
-              ? ['v0.8.8-arm64', 'v0.8.8', '0.8.8', 'stable', 'latest']
-            : digestNorm === `sha256:${'a'.repeat(64)}`
-              ? ['v0.1.8', '0.1.8']
-              : [found.svc.image.tag]
-
+      const refreshed = dbg.lastVersionInferenceRefreshDigest === digestNorm
+      const { repoTags, tags } = buildMockDigestTagData(
+        serviceId,
+        found.svc.image.tag,
+        digestNorm,
+        refreshed,
+      )
       const considered = Math.min(100, repoTags.length)
 
       return json({
@@ -3749,55 +3798,14 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       const found = findService(serviceId)
       if (!found) return json({ error: 'not found' }, { status: 404 })
 
-      const digest = (url?.searchParams.get('digest') ?? '').trim()
-      const digestNorm = digest ? (digest.includes(':') ? digest : `sha256:${digest}`) : ''
-      const isVersionTagsDemoScenario =
-        scenario === 'version-tags-popover-demo' || scenario === 'version-tags-popover-snapshot-pending'
-
-      const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
-
-      // Keep it deterministic:
-      // - `repoTags`: all registry tags for the image (superset).
-      // - `tags`: tags that match the requested digest (subset).
-      const repoTags =
-        serviceId === 'svc-prod-api'
-          ? ['5.2.1', '5.2.3', '5.2.4', '5.3.0', 'v5.2.1', 'v5.2.3', 'stable', 'latest']
-          : serviceId === 'svc-prod-web'
-            ? (() => {
-                const out: string[] = ['5.1', '5.1.10', '5.1.11', '5.1.12', '5.2', 'v5.2.1', 'stable', 'latest']
-                for (let i = 0; i < 40; i++) out.push(`5.2.${i}`)
-                return out
-              })()
-            : serviceId === 'svc-resolved-web'
-              ? (() => {
-                  // Mimic a real repo: lots of patch tags, plus a few named aliases.
-                  const out: string[] = ['5.1', '5.1.10', '5.1.11', '5.1.12', '5.2', 'v5.2.1', 'v5.2.3', 'stable', 'latest']
-                  for (let i = 0; i < 40; i++) out.push(`5.2.${i}`)
-                  return out
-                })()
-            : isVersionTagsDemoScenario && serviceId === 'svc-version-tags'
-              ? ['v0.8.9-arm64', 'v0.8.8-arm64', 'v0.8.8', '0.8.8', 'stable', 'latest']
-              : digestNorm === `sha256:${'a'.repeat(64)}`
-                ? ['v0.1.8', '0.1.8']
-                : [found.svc.image.tag]
-
-      const tags = !digestNorm
-        ? []
-        : digestNorm === d('c', 'c2')
-          ? ['v5.2.1', '5.2.1', '5.2', 'stable', 'latest']
-          : digestNorm === d('a', 'b1') && serviceId === 'svc-resolved-web'
-            ? ['5.2.1', 'v5.2.1', 'stable', 'latest']
-          : digestNorm === d('b', '9f') && serviceId === 'svc-resolved-web'
-            ? ['5.2.3', 'v5.2.3']
-          : digestNorm === d('a', 'b1')
-            ? ['5.2.1', 'v5.2.1']
-          : digestNorm === d('b', '9f') && serviceId === 'svc-prod-api'
-            ? ['5.2.3', 'v5.2.3', 'stable', 'latest']
-            : digestNorm === d('b', '9f') && isVersionTagsDemoScenario && serviceId === 'svc-version-tags'
-              ? ['v0.8.8-arm64', 'v0.8.8', '0.8.8', 'stable', 'latest']
-            : digestNorm === `sha256:${'a'.repeat(64)}`
-              ? ['v0.1.8', '0.1.8']
-              : [found.svc.image.tag]
+      const digestNorm = normalizeDigestValue(url?.searchParams.get('digest'))
+      const refreshed = dbg.lastVersionInferenceRefreshDigest === digestNorm
+      const { repoTags, tags } = buildMockDigestTagData(
+        serviceId,
+        found.svc.image.tag,
+        digestNorm,
+        refreshed,
+      )
 
       return json({
         digest: digestNorm,
@@ -3811,6 +3819,58 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
           manifestsError: 0,
         },
       })
+    }
+
+    if (method === 'POST' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/version-inference/refresh')) {
+      const dbg = globalThis.__DOCKREV_MOCK_DEBUG__ ??
+        (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
+      dbg.versionInferenceRefreshCalls += 1
+      dbg.lastVersionInferenceRefreshUrl = urlPathWithQuery
+
+      const parts = urlPath.split('/').filter(Boolean)
+      const serviceId = decodeURIComponent(parts[2] ?? '')
+      const found = findService(serviceId)
+      if (!found) return json({ error: 'not found' }, { status: 404 })
+
+      const parsed = parseJsonBody(init?.body) as { digest?: unknown } | null
+      const digestNorm = normalizeDigestValue(getString(parsed?.digest) ?? null)
+      dbg.lastVersionInferenceRefreshDigest = digestNorm || null
+
+      if (!digestNorm) {
+        return json(
+          {
+            error: {
+              code: 'bad_request',
+              message: 'digest is required',
+            },
+          },
+          { status: 400 },
+        )
+      }
+
+      const currentDigest = normalizeDigestValue(found.svc.image.digest ?? null)
+      const candidateDigest = normalizeDigestValue(found.svc.candidate?.digest ?? null)
+      if (digestNorm !== currentDigest && digestNorm !== candidateDigest) {
+        return json({ error: 'not found' }, { status: 404 })
+      }
+
+      const pendingKey = `${serviceId}:${digestNorm}`
+      const reason =
+        forcedDigestSnapshotPendingAttempts.has(pendingKey) ? 'running' : 'force'
+      if (reason === 'force') {
+        forcedDigestSnapshotPendingAttempts.set(pendingKey, 2)
+      }
+
+      return json(
+        {
+          status: 'pending',
+          serviceId,
+          imageRepo: found.svc.image.ref,
+          digest: digestNorm,
+          reason,
+        },
+        { status: 202 },
+      )
     }
 
     if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/resource-usage/history')) {
