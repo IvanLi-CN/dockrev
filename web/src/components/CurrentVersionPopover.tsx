@@ -301,7 +301,7 @@ export function CurrentVersionPopover(props: {
             if (localRefreshKey === digestKey) {
               setLocalDisplayTag({
                 key: digestKey,
-                value: pickSnapshotDisplayTag(data.tags),
+                value: pickSnapshotDisplayTag(data.tags, imageTag),
               })
               setLocalRefreshKey(null)
             }
@@ -350,6 +350,7 @@ export function CurrentVersionPopover(props: {
     digestKey,
     digestNorm,
     digestTags,
+    imageTag,
     localRefreshKey,
     open,
     snapshotFetchToken,
@@ -369,7 +370,7 @@ export function CurrentVersionPopover(props: {
     // Only release the override once the parent actually reflects the same inferred value.
     // Otherwise we'd flash the new tag for a render and immediately snap back to the old one.
     if (localDisplayTag.key !== digestKey || !localDisplayTag.value) return
-    if (!resolvedTagTrim || !isStrictSemverTag(resolvedTagTrim)) return
+    if (!resolvedTagTrim) return
     if (resolvedTagTrim !== localDisplayTag.value.trim()) return
     setLocalDisplayTag({ key: digestKey, value: null })
   }, [digestKey, localDisplayTag.key, localDisplayTag.value, resolvedTagTrim])

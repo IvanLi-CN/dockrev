@@ -16,7 +16,7 @@ import {
 } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 import { useHoverPinnedPopover } from './HoverPinnedPopover'
-import { isStrictSemverTag, pickSnapshotDisplayTag } from '../versionDisplay'
+import { pickSnapshotDisplayTag } from '../versionDisplay'
 
 function uniquePreserveOrder(
   values: Array<string | null | undefined> | null | undefined,
@@ -245,7 +245,7 @@ export function VersionTagsPopover(props: {
             if (localRefreshKey === digestKey) {
               setLocalDisplayTag({
                 key: digestKey,
-                value: pickSnapshotDisplayTag(data.tags),
+                value: pickSnapshotDisplayTag(data.tags, candidateTagTrim),
               })
               setLocalRefreshKey(null)
             }
@@ -315,7 +315,7 @@ export function VersionTagsPopover(props: {
     if (localDisplayTag.key !== digestKey || !localDisplayTag.value) return
     if (typeof children !== 'string') return
     const t = children.trim()
-    if (!t || !isStrictSemverTag(t)) return
+    if (!t) return
     if (t !== localDisplayTag.value.trim()) return
     setLocalDisplayTag({ key: digestKey, value: null })
   }, [children, digestKey, localDisplayTag.key, localDisplayTag.value])
