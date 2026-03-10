@@ -2,10 +2,10 @@
 
 ## 状态
 
-- Status: 部分完成（4/5）
+- Status: 已完成
 - Created: 2026-03-10
 - Last: 2026-03-10
-- Notes: fast-track
+- Notes: fast-track · PR #160
 
 ## 背景 / 问题陈述
 
@@ -76,7 +76,7 @@
 - [x] M2: 将 status 从单行字符串升级为键值信息块，将 history tabs 重构为文本状态列表，并保留既有 selection / newer-item 语义。
 - [x] M3: 补齐 render_ui 回归测试，覆盖新结构、running 状态、rollback 确认与主题 contract。
 - [x] M4: 完成本地 `cargo test` + 浏览器多断点 smoke 验证。
-- [ ] M5: 快车道交付：提交、push、PR、checks、review-loop 收敛，并把结果回写 spec。
+- [x] M5: 快车道交付：提交、push、PR、checks、review-loop 收敛，并把结果回写 spec。
 
 ## 风险 / 开放问题 / 假设（Risks, Open Questions, Assumptions）
 
@@ -89,3 +89,4 @@
 
 - 2026-03-10: 创建规格，冻结四区布局、默认状态直出、history 列表化与响应式验收口径。
 - 2026-03-10: 完成 Supervisor 四区重构、history 列表化、render_ui 回归测试，以及本地 `cargo test` + Chrome DevTools 多断点主题 smoke。
+- 2026-03-10: 根据 review-loop 收敛离线缓存态与无 history fallback，补充 uncached offline / logs-only 回归断言，并完成 PR #160、GitHub checks 全绿与 spec 回写。
