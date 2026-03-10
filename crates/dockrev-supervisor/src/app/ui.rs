@@ -101,89 +101,96 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
     <style>
       :root {{
         color-scheme: dark;
-        --bg: #061227;
+        --bg: #070b10;
         --bg-layered:
-          radial-gradient(960px 520px at -12% -20%, rgba(55, 133, 226, 0.18) 0%, rgba(55, 133, 226, 0) 55%),
-          radial-gradient(880px 460px at 115% -12%, rgba(48, 161, 211, 0.14) 0%, rgba(48, 161, 211, 0) 56%),
-          linear-gradient(160deg, #040b1a 0%, #061227 48%, #040f21 100%);
-        --text: rgba(232, 241, 255, 0.96);
-        --muted: rgba(220, 234, 254, 0.76);
-        --panel: rgba(10, 28, 54, 0.88);
-        --panel-strong: rgba(12, 34, 66, 0.96);
-        --panel-border: rgba(156, 192, 232, 0.24);
-        --panel-shadow: 0 26px 74px rgba(1, 10, 24, 0.52);
-        --surface: rgba(255, 255, 255, 0.055);
-        --surface-strong: rgba(255, 255, 255, 0.08);
-        --button-bg: rgba(255, 255, 255, 0.05);
-        --button-hover: rgba(54, 191, 250, 0.16);
-        --button-border: rgba(188, 223, 255, 0.22);
+          linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+          radial-gradient(72% 80% at 10% 0%, rgba(79, 209, 255, 0.18) 0%, rgba(79, 209, 255, 0) 60%),
+          radial-gradient(56% 64% at 100% 0%, rgba(255, 157, 106, 0.14) 0%, rgba(255, 157, 106, 0) 50%),
+          linear-gradient(180deg, #05080c 0%, #0a1118 42%, #0d151d 100%);
+        --text: rgba(238, 244, 249, 0.96);
+        --muted: rgba(193, 205, 217, 0.78);
+        --panel: rgba(10, 17, 24, 0.84);
+        --panel-strong: rgba(12, 21, 30, 0.98);
+        --panel-border: rgba(134, 154, 176, 0.22);
+        --panel-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
+        --surface: rgba(255, 255, 255, 0.035);
+        --surface-strong: rgba(255, 255, 255, 0.055);
+        --surface-accent: rgba(79, 209, 255, 0.11);
+        --button-bg: rgba(255, 255, 255, 0.04);
+        --button-hover: rgba(79, 209, 255, 0.12);
+        --button-border: rgba(167, 189, 212, 0.2);
         --button-text: var(--text);
-        --input-bg: rgba(255, 255, 255, 0.05);
-        --input-border: rgba(188, 223, 255, 0.2);
-        --input-shadow: 0 0 0 1px rgba(255, 255, 255, 0.01);
-        --pre-bg: rgba(4, 11, 26, 0.76);
-        --console-bg: rgba(2, 10, 24, 0.88);
-        --pop-bg: rgba(7, 20, 42, 0.98);
-        --link: #7dd3fc;
-        --link-hover: #bae6fd;
+        --input-bg: rgba(255, 255, 255, 0.04);
+        --input-border: rgba(167, 189, 212, 0.2);
+        --input-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.015);
+        --console-bg: rgba(4, 10, 15, 0.94);
+        --pop-bg: rgba(9, 16, 22, 0.98);
         --code-bg: rgba(255, 255, 255, 0.08);
-        --accent: rgba(54, 191, 250, 0.18);
-        --accent-strong: #36bffa;
-        --spinner-track: rgba(232, 241, 255, 0.24);
-        --spinner-head: rgba(232, 241, 255, 0.84);
-        --ok: #22c55e;
-        --bad: #f87171;
-        --warn: #fbbf24;
-        --info: #60a5fa;
-        --selection: rgba(54, 191, 250, 0.22);
+        --link: #9ae6ff;
+        --link-hover: #c8f1ff;
+        --accent: #4fd1ff;
+        --accent-strong: #22b8f5;
+        --accent-warm: #ff9d6a;
+        --spinner-track: rgba(238, 244, 249, 0.2);
+        --spinner-head: rgba(238, 244, 249, 0.88);
+        --ok: #32c96c;
+        --bad: #ff7b7b;
+        --warn: #ffb155;
+        --info: #53a9ff;
+        --selection: rgba(79, 209, 255, 0.2);
       }}
       html[data-theme='light'] {{
         color-scheme: light;
-        --bg: #f6faff;
+        --bg: #f5f7fa;
         --bg-layered:
-          radial-gradient(980px 500px at -14% -24%, rgba(76, 162, 238, 0.03) 0%, rgba(76, 162, 238, 0) 58%),
-          radial-gradient(900px 460px at 112% -14%, rgba(57, 156, 228, 0.025) 0%, rgba(57, 156, 228, 0) 56%),
-          linear-gradient(160deg, #ffffff 0%, #f8fcff 46%, #f3f9ff 100%);
-        --text: rgba(16, 40, 66, 0.96);
-        --muted: rgba(58, 86, 118, 0.84);
-        --panel: rgba(255, 255, 255, 0.94);
-        --panel-strong: rgba(255, 255, 255, 0.985);
-        --panel-border: rgba(14, 56, 100, 0.14);
-        --panel-shadow: 0 22px 50px rgba(17, 62, 112, 0.14);
-        --surface: rgba(12, 121, 207, 0.05);
-        --surface-strong: rgba(12, 121, 207, 0.09);
-        --button-bg: rgba(255, 255, 255, 0.92);
-        --button-hover: rgba(12, 121, 207, 0.1);
-        --button-border: rgba(14, 56, 100, 0.16);
-        --button-text: rgba(16, 40, 66, 0.96);
-        --input-bg: rgba(255, 255, 255, 0.9);
-        --input-border: rgba(14, 56, 100, 0.16);
-        --input-shadow: 0 0 0 1px rgba(12, 121, 207, 0.03);
-        --pre-bg: rgba(12, 121, 207, 0.06);
-        --console-bg: rgba(245, 250, 255, 0.98);
+          linear-gradient(rgba(8, 23, 39, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(8, 23, 39, 0.035) 1px, transparent 1px),
+          radial-gradient(72% 80% at 10% 0%, rgba(79, 209, 255, 0.12) 0%, rgba(79, 209, 255, 0) 60%),
+          radial-gradient(56% 64% at 100% 0%, rgba(255, 157, 106, 0.1) 0%, rgba(255, 157, 106, 0) 50%),
+          linear-gradient(180deg, #fbfdff 0%, #f5f8fb 42%, #eef3f7 100%);
+        --text: rgba(14, 24, 37, 0.96);
+        --muted: rgba(71, 89, 110, 0.82);
+        --panel: rgba(255, 255, 255, 0.88);
+        --panel-strong: rgba(255, 255, 255, 0.98);
+        --panel-border: rgba(12, 34, 58, 0.13);
+        --panel-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+        --surface: rgba(12, 34, 58, 0.035);
+        --surface-strong: rgba(12, 34, 58, 0.055);
+        --surface-accent: rgba(34, 184, 245, 0.09);
+        --button-bg: rgba(255, 255, 255, 0.86);
+        --button-hover: rgba(34, 184, 245, 0.08);
+        --button-border: rgba(12, 34, 58, 0.13);
+        --button-text: rgba(14, 24, 37, 0.96);
+        --input-bg: rgba(255, 255, 255, 0.92);
+        --input-border: rgba(12, 34, 58, 0.14);
+        --input-shadow: inset 0 0 0 1px rgba(34, 184, 245, 0.02);
+        --console-bg: rgba(243, 247, 251, 0.98);
         --pop-bg: rgba(255, 255, 255, 0.98);
-        --link: #0c79cf;
-        --link-hover: #095ea0;
-        --code-bg: rgba(12, 121, 207, 0.08);
-        --accent: rgba(12, 121, 207, 0.12);
-        --accent-strong: #0c79cf;
-        --spinner-track: rgba(16, 40, 66, 0.16);
-        --spinner-head: rgba(16, 40, 66, 0.72);
-        --ok: #138347;
-        --bad: #bf1240;
-        --warn: #a55706;
+        --code-bg: rgba(12, 34, 58, 0.07);
+        --link: #0f87bb;
+        --link-hover: #0b668f;
+        --accent: #22b8f5;
+        --accent-strong: #0f87bb;
+        --accent-warm: #d97745;
+        --spinner-track: rgba(14, 24, 37, 0.18);
+        --spinner-head: rgba(14, 24, 37, 0.8);
+        --ok: #15803d;
+        --bad: #c24141;
+        --warn: #a16207;
         --info: #2563eb;
-        --selection: rgba(12, 121, 207, 0.18);
+        --selection: rgba(34, 184, 245, 0.16);
       }}
       * {{ box-sizing: border-box; }}
       html {{ background: var(--bg); }}
       body {{
-        font-family: 'Avenir Next', 'Avenir', 'SF Pro Display', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
+        font-family: 'IBM Plex Sans', 'Avenir Next', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
         min-height: 100vh;
         margin: 0 auto;
-        padding: 0 14px 24px;
-        max-width: 1140px;
+        padding: 0 18px 44px;
+        max-width: 1240px;
         background: var(--bg-layered);
+        background-size: 24px 24px, 24px 24px, auto, auto, auto;
         background-attachment: fixed;
         color: var(--text);
       }}
@@ -201,37 +208,39 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       textarea,
       select {{ font: inherit; }}
       button {{
-        min-height: 36px;
-        padding: 7px 11px;
+        min-height: 38px;
+        padding: 8px 12px;
         border-radius: 12px;
         border: 1px solid var(--button-border);
         background: var(--button-bg);
         color: var(--button-text);
         cursor: pointer;
-        transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
+        transition: transform 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
       }}
       button:hover:not([disabled]) {{
         background: var(--button-hover);
-        border-color: rgba(54, 191, 250, 0.36);
-        box-shadow: 0 0 0 1px rgba(54, 191, 250, 0.08);
+        border-color: rgba(79, 209, 255, 0.34);
+        box-shadow: inset 0 0 0 1px rgba(79, 209, 255, 0.08);
+        transform: translateY(-1px);
       }}
       button:focus-visible,
       input:focus-visible {{
-        outline: 2px solid rgba(54, 191, 250, 0.42);
+        outline: 2px solid rgba(79, 209, 255, 0.38);
         outline-offset: 2px;
       }}
       button[disabled] {{
-        opacity: 0.52;
+        opacity: 0.5;
         cursor: not-allowed;
         box-shadow: none;
+        transform: none;
       }}
       button.primary {{
-        background: linear-gradient(180deg, rgba(54, 191, 250, 0.28) 0%, rgba(23, 118, 196, 0.34) 100%);
-        border-color: rgba(93, 209, 255, 0.42);
+        background: linear-gradient(135deg, rgba(79, 209, 255, 0.22), rgba(255, 157, 106, 0.18));
+        border-color: rgba(79, 209, 255, 0.42);
       }}
       html[data-theme='light'] button.primary {{
-        background: linear-gradient(180deg, rgba(12, 121, 207, 0.18) 0%, rgba(12, 121, 207, 0.12) 100%);
-        border-color: rgba(12, 121, 207, 0.3);
+        background: linear-gradient(135deg, rgba(34, 184, 245, 0.16), rgba(217, 119, 69, 0.12));
+        border-color: rgba(15, 135, 187, 0.24);
       }}
       button.btnRunning {{
         display: inline-flex;
@@ -251,8 +260,8 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       input {{
         width: 100%;
         min-width: 0;
-        padding: 8px 11px;
-        border-radius: 11px;
+        padding: 10px 12px;
+        border-radius: 12px;
         border: 1px solid var(--input-border);
         background: var(--input-bg);
         color: var(--text);
@@ -260,160 +269,199 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
       pre {{
         margin: 0;
-        padding: 10px 12px;
-        border-radius: 14px;
+        padding: 12px 14px;
+        border-radius: 16px;
         overflow: auto;
         white-space: pre-wrap;
         word-break: break-word;
         color: var(--text);
-        line-height: 1.54;
-        font-family: 'SFMono-Regular', 'JetBrains Mono', 'Fira Code', 'IBM Plex Mono', 'Menlo', monospace;
+        line-height: 1.6;
+        font-family: 'IBM Plex Mono', 'JetBrains Mono', 'SFMono-Regular', 'Menlo', monospace;
       }}
       .shell {{
         display: grid;
-        gap: 14px;
-        padding-top: 14px;
+        gap: 18px;
+        padding-top: 20px;
       }}
       .panel {{
+        position: relative;
         border: 1px solid var(--panel-border);
-        border-radius: 18px;
-        padding: 15px;
+        border-radius: 22px;
+        padding: 18px;
         background: var(--panel);
         box-shadow: var(--panel-shadow);
-        backdrop-filter: blur(18px);
+        overflow: hidden;
+      }}
+      .panel::before {{
+        content: '';
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 28%);
+      }}
+      .panel > * {{
+        position: relative;
+        z-index: 1;
       }}
       .muted {{
         color: var(--muted);
         font-size: 12px;
-        line-height: 1.45;
+        line-height: 1.5;
       }}
       .eyebrow,
       .sectionEyebrow {{
-        color: var(--muted);
-        font-size: 12px;
+        color: var(--accent);
+        font-size: 11px;
+        font-weight: 600;
         text-transform: uppercase;
-        letter-spacing: 0.12em;
+        letter-spacing: 0.14em;
       }}
       .sectionHeadingRow {{
         display: flex;
-        align-items: flex-start;
+        align-items: flex-end;
         justify-content: space-between;
-        gap: 10px;
+        gap: 14px;
         flex-wrap: wrap;
-        margin-bottom: 10px;
+        margin-bottom: 14px;
       }}
       .sectionHeadingRow h2 {{
-        margin: 2px 0 0;
-        font-size: 19px;
-        line-height: 1.08;
+        margin: 6px 0 0;
+        font-size: 20px;
+        line-height: 1.05;
+        letter-spacing: -0.03em;
+      }}
+      .sectionHeadingNote {{
+        max-width: 40ch;
+        text-align: right;
       }}
       .masthead {{
-        padding-top: 14px;
-        padding-bottom: 14px;
+        padding-top: 22px;
       }}
-      .mastheadTop {{
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 12px;
+      .mastheadGrid {{
+        display: grid;
+        grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr);
+        gap: 18px;
+        align-items: start;
       }}
       .brandRow {{
         display: flex;
-        gap: 10px;
-        align-items: center;
+        gap: 14px;
+        align-items: flex-start;
       }}
       .brandMark {{
-        width: 38px;
-        height: 38px;
+        width: 44px;
+        height: 44px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        border-radius: 12px;
-        background: linear-gradient(160deg, rgba(54, 191, 250, 0.18), rgba(54, 191, 250, 0.04));
-        border: 1px solid rgba(54, 191, 250, 0.22);
+        border-radius: 14px;
+        background: linear-gradient(145deg, rgba(79, 209, 255, 0.16), rgba(255, 157, 106, 0.08));
+        border: 1px solid rgba(79, 209, 255, 0.22);
         flex: 0 0 auto;
       }}
       .brandMark img {{
         display: block;
-        width: 22px;
-        height: 22px;
+        width: 24px;
+        height: 24px;
       }}
       .masthead h1 {{
-        margin: 2px 0 0;
-        font-size: clamp(26px, 3vw, 42px);
-        line-height: 1.02;
-        letter-spacing: -0.04em;
+        margin: 6px 0 0;
+        font-size: clamp(30px, 3.6vw, 44px);
+        line-height: 0.95;
+        letter-spacing: -0.05em;
       }}
       .intro {{
-        max-width: 640px;
-        margin: 8px 0 0;
+        max-width: 52ch;
+        margin: 12px 0 0;
         color: var(--muted);
-        font-size: clamp(13px, 1.15vw, 15px);
-        line-height: 1.55;
+        font-size: 14px;
+        line-height: 1.62;
       }}
-      .metaGrid {{
+      .mastheadAside {{
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 10px;
-        margin-top: 12px;
-      }}
-      .metaCard {{
-        padding: 10px 12px;
-        border-radius: 14px;
-        border: 1px solid var(--panel-border);
-        background: var(--surface);
-      }}
-      .metaLabel {{
-        color: var(--muted);
-        font-size: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-      }}
-      .metaValue {{
-        margin-top: 4px;
-        font-size: 13px;
-        line-height: 1.4;
-        word-break: break-word;
+        gap: 12px;
+        align-content: start;
       }}
       .linkButton {{
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-height: 36px;
-        padding: 7px 12px;
-        border-radius: 11px;
+        min-height: 38px;
+        padding: 8px 12px;
+        border-radius: 12px;
         border: 1px solid var(--button-border);
         background: var(--surface);
         color: var(--link);
-        flex: 0 0 auto;
+        justify-self: end;
       }}
       .linkButton:hover {{
         background: var(--button-hover);
         text-decoration: none;
       }}
-      .actionDeckGrid {{
+      .metaStack {{
         display: grid;
-        grid-template-columns: minmax(200px, 240px) minmax(0, 1fr) auto;
         gap: 10px;
-        align-items: center;
+      }}
+      .metaRow {{
+        display: grid;
+        grid-template-columns: 104px minmax(0, 1fr);
+        gap: 12px;
+        align-items: start;
+        padding: 12px 14px;
+        border-radius: 16px;
+        border: 1px solid var(--panel-border);
+        background: var(--surface);
+      }}
+      .metaLabel {{
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }}
+      .metaValue {{
+        font-size: 13px;
+        line-height: 1.5;
+        word-break: break-word;
+      }}
+      .actionDeckShell {{
+        display: grid;
+        grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+        gap: 14px;
+        align-items: start;
       }}
       .fieldBlock {{
         display: grid;
-        gap: 6px;
+        gap: 8px;
+        padding: 14px;
+        border-radius: 18px;
+        border: 1px solid var(--panel-border);
+        background: var(--surface);
       }}
       .fieldLabel {{
-        font-size: 12px;
+        font-size: 11px;
         color: var(--muted);
-        letter-spacing: 0.01em;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
       }}
       .fieldHint {{
         font-size: 11px;
         color: var(--muted);
+        line-height: 1.45;
+      }}
+      .actionRail {{
+        display: grid;
+        gap: 12px;
+      }}
+      .buttonRow {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
       }}
       .buttonGroup {{
         display: flex;
         flex-wrap: wrap;
-        gap: 8px;
+        gap: 10px;
         align-items: center;
       }}
       .buttonGroup > * {{
@@ -422,81 +470,104 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       .buttonGroup-aux {{
         justify-content: flex-end;
       }}
-      .statusGrid {{
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 10px;
-      }}
-      .statusTile {{
-        min-height: 88px;
-        padding: 11px;
+      .actionNote {{
+        padding: 12px 14px;
         border-radius: 16px;
-        border: 1px solid var(--panel-border);
-        background: var(--surface);
+        border: 1px dashed var(--panel-border);
+        background: linear-gradient(135deg, var(--surface-accent), transparent 70%);
+      }}
+      .statusBoard {{
         display: grid;
-        gap: 7px;
-        align-content: start;
+        grid-template-columns: minmax(0, 1.18fr) minmax(320px, 0.82fr);
+        gap: 14px;
       }}
-      .statusTile-hero {{
-        background: linear-gradient(180deg, rgba(54, 191, 250, 0.14) 0%, rgba(54, 191, 250, 0.05) 100%);
+      .statusHero,
+      .statusFact,
+      .progressCard,
+      .artifactCard {{
+        border: 1px solid var(--panel-border);
+        border-radius: 18px;
+        background: var(--surface);
       }}
-      html[data-theme='light'] .statusTile-hero {{
-        background: linear-gradient(180deg, rgba(12, 121, 207, 0.12) 0%, rgba(12, 121, 207, 0.05) 100%);
+      .statusHero {{
+        padding: 18px;
+        background: linear-gradient(145deg, rgba(79, 209, 255, 0.12), rgba(255, 157, 106, 0.08) 50%, transparent 100%);
       }}
-      .statusTile-wide {{
-        grid-column: span 2;
-        min-height: 88px;
+      html[data-theme='light'] .statusHero {{
+        background: linear-gradient(145deg, rgba(34, 184, 245, 0.1), rgba(217, 119, 69, 0.06) 50%, rgba(255, 255, 255, 0.65) 100%);
       }}
-      .statusTile-full {{
-        grid-column: 1 / -1;
-        min-height: auto;
+      .statusHeroTop {{
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 14px;
+      }}
+      .statusValue {{
+        font-size: 15px;
+        line-height: 1.38;
+        font-weight: 600;
+        word-break: break-word;
+      }}
+      .statusValue-lg {{
+        margin-top: 8px;
+        font-size: clamp(24px, 3vw, 34px);
+        line-height: 0.95;
+        letter-spacing: -0.05em;
       }}
       .statusLabel {{
         color: var(--muted);
         font-size: 11px;
         text-transform: uppercase;
-        letter-spacing: 0.07em;
-      }}
-      .statusValue {{
-        font-size: 14px;
-        line-height: 1.34;
-        font-weight: 600;
-        word-break: break-word;
-      }}
-      .statusValue-lg {{
-        font-size: clamp(18px, 2.3vw, 26px);
-        line-height: 1;
-        letter-spacing: -0.04em;
+        letter-spacing: 0.12em;
       }}
       .statusMeta {{
         color: var(--muted);
-        font-size: 11px;
-        line-height: 1.45;
+        font-size: 12px;
+        line-height: 1.5;
+      }}
+      .statusHeroSummary {{
+        margin-top: 14px;
+        max-width: 40ch;
+      }}
+      .statusFacts {{
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }}
+      .statusFact {{
+        padding: 14px;
+        display: grid;
+        gap: 8px;
+        align-content: start;
+      }}
+      .statusFact-wide {{
+        grid-column: 1 / -1;
       }}
       .statusTone {{
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-height: 28px;
-        padding: 4px 8px;
+        min-height: 30px;
+        padding: 5px 10px;
         border-radius: 999px;
         border: 1px solid var(--panel-border);
         background: var(--surface-strong);
         font-size: 11px;
         text-transform: uppercase;
-        letter-spacing: 0.07em;
+        letter-spacing: 0.12em;
+        white-space: nowrap;
       }}
       .statusTone.state-running,
       .stateBadge-running {{
         color: var(--info);
-        border-color: rgba(96, 165, 250, 0.32);
-        background: rgba(96, 165, 250, 0.12);
+        border-color: rgba(83, 169, 255, 0.32);
+        background: rgba(83, 169, 255, 0.12);
       }}
       .statusTone.state-succeeded,
       .stateBadge-succeeded {{
         color: var(--ok);
-        border-color: rgba(34, 197, 94, 0.28);
-        background: rgba(34, 197, 94, 0.12);
+        border-color: rgba(50, 201, 108, 0.28);
+        background: rgba(50, 201, 108, 0.12);
       }}
       .statusTone.state-failed,
       .statusTone.state-rolled_back,
@@ -505,8 +576,8 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       .stateBadge-rolled_back,
       .stateBadge-offline {{
         color: var(--bad);
-        border-color: rgba(248, 113, 113, 0.28);
-        background: rgba(248, 113, 113, 0.12);
+        border-color: rgba(255, 123, 123, 0.28);
+        background: rgba(255, 123, 123, 0.12);
       }}
       .statusTone.state-idle,
       .statusTone.state-unknown,
@@ -516,26 +587,43 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         border-color: var(--panel-border);
         background: var(--surface-strong);
       }}
+      .progressCard {{
+        grid-column: 1 / -1;
+        padding: 14px;
+        display: grid;
+        gap: 8px;
+      }}
+      .artifactGrid {{
+        grid-column: 1 / -1;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }}
+      .artifactCard {{
+        padding: 14px;
+        display: grid;
+        gap: 8px;
+      }}
       .statusCode,
       .statusCodeInline {{
-        background: var(--pre-bg);
+        background: var(--console-bg);
         border: 1px solid var(--panel-border);
-        border-radius: 12px;
-        padding: 8px 10px;
+        border-radius: 14px;
+        padding: 10px 12px;
         color: var(--text);
-        font-family: 'SFMono-Regular', 'JetBrains Mono', 'Fira Code', 'IBM Plex Mono', 'Menlo', monospace;
+        font-family: 'IBM Plex Mono', 'JetBrains Mono', 'SFMono-Regular', 'Menlo', monospace;
         font-size: 12px;
-        line-height: 1.45;
+        line-height: 1.58;
         white-space: pre-wrap;
         word-break: break-word;
       }}
       .statusCodeInline {{
-        min-height: 40px;
+        min-height: 44px;
       }}
       .workspaceGrid {{
         display: grid;
-        grid-template-columns: minmax(224px, 272px) minmax(0, 1fr);
-        gap: 10px;
+        grid-template-columns: minmax(250px, 310px) minmax(0, 1fr);
+        gap: 14px;
         align-items: stretch;
       }}
       .workspaceGrid.workspaceGrid-logsOnly {{
@@ -543,58 +631,58 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
       .historyRail,
       .logPanel {{
-        min-height: 300px;
-        border-radius: 16px;
+        min-height: 340px;
+        border-radius: 18px;
         border: 1px solid var(--panel-border);
         background: var(--surface);
       }}
       .historyRail {{
-        padding: 10px;
+        padding: 12px;
         max-height: min(560px, calc(100vh - 190px));
         overflow: auto;
         overscroll-behavior: contain;
       }}
       .historyList {{
         display: grid;
-        gap: 8px;
+        gap: 10px;
       }}
       .historyCard {{
         width: 100%;
-        min-height: 72px;
-        padding: 10px 12px;
-        border-radius: 14px;
+        min-height: 78px;
+        padding: 12px;
+        border-radius: 16px;
         border: 1px solid var(--panel-border);
         background: var(--panel-strong);
         color: var(--text);
         text-align: left;
         display: grid;
-        gap: 8px;
+        gap: 10px;
       }}
       .historyCard.active {{
-        border-color: rgba(54, 191, 250, 0.38);
-        background: linear-gradient(180deg, rgba(54, 191, 250, 0.16) 0%, rgba(54, 191, 250, 0.07) 100%);
-        box-shadow: 0 0 0 1px rgba(54, 191, 250, 0.08);
+        border-color: rgba(79, 209, 255, 0.34);
+        box-shadow: inset 3px 0 0 var(--accent), 0 0 0 1px rgba(79, 209, 255, 0.08);
+        background: linear-gradient(180deg, rgba(79, 209, 255, 0.08), rgba(255, 255, 255, 0.02));
       }}
       html[data-theme='light'] .historyCard.active {{
-        background: linear-gradient(180deg, rgba(12, 121, 207, 0.12) 0%, rgba(12, 121, 207, 0.04) 100%);
+        background: linear-gradient(180deg, rgba(34, 184, 245, 0.09), rgba(255, 255, 255, 0.65));
       }}
       .historyTop,
       .historyBottom {{
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 8px;
+        gap: 10px;
         flex-wrap: wrap;
       }}
       .historyTime {{
-        font-size: 13px;
+        font-size: 14px;
         font-weight: 600;
       }}
       .historyMeta,
       .historyTail {{
         color: var(--muted);
         font-size: 12px;
-        line-height: 1.5;
+        line-height: 1.45;
       }}
       .historyBadges {{
         display: flex;
@@ -606,12 +694,12 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         display: inline-flex;
         align-items: center;
         gap: 5px;
-        padding: 2px 6px;
+        padding: 2px 7px;
         border-radius: 999px;
         border: 1px solid var(--panel-border);
         font-size: 10px;
         text-transform: uppercase;
-        letter-spacing: 0.05em;
+        letter-spacing: 0.08em;
       }}
       .stateDot {{
         width: 8px;
@@ -625,42 +713,44 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       .stateDot-rolled_back,
       .stateDot-offline {{ background: var(--bad); }}
       .stateDot-idle,
-      .stateDot-unknown {{ background: #6b7280; }}
+      .stateDot-unknown {{ background: #7f93a8; }}
       .newBadge {{
         color: var(--warn);
-        border: 1px solid rgba(251, 191, 36, 0.28);
-        background: rgba(251, 191, 36, 0.16);
+        border: 1px solid rgba(255, 177, 85, 0.26);
+        background: rgba(255, 177, 85, 0.14);
         border-radius: 999px;
-        padding: 3px 7px;
+        padding: 3px 8px;
         font-size: 10px;
       }}
       .logPanel {{
         display: grid;
         grid-template-rows: auto 1fr;
-        padding: 10px;
+        padding: 14px;
       }}
       .logHeader {{
         display: flex;
         justify-content: space-between;
         align-items: flex-start;
-        gap: 8px;
+        gap: 12px;
         flex-wrap: wrap;
-        margin-bottom: 8px;
+        margin-bottom: 12px;
       }}
       .logTitle {{
-        margin-top: 2px;
-        font-size: 16px;
+        margin-top: 4px;
+        font-size: 18px;
         line-height: 1.1;
         font-weight: 600;
+        letter-spacing: -0.02em;
       }}
       .logSummary {{
-        max-width: 280px;
+        max-width: 340px;
         text-align: right;
       }}
       #logs {{
         height: 100%;
-        min-height: 220px;
+        min-height: 250px;
         background: var(--console-bg);
+        border: 1px solid var(--panel-border);
       }}
       .popWrap {{
         position: relative;
@@ -669,30 +759,30 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
       .popCard {{
         position: absolute;
-        top: calc(100% + 8px);
+        top: calc(100% + 10px);
         right: 0;
         left: auto;
-        width: min(300px, calc(100vw - 40px));
+        width: min(320px, calc(100vw - 48px));
         border: 1px solid var(--button-border);
-        border-radius: 14px;
+        border-radius: 16px;
         background: var(--pop-bg);
         box-shadow: var(--panel-shadow);
-        padding: 10px;
+        padding: 12px;
         z-index: 20;
       }}
       .popTitle {{
-        margin: 0 0 4px;
+        margin: 0 0 6px;
         font-size: 13px;
         font-weight: 700;
       }}
       .popActions {{
         display: flex;
-        gap: 7px;
+        gap: 8px;
         justify-content: flex-end;
-        margin-top: 10px;
+        margin-top: 12px;
       }}
       .danger {{
-        border-color: rgba(220, 38, 38, 0.92);
+        border-color: rgba(220, 38, 38, 0.84);
         background: rgba(220, 38, 38, 0.92);
         color: #fff;
       }}
@@ -707,23 +797,26 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
       @media (max-width: 1024px) {{
         body {{
-          padding-left: 14px;
-          padding-right: 14px;
+          padding-left: 16px;
+          padding-right: 16px;
         }}
         .panel {{
-          padding: 14px;
+          padding: 16px;
         }}
-        .metaGrid,
-        .statusGrid,
-        .actionDeckGrid,
-        .workspaceGrid {{
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-        }}
-        .actionDeckGrid > :last-child {{
-          grid-column: 1 / -1;
-        }}
+        .mastheadGrid,
+        .actionDeckShell,
+        .statusBoard,
         .workspaceGrid {{
           grid-template-columns: 1fr;
+        }}
+        .statusFacts {{
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }}
+        .artifactGrid {{
+          grid-template-columns: 1fr;
+        }}
+        .linkButton {{
+          justify-self: start;
         }}
         .historyRail,
         .logPanel {{
@@ -732,50 +825,47 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         .historyRail {{
           max-height: min(360px, 44vh);
         }}
-        .logSummary {{
+        .logSummary,
+        .sectionHeadingNote {{
           text-align: left;
           max-width: none;
         }}
       }}
       @media (max-width: 720px) {{
         body {{
-          padding-left: 10px;
-          padding-right: 10px;
+          padding-left: 12px;
+          padding-right: 12px;
         }}
         .shell {{
-          gap: 12px;
-          padding-top: 12px;
+          gap: 14px;
+          padding-top: 14px;
         }}
         .panel {{
-          padding: 12px;
-          border-radius: 16px;
+          padding: 14px;
+          border-radius: 18px;
         }}
-        .mastheadTop,
         .brandRow,
         .sectionHeadingRow,
+        .statusHeroTop,
         .historyTop,
         .historyBottom,
         .logHeader {{
           align-items: flex-start;
         }}
-        .mastheadTop,
+        .brandRow,
+        .metaRow {{
+          grid-template-columns: 1fr;
+        }}
         .brandRow {{
           flex-direction: column;
         }}
-        .metaGrid,
-        .statusGrid,
-        .actionDeckGrid,
-        .workspaceGrid {{
+        .statusFacts {{
           grid-template-columns: 1fr;
-        }}
-        .statusTile-wide,
-        .statusTile-full {{
-          grid-column: auto;
         }}
         .buttonGroup,
         .buttonGroup-aux {{
           width: 100%;
-          justify-content: stretch;
+          justify-content: flex-start;
         }}
         .buttonGroup > *,
         .buttonGroup-aux > *,
@@ -785,12 +875,12 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           width: 100%;
         }}
         .logTitle {{
-          font-size: 15px;
+          font-size: 16px;
         }}
         .popCard {{
           left: 0;
           right: auto;
-          width: min(300px, calc(100vw - 28px));
+          width: min(320px, calc(100vw - 36px));
         }}
       }}
     </style>
@@ -798,33 +888,35 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
   <body>
     <main class="shell">
       <section class="panel masthead" data-panel="masthead">
-        <div class="mastheadTop">
+        <div class="mastheadGrid">
           <div>
+            <div class="eyebrow">Supervisor Console</div>
             <div class="brandRow">
               <div class="brandMark">
                 <img src="{base_path}/favicon.png" alt="" aria-hidden="true" width="26" height="26" />
               </div>
               <div>
-                <div class="eyebrow">Supervisor Console</div>
                 <h1>Dockrev 自我升级（Supervisor）</h1>
+                <p class="intro">该页面独立于 Dockrev 生命周期；Dockrev 重启期间仍可用，并保留最近 operation 上下文供排障。</p>
               </div>
             </div>
-            <p class="intro">该页面独立于 Dockrev 生命周期，重启期间仍可用；会持续轮询升级状态，并保留最近 operation 上下文。</p>
           </div>
-          <a class="linkButton" href="/">返回 Dockrev</a>
-        </div>
-        <div class="metaGrid">
-          <div class="metaCard">
-            <div class="metaLabel">Supervisor 版本</div>
-            <div class="metaValue">{version_html}</div>
-          </div>
-          <div class="metaCard">
-            <div class="metaLabel">开源仓库</div>
-            <div class="metaValue">{repository_html}</div>
-          </div>
-          <div class="metaCard">
-            <div class="metaLabel">开发者</div>
-            <div class="metaValue">{developer_html}</div>
+          <div class="mastheadAside">
+            <a class="linkButton" href="/">返回 Dockrev</a>
+            <div class="metaStack">
+              <div class="metaRow">
+                <div class="metaLabel">Supervisor 版本</div>
+                <div class="metaValue">{version_html}</div>
+              </div>
+              <div class="metaRow">
+                <div class="metaLabel">开源仓库</div>
+                <div class="metaValue">{repository_html}</div>
+              </div>
+              <div class="metaRow">
+                <div class="metaLabel">开发者</div>
+                <div class="metaValue">{developer_html}</div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -835,32 +927,35 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
             <div class="sectionEyebrow">Action deck</div>
             <h2>升级控制台</h2>
           </div>
-          <div class="muted">失败会尝试回滚到 previous digest（如可用），请求状态会留在当前页。</div>
+          <div class="muted sectionHeadingNote">失败会尝试回滚到 previous digest（如可用）；操作过程会持续留在当前页。</div>
         </div>
-        <div class="actionDeckGrid">
+        <div class="actionDeckShell">
           <label class="fieldBlock" for="tag">
             <span class="fieldLabel">Target tag</span>
             <input id="tag" value="latest" />
-            <span class="fieldHint">默认使用 <code>latest</code>，也可输入固定 tag 进行验证或升级。</span>
+            <span class="fieldHint">默认使用 <code>latest</code>，也支持输入固定 tag 进行验证或升级。</span>
           </label>
-          <div class="buttonGroup buttonGroup-main">
-            <button id="dry">预览（dry-run）</button>
-            <button id="apply" class="primary">开始升级（apply）</button>
-          </div>
-          <div class="buttonGroup buttonGroup-aux">
-            <div id="rollbackWrap" class="popWrap">
-              <button id="rollback" aria-haspopup="dialog" aria-expanded="false">回滚</button>
-              <div id="rollbackPop" class="popCard" role="dialog" aria-modal="false" hidden>
-                <div class="popTitle">确认手动回滚？</div>
-                <div class="muted">将尝试回滚到 previous digest，并可能触发容器重启。</div>
-                <div class="muted">opId: <code id="rollbackOpId">-</code></div>
-                <div class="popActions">
-                  <button id="rollbackCancel">取消</button>
-                  <button id="rollbackConfirm" class="danger">确认回滚</button>
+          <div class="actionRail">
+            <div class="buttonGroup buttonGroup-main">
+              <button id="dry">预览（dry-run）</button>
+              <button id="apply" class="primary">开始升级（apply）</button>
+            </div>
+            <div class="buttonGroup buttonGroup-aux">
+              <div id="rollbackWrap" class="popWrap">
+                <button id="rollback" aria-haspopup="dialog" aria-expanded="false">回滚</button>
+                <div id="rollbackPop" class="popCard" role="dialog" aria-modal="false" hidden>
+                  <div class="popTitle">确认手动回滚？</div>
+                  <div class="muted">将尝试回滚到 previous digest，并可能触发容器重启。</div>
+                  <div class="muted">opId: <code id="rollbackOpId">-</code></div>
+                  <div class="popActions">
+                    <button id="rollbackCancel">取消</button>
+                    <button id="rollbackConfirm" class="danger">确认回滚</button>
+                  </div>
                 </div>
               </div>
+              <button id="refresh">刷新</button>
             </div>
-            <button id="refresh">刷新</button>
+            <div class="actionNote muted">建议先用 dry-run 确认 tag 与 digest，再执行 apply；operation 结束后可直接回滚。</div>
           </div>
         </div>
       </section>
@@ -873,39 +968,48 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           </div>
           <div id="statusTone" class="statusTone" aria-live="polite">loading…</div>
         </div>
-        <div class="statusGrid">
-          <article class="statusTile statusTile-hero">
+        <div class="statusBoard">
+          <article class="statusHero">
             <div class="statusLabel">State</div>
-            <div id="statusState" class="statusValue statusValue-lg">loading…</div>
-            <div id="statusSummary" class="statusMeta">等待首次轮询结果…</div>
+            <div class="statusHeroTop">
+              <div>
+                <div id="statusState" class="statusValue statusValue-lg">loading…</div>
+              </div>
+              <div class="statusMeta">operation stream</div>
+            </div>
+            <div id="statusSummary" class="statusMeta statusHeroSummary">等待首次轮询结果…</div>
           </article>
-          <article class="statusTile">
-            <div class="statusLabel">Current opId</div>
-            <div id="statusOpId" class="statusValue">-</div>
-            <div class="statusMeta">当前追踪中的 operation。</div>
-          </article>
-          <article class="statusTile">
-            <div class="statusLabel">Current step</div>
-            <div id="statusStep" class="statusValue">-</div>
-            <div id="statusMode" class="statusMeta">mode -</div>
-          </article>
-          <article class="statusTile">
-            <div class="statusLabel">Timestamps</div>
-            <div id="statusStartedAt" class="statusValue">-</div>
-            <div id="statusUpdatedAt" class="statusMeta">updated -</div>
-          </article>
-          <article class="statusTile statusTile-full">
+          <div class="statusFacts">
+            <article class="statusFact">
+              <div class="statusLabel">Current opId</div>
+              <div id="statusOpId" class="statusValue">-</div>
+              <div class="statusMeta">当前正在追踪的 operation 标识。</div>
+            </article>
+            <article class="statusFact">
+              <div class="statusLabel">Current step</div>
+              <div id="statusStep" class="statusValue">-</div>
+              <div id="statusMode" class="statusMeta">mode -</div>
+            </article>
+            <article class="statusFact statusFact-wide">
+              <div class="statusLabel">Timestamps</div>
+              <div id="statusStartedAt" class="statusValue">-</div>
+              <div id="statusUpdatedAt" class="statusMeta">updated -</div>
+            </article>
+          </div>
+          <article class="progressCard">
             <div class="statusLabel">Progress message</div>
             <div id="statusProgressMessage" class="statusCodeInline">-</div>
           </article>
-          <article class="statusTile statusTile-wide">
-            <div class="statusLabel">Target</div>
-            <pre id="statusTarget" class="statusCode">-</pre>
-          </article>
-          <article class="statusTile statusTile-wide">
-            <div class="statusLabel">Previous</div>
-            <pre id="statusPrevious" class="statusCode">-</pre>
-          </article>
+          <div class="artifactGrid">
+            <article class="artifactCard">
+              <div class="statusLabel">Target</div>
+              <pre id="statusTarget" class="statusCode">-</pre>
+            </article>
+            <article class="artifactCard">
+              <div class="statusLabel">Previous</div>
+              <pre id="statusPrevious" class="statusCode">-</pre>
+            </article>
+          </div>
         </div>
       </section>
 
@@ -915,7 +1019,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
             <div class="sectionEyebrow">History & logs</div>
             <h2>操作历史与日志</h2>
           </div>
-          <div id="historyHint" class="muted">loading…</div>
+          <div id="historyHint" class="muted sectionHeadingNote">loading…</div>
         </div>
         <div id="workspaceGrid" class="workspaceGrid">
           <aside id="historyRail" class="historyRail">
