@@ -18,6 +18,7 @@ import { normalizeDigest, shortenDigest } from './digest'
 import { useHoverPinnedPopover } from './HoverPinnedPopover'
 import { inferResolvedTagsFromSnapshot, isStrictSemverTag } from '../versionDisplay'
 import {
+  getDigestSnapshotInvalidationToken,
   invalidateDigestSnapshot,
   subscribeDigestSnapshotInvalidation,
 } from '../digestSnapshotBus'
@@ -135,8 +136,6 @@ export function CurrentVersionPopover(props: {
     togglePinned,
     triggerProps,
   } = useHoverPinnedPopover()
-  const openRef = useRef(open)
-  openRef.current = open
 
   const digestNorm = useMemo(() => normalizeDigest(imageDigest), [imageDigest])
 
@@ -174,6 +173,7 @@ export function CurrentVersionPopover(props: {
   const [snapshotPhase, setSnapshotPhase] = useState<SnapshotFetchPhase>('idle')
   const snapshotPhaseRef = useRef<SnapshotFetchPhase>(snapshotPhase)
   snapshotPhaseRef.current = snapshotPhase
+  const ignoreInvalidationTokenRef = useRef<number>(0)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null)
   const [refreshError, setRefreshError] = useState<string | null>(null)
@@ -228,20 +228,27 @@ export function CurrentVersionPopover(props: {
 
   useEffect(() => {
     if (!digestNorm) return
-    return subscribeDigestSnapshotInvalidation(digestKey, () => {
-      // Do not invalidate an open popover; keep refresh effects local and predictable.
-      if (openRef.current) return
-      if (snapshotPhaseRef.current === 'loading') return
+    return subscribeDigestSnapshotInvalidation(digestKey, (token) => {
+      if (ignoreInvalidationTokenRef.current === token) {
+        ignoreInvalidationTokenRef.current = 0
+        return
+      }
 
-      setDigestState({
-        key: digestKey,
-        tags: null,
-        scan: null,
-        checkedAt: null,
-        missingSnapshot: false,
-        error: null,
+      setDigestState((prev) => {
+        if (prev.key !== digestKey) return prev
+        if (prev.tags == null) return prev
+        return {
+          key: digestKey,
+          tags: null,
+          scan: null,
+          checkedAt: null,
+          missingSnapshot: false,
+          error: null,
+        }
       })
-      setSnapshotPhase('idle')
+      if (snapshotPhaseRef.current !== 'loading') {
+        setSnapshotPhase('idle')
+      }
     })
   }, [digestKey, digestNorm])
 
@@ -278,6 +285,8 @@ export function CurrentVersionPopover(props: {
         error: null,
       })
       setSnapshotPhase('loading')
+      const nextToken = getDigestSnapshotInvalidationToken(digestKey) + 1
+      ignoreInvalidationTokenRef.current = nextToken
       invalidateDigestSnapshot(digestKey)
     } catch (e: unknown) {
       setRefreshError(e instanceof Error ? e.message : String(e))
