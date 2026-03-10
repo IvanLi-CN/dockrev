@@ -308,12 +308,7 @@ export function VersionTagsPopover(props: {
 
               // Only clear inferred tags when the snapshot scan is successful; preserve last-known
               // good inference values for all_failed/error snapshots.
-              if (inferredFirst) {
-                setLocalDisplayTag({
-                  key: digestKey,
-                  value: inferredFirst,
-                })
-              }
+              setLocalDisplayTag({ key: digestKey, value: inferredFirst })
               if (isLocalRefresh && onLocalResolvedTag) {
                 if (inferredFirst || (!failures && complete)) onLocalResolvedTag(inferredFirst)
               }
@@ -333,7 +328,13 @@ export function VersionTagsPopover(props: {
                 missingSnapshot: true,
                 error: null,
               })
-              if (localRefreshKey === digestKey) setLocalRefreshKey(null)
+              const isLocalRefresh = localRefreshKey === digestKey
+              const isExternalRefresh = externalRefreshKey === digestKey
+              if (isLocalRefresh || isExternalRefresh) {
+                setLocalDisplayTag({ key: digestKey, value: null })
+              }
+              if (isLocalRefresh) setLocalRefreshKey(null)
+              if (isExternalRefresh) setExternalRefreshKey(null)
               setSnapshotPhase('missing')
               return
             }
@@ -345,7 +346,13 @@ export function VersionTagsPopover(props: {
               missingSnapshot: false,
               error: e instanceof Error ? e.message : String(e),
             })
-            if (localRefreshKey === digestKey) setLocalRefreshKey(null)
+            const isLocalRefresh = localRefreshKey === digestKey
+            const isExternalRefresh = externalRefreshKey === digestKey
+            if (isLocalRefresh || isExternalRefresh) {
+              setLocalDisplayTag({ key: digestKey, value: null })
+            }
+            if (isLocalRefresh) setLocalRefreshKey(null)
+            if (isExternalRefresh) setExternalRefreshKey(null)
             setSnapshotPhase('error')
           })
       }
