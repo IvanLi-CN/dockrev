@@ -515,6 +515,16 @@ export function ServiceDetailPage(props: {
 		                                    imageDigest={service.image.digest ?? null}
 		                                    resolvedTag={service.image.resolvedTag}
 		                                    resolvedTags={service.image.resolvedTags}
+                                        onLocalResolvedTags={(update) => {
+                                          patchServiceInStack((prev) => ({
+                                            ...prev,
+                                            image: {
+                                              ...prev.image,
+                                              resolvedTag: update.resolvedTag,
+                                              resolvedTags: update.resolvedTags,
+                                            },
+                                          }))
+                                        }}
 		                                    inferenceLoading={inferencePending}
 			                                  />
 	                                  <span
@@ -528,6 +538,17 @@ export function ServiceDetailPage(props: {
 			                                    candidateTag={service.candidate.tag}
 			                                    candidateDigest={service.candidate.digest ?? null}
 		                                      prefetchOnMount={candidatePrefetchOnMount}
+                                        onLocalResolvedTag={(resolvedTag) => {
+                                          patchServiceInStack((prev) => ({
+                                            ...prev,
+                                            candidate: prev.candidate
+                                              ? {
+                                                  ...prev.candidate,
+                                                  resolvedTag,
+                                                }
+                                              : prev.candidate,
+                                          }))
+                                        }}
 			                                  >
 			                                    {candidateDisplayTag}
 			                                  </VersionTagsPopover>
@@ -541,6 +562,16 @@ export function ServiceDetailPage(props: {
 	                                      imageDigest={service.image.digest ?? null}
 	                                      resolvedTag={service.image.resolvedTag}
 	                                      resolvedTags={service.image.resolvedTags}
+                                        onLocalResolvedTags={(update) => {
+                                          patchServiceInStack((prev) => ({
+                                            ...prev,
+                                            image: {
+                                              ...prev.image,
+                                              resolvedTag: update.resolvedTag,
+                                              resolvedTags: update.resolvedTags,
+                                            },
+                                          }))
+                                        }}
 	                                      preferSource="rawTag"
 	                                      triggerClassName="versionTagsTrigger mono monoSecondary"
 	                                    >

@@ -41,6 +41,9 @@ export function subscribeDigestSnapshotInvalidation(
     const existing = listenersByKey.get(key)
     if (!existing) return
     existing.delete(listener)
-    if (existing.size === 0) listenersByKey.delete(key)
+    if (existing.size === 0) {
+      listenersByKey.delete(key)
+      tokensByKey.delete(key)
+    }
   }
 }

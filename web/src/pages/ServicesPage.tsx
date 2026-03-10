@@ -906,6 +906,29 @@ export function ServicesPage(props: {
 	                            <AggregateUpdatePreviewList
 	                              items={previewItems}
 	                              dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
+                                onServiceResolvedTags={(update) => {
+                                  const stackId = (update.stackId ?? '').trim() || g.stackId
+                                  patchServiceInStackDetails(stackId, update.serviceId, (prev) => ({
+                                    ...prev,
+                                    image: {
+                                      ...prev.image,
+                                      resolvedTag: update.resolvedTag,
+                                      resolvedTags: update.resolvedTags,
+                                    },
+                                  }))
+                                }}
+                                onServiceCandidateResolvedTag={(update) => {
+                                  const stackId = (update.stackId ?? '').trim() || g.stackId
+                                  patchServiceInStackDetails(stackId, update.serviceId, (prev) => ({
+                                    ...prev,
+                                    candidate: prev.candidate
+                                      ? {
+                                          ...prev.candidate,
+                                          resolvedTag: update.resolvedTag,
+                                        }
+                                      : prev.candidate,
+                                  }))
+                                }}
 	                            />
 	                            <div className="modalDivider" />
 	                          </>
@@ -1203,6 +1226,16 @@ export function ServicesPage(props: {
 	                                                  imageDigest={svc.image.digest ?? null}
 	                                                  resolvedTag={svc.image.resolvedTag}
 	                                                  resolvedTags={svc.image.resolvedTags}
+                                                    onLocalResolvedTags={(update) => {
+                                                      patchServiceInStackDetails(g.stackId, svc.id, (prev) => ({
+                                                        ...prev,
+                                                        image: {
+                                                          ...prev.image,
+                                                          resolvedTag: update.resolvedTag,
+                                                          resolvedTags: update.resolvedTags,
+                                                        },
+                                                      }))
+                                                    }}
 	                                                  inferenceLoading={inferencePending}
 	                                                />
 	                                                <span
@@ -1217,6 +1250,17 @@ export function ServicesPage(props: {
 			                                                    candidateTag={candidateRawTag}
 			                                                    candidateDigest={svc.candidate?.digest ?? null}
 			                                                    prefetchOnMount={candidatePrefetchOnMount}
+                                                        onLocalResolvedTag={(resolvedTag) => {
+                                                          patchServiceInStackDetails(g.stackId, svc.id, (prev) => ({
+                                                            ...prev,
+                                                            candidate: prev.candidate
+                                                              ? {
+                                                                  ...prev.candidate,
+                                                                  resolvedTag,
+                                                                }
+                                                              : prev.candidate,
+                                                          }))
+                                                        }}
 			                                                  >
 			                                                    {candidateDisplayTag}
 			                                                  </VersionTagsPopover>
@@ -1233,6 +1277,16 @@ export function ServicesPage(props: {
                                                     imageDigest={svc.image.digest ?? null}
                                                     resolvedTag={svc.image.resolvedTag}
                                                     resolvedTags={svc.image.resolvedTags}
+                                                      onLocalResolvedTags={(update) => {
+                                                        patchServiceInStackDetails(g.stackId, svc.id, (prev) => ({
+                                                          ...prev,
+                                                          image: {
+                                                            ...prev.image,
+                                                            resolvedTag: update.resolvedTag,
+                                                            resolvedTags: update.resolvedTags,
+                                                          },
+                                                        }))
+                                                      }}
                                                     preferSource="rawTag"
                                                     triggerClassName="versionTagsTrigger mono monoSecondary"
                                                   >

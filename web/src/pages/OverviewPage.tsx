@@ -1110,6 +1110,31 @@ export function OverviewPage(props: {
 	                <AggregateUpdatePreviewList
 	                  items={previewItems}
 	                  dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
+                    onServiceResolvedTags={(update) => {
+                      const stackId = (update.stackId ?? '').trim()
+                      if (!stackId) return
+                      patchServiceInStackDetails(stackId, update.serviceId, (prev) => ({
+                        ...prev,
+                        image: {
+                          ...prev.image,
+                          resolvedTag: update.resolvedTag,
+                          resolvedTags: update.resolvedTags,
+                        },
+                      }))
+                    }}
+                    onServiceCandidateResolvedTag={(update) => {
+                      const stackId = (update.stackId ?? '').trim()
+                      if (!stackId) return
+                      patchServiceInStackDetails(stackId, update.serviceId, (prev) => ({
+                        ...prev,
+                        candidate: prev.candidate
+                          ? {
+                              ...prev.candidate,
+                              resolvedTag: update.resolvedTag,
+                            }
+                          : prev.candidate,
+                      }))
+                    }}
 	                />
 	                <div className="modalDivider" />
 	              </>
@@ -1391,6 +1416,29 @@ export function OverviewPage(props: {
 	                            <AggregateUpdatePreviewList
 	                              items={aggregatePreviewItems}
 	                              dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
+                                onServiceResolvedTags={(update) => {
+                                  const stackId = (update.stackId ?? '').trim() || st.id
+                                  patchServiceInStackDetails(stackId, update.serviceId, (prev) => ({
+                                    ...prev,
+                                    image: {
+                                      ...prev.image,
+                                      resolvedTag: update.resolvedTag,
+                                      resolvedTags: update.resolvedTags,
+                                    },
+                                  }))
+                                }}
+                                onServiceCandidateResolvedTag={(update) => {
+                                  const stackId = (update.stackId ?? '').trim() || st.id
+                                  patchServiceInStackDetails(stackId, update.serviceId, (prev) => ({
+                                    ...prev,
+                                    candidate: prev.candidate
+                                      ? {
+                                          ...prev.candidate,
+                                          resolvedTag: update.resolvedTag,
+                                        }
+                                      : prev.candidate,
+                                  }))
+                                }}
 	                            />
 	                            <div className="modalDivider" />
 	                          </>
@@ -1682,6 +1730,16 @@ export function OverviewPage(props: {
 		                                                imageDigest={svc.image.digest ?? null}
 		                                                resolvedTag={svc.image.resolvedTag}
 		                                                resolvedTags={svc.image.resolvedTags}
+                                                    onLocalResolvedTags={(update) => {
+                                                      patchServiceInStackDetails(st.id, svc.id, (prev) => ({
+                                                        ...prev,
+                                                        image: {
+                                                          ...prev.image,
+                                                          resolvedTag: update.resolvedTag,
+                                                          resolvedTags: update.resolvedTags,
+                                                        },
+                                                      }))
+                                                    }}
 		                                                inferenceLoading={inferencePending}
 		                                              />
 	                                              <span
@@ -1696,6 +1754,17 @@ export function OverviewPage(props: {
 			                                                  candidateTag={svc.candidate.tag}
 			                                                  candidateDigest={svc.candidate.digest ?? null}
 			                                                  prefetchOnMount={candidatePrefetchOnMount}
+                                                    onLocalResolvedTag={(resolvedTag) => {
+                                                      patchServiceInStackDetails(st.id, svc.id, (prev) => ({
+                                                        ...prev,
+                                                        candidate: prev.candidate
+                                                          ? {
+                                                              ...prev.candidate,
+                                                              resolvedTag,
+                                                            }
+                                                          : prev.candidate,
+                                                      }))
+                                                    }}
 			                                                >
 		                                                  {formatCandidateTagDisplay(
 		                                                    svc.candidate.tag,
@@ -1724,6 +1793,16 @@ export function OverviewPage(props: {
 		                                                    imageDigest={svc.image.digest ?? null}
 		                                                    resolvedTag={svc.image.resolvedTag}
 		                                                    resolvedTags={svc.image.resolvedTags}
+                                                      onLocalResolvedTags={(update) => {
+                                                        patchServiceInStackDetails(st.id, svc.id, (prev) => ({
+                                                          ...prev,
+                                                          image: {
+                                                            ...prev.image,
+                                                            resolvedTag: update.resolvedTag,
+                                                            resolvedTags: update.resolvedTags,
+                                                          },
+                                                        }))
+                                                      }}
 		                                                    preferSource="rawTag"
 		                                                    triggerClassName="versionTagsTrigger mono monoSecondary"
 		                                                  >
