@@ -939,6 +939,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       const themeMedia = themeController?.mediaQuery || window.matchMedia('(prefers-color-scheme: dark)');
       let activeOpId = null;
       let latestOpId = null;
+      let latestOpMarker = null;
       let latestHasNewer = false;
       let lastKnownSelfUpgradeState = null;
 
@@ -1077,6 +1078,11 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         return String(opId || '-').slice(-6);
       }}
 
+      function operationMarker(op) {{
+        if (!op?.opId) return null;
+        return `${{op.opId}}:${{op.updatedAt || ''}}:${{(op.logs || []).length}}`;
+      }}
+
       function formatTargetRef(target) {{
         const image = target?.image || '-';
         const tag = target?.tag ? `:${{target.tag}}` : '';
@@ -1170,6 +1176,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           syncWorkspaceMode(false);
           activeOpId = null;
           latestOpId = null;
+          latestOpMarker = null;
           latestHasNewer = false;
           historyHintEl.textContent = '暂无 operation 历史，已回退到扁平日志视图。';
           logTitleEl.textContent = '当前日志';
@@ -1180,17 +1187,21 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
 
         syncWorkspaceMode(true);
         const previousLatest = latestOpId;
-        const nextLatest = operations[0]?.opId || null;
+        const previousLatestMarker = latestOpMarker;
+        const nextLatestOp = operations[0] || null;
+        const nextLatest = nextLatestOp?.opId || null;
+        const nextLatestMarker = operationMarker(nextLatestOp);
         const wasViewingLatest = !activeOpId || (previousLatest && activeOpId === previousLatest);
         if (nextLatest && wasViewingLatest) {{
           activeOpId = nextLatest;
         }} else if (!operations.some((op) => op.opId === activeOpId)) {{
           activeOpId = nextLatest;
         }}
-        if (!wasViewingLatest && previousLatest && nextLatest && previousLatest !== nextLatest) {{
+        if (!wasViewingLatest && previousLatestMarker && nextLatestMarker && previousLatestMarker !== nextLatestMarker) {{
           latestHasNewer = true;
         }}
         latestOpId = nextLatest;
+        latestOpMarker = nextLatestMarker;
         if (activeOpId && activeOpId === latestOpId) {{
           latestHasNewer = false;
         }}

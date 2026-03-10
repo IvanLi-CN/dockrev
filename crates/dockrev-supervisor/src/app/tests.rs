@@ -349,6 +349,7 @@ fn render_ui_contains_status_tiles_and_textual_history_markup() {
     assert!(html.contains("id=\"statusProgressMessage\""));
     assert!(html.contains("function renderStatus(st)"));
     assert!(html.contains("function createStateBadge(state)"));
+    assert!(html.contains("function operationMarker(op)"));
     assert!(html.contains("stateBadge stateBadge-"));
     assert!(html.contains("latestHasNewer"));
 }
@@ -385,6 +386,16 @@ fn render_ui_collapses_history_rail_when_operation_groups_are_absent() {
     );
     assert!(html.contains("historyRailEl.hidden = !hasOperations;"));
     assert!(html.contains("暂无 operation 历史，已回退到扁平日志视图。"));
+}
+
+#[test]
+fn render_ui_marks_latest_history_card_when_same_operation_gets_new_logs() {
+    let html = render_ui("/supervisor", &test_meta());
+    assert!(html.contains("let latestOpMarker = null;"));
+    assert!(html.contains("const previousLatestMarker = latestOpMarker;"));
+    assert!(html.contains("const nextLatestMarker = operationMarker(nextLatestOp);"));
+    assert!(html.contains("previousLatestMarker !== nextLatestMarker"));
+    assert!(html.contains("latestOpMarker = nextLatestMarker;"));
 }
 
 #[test]
