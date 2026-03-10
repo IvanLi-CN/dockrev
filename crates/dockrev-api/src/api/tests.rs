@@ -3815,6 +3815,98 @@ services:
 }
 
 #[tokio::test]
+async fn stack_detail_preserves_resolved_tag_when_snapshot_has_no_semver_tags_but_scan_is_incomplete()
+ {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(300)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let service = services.first().expect("service must exist");
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    // Seed a last-known-good resolved tag on the service itself.
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            crate::snapshot_worker::normalize_digest("sha256:current"),
+            Some("v0.8.7".to_string()),
+            Some(serde_json::to_string(&vec!["v0.8.7"]).unwrap()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    // Snapshot refreshed, but it no longer contains any semver tags. The scan is incomplete
+    // (`repo_tags_considered` < `repo_tags_total`), so it must not wipe the last-known-good
+    // resolved tag values.
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:current",
+        "linux/amd64",
+        &now,
+        vec!["latest".to_string(), "stable".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 100,
+            repo_tags_considered: 40,
+            manifests_ok: 40,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let image = &detail["stack"]["services"][0]["image"];
+    assert_eq!(
+        image["resolvedTag"].as_str().unwrap_or("<none>"),
+        "v0.8.7",
+        "expected resolvedTag to be preserved for incomplete scan: {detail}"
+    );
+    assert_eq!(
+        image["resolvedTags"][0].as_str().unwrap_or("<none>"),
+        "v0.8.7",
+        "expected resolvedTags to be preserved for incomplete scan: {detail}"
+    );
+}
+
+#[tokio::test]
 async fn stack_detail_preserves_resolved_tag_when_snapshot_is_all_failed() {
     let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(300)));
     let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;

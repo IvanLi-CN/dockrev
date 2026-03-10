@@ -305,11 +305,15 @@ pub(super) async fn enrich_stack_with_version_inference(
                 let inferred_first = tags.first().cloned();
                 let scan_has_failures = snapshot_entry.snapshot.scan.manifests_timeout > 0
                     || snapshot_entry.snapshot.scan.manifests_error > 0;
+                let scan_is_complete = snapshot_entry.snapshot.scan.repo_tags_considered
+                    >= snapshot_entry.snapshot.scan.repo_tags_total;
 
                 // Only clear inferred tags when the snapshot scan completed without failures.
                 // Error/all_failed snapshots are persisted best-effort and must not wipe the last
-                // known good inference values.
-                if inferred_first.is_some() || !scan_has_failures {
+                // known good inference values. Additionally, snapshot scans can be deliberately
+                // truncated; only treat an "empty inferred tag set" as authoritative when the
+                // scan is complete.
+                if inferred_first.is_some() || (!scan_has_failures && scan_is_complete) {
                     if for_candidate {
                         if let Some(candidate) = svc.candidate.as_mut() {
                             candidate.resolved_tag = inferred_first;

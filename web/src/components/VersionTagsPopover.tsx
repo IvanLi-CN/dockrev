@@ -75,6 +75,11 @@ function scanHasFailures(scan: ServiceDigestTagsScanSummary | null | undefined):
   return scan.manifestsTimeout > 0 || scan.manifestsError > 0
 }
 
+function scanIsComplete(scan: ServiceDigestTagsScanSummary | null | undefined): boolean {
+  if (!scan) return false
+  return scan.repoTagsConsidered >= scan.repoTagsTotal
+}
+
 export function VersionTagsPopover(props: {
   serviceId: string
   candidateTag: string | null
@@ -299,6 +304,7 @@ export function VersionTagsPopover(props: {
               )
               const inferredFirst = inferred[0] ?? null
               const failures = scanHasFailures(data.scan)
+              const complete = scanIsComplete(data.scan)
 
               // Only clear inferred tags when the snapshot scan is successful; preserve last-known
               // good inference values for all_failed/error snapshots.
@@ -309,7 +315,7 @@ export function VersionTagsPopover(props: {
                 })
               }
               if (isLocalRefresh && onLocalResolvedTag) {
-                if (inferredFirst || !failures) onLocalResolvedTag(inferredFirst)
+                if (inferredFirst || (!failures && complete)) onLocalResolvedTag(inferredFirst)
               }
               if (isLocalRefresh) setLocalRefreshKey(null)
               if (isExternalRefresh) setExternalRefreshKey(null)
