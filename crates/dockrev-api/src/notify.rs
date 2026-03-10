@@ -636,8 +636,12 @@ async fn settle_new_version_display_tag(
     let raw_tag = raw_tag.trim();
     let digest = digest.map(str::trim).filter(|digest| !digest.is_empty());
     let image_repo = image_repo.map(str::trim).filter(|repo| !repo.is_empty());
-    let stable_display =
-        best_notification_display_tag(raw_tag, &[existing_resolved_tag, existing_display_tag]);
+    let stable_display = preferred_notification_display_tag(
+        raw_tag,
+        existing_display_tag,
+        None,
+        existing_resolved_tag,
+    );
     let needs_inference = notification_tag_requires_settle(raw_tag, &stable_display);
 
     let mut inferred = None;
@@ -660,13 +664,11 @@ async fn settle_new_version_display_tag(
             .await;
     }
 
-    let display = best_notification_display_tag(
+    let display = preferred_notification_display_tag(
         raw_tag,
-        &[
-            existing_resolved_tag,
-            existing_display_tag,
-            inferred.as_deref(),
-        ],
+        existing_display_tag,
+        inferred.as_deref(),
+        existing_resolved_tag,
     );
     let pending = in_flight_reason.is_some() && needs_inference && !snapshot_ready;
     Ok((display, pending))
@@ -738,6 +740,18 @@ fn best_notification_display_tag(raw_tag: &str, improved_candidates: &[Option<&s
         }
     }
     raw_tag.to_string()
+}
+
+fn preferred_notification_display_tag(
+    raw_tag: &str,
+    frozen_display_tag: Option<&str>,
+    inferred_display_tag: Option<&str>,
+    live_resolved_tag: Option<&str>,
+) -> String {
+    best_notification_display_tag(
+        raw_tag,
+        &[frozen_display_tag, inferred_display_tag, live_resolved_tag],
+    )
 }
 
 fn notification_tag_supports_settle(raw_tag: &str) -> bool {
@@ -3992,9 +4006,20 @@ mod tests {
     }
 
     #[test]
-    fn best_notification_display_tag_keeps_existing_resolved_before_stale_snapshot() {
+    fn preferred_notification_display_keeps_frozen_summary_before_live_resolved() {
         let display =
-            best_notification_display_tag("latest", &[Some("5.2.0"), Some("5.2.0"), Some("5.1.0")]);
+            preferred_notification_display_tag("latest", Some("5.2.0"), None, Some("5.1.0"));
+        assert_eq!(display, "5.2.0");
+    }
+
+    #[test]
+    fn preferred_notification_display_keeps_fresh_snapshot_before_live_resolved() {
+        let display = preferred_notification_display_tag(
+            "latest",
+            Some("latest"),
+            Some("5.2.0"),
+            Some("5.1.0"),
+        );
         assert_eq!(display, "5.2.0");
     }
 
