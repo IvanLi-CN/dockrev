@@ -48,6 +48,7 @@
 - 从 OCI label 读取到的 raw version 必须先按“允许前导 `v/V`”校验为合法 semver，再生成 ordered candidates。
 - ordered candidates 必须按 `[raw_tag_if_distinct, normalized_no_v_tag]` 顺序执行 pull，并对重复候选去重。
 - 若本地 `RepoTags` 已经包含某个候选 tag，必须按候选顺序直接短路成功，不再为更早失败候选消耗远端 pull 重试预算。
+- 同一 job 内若较晚候选（如 normalized tag）已在去重集合中，仍不得抢先跳过更早的 raw candidate；只有轮到该候选时才允许复用 job 级短路。
 - 所有候选都失败时，job 继续以 `failureStep=semver_pull` 失败，错误信息需包含全部尝试过的 refs。
 
 ### SHOULD
@@ -103,3 +104,4 @@
 - 2026-03-10: 新建规格，冻结“非 service update 的 semver pull 优先 raw tag，再回退 normalized tag”语义。
 - 2026-03-10: 完成 `dockrev-api` 实现与回归测试，保持非 service update 的阻断失败语义不变。
 - 2026-03-10: review-loop 补强本地 RepoTags 全候选短路、local-hit summary 记录与聚合失败尝试次数可观测性。
+- 2026-03-10: 合并 `origin/main` 后补强 raw-first 去重顺序，确保先前已拉取 normalized tag 时仍会优先尝试 raw tag。
