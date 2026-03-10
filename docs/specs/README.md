@@ -27,6 +27,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| xyma9 | Dockrev：非 service update 的 semver pull 保留 OCI 原始 tag 并回退无 v 变体 | 已完成 | `xyma9-semver-pull-raw-tag-fallback/SPEC.md` | 2026-03-10 | fast-track |
 | bvxtm | Dockrev：Supervisor 暗色主题修复 + 同源主题偏好共享 | 已完成 | `bvxtm-supervisor-dark-theme-same-origin-share/SPEC.md` | 2026-03-09 | fast-track（PR #156；cargo test + browser smoke） |
 | qh4zx | Dockrev：新版本通知等待解析收敛 + 单服务正文瘦身 | 已完成 | `qh4zx-new-version-notify-settle-and-copy/SPEC.md` | 2026-03-09 | fast-track（PR #159） |
 | 4n5vr | Dockrev：新版本通知记录表去重 + 通知内版本号展示 | 已完成 | `4n5vr-new-version-notification-records/SPEC.md` | 2026-03-09 | fast-track（notification record table + display tag version copy + review fixes + main sync） |
