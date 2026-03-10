@@ -15,6 +15,7 @@ import {
   type DiscoveredProject,
   type JobListItem,
   type Service,
+  type ServiceDigestTagsScanSummary,
   type StackDetail,
   type StackListItem,
 } from '../api'
@@ -39,13 +40,16 @@ import { ConfirmServiceVersionCell } from '../components/ConfirmServiceVersionCe
 import {
   formatCandidateTagDisplay,
   formatCurrentTagDisplay as formatTagDisplay,
+  inferResolvedTagsFromSnapshot,
   isStrictSemverTag,
 } from '../versionDisplay'
 import { normalizeDigest } from '../components/digest'
 import {
-  DIGEST_INFERENCE_UPDATED_EVENT,
-  type DigestInferenceUpdatedDetail,
+  DIGEST_SNAPSHOT_UPDATED_EVENT,
+  type DigestSnapshotUpdatedDetail,
 } from '../digestInferenceTracker'
+import { invalidateDigestSnapshot } from '../digestSnapshotBus'
+import { imageRepoFromImageRef } from '../imageRepo'
 import {
   resolveUpdateActionTargetKey,
   UPDATE_JOB_SETTLED_EVENT,
@@ -70,6 +74,16 @@ function formatCompactDateTime(ts?: string | null) {
   const h = String(d.getHours()).padStart(2, '0')
   const min = String(d.getMinutes()).padStart(2, '0')
   return `${m}/${day} ${h}:${min}`
+}
+
+function scanHasFailures(scan: ServiceDigestTagsScanSummary | null | undefined): boolean {
+  if (!scan) return false
+  return scan.manifestsTimeout > 0 || scan.manifestsError > 0
+}
+
+function scanIsComplete(scan: ServiceDigestTagsScanSummary | null | undefined): boolean {
+  if (!scan) return false
+  return scan.repoTagsConsidered >= scan.repoTagsTotal
 }
 
 function splitImageRef(ref: string): { registry: string; name: string } {
@@ -603,66 +617,109 @@ export function OverviewPage(props: {
     }
   }, [patchStackDetails, patchStackList, refresh, resolveSettledStackIds])
 
-  const applyDigestInferenceUpdate = useCallback((detail: DigestInferenceUpdatedDetail) => {
-    const serviceId = (detail.serviceId ?? '').trim()
-    const digestNorm = normalizeDigest(detail.digest)
-    if (!serviceId || !digestNorm) return
+  const applyDigestSnapshotUpdate = useCallback(
+    (detail: DigestSnapshotUpdatedDetail) => {
+      const imageRepo = (detail.imageRepo ?? '').trim().toLowerCase()
+      const digestNorm = normalizeDigest(detail.digest)?.toLowerCase() ?? null
+      if (!imageRepo || !digestNorm) return
 
-    setDetails((prev) => {
-      let changed = false
-      const next: Record<string, StackDetail | undefined> = { ...prev }
+      const failures = scanHasFailures(detail.scan)
+      const complete = scanIsComplete(detail.scan)
 
-      for (const [stackId, stack] of Object.entries(prev)) {
-        if (!stack) continue
-        let stackChanged = false
-        const nextServices = stack.services.map((svc) => {
-          if (svc.id !== serviceId) return svc
+      const patchService = (svc: Service): Service => {
+        const svcRepo = imageRepoFromImageRef(svc.image.ref)
+        if (!svcRepo || svcRepo !== imageRepo) return svc
 
-          if (detail.scope === 'candidate') {
-            const candidate = svc.candidate
-            if (!candidate) return svc
-            const candDigestNorm = normalizeDigest(candidate.digest)
-            if (candDigestNorm !== digestNorm) return svc
-            stackChanged = true
-            return { ...svc, candidate: { ...candidate, resolvedTag: detail.resolvedTag } }
+        let changed = false
+        let next: Service = svc
+
+        const currentDigest = normalizeDigest(svc.image.digest)?.toLowerCase() ?? null
+        if (currentDigest && currentDigest === digestNorm) {
+          const inferred = inferResolvedTagsFromSnapshot(detail.tags, svc.image.tag)
+          const inferredFirst = inferred[0] ?? null
+          if (inferredFirst || (!failures && complete)) {
+            changed = true
+            next = {
+              ...next,
+              image: {
+                ...next.image,
+                resolvedTag: inferredFirst,
+                resolvedTags: inferred.length > 1 ? inferred : null,
+              },
+            }
           }
+        }
 
-          const svcDigestNorm = normalizeDigest(svc.image.digest)
-          if (svcDigestNorm !== digestNorm) return svc
-          stackChanged = true
-          return {
-            ...svc,
-            image: {
-              ...svc.image,
-              resolvedTag: detail.resolvedTag,
-              resolvedTags: detail.resolvedTags ?? null,
-            },
+        const candidate = svc.candidate
+        const candidateDigest = candidate ? normalizeDigest(candidate.digest)?.toLowerCase() ?? null : null
+        if (candidate && candidateDigest && candidateDigest === digestNorm) {
+          const inferred = inferResolvedTagsFromSnapshot(detail.tags, candidate.tag)
+          const inferredFirst = inferred[0] ?? null
+          if (inferredFirst || (!failures && complete)) {
+            changed = true
+            next = {
+              ...next,
+              candidate: { ...candidate, resolvedTag: inferredFirst },
+            }
           }
-        })
-        if (!stackChanged) continue
-        changed = true
-        next[stackId] = { ...stack, services: nextServices }
+        }
+
+        return changed ? next : svc
       }
 
-      return changed ? next : prev
-    })
-  }, [])
+      setDetails((prev) => {
+        let changed = false
+        const next: Record<string, StackDetail | undefined> = { ...prev }
+
+        for (const [stackId, stack] of Object.entries(prev)) {
+          if (!stack) continue
+          let stackChanged = false
+          const nextServices = stack.services.map((svc) => {
+            const patched = patchService(svc)
+            if (patched !== svc) stackChanged = true
+            return patched
+          })
+          if (!stackChanged) continue
+          changed = true
+          next[stackId] = { ...stack, services: nextServices }
+        }
+
+        return changed ? next : prev
+      })
+
+      // Refresh cached popover tag lists for sibling services that share the same snapshot.
+      const triggerServiceId = (detail.triggerServiceId ?? '').trim()
+      const digestKeyDigest = normalizeDigest(detail.digest) ?? detail.digest.trim()
+      for (const stack of Object.values(details)) {
+        for (const svc of stack?.services ?? []) {
+          if (svc.id === triggerServiceId) continue
+          const svcRepo = imageRepoFromImageRef(svc.image.ref)
+          if (!svcRepo || svcRepo !== imageRepo) continue
+          const currentDigest = normalizeDigest(svc.image.digest)?.toLowerCase() ?? null
+          const candidateDigest = svc.candidate ? normalizeDigest(svc.candidate.digest)?.toLowerCase() ?? null : null
+          if (currentDigest !== digestNorm && candidateDigest !== digestNorm) continue
+          invalidateDigestSnapshot(`${svc.id}:${digestKeyDigest}`)
+        }
+      }
+    },
+    [details],
+  )
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    const onDigestInferenceUpdated = (evt: Event) => {
+    const onDigestSnapshotUpdated = (evt: Event) => {
       const detail =
         evt instanceof CustomEvent
-          ? (evt.detail as DigestInferenceUpdatedDetail | null)
+          ? (evt.detail as DigestSnapshotUpdatedDetail | null)
           : null
       if (!detail) return
-      applyDigestInferenceUpdate(detail)
+      applyDigestSnapshotUpdate(detail)
     }
-    window.addEventListener(DIGEST_INFERENCE_UPDATED_EVENT, onDigestInferenceUpdated)
+    window.addEventListener(DIGEST_SNAPSHOT_UPDATED_EVENT, onDigestSnapshotUpdated)
     return () => {
-      window.removeEventListener(DIGEST_INFERENCE_UPDATED_EVENT, onDigestInferenceUpdated)
+      window.removeEventListener(DIGEST_SNAPSHOT_UPDATED_EVENT, onDigestSnapshotUpdated)
     }
-  }, [applyDigestInferenceUpdate])
+  }, [applyDigestSnapshotUpdate])
 
   const pendingInferenceStackIds = useMemo(() => {
     const ids: string[] = []

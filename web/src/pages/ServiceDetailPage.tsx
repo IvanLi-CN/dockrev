@@ -14,6 +14,7 @@ import {
   triggerUpdate,
   type IgnoreRule,
   type Service,
+  type ServiceDigestTagsScanSummary,
   type ServiceSettings,
   type StackDetail,
 } from '../api'
@@ -27,12 +28,18 @@ import { ConfirmServiceVersionCell } from '../components/ConfirmServiceVersionCe
 import { ServiceResourcePanel } from '../components/ServiceResourcePanel'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { useConfirm } from '../confirm'
-import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, isStrictSemverTag } from '../versionDisplay'
+import {
+  formatCandidateTagDisplay,
+  formatCurrentTagDisplay as formatTagDisplay,
+  inferResolvedTagsFromSnapshot,
+  isStrictSemverTag,
+} from '../versionDisplay'
 import { normalizeDigest } from '../components/digest'
 import {
-  DIGEST_INFERENCE_UPDATED_EVENT,
-  type DigestInferenceUpdatedDetail,
+  DIGEST_SNAPSHOT_UPDATED_EVENT,
+  type DigestSnapshotUpdatedDetail,
 } from '../digestInferenceTracker'
+import { imageRepoFromImageRef } from '../imageRepo'
 import {
   resolveUpdateActionTargetKey,
   UPDATE_JOB_SETTLED_EVENT,
@@ -44,6 +51,16 @@ import {
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
   return String(e)
+}
+
+function scanHasFailures(scan: ServiceDigestTagsScanSummary | null | undefined): boolean {
+  if (!scan) return false
+  return scan.manifestsTimeout > 0 || scan.manifestsError > 0
+}
+
+function scanIsComplete(scan: ServiceDigestTagsScanSummary | null | undefined): boolean {
+  if (!scan) return false
+  return scan.repoTagsConsidered >= scan.repoTagsTotal
 }
 
 function svcTone(svc: Service): 'ok' | 'warn' | 'bad' | 'muted' {
@@ -246,57 +263,74 @@ export function ServiceDetailPage(props: {
     }
   }, [refreshStackOnly, serviceId, stackId])
 
-  const applyDigestInferenceUpdate = useCallback(
-    (detail: DigestInferenceUpdatedDetail) => {
-      const targetServiceId = (detail.serviceId ?? '').trim()
-      if (!targetServiceId || targetServiceId !== serviceId) return
-      const digestNorm = normalizeDigest(detail.digest)
-      if (!digestNorm) return
+  const applyDigestSnapshotUpdate = useCallback(
+    (detail: DigestSnapshotUpdatedDetail) => {
+      const imageRepo = (detail.imageRepo ?? '').trim().toLowerCase()
+      const digestNorm = normalizeDigest(detail.digest)?.toLowerCase() ?? null
+      if (!imageRepo || !digestNorm) return
+
+      const failures = scanHasFailures(detail.scan)
+      const complete = scanIsComplete(detail.scan)
 
       patchServiceInStack((prev) => {
-        if (detail.scope === 'candidate') {
-          if (!prev.candidate) return prev
-          const candDigestNorm = normalizeDigest(prev.candidate.digest)
-          if (candDigestNorm !== digestNorm) return prev
-          return {
-            ...prev,
-            candidate: {
-              ...prev.candidate,
-              resolvedTag: detail.resolvedTag,
-            },
+        const svcRepo = imageRepoFromImageRef(prev.image.ref)
+        if (!svcRepo || svcRepo !== imageRepo) return prev
+
+        let changed = false
+        let next: Service = prev
+
+        const currentDigest = normalizeDigest(prev.image.digest)?.toLowerCase() ?? null
+        if (currentDigest && currentDigest === digestNorm) {
+          const inferred = inferResolvedTagsFromSnapshot(detail.tags, prev.image.tag)
+          const inferredFirst = inferred[0] ?? null
+          if (inferredFirst || (!failures && complete)) {
+            changed = true
+            next = {
+              ...next,
+              image: {
+                ...next.image,
+                resolvedTag: inferredFirst,
+                resolvedTags: inferred.length > 1 ? inferred : null,
+              },
+            }
           }
         }
 
-        const svcDigestNorm = normalizeDigest(prev.image.digest)
-        if (svcDigestNorm !== digestNorm) return prev
-        return {
-          ...prev,
-          image: {
-            ...prev.image,
-            resolvedTag: detail.resolvedTag,
-            resolvedTags: detail.resolvedTags ?? null,
-          },
+        const candidate = prev.candidate
+        const candidateDigest = candidate ? normalizeDigest(candidate.digest)?.toLowerCase() ?? null : null
+        if (candidate && candidateDigest && candidateDigest === digestNorm) {
+          const inferred = inferResolvedTagsFromSnapshot(detail.tags, candidate.tag)
+          const inferredFirst = inferred[0] ?? null
+          if (inferredFirst || (!failures && complete)) {
+            changed = true
+            next = {
+              ...next,
+              candidate: { ...candidate, resolvedTag: inferredFirst },
+            }
+          }
         }
+
+        return changed ? next : prev
       })
     },
-    [patchServiceInStack, serviceId],
+    [patchServiceInStack],
   )
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    const onDigestInferenceUpdated = (evt: Event) => {
+    const onDigestSnapshotUpdated = (evt: Event) => {
       const detail =
         evt instanceof CustomEvent
-          ? (evt.detail as DigestInferenceUpdatedDetail | null)
+          ? (evt.detail as DigestSnapshotUpdatedDetail | null)
           : null
       if (!detail) return
-      applyDigestInferenceUpdate(detail)
+      applyDigestSnapshotUpdate(detail)
     }
-    window.addEventListener(DIGEST_INFERENCE_UPDATED_EVENT, onDigestInferenceUpdated)
+    window.addEventListener(DIGEST_SNAPSHOT_UPDATED_EVENT, onDigestSnapshotUpdated)
     return () => {
-      window.removeEventListener(DIGEST_INFERENCE_UPDATED_EVENT, onDigestInferenceUpdated)
+      window.removeEventListener(DIGEST_SNAPSHOT_UPDATED_EVENT, onDigestSnapshotUpdated)
     }
-  }, [applyDigestInferenceUpdate])
+  }, [applyDigestSnapshotUpdate])
 
   useEffect(() => {
     if (service?.versionInference?.status !== 'pending') return

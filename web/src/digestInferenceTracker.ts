@@ -4,35 +4,29 @@ import {
   isServiceDigestTagsSnapshotPending,
   type ServiceDigestTagsScanSummary,
 } from './api'
-import { inferResolvedTagsFromSnapshot } from './versionDisplay'
 
-export const DIGEST_INFERENCE_UPDATED_EVENT = 'dockrev:digest-inference-updated'
+export const DIGEST_SNAPSHOT_UPDATED_EVENT = 'dockrev:digest-snapshot-updated'
 
-export type DigestInferenceScope = 'current' | 'candidate'
-
-export type DigestInferenceUpdatedDetail = {
-  serviceId: string
+export type DigestSnapshotUpdatedDetail = {
+  triggerServiceId: string
+  imageRepo: string
   digest: string
-  scope: DigestInferenceScope
-  resolvedTag: string | null
-  resolvedTags: string[] | null
+  tags: string[]
   checkedAt: string | null
   scan: ServiceDigestTagsScanSummary | null
 }
 
-type TrackDigestInferenceRefreshInput = {
+type TrackDigestSnapshotRefreshInput = {
   serviceId: string
+  imageRepo: string
   digest: string
-  rawTag: string
-  scope: DigestInferenceScope
 }
 
 type TrackedRefresh = {
   key: string
   serviceId: string
+  imageRepo: string
   digest: string
-  rawTag: string
-  scope: DigestInferenceScope
   errors: number
   startedAtMs: number
   timer: number | null
@@ -44,20 +38,10 @@ const POLL_FALLBACK_MS = 1200
 const MAX_ERRORS = 3
 const MAX_TRACK_AGE_MS = 10 * 60 * 1000
 
-function scanHasFailures(scan: ServiceDigestTagsScanSummary | null | undefined): boolean {
-  if (!scan) return false
-  return scan.manifestsTimeout > 0 || scan.manifestsError > 0
-}
-
-function scanIsComplete(scan: ServiceDigestTagsScanSummary | null | undefined): boolean {
-  if (!scan) return false
-  return scan.repoTagsConsidered >= scan.repoTagsTotal
-}
-
-function publishDigestInferenceUpdated(detail: DigestInferenceUpdatedDetail) {
+function publishDigestSnapshotUpdated(detail: DigestSnapshotUpdatedDetail) {
   if (typeof window === 'undefined') return
   window.dispatchEvent(
-    new CustomEvent<DigestInferenceUpdatedDetail>(DIGEST_INFERENCE_UPDATED_EVENT, { detail }),
+    new CustomEvent<DigestSnapshotUpdatedDetail>(DIGEST_SNAPSHOT_UPDATED_EVENT, { detail }),
   )
 }
 
@@ -94,23 +78,14 @@ async function pollTracked(key: string) {
       return
     }
 
-    const inferred = inferResolvedTagsFromSnapshot(data.tags, tracked.rawTag)
-    const inferredFirst = inferred[0] ?? null
-    const failures = scanHasFailures(data.scan)
-    const complete = scanIsComplete(data.scan)
-    const shouldApply = Boolean(inferredFirst) || (!failures && complete)
-
-    if (shouldApply) {
-      publishDigestInferenceUpdated({
-        serviceId: tracked.serviceId,
-        digest: tracked.digest,
-        scope: tracked.scope,
-        resolvedTag: inferredFirst,
-        resolvedTags: inferred.length > 1 ? inferred : null,
-        checkedAt: data.checkedAt ?? null,
-        scan: data.scan ?? null,
-      })
-    }
+    publishDigestSnapshotUpdated({
+      triggerServiceId: tracked.serviceId,
+      imageRepo: tracked.imageRepo,
+      digest: tracked.digest,
+      tags: data.tags ?? [],
+      checkedAt: data.checkedAt ?? null,
+      scan: data.scan ?? null,
+    })
 
     clearTracked(key)
   } catch (e: unknown) {
@@ -134,27 +109,27 @@ async function pollTracked(key: string) {
   }
 }
 
-export function trackDigestInferenceRefresh(input: TrackDigestInferenceRefreshInput) {
+export function trackDigestSnapshotRefresh(input: TrackDigestSnapshotRefreshInput) {
   if (typeof window === 'undefined') return
-  const serviceId = input.serviceId.trim()
-  const digest = input.digest.trim()
-  if (!serviceId || !digest) return
 
-  const scope = input.scope
-  const key = `${serviceId}:${digest}:${scope}`
+  const triggerServiceId = input.serviceId.trim()
+  const imageRepo = input.imageRepo.trim().toLowerCase()
+  const digest = input.digest.trim().toLowerCase()
+  if (!triggerServiceId || !imageRepo || !digest) return
+
+  const key = `${imageRepo}@${digest}`
   const existing = trackedByKey.get(key)
   if (existing) {
-    // Keep the most recent raw tag in case the caller is operating on a newer view of the service.
-    existing.rawTag = input.rawTag
+    // Prefer the latest serviceId in case a previous one becomes unavailable.
+    existing.serviceId = triggerServiceId
     return
   }
 
   trackedByKey.set(key, {
     key,
-    serviceId,
+    serviceId: triggerServiceId,
+    imageRepo,
     digest,
-    rawTag: input.rawTag,
-    scope,
     errors: 0,
     startedAtMs: Date.now(),
     timer: window.setTimeout(() => {

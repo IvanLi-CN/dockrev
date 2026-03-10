@@ -22,7 +22,7 @@ import {
   invalidateDigestSnapshot,
   subscribeDigestSnapshotInvalidation,
 } from '../digestSnapshotBus'
-import { trackDigestInferenceRefresh } from '../digestInferenceTracker'
+import { trackDigestSnapshotRefresh } from '../digestInferenceTracker'
 
 type TagSeries = {
   major: number
@@ -304,18 +304,13 @@ export function CurrentVersionPopover(props: {
       const nextToken = getDigestSnapshotInvalidationToken(digestKey) + 1
       ignoreInvalidationTokenRef.current = nextToken
       invalidateDigestSnapshot(digestKey)
-      trackDigestInferenceRefresh({
-        serviceId,
-        digest: digestNorm,
-        rawTag: imageTag,
-        scope: 'current',
-      })
+      trackDigestSnapshotRefresh({ serviceId, imageRepo: resp.imageRepo, digest: digestNorm })
     } catch (e: unknown) {
       setRefreshError(e instanceof Error ? e.message : String(e))
     } finally {
       setRefreshing(false)
     }
-  }, [digestKey, digestNorm, imageTag, refreshing, serviceId])
+  }, [digestKey, digestNorm, refreshing, serviceId])
 
   useEffect(() => {
     const shouldPollSnapshot = open || snapshotPhaseRef.current === 'loading'
