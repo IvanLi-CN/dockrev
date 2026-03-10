@@ -899,6 +899,16 @@ fn semver_tag_candidates_from_oci_version(raw: &str) -> Vec<String> {
     candidates
 }
 
+fn record_semver_pull_success(
+    tag_ref: String,
+    semver_pulled: &mut Vec<String>,
+    semver_pulled_set: &mut HashSet<String>,
+) {
+    if semver_pulled_set.insert(tag_ref.clone()) {
+        semver_pulled.push(tag_ref);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn maybe_pull_semver_tag_for_image(
     runner: &dyn CommandRunner,
@@ -942,13 +952,17 @@ async fn maybe_pull_semver_tag_for_image(
         .flatten()
         .unwrap_or_default();
 
-    let mut pull_failures: Vec<String> = Vec::new();
-    for tag_ref in candidate_refs {
-        if semver_pulled_set.contains(&tag_ref) {
+    for tag_ref in &candidate_refs {
+        if parsed_repo_tags.iter().any(|t| t == tag_ref) {
+            record_semver_pull_success(tag_ref.clone(), semver_pulled, semver_pulled_set);
             return Ok(());
         }
-        if parsed_repo_tags.iter().any(|t| t == &tag_ref) {
-            semver_pulled_set.insert(tag_ref);
+    }
+
+    let mut pull_failures: Vec<String> = Vec::new();
+    let mut total_pull_attempts = 0usize;
+    for tag_ref in candidate_refs {
+        if semver_pulled_set.contains(&tag_ref) {
             return Ok(());
         }
 
@@ -962,27 +976,33 @@ async fn maybe_pull_semver_tag_for_image(
         .await
         {
             Ok(()) => {
-                if semver_pulled_set.insert(tag_ref.clone()) {
-                    semver_pulled.push(tag_ref);
-                }
+                record_semver_pull_success(tag_ref, semver_pulled, semver_pulled_set);
                 return Ok(());
             }
-            Err(err) => {
-                let detail = match err.downcast::<UpdateStepFailure>() {
-                    Ok(step_failure) => step_failure.last_error,
-                    Err(err) => err.to_string(),
-                };
-                pull_failures.push(format!("{tag_ref} => {detail}"));
-            }
+            Err(err) => match err.downcast::<UpdateStepFailure>() {
+                Ok(step_failure) => {
+                    total_pull_attempts += step_failure.retry.attempts as usize;
+                    pull_failures.push(format!("{tag_ref} => {}", step_failure.last_error));
+                }
+                Err(err) => {
+                    total_pull_attempts += idempotent_retry_policy.max_attempts;
+                    pull_failures.push(format!("{tag_ref} => {err}"));
+                }
+            },
         }
     }
 
-    Err(anyhow::Error::new(UpdateStepFailure::new(
-        "semver_pull",
-        idempotent_retry_policy,
-        idempotent_retry_policy.max_attempts,
-        format!("all semver candidates failed: {}", pull_failures.join("; ")),
-    )))
+    Err(anyhow::Error::new(UpdateStepFailure {
+        step: "semver_pull".to_string(),
+        retry: RetrySummary {
+            attempts: total_pull_attempts as u32,
+            max_attempts: (idempotent_retry_policy.max_attempts * pull_failures.len()) as u32,
+            base_ms: idempotent_retry_policy.base_ms,
+            max_ms: idempotent_retry_policy.max_ms,
+        },
+        last_error: format!("all semver candidates failed: {}", pull_failures.join("; ")),
+        partial_summary: None,
+    }))
 }
 
 fn parse_size_to_bytes(input: &str) -> Option<f64> {
@@ -2724,6 +2744,77 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct SemverNormalizedTagAlreadyPresentRunner {
+        inspect_repo_tags_calls: Mutex<usize>,
+        pull_calls: Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for SemverNormalizedTagAlreadyPresentRunner {
+        async fn run(
+            &self,
+            spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            if spec.program != "docker" {
+                return Ok(CommandOutput {
+                    status: 1,
+                    stdout: String::new(),
+                    stderr: "unexpected program".to_string(),
+                });
+            }
+            let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
+            if args
+                == vec![
+                    "image",
+                    "inspect",
+                    "--format",
+                    r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
+                    "sha256:new",
+                ]
+            {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: "v0.7.7\n".to_string(),
+                    stderr: String::new(),
+                });
+            }
+            if args
+                == vec![
+                    "image",
+                    "inspect",
+                    "--format",
+                    "{{json .RepoTags}}",
+                    "sha256:new",
+                ]
+            {
+                *self.inspect_repo_tags_calls.lock().unwrap() += 1;
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: r#"["ghcr.io/org/web:0.7.7"]"#.to_string(),
+                    stderr: String::new(),
+                });
+            }
+            if args == vec!["pull", "ghcr.io/org/web:v0.7.7"]
+                || args == vec!["pull", "ghcr.io/org/web:0.7.7"]
+            {
+                *self.pull_calls.lock().unwrap() += 1;
+                return Ok(CommandOutput {
+                    status: 1,
+                    stdout: String::new(),
+                    stderr: "pull should not run when a fallback tag already exists locally"
+                        .to_string(),
+                });
+            }
+            Ok(CommandOutput {
+                status: 1,
+                stdout: String::new(),
+                stderr: "unexpected args".to_string(),
+            })
+        }
+    }
+
+    #[derive(Default)]
     struct SemverAlreadyTaggedRunner {
         inspect_repo_tags_calls: Mutex<usize>,
         pull_calls: Mutex<usize>,
@@ -3003,6 +3094,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn maybe_pull_semver_tag_still_attempts_raw_tag_when_only_normalized_tag_was_previously_pulled()
+     {
+        let runner = SemverRawTagRunner::default();
+        let docker_cfg = docker_runner::DockerRunnerConfig::default();
+
+        let mut semver_pulled: Vec<String> = vec!["ghcr.io/org/web:0.7.7".to_string()];
+        let mut semver_pulled_set: HashSet<String> =
+            HashSet::from(["ghcr.io/org/web:0.7.7".to_string()]);
+        let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
+            serde_json::Map::new();
+
+        maybe_pull_semver_tag_for_image(
+            &runner,
+            &docker_cfg,
+            IdempotentRetryPolicy {
+                max_attempts: 3,
+                base_ms: 1,
+                max_ms: 2,
+            },
+            "svc_2",
+            "ghcr.io/org/web",
+            "sha256:new",
+            &mut semver_pulled,
+            &mut semver_pulled_set,
+            &mut semver_pull_warnings,
+        )
+        .await
+        .expect("raw tag should still be attempted before normalized set short-circuit");
+
+        assert_eq!(
+            semver_pulled,
+            vec![
+                "ghcr.io/org/web:0.7.7".to_string(),
+                "ghcr.io/org/web:v0.7.7".to_string(),
+            ]
+        );
+        assert!(semver_pulled_set.contains("ghcr.io/org/web:0.7.7"));
+        assert!(semver_pulled_set.contains("ghcr.io/org/web:v0.7.7"));
+        assert_eq!(
+            *runner.pull_calls.lock().unwrap(),
+            vec!["ghcr.io/org/web:v0.7.7".to_string()]
+        );
+    }
+
+    #[tokio::test]
     async fn maybe_pull_semver_tag_short_circuits_when_raw_tag_already_exists_locally() {
         let runner = SemverAlreadyTaggedRunner::default();
         let docker_cfg = docker_runner::DockerRunnerConfig::default();
@@ -3030,8 +3166,42 @@ mod tests {
         .await
         .expect("local raw tag should short-circuit semver pull");
 
-        assert!(semver_pulled.is_empty());
+        assert_eq!(semver_pulled, vec!["ghcr.io/org/web:v0.7.7".to_string()]);
         assert!(semver_pulled_set.contains("ghcr.io/org/web:v0.7.7"));
+        assert_eq!(*runner.inspect_repo_tags_calls.lock().unwrap(), 1);
+        assert_eq!(*runner.pull_calls.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn maybe_pull_semver_tag_short_circuits_when_normalized_tag_already_exists_locally() {
+        let runner = SemverNormalizedTagAlreadyPresentRunner::default();
+        let docker_cfg = docker_runner::DockerRunnerConfig::default();
+
+        let mut semver_pulled: Vec<String> = Vec::new();
+        let mut semver_pulled_set: HashSet<String> = HashSet::new();
+        let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
+            serde_json::Map::new();
+
+        maybe_pull_semver_tag_for_image(
+            &runner,
+            &docker_cfg,
+            IdempotentRetryPolicy {
+                max_attempts: 3,
+                base_ms: 1,
+                max_ms: 2,
+            },
+            "svc_1",
+            "ghcr.io/org/web",
+            "sha256:new",
+            &mut semver_pulled,
+            &mut semver_pulled_set,
+            &mut semver_pull_warnings,
+        )
+        .await
+        .expect("normalized local tag should short-circuit before remote retries");
+
+        assert_eq!(semver_pulled, vec!["ghcr.io/org/web:0.7.7".to_string()]);
+        assert!(semver_pulled_set.contains("ghcr.io/org/web:0.7.7"));
         assert_eq!(*runner.inspect_repo_tags_calls.lock().unwrap(), 1);
         assert_eq!(*runner.pull_calls.lock().unwrap(), 0);
     }
@@ -3068,8 +3238,8 @@ mod tests {
             .downcast_ref::<UpdateStepFailure>()
             .expect("expected UpdateStepFailure");
         assert_eq!(detail.step, "semver_pull");
-        assert_eq!(detail.retry.attempts, 3);
-        assert_eq!(detail.retry.max_attempts, 3);
+        assert_eq!(detail.retry.attempts, 6);
+        assert_eq!(detail.retry.max_attempts, 6);
         assert!(
             detail
                 .last_error
