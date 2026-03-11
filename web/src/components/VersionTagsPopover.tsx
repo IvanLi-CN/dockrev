@@ -25,6 +25,11 @@ import {
 import {
   trackDigestSnapshotRefresh,
 } from '../digestInferenceTracker'
+import {
+  createSnapshotFreshnessBaseline,
+  isSnapshotFreshEnough,
+  type SnapshotFreshnessBaseline,
+} from '../digestSnapshotFreshness'
 
 function uniquePreserveOrder(
   values: Array<string | null | undefined> | null | undefined,
@@ -73,6 +78,40 @@ type DigestTagsState = {
 
 type SnapshotFetchPhase = 'idle' | 'loading' | 'ready' | 'missing' | 'error'
 
+const REFRESH_STALE_ERROR = '刷新未生成新的快照，请稍后重试。'
+
+function emptyDigestTagsState(key: string): DigestTagsState {
+  return {
+    key,
+    tags: null,
+    scan: null,
+    checkedAt: null,
+    missingSnapshot: false,
+    error: null,
+  }
+}
+
+function cloneDigestTagsState(state: DigestTagsState): DigestTagsState {
+  return {
+    ...state,
+    tags: state.tags ? [...state.tags] : state.tags,
+    scan: state.scan ? { ...state.scan } : state.scan,
+  }
+}
+
+function snapshotPhaseFromDigestTagsState(state: DigestTagsState): SnapshotFetchPhase {
+  if (state.error) return 'error'
+  if (state.missingSnapshot) return 'missing'
+  if (state.tags != null) return 'ready'
+  return 'idle'
+}
+
+type RefreshExpectation = {
+  key: string
+  baseline: SnapshotFreshnessBaseline
+  previousState: DigestTagsState
+}
+
 function scanHasFailures(scan: ServiceDigestTagsScanSummary | null | undefined): boolean {
   if (!scan) return false
   return scan.manifestsTimeout > 0 || scan.manifestsError > 0
@@ -119,14 +158,9 @@ export function VersionTagsPopover(props: {
     [candidateDigestNorm, serviceId],
   )
 
-  const [digestState, setDigestState] = useState<DigestTagsState>(() => ({
-    key: snapshotKey,
-    tags: null,
-    scan: null,
-    checkedAt: null,
-    missingSnapshot: false,
-    error: null,
-  }))
+  const [digestState, setDigestState] = useState<DigestTagsState>(() =>
+    emptyDigestTagsState(snapshotKey),
+  )
   const digestTags = digestState.key === snapshotKey ? digestState.tags : null
   const scan = digestState.key === snapshotKey ? digestState.scan : null
   const checkedAt = digestState.key === snapshotKey ? digestState.checkedAt : null
@@ -141,11 +175,33 @@ export function VersionTagsPopover(props: {
   const [refreshing, setRefreshing] = useState(false)
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null)
   const [refreshError, setRefreshError] = useState<string | null>(null)
+  const digestStateRef = useRef(digestState)
+  digestStateRef.current = digestState
+  const refreshExpectationRef = useRef<RefreshExpectation | null>(null)
   const [localRefreshKey, setLocalRefreshKey] = useState<string | null>(null)
   const [externalRefreshKey, setExternalRefreshKey] = useState<string | null>(
     null,
   )
   const [snapshotFetchToken, setSnapshotFetchToken] = useState(0)
+  const beginRefreshExpectation = useCallback(() => {
+    const current =
+      digestStateRef.current.key === snapshotKey
+        ? cloneDigestTagsState(digestStateRef.current)
+        : emptyDigestTagsState(snapshotKey)
+    const expectation: RefreshExpectation = {
+      key: snapshotKey,
+      baseline: createSnapshotFreshnessBaseline(current.checkedAt),
+      previousState: current,
+    }
+    refreshExpectationRef.current = expectation
+    return expectation
+  }, [snapshotKey])
+
+  const clearRefreshExpectation = useCallback(() => {
+    if (refreshExpectationRef.current?.key === snapshotKey) {
+      refreshExpectationRef.current = null
+    }
+  }, [snapshotKey])
   const [localDisplayTag, setLocalDisplayTag] = useState<{
     key: string
     value: string | null
@@ -185,22 +241,16 @@ export function VersionTagsPopover(props: {
       }
 
       suppressLoadingLabelRef.current = true
+      beginRefreshExpectation()
       setDigestState((prev) => {
         if (prev.key !== snapshotKey) return prev
-        return {
-          key: snapshotKey,
-          tags: null,
-          scan: null,
-          checkedAt: null,
-          missingSnapshot: false,
-          error: null,
-        }
+        return emptyDigestTagsState(snapshotKey)
       })
       setExternalRefreshKey(snapshotKey)
       setSnapshotFetchToken((value) => value + 1)
       setSnapshotPhase('loading')
     })
-  }, [candidateDigestNorm, snapshotKey])
+  }, [candidateDigestNorm, snapshotKey, beginRefreshExpectation])
 
   const triggerForceRefresh = useCallback(async () => {
     if (refreshing || !candidateDigestNorm) return
@@ -218,6 +268,7 @@ export function VersionTagsPopover(props: {
         serviceId,
         candidateDigestNorm,
       )
+      const refreshExpectation = beginRefreshExpectation()
       setRefreshNotice(
         resp.reason === 'running'
           ? '候选 digest 已有刷新任务在进行中。'
@@ -226,14 +277,7 @@ export function VersionTagsPopover(props: {
       setLocalRefreshKey(snapshotKey)
       setLocalDisplayTag({ key: snapshotKey, value: null })
       setSnapshotFetchToken((value) => value + 1)
-      setDigestState({
-        key: snapshotKey,
-        tags: null,
-        scan: null,
-        checkedAt: null,
-        missingSnapshot: false,
-        error: null,
-      })
+      setDigestState(emptyDigestTagsState(snapshotKey))
       suppressLoadingLabelRef.current = false
       setSnapshotPhase('loading')
       const nextToken = getDigestSnapshotInvalidationToken(snapshotKey) + 1
@@ -244,13 +288,14 @@ export function VersionTagsPopover(props: {
         imageRepo: resp.imageRepo,
         digest: candidateDigestNorm,
         side: 'candidate',
+        baselineCheckedAt: refreshExpectation.baseline.checkedAt,
       })
     } catch (e: unknown) {
       setRefreshError(e instanceof Error ? e.message : String(e))
     } finally {
       setRefreshing(false)
     }
-  }, [candidateDigestNorm, snapshotKey, refreshing, serviceId])
+  }, [candidateDigestNorm, snapshotKey, refreshing, serviceId, beginRefreshExpectation])
 
   useEffect(() => {
     const shouldPollSnapshot =
@@ -301,6 +346,37 @@ export function VersionTagsPopover(props: {
               }, retryAfterMs)
               return
             }
+            const isLocalRefresh = localRefreshKey === snapshotKey
+            const isExternalRefresh = externalRefreshKey === snapshotKey
+            const refreshExpectation =
+              refreshExpectationRef.current?.key === snapshotKey
+                ? refreshExpectationRef.current
+                : null
+            if (
+              (isLocalRefresh || isExternalRefresh) &&
+              !isSnapshotFreshEnough(
+                data.checkedAt ?? null,
+                refreshExpectation?.baseline ?? null,
+              )
+            ) {
+              const previousState = refreshExpectation?.previousState
+              if (previousState) {
+                setDigestState(cloneDigestTagsState(previousState))
+                setSnapshotPhase(snapshotPhaseFromDigestTagsState(previousState))
+              } else {
+                setDigestState(emptyDigestTagsState(snapshotKey))
+                setSnapshotPhase('error')
+              }
+              if (isLocalRefresh) {
+                setRefreshNotice(null)
+                setRefreshError(REFRESH_STALE_ERROR)
+                setLocalRefreshKey(null)
+              }
+              if (isExternalRefresh) setExternalRefreshKey(null)
+              clearRefreshExpectation()
+              return
+            }
+
             setDigestState({
               key: snapshotKey,
               tags: data.tags,
@@ -309,8 +385,6 @@ export function VersionTagsPopover(props: {
               missingSnapshot: false,
               error: null,
             })
-            const isLocalRefresh = localRefreshKey === snapshotKey
-            const isExternalRefresh = externalRefreshKey === snapshotKey
             if (isLocalRefresh || isExternalRefresh) {
               const failures = scanHasFailures(data.scan)
               const complete = scanIsComplete(data.scan)
@@ -334,6 +408,7 @@ export function VersionTagsPopover(props: {
               }
               if (isLocalRefresh) setLocalRefreshKey(null)
               if (isExternalRefresh) setExternalRefreshKey(null)
+              clearRefreshExpectation()
             }
             setSnapshotPhase('ready')
           })
@@ -353,8 +428,13 @@ export function VersionTagsPopover(props: {
               if (isLocalRefresh || isExternalRefresh) {
                 setLocalDisplayTag({ key: snapshotKey, value: null })
               }
-              if (isLocalRefresh) setLocalRefreshKey(null)
+              if (isLocalRefresh) {
+                setRefreshNotice(null)
+                setRefreshError(REFRESH_STALE_ERROR)
+                setLocalRefreshKey(null)
+              }
               if (isExternalRefresh) setExternalRefreshKey(null)
+              clearRefreshExpectation()
               setSnapshotPhase('missing')
               return
             }
@@ -371,8 +451,13 @@ export function VersionTagsPopover(props: {
             if (isLocalRefresh || isExternalRefresh) {
               setLocalDisplayTag({ key: snapshotKey, value: null })
             }
-            if (isLocalRefresh) setLocalRefreshKey(null)
+            if (isLocalRefresh) {
+              setRefreshNotice(null)
+              setRefreshError(e instanceof Error ? e.message : String(e))
+              setLocalRefreshKey(null)
+            }
             if (isExternalRefresh) setExternalRefreshKey(null)
+            clearRefreshExpectation()
             setSnapshotPhase('error')
           })
       }
@@ -403,6 +488,7 @@ export function VersionTagsPopover(props: {
     onLocalResolvedTag,
     serviceId,
     externalRefreshKey,
+    clearRefreshExpectation,
   ])
 
   useEffect(() => {
@@ -414,6 +500,7 @@ export function VersionTagsPopover(props: {
     setRefreshNotice(null)
     setRefreshError(null)
     suppressLoadingLabelRef.current = false
+    refreshExpectationRef.current = null
   }, [snapshotKey])
 
   useEffect(() => {

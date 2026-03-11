@@ -4,6 +4,7 @@ import {
   isServiceDigestTagsSnapshotPending,
   type ServiceDigestTagsScanSummary,
 } from './api'
+import { isSnapshotFreshEnough } from './digestSnapshotFreshness'
 
 export const DIGEST_SNAPSHOT_UPDATED_EVENT = 'dockrev:digest-snapshot-updated'
 
@@ -24,6 +25,7 @@ type TrackDigestSnapshotRefreshInput = {
   imageRepo: string
   digest: string
   side: DigestSnapshotSide
+  baselineCheckedAt?: string | null
 }
 
 type TrackedRefresh = {
@@ -32,6 +34,7 @@ type TrackedRefresh = {
   imageRepo: string
   digest: string
   side: DigestSnapshotSide
+  baselineCheckedAt: string | null
   errors: number
   startedAtMs: number
   timer: number | null
@@ -83,6 +86,16 @@ async function pollTracked(key: string) {
       return
     }
 
+    if (
+      !isSnapshotFreshEnough(data.checkedAt ?? null, {
+        checkedAt: latest.baselineCheckedAt,
+        startedAtMs: latest.startedAtMs,
+      })
+    ) {
+      clearTracked(key)
+      return
+    }
+
     publishDigestSnapshotUpdated({
       triggerServiceId: tracked.serviceId,
       imageRepo: tracked.imageRepo,
@@ -130,6 +143,7 @@ export function trackDigestSnapshotRefresh(input: TrackDigestSnapshotRefreshInpu
   if (existing) {
     existing.imageRepo = imageRepo
     existing.side = side
+    existing.baselineCheckedAt = (input.baselineCheckedAt ?? '').trim() || null
     // Manual refresh should always re-arm tracking, even when the same digest key is reused.
     existing.errors = 0
     existing.startedAtMs = Date.now()
@@ -146,6 +160,7 @@ export function trackDigestSnapshotRefresh(input: TrackDigestSnapshotRefreshInpu
     imageRepo,
     digest,
     side,
+    baselineCheckedAt: (input.baselineCheckedAt ?? '').trim() || null,
     errors: 0,
     startedAtMs: Date.now(),
     timer: window.setTimeout(() => {
