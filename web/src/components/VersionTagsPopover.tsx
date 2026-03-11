@@ -115,7 +115,7 @@ export function VersionTagsPopover(props: {
     [candidateDigest],
   )
   const digestKey = useMemo(
-    () => `${serviceId}:${candidateDigestNorm ?? ''}`,
+    () => `${serviceId}:candidate:${candidateDigestNorm ?? ''}`,
     [candidateDigestNorm, serviceId],
   )
 
@@ -243,6 +243,7 @@ export function VersionTagsPopover(props: {
         serviceId,
         imageRepo: resp.imageRepo,
         digest: candidateDigestNorm,
+        side: 'candidate',
       })
     } catch (e: unknown) {
       setRefreshError(e instanceof Error ? e.message : String(e))

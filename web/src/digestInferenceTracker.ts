@@ -7,10 +7,13 @@ import {
 
 export const DIGEST_SNAPSHOT_UPDATED_EVENT = 'dockrev:digest-snapshot-updated'
 
+export type DigestSnapshotSide = 'current' | 'candidate'
+
 export type DigestSnapshotUpdatedDetail = {
   triggerServiceId: string
   imageRepo: string
   digest: string
+  side: DigestSnapshotSide
   tags: string[]
   checkedAt: string | null
   scan: ServiceDigestTagsScanSummary | null
@@ -20,6 +23,7 @@ type TrackDigestSnapshotRefreshInput = {
   serviceId: string
   imageRepo: string
   digest: string
+  side: DigestSnapshotSide
 }
 
 type TrackedRefresh = {
@@ -27,6 +31,7 @@ type TrackedRefresh = {
   serviceId: string
   imageRepo: string
   digest: string
+  side: DigestSnapshotSide
   errors: number
   startedAtMs: number
   timer: number | null
@@ -82,6 +87,7 @@ async function pollTracked(key: string) {
       triggerServiceId: tracked.serviceId,
       imageRepo: tracked.imageRepo,
       digest: tracked.digest,
+      side: tracked.side,
       tags: data.tags ?? [],
       checkedAt: data.checkedAt ?? null,
       scan: data.scan ?? null,
@@ -115,9 +121,11 @@ export function trackDigestSnapshotRefresh(input: TrackDigestSnapshotRefreshInpu
   const serviceId = input.serviceId.trim()
   const imageRepo = input.imageRepo.trim().toLowerCase()
   const digest = input.digest.trim().toLowerCase()
+  const side = input.side
   if (!serviceId || !imageRepo || !digest) return
+  if (side !== 'current' && side !== 'candidate') return
 
-  const key = `${serviceId}:${digest}`
+  const key = `${serviceId}:${side}:${digest}`
   const existing = trackedByKey.get(key)
   if (existing) {
     existing.imageRepo = imageRepo
@@ -129,6 +137,7 @@ export function trackDigestSnapshotRefresh(input: TrackDigestSnapshotRefreshInpu
     serviceId,
     imageRepo,
     digest,
+    side,
     errors: 0,
     startedAtMs: Date.now(),
     timer: window.setTimeout(() => {

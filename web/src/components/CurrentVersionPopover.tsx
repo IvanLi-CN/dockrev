@@ -166,7 +166,7 @@ export function CurrentVersionPopover(props: {
   const rawSeries = useMemo(() => parseTagSeries(imageTag), [imageTag])
 
   const digestKey = useMemo(
-    () => `${serviceId}:${digestNorm ?? ''}`,
+    () => `${serviceId}:current:${digestNorm ?? ''}`,
     [digestNorm, serviceId],
   )
   const [digestState, setDigestState] = useState<DigestTagsState>(() => ({
@@ -311,7 +311,7 @@ export function CurrentVersionPopover(props: {
       const nextToken = getDigestSnapshotInvalidationToken(digestKey) + 1
       ignoreInvalidationTokenRef.current = nextToken
       invalidateDigestSnapshot(digestKey)
-      trackDigestSnapshotRefresh({ serviceId, imageRepo: resp.imageRepo, digest: digestNorm })
+      trackDigestSnapshotRefresh({ serviceId, imageRepo: resp.imageRepo, digest: digestNorm, side: 'current' })
     } catch (e: unknown) {
       setRefreshError(e instanceof Error ? e.message : String(e))
     } finally {

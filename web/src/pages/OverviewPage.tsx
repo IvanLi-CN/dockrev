@@ -619,7 +619,9 @@ export function OverviewPage(props: {
     (detail: DigestSnapshotUpdatedDetail) => {
       const digestNorm = normalizeDigest(detail.digest)?.toLowerCase() ?? null
       const triggerServiceId = (detail.triggerServiceId ?? '').trim()
+      const side = detail.side
       if (!triggerServiceId || !digestNorm) return
+      if (side !== 'current' && side !== 'candidate') return
 
       const failures = scanHasFailures(detail.scan)
       const complete = scanIsComplete(detail.scan)
@@ -630,33 +632,37 @@ export function OverviewPage(props: {
         let changed = false
         let next: Service = svc
 
-        const currentDigest = normalizeDigest(svc.image.digest)?.toLowerCase() ?? null
-        if (currentDigest && currentDigest === digestNorm) {
-          const inferred = inferResolvedTagsFromSnapshot(detail.tags, svc.image.tag)
-          const inferredFirst = inferred[0] ?? null
-          if (inferredFirst || (!failures && complete)) {
-            changed = true
-            next = {
-              ...next,
-              image: {
-                ...next.image,
-                resolvedTag: inferredFirst,
-                resolvedTags: inferred.length > 1 ? inferred : null,
-              },
+        if (side === 'current') {
+          const currentDigest = normalizeDigest(svc.image.digest)?.toLowerCase() ?? null
+          if (currentDigest && currentDigest === digestNorm) {
+            const inferred = inferResolvedTagsFromSnapshot(detail.tags, svc.image.tag)
+            const inferredFirst = inferred[0] ?? null
+            if (inferredFirst || (!failures && complete)) {
+              changed = true
+              next = {
+                ...next,
+                image: {
+                  ...next.image,
+                  resolvedTag: inferredFirst,
+                  resolvedTags: inferred.length > 1 ? inferred : null,
+                },
+              }
             }
           }
         }
 
-        const candidate = svc.candidate
-        const candidateDigest = candidate ? normalizeDigest(candidate.digest)?.toLowerCase() ?? null : null
-        if (candidate && candidateDigest && candidateDigest === digestNorm) {
-          const inferred = inferResolvedTagsFromSnapshot(detail.tags, candidate.tag)
-          const inferredFirst = inferred[0] ?? null
-          if (inferredFirst || (!failures && complete)) {
-            changed = true
-            next = {
-              ...next,
-              candidate: { ...candidate, resolvedTag: inferredFirst },
+        if (side === 'candidate') {
+          const candidate = svc.candidate
+          const candidateDigest = candidate ? normalizeDigest(candidate.digest)?.toLowerCase() ?? null : null
+          if (candidate && candidateDigest && candidateDigest === digestNorm) {
+            const inferred = inferResolvedTagsFromSnapshot(detail.tags, candidate.tag)
+            const inferredFirst = inferred[0] ?? null
+            if (inferredFirst || (!failures && complete)) {
+              changed = true
+              next = {
+                ...next,
+                candidate: { ...candidate, resolvedTag: inferredFirst },
+              }
             }
           }
         }
