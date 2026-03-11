@@ -1,7 +1,7 @@
 name: Review Policy
 
 on:
-  pull_request:
+  pull_request_target:
     types:
       - opened
       - reopened
@@ -63,23 +63,18 @@ jobs:
               return String(ref).replace(/^refs\/heads\//, '')
             }
 
-            function parsePullNumbersFromText(text) {
+            function parsePullNumbersFromHeadRef(text) {
               if (!text) {
                 return []
               }
               const input = String(text)
               const numbers = new Set()
-              const patterns = [
-                /(?:^|\/)pr-(\d+)(?:-|$)/g,
-                /#(\d+)/g,
-              ]
-              for (const pattern of patterns) {
-                let match
-                while ((match = pattern.exec(input)) !== null) {
-                  const value = Number(match[1])
-                  if (Number.isInteger(value) && value > 0) {
-                    numbers.add(value)
-                  }
+              const pattern = /(?:^|\/)pr-(\d+)(?:-|$)/g
+              let match
+              while ((match = pattern.exec(input)) !== null) {
+                const value = Number(match[1])
+                if (Number.isInteger(value) && value > 0) {
+                  numbers.add(value)
                 }
               }
               return Array.from(numbers)
@@ -115,13 +110,7 @@ jobs:
 
             async function resolveMergeGroupPullNumbers() {
               const headRef = normalizeHeadRef(context.payload.merge_group?.head_ref || context.ref || '')
-              const headMessage = context.payload.merge_group?.head_commit?.message || ''
-              const parsed = Array.from(
-                new Set([
-                  ...parsePullNumbersFromText(headRef),
-                  ...parsePullNumbersFromText(headMessage),
-                ])
-              )
+              const parsed = parsePullNumbersFromHeadRef(headRef)
               const mergeGroupSha = context.payload.merge_group?.head_sha || context.sha
               const commitPullNumbers = await listCommitAssociatedPullNumbers(mergeGroupSha)
               if (!commitPullNumbers.length) {
@@ -173,6 +162,16 @@ jobs:
 
               const authorPermission = await getPermission(author)
               const isExemptAuthor = exemptPermissions.has(authorPermission)
+              if (isExemptAuthor) {
+                return {
+                  pullNumber,
+                  author,
+                  authorPermission,
+                  pass: true,
+                  description: `Author @${author} has ${authorPermission} permission; approval not required.`,
+                }
+              }
+
               let pass = false
               let description = ''
 
@@ -225,9 +224,6 @@ jobs:
 
               if (blockingRequests.length > 0) {
                 description = `Blocking change requests from ${blockingRequests.join(', ')}.`
-              } else if (isExemptAuthor) {
-                pass = true
-                description = `Author @${author} has ${authorPermission} permission; approval not required.`
               } else {
                 pass = approvals.length >= requiredApprovals
                 if (pass) {

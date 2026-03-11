@@ -50,10 +50,10 @@
 
 ### MUST
 
-- `Review Policy` 必须切换到最终 topic 模板口径：`pull_request` + `pull_request_review` + `merge_group`，并以 dedicated local required check `Review Policy Gate` 直接表达结论。
+- `Review Policy` 必须保持 trusted gate 语义：PR 路径使用 base-branch 可信工作流触发（`pull_request_target`），并补齐 `pull_request_review` + `merge_group` 重新评估，结论由 dedicated local required check `Review Policy Gate` 直接表达。
 - `Review Policy` 必须能在 `merge_group` 上下文安全还原关联 PR 集合；无法从 GitHub 披露数据证明成员集合时，必须 fail closed。
 - `Review Policy` 不得继续依赖 `statuses: write` / `createCommitStatus` 充当最终契约。
-- `PR Label Gate` 必须支持 `merge_group`，并对 merge queue 中的每个 PR 分别验证 `type:*` 与 `channel:*` 标签契约。
+- `PR Label Gate` 必须保持 trusted gate 语义：PR 路径使用 base-branch 可信工作流触发（`pull_request_target`），并支持 `merge_group` 对队列中的每个 PR 分别验证 `type:*` 与 `channel:*` 标签契约。
 - `CI (PR)` 必须在 `merge_group` 上触发，并保证声明为 required 的 job 在 merge queue 上仍会产生真实 check。
 - 默认分支专用 workflow 若复用与 PR workflow 相同的 job 名，必须改名以避免 GitHub check context 冲突。
 - `changes` gating 在 `merge_group` 上必须走保守策略，确保 required jobs 不会因为“无法判断变更范围”而被跳过。
@@ -61,6 +61,7 @@
 ### SHOULD
 
 - merge queue 路径与 PR 路径尽量共享同一套校验逻辑，避免两套规则长期漂移。
+- 任何 required gate 若需要在 PR 上充当“可信裁决器”，其 PR 触发路径不得依赖 PR 分支可篡改的 workflow 定义。
 - 规格与索引应记录这次对齐是 `quality-gates` 最终版落地，而不是临时修补。
 
 ## 功能与行为规格（Functional/Behavior Spec）
@@ -117,3 +118,4 @@
 - 2026-03-11: 新建规格，冻结 Dockrev `quality-gates` 最终版对齐目标与验收口径。
 - 2026-03-11: 完成 repo 内 workflow 对齐，补齐 merge queue required checks，并消除 main / PR check context 冲突。
 - 2026-03-11: 同步 release contract-check，使仓库内静态门禁改为校验新的 label-gate 最终实现。
+- 2026-03-11: 根据 review 结果收紧 trusted gate 语义：PR 路径恢复 base-branch trusted workflow，merge queue 只信任 `head_ref` + commit-associated pulls，owner/maintainer 真正免 review。
