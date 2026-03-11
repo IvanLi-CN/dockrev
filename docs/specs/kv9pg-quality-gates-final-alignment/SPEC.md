@@ -103,7 +103,7 @@
 - `python3 /Users/ivan/.style-playbook-skills/skills/style-topic-quality-gates/scripts/check_quality_gates.py --repo-root . --declaration .github/quality-gates.json --allow-unchecked-branch-protection`
 - `go run github.com/rhysd/actionlint/cmd/actionlint@latest .github/workflows/*.yml`
 - `bash ./.github/scripts/release-channel-contract-check.sh`
-- `python3 ./.github/scripts/check-live-quality-gates.py --declaration .github/quality-gates.json --repo "${GITHUB_REPOSITORY}" --mode require`（GitHub Actions 上必须通过）
+- `python3 ./.github/scripts/check-live-quality-gates.py --declaration .github/quality-gates.json --repo "${GITHUB_REPOSITORY}" --mode require`（GitHub Actions 上必须通过；校验 effective branch rules，PR-only bypass actor 在 live ruleset 配置复核时确认）
 - `git diff --check`
 - PR CI 全绿，且当前 `head_sha` 的 review-loop 收敛后才允许合并
 
@@ -124,4 +124,4 @@
 - 2026-03-11: 新建规格，冻结 Dockrev `quality-gates` 最终版对齐目标与验收口径。
 - 2026-03-11: 完成 repo 内 label gate / CI merge queue 对齐，并消除 main / PR check context 冲突。
 - 2026-03-11: 根据最新 review 结果回修最终契约：条件 review 不再由 workflow-backed gate 承担，改为 GitHub native required review rule + PR-only bypass；仓库内移除 legacy `Review Policy` workflow，并同步 contract-check 与声明口径。
-- 2026-03-11: 根据新一轮 review 补上 live GitHub rules 对齐校验：`release-channel-contract-check.sh` 在 GitHub Actions 上要求 `check-live-quality-gates.py` 读取默认分支生效规则，阻断“声明已改但线上 rules 尚未对齐”的回归窗口。
+- 2026-03-11: 根据新一轮 review 补上 live GitHub rules 对齐校验：`release-channel-contract-check.sh` 在 GitHub Actions 上要求 `check-live-quality-gates.py` 读取默认分支生效的 branch rules，阻断“声明已改但线上 required review / required checks / signed-commit 规则仍漂移”的回归窗口；PR-only bypass actor 继续在 live ruleset 配置复核中确认。

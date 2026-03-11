@@ -176,76 +176,44 @@ REQUIRED_CHECKS = [
     "Release build check (PR)",
 ]
 
-def make_review_ruleset(required_approvals, bypass_actors):
-    return {
-        "name": "protect-main-review-policy",
-        "bypass_actors": bypass_actors,
-        "rules": [
-            {
-                "type": "pull_request",
-                "parameters": {
-                    "required_approving_review_count": required_approvals,
-                    "dismiss_stale_reviews_on_push": False,
-                    "require_code_owner_review": False,
-                    "require_last_push_approval": False,
-                    "required_review_thread_resolution": False,
-                    "allowed_merge_methods": ["merge", "squash", "rebase"],
-                },
+def make_review_rules(required_approvals):
+    return [
+        {
+            "type": "pull_request",
+            "parameters": {
+                "required_approving_review_count": required_approvals,
+                "dismiss_stale_reviews_on_push": False,
+                "require_code_owner_review": False,
+                "require_last_push_approval": False,
+                "required_review_thread_resolution": False,
+                "allowed_merge_methods": ["merge", "squash", "rebase"],
             },
-            {"type": "required_signatures"},
-            {"type": "non_fast_forward"},
-        ],
-    }
+        },
+        {"type": "required_signatures"},
+        {"type": "non_fast_forward"},
+    ]
 
 
-def make_required_checks_ruleset(extra_checks=None):
+def make_required_checks_rules(extra_checks=None):
     checks = REQUIRED_CHECKS if extra_checks is None else REQUIRED_CHECKS + extra_checks
-    return {
-        "name": "protect-main-required-checks",
-        "bypass_actors": [],
-        "rules": [
-            {
-                "type": "required_status_checks",
-                "parameters": {
-                    "strict_required_status_checks_policy": True,
-                    "required_status_checks": [
-                        {"context": context, "integration_id": 15368}
-                        for context in checks
-                    ],
-                },
-            }
-        ],
-    }
+    return [
+        {
+            "type": "required_status_checks",
+            "parameters": {
+                "strict_required_status_checks_policy": True,
+                "required_status_checks": [
+                    {"context": context, "integration_id": 15368}
+                    for context in checks
+                ],
+            },
+        }
+    ]
 
-
-PR_ONLY_BYPASS = [
-    {"actor_id": 2, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"},
-    {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"},
-]
 
 RULES_BY_BRANCH = {
-    "main": [
-        make_review_ruleset(1, PR_ONLY_BYPASS),
-        make_required_checks_ruleset(),
-    ],
-    "main-missing-review": [
-        make_review_ruleset(0, PR_ONLY_BYPASS),
-        make_required_checks_ruleset(),
-    ],
-    "main-bad-bypass": [
-        make_review_ruleset(
-            1,
-            [
-                {"actor_id": 2, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"},
-                {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"},
-            ],
-        ),
-        make_required_checks_ruleset(),
-    ],
-    "main-stale-check": [
-        make_review_ruleset(1, PR_ONLY_BYPASS),
-        make_required_checks_ruleset(["Review Policy Gate"]),
-    ],
+    "main": make_review_rules(1) + make_required_checks_rules(),
+    "main-missing-review": make_review_rules(0) + make_required_checks_rules(),
+    "main-stale-check": make_review_rules(1) + make_required_checks_rules(["Review Policy Gate"]),
 }
 
 
@@ -630,7 +598,6 @@ run_inline_workflow_contract_checks
 echo "[contract-check] live quality-gates scenarios"
 run_live_quality_gates main ok
 run_live_quality_gates main-missing-review fail
-run_live_quality_gates main-bad-bypass fail
 run_live_quality_gates main-stale-check fail
 
 echo "[contract-check] label-gate scenarios"
