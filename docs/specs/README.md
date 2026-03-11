@@ -27,7 +27,8 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
-| xyma9 | Dockrev：非 service update 的 semver pull 保留 OCI 原始 tag 并回退无 v 变体 | 已完成 | `xyma9-semver-pull-raw-tag-fallback/SPEC.md` | 2026-03-10 | fast-track |
+| 99egq | Dockrev：显式 tag 驱动的 Update 契约 | 已完成 | `99egq-explicit-update-tag-contract/SPEC.md` | 2026-03-11 | fast-track（撤销 #162 的 semver raw fallback；统一 explicit targetTag + pullTags） |
+| xyma9 | Dockrev：非 service update 的 semver pull 保留 OCI 原始 tag 并回退无 v 变体 | 重新设计（#99egq） | `xyma9-semver-pull-raw-tag-fallback/SPEC.md` | 2026-03-11 | superseded by explicit target contract |
 | ufxaq | Dockrev：Update Job Docker 凭据透传桥接 | 已完成 | `ufxaq-update-job-docker-auth-bridge/SPEC.md` | 2026-03-10 | fast-track（update job Docker auth bridge + private registry docs sync） |
 | bvxtm | Dockrev：Supervisor 暗色主题修复 + 同源主题偏好共享 | 已完成 | `bvxtm-supervisor-dark-theme-same-origin-share/SPEC.md` | 2026-03-09 | fast-track（PR #156；cargo test + browser smoke） |
 | qh4zx | Dockrev：新版本通知等待解析收敛 + 单服务正文瘦身 | 已完成 | `qh4zx-new-version-notify-settle-and-copy/SPEC.md` | 2026-03-09 | fast-track（PR #159） |

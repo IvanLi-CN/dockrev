@@ -62,6 +62,7 @@ pub(super) async fn webhook_trigger(
         scope,
         stack_id,
         service_id,
+        targets,
         allow_arch_mismatch,
         backup_mode,
     } = req;
@@ -106,9 +107,9 @@ pub(super) async fn webhook_trigger(
             Ok(Json(WebhookTriggerResponse { job_id }))
         }
         WebhookAction::Update => {
-            if scope == JobScope::Service {
+            if targets.is_none() {
                 return Err(ApiError::invalid_argument(
-                    "webhook update does not support scope=service; use /api/updates with explicit targetTag/targetDigest",
+                    "targets is required for webhook update",
                 ));
             }
 
@@ -118,6 +119,8 @@ pub(super) async fn webhook_trigger(
                 service_id,
                 target_tag: None,
                 target_digest: None,
+                pull_tags: None,
+                targets,
                 mode: UpdateMode::Apply,
                 allow_arch_mismatch,
                 backup_mode,

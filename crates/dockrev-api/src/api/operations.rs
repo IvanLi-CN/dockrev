@@ -1,5 +1,7 @@
 use super::*;
 
+use std::collections::HashSet;
+
 use crate::service_check;
 
 pub(super) const CHECK_PROGRESS_LOG_INTERVAL: Duration = Duration::from_millis(500);
@@ -136,10 +138,14 @@ pub(super) fn update_apply_fraction(evt: &updater::UpdateProgressEvent) -> f64 {
         S::PullDone => 0.52,
         S::UpStart => 0.60,
         S::UpDone => 0.82,
-        S::HealthStart => 0.86,
-        S::HealthDone => 0.90,
-        S::SyncTagStart => 0.93,
+        S::HealthStart => 0.84,
+        S::HealthDone => 0.88,
+        S::TargetTagPullStart => 0.90,
+        S::TargetTagPullDone => 0.93,
+        S::SyncTagStart => 0.95,
         S::SyncTagDone => 0.97,
+        S::PullTagsStart => 0.985,
+        S::PullTagsDone => 0.995,
         S::ServiceDone => 1.0,
     };
 
@@ -1366,32 +1372,49 @@ pub(super) async fn trigger_update(
         req.service_id.as_deref(),
     )?;
 
-    if (req.target_tag.is_some() || req.target_digest.is_some()) && req.scope != JobScope::Service {
-        return Err(ApiError::invalid_argument(
-            "targetTag/targetDigest is only supported for scope=service",
-        ));
-    }
-
-    if req.scope == JobScope::Service
-        && req
-            .target_tag
-            .as_deref()
-            .is_none_or(|t| t.trim().is_empty())
-    {
-        return Err(ApiError::invalid_argument(
-            "targetTag is required for scope=service",
-        ));
-    }
-
-    if req.scope == JobScope::Service
-        && req
-            .target_digest
-            .as_deref()
-            .is_none_or(|d| d.trim().is_empty())
-    {
-        return Err(ApiError::invalid_argument(
-            "targetDigest is required for scope=service",
-        ));
+    match req.scope {
+        JobScope::Service => {
+            if req.targets.is_some() {
+                return Err(ApiError::invalid_argument(
+                    "targets is not supported for scope=service; use targetTag/targetDigest/pullTags",
+                ));
+            }
+            if req
+                .target_tag
+                .as_deref()
+                .is_none_or(|t| t.trim().is_empty())
+            {
+                return Err(ApiError::invalid_argument(
+                    "targetTag is required for scope=service",
+                ));
+            }
+            if req
+                .target_digest
+                .as_deref()
+                .is_none_or(|d| d.trim().is_empty())
+            {
+                return Err(ApiError::invalid_argument(
+                    "targetDigest is required for scope=service",
+                ));
+            }
+            if req.pull_tags.is_none() {
+                return Err(ApiError::invalid_argument(
+                    "pullTags is required for scope=service",
+                ));
+            }
+        }
+        JobScope::Stack | JobScope::All => {
+            if req.target_tag.is_some() || req.target_digest.is_some() || req.pull_tags.is_some() {
+                return Err(ApiError::invalid_argument(
+                    "targetTag/targetDigest/pullTags is only supported for scope=service",
+                ));
+            }
+            if req.targets.is_none() {
+                return Err(ApiError::invalid_argument(
+                    "targets is required for scope=stack/all",
+                ));
+            }
+        }
     }
 
     let job_id = enqueue_update_job(
@@ -1410,13 +1433,14 @@ pub(super) async fn enqueue_update_job(
     state: Arc<AppState>,
     created_by: String,
     reason: String,
-    req: TriggerUpdateRequest,
+    mut req: TriggerUpdateRequest,
     now: String,
 ) -> Result<String, ApiError> {
     let stack_ids = resolve_stack_ids_for_update(&state, &req)
         .await
         .map_err(map_internal)?;
-    validate_arch_mismatch_for_update(&state, &req, &stack_ids).await?;
+    let validated_targets = resolve_validated_update_targets(&state, &req, &stack_ids).await?;
+    req.targets = Some(validated_targets);
 
     let job_id = ids::new_job_id();
     let mut job = JobRecord::new_running(
@@ -1470,6 +1494,135 @@ pub(super) async fn enqueue_update_job(
     Ok(job_id)
 }
 
+fn normalize_digest_for_compare(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.contains(':') {
+        return Some(trimmed.to_string());
+    }
+    Some(format!("sha256:{trimmed}"))
+}
+
+fn normalize_required_update_string(field: &str, value: Option<&str>) -> Result<String, ApiError> {
+    let trimmed = value.unwrap_or_default().trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::invalid_argument(format!("{field} is required")));
+    }
+    Ok(trimmed.to_string())
+}
+
+fn normalize_required_pull_tags(
+    field: &str,
+    pull_tags: Option<&Vec<String>>,
+    target_tag: &str,
+) -> Result<Vec<String>, ApiError> {
+    let values =
+        pull_tags.ok_or_else(|| ApiError::invalid_argument(format!("{field} is required")))?;
+    let target_tag = target_tag.trim();
+    let mut normalized = Vec::with_capacity(values.len());
+    let mut seen = HashSet::new();
+    for (idx, tag) in values.iter().enumerate() {
+        let trimmed = tag.trim();
+        if trimmed.is_empty() {
+            return Err(ApiError::invalid_argument(format!(
+                "{field}[{idx}] must not be empty"
+            )));
+        }
+        if trimmed == target_tag {
+            continue;
+        }
+        if seen.insert(trimmed.to_string()) {
+            normalized.push(trimmed.to_string());
+        }
+    }
+    Ok(normalized)
+}
+
+fn normalize_update_service_target(
+    target: &UpdateServiceTarget,
+    field_prefix: &str,
+) -> Result<UpdateServiceTarget, ApiError> {
+    let target_tag = normalize_required_update_string(
+        &format!("{field_prefix}.targetTag"),
+        Some(&target.target_tag),
+    )?;
+    let target_digest = normalize_required_update_string(
+        &format!("{field_prefix}.targetDigest"),
+        Some(&target.target_digest),
+    )?;
+    let normalized_digest = normalize_digest_for_compare(&target_digest).ok_or_else(|| {
+        ApiError::invalid_argument(format!("{field_prefix}.targetDigest is required"))
+    })?;
+    Ok(UpdateServiceTarget {
+        service_id: normalize_required_update_string(
+            &format!("{field_prefix}.serviceId"),
+            Some(&target.service_id),
+        )?,
+        target_tag: target_tag.clone(),
+        target_digest: normalized_digest,
+        pull_tags: Some(normalize_required_pull_tags(
+            &format!("{field_prefix}.pullTags"),
+            target.pull_tags.as_ref(),
+            &target_tag,
+        )?),
+    })
+}
+
+fn requested_update_targets(
+    req: &TriggerUpdateRequest,
+) -> Result<Vec<UpdateServiceTarget>, ApiError> {
+    match req.scope {
+        JobScope::Service => {
+            if let Some(targets) = req.targets.as_ref() {
+                let mut normalized = Vec::with_capacity(targets.len());
+                for (idx, target) in targets.iter().enumerate() {
+                    normalized.push(normalize_update_service_target(
+                        target,
+                        &format!("targets[{idx}]"),
+                    )?);
+                }
+                return Ok(normalized);
+            }
+
+            let target_tag =
+                normalize_required_update_string("targetTag", req.target_tag.as_deref())?;
+            let target_digest =
+                normalize_required_update_string("targetDigest", req.target_digest.as_deref())?;
+            let normalized_digest = normalize_digest_for_compare(&target_digest)
+                .ok_or_else(|| ApiError::invalid_argument("targetDigest is required"))?;
+
+            Ok(vec![UpdateServiceTarget {
+                service_id: normalize_required_update_string(
+                    "serviceId",
+                    req.service_id.as_deref(),
+                )?,
+                target_tag: target_tag.clone(),
+                target_digest: normalized_digest,
+                pull_tags: Some(normalize_required_pull_tags(
+                    "pullTags",
+                    req.pull_tags.as_ref(),
+                    &target_tag,
+                )?),
+            }])
+        }
+        JobScope::Stack | JobScope::All => {
+            let targets = req.targets.as_ref().ok_or_else(|| {
+                ApiError::invalid_argument("targets is required for scope=stack/all")
+            })?;
+            let mut normalized = Vec::with_capacity(targets.len());
+            for (idx, target) in targets.iter().enumerate() {
+                normalized.push(normalize_update_service_target(
+                    target,
+                    &format!("targets[{idx}]"),
+                )?);
+            }
+            Ok(normalized)
+        }
+    }
+}
+
 pub(super) async fn resolve_stack_ids_for_update(
     state: &AppState,
     req: &TriggerUpdateRequest,
@@ -1490,92 +1643,167 @@ pub(super) async fn resolve_stack_ids_for_update(
     Ok(stack_ids)
 }
 
-pub(super) async fn validate_arch_mismatch_for_update(
+fn validate_target_against_service(
+    svc: &crate::api::types::Service,
+    target: &UpdateServiceTarget,
+    allow_arch_mismatch: bool,
+) -> Result<(), ApiError> {
+    if target.target_tag.trim() != svc.image.tag.trim() {
+        return Err(ApiError::invalid_argument(
+            "cross-tag updates are not supported (targetTag must match service image tag)",
+        )
+        .with_details(json!({
+            "serviceId": svc.id,
+            "expectedTag": svc.image.tag,
+            "gotTag": target.target_tag,
+        })));
+    }
+
+    let expected_digest = svc
+        .candidate
+        .as_ref()
+        .and_then(|candidate| normalize_digest_for_compare(&candidate.digest));
+    let got_digest = normalize_digest_for_compare(&target.target_digest);
+    let (Some(expected_digest), Some(got_digest)) = (expected_digest.clone(), got_digest) else {
+        return Err(ApiError::conflict(
+            "target digest no longer matches latest scan (rescan required)",
+        )
+        .with_details(json!({
+            "serviceId": svc.id,
+            "expectedDigest": expected_digest,
+            "gotDigest": target.target_digest,
+        })));
+    };
+    if expected_digest != got_digest {
+        return Err(ApiError::conflict(
+            "target digest no longer matches latest scan (rescan required)",
+        )
+        .with_details(json!({
+            "serviceId": svc.id,
+            "expectedDigest": expected_digest,
+            "gotDigest": got_digest,
+        })));
+    }
+
+    if !allow_arch_mismatch
+        && svc.candidate.as_ref().is_some_and(|candidate| {
+            matches!(candidate.arch_match, crate::api::types::ArchMatch::Mismatch)
+        })
+    {
+        return Err(ApiError::invalid_argument(
+            "arch mismatch: re-run with allowArchMismatch=true to force update",
+        )
+        .with_details(json!({
+            "serviceId": svc.id,
+            "archMatch": "mismatch",
+        })));
+    }
+
+    Ok(())
+}
+
+pub(super) async fn resolve_validated_update_targets(
     state: &AppState,
     req: &TriggerUpdateRequest,
     stack_ids: &[String],
-) -> Result<(), ApiError> {
-    fn normalize_digest_for_compare(input: &str) -> Option<String> {
-        let t = input.trim();
-        if t.is_empty() {
-            return None;
+) -> Result<Vec<UpdateServiceTarget>, ApiError> {
+    let normalized_targets = requested_update_targets(req)?;
+    let mut requested_by_service = std::collections::BTreeMap::<String, UpdateServiceTarget>::new();
+    for target in normalized_targets {
+        if requested_by_service
+            .insert(target.service_id.clone(), target)
+            .is_some()
+        {
+            return Err(ApiError::invalid_argument(
+                "targets contains duplicate serviceId",
+            ));
         }
-        if t.contains(':') {
-            return Some(t.to_string());
-        }
-        Some(format!("sha256:{t}"))
     }
 
-    // For stack/all updates we intentionally skip arch-mismatch services (UI shows them as
-    // non-actionable), so only enforce mismatch blocking and target locking for service updates.
-    if req.scope != JobScope::Service {
-        return Ok(());
+    if req.scope == JobScope::Service {
+        let service_id = req.service_id.as_deref().unwrap_or_default().trim();
+        if requested_by_service.len() != 1 {
+            return Err(ApiError::invalid_argument(
+                "exactly one target is required for scope=service",
+            ));
+        }
+        let Some(target) = requested_by_service.get(service_id) else {
+            return Err(ApiError::invalid_argument(
+                "scope=service target serviceId must match request serviceId",
+            ));
+        };
+
+        let mut found_service = false;
+        for stack_id in stack_ids {
+            let Some(stack) = state.db.get_stack(stack_id).await.map_err(map_internal)? else {
+                continue;
+            };
+            for svc in &stack.services {
+                if svc.id != service_id {
+                    continue;
+                }
+                validate_target_against_service(svc, target, req.allow_arch_mismatch)?;
+                found_service = true;
+            }
+        }
+
+        if !found_service {
+            return Ok(requested_by_service.into_values().collect());
+        }
+
+        return Ok(requested_by_service.into_values().collect());
     }
 
-    let got_digest = normalize_digest_for_compare(req.target_digest.as_deref().unwrap_or_default());
-
+    let mut expected_service_ids = std::collections::BTreeSet::<String>::new();
+    let mut actionable_services =
+        std::collections::BTreeMap::<String, crate::api::types::Service>::new();
     for stack_id in stack_ids {
         let Some(stack) = state.db.get_stack(stack_id).await.map_err(map_internal)? else {
             continue;
         };
 
-        for svc in &stack.services {
-            if req.service_id.as_deref().is_some_and(|id| id != svc.id) {
-                continue;
-            }
+        let selection = updater::select_update_services(
+            &stack,
+            &req.scope,
+            req.service_id.as_deref(),
+            req.allow_arch_mismatch,
+            req.reason.as_str(),
+            Some(state.config.dockrev_image_repo.as_str()),
+        );
 
-            // Cross-tag updates are not supported. If the client sends targetTag, it must match
-            // the service's configured tag.
-            if let Some(tag) = req.target_tag.as_deref()
-                && tag.trim() != svc.image.tag.trim()
-            {
-                return Err(ApiError::invalid_argument(
-                    "cross-tag updates are not supported (targetTag must match service image tag)",
-                ));
-            }
-
-            // Enforce "update locks to scan result": targetDigest must match the latest persisted
-            // candidate digest for this service.
-            let expected_opt = svc
-                .candidate
-                .as_ref()
-                .and_then(|c| normalize_digest_for_compare(&c.digest));
-            let got_opt = got_digest.clone();
-            let (Some(expected), Some(got)) = (expected_opt.clone(), got_opt.clone()) else {
-                return Err(ApiError::conflict(
-                    "target digest no longer matches latest scan (rescan required)",
-                )
-                .with_details(json!({
-                    "serviceId": svc.id,
-                    "expectedDigest": expected_opt,
-                    "gotDigest": got_opt,
-                })));
-            };
-            if expected != got {
-                return Err(ApiError::conflict(
-                    "target digest no longer matches latest scan (rescan required)",
-                )
-                .with_details(json!({
-                    "serviceId": svc.id,
-                    "expectedDigest": expected,
-                    "gotDigest": got,
-                })));
-            }
-
-            if !req.allow_arch_mismatch
-                && svc
-                    .candidate
-                    .as_ref()
-                    .is_some_and(|c| matches!(c.arch_match, ArchMatch::Mismatch))
-            {
-                return Err(ApiError::invalid_argument(
-                    "candidate arch mismatch (set allowArchMismatch=true to override)",
-                ));
-            }
+        for svc in selection.services {
+            expected_service_ids.insert(svc.id.clone());
+            actionable_services.insert(svc.id.clone(), svc.clone());
         }
     }
 
-    Ok(())
+    let missing_service_ids = expected_service_ids
+        .iter()
+        .filter(|service_id| !requested_by_service.contains_key(*service_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let extra_service_ids = requested_by_service
+        .keys()
+        .filter(|service_id| !expected_service_ids.contains(*service_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing_service_ids.is_empty() || !extra_service_ids.is_empty() {
+        return Err(ApiError::invalid_argument(
+            "targets must exactly cover the selected services for this scope",
+        )
+        .with_details(json!({
+            "missingServiceIds": missing_service_ids,
+            "extraServiceIds": extra_service_ids,
+        })));
+    }
+
+    for (service_id, target) in &requested_by_service {
+        if let Some(svc) = actionable_services.get(service_id) {
+            validate_target_against_service(svc, target, req.allow_arch_mismatch)?;
+        }
+    }
+
+    Ok(requested_by_service.into_values().collect())
 }
 
 type UpdateStackSummaries = Vec<serde_json::Value>;
@@ -1864,7 +2092,9 @@ pub(super) async fn run_update_job(
                         updater::UpdateProgressStep::PullDone
                             | updater::UpdateProgressStep::UpDone
                             | updater::UpdateProgressStep::HealthDone
+                            | updater::UpdateProgressStep::TargetTagPullDone
                             | updater::UpdateProgressStep::SyncTagDone
+                            | updater::UpdateProgressStep::PullTagsDone
                             | updater::UpdateProgressStep::ServiceDone
                     );
                     let should_emit = force_emit
@@ -1917,8 +2147,7 @@ pub(super) async fn run_update_job(
                 &req.scope,
                 req.service_id.as_deref(),
                 req.mode.as_str(),
-                req.target_tag.as_deref(),
-                req.target_digest.as_deref(),
+                req.targets.as_deref(),
                 req.allow_arch_mismatch,
                 req.reason.as_str(),
                 Some(state.config.dockrev_image_repo.as_str()),

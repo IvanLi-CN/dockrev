@@ -18,6 +18,7 @@ import {
   type StackDetail,
 } from '../api'
 import { navigate } from '../routes'
+import { buildUpdateServiceTarget } from '../updateTargets'
 import { ArrowRightIcon, Button, Input, Mono, Pill, SelectField, Switch } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
@@ -379,9 +380,7 @@ export function ServiceDetailPage(props: {
                     const resp = await triggerUpdate({
                       scope: 'service',
                       stackId,
-                      serviceId,
-                      targetTag: service.image.tag,
-                      targetDigest: service.candidate.digest,
+                      ...(await buildUpdateServiceTarget(service)),
                       mode: 'dry-run',
                       allowArchMismatch: false,
                       backupMode: 'inherit',
@@ -576,9 +575,7 @@ export function ServiceDetailPage(props: {
                     const resp = await triggerUpdate({
                       scope: 'service',
                       stackId,
-                      serviceId,
-                      targetTag: service.image.tag,
-                      targetDigest: service.candidate.digest,
+                      ...(await buildUpdateServiceTarget(service)),
                       mode: 'apply',
                       allowArchMismatch: false,
                       backupMode: 'inherit',
@@ -1146,20 +1143,20 @@ export function ServiceDetailPage(props: {
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>
-        <div className="title">Webhook 触发（服务级）</div>
-        <div className="muted">用于外部系统触发：更新此服务 / 更新 compose / 更新全部</div>
+        <div className="title">Webhook 触发（显式 targets[]）</div>
+        <div className="muted">外部系统触发 update 时，必须显式声明真实存在的 targetTag 与兼容 pullTags。</div>
 
         <div className="webhookRow">
           <div className="label">POST</div>
-          <div className="mono">/api/v1/update/service/{service.name}</div>
+          <div className="mono">/api/webhooks/trigger</div>
           <div style={{ marginLeft: 'auto' }} className="chipStatic">
-            需要鉴权
+            Webhook Secret
           </div>
         </div>
         <div className="webhookBody">
-          <div className="label">Body（可选）</div>
-          <div className="mono">{`{ "dryRun": true, "backup": "inherit" }`}</div>
-          <div className="muted">dryRun=仅预览；backup=inherit/on/off；rollback=inherit/on/off</div>
+          <div className="label">Body（示例）</div>
+          <div className="mono">{`{ "action": "update", "scope": "service", "serviceId": "${service.id}", "targets": [{ "serviceId": "${service.id}", "targetTag": "${service.image.tag}", "targetDigest": "${service.candidate?.digest ?? 'sha256:...'}", "pullTags": [] }], "allowArchMismatch": false, "backupMode": "inherit" }`}</div>
+          <div className="muted">旧的 update webhook payload 若未提供 <Mono>targets[]</Mono> 会返回 <Mono>400 invalid_argument</Mono>。</div>
         </div>
       </div>
 

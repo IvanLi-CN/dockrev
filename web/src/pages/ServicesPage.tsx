@@ -11,10 +11,12 @@ import {
   newJobEventsSource,
   ApiError,
   type Service,
+  type TriggerUpdateInput,
   type StackDetail,
   type StackListItem,
 } from '../api'
 import { navigate } from '../routes'
+import { buildUpdateServiceTarget, buildUpdateServiceTargets } from '../updateTargets'
 import { ArrowRightIcon, Button, Input, Mono, Pill, StatusRemark } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
@@ -550,9 +552,7 @@ export function ServicesPage(props: {
       stackId: string
       serviceId?: string
       targetLabel: string
-      targetTag?: string
-      targetDigest?: string | null
-      getTarget?: () => { targetTag?: string; targetDigest?: string | null }
+      buildRequest: () => Promise<TriggerUpdateInput>
       confirmBody?: ReactNode
       confirmTitle?: string
     }) => {
@@ -595,42 +595,13 @@ export function ServicesPage(props: {
       })
       if (!ok) return
 
-      const finalTarget = input.getTarget
-        ? input.getTarget()
-        : { targetTag: input.targetTag, targetDigest: input.targetDigest }
       const targetKey = resolveUpdateActionTargetKey(input.scope, input.stackId, input.serviceId)
 
       setError(null)
       setNoticeJobId(null)
       if (targetKey) beginSubmitting(targetKey)
       try {
-        let resp: { jobId: string }
-        if (input.scope === 'service') {
-          const serviceId = (input.serviceId ?? '').trim()
-          const targetTag = (finalTarget.targetTag ?? '').trim()
-          const targetDigest = (finalTarget.targetDigest ?? '').trim()
-          if (!serviceId || !targetTag || !targetDigest) {
-            throw new Error('service update 缺少必要参数（serviceId/targetTag/targetDigest）')
-          }
-          resp = await triggerUpdate({
-            scope: 'service',
-            stackId: input.stackId,
-            serviceId,
-            targetTag,
-            targetDigest,
-            mode: 'apply',
-            allowArchMismatch: false,
-            backupMode: 'inherit',
-          })
-        } else {
-          resp = await triggerUpdate({
-            scope: 'stack',
-            stackId: input.stackId,
-            mode: 'apply',
-            allowArchMismatch: false,
-            backupMode: 'inherit',
-          })
-        }
+        const resp = await triggerUpdate(await input.buildRequest())
         setNoticeJobId(resp.jobId)
         if (targetKey) trackJob(targetKey, resp.jobId, 'queued')
       } catch (e: unknown) {
@@ -865,11 +836,11 @@ export function ServicesPage(props: {
                       title={stackApplyActiveJob ? '任务进行中，点击查看任务详情' : (stackApply.title ?? undefined)}
                       hint={stackApplyActiveJob ? '任务进行中，点击查看任务详情' : (!stackApply.enabled ? (stackApply.hint ?? undefined) : undefined)}
                       onClick={() => {
-                            if (stackApplyActiveJob) {
-                              navigate({ name: 'job', jobId: stackApplyActiveJob.jobId })
-                              return
-                            }
-		                        const previewItems = [
+                        if (stackApplyActiveJob) {
+                          navigate({ name: 'job', jobId: stackApplyActiveJob.jobId })
+                          return
+                        }
+                        const previewItems = [
                           ...g.aggregatePartition.actionable.map((item) => ({
                             ...item,
                             displayName: item.svc.name,
@@ -919,14 +890,24 @@ export function ServicesPage(props: {
                             <div className="modalDivider" />
                           </>
                         )
-                                                void triggerApply({
-	                          scope: 'stack',
-	                          stackId: g.stackId,
-	                          targetLabel: `stack:${g.stackName}`,
-	                          confirmBody: body,
-	                          confirmTitle: '确认更新此 stack？',
-		                        })
-		                      }}
+                        void triggerApply({
+                          scope: 'stack',
+                          stackId: g.stackId,
+                          targetLabel: `stack:${g.stackName}`,
+                          buildRequest: async () => ({
+                            scope: 'stack',
+                            stackId: g.stackId,
+                            targets: await buildUpdateServiceTargets(
+                              g.aggregatePartition.actionable.map((item) => item.svc),
+                            ),
+                            mode: 'apply',
+                            allowArchMismatch: false,
+                            backupMode: 'inherit',
+                          }),
+                          confirmBody: body,
+                          confirmTitle: '确认更新此 stack？',
+                        })
+                      }}
 	                    >
                         {stackApplyActiveJob?.status === 'queued'
                           ? '排队中…'
@@ -1127,106 +1108,112 @@ export function ServicesPage(props: {
                                 title={svcApplyActiveJob ? '任务进行中，点击查看任务详情' : (svcApply.title ?? undefined)}
                                 hint={svcApplyActiveJob ? '任务进行中，点击查看任务详情' : undefined}
                                 onClick={() => {
-                                          if (svcApplyActiveJob) {
-                                            navigate({ name: 'job', jobId: svcApplyActiveJob.jobId })
-                                            return
-                                          }
-		                                  const body = (
-		                                    <>
-	                                      <div className="modalLead">将对该服务执行更新（apply）。</div>
-	                                      <div className="modalKvGrid">
-	                                        <div className="modalKvLabel">范围</div>
-	                                        <div className="modalKvValue">
-	                                          <Mono>service</Mono>
-	                                        </div>
-	                                        <div className="modalKvLabel">目标</div>
-	                                        <div className="modalKvValue">
-	                                          <Mono>{`${g.stackName}/${svc.name}`}</Mono>
-		                                        </div>
-		                                        <div className="modalKvLabel">镜像</div>
-		                                        <div className="modalKvValue">
-		                                          {(() => {
-		                                        const img = splitImageRef(svc.image.ref)
-		                                        const dn = splitImageNameForDisplay(img.name, svc.image.tag)
-		                                        return (
-		                                          <div className="cellTwoLine">
-		                                            <div className="mono monoPrimary monoSplit" title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}>
-		                                              <span className="monoSplitBase">{dn.base}</span>
-		                                            </div>
-		                                            <div className="mono monoSecondary">{img.registry}</div>
-		                                          </div>
-		                                        )
-		                                      })()}
-		                                        </div>
-		                                        <div className="modalKvLabel">目标版本</div>
-		                                        <div className="modalKvValue">
-                                            <div className="cellTwoLine">
-                                              <div className="versionLine">
+                                  if (svcApplyActiveJob) {
+                                    navigate({ name: 'job', jobId: svcApplyActiveJob.jobId })
+                                    return
+                                  }
+                                  const body = (
+                                    <>
+                                      <div className="modalLead">将对该服务执行更新（apply）。</div>
+                                      <div className="modalKvGrid">
+                                        <div className="modalKvLabel">范围</div>
+                                        <div className="modalKvValue">
+                                          <Mono>service</Mono>
+                                        </div>
+                                        <div className="modalKvLabel">目标</div>
+                                        <div className="modalKvValue">
+                                          <Mono>{`${g.stackName}/${svc.name}`}</Mono>
+                                        </div>
+                                        <div className="modalKvLabel">镜像</div>
+                                        <div className="modalKvValue">
+                                          {(() => {
+                                            const img = splitImageRef(svc.image.ref)
+                                            const dn = splitImageNameForDisplay(img.name, svc.image.tag)
+                                            return (
+                                              <div className="cellTwoLine">
+                                                <div className="mono monoPrimary monoSplit" title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}>
+                                                  <span className="monoSplitBase">{dn.base}</span>
+                                                </div>
+                                                <div className="mono monoSecondary">{img.registry}</div>
+                                              </div>
+                                            )
+                                          })()}
+                                        </div>
+                                        <div className="modalKvLabel">目标版本</div>
+                                        <div className="modalKvValue">
+                                          <div className="cellTwoLine">
+                                            <div className="versionLine">
+                                              <CurrentVersionPopover
+                                                serviceId={svc.id}
+                                                displayTag={currentDisplayTag}
+                                                imageTag={svc.image.tag}
+                                                imageDigest={svc.image.digest ?? null}
+                                                resolvedTag={svc.image.resolvedTag}
+                                                resolvedTags={svc.image.resolvedTags}
+                                                inferenceLoading={inferencePending}
+                                              />
+                                              <span
+                                                className={arrowPulse ? 'inlineIconLoading' : 'inlineIconMuted'}
+                                                style={arrowPulse ? { margin: '0 6px' } : { opacity: 0.8, margin: '0 6px' }}
+                                              >
+                                                <ArrowRightIcon className="inlineIcon" />
+                                              </span>
+                                              {candidateRawTag && candidateDisplayTag ? (
+                                                <VersionTagsPopover
+                                                  serviceId={svc.id}
+                                                  candidateTag={candidateRawTag}
+                                                  candidateDigest={svc.candidate?.digest ?? null}
+                                                  prefetchOnMount={candidatePrefetchOnMount}
+                                                >
+                                                  {candidateDisplayTag}
+                                                </VersionTagsPopover>
+                                              ) : (
+                                                <span className="mono monoPrimary">-</span>
+                                              )}
+                                            </div>
+                                            {showRawTag ? (
+                                              <div>
                                                 <CurrentVersionPopover
                                                   serviceId={svc.id}
-                                                  displayTag={currentDisplayTag}
+                                                  displayTag={svc.image.tag}
                                                   imageTag={svc.image.tag}
                                                   imageDigest={svc.image.digest ?? null}
                                                   resolvedTag={svc.image.resolvedTag}
                                                   resolvedTags={svc.image.resolvedTags}
-                                                  inferenceLoading={inferencePending}
-                                                />
-	                                                <span
-	                                                  className={arrowPulse ? 'inlineIconLoading' : 'inlineIconMuted'}
-	                                                  style={arrowPulse ? { margin: '0 6px' } : { opacity: 0.8, margin: '0 6px' }}
-	                                                >
-	                                                  <ArrowRightIcon className="inlineIcon" />
-	                                                </span>
-	                                                {candidateRawTag && candidateDisplayTag ? (
-		                                                  <VersionTagsPopover
-		                                                    serviceId={svc.id}
-		                                                    candidateTag={candidateRawTag}
-		                                                    candidateDigest={svc.candidate?.digest ?? null}
-		                                                    prefetchOnMount={candidatePrefetchOnMount}
-		                                                  >
-		                                                    {candidateDisplayTag}
-		                                                  </VersionTagsPopover>
-	                                                ) : (
-	                                                  <span className="mono monoPrimary">-</span>
-	                                                )}
-	                                              </div>
-                                              {showRawTag ? (
-                                                <div>
-                                                  <CurrentVersionPopover
-                                                    serviceId={svc.id}
-                                                    displayTag={svc.image.tag}
-                                                    imageTag={svc.image.tag}
-                                                    imageDigest={svc.image.digest ?? null}
-                                                    resolvedTag={svc.image.resolvedTag}
-                                                    resolvedTags={svc.image.resolvedTags}
-                                                    preferSource="rawTag"
-                                                    triggerClassName="versionTagsTrigger mono monoSecondary"
-                                                  >
-                                                    {svc.image.tag}
-                                                  </CurrentVersionPopover>
-                                                </div>
-                                              ) : null}
-                                            </div>
-	                                        </div>
-		                                        <div className="modalKvLabel">状态</div>
-		                                        <div className="modalKvValue">
-		                                          <Mono>{status}</Mono>
-		                                        </div>
-		                                      </div>
-		                                      <div className="modalDivider" />
-		                                    </>
-	                                  )
-			                                  void triggerApply({
-			                                    scope: 'service',
-			                                    stackId: g.stackId,
-			                                    serviceId: svc.id,
-			                                    targetLabel: `service:${g.stackName}/${svc.name}`,
-			                                    targetTag: svc.image.tag,
-			                                    targetDigest: svc.candidate?.digest ?? null,
-			                                    confirmBody: body,
-			                                    confirmTitle: `确认更新服务 ${svc.name}？`,
-			                                  })
-		                                }}
+                                                  preferSource="rawTag"
+                                                  triggerClassName="versionTagsTrigger mono monoSecondary"
+                                                >
+                                                  {svc.image.tag}
+                                                </CurrentVersionPopover>
+                                              </div>
+                                            ) : null}
+                                          </div>
+                                        </div>
+                                        <div className="modalKvLabel">状态</div>
+                                        <div className="modalKvValue">
+                                          <Mono>{status}</Mono>
+                                        </div>
+                                      </div>
+                                      <div className="modalDivider" />
+                                    </>
+                                  )
+                                  void triggerApply({
+                                    scope: 'service',
+                                    stackId: g.stackId,
+                                    serviceId: svc.id,
+                                    targetLabel: `service:${g.stackName}/${svc.name}`,
+                                    buildRequest: async () => ({
+                                      scope: 'service',
+                                      stackId: g.stackId,
+                                      ...(await buildUpdateServiceTarget(svc)),
+                                      mode: 'apply',
+                                      allowArchMismatch: false,
+                                      backupMode: 'inherit',
+                                    }),
+                                    confirmBody: body,
+                                    confirmTitle: `确认更新服务 ${svc.name}？`,
+                                  })
+                                }}
 	                              >
                                   {svcApplyActiveJob?.status === 'queued'
                                     ? '排队中…'

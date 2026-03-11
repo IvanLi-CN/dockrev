@@ -978,6 +978,13 @@ type TriggerUpdateCommonInput = {
   backupMode: 'inherit' | 'skip' | 'force'
 }
 
+export type UpdateServiceTargetInput = {
+  serviceId: string
+  targetTag: string
+  targetDigest: string
+  pullTags: string[]
+}
+
 export type TriggerUpdateInput =
   | (TriggerUpdateCommonInput & {
       scope: 'service'
@@ -985,6 +992,8 @@ export type TriggerUpdateInput =
       stackId?: string
       targetTag: string
       targetDigest: string
+      pullTags: string[]
+      targets?: never
     })
   | (TriggerUpdateCommonInput & {
       scope: 'stack'
@@ -992,6 +1001,8 @@ export type TriggerUpdateInput =
       serviceId?: never
       targetTag?: never
       targetDigest?: never
+      pullTags?: never
+      targets: UpdateServiceTargetInput[]
     })
   | (TriggerUpdateCommonInput & {
       scope: 'all'
@@ -999,6 +1010,8 @@ export type TriggerUpdateInput =
       serviceId?: never
       targetTag?: never
       targetDigest?: never
+      pullTags?: never
+      targets: UpdateServiceTargetInput[]
     })
 
 export async function triggerUpdate(input: TriggerUpdateInput) {
