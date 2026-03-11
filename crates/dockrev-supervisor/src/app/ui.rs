@@ -776,11 +776,11 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
       .copyButton {{
         position: relative;
-        min-height: 28px;
-        min-width: 28px;
-        width: 28px;
+        min-height: 24px;
+        min-width: 24px;
+        width: 24px;
         padding: 0;
-        border-radius: 10px;
+        border-radius: 8px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -831,8 +831,8 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         transform: translateX(-50%) rotate(45deg);
       }}
       .copyButton svg {{
-        width: 14px;
-        height: 14px;
+        width: 12px;
+        height: 12px;
         display: block;
       }}
       .copyButton.copied {{
