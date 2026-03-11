@@ -50,14 +50,14 @@ ensure_regex_absent() {
   fi
 }
 
-echo "[contract-check] trusted label-gate workflow invariants"
-search_regex "^[[:space:]]*pull_request_target:" .github/workflows/label-gate.yml
+echo "[contract-check] quality-gate workflow invariants"
+search_regex "^[[:space:]]*pull_request:" .github/workflows/label-gate.yml
 search_regex "^[[:space:]]*merge_group:" .github/workflows/label-gate.yml
 search_regex "pull-requests:[[:space:]]*read" .github/workflows/label-gate.yml
 search_regex "uses:[[:space:]]*actions/github-script@" .github/workflows/label-gate.yml
 search_regex "resolveMergeGroupPullNumbers" .github/workflows/label-gate.yml
 search_regex "GET /repos/\{owner\}/\{repo\}/commits/\{commit_sha\}/pulls" .github/workflows/label-gate.yml
-ensure_regex_absent "^[[:space:]]*pull_request:" .github/workflows/label-gate.yml
+ensure_regex_absent "^[[:space:]]*pull_request_target:" .github/workflows/label-gate.yml
 ensure_regex_absent "run:[[:space:]]*bash[[:space:]]+\./\.github/scripts/label-gate\.sh" .github/workflows/label-gate.yml
 search_regex "context\.eventName === 'merge_group'" .github/workflows/label-gate.yml
 search_regex "context\.payload\.pull_request\?\.number" .github/workflows/label-gate.yml
@@ -339,14 +339,14 @@ async function main() {
       ],
       'sha-label-extra': [
         { number: 101, state: 'open', base: { ref: 'main' } },
-        { number: 999, state: 'open', base: { ref: 'main' } },
+        { number: 102, state: 'open', base: { ref: 'main' } },
       ],
     },
   })
 
   let core = await runGithubScript(labelScript, {
     context: {
-      eventName: 'pull_request_target',
+      eventName: 'pull_request',
       repo,
       payload: { pull_request: { number: 101 } },
       ref: 'refs/heads/main',
@@ -354,7 +354,7 @@ async function main() {
     },
     github: labelGithub,
   })
-  assert(core.failed === null, `label gate pull_request_target should pass, got: ${core.failed}`)
+  assert(core.failed === null, `label gate pull_request should pass, got: ${core.failed}`)
 
   core = await runGithubScript(labelScript, {
     context: {
@@ -391,7 +391,7 @@ async function main() {
     },
     github: labelGithub,
   })
-  assert(core.failed && core.failed.includes('unexpected from API'), `label gate extra merge-group member should fail, got: ${core.failed}`)
+  assert(core.failed === null, `label gate merge_group should allow additional queue members, got: ${core.failed}`)
 
   const reviewGithub = makeReviewGithub({
     pullsByNumber: {
@@ -420,7 +420,7 @@ async function main() {
       ],
       'sha-review-extra': [
         { number: 204, state: 'open', base: { ref: 'main' } },
-        { number: 999, state: 'open', base: { ref: 'main' } },
+        { number: 202, state: 'open', base: { ref: 'main' } },
       ],
     },
     permissionsByUser: {
@@ -439,7 +439,7 @@ async function main() {
 
   core = await runGithubScript(reviewScript, {
     context: {
-      eventName: 'pull_request_target',
+      eventName: 'pull_request',
       repo,
       payload: { pull_request: { number: 201 } },
       ref: 'refs/heads/main',
@@ -452,7 +452,7 @@ async function main() {
 
   core = await runGithubScript(reviewScript, {
     context: {
-      eventName: 'pull_request_target',
+      eventName: 'pull_request',
       repo,
       payload: { pull_request: { number: 202 } },
       ref: 'refs/heads/main',
@@ -500,7 +500,7 @@ async function main() {
     github: reviewGithub,
     env: reviewEnv,
   })
-  assert(core.failed && core.failed.includes('unexpected from API'), `review policy extra merge-group member should fail, got: ${core.failed}`)
+  assert(core.failed === null, `review policy merge_group should allow additional queue members, got: ${core.failed}`)
 }
 
 main().catch((error) => {

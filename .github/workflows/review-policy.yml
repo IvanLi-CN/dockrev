@@ -1,7 +1,7 @@
 name: Review Policy
 
 on:
-  pull_request_target:
+  pull_request:
     types:
       - opened
       - reopened
@@ -63,7 +63,7 @@ jobs:
               return String(ref).replace(/^refs\/heads\//, '')
             }
 
-            function parsePullNumbersFromHeadRef(text) {
+            function parsePullNumbersFromText(text) {
               if (!text) {
                 return []
               }
@@ -110,7 +110,7 @@ jobs:
 
             async function resolveMergeGroupPullNumbers() {
               const headRef = normalizeHeadRef(context.payload.merge_group?.head_ref || context.ref || '')
-              const parsed = parsePullNumbersFromHeadRef(headRef)
+              const parsed = parsePullNumbersFromText(headRef)
               const mergeGroupSha = context.payload.merge_group?.head_sha || context.sha
               const commitPullNumbers = await listCommitAssociatedPullNumbers(mergeGroupSha)
               if (!commitPullNumbers.length) {
@@ -118,18 +118,9 @@ jobs:
               }
               if (parsed.length) {
                 const commitSet = new Set(commitPullNumbers)
-                const parsedSet = new Set(parsed)
                 const missing = parsed.filter((value) => !commitSet.has(value))
-                const unexpected = commitPullNumbers.filter((value) => !parsedSet.has(value))
-                if (missing.length || unexpected.length) {
-                  const mismatch = []
-                  if (missing.length) {
-                    mismatch.push(`missing from API: ${missing.join(', ')}`)
-                  }
-                  if (unexpected.length) {
-                    mismatch.push(`unexpected from API: ${unexpected.join(', ')}`)
-                  }
-                  throw new Error(`Merge queue member set mismatch: ${mismatch.join('; ')}`)
+                if (missing.length) {
+                  throw new Error(`Merge queue member set mismatch: ${missing.join(', ')}`)
                 }
               }
               return commitPullNumbers.sort((a, b) => a - b)

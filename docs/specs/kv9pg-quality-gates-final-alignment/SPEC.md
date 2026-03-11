@@ -50,10 +50,10 @@
 
 ### MUST
 
-- `Review Policy` 必须保持 trusted gate 语义：PR 路径使用 base-branch 可信工作流触发（`pull_request_target`），并补齐 `pull_request_review` + `merge_group` 重新评估，结论由 dedicated local required check `Review Policy Gate` 直接表达。
+- `Review Policy` 必须使用最终 topic 定义的本地 required-check 语义：PR 路径使用 `pull_request` 触发，配合 `pull_request_review` + `merge_group` 重新评估，结论由 dedicated local required check `Review Policy Gate` 直接表达。
 - `Review Policy` 必须能在 `merge_group` 上下文安全还原关联 PR 集合；无法从 GitHub 披露数据证明成员集合时，必须 fail closed。
 - `Review Policy` 不得继续依赖 `statuses: write` / `createCommitStatus` 充当最终契约。
-- `PR Label Gate` 必须保持 trusted gate 语义：PR 路径使用 base-branch 可信工作流触发（`pull_request_target`），并支持 `merge_group` 对队列中的每个 PR 分别验证 `type:*` 与 `channel:*` 标签契约。
+- `PR Label Gate` 必须使用最终 topic 定义的 workflow-backed gate：PR 路径使用 `pull_request` 触发，并支持 `merge_group` 对队列中的每个 PR 分别验证 `type:*` 与 `channel:*` 标签契约。
 - `CI (PR)` 必须在 `merge_group` 上触发，并保证声明为 required 的 job 在 merge queue 上仍会产生真实 check。
 - 默认分支专用 workflow 若复用与 PR workflow 相同的 job 名，必须改名以避免 GitHub check context 冲突。
 - `changes` gating 在 `merge_group` 上必须走保守策略，确保 required jobs 不会因为“无法判断变更范围”而被跳过。
@@ -61,7 +61,7 @@
 ### SHOULD
 
 - merge queue 路径与 PR 路径尽量共享同一套校验逻辑，避免两套规则长期漂移。
-- 任何 required gate 若需要在 PR 上充当“可信裁决器”，其 PR 触发路径不得依赖 PR 分支可篡改的 workflow 定义。
+- repo 内 workflow、静态 contract-check 与 `quality-gates` 声明必须能被当前 topic validator 一致识别，不允许“仓库自认为完成、topic 仍判 drift”。
 - 规格与索引应记录这次对齐是 `quality-gates` 最终版落地，而不是临时修补。
 
 ## 功能与行为规格（Functional/Behavior Spec）
@@ -69,10 +69,10 @@
 ### Core flows
 
 - `PR Label Gate`
-  - `pull_request_target`：对当前 PR 校验 exactly-one `type:*` + exactly-one `channel:*`。
+  - `pull_request`：对当前 PR 校验 exactly-one `type:*` + exactly-one `channel:*`。
   - `merge_group`：先解析关联 PR 集合，再逐个复用相同的标签验证语义；任一 PR 不满足即整体失败。
 - `Review Policy`
-  - `pull_request_target` / `pull_request_review`：按声明的条件 review 规则直接评估当前 PR。
+  - `pull_request` / `pull_request_review`：按声明的条件 review 规则直接评估当前 PR。
   - `merge_group`：解析关联 PR 集合，逐个评估；任一 PR 不满足 review 契约则整体失败。
 - `CI (PR)`
   - `pull_request`：维持现有按路径裁剪的重活门禁。
@@ -81,7 +81,7 @@
 ### Edge cases / errors
 
 - 若 merge queue 无法从 commit-associated pulls 证明 PR 集合，`PR Label Gate` 与 `Review Policy` 都必须失败，不允许猜测放行。
-- 若 merge queue 解析到的 PR 集合与 `head_ref` 中可证明的 PR 编号不一致，必须视为异常并失败。
+- 若 merge queue 的 commit-associated pulls 未包含 `head_ref` 中可证明的入口 PR 编号，必须视为异常并失败；额外队列成员属于合法情况。
 - 若 `changes` 无法在 merge queue 上做精确 diff，必须默认 required jobs 继续运行，而不是跳过。
 
 ## 验收标准（Acceptance Criteria）
@@ -91,7 +91,7 @@
 - Given 一个 maintainer / owner 作者 PR，When 没有额外 review，Then `Review Policy Gate` 通过。
 - Given 一个非 maintainer / 非 owner 作者 PR，When 未达到要求 review，Then `Review Policy Gate` 失败。
 - Given 一个 merge queue 组，When 任一 PR 未满足条件 review，Then `Review Policy Gate` 失败并标出具体 PR。
-- Given 仓库内 workflow 与静态 contract-check，When 校验 trusted gate / merge queue / required-check 语义，Then 不再出现 merge queue member-resolution、trusted gate 来源或 main/PR check context 冲突。
+- Given 仓库内 workflow、topic validator 与静态 contract-check，When 校验 merge queue / required-check / 条件 review 语义，Then 不再出现 merge queue member-resolution、validator drift 或 main/PR check context 冲突。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
@@ -104,8 +104,8 @@
 
 ## 实现里程碑（Milestones / Delivery checklist）
 
-- [x] M1: `Review Policy` 收紧为 trusted gate 实现，补齐 merge queue fail-closed 评估。
-- [x] M2: `PR Label Gate` 支持 merge queue 多 PR 校验，并保持 trusted PR-path gate 语义。
+- [x] M1: `Review Policy` 对齐最终 topic 契约，补齐 merge queue fail-closed 评估。
+- [x] M2: `PR Label Gate` 支持 merge queue 多 PR 校验，并对齐最终 topic 的 PR 路径语义。
 - [x] M3: `CI (PR)` 补齐 `merge_group`，让 required jobs 在 merge queue 上稳定产出。
 - [ ] M4: 完成规格同步、验证、PR 收敛与 GitHub required checks / branch protection 对齐。
 
@@ -119,4 +119,4 @@
 - 2026-03-11: 新建规格，冻结 Dockrev `quality-gates` 最终版对齐目标与验收口径。
 - 2026-03-11: 完成 repo 内 workflow 对齐，补齐 merge queue required checks，并消除 main / PR check context 冲突。
 - 2026-03-11: 同步 release contract-check，使仓库内静态门禁改为校验新的 label-gate 最终实现。
-- 2026-03-11: 根据 review 结果收紧 trusted gate 语义：PR 路径恢复 base-branch trusted workflow，merge queue 只信任 `head_ref` + commit-associated pulls，owner/maintainer 真正免 review。
+- 2026-03-11: 根据 review 结果回到最终 topic 契约：PR 路径使用 `pull_request`，merge queue 只要求 `head_ref` 证明入口 PR，允许额外合法队列成员，owner/maintainer 真正免 review。
