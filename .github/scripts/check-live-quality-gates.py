@@ -179,6 +179,8 @@ def validate_rules(declaration: dict, rules: list[dict], branch: str) -> list[st
 
     if require_merge_queue and "merge_queue" not in grouped:
         errors.append(f"{branch}: missing merge_queue rule")
+    if not require_merge_queue and "merge_queue" in grouped:
+        errors.append(f"{branch}: unexpected merge_queue rule")
 
     if branch_policy.get("disallow_direct_pushes") and "pull_request" not in grouped:
         errors.append(f"{branch}: missing pull_request rule required to block direct pushes")

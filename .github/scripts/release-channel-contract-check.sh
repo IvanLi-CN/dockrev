@@ -67,7 +67,7 @@ if [[ "${latest_gate_count}" -lt 2 ]]; then
 fi
 
 echo "[contract-check] quality-gate workflow invariants"
-search_regex "^[[:space:]]*pull_request:" .github/workflows/label-gate.yml
+search_regex "^[[:space:]]*pull_request_target:" .github/workflows/label-gate.yml
 search_regex "^[[:space:]]*merge_group:" .github/workflows/label-gate.yml
 search_regex "pull-requests:[[:space:]]*read" .github/workflows/label-gate.yml
 search_regex "uses:[[:space:]]*actions/github-script@" .github/workflows/label-gate.yml
@@ -75,11 +75,11 @@ search_regex "resolveMergeGroupPullNumbers" .github/workflows/label-gate.yml
 search_regex "GET /repos/\{owner\}/\{repo\}/commits/\{commit_sha\}/pulls" .github/workflows/label-gate.yml
 search_regex "context\.eventName === 'merge_group'" .github/workflows/label-gate.yml
 search_regex "context\.payload\.pull_request\?\.number" .github/workflows/label-gate.yml
-ensure_regex_absent "^[[:space:]]*pull_request_target:" .github/workflows/label-gate.yml
+ensure_regex_absent "^[[:space:]]*pull_request:" .github/workflows/label-gate.yml
 ensure_regex_absent "run:[[:space:]]*bash[[:space:]]+\./\.github/scripts/label-gate\.sh" .github/workflows/label-gate.yml
 ensure_regex_absent "head_commit\?\.message" .github/workflows/label-gate.yml
 
-search_regex "^[[:space:]]*pull_request:" .github/workflows/review-policy.yml
+search_regex "^[[:space:]]*pull_request_target:" .github/workflows/review-policy.yml
 search_regex "^[[:space:]]*pull_request_review:" .github/workflows/review-policy.yml
 search_regex "^[[:space:]]*merge_group:" .github/workflows/review-policy.yml
 search_regex "pull-requests:[[:space:]]*read" .github/workflows/review-policy.yml
@@ -87,7 +87,7 @@ search_regex "uses:[[:space:]]*actions/github-script@" .github/workflows/review-
 search_regex "resolveMergeGroupPullNumbers" .github/workflows/review-policy.yml
 search_regex "getCollaboratorPermissionLevel" .github/workflows/review-policy.yml
 search_regex "listReviews" .github/workflows/review-policy.yml
-ensure_regex_absent "^[[:space:]]*pull_request_target:" .github/workflows/review-policy.yml
+ensure_regex_absent "^[[:space:]]*pull_request:" .github/workflows/review-policy.yml
 ensure_regex_absent "statuses:[[:space:]]*write" .github/workflows/review-policy.yml
 ensure_regex_absent "createCommitStatus" .github/workflows/review-policy.yml
 
@@ -222,6 +222,7 @@ RULES_BY_BRANCH = {
     "main": make_review_rules(0) + make_required_checks_rules(),
     "main-extra-review": make_review_rules(1) + make_required_checks_rules(),
     "main-missing-check": make_review_rules(0) + make_required_checks_rules(REQUIRED_CHECKS[1:]),
+    "main-unexpected-merge-queue": make_review_rules(0) + make_required_checks_rules() + [{"type": "merge_queue"}],
 }
 
 
@@ -470,13 +471,17 @@ async function main() {
       'sha-label-exact': [
         { number: 101, state: 'open', base: { ref: 'main' } },
       ],
-      'sha-label-extra-pass': [
+      'sha-label-pass-multi': [
         { number: 101, state: 'open', base: { ref: 'main' } },
         { number: 999, state: 'open', base: { ref: 'main' } },
       ],
-      'sha-label-extra-fail': [
+      'sha-label-invalid-associated': [
         { number: 101, state: 'open', base: { ref: 'main' } },
         { number: 998, state: 'open', base: { ref: 'main' } },
+      ],
+      'sha-label-extra-mismatch': [
+        { number: 101, state: 'open', base: { ref: 'main' } },
+        { number: 999, state: 'open', base: { ref: 'main' } },
       ],
       'sha-label-mismatch': [
         { number: 999, state: 'open', base: { ref: 'main' } },
@@ -486,7 +491,7 @@ async function main() {
 
   let core = await runGithubScript(labelScript, {
     context: {
-      eventName: 'pull_request',
+      eventName: 'pull_request_target',
       repo,
       payload: { pull_request: { number: 101 } },
       ref: 'refs/heads/main',
@@ -522,16 +527,34 @@ async function main() {
       payload: {
         merge_group: {
           base_ref: 'refs/heads/main',
-          head_ref: 'gh-readonly-queue/main/pr-101-deadbeef',
-          head_sha: 'sha-label-extra-pass',
+          head_ref: 'gh-readonly-queue/main/pr-101-deadbeef/pr-999-cafebabe',
+          head_sha: 'sha-label-pass-multi',
         },
       },
-      ref: 'refs/heads/gh-readonly-queue/main/pr-101-deadbeef',
-      sha: 'sha-label-extra-pass',
+      ref: 'refs/heads/gh-readonly-queue/main/pr-101-deadbeef/pr-999-cafebabe',
+      sha: 'sha-label-pass-multi',
     },
     github: labelGithub,
   })
-  assert(core.failed === null, `label gate merge_group should validate every associated open PR, got: ${core.failed}`)
+  assert(core.failed === null, `label gate merge_group should pass when the proven PR set exactly matches and every associated PR is valid, got: ${core.failed}`)
+
+  core = await runGithubScript(labelScript, {
+    context: {
+      eventName: 'merge_group',
+      repo,
+      payload: {
+        merge_group: {
+          base_ref: 'refs/heads/main',
+          head_ref: 'gh-readonly-queue/main/pr-101-deadbeef/pr-998-cafebabe',
+          head_sha: 'sha-label-invalid-associated',
+        },
+      },
+      ref: 'refs/heads/gh-readonly-queue/main/pr-101-deadbeef/pr-998-cafebabe',
+      sha: 'sha-label-invalid-associated',
+    },
+    github: labelGithub,
+  })
+  assert(core.failed !== null && core.failed.includes('PR #998'), `label gate merge_group should fail when any proven associated PR has invalid labels, got: ${core.failed}`)
 
   core = await runGithubScript(labelScript, {
     context: {
@@ -541,15 +564,15 @@ async function main() {
         merge_group: {
           base_ref: 'refs/heads/main',
           head_ref: 'gh-readonly-queue/main/pr-101-deadbeef',
-          head_sha: 'sha-label-extra-fail',
+          head_sha: 'sha-label-extra-mismatch',
         },
       },
       ref: 'refs/heads/gh-readonly-queue/main/pr-101-deadbeef',
-      sha: 'sha-label-extra-fail',
+      sha: 'sha-label-extra-mismatch',
     },
     github: labelGithub,
   })
-  assert(core.failed === null, `label gate merge_group should ignore unrelated associated PRs, got: ${core.failed}`)
+  assert(core.failed !== null && core.failed.includes('mismatch'), `label gate merge_group should fail when commit metadata contains extra open PRs, got: ${core.failed}`)
 
   core = await runGithubScript(labelScript, {
     context: {
@@ -594,10 +617,14 @@ async function main() {
       'sha-review-pass': [
         { number: 201, state: 'open', base: { ref: 'main' } },
         { number: 203, state: 'open', base: { ref: 'main' } },
-        { number: 202, state: 'open', base: { ref: 'main' } },
       ],
       'sha-review-fail': [
         { number: 201, state: 'open', base: { ref: 'main' } },
+        { number: 202, state: 'open', base: { ref: 'main' } },
+      ],
+      'sha-review-extra-mismatch': [
+        { number: 201, state: 'open', base: { ref: 'main' } },
+        { number: 203, state: 'open', base: { ref: 'main' } },
         { number: 202, state: 'open', base: { ref: 'main' } },
       ],
     },
@@ -605,7 +632,7 @@ async function main() {
 
   core = await runGithubScript(reviewScript, {
     context: {
-      eventName: 'pull_request',
+      eventName: 'pull_request_target',
       repo,
       payload: { pull_request: { number: 201 } },
       ref: 'refs/heads/main',
@@ -623,7 +650,7 @@ async function main() {
 
   core = await runGithubScript(reviewScript, {
     context: {
-      eventName: 'pull_request',
+      eventName: 'pull_request_target',
       repo,
       payload: { pull_request: { number: 202 } },
       ref: 'refs/heads/main',
@@ -641,7 +668,7 @@ async function main() {
 
   core = await runGithubScript(reviewScript, {
     context: {
-      eventName: 'pull_request',
+      eventName: 'pull_request_target',
       repo,
       payload: { pull_request: { number: 203 } },
       ref: 'refs/heads/main',
@@ -680,6 +707,30 @@ async function main() {
     },
   })
   assert(core.failed === null, `review policy merge_group should pass when every associated PR passes, got: ${core.failed}`)
+
+  core = await runGithubScript(reviewScript, {
+    context: {
+      eventName: 'merge_group',
+      repo,
+      payload: {
+        merge_group: {
+          base_ref: 'refs/heads/main',
+          head_ref: 'gh-readonly-queue/main/pr-201-deadbeef/pr-203-cafebabe',
+          head_sha: 'sha-review-extra-mismatch',
+        },
+      },
+      ref: 'refs/heads/gh-readonly-queue/main/pr-201-deadbeef/pr-203-cafebabe',
+      sha: 'sha-review-extra-mismatch',
+    },
+    github: reviewGithub,
+    env: {
+      REVIEW_POLICY_REQUIRED_APPROVALS: '1',
+      REVIEW_POLICY_EXEMPT_PERMISSIONS: '["admin","maintain"]',
+      REVIEW_POLICY_REVIEWER_PERMISSIONS: '["write","maintain","admin"]',
+      REVIEW_POLICY_EXEMPT_REPOSITORY_OWNER: 'true',
+    },
+  })
+  assert(core.failed !== null && core.failed.includes('mismatch'), `review policy merge_group should fail when commit metadata contains extra open PRs, got: ${core.failed}`)
 
   core = await runGithubScript(reviewScript, {
     context: {
@@ -813,6 +864,7 @@ echo "[contract-check] live quality-gates scenarios"
 run_live_quality_gates main ok
 run_live_quality_gates main-extra-review fail
 run_live_quality_gates main-missing-check fail
+run_live_quality_gates main-unexpected-merge-queue fail
 
 echo "[contract-check] label-gate scenarios"
 run_label_gate 101 ok

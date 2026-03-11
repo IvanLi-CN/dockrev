@@ -57,8 +57,8 @@
 - `review_policy` 必须在仓库声明中使用 workflow-backed enforcement：`mode=required-check`，`check_name=Review Policy Gate`。
 - repo 内必须保留 `Review Policy` workflow，并把 `Review Policy Gate` 列为 required check。
 - `Review Policy Gate` 必须表达以下语义：owner / `admin` / `maintain` 作者免 review；其余作者必须获得 1 个来自 `write|maintain|admin` reviewer 的批准。
-- `Review Policy Gate` 必须支持 `merge_group`，并对 merge-group 关联到的全部 open PR 做 fail-closed 校验。
-- `PR Label Gate` 必须支持 `pull_request` + `merge_group`，并继续校验 exactly-one `type:*` + exactly-one `channel:*`。
+- `Review Policy Gate` 必须以 trusted-source 方式运行：PR 侧使用 `pull_request_target`，并支持 `merge_group`；对 merge-group 关联到的全部 open PR 做 fail-closed 校验。
+- `PR Label Gate` 必须以 trusted-source 方式运行：PR 侧使用 `pull_request_target`，并支持 `merge_group`；继续校验 exactly-one `type:*` + exactly-one `channel:*`。
 - `CI (PR)` 必须在 `merge_group` 上触发，并保证声明为 required 的 job 在 merge queue 上仍会产生真实 check。
 - 默认分支专用 workflow 若复用与 PR workflow 相同的 job 名，必须改名以避免 GitHub check context 冲突。
 - GitHub live 规则必须保留：默认分支 PR-only、禁止直接推送、required checks、signed commits；不得额外保留 native required review 造成 owner PR 继续强制 review。
@@ -73,10 +73,10 @@
 ### Core flows
 
 - `Review Policy Gate`
-  - `pull_request` / `pull_request_review`：对当前 PR 重新计算条件 review 结果。
+  - `pull_request_target` / `pull_request_review`：对当前 PR 重新计算条件 review 结果。
   - `merge_group`：解析 merge queue 关联的全部 open PR，并逐个复用同一套 review 语义；任一 PR 不满足即失败。
 - `PR Label Gate`
-  - `pull_request`：对当前 PR 校验 exactly-one `type:*` + exactly-one `channel:*`。
+  - `pull_request_target`：对当前 PR 校验 exactly-one `type:*` + exactly-one `channel:*`。
   - `merge_group`：解析 merge-group 关联的全部 open PR，并复用相同的标签验证语义；任一 PR 不满足即失败。
 - `CI (PR)`
   - `pull_request`：维持现有按路径裁剪的重活门禁。
@@ -84,7 +84,7 @@
 
 ### Edge cases / errors
 
-- 若 merge queue 无法从 `head_ref` + `commits/{sha}/pulls` 证明关联 PR 集合，`Review Policy Gate` 与 `PR Label Gate` 都必须 fail closed。
+- 若 merge queue 无法从 `head_ref` + `commits/{sha}/pulls` 证明完整且一致的关联 PR 集合，`Review Policy Gate` 与 `PR Label Gate` 都必须 fail closed。
 - 若 `changes` 无法在 merge queue 上做精确 diff，required jobs 必须继续运行，而不是跳过。
 - 若 GitHub live required checks / branch protection 与声明不一致，视为 drift，不因 GitHub merge 按钮可点击而视为完成。
 
