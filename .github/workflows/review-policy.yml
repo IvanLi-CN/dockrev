@@ -1,7 +1,7 @@
 name: Review Policy
 
 on:
-  pull_request:
+  pull_request_target:
     types:
       - opened
       - reopened
@@ -111,19 +111,20 @@ jobs:
             async function resolveMergeGroupPullNumbers() {
               const headRef = normalizeHeadRef(context.payload.merge_group?.head_ref || context.ref || '')
               const parsed = parsePullNumbersFromText(headRef)
+              if (!parsed.length) {
+                throw new Error('Merge queue member set could not be proven from GitHub-disclosed data')
+              }
               const mergeGroupSha = context.payload.merge_group?.head_sha || context.sha
               const commitPullNumbers = await listCommitAssociatedPullNumbers(mergeGroupSha)
               if (!commitPullNumbers.length) {
                 throw new Error('Merge queue member set could not be proven from GitHub-disclosed data')
               }
-              if (parsed.length) {
-                const commitSet = new Set(commitPullNumbers)
-                const missing = parsed.filter((value) => !commitSet.has(value))
-                if (missing.length) {
-                  throw new Error(`Merge queue member set mismatch: ${missing.join(', ')}`)
-                }
+              const commitSet = new Set(commitPullNumbers)
+              const missing = parsed.filter((value) => !commitSet.has(value))
+              if (missing.length) {
+                throw new Error(`Merge queue entry pull request mismatch: ${missing.join(', ')}`)
               }
-              return commitPullNumbers.sort((a, b) => a - b)
+              return parsed.sort((a, b) => a - b)
             }
 
             const recognizedPermissions = new Set([
