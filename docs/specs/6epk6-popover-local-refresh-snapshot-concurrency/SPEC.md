@@ -67,6 +67,7 @@
 - Given 请求中的 digest 不属于该 service 的 current/candidate digest，When 调用 refresh API，Then 返回 `404` 且不 enqueue snapshot task。
 - Given 从候选版本气泡点击“强制刷新”，When 请求返回并等待本地 snapshot 刷新，Then 候选 trigger 允许进入局部 loading/ready，但当前版本主展示与整页 `versionInference` 状态不变。
 - Given 从当前版本气泡点击“强制刷新”，When 请求返回并等待本地 snapshot 刷新，Then 当前 trigger 允许进入局部 loading/ready，但候选 trigger、候选 popover 与页面其它服务行不被影响。
+- Given 多个 service 可能复用同一个 `imageRepo + digest`，When 其中任一 service 的 popover 触发局部刷新并完成 ready，Then 不回填其它 service（即使 digest 相同），只更新发起 service 的本侧展示。
 - Given refresh API 成功 enqueue 或命中 in-flight 去重，When 前端接收响应，Then 仍返回 `status=pending` 与 `reason=force|running`，并带回本次目标 `digest`。
 - Given snapshot worker 有多个 digest 待处理，When 运行采集，Then 同时运行的 snapshot task 不超过 `2`，单个 task 的 manifest fan-out 仍为 `4`，同 registry host 的 HTTP 并发不超过 `7`。
 
