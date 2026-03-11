@@ -22,6 +22,16 @@ search_regex() {
   fi
 }
 
+search_fixed() {
+  local needle="$1"
+  local file="$2"
+  if has_rg; then
+    rg -q -F -- "${needle}" "${file}"
+  else
+    grep -Fq -- "${needle}" "${file}"
+  fi
+}
+
 count_fixed_lines() {
   local needle="$1"
   local file="$2"
@@ -32,15 +42,6 @@ count_fixed_lines() {
   fi
 }
 
-echo "[contract-check] release workflow rc gating invariants"
-search_regex "steps\\.intent\\.outputs\\.release_channel == 'rc'" .github/workflows/release.yml
-search_regex "prerelease: \\$\\{\\{ env.RELEASE_CHANNEL == 'rc' \\}\\}" .github/workflows/release.yml
-latest_gate_count="$(count_fixed_lines 'if [[ "${RELEASE_CHANNEL}" != "rc" ]]; then' .github/workflows/release.yml)"
-if [[ "${latest_gate_count}" -lt 2 ]]; then
-  echo "[contract-check] expected >=2 latest gates, got ${latest_gate_count}" >&2
-  exit 1
-fi
-
 ensure_regex_absent() {
   local pattern="$1"
   local file="$2"
@@ -50,21 +51,70 @@ ensure_regex_absent() {
   fi
 }
 
+echo "[contract-check] release workflow rc gating invariants"
+search_regex "steps\\.intent\\.outputs\\.release_channel == 'rc'" .github/workflows/release.yml
+python3 - <<'PY'
+from pathlib import Path
+text = Path('.github/workflows/release.yml').read_text()
+needle = "prerelease: ${{ env.RELEASE_CHANNEL == 'rc' }}"
+if needle not in text:
+    raise SystemExit('[contract-check] expected prerelease gate in release workflow')
+PY
+latest_gate_count="$(count_fixed_lines 'if [[ "${RELEASE_CHANNEL}" != "rc" ]]; then' .github/workflows/release.yml)"
+if [[ "${latest_gate_count}" -lt 2 ]]; then
+  echo "[contract-check] expected >=2 latest gates, got ${latest_gate_count}" >&2
+  exit 1
+fi
+
 echo "[contract-check] quality-gate workflow invariants"
 search_regex "^[[:space:]]*pull_request_target:" .github/workflows/label-gate.yml
 search_regex "^[[:space:]]*merge_group:" .github/workflows/label-gate.yml
 search_regex "pull-requests:[[:space:]]*read" .github/workflows/label-gate.yml
 search_regex "uses:[[:space:]]*actions/github-script@" .github/workflows/label-gate.yml
 search_regex "resolveMergeGroupPullNumbers" .github/workflows/label-gate.yml
-search_regex "GET /repos/\{owner\}/\{repo\}/commits/\{commit_sha\}/pulls" .github/workflows/label-gate.yml
+search_regex "GET /repos/\\{owner\\}/\\{repo\\}/commits/\\{commit_sha\\}/pulls" .github/workflows/label-gate.yml
+search_regex "context\\.eventName === 'merge_group'" .github/workflows/label-gate.yml
+search_regex "context\\.payload\\.pull_request\\?\\.number" .github/workflows/label-gate.yml
 ensure_regex_absent "^[[:space:]]*pull_request:" .github/workflows/label-gate.yml
-ensure_regex_absent "run:[[:space:]]*bash[[:space:]]+\./\.github/scripts/label-gate\.sh" .github/workflows/label-gate.yml
-search_regex "context\.eventName === 'merge_group'" .github/workflows/label-gate.yml
-search_regex "context\.payload\.pull_request\?\.number" .github/workflows/label-gate.yml
-ensure_regex_absent "context\.eventName === 'pull_request'" .github/workflows/label-gate.yml
-ensure_regex_absent "head_commit\?\.message" .github/workflows/label-gate.yml
-ensure_regex_absent "head_commit\?\.message" .github/workflows/review-policy.yml
-search_regex "if \(isExemptAuthor\) \{" .github/workflows/review-policy.yml
+ensure_regex_absent "run:[[:space:]]*bash[[:space:]]+\\./\\.github/scripts/label-gate\\.sh" .github/workflows/label-gate.yml
+ensure_regex_absent "context\\.eventName === 'pull_request'" .github/workflows/label-gate.yml
+ensure_regex_absent "head_commit\\?\\.message" .github/workflows/label-gate.yml
+
+if [[ -e .github/workflows/review-policy.yml ]]; then
+  echo "[contract-check] review-policy workflow must be removed; review policy is GitHub-native now" >&2
+  exit 1
+fi
+
+python3 - <<'PY'
+from __future__ import annotations
+import json
+from pathlib import Path
+
+path = Path('.github/quality-gates.json')
+data = json.loads(path.read_text())
+policy = data['policy']
+review = policy['review_policy']
+enforcement = review['enforcement']
+required_checks = data.get('required_checks', [])
+informational_checks = data.get('informational_checks', [])
+expected_pr_workflows = data.get('expected_pr_workflows', [])
+
+assert policy['require_signed_commits'] is True, 'require_signed_commits must stay true'
+assert policy['branch_protection']['require_pull_request'] is True, 'default branch must stay PR-only'
+assert policy['branch_protection']['disallow_direct_pushes'] is True, 'default branch must disallow direct pushes'
+assert review['mode'] == 'conditional-required', 'review_policy.mode must stay conditional-required'
+assert review['required_approvals'] == 1, 'review_policy.required_approvals must stay 1'
+assert review['exempt_repository_owner'] is True, 'repository owner must stay exempt'
+assert review['exempt_author_permissions'] == ['admin', 'maintain'], 'exempt author permissions drifted'
+assert review['allowed_reviewer_permissions'] == ['write', 'maintain', 'admin'], 'allowed reviewer permissions drifted'
+assert enforcement['mode'] == 'github-native', 'review policy enforcement must be github-native'
+assert enforcement['bypass_mode'] == 'pull-request-only', 'review policy bypass must stay PR-only'
+assert 'Review Policy Gate' not in required_checks, 'legacy Review Policy Gate must not stay required'
+assert 'Review Policy Gate' not in informational_checks, 'legacy Review Policy Gate must not stay informational'
+assert all(item.get('workflow') != 'Review Policy' for item in expected_pr_workflows), 'Review Policy workflow must not stay declared'
+assert 'Release intent label gate' in required_checks, 'label gate must stay required'
+PY
+
 tmp_dir="$(mktemp -d)"
 server_pid=""
 cleanup() {
@@ -192,7 +242,6 @@ if ! start_mock_server; then
   exit 1
 fi
 
-
 extract_github_script() {
   local workflow_path="$1"
   local job_key="$2"
@@ -209,23 +258,16 @@ extract_github_script() {
 
 run_inline_workflow_contract_checks() {
   local label_script="${tmp_dir}/label-gate.inline.js"
-  local review_script="${tmp_dir}/review-policy.inline.js"
   extract_github_script \
     .github/workflows/label-gate.yml \
     label-gate \
     "Validate release intent + channel labels" \
     "${label_script}"
-  extract_github_script \
-    .github/workflows/review-policy.yml \
-    review-policy \
-    "Evaluate review policy" \
-    "${review_script}"
 
-  node - "${label_script}" "${review_script}" <<'NODE'
+  node - "${label_script}" <<'NODE'
 const fs = require('fs')
 
 const labelScript = fs.readFileSync(process.argv[2], 'utf8')
-const reviewScript = fs.readFileSync(process.argv[3], 'utf8')
 
 function createCore() {
   return {
@@ -298,33 +340,6 @@ function makeLabelGithub({ labelsByPull, commitPullsBySha }) {
   }
 }
 
-function makeReviewGithub({ pullsByNumber, reviewsByPull, commitPullsBySha, permissionsByUser }) {
-  const listReviewsMarker = Symbol('listReviews')
-  const github = {
-    paginate: async (route, params) => {
-      if (typeof route === 'string' && route.includes('/commits/{commit_sha}/pulls')) {
-        return commitPullsBySha[params.commit_sha] || []
-      }
-      if (route === github.rest.pulls.listReviews) {
-        return reviewsByPull[params.pull_number] || []
-      }
-      throw new Error(`unexpected review-policy paginate route: ${String(route)}`)
-    },
-    rest: {
-      pulls: {
-        listReviews: listReviewsMarker,
-        get: async ({ pull_number }) => ({ data: pullsByNumber[pull_number] }),
-      },
-      repos: {
-        getCollaboratorPermissionLevel: async ({ username }) => ({
-          data: permissionsByUser[username] || { role_name: 'none', permission: 'none' },
-        }),
-      },
-    },
-  }
-  return github
-}
-
 async function main() {
   const repo = { owner: 'IvanLi-CN', repo: 'dockrev' }
 
@@ -392,115 +407,6 @@ async function main() {
     github: labelGithub,
   })
   assert(core.failed === null, `label gate merge_group should ignore unrelated associated pulls, got: ${core.failed}`)
-
-  const reviewGithub = makeReviewGithub({
-    pullsByNumber: {
-      201: { number: 201, user: { login: 'IvanLi-CN' } },
-      202: { number: 202, user: { login: 'feature-author' } },
-      203: { number: 203, user: { login: 'feature-author' } },
-      204: { number: 204, user: { login: 'feature-author' } },
-    },
-    reviewsByPull: {
-      201: [
-        { user: { login: 'reviewer-write' }, state: 'CHANGES_REQUESTED', submitted_at: '2026-03-11T00:00:00Z' },
-      ],
-      202: [
-        { user: { login: 'reviewer-custom' }, state: 'APPROVED', submitted_at: '2026-03-11T00:00:00Z' },
-      ],
-      203: [
-        { user: { login: 'reviewer-custom' }, state: 'APPROVED', submitted_at: '2026-03-11T00:00:00Z' },
-      ],
-      204: [
-        { user: { login: 'reviewer-write' }, state: 'APPROVED', submitted_at: '2026-03-11T00:00:00Z' },
-      ],
-    },
-    commitPullsBySha: {
-      'sha-review-exact': [
-        { number: 203, state: 'open', base: { ref: 'main' } },
-      ],
-      'sha-review-extra': [
-        { number: 204, state: 'open', base: { ref: 'main' } },
-        { number: 999, state: 'open', base: { ref: 'main' } },
-      ],
-    },
-    permissionsByUser: {
-      'feature-author': { role_name: 'write', permission: 'write' },
-      'reviewer-write': { role_name: 'write', permission: 'write' },
-      'reviewer-custom': { role_name: 'release-manager', permission: 'write' },
-    },
-  })
-
-  const reviewEnv = {
-    REVIEW_POLICY_REQUIRED_APPROVALS: '1',
-    REVIEW_POLICY_EXEMPT_PERMISSIONS: '["admin", "maintain"]',
-    REVIEW_POLICY_REVIEWER_PERMISSIONS: '["write", "maintain", "admin"]',
-    REVIEW_POLICY_EXEMPT_REPOSITORY_OWNER: 'true',
-  }
-
-  core = await runGithubScript(reviewScript, {
-    context: {
-      eventName: 'pull_request_target',
-      repo,
-      payload: { pull_request: { number: 201 } },
-      ref: 'refs/heads/main',
-      sha: 'sha-owner',
-    },
-    github: reviewGithub,
-    env: reviewEnv,
-  })
-  assert(core.failed === null, `review policy owner exemption should pass, got: ${core.failed}`)
-
-  core = await runGithubScript(reviewScript, {
-    context: {
-      eventName: 'pull_request_target',
-      repo,
-      payload: { pull_request: { number: 202 } },
-      ref: 'refs/heads/main',
-      sha: 'sha-custom-reviewer',
-    },
-    github: reviewGithub,
-    env: reviewEnv,
-  })
-  assert(core.failed === null, `review policy should count custom role reviewer by base permission, got: ${core.failed}`)
-
-  core = await runGithubScript(reviewScript, {
-    context: {
-      eventName: 'merge_group',
-      repo,
-      payload: {
-        merge_group: {
-          base_ref: 'refs/heads/main',
-          head_ref: 'gh-readonly-queue/main/pr-203-deadbeef',
-          head_sha: 'sha-review-exact',
-          head_commit: { message: 'merge queue contains Fix #999' },
-        },
-      },
-      ref: 'refs/heads/gh-readonly-queue/main/pr-203-deadbeef',
-      sha: 'sha-review-exact',
-    },
-    github: reviewGithub,
-    env: reviewEnv,
-  })
-  assert(core.failed === null, `review policy merge_group with noisy commit message should pass, got: ${core.failed}`)
-
-  core = await runGithubScript(reviewScript, {
-    context: {
-      eventName: 'merge_group',
-      repo,
-      payload: {
-        merge_group: {
-          base_ref: 'refs/heads/main',
-          head_ref: 'gh-readonly-queue/main/pr-204-deadbeef',
-          head_sha: 'sha-review-extra',
-        },
-      },
-      ref: 'refs/heads/gh-readonly-queue/main/pr-204-deadbeef',
-      sha: 'sha-review-extra',
-    },
-    github: reviewGithub,
-    env: reviewEnv,
-  })
-  assert(core.failed === null, `review policy merge_group should ignore unrelated associated pulls, got: ${core.failed}`)
 }
 
 main().catch((error) => {
@@ -515,13 +421,13 @@ run_label_gate() {
   local expected_status="$2"
   set +e
   local output
-  output="$(
+  output="$({
     GITHUB_API_URL="http://127.0.0.1:${api_port}" \
       GITHUB_REPOSITORY="IvanLi-CN/dockrev" \
       GITHUB_TOKEN="x" \
       PR_NUMBER="${pr_number}" \
-      bash ./.github/scripts/label-gate.sh 2>&1
-  )"
+      bash ./.github/scripts/label-gate.sh
+  } 2>&1)"
   local code=$?
   set -e
   if [[ "${expected_status}" == "ok" ]]; then

@@ -24,8 +24,8 @@
         "admin"
       ],
       "enforcement": {
-        "mode": "required-check",
-        "check_name": "Review Policy Gate"
+        "mode": "github-native",
+        "bypass_mode": "pull-request-only"
       }
     }
   },
@@ -37,8 +37,7 @@
     "Frontend lint + build",
     "Frontend Storybook build",
     "Frontend Storybook test",
-    "Release build check (PR)",
-    "Review Policy Gate"
+    "Release build check (PR)"
   ],
   "informational_checks": [
     "Deploy Smoke"
@@ -62,12 +61,6 @@
         "Frontend Storybook build",
         "Frontend Storybook test",
         "Release build check (PR)"
-      ]
-    },
-    {
-      "workflow": "Review Policy",
-      "jobs": [
-        "Review Policy Gate"
       ]
     }
   ]
