@@ -41,8 +41,8 @@ This page documents every HTTP route exposed in:
 | POST | `/api/services/{service_id}/archive` | Forward Auth | Archive service | `200` `404` `401` |
 | POST | `/api/services/{service_id}/restore` | Forward Auth | Restore service | `200` `404` `401` |
 | GET | `/api/services/{service_id}/digest-tags` | Forward Auth | Fetch digest-to-tags mapping | `200` `404` `401` |
-| GET | `/api/services/{service_id}/digest-tags-snapshot` | Forward Auth | Fetch digest-tag snapshot | `200` `404` `401` |
-| POST | `/api/services/{service_id}/version-inference/refresh` | Forward Auth | Trigger service-level version inference refresh | `200` `404` `401` |
+| GET | `/api/services/{service_id}/digest-tags-snapshot` | Forward Auth | Fetch digest-tag snapshot (`202 pending` while the target digest is refreshing) | `200` `202` `404` `401` |
+| POST | `/api/services/{service_id}/version-inference/refresh` | Forward Auth | Trigger digest-scoped version inference refresh (`digest` body required) | `202` `400` `404` `401` |
 | GET | `/api/version-inference/overview` | Forward Auth | Version inference overview | `200` `401` |
 | GET | `/api/version-inference/events` | Forward Auth | Version inference SSE stream | `200` `401` |
 

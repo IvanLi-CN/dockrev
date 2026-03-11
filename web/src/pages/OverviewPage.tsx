@@ -15,6 +15,7 @@ import {
   type DiscoveredProject,
   type JobListItem,
   type Service,
+  type ServiceDigestTagsScanSummary,
   type StackDetail,
   type StackListItem,
 } from '../api'
@@ -35,11 +36,19 @@ import { useConfirm } from '../confirm'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
 import { AggregateUpdatePreviewList, type AggregateUpdatePreviewListItem } from '../components/AggregateUpdatePreviewList'
+import { ConfirmServiceVersionCell } from '../components/ConfirmServiceVersionCell'
 import {
   formatCandidateTagDisplay,
   formatCurrentTagDisplay as formatTagDisplay,
+  inferResolvedTagsFromSnapshot,
   isStrictSemverTag,
 } from '../versionDisplay'
+import { normalizeDigest } from '../components/digest'
+import {
+  DIGEST_SNAPSHOT_UPDATED_EVENT,
+  type DigestSnapshotUpdatedDetail,
+} from '../digestInferenceTracker'
+import { imageRepoFromImageRef } from '../imageRepo'
 import {
   resolveUpdateActionTargetKey,
   UPDATE_JOB_SETTLED_EVENT,
@@ -64,6 +73,16 @@ function formatCompactDateTime(ts?: string | null) {
   const h = String(d.getHours()).padStart(2, '0')
   const min = String(d.getMinutes()).padStart(2, '0')
   return `${m}/${day} ${h}:${min}`
+}
+
+function scanHasFailures(scan: ServiceDigestTagsScanSummary | null | undefined): boolean {
+  if (!scan) return false
+  return scan.manifestsTimeout > 0 || scan.manifestsError > 0
+}
+
+function scanIsComplete(scan: ServiceDigestTagsScanSummary | null | undefined): boolean {
+  if (!scan) return false
+  return scan.repoTagsConsidered >= scan.repoTagsTotal
 }
 
 function splitImageRef(ref: string): { registry: string; name: string } {
@@ -148,10 +167,12 @@ function formatGroupSummary(services: number, counts: Record<Exclude<RowStatus, 
 function withAggregateDisplayName(
   items: Array<Pick<AggregateUpdatePreviewListItem, 'svc' | 'status' | 'guardedDockrev'>>,
   stackName?: string,
+  stackId?: string,
 ): AggregateUpdatePreviewListItem[] {
   return items.map((item) => ({
     ...item,
     displayName: stackName ? `${stackName}/${item.svc.name}` : item.svc.name,
+    stackId,
   }))
 }
 
@@ -378,6 +399,30 @@ export function OverviewPage(props: {
     [onLastScanHint],
   )
 
+  const patchServiceInStackDetails = useCallback(
+    (stackId: string, serviceId: string, patch: (svc: Service) => Service) => {
+      setDetails((prev) => {
+        const stack = prev[stackId]
+        if (!stack) return prev
+        let changed = false
+        const nextServices = stack.services.map((svc) => {
+          if (svc.id !== serviceId) return svc
+          changed = true
+          return patch(svc)
+        })
+        if (!changed) return prev
+        return {
+          ...prev,
+          [stackId]: {
+            ...stack,
+            services: nextServices,
+          },
+        }
+      })
+    },
+    [],
+  )
+
   const resolveSettledStackIds = useCallback(
     (detail: UpdateJobSettledDetail): string[] => {
       const explicitStackId = (detail.stackId ?? '').trim()
@@ -526,45 +571,6 @@ export function OverviewPage(props: {
   }, [])
 
   useEffect(() => {
-    let alive = true
-    const onVersionRefresh = (evt: Event) => {
-      const detail = evt instanceof CustomEvent ? evt.detail : null
-      const serviceId =
-        detail && typeof detail === 'object' && 'serviceId' in detail && typeof detail.serviceId === 'string'
-          ? detail.serviceId
-          : null
-
-      const targetedStackIds =
-        serviceId == null
-          ? []
-          : Object.entries(details)
-              .filter(([, d]) => d?.services.some((svc) => svc.id === serviceId))
-              .map(([stackId]) => stackId)
-      const ids = targetedStackIds.length > 0 ? targetedStackIds : stacks.map((s) => s.id)
-      if (ids.length === 0) return
-
-      void (async () => {
-        const results = await Promise.all(
-          ids.map(async (id) => {
-            try {
-              return [id, await getStack(id)] as const
-            } catch {
-              return [id, undefined] as const
-            }
-          }),
-        )
-        if (!alive) return
-        setDetails((prev) => ({ ...prev, ...Object.fromEntries(results) }))
-      })()
-    }
-    window.addEventListener('dockrev:version-inference-refresh', onVersionRefresh)
-    return () => {
-      alive = false
-      window.removeEventListener('dockrev:version-inference-refresh', onVersionRefresh)
-    }
-  }, [details, stacks])
-
-  useEffect(() => {
     let closed = false
     const timers = new Set<number>()
 
@@ -609,6 +615,99 @@ export function OverviewPage(props: {
       window.removeEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateJobSettled)
     }
   }, [patchStackDetails, patchStackList, refresh, resolveSettledStackIds])
+
+  const applyDigestSnapshotUpdate = useCallback(
+    (detail: DigestSnapshotUpdatedDetail) => {
+      // Popover-triggered refresh stays local to the clicked service, but when that service's
+      // current/candidate happen to share one digest both sides should consume the new snapshot.
+      const imageRepo = (detail.imageRepo ?? '').trim().toLowerCase()
+      const digestNorm = normalizeDigest(detail.digest)?.toLowerCase() ?? null
+      const triggerServiceId = (detail.triggerServiceId ?? '').trim()
+      if (!imageRepo || !triggerServiceId || !digestNorm) return
+
+      const failures = scanHasFailures(detail.scan)
+      const complete = scanIsComplete(detail.scan)
+
+      const patchService = (svc: Service): Service => {
+        if (svc.id !== triggerServiceId) return svc
+        const svcRepo = imageRepoFromImageRef(svc.image.ref)
+        if (!svcRepo || svcRepo !== imageRepo) return svc
+
+        let changed = false
+        let next: Service = svc
+
+        const currentDigest = normalizeDigest(svc.image.digest)?.toLowerCase() ?? null
+        if (currentDigest && currentDigest === digestNorm && !isStrictSemverTag(svc.image.tag)) {
+          const inferred = inferResolvedTagsFromSnapshot(detail.tags, svc.image.tag)
+          const inferredFirst = inferred[0] ?? null
+          if (inferredFirst || (!failures && complete)) {
+            changed = true
+            next = {
+              ...next,
+              image: {
+                ...next.image,
+                resolvedTag: inferredFirst,
+                resolvedTags: inferred.length > 1 ? inferred : null,
+              },
+            }
+          }
+        }
+
+        const candidate = next.candidate
+        const candidateDigest = candidate ? normalizeDigest(candidate.digest)?.toLowerCase() ?? null : null
+        if (candidate && candidateDigest && candidateDigest === digestNorm && !isStrictSemverTag(candidate.tag)) {
+          const inferred = inferResolvedTagsFromSnapshot(detail.tags, candidate.tag)
+          const inferredFirst = inferred[0] ?? null
+          if (inferredFirst || (!failures && complete)) {
+            changed = true
+            next = {
+              ...next,
+              candidate: { ...candidate, resolvedTag: inferredFirst },
+            }
+          }
+        }
+
+        return changed ? next : svc
+      }
+
+      setDetails((prev) => {
+        let changed = false
+        const next: Record<string, StackDetail | undefined> = { ...prev }
+
+        for (const [stackId, stack] of Object.entries(prev)) {
+          if (!stack) continue
+          let stackChanged = false
+          const nextServices = stack.services.map((svc) => {
+            const patched = patchService(svc)
+            if (patched !== svc) stackChanged = true
+            return patched
+          })
+          if (!stackChanged) continue
+          changed = true
+          next[stackId] = { ...stack, services: nextServices }
+        }
+
+        return changed ? next : prev
+      })
+    },
+    [],
+  )
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const onDigestSnapshotUpdated = (evt: Event) => {
+      const detail =
+        evt instanceof CustomEvent
+          ? (evt.detail as DigestSnapshotUpdatedDetail | null)
+          : null
+      if (!detail) return
+      applyDigestSnapshotUpdate(detail)
+    }
+    window.addEventListener(DIGEST_SNAPSHOT_UPDATED_EVENT, onDigestSnapshotUpdated)
+    return () => {
+      window.removeEventListener(DIGEST_SNAPSHOT_UPDATED_EVENT, onDigestSnapshotUpdated)
+    }
+  }, [applyDigestSnapshotUpdate])
 
   const pendingInferenceStackIds = useMemo(() => {
     const ids: string[] = []
@@ -819,8 +918,8 @@ export function OverviewPage(props: {
       counts.hint += partition.counts.hint
       counts.archMismatch += partition.counts.archMismatch
       counts.blocked += partition.counts.blocked
-      actionablePreviewItems.push(...withAggregateDisplayName(partition.actionable, d.name))
-      guardedPreviewItems.push(...withAggregateDisplayName(partition.guardedDockrevPreview, d.name))
+      actionablePreviewItems.push(...withAggregateDisplayName(partition.actionable, d.name, st.id))
+      guardedPreviewItems.push(...withAggregateDisplayName(partition.guardedDockrevPreview, d.name, st.id))
     }
 
     return { counts, actionablePreviewItems, guardedPreviewItems }
@@ -1118,12 +1217,40 @@ export function OverviewPage(props: {
                     ⚠ 检测到 {anomalyCount} 个版本异常（候选低于当前）；手动确认后仍可继续更新。
                   </div>
                 ) : null}
-                <div className="modalDivider" />
-                <div className="modalLead">将更新的服务（预览）</div>
-                <AggregateUpdatePreviewList items={previewItems} dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT} />
-                <div className="modalDivider" />
-              </>
-            )
+	                <div className="modalDivider" />
+	                <div className="modalLead">将更新的服务（预览）</div>
+	                <AggregateUpdatePreviewList
+	                  items={previewItems}
+	                  dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
+                    onServiceResolvedTags={(update) => {
+                      const stackId = (update.stackId ?? '').trim()
+                      if (!stackId) return
+                      patchServiceInStackDetails(stackId, update.serviceId, (prev) => ({
+                        ...prev,
+                        image: {
+                          ...prev.image,
+                          resolvedTag: update.resolvedTag,
+                          resolvedTags: update.resolvedTags,
+                        },
+                      }))
+                    }}
+                    onServiceCandidateResolvedTag={(update) => {
+                      const stackId = (update.stackId ?? '').trim()
+                      if (!stackId) return
+                      patchServiceInStackDetails(stackId, update.serviceId, (prev) => ({
+                        ...prev,
+                        candidate: prev.candidate
+                          ? {
+                              ...prev.candidate,
+                              resolvedTag: update.resolvedTag,
+                            }
+                          : prev.candidate,
+                      }))
+                    }}
+	                />
+	                <div className="modalDivider" />
+	              </>
+	            )
                         void triggerApply({ scope: 'all', targetLabel: '全部服务', confirmBody: body, confirmTitle: '确认更新全部服务？' })
           }}
         >
@@ -1137,17 +1264,18 @@ export function OverviewPage(props: {
         </Button>
       </>,
     )
-  }, [
-    aggregateAll,
-    allApply,
-    allApplyActiveJob,
-    allApplyActionBusy,
-    allApplySubmitting,
-    busy,
-    onTopActions,
-    refresh,
-    triggerApply,
-  ])
+	  }, [
+	    aggregateAll,
+	    allApply,
+	    allApplyActiveJob,
+	    allApplyActionBusy,
+	    allApplySubmitting,
+	    busy,
+	    onTopActions,
+	    patchServiceInStackDetails,
+	    refresh,
+	    triggerApply,
+	  ])
 
   return (
     <div className="page">
@@ -1308,10 +1436,10 @@ export function OverviewPage(props: {
 
 	            if (rows.length === 0) return null
 
-	            const aggregatePartition = partitionAggregateUpdateServices(d.services)
+            const aggregatePartition = partitionAggregateUpdateServices(d.services)
             const aggregatePreviewItems = [
-              ...withAggregateDisplayName(aggregatePartition.actionable),
-              ...withAggregateDisplayName(aggregatePartition.guardedDockrevPreview),
+              ...withAggregateDisplayName(aggregatePartition.actionable, undefined, st.id),
+              ...withAggregateDisplayName(aggregatePartition.guardedDockrevPreview, undefined, st.id),
             ]
             const isCollapsed = collapsed[st.id] ?? false
             const totalServices = d.services.filter((svc) => !svc.archived).length
@@ -1395,15 +1523,38 @@ export function OverviewPage(props: {
                                 ⚠ 检测到 {anomalyCount} 个版本异常（候选低于当前）；手动确认后仍可继续更新。
                               </div>
                             ) : null}
-                            <div className="modalDivider" />
-                            <div className="modalLead">将更新的服务（预览）</div>
-                            <AggregateUpdatePreviewList
-                              items={aggregatePreviewItems}
-                              dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
-                            />
-                            <div className="modalDivider" />
-                          </>
-                        )
+	                            <div className="modalDivider" />
+	                            <div className="modalLead">将更新的服务（预览）</div>
+	                            <AggregateUpdatePreviewList
+	                              items={aggregatePreviewItems}
+	                              dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
+                                onServiceResolvedTags={(update) => {
+                                  const stackId = (update.stackId ?? '').trim() || st.id
+                                  patchServiceInStackDetails(stackId, update.serviceId, (prev) => ({
+                                    ...prev,
+                                    image: {
+                                      ...prev.image,
+                                      resolvedTag: update.resolvedTag,
+                                      resolvedTags: update.resolvedTags,
+                                    },
+                                  }))
+                                }}
+                                onServiceCandidateResolvedTag={(update) => {
+                                  const stackId = (update.stackId ?? '').trim() || st.id
+                                  patchServiceInStackDetails(stackId, update.serviceId, (prev) => ({
+                                    ...prev,
+                                    candidate: prev.candidate
+                                      ? {
+                                          ...prev.candidate,
+                                          resolvedTag: update.resolvedTag,
+                                        }
+                                      : prev.candidate,
+                                  }))
+                                }}
+	                            />
+	                            <div className="modalDivider" />
+	                          </>
+	                        )
                                                 void triggerApply({
 	                          scope: 'stack',
 	                          stackId: st.id,
@@ -1526,6 +1677,16 @@ export function OverviewPage(props: {
                                   imageDigest={svc.image.digest ?? null}
                                   resolvedTag={svc.image.resolvedTag}
                                   resolvedTags={svc.image.resolvedTags}
+                                  onLocalResolvedTags={(update) => {
+                                    patchServiceInStackDetails(st.id, svc.id, (prev) => ({
+                                      ...prev,
+                                      image: {
+                                        ...prev.image,
+                                        resolvedTag: update.resolvedTag,
+                                        resolvedTags: update.resolvedTags,
+                                      },
+                                    }))
+                                  }}
                                   inferenceLoading={inferencePending}
                                 />
                                 {showCandidate ? (
@@ -1538,6 +1699,17 @@ export function OverviewPage(props: {
                                       candidateTag={candidateTag}
                                       candidateDigest={svc.candidate?.digest ?? null}
                                       prefetchOnMount={candidatePrefetchOnMount}
+                                      onLocalResolvedTag={(resolvedTag) => {
+                                        patchServiceInStackDetails(st.id, svc.id, (prev) => ({
+                                          ...prev,
+                                          candidate: prev.candidate
+                                            ? {
+                                                ...prev.candidate,
+                                                resolvedTag,
+                                              }
+                                            : prev.candidate,
+                                        }))
+                                      }}
                                     >
                                       {candidateDisplayTag}
                                     </VersionTagsPopover>
@@ -1553,6 +1725,16 @@ export function OverviewPage(props: {
                                     imageDigest={svc.image.digest ?? null}
                                     resolvedTag={svc.image.resolvedTag}
                                     resolvedTags={svc.image.resolvedTags}
+                                    onLocalResolvedTags={(update) => {
+                                      patchServiceInStackDetails(st.id, svc.id, (prev) => ({
+                                        ...prev,
+                                        image: {
+                                          ...prev.image,
+                                          resolvedTag: update.resolvedTag,
+                                          resolvedTags: update.resolvedTags,
+                                        },
+                                      }))
+                                    }}
                                     preferSource="rawTag"
                                     triggerClassName="versionTagsTrigger mono monoSecondary"
                                   >
@@ -1651,66 +1833,39 @@ export function OverviewPage(props: {
 		                                        </div>
 		                                        <div className="modalKvLabel">目标版本</div>
 		                                        <div className="modalKvValue">
-                                          <div className="cellTwoLine">
-                                            <div className="versionLine">
-                                              <CurrentVersionPopover
-                                                serviceId={svc.id}
-                                                displayTag={currentDisplayTag}
-                                                imageTag={svc.image.tag}
-                                                imageDigest={svc.image.digest ?? null}
-                                                resolvedTag={svc.image.resolvedTag}
-                                                resolvedTags={svc.image.resolvedTags}
-                                                inferenceLoading={inferencePending}
-                                              />
-	                                              <span
-	                                                className={arrowPulse ? 'inlineIconLoading' : 'inlineIconMuted'}
-	                                                style={arrowPulse ? { margin: '0 6px' } : { opacity: 0.8, margin: '0 6px' }}
-	                                              >
-	                                                <ArrowRightIcon className="inlineIcon" />
-	                                              </span>
-	                                              {svc.candidate?.tag ? (
-	                                                <VersionTagsPopover
-	                                                  serviceId={svc.id}
-	                                                  candidateTag={svc.candidate.tag}
-	                                                  candidateDigest={svc.candidate.digest ?? null}
-	                                                  prefetchOnMount={candidatePrefetchOnMount}
-	                                                >
-	                                                  {formatCandidateTagDisplay(
-	                                                    svc.candidate.tag,
-	                                                    svc.candidate.resolvedTag ?? null,
-                                                      svc.versionInference?.status,
-	                                                  )}
-	                                                </VersionTagsPopover>
-	                                              ) : (
-	                                                <span className="mono monoPrimary">-</span>
-	                                              )}
-	                                            </div>
-                                            {(() => {
-                                              const currentTag = formatTagDisplay(
-                                                svc.image.tag,
-                                                svc.image.resolvedTag,
-                                                svc.versionInference?.status,
-                                              )
-                                              const rawTrim = (svc.image.tag ?? '').trim()
-                                              const showRaw = Boolean(rawTrim && rawTrim !== currentTag)
-                                              return showRaw ? (
-                                                <div>
-                                                  <CurrentVersionPopover
-                                                    serviceId={svc.id}
-                                                    displayTag={svc.image.tag}
-                                                    imageTag={svc.image.tag}
-                                                    imageDigest={svc.image.digest ?? null}
-                                                    resolvedTag={svc.image.resolvedTag}
-                                                    resolvedTags={svc.image.resolvedTags}
-                                                    preferSource="rawTag"
-                                                    triggerClassName="versionTagsTrigger mono monoSecondary"
-                                                  >
-                                                    {svc.image.tag}
-                                                  </CurrentVersionPopover>
-                                                </div>
-                                              ) : null
-                                            })()}
-                                          </div>
+                                          <ConfirmServiceVersionCell
+                                            serviceId={svc.id}
+                                            imageTag={svc.image.tag}
+                                            imageDigest={svc.image.digest ?? null}
+                                            resolvedTag={svc.image.resolvedTag}
+                                            resolvedTags={svc.image.resolvedTags}
+                                            inferenceStatus={svc.versionInference?.status}
+                                            candidateTag={svc.candidate?.tag}
+                                            candidateDigest={svc.candidate?.digest ?? null}
+                                            candidateResolvedTag={svc.candidate?.resolvedTag}
+                                            prefetchOnMount={candidatePrefetchOnMount}
+                                            onHostResolvedTags={(update) => {
+                                              patchServiceInStackDetails(st.id, svc.id, (prev) => ({
+                                                ...prev,
+                                                image: {
+                                                  ...prev.image,
+                                                  resolvedTag: update.resolvedTag,
+                                                  resolvedTags: update.resolvedTags,
+                                                },
+                                              }))
+                                            }}
+                                            onHostCandidateResolvedTag={(resolvedTag) => {
+                                              patchServiceInStackDetails(st.id, svc.id, (prev) => ({
+                                                ...prev,
+                                                candidate: prev.candidate
+                                                  ? {
+                                                      ...prev.candidate,
+                                                      resolvedTag,
+                                                    }
+                                                  : prev.candidate,
+                                              }))
+                                            }}
+                                          />
 	                                        </div>
                                         <div className="modalKvLabel">状态</div>
                                         <div className="modalKvValue">

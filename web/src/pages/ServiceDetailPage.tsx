@@ -14,19 +14,32 @@ import {
   triggerUpdate,
   type IgnoreRule,
   type Service,
+  type ServiceDigestTagsScanSummary,
   type ServiceSettings,
   type StackDetail,
 } from '../api'
 import { navigate } from '../routes'
-import { ArrowRightIcon, Button, Input, Mono, Pill, SelectField, Switch } from '../ui'
+import { Button, Input, Mono, Pill, SelectField, Switch } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { isSemverDowngradeAnomaly, serviceRowStatus } from '../updateStatus'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
+import { ConfirmServiceVersionCell } from '../components/ConfirmServiceVersionCell'
 import { ServiceResourcePanel } from '../components/ServiceResourcePanel'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { useConfirm } from '../confirm'
-import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, isStrictSemverTag } from '../versionDisplay'
+import {
+  formatCandidateTagDisplay,
+  formatCurrentTagDisplay as formatTagDisplay,
+  inferResolvedTagsFromSnapshot,
+  isStrictSemverTag,
+} from '../versionDisplay'
+import { normalizeDigest } from '../components/digest'
+import {
+  DIGEST_SNAPSHOT_UPDATED_EVENT,
+  type DigestSnapshotUpdatedDetail,
+} from '../digestInferenceTracker'
+import { imageRepoFromImageRef } from '../imageRepo'
 import {
   resolveUpdateActionTargetKey,
   UPDATE_JOB_SETTLED_EVENT,
@@ -38,6 +51,16 @@ import {
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
   return String(e)
+}
+
+function scanHasFailures(scan: ServiceDigestTagsScanSummary | null | undefined): boolean {
+  if (!scan) return false
+  return scan.manifestsTimeout > 0 || scan.manifestsError > 0
+}
+
+function scanIsComplete(scan: ServiceDigestTagsScanSummary | null | undefined): boolean {
+  if (!scan) return false
+  return scan.repoTagsConsidered >= scan.repoTagsTotal
 }
 
 function svcTone(svc: Service): 'ok' | 'warn' | 'bad' | 'muted' {
@@ -170,19 +193,31 @@ export function ServiceDetailPage(props: {
     setService(svc)
   }, [serviceId, stackId])
 
+  const patchServiceInStack = useCallback(
+    (patch: (svc: Service) => Service) => {
+      setStack((prev) => {
+        if (!prev) return prev
+        let changed = false
+        const nextServices = prev.services.map((svc) => {
+          if (svc.id !== serviceId) return svc
+          changed = true
+          return patch(svc)
+        })
+        if (!changed) return prev
+        return { ...prev, services: nextServices }
+      })
+
+      setService((prev) => {
+        if (!prev || prev.id !== serviceId) return prev
+        return patch(prev)
+      })
+    },
+    [serviceId],
+  )
+
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(errorMessage(e)))
   }, [refresh])
-
-  useEffect(() => {
-    const onVersionRefresh = () => {
-      void refreshStackOnly().catch(() => {})
-    }
-    window.addEventListener('dockrev:version-inference-refresh', onVersionRefresh)
-    return () => {
-      window.removeEventListener('dockrev:version-inference-refresh', onVersionRefresh)
-    }
-  }, [refreshStackOnly])
 
   useEffect(() => {
     let closed = false
@@ -227,6 +262,77 @@ export function ServiceDetailPage(props: {
       window.removeEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateJobSettled)
     }
   }, [refreshStackOnly, serviceId, stackId])
+
+  const applyDigestSnapshotUpdate = useCallback(
+    (detail: DigestSnapshotUpdatedDetail) => {
+      const imageRepo = (detail.imageRepo ?? '').trim().toLowerCase()
+      const digestNorm = normalizeDigest(detail.digest)?.toLowerCase() ?? null
+      const triggerServiceId = (detail.triggerServiceId ?? '').trim()
+      if (!imageRepo || !digestNorm) return
+      if (!triggerServiceId || triggerServiceId !== serviceId) return
+
+      const failures = scanHasFailures(detail.scan)
+      const complete = scanIsComplete(detail.scan)
+
+      patchServiceInStack((prev) => {
+        const svcRepo = imageRepoFromImageRef(prev.image.ref)
+        if (!svcRepo || svcRepo !== imageRepo) return prev
+
+        let changed = false
+        let next: Service = prev
+
+        const currentDigest = normalizeDigest(prev.image.digest)?.toLowerCase() ?? null
+        if (currentDigest && currentDigest === digestNorm && !isStrictSemverTag(prev.image.tag)) {
+          const inferred = inferResolvedTagsFromSnapshot(detail.tags, prev.image.tag)
+          const inferredFirst = inferred[0] ?? null
+          if (inferredFirst || (!failures && complete)) {
+            changed = true
+            next = {
+              ...next,
+              image: {
+                ...next.image,
+                resolvedTag: inferredFirst,
+                resolvedTags: inferred.length > 1 ? inferred : null,
+              },
+            }
+          }
+        }
+
+        const candidate = next.candidate
+        const candidateDigest = candidate ? normalizeDigest(candidate.digest)?.toLowerCase() ?? null : null
+        if (candidate && candidateDigest && candidateDigest === digestNorm && !isStrictSemverTag(candidate.tag)) {
+          const inferred = inferResolvedTagsFromSnapshot(detail.tags, candidate.tag)
+          const inferredFirst = inferred[0] ?? null
+          if (inferredFirst || (!failures && complete)) {
+            changed = true
+            next = {
+              ...next,
+              candidate: { ...candidate, resolvedTag: inferredFirst },
+            }
+          }
+        }
+
+        return changed ? next : prev
+      })
+    },
+    [patchServiceInStack, serviceId],
+  )
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const onDigestSnapshotUpdated = (evt: Event) => {
+      const detail =
+        evt instanceof CustomEvent
+          ? (evt.detail as DigestSnapshotUpdatedDetail | null)
+          : null
+      if (!detail) return
+      applyDigestSnapshotUpdate(detail)
+    }
+    window.addEventListener(DIGEST_SNAPSHOT_UPDATED_EVENT, onDigestSnapshotUpdated)
+    return () => {
+      window.removeEventListener(DIGEST_SNAPSHOT_UPDATED_EVENT, onDigestSnapshotUpdated)
+    }
+  }, [applyDigestSnapshotUpdate])
 
   useEffect(() => {
     if (service?.versionInference?.status !== 'pending') return
@@ -436,34 +542,21 @@ export function ServiceDetailPage(props: {
               }
               onClick={() => {
                 void (async () => {
-                  if (applyActiveJob) {
-                    navigate({ name: 'job', jobId: applyActiveJob.jobId })
-                    return
-                  }
-                  if (!service || !service.candidate) return
-                  const semverDowngradeAnomaly = isSemverDowngradeAnomaly(service)
-                  const currentDisplayTag = formatTagDisplay(
-                    service.image.tag,
-                    service.image.resolvedTag,
-                    service.versionInference?.status,
-                  )
-                  const inferencePending = service.versionInference?.status === 'pending'
-                  const candidatePrefetchOnMount = shouldPrefetchFloatingCandidate(
-                    service.candidate.tag,
-                    service.candidate.resolvedTag ?? null,
-                    service.candidate.digest ?? null,
-                  )
-                  const candidateDisplayTag = formatCandidateTagDisplay(
-                    service.candidate.tag,
-                    service.candidate.resolvedTag ?? null,
-                    service.versionInference?.status,
-                  )
-                  const rawTagTrim = (service.image.tag ?? '').trim()
-                    const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
-	                  const ok = await confirm({
-	                    title: `确认更新服务 ${service.name}？`,
-	                    body: (
-	                      <>
+	                  if (applyActiveJob) {
+	                    navigate({ name: 'job', jobId: applyActiveJob.jobId })
+	                    return
+	                  }
+	                  if (!service || !service.candidate) return
+	                  const semverDowngradeAnomaly = isSemverDowngradeAnomaly(service)
+	                  const candidatePrefetchOnMount = shouldPrefetchFloatingCandidate(
+	                    service.candidate.tag,
+	                    service.candidate.resolvedTag ?? null,
+	                    service.candidate.digest ?? null,
+	                  )
+		                  const ok = await confirm({
+		                    title: `确认更新服务 ${service.name}？`,
+		                    body: (
+		                      <>
 	                        <div className="modalLead">将对该服务执行更新（apply）。</div>
 	                        <div className="modalKvGrid">
 	                          <div className="modalKvLabel">范围</div>
@@ -494,49 +587,39 @@ export function ServiceDetailPage(props: {
 		                          </div>
 		                          <div className="modalKvLabel">目标版本</div>
 		                          <div className="modalKvValue">
-                                <div className="cellTwoLine">
-                                <div className="versionLine">
-                                  <CurrentVersionPopover
-                                    serviceId={service.id}
-                                    displayTag={currentDisplayTag}
-                                    imageTag={service.image.tag}
-                                    imageDigest={service.image.digest ?? null}
-                                    resolvedTag={service.image.resolvedTag}
-                                    resolvedTags={service.image.resolvedTags}
-                                    inferenceLoading={inferencePending}
-	                                  />
-	                                  <span
-	                                    className={inferencePending ? 'inlineIconLoading' : 'inlineIconMuted'}
-	                                    style={inferencePending ? { margin: '0 6px' } : { opacity: 0.8, margin: '0 6px' }}
-	                                  >
-	                                    <ArrowRightIcon className="inlineIcon" />
-	                                  </span>
-	                                  <VersionTagsPopover
-	                                    serviceId={service.id}
-	                                    candidateTag={service.candidate.tag}
-	                                    candidateDigest={service.candidate.digest ?? null}
-                                      prefetchOnMount={candidatePrefetchOnMount}
-	                                  >
-	                                    {candidateDisplayTag}
-	                                  </VersionTagsPopover>
-	                                </div>
-	                                {showRawTag ? (
-                                  <div>
-                                    <CurrentVersionPopover
-                                      serviceId={service.id}
-                                      displayTag={service.image.tag}
-                                      imageTag={service.image.tag}
-                                      imageDigest={service.image.digest ?? null}
-                                      resolvedTag={service.image.resolvedTag}
-                                      resolvedTags={service.image.resolvedTags}
-                                      preferSource="rawTag"
-                                      triggerClassName="versionTagsTrigger mono monoSecondary"
-                                    >
-                                      {service.image.tag}
-                                    </CurrentVersionPopover>
-                                  </div>
-                                ) : null}
-                              </div>
+                                <ConfirmServiceVersionCell
+                                  serviceId={service.id}
+                                  imageTag={service.image.tag}
+                                  imageDigest={service.image.digest ?? null}
+                                  resolvedTag={service.image.resolvedTag}
+                                  resolvedTags={service.image.resolvedTags}
+                                  inferenceStatus={service.versionInference?.status}
+                                  candidateTag={service.candidate.tag}
+                                  candidateDigest={service.candidate.digest ?? null}
+                                  candidateResolvedTag={service.candidate.resolvedTag}
+                                  prefetchOnMount={candidatePrefetchOnMount}
+                                  onHostResolvedTags={(update) => {
+                                    patchServiceInStack((prev) => ({
+                                      ...prev,
+                                      image: {
+                                        ...prev.image,
+                                        resolvedTag: update.resolvedTag,
+                                        resolvedTags: update.resolvedTags,
+                                      },
+                                    }))
+                                  }}
+                                  onHostCandidateResolvedTag={(resolvedTag) => {
+                                    patchServiceInStack((prev) => ({
+                                      ...prev,
+                                      candidate: prev.candidate
+                                        ? {
+                                            ...prev.candidate,
+                                            resolvedTag,
+                                          }
+                                        : prev.candidate,
+                                    }))
+                                  }}
+                                />
 		                          </div>
 	                          <div className="modalKvLabel">状态</div>
 	                          <div className="modalKvValue">
@@ -675,6 +758,7 @@ export function ServiceDetailPage(props: {
     confirm,
     endSubmitting,
     onTopActions,
+    patchServiceInStack,
     refresh,
     selfUpgradeUrl,
     service,
@@ -733,6 +817,16 @@ export function ServiceDetailPage(props: {
         imageDigest={service.image.digest ?? null}
         resolvedTag={service.image.resolvedTag}
         resolvedTags={service.image.resolvedTags}
+        onLocalResolvedTags={(update) => {
+          patchServiceInStack((prev) => ({
+            ...prev,
+            image: {
+              ...prev.image,
+              resolvedTag: update.resolvedTag,
+              resolvedTags: update.resolvedTags,
+            },
+          }))
+        }}
         inferenceLoading={inferencePending}
       />
     )
@@ -749,6 +843,16 @@ export function ServiceDetailPage(props: {
           imageDigest={service.image.digest ?? null}
           resolvedTag={service.image.resolvedTag}
           resolvedTags={service.image.resolvedTags}
+          onLocalResolvedTags={(update) => {
+            patchServiceInStack((prev) => ({
+              ...prev,
+              image: {
+                ...prev.image,
+                resolvedTag: update.resolvedTag,
+                resolvedTags: update.resolvedTags,
+              },
+            }))
+          }}
           preferSource="rawTag"
           triggerClassName="versionTagsTrigger mono monoSecondary"
         >
@@ -804,19 +908,30 @@ export function ServiceDetailPage(props: {
         {currentDigestNode}
         {rawTagNode}
 	        {' \u2192 '}候选:{' '}
-	        <VersionTagsPopover
-	          serviceId={service.id}
-	          candidateTag={service.candidate.tag}
-	          candidateDigest={service.candidate.digest ?? null}
-            prefetchOnMount={candidatePrefetchOnMount}
-	        >
-	          {candidateDisplayTag}
-	        </VersionTagsPopover>
+		        <VersionTagsPopover
+		          serviceId={service.id}
+		          candidateTag={service.candidate.tag}
+		          candidateDigest={service.candidate.digest ?? null}
+	            prefetchOnMount={candidatePrefetchOnMount}
+		          onLocalResolvedTag={(resolvedTag) => {
+		            patchServiceInStack((prev) => ({
+		              ...prev,
+		              candidate: prev.candidate
+		                ? {
+		                    ...prev.candidate,
+		                    resolvedTag,
+		                  }
+		                : prev.candidate,
+		            }))
+		          }}
+		        >
+		          {candidateDisplayTag}
+		        </VersionTagsPopover>
 	        <span className="mono">{`@${shortDigest(service.candidate.digest)}`}</span>
 	        {archNode}
 	      </>
     )
-  }, [service])
+  }, [patchServiceInStack, service])
 
   if (!stack || !service || !settings) {
     return <div className="muted">加载中…</div>

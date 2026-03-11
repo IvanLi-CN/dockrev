@@ -24,14 +24,14 @@ function inferredTagForDisplay(tag: string, resolvedTag: string | null | undefin
 
 function Demo(props: {
   serviceId: string
+  imageTag: string
+  imageDigest: string | null
   candidateTag: string
   candidateDigest: string | null
   prefetchOnMount?: boolean
 }) {
-  const imageTag = '0.8'
-  const imageDigest = props.candidateDigest
-  const currentDisplayTag = inferredTagForDisplay(imageTag, null)
-  const showRawTag = Boolean(imageTag.trim() && imageTag.trim() !== currentDisplayTag)
+  const currentDisplayTag = inferredTagForDisplay(props.imageTag, null)
+  const showRawTag = Boolean(props.imageTag.trim() && props.imageTag.trim() !== currentDisplayTag)
   return (
     <div style={{ padding: 16, maxWidth: 560, display: 'grid', gap: 12 }}>
       <div style={{ maxWidth: 360 }}>
@@ -40,8 +40,8 @@ function Demo(props: {
             <CurrentVersionPopover
               serviceId={props.serviceId}
               displayTag=""
-              imageTag={imageTag}
-              imageDigest={imageDigest}
+              imageTag={props.imageTag}
+              imageDigest={props.imageDigest}
               resolvedTag={null}
               resolvedTags={null}
             />
@@ -59,15 +59,15 @@ function Demo(props: {
             <div>
               <CurrentVersionPopover
                 serviceId={props.serviceId}
-                displayTag={imageTag}
-                imageTag={imageTag}
-                imageDigest={imageDigest}
+                displayTag={props.imageTag}
+                imageTag={props.imageTag}
+                imageDigest={props.imageDigest}
                 resolvedTag={null}
                 resolvedTags={null}
                 preferSource="rawTag"
                 triggerClassName="versionTagsTrigger mono monoSecondary"
               >
-                {imageTag}
+                {props.imageTag}
               </CurrentVersionPopover>
             </div>
           ) : null}
@@ -90,8 +90,21 @@ export const MultiTags: Story = {
   parameters: { dockrevApiScenario: 'version-tags-popover-demo' },
   args: {
     serviceId: 'svc-version-tags',
+    imageTag: '0.8',
+    imageDigest: d('a', 'b1'),
     candidateTag: 'v0.8.8-arm64',
     candidateDigest: d('b', '9f'),
+  },
+}
+
+export const SameDigest: Story = {
+  parameters: { dockrevApiScenario: 'version-tags-popover-same-digest' },
+  args: {
+    serviceId: 'svc-version-tags',
+    imageTag: '0.8',
+    imageDigest: d('a', 'b1'),
+    candidateTag: 'stable',
+    candidateDigest: d('a', 'b1'),
   },
 }
 
@@ -99,6 +112,8 @@ export const MissingDigest: Story = {
   parameters: { dockrevApiScenario: 'version-tags-popover-demo' },
   args: {
     serviceId: 'svc-version-tags',
+    imageTag: '0.8',
+    imageDigest: d('a', 'b1'),
     candidateTag: 'v0.8.8-arm64',
     candidateDigest: null,
   },
@@ -108,6 +123,8 @@ export const MissingSnapshot: Story = {
   parameters: { dockrevApiScenario: 'version-tags-popover-snapshot-missing' },
   args: {
     serviceId: 'svc-version-tags',
+    imageTag: '0.8',
+    imageDigest: d('a', 'b1'),
     candidateTag: 'v0.8.8-arm64',
     candidateDigest: d('b', '9f'),
   },
@@ -117,6 +134,8 @@ export const PendingSnapshot: Story = {
   parameters: { dockrevApiScenario: 'version-tags-popover-snapshot-pending' },
   args: {
     serviceId: 'svc-version-tags',
+    imageTag: '0.8',
+    imageDigest: d('a', 'b1'),
     candidateTag: 'v0.8.8-arm64',
     candidateDigest: d('b', '9f'),
     prefetchOnMount: true,
@@ -127,6 +146,8 @@ export const ApiError: Story = {
   parameters: { dockrevApiScenario: 'error' },
   args: {
     serviceId: 'svc-version-tags',
+    imageTag: '0.8',
+    imageDigest: d('a', 'b1'),
     candidateTag: 'v0.8.8-arm64',
     candidateDigest: d('b', '9f'),
   },

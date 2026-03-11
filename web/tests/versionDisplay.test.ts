@@ -1,8 +1,20 @@
 import { describe, expect, test } from 'bun:test'
 
-import { formatCandidateTagDisplay, formatCurrentTagDisplay } from '../src/versionDisplay'
+import {
+  formatCandidateTagDisplay,
+  formatCurrentTagDisplay,
+  isStrictSemverTag,
+  pickSnapshotDisplayTag,
+  shouldReleaseLocalDisplayTag,
+} from '../src/versionDisplay'
 
 describe('versionDisplay', () => {
+  test('treats leading zeros in numeric identifiers as non-strict semver', () => {
+    expect(isStrictSemverTag('01.2.3')).toBe(false)
+    expect(isStrictSemverTag('1.2.3-01')).toBe(false)
+    expect(isStrictSemverTag('1.2.3-0')).toBe(true)
+  })
+
   test('prefers resolved current tag when it is strict semver', () => {
     expect(formatCurrentTagDisplay('latest', 'v0.2.51')).toBe('v0.2.51')
   })
@@ -28,5 +40,28 @@ describe('versionDisplay', () => {
   test('keeps candidate visible during pending state', () => {
     expect(formatCandidateTagDisplay('latest', 'v0.2.51', 'pending')).toBe('v0.2.51')
     expect(formatCandidateTagDisplay('latest', null, 'pending')).toBe('latest')
+  })
+
+  test('picks the best semver-ish tag from a snapshot tag list', () => {
+    expect(pickSnapshotDisplayTag(['latest', 'v0.2.51', '0.2.50'], 'latest')).toBe('v0.2.51')
+    expect(pickSnapshotDisplayTag(['stable', 'latest'], 'latest')).toBeNull()
+
+    // Prefer canonical release tags over prereleases when deriving from a floating raw tag.
+    expect(
+      pickSnapshotDisplayTag(
+        ['v0.8.8-arm64', 'v0.8.8', '0.8.8', 'stable', 'latest'],
+        'latest',
+      ),
+    ).toBe('v0.8.8')
+
+    // Avoid rewriting already-stable semver tags.
+    expect(pickSnapshotDisplayTag(['v1.2.3', '1.2.3'], 'v1.2.3')).toBeNull()
+  })
+
+  test('releases local display tag once parent resolved data catches up', () => {
+    expect(shouldReleaseLocalDisplayTag('v0.8.8', 'v0.8.8', null)).toBe(true)
+    expect(shouldReleaseLocalDisplayTag('v0.8.8', null, ['v0.8.8', '0.8.8'])).toBe(true)
+    expect(shouldReleaseLocalDisplayTag('v0.8.8', 'latest', ['0.8.7'])).toBe(false)
+    expect(shouldReleaseLocalDisplayTag(null, 'v0.8.8', ['v0.8.8'])).toBe(false)
   })
 })

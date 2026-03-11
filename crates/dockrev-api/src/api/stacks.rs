@@ -283,8 +283,12 @@ pub(super) async fn enrich_stack_with_version_inference(
                 reason
             };
             if let Some(in_flight_reason) = in_flight_reason {
-                pending = true;
-                pending_reason.get_or_insert(in_flight_reason);
+                // `force` tasks are user-triggered best-effort refreshes for a single digest.
+                // They must not leak into the stack/service-level pending/loading UX.
+                if in_flight_reason != VERSION_INFERENCE_REASON_FORCE {
+                    pending = true;
+                    pending_reason.get_or_insert(in_flight_reason);
+                }
             }
 
             if let Some(snapshot_entry) = snapshot_entry.as_ref() {
@@ -299,15 +303,25 @@ pub(super) async fn enrich_stack_with_version_inference(
                     infer_semver_tags_from_snapshot(&snapshot_entry.snapshot, &svc.image.tag)
                 };
                 let inferred_first = tags.first().cloned();
-                if for_candidate {
-                    if let Some(candidate) = svc.candidate.as_mut()
-                        && let Some(inferred) = inferred_first
-                    {
-                        candidate.resolved_tag = Some(inferred);
+                let scan_has_failures = snapshot_entry.snapshot.scan.manifests_timeout > 0
+                    || snapshot_entry.snapshot.scan.manifests_error > 0;
+                let scan_is_complete = snapshot_entry.snapshot.scan.repo_tags_considered
+                    >= snapshot_entry.snapshot.scan.repo_tags_total;
+
+                // Only clear inferred tags when the snapshot scan completed without failures.
+                // Error/all_failed snapshots are persisted best-effort and must not wipe the last
+                // known good inference values. Additionally, snapshot scans can be deliberately
+                // truncated; only treat an "empty inferred tag set" as authoritative when the
+                // scan is complete.
+                if inferred_first.is_some() || (!scan_has_failures && scan_is_complete) {
+                    if for_candidate {
+                        if let Some(candidate) = svc.candidate.as_mut() {
+                            candidate.resolved_tag = inferred_first;
+                        }
+                    } else {
+                        svc.image.resolved_tag = inferred_first;
+                        svc.image.resolved_tags = if tags.len() > 1 { Some(tags) } else { None };
                     }
-                } else if let Some(inferred) = inferred_first {
-                    svc.image.resolved_tag = Some(inferred);
-                    svc.image.resolved_tags = if tags.len() > 1 { Some(tags) } else { None };
                 }
             }
         }

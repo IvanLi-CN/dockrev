@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Icon } from '@iconify/react'
 import helpCircleOutline from '@iconify-icons/mdi/help-circle-outline'
 
@@ -17,6 +18,36 @@ export type AggregateUpdatePreviewListItem = {
   status: Extract<RowStatus, 'updatable' | 'hint'>
   guardedDockrev?: boolean
   displayName?: string
+  stackId?: string
+}
+
+type ImageOverride = {
+  baseResolvedTag: string | null
+  baseResolvedTags: string[] | null
+  resolvedTag: string | null
+  resolvedTags: string[] | null
+}
+
+type CandidateOverride = {
+  baseResolvedTag: string | null
+  resolvedTag: string | null
+}
+
+function normalizeTag(value: string | null | undefined): string | null {
+  const trimmed = (value ?? '').trim()
+  return trimmed ? trimmed : null
+}
+
+function normalizeTags(value: string[] | null | undefined): string[] | null {
+  return value == null ? null : value.map((tag) => tag.trim())
+}
+
+function tagsKey(value: string[] | null | undefined): string {
+  return JSON.stringify(normalizeTags(value))
+}
+
+function buildDigestKey(serviceId: string, digest: string | null | undefined): string {
+  return `${serviceId}:${(digest ?? '').trim()}`
 }
 
 function splitImageRef(ref: string): { registry: string; name: string } {
@@ -56,30 +87,85 @@ function shouldPrefetchFloatingCandidate(
 export function AggregateUpdatePreviewList(props: {
   items: AggregateUpdatePreviewListItem[]
   dockrevGuardHint: string
+  onServiceResolvedTags?: (update: {
+    stackId?: string
+    serviceId: string
+    resolvedTag: string | null
+    resolvedTags: string[] | null
+  }) => void
+  onServiceCandidateResolvedTag?: (update: {
+    stackId?: string
+    serviceId: string
+    resolvedTag: string | null
+  }) => void
 }) {
+  // ConfirmProvider snapshots modal bodies. Track local overrides so popover-triggered refreshes
+  // can update sibling rows inside the same modal (raw tag row, candidate trigger, etc.).
+  const [imageOverrides, setImageOverrides] = useState<Map<string, ImageOverride>>(() => new Map())
+  const [candidateOverrides, setCandidateOverrides] = useState<Map<string, CandidateOverride>>(() => new Map())
+
   return (
     <div className="modalList">
       {props.items.map((item) => {
+        const svcId = item.svc.id
+        const imageOverrideKey = buildDigestKey(svcId, item.svc.image.digest ?? null)
+        const candidateOverrideKey = buildDigestKey(svcId, item.svc.candidate?.digest ?? null)
+
+        const imageOverride = imageOverrides.get(imageOverrideKey)
+        const useImageOverride =
+          imageOverride != null &&
+          imageOverride.baseResolvedTag === normalizeTag(item.svc.image.resolvedTag) &&
+          tagsKey(imageOverride.baseResolvedTags) === tagsKey(item.svc.image.resolvedTags)
+        const effectiveImageResolvedTag = useImageOverride ? imageOverride.resolvedTag : item.svc.image.resolvedTag
+        const effectiveImageResolvedTags = useImageOverride ? imageOverride.resolvedTags : item.svc.image.resolvedTags
+
+        const candidateOverride = candidateOverrides.get(candidateOverrideKey)
+        const useCandidateOverride =
+          candidateOverride != null &&
+          candidateOverride.baseResolvedTag === normalizeTag(item.svc.candidate?.resolvedTag)
+        const effectiveCandidateResolvedTag = useCandidateOverride
+          ? candidateOverride.resolvedTag
+          : item.svc.candidate?.resolvedTag
+
+        const svc: Service = {
+          ...item.svc,
+          image: {
+            ...item.svc.image,
+            resolvedTag: effectiveImageResolvedTag,
+            resolvedTags: effectiveImageResolvedTags,
+          },
+          candidate: item.svc.candidate
+            ? {
+                ...item.svc.candidate,
+                resolvedTag: effectiveCandidateResolvedTag,
+              }
+            : item.svc.candidate,
+        }
+
         const currentDisplayTag = formatTagDisplay(
-          item.svc.image.tag,
-          item.svc.image.resolvedTag,
-          item.svc.versionInference?.status,
+          svc.image.tag,
+          svc.image.resolvedTag,
+          svc.versionInference?.status,
         )
-        const inferencePending = item.svc.versionInference?.status === 'pending'
-        const rawTagTrim = (item.svc.image.tag ?? '').trim()
+        const inferencePending = svc.versionInference?.status === 'pending'
+        const rawTagTrim = (svc.image.tag ?? '').trim()
         const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
-        const candidateTag = item.svc.candidate?.tag && item.svc.candidate.tag !== '-' ? item.svc.candidate.tag : null
+        const candidateTag = svc.candidate?.tag && svc.candidate.tag !== '-' ? svc.candidate.tag : null
         const candidateDisplayTag = candidateTag
-          ? formatCandidateTagDisplay(candidateTag, item.svc.candidate?.resolvedTag ?? null, item.svc.versionInference?.status)
+          ? formatCandidateTagDisplay(candidateTag, svc.candidate?.resolvedTag ?? null, svc.versionInference?.status)
           : null
         const candidatePrefetchOnMount =
           candidateTag && candidateDisplayTag
-            ? shouldPrefetchFloatingCandidate(candidateTag, item.svc.candidate?.resolvedTag ?? null, item.svc.candidate?.digest ?? null)
+            ? shouldPrefetchFloatingCandidate(
+                candidateTag,
+                svc.candidate?.resolvedTag ?? null,
+                svc.candidate?.digest ?? null,
+              )
             : false
-        const semverAnomaly = isSemverDowngradeAnomaly(item.svc)
+        const semverAnomaly = isSemverDowngradeAnomaly(svc)
         const arrowPulse = inferencePending
-        const img = splitImageRef(item.svc.image.ref)
-        const dn = splitImageNameForDisplay(img.name, item.svc.image.tag)
+        const img = splitImageRef(svc.image.ref)
+        const dn = splitImageNameForDisplay(img.name, svc.image.tag)
         const classNames = [
           'modalListItem',
           semverAnomaly ? 'modalListItemAnomaly' : null,
@@ -90,13 +176,13 @@ export function AggregateUpdatePreviewList(props: {
 
         return (
           <div
-            key={`${item.displayName ?? item.svc.name}:${item.svc.id}`}
+            key={`${item.displayName ?? svc.name}:${svc.id}`}
             className={classNames}
             aria-disabled={item.guardedDockrev ? true : undefined}
           >
             <div className="modalListLeft">
               <div className="modalListTitle">
-                <span className="mono">{item.displayName ?? item.svc.name}</span>
+                <span className="mono">{item.displayName ?? svc.name}</span>
                 <span className="muted">{` · ${item.status}`}</span>
                 {item.guardedDockrev ? (
                   <TooltipProvider delayDuration={160}>
@@ -134,12 +220,29 @@ export function AggregateUpdatePreviewList(props: {
               <div className="cellTwoLine">
                 <div className="versionLine">
                   <CurrentVersionPopover
-                    serviceId={item.svc.id}
+                    serviceId={svc.id}
                     displayTag={currentDisplayTag}
-                    imageTag={item.svc.image.tag}
-                    imageDigest={item.svc.image.digest ?? null}
-                    resolvedTag={item.svc.image.resolvedTag}
-                    resolvedTags={item.svc.image.resolvedTags}
+                    imageTag={svc.image.tag}
+                    imageDigest={svc.image.digest ?? null}
+                    resolvedTag={svc.image.resolvedTag}
+                    resolvedTags={svc.image.resolvedTags}
+                    onLocalResolvedTags={(update) => {
+                      setImageOverrides((prev) => {
+                        const next = new Map(prev)
+                        next.set(imageOverrideKey, {
+                          baseResolvedTag: normalizeTag(item.svc.image.resolvedTag),
+                          baseResolvedTags: normalizeTags(item.svc.image.resolvedTags),
+                          resolvedTag: update.resolvedTag,
+                          resolvedTags: update.resolvedTags,
+                        })
+                        return next
+                      })
+                      props.onServiceResolvedTags?.({
+                        stackId: item.stackId,
+                        serviceId: svcId,
+                        ...update,
+                      })
+                    }}
                     inferenceLoading={inferencePending}
                   />
                   <span className={arrowPulse ? 'inlineIconLoading' : 'inlineIconMuted'}>
@@ -150,10 +253,25 @@ export function AggregateUpdatePreviewList(props: {
                   </span>
                   {candidateTag && candidateDisplayTag ? (
                     <VersionTagsPopover
-                      serviceId={item.svc.id}
+                      serviceId={svc.id}
                       candidateTag={candidateTag}
-                      candidateDigest={item.svc.candidate?.digest ?? null}
+                      candidateDigest={svc.candidate?.digest ?? null}
                       prefetchOnMount={candidatePrefetchOnMount}
+                      onLocalResolvedTag={(resolvedTag) => {
+                        setCandidateOverrides((prev) => {
+                          const next = new Map(prev)
+                          next.set(candidateOverrideKey, {
+                            baseResolvedTag: normalizeTag(item.svc.candidate?.resolvedTag),
+                            resolvedTag,
+                          })
+                          return next
+                        })
+                        props.onServiceCandidateResolvedTag?.({
+                          stackId: item.stackId,
+                          serviceId: svcId,
+                          resolvedTag,
+                        })
+                      }}
                     >
                       {candidateDisplayTag}
                     </VersionTagsPopover>
@@ -164,16 +282,33 @@ export function AggregateUpdatePreviewList(props: {
                 {showRawTag ? (
                   <div>
                     <CurrentVersionPopover
-                      serviceId={item.svc.id}
-                      displayTag={item.svc.image.tag}
-                      imageTag={item.svc.image.tag}
-                      imageDigest={item.svc.image.digest ?? null}
-                      resolvedTag={item.svc.image.resolvedTag}
-                      resolvedTags={item.svc.image.resolvedTags}
+                      serviceId={svc.id}
+                      displayTag={svc.image.tag}
+                      imageTag={svc.image.tag}
+                      imageDigest={svc.image.digest ?? null}
+                      resolvedTag={svc.image.resolvedTag}
+                      resolvedTags={svc.image.resolvedTags}
+                      onLocalResolvedTags={(update) => {
+                        setImageOverrides((prev) => {
+                          const next = new Map(prev)
+                          next.set(imageOverrideKey, {
+                            baseResolvedTag: normalizeTag(item.svc.image.resolvedTag),
+                            baseResolvedTags: normalizeTags(item.svc.image.resolvedTags),
+                            resolvedTag: update.resolvedTag,
+                            resolvedTags: update.resolvedTags,
+                          })
+                          return next
+                        })
+                        props.onServiceResolvedTags?.({
+                          stackId: item.stackId,
+                          serviceId: svcId,
+                          ...update,
+                        })
+                      }}
                       preferSource="rawTag"
                       triggerClassName="versionTagsTrigger mono monoSecondary"
                     >
-                      {item.svc.image.tag}
+                      {svc.image.tag}
                     </CurrentVersionPopover>
                   </div>
                 ) : null}
