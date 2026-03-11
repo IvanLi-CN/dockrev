@@ -42,6 +42,7 @@ import {
   DIGEST_SNAPSHOT_UPDATED_EVENT,
   type DigestSnapshotUpdatedDetail,
 } from '../digestInferenceTracker'
+import { imageRepoFromImageRef } from '../imageRepo'
 import {
   resolveUpdateActionTargetKey,
   UPDATE_JOB_SETTLED_EVENT,
@@ -356,10 +357,14 @@ export function ServicesPage(props: {
 
   const applyDigestSnapshotUpdate = useCallback(
     (detail: DigestSnapshotUpdatedDetail) => {
+      // Digest snapshots are stored per `imageRepo + digest`, but UI refresh from popovers is
+      // intentionally scoped to the clicked service + side. We avoid fanning out to other
+      // services that happen to share the same digest to preserve locality.
+      const imageRepo = (detail.imageRepo ?? '').trim().toLowerCase()
       const digestNorm = normalizeDigest(detail.digest)?.toLowerCase() ?? null
       const triggerServiceId = (detail.triggerServiceId ?? '').trim()
       const side = detail.side
-      if (!triggerServiceId || !digestNorm) return
+      if (!imageRepo || !triggerServiceId || !digestNorm) return
       if (side !== 'current' && side !== 'candidate') return
 
       const failures = scanHasFailures(detail.scan)
@@ -367,6 +372,8 @@ export function ServicesPage(props: {
 
       const patchService = (svc: Service): Service => {
         if (svc.id !== triggerServiceId) return svc
+        const svcRepo = imageRepoFromImageRef(svc.image.ref)
+        if (!svcRepo || svcRepo !== imageRepo) return svc
 
         let changed = false
         let next: Service = svc
