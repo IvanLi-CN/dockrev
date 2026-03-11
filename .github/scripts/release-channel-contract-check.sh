@@ -115,6 +115,8 @@ assert all(item.get('workflow') != 'Review Policy' for item in expected_pr_workf
 assert 'Release intent label gate' in required_checks, 'label gate must stay required'
 PY
 
+python3 ./.github/scripts/check-live-quality-gates.py --declaration .github/quality-gates.json || exit 1
+
 tmp_dir="$(mktemp -d)"
 server_pid=""
 cleanup() {
@@ -163,6 +165,92 @@ LABELS = {
     106: [{"name": "type:docs"}, {"name": "channel:stable"}],
 }
 
+REQUIRED_CHECKS = [
+    "Release intent label gate",
+    "Detect changes",
+    "Lint & Checks",
+    "Backend Tests",
+    "Frontend lint + build",
+    "Frontend Storybook build",
+    "Frontend Storybook test",
+    "Release build check (PR)",
+]
+
+RULES_BY_BRANCH = {
+    "main": {
+        "rules": [
+            {
+                "type": "pull_request",
+                "parameters": {
+                    "required_approving_review_count": 1,
+                    "dismiss_stale_reviews_on_push": False,
+                    "require_code_owner_review": False,
+                    "require_last_push_approval": False,
+                    "required_review_thread_resolution": False,
+                    "allowed_merge_methods": ["merge", "squash", "rebase"],
+                },
+            },
+            {
+                "type": "required_status_checks",
+                "parameters": {
+                    "strict_required_status_checks_policy": True,
+                    "required_status_checks": [
+                        {"context": context, "integration_id": 15368}
+                        for context in REQUIRED_CHECKS
+                    ],
+                },
+            },
+            {"type": "required_signatures"},
+            {"type": "non_fast_forward"},
+        ]
+    },
+    "main-missing-review": {
+        "rules": [
+            {
+                "type": "pull_request",
+                "parameters": {
+                    "required_approving_review_count": 0,
+                    "allowed_merge_methods": ["merge", "squash", "rebase"],
+                },
+            },
+            {
+                "type": "required_status_checks",
+                "parameters": {
+                    "strict_required_status_checks_policy": True,
+                    "required_status_checks": [
+                        {"context": context, "integration_id": 15368}
+                        for context in REQUIRED_CHECKS
+                    ],
+                },
+            },
+            {"type": "required_signatures"},
+        ]
+    },
+    "main-stale-check": {
+        "rules": [
+            {
+                "type": "pull_request",
+                "parameters": {
+                    "required_approving_review_count": 1,
+                    "allowed_merge_methods": ["merge", "squash", "rebase"],
+                },
+            },
+            {
+                "type": "required_status_checks",
+                "parameters": {
+                    "strict_required_status_checks_policy": True,
+                    "required_status_checks": [
+                        {"context": context, "integration_id": 15368}
+                        for context in REQUIRED_CHECKS + ["Review Policy Gate"]
+                    ],
+                },
+            },
+            {"type": "required_signatures"},
+            {"type": "non_fast_forward"},
+        ]
+    },
+}
+
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
@@ -190,6 +278,12 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 return self._json([], status=400)
             return self._json(LABELS.get(pr_number, []))
+        if len(parts) >= 6 and parts[0] == "repos" and parts[3] == "rules" and parts[4] == "branches":
+            branch = parts[5]
+            payload = RULES_BY_BRANCH.get(branch)
+            if payload is None:
+                return self._json({"error": "branch not found", "branch": branch}, status=404)
+            return self._json(payload)
         return self._json({"error": "not found", "path": path}, status=404)
 
 
@@ -416,6 +510,38 @@ main().catch((error) => {
 NODE
 }
 
+run_live_quality_gates() {
+  local branch="$1"
+  local expected_status="$2"
+  set +e
+  local output
+  output="$({
+    QUALITY_GATES_LIVE_RULES_MODE=require \
+      GITHUB_API_URL="http://127.0.0.1:${api_port}" \
+      GITHUB_REPOSITORY="IvanLi-CN/dockrev" \
+      GITHUB_TOKEN="x" \
+      python3 ./.github/scripts/check-live-quality-gates.py \
+        --declaration .github/quality-gates.json \
+        --repo IvanLi-CN/dockrev \
+        --branch "${branch}"
+  } 2>&1)"
+  local code=$?
+  set -e
+  if [[ "${expected_status}" == "ok" ]]; then
+    if [[ "${code}" -ne 0 ]]; then
+      echo "[contract-check] live-quality-gates branch=${branch} expected ok, got ${code}" >&2
+      echo "${output}" >&2
+      exit 1
+    fi
+  else
+    if [[ "${code}" -eq 0 ]]; then
+      echo "[contract-check] live-quality-gates branch=${branch} expected fail, got success" >&2
+      echo "${output}" >&2
+      exit 1
+    fi
+  fi
+}
+
 run_label_gate() {
   local pr_number="$1"
   local expected_status="$2"
@@ -479,6 +605,11 @@ run_release_intent() {
 
 echo "[contract-check] inline github-script scenarios"
 run_inline_workflow_contract_checks
+
+echo "[contract-check] live quality-gates scenarios"
+run_live_quality_gates main ok
+run_live_quality_gates main-missing-review fail
+run_live_quality_gates main-stale-check fail
 
 echo "[contract-check] label-gate scenarios"
 run_label_gate 101 ok
