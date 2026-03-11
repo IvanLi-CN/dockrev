@@ -8,7 +8,8 @@
         "main"
       ],
       "require_pull_request": true,
-      "disallow_direct_pushes": true
+      "disallow_direct_pushes": true,
+      "require_merge_queue": false
     },
     "review_policy": {
       "mode": "conditional-required",
@@ -30,6 +31,7 @@
     }
   },
   "required_checks": [
+    "Review Policy Gate",
     "Release intent label gate",
     "Detect changes",
     "Lint & Checks",
@@ -37,14 +39,19 @@
     "Frontend lint + build",
     "Frontend Storybook build",
     "Frontend Storybook test",
-    "Release build check (PR)",
-    "Review Policy Gate"
+    "Release build check (PR)"
   ],
   "informational_checks": [
     "Deploy Smoke"
   ],
   "waivers": [],
   "expected_pr_workflows": [
+    {
+      "workflow": "Review Policy",
+      "jobs": [
+        "Review Policy Gate"
+      ]
+    },
     {
       "workflow": "PR Label Gate",
       "jobs": [
@@ -62,12 +69,6 @@
         "Frontend Storybook build",
         "Frontend Storybook test",
         "Release build check (PR)"
-      ]
-    },
-    {
-      "workflow": "Review Policy",
-      "jobs": [
-        "Review Policy Gate"
       ]
     }
   ]

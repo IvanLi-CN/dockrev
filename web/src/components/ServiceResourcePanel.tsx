@@ -44,6 +44,43 @@ const TAB_OPTIONS: Array<{ key: MetricTabKey; label: string }> = [
   { key: 'pids', label: 'PIDs' },
 ]
 
+const WINDOW_META_LABELS: Record<ServiceResourceUsageWindow, string> = {
+  '15m': '最近 15 分钟',
+  '1h': '最近 1 小时',
+  '6h': '最近 6 小时',
+}
+
+const METRIC_PANEL_COPY: Record<
+  MetricTabKey,
+  { title: string; description: string; currentLabel: string }
+> = {
+  cpu: {
+    title: 'CPU 占用趋势',
+    description: '关注短时尖峰与持续占用，快速判断是否存在抖动或异常突增。',
+    currentLabel: '当前 CPU',
+  },
+  memory: {
+    title: '内存使用趋势',
+    description: '聚焦容器已用内存与上限关系，适合观察增长是否接近资源边界。',
+    currentLabel: '当前内存',
+  },
+  network: {
+    title: '网络吞吐趋势',
+    description: '同时观察 RX / TX 速率，判断实时流量波峰是否持续或异常偏置。',
+    currentLabel: '当前网络',
+  },
+  disk: {
+    title: '磁盘 I/O 趋势',
+    description: '对比 Read / Write 速率，识别高频读写或突发型块设备压力。',
+    currentLabel: '当前磁盘 I/O',
+  },
+  pids: {
+    title: '进程数量趋势',
+    description: '观察容器进程数是否稳定，排查泄漏、重启抖动或异常派生进程。',
+    currentLabel: '当前 PIDs',
+  },
+}
+
 const SSE_BACKOFF_MS = [1000, 2000, 5000]
 
 function errorMessage(error: unknown): string {
@@ -151,6 +188,11 @@ function formatMemorySummary(sample: ServiceResourceSample | null): string {
   return `${formatBytes(sample.memUsedBytes)} / ${formatBytes(sample.memLimitBytes)}`
 }
 
+function formatSampleTime(sample: ServiceResourceSample | null): string {
+  const ts = sample ? parseSampleTs(sample) : null
+  return ts == null ? '暂无样本' : formatTime(ts)
+}
+
 function computeRatePairs(
   samples: ServiceResourceSample[],
   pickRx: (sample: ServiceResourceSample) => number | null | undefined,
@@ -238,6 +280,69 @@ function buildPath(
   return path
 }
 
+function scalePoint(
+  point: { x: number; y: number },
+  domain: { xMin: number; xMax: number; yMin: number; yMax: number },
+  box: { left: number; top: number; width: number; height: number },
+): { x: number; y: number } {
+  const xSpan = Math.max(1, domain.xMax - domain.xMin)
+  const ySpan = Math.max(1e-6, domain.yMax - domain.yMin)
+  return {
+    x: box.left + ((point.x - domain.xMin) / xSpan) * box.width,
+    y: box.top + box.height - ((point.y - domain.yMin) / ySpan) * box.height,
+  }
+}
+
+function buildAreaPaths(
+  points: Array<{ x: number; y: number | null }>,
+  domain: { xMin: number; xMax: number; yMin: number; yMax: number },
+  box: { left: number; top: number; width: number; height: number },
+): string[] {
+  const segments: Array<Array<{ x: number; y: number }>> = []
+  let currentSegment: Array<{ x: number; y: number }> = []
+
+  for (const point of points) {
+    if (point.y == null || !Number.isFinite(point.y)) {
+      if (currentSegment.length) {
+        segments.push(currentSegment)
+        currentSegment = []
+      }
+      continue
+    }
+    currentSegment.push(scalePoint({ x: point.x, y: point.y }, domain, box))
+  }
+
+  if (currentSegment.length) segments.push(currentSegment)
+
+  const baseY = box.top + box.height
+  return segments.map((segment) => {
+    const [first] = segment
+    const last = segment[segment.length - 1]
+    let path = `M ${first.x.toFixed(2)} ${baseY.toFixed(2)} L ${first.x.toFixed(2)} ${first.y.toFixed(2)}`
+    for (let index = 1; index < segment.length; index += 1) {
+      const point = segment[index]
+      path += ` L ${point.x.toFixed(2)} ${point.y.toFixed(2)}`
+    }
+    path += ` L ${last.x.toFixed(2)} ${baseY.toFixed(2)} Z`
+    return path
+  })
+}
+
+function currentPointValue(points: Array<{ x: number; y: number | null }>): number | null {
+  const value = points[points.length - 1]?.y
+  return value != null && Number.isFinite(value) ? value : null
+}
+
+function currentPointMarker(
+  points: Array<{ x: number; y: number | null }>,
+  domain: { xMin: number; xMax: number; yMin: number; yMax: number },
+  box: { left: number; top: number; width: number; height: number },
+): { x: number; y: number } | null {
+  const point = points[points.length - 1]
+  if (!point || point.y == null || !Number.isFinite(point.y)) return null
+  return scalePoint({ x: point.x, y: point.y }, domain, box)
+}
+
 function ResourceLineChart(props: {
   series: ChartSeries[]
   yFormatter: (value: number) => string
@@ -277,10 +382,20 @@ function ResourceLineChart(props: {
   }
 
   const domain = { xMin, xMax, yMin, yMax }
+  const singleSeries = series.length === 1
 
   return (
     <div className="svcResourceChart">
       <svg viewBox={`0 0 ${width} ${height}`} className="svcResourceChartSvg" role="img" aria-label="服务资源趋势图">
+        <rect
+          className="svcResourcePlotBackdrop"
+          height={box.height}
+          rx={20}
+          width={box.width}
+          x={box.left}
+          y={box.top}
+        />
+
         {gridTicks.map((tick) => {
           const y = box.top + box.height - tick * box.height
           const value = yMin + tick * (yMax - yMin)
@@ -301,8 +416,30 @@ function ResourceLineChart(props: {
             width: box.width,
             height: box.height,
           })
+          const areaPaths = singleSeries
+            ? buildAreaPaths(item.points, domain, {
+                left: box.left,
+                top: box.top,
+                width: box.width,
+                height: box.height,
+              })
+            : []
+          const point = currentPointMarker(item.points, domain, {
+            left: box.left,
+            top: box.top,
+            width: box.width,
+            height: box.height,
+          })
           if (!path) return null
-          return <path key={item.id} d={path} className={`svcResourceLine ${item.colorClass}`} />
+          return (
+            <g key={item.id} className={item.colorClass}>
+              {areaPaths.map((areaPath, index) => (
+                <path key={`${item.id}-area-${index}`} d={areaPath} className={`svcResourceArea ${item.colorClass}`} />
+              ))}
+              <path d={path} className={`svcResourceLine ${item.colorClass}`} />
+              {point ? <circle className={`svcResourcePoint ${item.colorClass}`} cx={point.x} cy={point.y} r={4} /> : null}
+            </g>
+          )
         })}
 
         <text x={box.left} y={height - 10} className="svcResourceAxisLabel" textAnchor="start">
@@ -314,12 +451,16 @@ function ResourceLineChart(props: {
       </svg>
 
       <div className="svcResourceLegend">
-        {series.map((item) => (
-          <div key={item.id} className="svcResourceLegendItem">
-            <span className={`svcResourceLegendDot ${item.colorClass}`} />
-            <span>{item.label}</span>
-          </div>
-        ))}
+        {series.map((item) => {
+          const latestValue = currentPointValue(item.points)
+          return (
+            <div key={item.id} className="svcResourceLegendItem">
+              <span className={`svcResourceLegendDot ${item.colorClass}`} />
+              <span className="svcResourceLegendLabel">{item.label}</span>
+              <span className="svcResourceLegendValue">{latestValue == null ? '--' : yFormatter(latestValue)}</span>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -603,88 +744,188 @@ export function ServiceResourcePanel(props: { serviceId: string }) {
             ? '未连接'
             : '页面不可见，实时连接已暂停'
 
+  const streamBadge = useMemo(() => {
+    if (monitorDisabled) return { label: '监控关闭', className: 'svcResourceStatusWarn' }
+    if (streamError) return { label: '实时异常', className: 'svcResourceStatusBad' }
+    if (streamState === 'live') return { label: '实时在线', className: 'svcResourceStatusLive' }
+    if (streamState === 'connecting' || streamState === 'reconnecting') {
+      return { label: streamState === 'connecting' ? '建立连接' : '正在重连', className: 'svcResourceStatusSync' }
+    }
+    if (!isPageVisible) return { label: '已暂停', className: 'svcResourceStatusIdle' }
+    return { label: '未连接', className: 'svcResourceStatusIdle' }
+  }, [isPageVisible, monitorDisabled, streamError, streamState])
+
+  const activeMetric = TAB_OPTIONS.find((item) => item.key === metricTab) ?? TAB_OPTIONS[0]
+  const activeMetricCopy = METRIC_PANEL_COPY[metricTab]
+  const chartCurrentValue =
+    metricTab === 'cpu'
+      ? formatPercent(latestSample?.cpuPercent ?? null)
+      : metricTab === 'memory'
+        ? formatMemorySummary(latestSample)
+        : metricTab === 'network'
+          ? `↓ ${formatRate(latestNetworkRate.rx)} · ↑ ${formatRate(latestNetworkRate.tx)}`
+          : metricTab === 'disk'
+            ? `R ${formatRate(latestDiskRate.rx)} · W ${formatRate(latestDiskRate.tx)}`
+            : formatCount(latestSample?.pids)
+
+  const chartContext = historyLoading
+    ? `${WINDOW_META_LABELS[windowKey]} · 正在加载历史样本`
+    : samples.length > 0
+      ? `${WINDOW_META_LABELS[windowKey]} · ${samples.length} 个样本`
+      : `${WINDOW_META_LABELS[windowKey]} · 暂无历史样本`
+
+  const statCards = [
+    {
+      key: 'cpu',
+      label: 'CPU',
+      value: formatPercent(latestSample?.cpuPercent ?? null),
+      meta: '实时占用率',
+      primary: true,
+    },
+    {
+      key: 'memory',
+      label: '内存',
+      value: formatMemorySummary(latestSample),
+      meta: '已用 / 限额',
+      primary: true,
+    },
+    {
+      key: 'network',
+      label: '网络速率',
+      value: `↓ ${formatRate(latestNetworkRate.rx)} · ↑ ${formatRate(latestNetworkRate.tx)}`,
+      meta: 'RX / TX',
+      primary: false,
+    },
+    {
+      key: 'disk',
+      label: '磁盘 I/O',
+      value: `R ${formatRate(latestDiskRate.rx)} · W ${formatRate(latestDiskRate.tx)}`,
+      meta: 'Read / Write',
+      primary: false,
+    },
+    {
+      key: 'pids',
+      label: 'PIDs',
+      value: formatCount(latestSample?.pids),
+      meta: '容器进程数',
+      primary: false,
+    },
+  ]
+
   return (
     <div className="card svcResourceCard">
-      <div className="title">资源监控</div>
-      <div className="muted">历史趋势 + SSE 实时推送（1 秒）</div>
+      <div className="svcResourceHero">
+        <div className="svcResourceEyebrow">Service Observability</div>
+        <div className="svcResourceHeroTop">
+          <div className="svcResourceTitleBlock">
+            <div className="title svcResourceTitle">资源监控</div>
+            <div className="muted svcResourceSubtitle">历史趋势 + SSE 实时推送（1 秒），优先帮助你抓住尖峰、漂移和容器压力。</div>
+          </div>
+
+          <div className={`svcResourceStatusBadge ${streamBadge.className}`} role="status" aria-live="polite">
+            <span className="svcResourceStatusDot" aria-hidden="true" />
+            <span className="svcResourceStatusText">{streamBadge.label}</span>
+          </div>
+        </div>
+
+        <div className="svcResourceFacts" aria-label="监控面板概览">
+          <div className="svcResourceFact">{WINDOW_META_LABELS[windowKey]}</div>
+          <div className="svcResourceFact">{historyLoading ? '加载样本中' : `${samples.length} 个样本`}</div>
+          <div className="svcResourceFact">最近更新 {formatSampleTime(latestSample)}</div>
+        </div>
+
+        {streamError && !monitorDisabled ? <div className="svcResourceSubtleAlert">实时状态：{streamError}</div> : null}
+      </div>
 
       {monitorDisabled ? (
         <div className="svcResourceNotice">资源监控已关闭，请在“系统设置 → 资源监控”中启用。</div>
       ) : (
         <>
           <div className="svcResourceStatGrid">
-            <div className="svcResourceStatCard">
-              <div className="svcResourceStatLabel">CPU</div>
-              <div className="svcResourceStatValue">{formatPercent(latestSample?.cpuPercent ?? null)}</div>
-            </div>
-            <div className="svcResourceStatCard">
-              <div className="svcResourceStatLabel">内存</div>
-              <div className="svcResourceStatValue">{formatMemorySummary(latestSample)}</div>
-            </div>
-            <div className="svcResourceStatCard">
-              <div className="svcResourceStatLabel">网络速率</div>
-              <div className="svcResourceStatValue">{`↓ ${formatRate(latestNetworkRate.rx)} · ↑ ${formatRate(latestNetworkRate.tx)}`}</div>
-            </div>
-            <div className="svcResourceStatCard">
-              <div className="svcResourceStatLabel">磁盘 I/O 速率</div>
-              <div className="svcResourceStatValue">{`R ${formatRate(latestDiskRate.rx)} · W ${formatRate(latestDiskRate.tx)}`}</div>
-            </div>
-            <div className="svcResourceStatCard">
-              <div className="svcResourceStatLabel">PIDs</div>
-              <div className="svcResourceStatValue">{formatCount(latestSample?.pids)}</div>
-            </div>
+            {statCards.map((card) => (
+              <div
+                key={card.key}
+                className={card.primary ? 'svcResourceStatCard svcResourceStatCardPrimary' : 'svcResourceStatCard'}
+              >
+                <div className="svcResourceStatLabel">{card.label}</div>
+                <div className="svcResourceStatValue">{card.value}</div>
+                <div className="svcResourceStatMeta">{card.meta}</div>
+              </div>
+            ))}
           </div>
 
           <Tabs className="svcResourceChartWrap" onValueChange={(value) => setMetricTab(value as MetricTabKey)} value={metricTab}>
-            <TabsList className="svcResourceTabs" aria-label="监控指标切换">
-              {TAB_OPTIONS.map((tab) => (
-                <TabsTrigger
-                  key={tab.key}
-                  className={tab.key === metricTab ? 'svcResourceTab active' : 'svcResourceTab'}
-                  value={tab.key}
-                >
-                  {tab.label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
+            <div className="svcResourceToolbar">
+              <div className="svcResourceToolbarGroup">
+                <div className="svcResourceToolbarLabel">监控指标</div>
+                <TabsList className="svcResourceTabs" aria-label="监控指标切换">
+                  {TAB_OPTIONS.map((tab) => (
+                    <TabsTrigger
+                      key={tab.key}
+                      className={tab.key === metricTab ? 'svcResourceTab active' : 'svcResourceTab'}
+                      value={tab.key}
+                    >
+                      {tab.label}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </div>
 
-            {historyLoading ? (
-              <div className="svcResourceChartEmpty">正在加载历史采样…</div>
-            ) : historyError ? (
-              <div className="svcResourceChartEmpty">历史数据加载失败：{historyError}</div>
-            ) : (
-              <ResourceLineChart
-                series={chartSeries}
-                yFormatter={yFormatter}
-                emptyText="当前窗口暂无可展示的监控数据"
-              />
-            )}
+              <div className="svcResourceToolbarGroup svcResourceToolbarGroupWindow">
+                <div className="svcResourceToolbarLabel">时间范围</div>
+                <ToggleGroup
+                  className="svcResourceWindowSwitch"
+                  type="single"
+                  value={windowKey}
+                  onValueChange={(value) => {
+                    if (!value) return
+                    setWindowKey(value as ServiceResourceUsageWindow)
+                  }}
+                  aria-label="时间窗口切换"
+                >
+                  {WINDOW_OPTIONS.map((option) => (
+                    <ToggleGroupItem
+                      key={option.key}
+                      className={option.key === windowKey ? 'svcResourceWindowBtn active' : 'svcResourceWindowBtn'}
+                      value={option.key}
+                    >
+                      {option.label}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              </div>
+            </div>
+
+            <div className="svcResourceChartStage">
+              <div className="svcResourceChartStageHead">
+                <div className="svcResourceChartTitleBlock">
+                  <div className="svcResourceChartEyebrow">{activeMetric.label}</div>
+                  <div className="svcResourceChartTitle">{activeMetricCopy.title}</div>
+                  <div className="svcResourceChartDescription">{activeMetricCopy.description}</div>
+                </div>
+
+                <div className="svcResourceChartCurrentCard">
+                  <div className="svcResourceChartCurrentLabel">{activeMetricCopy.currentLabel}</div>
+                  <div className="svcResourceChartCurrentValue">{chartCurrentValue}</div>
+                  <div className="svcResourceChartCurrentMeta">{chartContext}</div>
+                </div>
+              </div>
+
+              {historyLoading ? (
+                <div className="svcResourceChartEmpty">正在加载历史采样…</div>
+              ) : historyError ? (
+                <div className="svcResourceChartEmpty">历史数据加载失败：{historyError}</div>
+              ) : (
+                <ResourceLineChart
+                  series={chartSeries}
+                  yFormatter={yFormatter}
+                  emptyText="当前窗口暂无可展示的监控数据"
+                />
+              )}
+            </div>
           </Tabs>
 
-          <div className="svcResourceFooter">
-            <ToggleGroup
-              className="svcResourceWindowSwitch"
-              type="single"
-              value={windowKey}
-              onValueChange={(value) => {
-                if (!value) return
-                setWindowKey(value as ServiceResourceUsageWindow)
-              }}
-              aria-label="时间窗口切换"
-            >
-              {WINDOW_OPTIONS.map((option) => (
-                <ToggleGroupItem
-                  key={option.key}
-                  className={option.key === windowKey ? 'svcResourceWindowBtn active' : 'svcResourceWindowBtn'}
-                  value={option.key}
-                >
-                  {option.label}
-                </ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-
-            <div className="svcResourceStreamStatus">{streamError ? `实时状态：${streamError}` : streamStatusLabel}</div>
-          </div>
+          <div className="svcResourceStreamStatus">{streamStatusLabel}</div>
         </>
       )}
     </div>

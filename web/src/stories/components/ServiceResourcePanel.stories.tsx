@@ -7,7 +7,7 @@ const meta: Meta<typeof ServiceResourcePanel> = {
   component: ServiceResourcePanel,
   decorators: [withDockrevMockApi],
   args: {
-    serviceId: 'svc-api',
+    serviceId: 'svc-prod-api',
   },
 }
 

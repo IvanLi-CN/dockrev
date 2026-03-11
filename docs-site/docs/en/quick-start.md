@@ -18,7 +18,9 @@ Goal: get Dockrev running in about 10 minutes and validate the end-to-end flow.
 ```bash
 cd deploy
 mkdir -p data
+# Dockrev stages this file for update-job Docker/Compose auth, so you do not need an extra /root/.docker/config.json mount.
 cp ~/.docker/config.json data/docker-config.json
+# If you rely on Docker contexts, configure DOCKREV_DOCKER_CONFIG with a real config.json path instead of a renamed copy.
 
 docker compose up --build
 ```
