@@ -113,8 +113,10 @@ Uniquely mapped means:
 
 Trigger: scheduled update checks and GHCR-webhook-triggered service checks. A notification is sent when a check run discovers new versions. UI-triggered manual checks stay silent.
 
-Deduplication and lifecycle:
+Dispatch timing, dedupe, and lifecycle:
 
+- the check job is finalized as `success` before any notification wait starts; only dispatch is delayed
+- services that still depend on floating-tag inference wait on digest snapshots + snapshot-worker in-flight state before dispatch, with a fixed **3 second** cap
 - active dedupe is keyed by `serviceId + candidateDigest`
 - only `pending` / `sent` records block repeats
 - when the candidate disappears, the candidate digest changes, or the service baseline `imageRef:imageTag` changes, the previous active record is marked `superseded`
@@ -128,9 +130,29 @@ Key fields:
 - `links.jobUrl`: `/queue/{jobId}`
 - `links.serviceUrls[]`: `/services/{stackId}/{serviceId}`
 - `links.serviceUrls[].currentTag` / `candidateTag`: raw tags kept for backward compatibility
-- `links.serviceUrls[].currentDisplayTag` / `candidateDisplayTag`: optional display tags that prefer resolved version/tag and fall back to raw tags
+- `links.serviceUrls[].currentDisplayTag` / `candidateDisplayTag`: prefer resolved version/tag when available; raw fields remain unchanged for compatibility
 - `links.primaryUrl`: service URL when exactly one service is affected, otherwise job URL
-- `human.summary`: includes affected service names together with the visible transition (for example: `Found 3 services with new versions: blog/api (1.0.0 -> 1.1.0), blog/worker (1.0.0 -> 1.1.0), shop/gateway (2.4.0 -> 2.5.0).`)
+- `human.title`: a compact headline for the Email subject / Web Push title; single-service payloads use the service name, while multi-service payloads use an aggregate count
+- `human.summary`: the human-facing copy is tightened without changing the schema version
+
+Human-readable summary rules:
+
+- single service, both sides readable: `blog / api has a new version available (1.0.0 -> 1.1.0).`
+- single service, only one side readable: `blog / api has a new version available (1.0.0 -> latest).`
+- single service, both sides still unreadable after settling: `blog / api has a new version available.` (never `latest -> latest`)
+- multi-service aggregate:
+  ```text
+  3 services have new versions available:
+  - blog / api
+  - blog / worker (1.0.0 -> 1.1.0)
+  - shop / gateway (2.4.0 -> 2.5.0)
+  ```
+
+Channel rendering rules:
+
+- Telegram / Email (single service): start directly with the summary sentence and keep only one `Service details` action; no generic banner title, no trailing `Details` suffix, no `Service list` block, and no duplicate link list
+- Telegram / Email (multi service): keep the aggregate notification, but render one service per line; unreadable entries show only the service name without a transition suffix
+- Web Push: `title` uses the compact `human.title` headline, `body` is exactly `human.summary`, and the click target still uses `links.primaryUrl`
 
 Truncation:
 

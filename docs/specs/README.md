@@ -27,8 +27,12 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| kv9pg | Dockrev：quality-gates 最终版对齐（merge queue + 条件 review + required checks） | 进行中 | `kv9pg-quality-gates-final-alignment/SPEC.md` | 2026-03-11 | fast-track |
+| xyma9 | Dockrev：非 service update 的 semver pull 保留 OCI 原始 tag 并回退无 v 变体 | 已完成 | `xyma9-semver-pull-raw-tag-fallback/SPEC.md` | 2026-03-10 | fast-track |
+| ufxaq | Dockrev：Update Job Docker 凭据透传桥接 | 已完成 | `ufxaq-update-job-docker-auth-bridge/SPEC.md` | 2026-03-10 | fast-track（update job Docker auth bridge + private registry docs sync） |
 | 6epk6 | Dockrev：Popover 局部刷新边界收敛 + Snapshot 并发调整 | 已完成 | `6epk6-popover-local-refresh-snapshot-concurrency/SPEC.md` | 2026-03-10 | fast-track |
 | bvxtm | Dockrev：Supervisor 暗色主题修复 + 同源主题偏好共享 | 已完成 | `bvxtm-supervisor-dark-theme-same-origin-share/SPEC.md` | 2026-03-09 | fast-track（PR #156；cargo test + browser smoke） |
+| qh4zx | Dockrev：新版本通知等待解析收敛 + 单服务正文瘦身 | 已完成 | `qh4zx-new-version-notify-settle-and-copy/SPEC.md` | 2026-03-09 | fast-track（PR #159） |
 | 4n5vr | Dockrev：新版本通知记录表去重 + 通知内版本号展示 | 已完成 | `4n5vr-new-version-notification-records/SPEC.md` | 2026-03-09 | fast-track（notification record table + display tag version copy + review fixes + main sync） |
 | mmffn | Dockrev：聚合更新自升级保护 | 已完成 | `mmffn-dockrev-aggregate-self-upgrade-guard/SPEC.md` | 2026-03-09 | fast-track（aggregate guard: dockrev 改走 supervisor，自身不参与 all/stack update；cargo/web/storybook 回归通过） |
 | e3f83 | Dockrev：GHCR Webhook 收件箱 SSE 实时更新 | 已完成 | `e3f83-ghcr-webhook-inbox-sse/SPEC.md` | 2026-03-09 | fast-track（delivery SSE + inbox auto refresh） |
@@ -55,7 +59,7 @@
 | ttq9u | Dockrev：Supervisor 自升级 dry-run/apply 按钮运行态修复（禁用 + spin） | 已完成 | `ttq9u-supervisor-self-upgrade-running-buttons/SPEC.md` | 2026-03-03 | fast-track（running 禁用 dry/apply，按 request.mode 显示 spinner） |
 | rxcb6 | Dockrev：Telegram 群组支持与 Bot Token 脱敏改造 | 已完成 | `rxcb6-telegram-group-token-mask/SPEC.md` | 2026-03-03 | fast-track（群组 chatId 明文 + token 不回传 + 圆点掩码 + review-loop 收敛） |
 | xg3dj | Dockrev：概览卡片任务列表增强（运行中/排队展示 + 补齐 + 直达详情） | 已完成 | `xg3dj-overview-card-job-list/SPEC.md` | 2026-03-03 | fast-track（5/10 动态上限 + jobs SSE 实时刷新 + 点击直达详情） |
-| kbz3z | Dockrev：服务资源监控（SSE 实时推送 + 图表 + 历史持久化） | 已完成 | `kbz3z-service-resource-monitoring-sse/SPEC.md` | 2026-03-09 | fast-track（settings 开关/频率 + history + service detail SSE+SVG 图表；修复 SSE guard 提前释放导致的 10s 断流） |
+| kbz3z | Dockrev：服务资源监控（SSE 实时推送 + 图表 + 历史持久化） | 已完成 | `kbz3z-service-resource-monitoring-sse/SPEC.md` | 2026-03-11 | fast-track（settings 开关/频率 + history + service detail SSE+SVG 图表；修复 SSE guard 提前释放导致的 10s 断流；2026-03-11 面板视觉层级升级） |
 | q6x2g | Dockrev：执行更新按钮绑定任务运行态（Spin） | 已完成 | `q6x2g-update-action-button-spin/SPEC.md` | 2026-03-02 | fast-track（all/stack/service 按钮按任务态显示 spinner） |
 | gh58m | Dockrev：全站任务展示优先人可读名称 | 已完成 | `gh58m-queue-readable-task-name/SPEC.md` | 2026-03-02 | fast-track（scope/type tag 与 type 颜色区分，PR #116 补图 spec-sync） |
 | x2n6v | Dockrev：GHCR 状态同步（全量 + 单仓库）与队列并发可视 | 已完成 | `x2n6v-ghcr-sync-all-and-repo/SPEC.md` | 2026-03-03 | fast-track（sync-all/sync-repo + 并发与去重） |

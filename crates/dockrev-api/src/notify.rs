@@ -14,7 +14,10 @@ use web_push::{
 };
 
 use crate::{
-    api::types::{JobLogLine, NotificationSettings, NotificationTestChannel},
+    api::types::{
+        JobLogLine, NotificationSettings, NotificationTestChannel,
+        ServiceDigestTagsSnapshotResponse,
+    },
     state::AppState,
 };
 
@@ -26,6 +29,8 @@ const MAX_JOB_ERROR_CHARS: usize = 1024;
 const MAX_NEW_VERSION_SERVICE_URLS: usize = 10;
 const MAX_GHCR_REPOS: usize = 10;
 const MAX_GHCR_REPO_ERROR_CHARS: usize = 256;
+const NEW_VERSION_NOTIFY_SETTLE_TIMEOUT: Duration = Duration::from_secs(3);
+const NEW_VERSION_NOTIFY_SETTLE_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 pub async fn notify_job_updated(
     state: &AppState,
@@ -87,6 +92,10 @@ pub async fn notify_new_versions_discovered(
         return Ok(());
     }
 
+    let discovered_services =
+        settle_new_version_discovered_services(state, &discovered_services).await?;
+    let dispatch_now_rfc3339 = notification_now_rfc3339(now_rfc3339);
+
     let mut reserved = Vec::<ReservedNewVersionNotification>::new();
     for item in &discovered_services {
         let pending = crate::db::NewVersionNotificationPending {
@@ -101,7 +110,7 @@ pub async fn notify_new_versions_discovered(
             candidate_tag: item.candidate_tag.clone(),
             candidate_display_tag: item.candidate_display_tag.clone(),
             candidate_digest: item.candidate_digest.clone(),
-            created_at: now_rfc3339.to_string(),
+            created_at: dispatch_now_rfc3339.clone(),
         };
         match state.db.reserve_new_version_notification(&pending).await? {
             crate::db::NewVersionNotificationReserveResult::Reserved(record_id) => {
@@ -118,7 +127,7 @@ pub async fn notify_new_versions_discovered(
         log_new_version_notification_skip(
             state,
             check_job_id,
-            now_rfc3339,
+            &dispatch_now_rfc3339,
             format!(
                 "new-version notification skipped: all {} services already have active records",
                 discovered_services.len()
@@ -146,7 +155,12 @@ pub async fn notify_new_versions_discovered(
         } else {
             state
                 .db
-                .finalize_new_version_notification(&item.record_id, &[], None, now_rfc3339)
+                .finalize_new_version_notification(
+                    &item.record_id,
+                    &[],
+                    None,
+                    &dispatch_now_rfc3339,
+                )
                 .await?;
         }
     }
@@ -155,7 +169,7 @@ pub async fn notify_new_versions_discovered(
         log_new_version_notification_skip(
             state,
             check_job_id,
-            now_rfc3339,
+            &dispatch_now_rfc3339,
             format!(
                 "new-version notification skipped: all {} services no longer have matching active candidates",
                 discovered_total
@@ -172,7 +186,7 @@ pub async fn notify_new_versions_discovered(
     let send_result = send_new_versions(
         state,
         check_job_id,
-        now_rfc3339,
+        &dispatch_now_rfc3339,
         services_checked,
         &reserved_services,
     )
@@ -189,7 +203,7 @@ pub async fn notify_new_versions_discovered(
                         &item.record_id,
                         &[],
                         Some(err_text.as_str()),
-                        now_rfc3339,
+                        &dispatch_now_rfc3339,
                     )
                     .await;
             }
@@ -206,7 +220,7 @@ pub async fn notify_new_versions_discovered(
                 &item.record_id,
                 &sent_channels,
                 last_error.as_deref(),
-                now_rfc3339,
+                &dispatch_now_rfc3339,
             )
             .await?;
     }
@@ -267,6 +281,7 @@ pub struct NewVersionDiscoveredService {
     pub service_id: String,
     pub image_ref: String,
     pub current_tag: String,
+    pub current_digest: Option<String>,
     pub current_display_tag: String,
     pub candidate_tag: String,
     pub candidate_display_tag: String,
@@ -302,6 +317,10 @@ pub fn extract_new_versions_discovered(summary: &Value) -> Vec<NewVersionDiscove
         let Some(candidate_digest) = item.get("candidateDigest").and_then(|v| v.as_str()) else {
             continue;
         };
+        let current_digest = item
+            .get("currentDigest")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
         let current_display_tag = item
             .get("currentDisplayTag")
             .and_then(|v| v.as_str())
@@ -315,6 +334,7 @@ pub fn extract_new_versions_discovered(summary: &Value) -> Vec<NewVersionDiscove
             service_id: service_id.to_string(),
             image_ref: image_ref.to_string(),
             current_tag: current_tag.to_string(),
+            current_digest,
             current_display_tag: current_display_tag.to_string(),
             candidate_tag: candidate_tag.to_string(),
             candidate_display_tag: candidate_display_tag.to_string(),
@@ -419,6 +439,385 @@ async fn revalidate_new_version_discovered_services(
         })
         .cloned()
         .collect())
+}
+
+#[derive(Clone, Debug, Default)]
+struct NewVersionNotificationSettleTarget {
+    image_repo: Option<String>,
+    current_digest: Option<String>,
+    current_snapshot_ready: bool,
+    current_resolved_tag: Option<String>,
+    candidate_resolved_tag: Option<String>,
+}
+
+async fn settle_new_version_discovered_services(
+    state: &AppState,
+    discovered_services: &[NewVersionDiscoveredService],
+) -> anyhow::Result<Vec<NewVersionDiscoveredService>> {
+    if discovered_services.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let host_platform =
+        crate::registry::host_platform_override(state.config.host_platform.as_deref())
+            .unwrap_or_else(|| "linux/amd64".to_string());
+    let settle_targets =
+        load_new_version_notification_settle_targets(state, discovered_services, &host_platform)
+            .await?;
+    let deadline = tokio::time::Instant::now() + NEW_VERSION_NOTIFY_SETTLE_TIMEOUT;
+
+    loop {
+        let (settled, pending) = settle_new_version_discovered_services_once(
+            state,
+            discovered_services,
+            &settle_targets,
+            &host_platform,
+        )
+        .await?;
+        if !pending || tokio::time::Instant::now() >= deadline {
+            return Ok(settled);
+        }
+        tokio::time::sleep(NEW_VERSION_NOTIFY_SETTLE_POLL_INTERVAL).await;
+    }
+}
+
+async fn load_notification_snapshot_ready(
+    state: &AppState,
+    image_repo: &str,
+    digest: &str,
+    host_platform: &str,
+) -> anyhow::Result<Option<bool>> {
+    let Some((snapshot_json, checked_at, _updated_at)) = state
+        .db
+        .get_image_digest_tags_snapshot(image_repo, digest, host_platform)
+        .await?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(
+        notification_snapshot_is_ready_from_row(&snapshot_json, &checked_at).unwrap_or(false),
+    ))
+}
+
+async fn load_new_version_notification_settle_targets(
+    state: &AppState,
+    discovered_services: &[NewVersionDiscoveredService],
+    host_platform: &str,
+) -> anyhow::Result<std::collections::HashMap<String, NewVersionNotificationSettleTarget>> {
+    let mut out = std::collections::HashMap::new();
+    let mut stack_cache =
+        std::collections::HashMap::<String, Option<crate::api::types::StackRecord>>::new();
+
+    for item in discovered_services {
+        if out.contains_key(&item.service_id) {
+            continue;
+        }
+
+        let stack = if let Some(cached) = stack_cache.get(&item.stack_id) {
+            cached.clone()
+        } else {
+            let loaded = state.db.get_stack(&item.stack_id).await?;
+            stack_cache.insert(item.stack_id.clone(), loaded.clone());
+            loaded
+        };
+
+        let image_repo = crate::snapshot_worker::image_repo_from_image_ref(&item.image_ref);
+        let target = if let Some(service) = stack
+            .as_ref()
+            .and_then(|stack| stack.services.iter().find(|svc| svc.id == item.service_id))
+        {
+            let image_repo = image_repo.clone().or_else(|| {
+                crate::snapshot_worker::image_repo_from_image_ref(&service.image.reference)
+            });
+            let live_current_digest = service
+                .image
+                .digest
+                .as_deref()
+                .and_then(crate::snapshot_worker::normalize_digest);
+            let frozen_current_digest = item
+                .current_digest
+                .as_deref()
+                .and_then(crate::snapshot_worker::normalize_digest)
+                .or_else(|| live_current_digest.clone());
+            let current_snapshot_ready = if let (Some(image_repo), Some(current_digest)) =
+                (image_repo.as_deref(), frozen_current_digest.as_deref())
+            {
+                load_notification_snapshot_ready(state, image_repo, current_digest, host_platform)
+                    .await?
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+            let current_digest_matches_live = live_current_digest == frozen_current_digest;
+            NewVersionNotificationSettleTarget {
+                image_repo,
+                current_digest: frozen_current_digest,
+                current_snapshot_ready,
+                current_resolved_tag: service
+                    .image
+                    .resolved_tag
+                    .clone()
+                    .filter(|_| current_snapshot_ready)
+                    .filter(|_| current_digest_matches_live),
+                candidate_resolved_tag: service.candidate.as_ref().and_then(|candidate| {
+                    crate::snapshot_worker::normalize_digest(&candidate.digest)
+                        .filter(|digest| digest == item.candidate_digest.as_str())
+                        .and_then(|_| candidate.resolved_tag.clone())
+                }),
+            }
+        } else {
+            NewVersionNotificationSettleTarget {
+                image_repo,
+                ..NewVersionNotificationSettleTarget::default()
+            }
+        };
+        out.insert(item.service_id.clone(), target);
+    }
+
+    Ok(out)
+}
+
+async fn settle_new_version_discovered_services_once(
+    state: &AppState,
+    discovered_services: &[NewVersionDiscoveredService],
+    settle_targets: &std::collections::HashMap<String, NewVersionNotificationSettleTarget>,
+    host_platform: &str,
+) -> anyhow::Result<(Vec<NewVersionDiscoveredService>, bool)> {
+    let mut pending = false;
+    let mut settled = Vec::with_capacity(discovered_services.len());
+
+    for item in discovered_services {
+        let target = settle_targets.get(&item.service_id);
+        let image_repo = target.and_then(|target| target.image_repo.as_deref());
+        let (current_display_tag, current_pending) = settle_new_version_display_tag(
+            state,
+            image_repo,
+            &item.current_tag,
+            target.and_then(|target| target.current_resolved_tag.as_deref()),
+            target.and_then(|target| {
+                target
+                    .current_snapshot_ready
+                    .then_some(item.current_display_tag.as_str())
+            }),
+            target.and_then(|target| target.current_digest.as_deref()),
+            host_platform,
+        )
+        .await?;
+        let (candidate_display_tag, candidate_pending) = settle_new_version_display_tag(
+            state,
+            image_repo,
+            &item.candidate_tag,
+            target.and_then(|target| target.candidate_resolved_tag.as_deref()),
+            Some(item.candidate_display_tag.as_str()),
+            Some(item.candidate_digest.as_str()),
+            host_platform,
+        )
+        .await?;
+        pending |= current_pending || candidate_pending;
+        settled.push(NewVersionDiscoveredService {
+            current_display_tag,
+            candidate_display_tag,
+            ..item.clone()
+        });
+    }
+
+    Ok((settled, pending))
+}
+
+async fn settle_new_version_display_tag(
+    state: &AppState,
+    image_repo: Option<&str>,
+    raw_tag: &str,
+    existing_resolved_tag: Option<&str>,
+    existing_display_tag: Option<&str>,
+    digest: Option<&str>,
+    host_platform: &str,
+) -> anyhow::Result<(String, bool)> {
+    let raw_tag = raw_tag.trim();
+    let digest = digest.map(str::trim).filter(|digest| !digest.is_empty());
+    let image_repo = image_repo.map(str::trim).filter(|repo| !repo.is_empty());
+    let stable_display = preferred_notification_display_tag(
+        raw_tag,
+        existing_display_tag,
+        None,
+        existing_resolved_tag,
+    );
+    let needs_inference = notification_tag_requires_settle(raw_tag, &stable_display);
+
+    let mut inferred = None;
+    let mut in_flight_reason = None;
+    let mut snapshot_ready = false;
+    if needs_inference && let (Some(image_repo), Some(digest)) = (image_repo, digest) {
+        let snapshot_result = infer_notification_display_tag_from_snapshot(
+            state,
+            image_repo,
+            digest,
+            host_platform,
+            raw_tag,
+        )
+        .await?;
+        inferred = snapshot_result.display_tag;
+        snapshot_ready = snapshot_result.ready;
+        in_flight_reason = state
+            .snapshot_worker
+            .in_flight_reason(image_repo, digest, host_platform)
+            .await;
+    }
+
+    let display = preferred_notification_display_tag(
+        raw_tag,
+        existing_display_tag,
+        inferred.as_deref(),
+        existing_resolved_tag,
+    );
+    let pending = in_flight_reason.is_some() && needs_inference && !snapshot_ready;
+    Ok((display, pending))
+}
+
+#[derive(Default)]
+struct NotificationSnapshotDisplayResult {
+    display_tag: Option<String>,
+    ready: bool,
+}
+
+async fn infer_notification_display_tag_from_snapshot(
+    state: &AppState,
+    image_repo: &str,
+    digest: &str,
+    host_platform: &str,
+    raw_tag: &str,
+) -> anyhow::Result<NotificationSnapshotDisplayResult> {
+    let Some((snapshot_json, checked_at, _updated_at)) = state
+        .db
+        .get_image_digest_tags_snapshot(image_repo, digest, host_platform)
+        .await?
+    else {
+        return Ok(NotificationSnapshotDisplayResult::default());
+    };
+
+    let mut snapshot =
+        match serde_json::from_str::<ServiceDigestTagsSnapshotResponse>(&snapshot_json) {
+            Ok(snapshot) => snapshot,
+            Err(_) => return Ok(NotificationSnapshotDisplayResult::default()),
+        };
+    if snapshot.checked_at.trim().is_empty() {
+        snapshot.checked_at = checked_at;
+    }
+    let ready = notification_snapshot_is_ready(&snapshot, snapshot.checked_at.as_str());
+    Ok(NotificationSnapshotDisplayResult {
+        display_tag: ready
+            .then(|| infer_notification_semver_tag_from_snapshot(&snapshot, raw_tag))
+            .flatten(),
+        ready,
+    })
+}
+
+fn infer_notification_semver_tag_from_snapshot(
+    snapshot: &ServiceDigestTagsSnapshotResponse,
+    raw_tag: &str,
+) -> Option<String> {
+    let mut semver_tags = snapshot
+        .tags
+        .iter()
+        .filter_map(|tag| crate::ignore::parse_version(tag).map(|version| (version, tag.clone())))
+        .collect::<Vec<_>>();
+    semver_tags.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    let raw_tag = raw_tag.trim();
+    semver_tags
+        .into_iter()
+        .map(|(_, tag)| tag)
+        .find(|tag| tag != raw_tag)
+}
+
+fn best_notification_display_tag(raw_tag: &str, improved_candidates: &[Option<&str>]) -> String {
+    let raw_tag = raw_tag.trim();
+    for candidate in improved_candidates {
+        if let Some(candidate) = candidate
+            .map(str::trim)
+            .filter(|candidate| !candidate.is_empty() && *candidate != raw_tag)
+        {
+            return candidate.to_string();
+        }
+    }
+    raw_tag.to_string()
+}
+
+fn preferred_notification_display_tag(
+    raw_tag: &str,
+    frozen_display_tag: Option<&str>,
+    inferred_display_tag: Option<&str>,
+    live_resolved_tag: Option<&str>,
+) -> String {
+    best_notification_display_tag(
+        raw_tag,
+        &[frozen_display_tag, inferred_display_tag, live_resolved_tag],
+    )
+}
+
+fn notification_tag_supports_settle(raw_tag: &str) -> bool {
+    crate::api::needs_version_inference_for_tags(raw_tag.trim(), None)
+}
+
+pub(crate) fn notification_tag_requires_settle(raw_tag: &str, display_tag: &str) -> bool {
+    let raw_tag = raw_tag.trim();
+    let display_tag = display_tag.trim();
+    if raw_tag.is_empty() || display_tag != raw_tag {
+        return false;
+    }
+    // Only wait for aliases we can plausibly collapse back into a semver-like label.
+    notification_tag_supports_settle(raw_tag)
+}
+
+fn notification_now_rfc3339(fallback: &str) -> String {
+    time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| fallback.to_string())
+}
+
+fn notification_snapshot_checked_at_is_older_than(
+    checked_at: &str,
+    min_age: time::Duration,
+) -> bool {
+    let parsed =
+        time::OffsetDateTime::parse(checked_at, &time::format_description::well_known::Rfc3339);
+    let now = time::OffsetDateTime::now_utc();
+    match parsed {
+        Ok(ts) => now - ts > min_age,
+        Err(_) => true,
+    }
+}
+
+pub(crate) fn notification_snapshot_is_ready(
+    snapshot: &ServiceDigestTagsSnapshotResponse,
+    checked_at: &str,
+) -> bool {
+    if notification_snapshot_checked_at_is_older_than(
+        checked_at,
+        time::Duration::days(crate::snapshot_worker::SNAPSHOT_CACHE_TTL_DAYS),
+    ) {
+        return false;
+    }
+    let retryable_all_failed = crate::snapshot_worker::snapshot_is_all_failed(snapshot)
+        && notification_snapshot_checked_at_is_older_than(
+            checked_at,
+            time::Duration::minutes(crate::snapshot_worker::SNAPSHOT_ALL_FAILED_RETRY_MINUTES),
+        );
+    !retryable_all_failed
+}
+
+pub(crate) fn notification_snapshot_is_ready_from_row(
+    snapshot_json: &str,
+    checked_at: &str,
+) -> Option<bool> {
+    let mut snapshot =
+        serde_json::from_str::<ServiceDigestTagsSnapshotResponse>(snapshot_json).ok()?;
+    if snapshot.checked_at.trim().is_empty() {
+        snapshot.checked_at = checked_at.to_string();
+    }
+    Some(notification_snapshot_is_ready(
+        &snapshot,
+        snapshot.checked_at.as_str(),
+    ))
 }
 
 async fn log_new_version_notification_skip(
@@ -761,14 +1160,45 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
     out
 }
 
+struct NotificationTagDisplay<'a> {
+    label: &'a str,
+    readable: bool,
+    raw_non_strict: bool,
+}
+
 fn notification_tag_display<'a>(
     display_tag: Option<&'a str>,
     raw_tag: Option<&'a str>,
-) -> Option<&'a str> {
-    display_tag
-        .map(str::trim)
-        .filter(|tag| !tag.is_empty())
-        .or_else(|| raw_tag.map(str::trim).filter(|tag| !tag.is_empty()))
+) -> Option<NotificationTagDisplay<'a>> {
+    let display_tag = display_tag.map(str::trim).filter(|tag| !tag.is_empty());
+    let raw_tag = raw_tag.map(str::trim).filter(|tag| !tag.is_empty());
+    match (display_tag, raw_tag) {
+        (Some(display_tag), Some(raw_tag)) if display_tag != raw_tag => {
+            Some(NotificationTagDisplay {
+                label: display_tag,
+                readable: true,
+                raw_non_strict: false,
+            })
+        }
+        (_, Some(raw_tag)) if crate::ignore::parse_version(raw_tag).is_some() => {
+            Some(NotificationTagDisplay {
+                label: raw_tag,
+                readable: true,
+                raw_non_strict: !crate::ignore::is_strict_semver(raw_tag),
+            })
+        }
+        (_, Some(raw_tag)) => Some(NotificationTagDisplay {
+            label: raw_tag,
+            readable: false,
+            raw_non_strict: !crate::ignore::is_strict_semver(raw_tag),
+        }),
+        (Some(display_tag), None) => Some(NotificationTagDisplay {
+            label: display_tag,
+            readable: true,
+            raw_non_strict: false,
+        }),
+        (None, None) => None,
+    }
 }
 
 fn render_tag_transition(
@@ -780,10 +1210,51 @@ fn render_tag_transition(
     let current = notification_tag_display(current_display_tag, current_tag);
     let candidate = notification_tag_display(candidate_display_tag, candidate_tag);
     match (current, candidate) {
-        (Some(current), Some(candidate)) => Some(format!("{current} -> {candidate}")),
-        (None, Some(candidate)) => Some(format!("-> {candidate}")),
+        (Some(current), Some(candidate)) if !current.readable && !candidate.readable => None,
+        (Some(current), Some(candidate))
+            if current.label == candidate.label
+                && current.raw_non_strict
+                && candidate.raw_non_strict =>
+        {
+            None
+        }
+        (Some(current), Some(candidate)) => {
+            Some(format!("{} -> {}", current.label, candidate.label))
+        }
+        (None, Some(candidate)) if candidate.readable => Some(format!("-> {}", candidate.label)),
         _ => None,
     }
+}
+
+fn render_new_version_service_label(svc: &NewVersionNotificationServiceUrlV2) -> String {
+    let mut label = format!("{} / {}", svc.stack_name, svc.service_name);
+    if let Some(transition) = render_tag_transition(
+        svc.current_display_tag.as_deref(),
+        svc.candidate_display_tag.as_deref(),
+        svc.current_tag.as_deref(),
+        svc.candidate_tag.as_deref(),
+    ) {
+        label.push_str(&format!(" ({transition})"));
+    }
+    label
+}
+
+fn headline_new_version_services(
+    total_new_versions: usize,
+    visible_services: &[NewVersionNotificationServiceUrlV2],
+) -> String {
+    if total_new_versions == 0 {
+        return "发现新版本服务数为 0".to_string();
+    }
+
+    if total_new_versions == 1 {
+        if let Some(svc) = visible_services.first() {
+            return format!("{} / {} 服务有新版本", svc.stack_name, svc.service_name);
+        }
+        return "发现 1 个服务有新版本".to_string();
+    }
+
+    format!("发现 {total_new_versions} 个服务有新版本")
 }
 
 fn summarize_new_version_services(
@@ -797,49 +1268,36 @@ fn summarize_new_version_services(
 
     if total_new_versions == 1 {
         if let Some(svc) = visible_services.first() {
-            let transition = render_tag_transition(
+            if let Some(transition) = render_tag_transition(
                 svc.current_display_tag.as_deref(),
                 svc.candidate_display_tag.as_deref(),
                 svc.current_tag.as_deref(),
                 svc.candidate_tag.as_deref(),
-            )
-            .map(|t| format!("，{t}"))
-            .unwrap_or_default();
-            return format!(
-                "发现 1 个服务有新版本（{} / {}{}）。",
-                svc.stack_name, svc.service_name, transition
-            );
+            ) {
+                return format!(
+                    "{} / {} 服务有新版本（{transition}）。",
+                    svc.stack_name, svc.service_name
+                );
+            }
+            return format!("{} / {} 服务有新版本。", svc.stack_name, svc.service_name);
         }
         return "发现 1 个服务有新版本。".to_string();
     }
 
-    let preview = visible_services
-        .iter()
-        .map(|svc| {
-            let transition = render_tag_transition(
-                svc.current_display_tag.as_deref(),
-                svc.candidate_display_tag.as_deref(),
-                svc.current_tag.as_deref(),
-                svc.candidate_tag.as_deref(),
-            )
-            .map(|t| format!("（{t}）"))
-            .unwrap_or_default();
-            format!("{} / {}{}", svc.stack_name, svc.service_name, transition)
-        })
-        .collect::<Vec<_>>()
-        .join("、");
-    if preview.is_empty() {
+    if visible_services.is_empty() {
         return format!("发现 {total_new_versions} 个服务有新版本。");
     }
 
+    let mut lines = vec![format!("发现 {total_new_versions} 个服务有新版本：")];
+    lines.extend(
+        visible_services
+            .iter()
+            .map(|svc| format!("- {}", render_new_version_service_label(svc))),
+    );
     if omitted > 0 {
-        return format!(
-            "发现 {total_new_versions} 个服务有新版本：{preview}（通知正文仅展示前 {} 条）。",
-            visible_services.len()
-        );
+        lines.push(format!("... 以及其他 {omitted} 个服务（已省略）"));
     }
-
-    format!("发现 {total_new_versions} 个服务有新版本：{preview}。")
+    lines.join("\n")
 }
 
 fn summarize_ghcr_anomaly_repos(
@@ -1151,7 +1609,7 @@ fn to_web_push_new_version_value(
         );
         map.insert(
             "body".to_string(),
-            Value::String(format!("{}\n点击通知查看详情", payload.human.summary)),
+            Value::String(payload.human.summary.clone()),
         );
         map.insert(
             "url".to_string(),
@@ -1469,84 +1927,67 @@ async fn send_email_job(
     Ok(())
 }
 
+fn is_single_new_version_payload(payload: &NewVersionNotificationPayloadV2) -> bool {
+    payload.links.service_urls.len() == 1 && payload.links.truncated.service_urls_omitted == 0
+}
+
+fn render_service_detail_action_html(url: &str) -> String {
+    render_open_link_html(url, "服务详情")
+}
+
+fn render_service_detail_action_plain(url: &str) -> String {
+    format!("服务详情：{url}")
+}
+
+fn render_check_job_action_html(url: &str) -> String {
+    if is_absolute_http_url(url) {
+        format!("检查任务：<a href=\"{}\">检查任务</a>", escape_html(url))
+    } else {
+        format!("检查任务：<code>{}</code>", escape_html(url))
+    }
+}
+
+fn render_check_job_action_plain(url: &str) -> String {
+    format!("检查任务：{url}")
+}
+
 fn render_telegram_new_version_html(payload: &NewVersionNotificationPayloadV2) -> String {
     let mut lines: Vec<String> = Vec::new();
-    lines.push(format!(
-        "<b>{}</b> {}",
-        escape_html(&payload.human.title),
-        render_open_link_html(&payload.links.primary_url, "详情")
-    ));
+    let single = is_single_new_version_payload(payload);
     lines.push(escape_html(&payload.human.summary));
 
     if !is_absolute_http_url(&payload.links.primary_url) {
         lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
     }
 
-    if !payload.links.service_urls.is_empty() {
-        lines.push(String::new());
-        lines.push("<b>服务清单</b>".to_string());
-        for svc in &payload.links.service_urls {
-            let mut label = format!("{} / {}", svc.stack_name, svc.service_name);
-            if let Some(transition) = render_tag_transition(
-                svc.current_display_tag.as_deref(),
-                svc.candidate_display_tag.as_deref(),
-                svc.current_tag.as_deref(),
-                svc.candidate_tag.as_deref(),
-            ) {
-                label.push_str(&format!(" ({transition})"));
-            }
-            lines.push(format!(
-                "- {}：{}",
-                escape_html(&label),
-                render_open_link_html(&svc.url, "服务详情"),
-            ));
+    if single {
+        if let Some(svc) = payload.links.service_urls.first() {
+            lines.push(render_service_detail_action_html(&svc.url));
         }
-        if payload.links.truncated.service_urls_omitted > 0 {
-            lines.push(format!(
-                "... 以及其他 {} 个服务（已省略）",
-                payload.links.truncated.service_urls_omitted
-            ));
-        }
+        return lines.join("\n");
     }
 
+    lines.push(render_check_job_action_html(&payload.links.primary_url));
     lines.join("\n")
 }
 
 fn render_telegram_new_version_plain(payload: &NewVersionNotificationPayloadV2) -> String {
     let mut lines: Vec<String> = Vec::new();
-    lines.push(format!(
-        "{} 详情：{}",
-        payload.human.title, payload.links.primary_url
-    ));
+    let single = is_single_new_version_payload(payload);
     lines.push(payload.human.summary.clone());
 
     if !is_absolute_http_url(&payload.links.primary_url) {
         lines.push("提示：未配置实例 Public Base URL（系统设置），以下为站内路径。".to_string());
     }
 
-    if !payload.links.service_urls.is_empty() {
-        lines.push(String::new());
-        lines.push("服务清单".to_string());
-        for svc in &payload.links.service_urls {
-            let mut label = format!("{} / {}", svc.stack_name, svc.service_name);
-            if let Some(transition) = render_tag_transition(
-                svc.current_display_tag.as_deref(),
-                svc.candidate_display_tag.as_deref(),
-                svc.current_tag.as_deref(),
-                svc.candidate_tag.as_deref(),
-            ) {
-                label.push_str(&format!(" ({transition})"));
-            }
-            lines.push(format!("- {}: {}", label, svc.url));
+    if single {
+        if let Some(svc) = payload.links.service_urls.first() {
+            lines.push(render_service_detail_action_plain(&svc.url));
         }
-        if payload.links.truncated.service_urls_omitted > 0 {
-            lines.push(format!(
-                "... 以及其他 {} 个服务（已省略）",
-                payload.links.truncated.service_urls_omitted
-            ));
-        }
+        return lines.join("\n");
     }
 
+    lines.push(render_check_job_action_plain(&payload.links.primary_url));
     lines.join("\n")
 }
 
@@ -1560,42 +2001,22 @@ fn render_email_new_version_plain(payload: &NewVersionNotificationPayloadV2) -> 
 }
 
 fn render_email_new_version_html(payload: &NewVersionNotificationPayloadV2) -> String {
-    let title = escape_html(&payload.human.title);
-    let summary = escape_html(&payload.human.summary);
+    let summary = escape_html(&payload.human.summary).replace('\n', "<br>");
+    let single = is_single_new_version_payload(payload);
 
-    let mut items = String::new();
-    if !payload.links.service_urls.is_empty() {
-        items.push_str("<ul>");
-        for svc in &payload.links.service_urls {
-            let mut label = format!("{} / {}", svc.stack_name, svc.service_name);
-            if let Some(transition) = render_tag_transition(
-                svc.current_display_tag.as_deref(),
-                svc.candidate_display_tag.as_deref(),
-                svc.current_tag.as_deref(),
-                svc.candidate_tag.as_deref(),
-            ) {
-                label.push_str(&format!(" ({transition})"));
-            }
-            let label = escape_html(&label);
-            if is_absolute_http_url(&svc.url) {
-                items.push_str(&format!(
-                    "<li>{label}: <a href=\"{}\">服务详情</a></li>",
-                    escape_html(&svc.url)
-                ));
-            } else {
-                items.push_str(&format!(
-                    "<li>{label}: <code>{}</code></li>",
-                    escape_html(&svc.url)
-                ));
-            }
-        }
-        if payload.links.truncated.service_urls_omitted > 0 {
-            items.push_str(&format!(
-                "<li>... 以及其他 {} 个服务（已省略）</li>",
-                payload.links.truncated.service_urls_omitted
-            ));
-        }
-        items.push_str("</ul>");
+    let mut note = String::new();
+    if !is_absolute_http_url(&payload.links.job_url) {
+        note = "<p><em>提示：未配置实例 Public Base URL（系统设置），以下链接可能仅为站内路径。</em></p>".to_string();
+    }
+
+    if single {
+        let action = payload
+            .links
+            .service_urls
+            .first()
+            .map(|svc| render_service_detail_action_html(&svc.url))
+            .unwrap_or_else(|| render_service_detail_action_html(&payload.links.primary_url));
+        return format!("<p>{summary}</p>{note}<p>{action}</p>");
     }
 
     let check_link = if is_absolute_http_url(&payload.links.job_url) {
@@ -1608,24 +2029,7 @@ fn render_email_new_version_html(payload: &NewVersionNotificationPayloadV2) -> S
         format!("<code>{}</code>", escape_html(&payload.links.job_url))
     };
 
-    let open_primary = if is_absolute_http_url(&payload.links.primary_url) {
-        format!(
-            "<a href=\"{}\">{}</a>",
-            escape_html(&payload.links.primary_url),
-            escape_html(&payload.links.primary_url)
-        )
-    } else {
-        format!("<code>{}</code>", escape_html(&payload.links.primary_url))
-    };
-
-    let mut note = String::new();
-    if !is_absolute_http_url(&payload.links.job_url) {
-        note = "<p><em>提示：未配置实例 Public Base URL（系统设置），以下链接可能仅为站内路径。</em></p>".to_string();
-    }
-
-    format!(
-        "<h2>{title}</h2><p>{summary}</p>{note}<p>检查任务：{check_link}</p><p>打开：{open_primary}</p>{items}",
-    )
+    format!("<p>{summary}</p>{note}<p>检查任务：{check_link}</p>")
 }
 
 fn render_telegram_ghcr_webhook_anomaly_html(payload: &GhcrWebhookAnomalyPayloadV2) -> String {
@@ -1821,7 +2225,7 @@ async fn send_email_new_version(
     let smtp_url = smtp_url.context("email.smtpUrl missing")?;
     let (dsn, from, to) = parse_smtp_dsn(smtp_url)?;
 
-    let subject = "[dockrev] 发现新版本".to_string();
+    let subject = format!("[dockrev] {}", payload.human.title);
     let plain_text = render_email_new_version_plain(payload);
     let html_text = render_email_new_version_html(payload);
 
@@ -2225,6 +2629,7 @@ async fn build_new_version_payload_v2(
         job_url.clone()
     };
 
+    let title = headline_new_version_services(total_new_versions, &service_urls_full);
     let summary = summarize_new_version_services(total_new_versions, &service_urls_full, omitted);
 
     let mut detail_lines = vec![
@@ -2260,7 +2665,7 @@ async fn build_new_version_payload_v2(
             },
         },
         human: JobNotificationHumanV2 {
-            title: "Dockrev：发现新版本".to_string(),
+            title,
             summary,
             detail: detail_lines.join("\n"),
         },
@@ -3352,8 +3757,8 @@ mod tests {
                 },
             },
             human: JobNotificationHumanV2 {
-                title: "Dockrev：发现新版本".to_string(),
-                summary: "发现 1 个服务有新版本（blog / api）。".to_string(),
+                title: "blog / api 服务有新版本".to_string(),
+                summary: "blog / api 服务有新版本（1.0.0 -> 1.1.0）。".to_string(),
                 detail: "test".to_string(),
             },
             debug: JobNotificationDebugV2 {
@@ -3361,6 +3766,21 @@ mod tests {
                 source: "dockrev-api",
             },
         }
+    }
+
+    fn sample_multi_new_version_payload() -> NewVersionNotificationPayloadV2 {
+        let mut payload = sample_new_version_payload();
+        payload.check.new_versions = 2;
+        payload.links.primary_url = "https://dockrev.example.com/queue/job_check_123".to_string();
+        payload
+            .links
+            .service_urls
+            .push(make_new_version_service("shop", "gateway"));
+        payload.human.title = "发现 2 个服务有新版本".to_string();
+        payload.human.summary =
+            "发现 2 个服务有新版本：\n- blog / api (1.0.0 -> 1.1.0)\n- shop / gateway (1.0.0 -> 1.1.0)"
+                .to_string();
+        payload
     }
 
     fn make_new_version_service(
@@ -3390,10 +3810,10 @@ mod tests {
             make_new_version_service("shop", "gateway"),
         ];
         let summary = summarize_new_version_services(3, &services, 0);
-        assert!(summary.contains("blog / api"));
-        assert!(summary.contains("blog / worker"));
-        assert!(summary.contains("shop / gateway"));
-        assert!(summary.starts_with("发现 3 个服务有新版本："));
+        assert!(summary.starts_with("发现 3 个服务有新版本：\n"));
+        assert!(summary.contains("\n- blog / api (1.0.0 -> 1.1.0)"));
+        assert!(summary.contains("\n- blog / worker (1.0.0 -> 1.1.0)"));
+        assert!(summary.contains("\n- shop / gateway (1.0.0 -> 1.1.0)"));
     }
 
     #[test]
@@ -3405,11 +3825,161 @@ mod tests {
             make_new_version_service("shop", "sync"),
         ];
         let summary = summarize_new_version_services(14, &services, 10);
+        assert!(summary.starts_with("发现 14 个服务有新版本：\n"));
+        assert!(summary.contains("\n- blog / api (1.0.0 -> 1.1.0)"));
+        assert!(summary.contains("\n- blog / worker (1.0.0 -> 1.1.0)"));
+        assert!(summary.contains("\n- shop / gateway (1.0.0 -> 1.1.0)"));
+        assert!(summary.contains("\n- shop / sync (1.0.0 -> 1.1.0)"));
+        assert!(summary.contains("\n... 以及其他 10 个服务（已省略）"));
+    }
+
+    #[test]
+    fn new_version_summary_single_service_omits_raw_only_transition() {
+        let services = vec![NewVersionNotificationServiceUrlV2 {
+            stack_id: "stk_blog".to_string(),
+            stack_name: "blog".to_string(),
+            service_id: "svc_api".to_string(),
+            service_name: "api".to_string(),
+            current_tag: Some("latest".to_string()),
+            current_display_tag: Some("latest".to_string()),
+            candidate_tag: Some("latest".to_string()),
+            candidate_display_tag: Some("latest".to_string()),
+            url: "https://dockrev.example.com/services/stk_blog/svc_api".to_string(),
+        }];
+        let summary = summarize_new_version_services(1, &services, 0);
+        assert_eq!(summary, "blog / api 服务有新版本。");
+    }
+
+    #[test]
+    fn new_version_summary_single_service_keeps_same_strict_semver_transition() {
+        let services = vec![NewVersionNotificationServiceUrlV2 {
+            stack_id: "stk_blog".to_string(),
+            stack_name: "blog".to_string(),
+            service_id: "svc_api".to_string(),
+            service_name: "api".to_string(),
+            current_tag: Some("1.2.3".to_string()),
+            current_display_tag: Some("1.2.3".to_string()),
+            candidate_tag: Some("1.2.3".to_string()),
+            candidate_display_tag: Some("1.2.3".to_string()),
+            url: "https://dockrev.example.com/services/stk_blog/svc_api".to_string(),
+        }];
+        let summary = summarize_new_version_services(1, &services, 0);
+        assert_eq!(summary, "blog / api 服务有新版本（1.2.3 -> 1.2.3）。");
+    }
+
+    #[test]
+    fn new_version_summary_single_service_omits_same_alias_transition() {
+        let services = vec![NewVersionNotificationServiceUrlV2 {
+            stack_id: "stk_blog".to_string(),
+            stack_name: "blog".to_string(),
+            service_id: "svc_api".to_string(),
+            service_name: "api".to_string(),
+            current_tag: Some("5.2".to_string()),
+            current_display_tag: Some("5.2".to_string()),
+            candidate_tag: Some("5.2".to_string()),
+            candidate_display_tag: Some("5.2".to_string()),
+            url: "https://dockrev.example.com/services/stk_blog/svc_api".to_string(),
+        }];
+        let summary = summarize_new_version_services(1, &services, 0);
+        assert_eq!(summary, "blog / api 服务有新版本。");
+    }
+
+    #[test]
+    fn new_version_summary_single_service_allows_resolved_and_raw_mix() {
+        let services = vec![NewVersionNotificationServiceUrlV2 {
+            stack_id: "stk_blog".to_string(),
+            stack_name: "blog".to_string(),
+            service_id: "svc_api".to_string(),
+            service_name: "api".to_string(),
+            current_tag: Some("latest".to_string()),
+            current_display_tag: Some("latest".to_string()),
+            candidate_tag: Some("latest".to_string()),
+            candidate_display_tag: Some("1.1.0".to_string()),
+            url: "https://dockrev.example.com/services/stk_blog/svc_api".to_string(),
+        }];
+        let summary = summarize_new_version_services(1, &services, 0);
+        assert_eq!(summary, "blog / api 服务有新版本（latest -> 1.1.0）。");
+    }
+
+    #[test]
+    fn new_version_summary_keeps_parseable_non_strict_transitions() {
+        let services = vec![NewVersionNotificationServiceUrlV2 {
+            stack_id: "stk_blog".to_string(),
+            stack_name: "blog".to_string(),
+            service_id: "svc_api".to_string(),
+            service_name: "api".to_string(),
+            current_tag: Some("15-alpine".to_string()),
+            current_display_tag: Some("15-alpine".to_string()),
+            candidate_tag: Some("16-alpine".to_string()),
+            candidate_display_tag: Some("16-alpine".to_string()),
+            url: "https://dockrev.example.com/services/stk_blog/svc_api".to_string(),
+        }];
+        let summary = summarize_new_version_services(1, &services, 0);
+        assert_eq!(
+            summary,
+            "blog / api 服务有新版本（15-alpine -> 16-alpine）。"
+        );
+    }
+
+    #[test]
+    fn notification_tag_requires_settle_reuses_shared_non_strict_semver_rules() {
+        assert!(notification_tag_requires_settle("main", "main"));
+        assert!(notification_tag_requires_settle("nightly", "nightly"));
+        assert!(!notification_tag_requires_settle("1.2.3", "1.2.3"));
+        assert!(!notification_tag_requires_settle("main", "5.3.0"));
+    }
+
+    #[test]
+    fn preferred_notification_display_keeps_frozen_summary_before_live_resolved() {
+        let display =
+            preferred_notification_display_tag("latest", Some("5.2.0"), None, Some("5.1.0"));
+        assert_eq!(display, "5.2.0");
+    }
+
+    #[test]
+    fn preferred_notification_display_keeps_fresh_snapshot_before_live_resolved() {
+        let display = preferred_notification_display_tag(
+            "latest",
+            Some("latest"),
+            Some("5.2.0"),
+            Some("5.1.0"),
+        );
+        assert_eq!(display, "5.2.0");
+    }
+
+    #[test]
+    fn notification_tag_requires_settle_only_for_unresolved_non_strict_tags() {
+        assert!(notification_tag_requires_settle("latest", "latest"));
+        assert!(notification_tag_requires_settle("15-alpine", "15-alpine"));
+        assert!(!notification_tag_requires_settle("15-alpine", "15.0.2"));
+        assert!(!notification_tag_requires_settle("1.2.3", "1.2.3"));
+        assert!(notification_tag_requires_settle("main", "main"));
+        assert!(notification_tag_requires_settle(
+            "sha-abcdef0",
+            "sha-abcdef0"
+        ));
+    }
+
+    #[test]
+    fn new_version_summary_multi_service_omits_raw_only_transition_per_item() {
+        let services = vec![
+            NewVersionNotificationServiceUrlV2 {
+                stack_id: "stk_blog".to_string(),
+                stack_name: "blog".to_string(),
+                service_id: "svc_api".to_string(),
+                service_name: "api".to_string(),
+                current_tag: Some("latest".to_string()),
+                current_display_tag: Some("latest".to_string()),
+                candidate_tag: Some("latest".to_string()),
+                candidate_display_tag: Some("latest".to_string()),
+                url: "https://dockrev.example.com/services/stk_blog/svc_api".to_string(),
+            },
+            make_new_version_service("shop", "gateway"),
+        ];
+        let summary = summarize_new_version_services(2, &services, 0);
         assert!(summary.contains("blog / api"));
-        assert!(summary.contains("blog / worker"));
-        assert!(summary.contains("shop / gateway"));
-        assert!(summary.contains("shop / sync"));
-        assert!(summary.contains("仅展示前 4 条"));
+        assert!(!summary.contains("blog / api（"));
+        assert!(summary.contains("shop / gateway (1.0.0 -> 1.1.0)"));
     }
 
     fn sample_ghcr_anomaly_payload() -> GhcrWebhookAnomalyPayloadV2 {
@@ -3462,28 +4032,89 @@ mod tests {
     }
 
     #[test]
-    fn new_version_telegram_render_contains_clickable_service_links() {
+    fn new_version_telegram_render_uses_single_service_action_copy() {
         let payload = sample_new_version_payload();
         let html = render_telegram_new_version_html(&payload);
-        assert!(html.contains(
-            "<b>Dockrev：发现新版本</b> <a href=\"https://dockrev.example.com/services/stk_1/svc_1\">详情</a>"
-        ));
-        assert!(html.contains("<a href=\"https://dockrev.example.com/services/stk_1/svc_1\">"));
-        assert!(html.contains("<b>服务清单</b>"));
-        assert!(!html.contains("检查任务："));
-        assert!(!html.contains("打开服务详情："));
+        assert!(!html.contains("Dockrev：发现新版本"));
+        assert!(html.contains("blog / api 服务有新版本（1.0.0 -&gt; 1.1.0）。"));
+        assert!(
+            html.contains(
+                "<a href=\"https://dockrev.example.com/services/stk_1/svc_1\">服务详情</a>"
+            )
+        );
+        assert!(!html.contains("<b>服务清单</b>"));
+        assert!(!html.contains(">详情</a>"));
     }
 
     #[test]
-    fn new_version_title_line_keeps_detail_suffix_without_base_url() {
+    fn new_version_single_service_without_base_url_keeps_service_action() {
         let mut payload = sample_new_version_payload();
         payload.links.primary_url = "services/stk_1/svc_1".to_string();
         payload.links.job_url = "queue/job_check_123".to_string();
         payload.links.service_urls[0].url = "services/stk_1/svc_1".to_string();
 
         let html = render_telegram_new_version_html(&payload);
-        assert!(html.contains("<b>Dockrev：发现新版本</b> <code>services/stk_1/svc_1</code>"));
+        assert!(!html.contains("Dockrev：发现新版本"));
+        assert!(html.contains("<code>services/stk_1/svc_1</code>"));
         assert!(!html.contains("\n详情："));
+        assert!(!html.contains("<b>服务清单</b>"));
+    }
+
+    #[test]
+    fn new_version_email_render_uses_single_service_action_copy() {
+        let payload = sample_new_version_payload();
+        let plain = render_email_new_version_plain(&payload);
+        let html = render_email_new_version_html(&payload);
+
+        assert!(!plain.contains("Dockrev：发现新版本"));
+        assert!(plain.contains("blog / api 服务有新版本（1.0.0 -> 1.1.0）。"));
+        assert!(plain.contains("服务详情：https://dockrev.example.com/services/stk_1/svc_1"));
+        assert!(!plain.contains("服务清单"));
+        assert!(!plain.contains("检查任务："));
+
+        assert!(!html.contains("<h2>"));
+        assert!(html.contains("blog / api 服务有新版本（1.0.0 -&gt; 1.1.0）。"));
+        assert!(
+            html.contains(
+                "<a href=\"https://dockrev.example.com/services/stk_1/svc_1\">服务详情</a>"
+            )
+        );
+        assert!(!html.contains("服务清单"));
+        assert!(!html.contains("检查任务："));
+    }
+
+    #[test]
+    fn new_version_multi_service_render_puts_each_service_on_its_own_line() {
+        let payload = sample_multi_new_version_payload();
+        let telegram_html = render_telegram_new_version_html(&payload);
+        let telegram_plain = render_telegram_new_version_plain(&payload);
+        let email_html = render_email_new_version_html(&payload);
+
+        assert!(!telegram_html.contains("<b>发现 2 个服务有新版本</b>"));
+        assert!(telegram_html.starts_with(
+            "发现 2 个服务有新版本：\n- blog / api (1.0.0 -&gt; 1.1.0)\n- shop / gateway (1.0.0 -&gt; 1.1.0)"
+        ));
+        assert!(telegram_html.contains(
+            r#"检查任务：<a href="https://dockrev.example.com/queue/job_check_123">检查任务</a>"#
+        ));
+        assert!(!telegram_html.contains("<b>服务清单</b>"));
+
+        assert!(telegram_plain.starts_with(
+            "发现 2 个服务有新版本：\n- blog / api (1.0.0 -> 1.1.0)\n- shop / gateway (1.0.0 -> 1.1.0)"
+        ));
+        assert!(
+            telegram_plain.contains("\n检查任务：https://dockrev.example.com/queue/job_check_123")
+        );
+        assert!(!telegram_plain.contains("\n服务清单\n"));
+
+        assert!(!email_html.contains("<h2>"));
+        assert!(email_html.starts_with(
+            "<p>发现 2 个服务有新版本：<br>- blog / api (1.0.0 -&gt; 1.1.0)<br>- shop / gateway (1.0.0 -&gt; 1.1.0)</p>"
+        ));
+        assert!(email_html.contains(
+            r#"检查任务：<a href="https://dockrev.example.com/queue/job_check_123">查看检查任务</a>"#
+        ));
+        assert!(!email_html.contains("<ul>"));
     }
 
     #[test]
@@ -3581,12 +4212,27 @@ mod tests {
             new_version_value["url"].as_str(),
             Some("https://dockrev.example.com/services/stk_1/svc_1")
         );
+        assert_eq!(
+            new_version_value["title"].as_str(),
+            Some("blog / api 服务有新版本")
+        );
+        assert_eq!(
+            new_version_value["body"].as_str(),
+            Some("blog / api 服务有新版本（1.0.0 -> 1.1.0）。")
+        );
 
         let ghcr_payload = sample_ghcr_anomaly_payload();
         let ghcr_value = to_web_push_ghcr_webhook_anomaly_value(&ghcr_payload).unwrap();
         assert_eq!(
             ghcr_value["url"].as_str(),
             Some("https://dockrev.example.com/queue/job_ghcr_123")
+        );
+        assert_eq!(
+            ghcr_value["body"].as_str(),
+            Some(
+                "巡检发现 2 个异常仓库：acme/api [missing]、acme/worker [error]。
+点击通知查看详情"
+            )
         );
     }
 

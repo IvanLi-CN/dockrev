@@ -1,12 +1,15 @@
 use std::{
     collections::HashSet,
+    path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use anyhow::Context;
 use semver::Version;
 use serde::Serialize;
 use serde_json::json;
 use tokio::sync::mpsc::UnboundedSender;
+use ulid::Ulid;
 
 use crate::{
     api::types::{JobScope, StackRecord},
@@ -22,6 +25,97 @@ impl Drop for TempFileCleanup {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.0);
     }
+}
+
+#[derive(Clone, Debug)]
+struct TempDirCleanup(PathBuf);
+
+impl Drop for TempDirCleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[derive(Clone, Debug)]
+struct DockerCliAuthBridge {
+    docker_config_dir: PathBuf,
+    _cleanup: TempDirCleanup,
+}
+
+impl DockerCliAuthBridge {
+    fn stage(docker_config_path: &Path) -> anyhow::Result<Self> {
+        let temp_root = std::env::temp_dir().join(format!("dockrev-auth-config-{}", Ulid::new()));
+        let docker_config_dir = temp_root.join(".docker");
+        let source_dir = docker_config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."));
+        let source_file_name = docker_config_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+
+        std::fs::create_dir_all(&docker_config_dir).with_context(|| {
+            format!(
+                "create docker auth workspace {}",
+                docker_config_dir.display()
+            )
+        })?;
+
+        if source_file_name == "config.json" {
+            copy_selected_docker_config_metadata(source_dir, &docker_config_dir)?;
+        }
+
+        let staged_config_path = docker_config_dir.join("config.json");
+        std::fs::copy(docker_config_path, &staged_config_path).with_context(|| {
+            format!(
+                "stage docker config {} -> {}",
+                docker_config_path.display(),
+                staged_config_path.display()
+            )
+        })?;
+
+        Ok(Self {
+            docker_config_dir,
+            _cleanup: TempDirCleanup(temp_root),
+        })
+    }
+
+    fn env(&self) -> Vec<(String, String)> {
+        // Keep compose `${HOME}` interpolation untouched; only point Docker CLI tools at the staged config.
+        vec![(
+            "DOCKER_CONFIG".to_string(),
+            self.docker_config_dir.to_string_lossy().to_string(),
+        )]
+    }
+}
+
+fn copy_selected_docker_config_metadata(src: &Path, dest: &Path) -> anyhow::Result<()> {
+    let contexts_src = src.join("contexts");
+    if contexts_src.is_dir() {
+        copy_dir_recursively(&contexts_src, &dest.join("contexts")).with_context(|| {
+            format!(
+                "stage docker config contexts {} -> {}",
+                contexts_src.display(),
+                dest.join("contexts").display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn copy_dir_recursively(src: &Path, dest: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dest)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let dest_path = dest.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_recursively(&entry.path(), &dest_path)?;
+        } else if file_type.is_file() {
+            std::fs::copy(entry.path(), dest_path)?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -303,6 +397,7 @@ fn should_sync_local_tag(image_ref: &str) -> bool {
 pub async fn run_update_job(
     runner: &dyn CommandRunner,
     compose_bin: &str,
+    docker_config_path: Option<&Path>,
     idempotent_retry_policy: IdempotentRetryPolicy,
     stack: &StackRecord,
     scope: &JobScope,
@@ -315,14 +410,6 @@ pub async fn run_update_job(
     dockrev_image_repo: Option<&str>,
     progress_events: Option<UnboundedSender<UpdateProgressEvent>>,
 ) -> anyhow::Result<UpdateOutcome> {
-    let compose_cfg = ComposeRunnerConfig {
-        compose_bin: compose_bin.to_string(),
-    };
-    let compose_stack = ComposeStack {
-        project_name: sanitize_project_name(&stack.name),
-        compose: stack.compose.clone(),
-    };
-
     let selection = select_update_services(
         stack,
         scope,
@@ -345,6 +432,36 @@ pub async fn run_update_job(
         });
     }
 
+    if services.is_empty() {
+        return Ok(UpdateOutcome {
+            status: "success".to_string(),
+            summary_json: json!({
+                "changedServices": 0,
+                "oldDigests": serde_json::Map::<String, serde_json::Value>::new(),
+                "newDigests": serde_json::Map::<String, serde_json::Value>::new(),
+                "semverPulled": Vec::<String>::new(),
+                "semverPullWarnings": serde_json::Map::<String, serde_json::Value>::new(),
+                "skippedVersionAnomaly": skipped_version_anomaly,
+            }),
+        });
+    }
+
+    let auth_bridge = docker_config_path
+        .map(DockerCliAuthBridge::stage)
+        .transpose()?;
+    let command_env = auth_bridge
+        .as_ref()
+        .map(DockerCliAuthBridge::env)
+        .unwrap_or_default();
+    let compose_cfg = ComposeRunnerConfig {
+        compose_bin: compose_bin.to_string(),
+        env: command_env.clone(),
+    };
+    let compose_stack = ComposeStack {
+        project_name: sanitize_project_name(&stack.name),
+        compose: stack.compose.clone(),
+    };
+
     let override_path = build_override_file(stack, &services, target_tag, target_digest)?;
     let _override_cleanup = override_path.as_ref().map(|p| TempFileCleanup(p.clone()));
     let override_stack = override_path.as_ref().map(|p| ComposeStack {
@@ -356,7 +473,10 @@ pub async fn run_update_job(
         },
     });
 
-    let docker_cfg = docker_runner::DockerRunnerConfig::default();
+    let docker_cfg = docker_runner::DockerRunnerConfig {
+        docker_bin: "docker".to_string(),
+        env: command_env,
+    };
 
     let mut changed = 0u32;
     let mut old_images = serde_json::Map::new();
@@ -876,20 +996,37 @@ fn replace_tag(image_ref: &str, tag: &str) -> Option<String> {
     }
 }
 
-fn semver_tag_from_oci_version(raw: &str) -> Option<String> {
-    let t = raw.trim();
-    if t.is_empty() || t == "<no value>" {
-        return None;
+fn semver_tag_candidates_from_oci_version(raw: &str) -> Vec<String> {
+    let raw_tag = raw.trim();
+    if raw_tag.is_empty() || raw_tag == "<no value>" {
+        return Vec::new();
     }
-    let t = t
+
+    let normalized = raw_tag
         .strip_prefix('v')
-        .or_else(|| t.strip_prefix('V'))
-        .unwrap_or(t);
-    let v = Version::parse(t).ok()?;
-    if !v.build.is_empty() {
-        return None;
+        .or_else(|| raw_tag.strip_prefix('V'))
+        .unwrap_or(raw_tag);
+    let version = match Version::parse(normalized) {
+        Ok(version) if version.build.is_empty() => version,
+        _ => return Vec::new(),
+    };
+
+    let normalized_tag = version.to_string();
+    let mut candidates = vec![raw_tag.to_string()];
+    if normalized_tag != raw_tag {
+        candidates.push(normalized_tag);
     }
-    Some(v.to_string())
+    candidates
+}
+
+fn record_semver_pull_success(
+    tag_ref: String,
+    semver_pulled: &mut Vec<String>,
+    semver_pulled_set: &mut HashSet<String>,
+) {
+    if semver_pulled_set.insert(tag_ref.clone()) {
+        semver_pulled.push(tag_ref);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -913,12 +1050,11 @@ async fn maybe_pull_semver_tag_for_image(
     )
     .await?;
 
-    let Some(tag) = semver_tag_from_oci_version(&raw_version) else {
-        return Ok(());
-    };
-    let tag_ref = format!("{repo}:{tag}");
-
-    if semver_pulled_set.contains(&tag_ref) {
+    let candidate_refs = semver_tag_candidates_from_oci_version(&raw_version)
+        .into_iter()
+        .map(|tag| format!("{repo}:{tag}"))
+        .collect::<Vec<_>>();
+    if candidate_refs.is_empty() {
         return Ok(());
     }
 
@@ -931,26 +1067,62 @@ async fn maybe_pull_semver_tag_for_image(
         idempotent_retry_policy,
     )
     .await?;
-    if let Ok(parsed) = serde_json::from_str::<Option<Vec<String>>>(repo_tags.trim())
-        && parsed.unwrap_or_default().iter().any(|t| t == &tag_ref)
-    {
-        semver_pulled_set.insert(tag_ref);
-        return Ok(());
+    let parsed_repo_tags = serde_json::from_str::<Option<Vec<String>>>(repo_tags.trim())
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+
+    for tag_ref in &candidate_refs {
+        if parsed_repo_tags.iter().any(|t| t == tag_ref) {
+            record_semver_pull_success(tag_ref.clone(), semver_pulled, semver_pulled_set);
+            return Ok(());
+        }
     }
 
-    run_checked_with_retry(
-        runner,
-        docker_runner::pull_image(docker_cfg, &tag_ref),
-        Duration::from_secs(300),
-        "semver_pull",
-        idempotent_retry_policy,
-    )
-    .await?;
-    if semver_pulled_set.insert(tag_ref.clone()) {
-        semver_pulled.push(tag_ref);
+    let mut pull_failures: Vec<String> = Vec::new();
+    let mut total_pull_attempts = 0usize;
+    for tag_ref in candidate_refs {
+        if semver_pulled_set.contains(&tag_ref) {
+            return Ok(());
+        }
+
+        match run_checked_with_retry(
+            runner,
+            docker_runner::pull_image(docker_cfg, &tag_ref),
+            Duration::from_secs(300),
+            "semver_pull",
+            idempotent_retry_policy,
+        )
+        .await
+        {
+            Ok(()) => {
+                record_semver_pull_success(tag_ref, semver_pulled, semver_pulled_set);
+                return Ok(());
+            }
+            Err(err) => match err.downcast::<UpdateStepFailure>() {
+                Ok(step_failure) => {
+                    total_pull_attempts += step_failure.retry.attempts as usize;
+                    pull_failures.push(format!("{tag_ref} => {}", step_failure.last_error));
+                }
+                Err(err) => {
+                    total_pull_attempts += idempotent_retry_policy.max_attempts;
+                    pull_failures.push(format!("{tag_ref} => {err}"));
+                }
+            },
+        }
     }
 
-    Ok(())
+    Err(anyhow::Error::new(UpdateStepFailure {
+        step: "semver_pull".to_string(),
+        retry: RetrySummary {
+            attempts: total_pull_attempts as u32,
+            max_attempts: (idempotent_retry_policy.max_attempts * pull_failures.len()) as u32,
+            base_ms: idempotent_retry_policy.base_ms,
+            max_ms: idempotent_retry_policy.max_ms,
+        },
+        last_error: format!("all semver candidates failed: {}", pull_failures.join("; ")),
+        partial_summary: None,
+    }))
 }
 
 fn parse_size_to_bytes(input: &str) -> Option<f64> {
@@ -1326,7 +1498,7 @@ mod tests {
         },
         runner::{CommandOutput, CommandRunner},
     };
-    use std::{collections::BTreeMap, sync::Mutex};
+    use std::{collections::BTreeMap, fs, sync::Mutex};
 
     #[derive(Default)]
     struct FakeRunner {
@@ -1396,6 +1568,216 @@ mod tests {
                 },
                 archived: None,
             }],
+        }
+    }
+
+    fn write_test_docker_config() -> (PathBuf, TempDirCleanup) {
+        let root = std::env::temp_dir().join(format!("dockrev-test-auth-{}", ulid::Ulid::new()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("docker-config.custom.json");
+        fs::write(&path, r#"{"auths":{"ghcr.io":{"auth":"Zm9vOmJhcg=="}}}"#).unwrap();
+        (path, TempDirCleanup(root))
+    }
+
+    fn write_test_default_named_docker_config() -> (PathBuf, TempDirCleanup) {
+        let root =
+            std::env::temp_dir().join(format!("dockrev-test-auth-default-{}", ulid::Ulid::new()));
+        let contexts_dir = root.join("contexts/meta");
+        let buildx_dir = root.join("buildx");
+        fs::create_dir_all(&contexts_dir).unwrap();
+        fs::create_dir_all(&buildx_dir).unwrap();
+        let path = root.join("config.json");
+        fs::write(&path, r#"{"auths":{"ghcr.io":{"auth":"Zm9vOmJhcg=="}}}"#).unwrap();
+        fs::write(
+            contexts_dir.join("state.json"),
+            r#"{"currentContext":"desktop-linux"}"#,
+        )
+        .unwrap();
+        fs::write(buildx_dir.join("state.json"), "cache-state").unwrap();
+        fs::write(root.join("notes.txt"), "not-for-auth-bridge").unwrap();
+        (path, TempDirCleanup(root))
+    }
+
+    #[test]
+    fn docker_cli_auth_bridge_stages_custom_config_as_config_json() {
+        let (source_path, _source_cleanup) = write_test_docker_config();
+
+        let bridge = DockerCliAuthBridge::stage(&source_path).expect("auth bridge should stage");
+        let staged_path = bridge.docker_config_dir.join("config.json");
+
+        assert_eq!(
+            fs::read_to_string(&staged_path).unwrap(),
+            fs::read_to_string(&source_path).unwrap()
+        );
+        assert_eq!(
+            bridge.env(),
+            vec![(
+                "DOCKER_CONFIG".to_string(),
+                bridge.docker_config_dir.to_string_lossy().to_string(),
+            )]
+        );
+    }
+
+    #[test]
+    fn docker_cli_auth_bridge_copies_context_metadata_for_real_config_json() {
+        let (source_path, _source_cleanup) = write_test_default_named_docker_config();
+
+        let bridge = DockerCliAuthBridge::stage(&source_path).expect("auth bridge should stage");
+        let staged_path = bridge.docker_config_dir.join("config.json");
+        let staged_context = bridge.docker_config_dir.join("contexts/meta/state.json");
+
+        assert_eq!(
+            fs::read_to_string(&staged_path).unwrap(),
+            fs::read_to_string(&source_path).unwrap()
+        );
+        assert_eq!(
+            fs::read_to_string(&staged_context).unwrap(),
+            r#"{"currentContext":"desktop-linux"}"#
+        );
+        assert!(!bridge.docker_config_dir.join("buildx/state.json").exists());
+        assert!(!bridge.docker_config_dir.join("notes.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn docker_cli_auth_bridge_handles_read_only_real_config_json() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (source_path, _source_cleanup) = write_test_default_named_docker_config();
+        let mut permissions = fs::metadata(&source_path).unwrap().permissions();
+        permissions.set_mode(0o444);
+        fs::set_permissions(&source_path, permissions).unwrap();
+
+        let bridge = DockerCliAuthBridge::stage(&source_path).expect("auth bridge should stage");
+
+        assert_eq!(
+            fs::read_to_string(bridge.docker_config_dir.join("config.json")).unwrap(),
+            fs::read_to_string(&source_path).unwrap()
+        );
+    }
+
+    #[derive(Default)]
+    struct EnvCaptureUpdateRunner {
+        step: Mutex<usize>,
+        specs: Mutex<Vec<CommandSpec>>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for EnvCaptureUpdateRunner {
+        async fn run(
+            &self,
+            spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            self.specs.lock().unwrap().push(spec.clone());
+            let mut step = self.step.lock().unwrap();
+            let out = match *step {
+                0 => CommandOutput {
+                    status: 0,
+                    stdout: "old_container\n".to_string(),
+                    stderr: String::new(),
+                },
+                1 => CommandOutput {
+                    status: 0,
+                    stdout: "sha256:old\n".to_string(),
+                    stderr: String::new(),
+                },
+                2 => CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+                3 => CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+                4 => CommandOutput {
+                    status: 0,
+                    stdout: "new_container\n".to_string(),
+                    stderr: String::new(),
+                },
+                5 => CommandOutput {
+                    status: 0,
+                    stdout: "0\n".to_string(),
+                    stderr: String::new(),
+                },
+                6 => CommandOutput {
+                    status: 0,
+                    stdout: "sha256:new\n".to_string(),
+                    stderr: String::new(),
+                },
+                7 => CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+                _ => panic!(
+                    "unexpected extra command: program={} args={:?}",
+                    spec.program, spec.args
+                ),
+            };
+            *step += 1;
+            Ok(out)
+        }
+    }
+
+    #[derive(Default)]
+    struct EnvCaptureSemverRunner {
+        specs: Mutex<Vec<CommandSpec>>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for EnvCaptureSemverRunner {
+        async fn run(
+            &self,
+            spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            self.specs.lock().unwrap().push(spec.clone());
+            let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
+            if args
+                == vec![
+                    "image",
+                    "inspect",
+                    "--format",
+                    r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
+                    "sha256:new",
+                ]
+            {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: "0.7.7\n".to_string(),
+                    stderr: String::new(),
+                });
+            }
+            if args
+                == vec![
+                    "image",
+                    "inspect",
+                    "--format",
+                    "{{json .RepoTags}}",
+                    "sha256:new",
+                ]
+            {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: "[]\n".to_string(),
+                    stderr: String::new(),
+                });
+            }
+            if args == vec!["pull", "ghcr.io/org/web:0.7.7"] {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                });
+            }
+            Ok(CommandOutput {
+                status: 1,
+                stdout: String::new(),
+                stderr: format!("unexpected args: {:?}", spec.args),
+            })
         }
     }
 
@@ -1522,6 +1904,7 @@ mod tests {
         let outcome = run_update_job(
             &runner,
             "docker-compose",
+            None,
             IdempotentRetryPolicy::default(),
             &stack,
             &JobScope::Stack,
@@ -1540,6 +1923,125 @@ mod tests {
         assert_eq!(outcome.status, "success");
         assert_eq!(outcome.summary_json["changedServices"].as_u64(), Some(0));
         assert!(runner.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn update_job_injects_docker_auth_env_into_compose_and_docker_commands() {
+        let stack = single_service_stack("ghcr.io/org/web:1.0", None);
+        let runner = EnvCaptureUpdateRunner::default();
+        let (docker_config_path, _docker_config_cleanup) = write_test_docker_config();
+
+        let outcome = run_update_job(
+            &runner,
+            "docker-compose",
+            Some(docker_config_path.as_path()),
+            IdempotentRetryPolicy::default(),
+            &stack,
+            &JobScope::Service,
+            Some("svc_1"),
+            "live",
+            None,
+            None,
+            false,
+            "ui",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.status, "success");
+
+        let specs = runner.specs.lock().unwrap();
+        let compose_pull = specs
+            .iter()
+            .find(|spec| args_end_with(&spec.args, &["pull", "web"]))
+            .expect("compose pull command should exist");
+        let compose_up = specs
+            .iter()
+            .find(|spec| args_end_with(&spec.args, &["up", "-d", "web"]))
+            .expect("compose up command should exist");
+        let docker_tag = specs
+            .iter()
+            .find(|spec| spec.args == vec!["image", "tag", "sha256:new", "ghcr.io/org/web:1.0"])
+            .expect("docker tag command should exist");
+
+        for spec in [compose_pull, compose_up, docker_tag] {
+            assert_eq!(spec.env.len(), 1);
+            assert!(spec.env.iter().all(|(k, _)| k == "DOCKER_CONFIG"));
+            assert!(
+                spec.env
+                    .iter()
+                    .any(|(k, v)| k == "DOCKER_CONFIG" && v.ends_with("/.docker"))
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn noop_update_with_broken_docker_config_path_stays_noop() {
+        let stack = single_service_stack("ghcr.io/ivanli-cn/dockrev:1.0", None);
+        let runner = FakeRunner::default();
+        let missing_path = std::env::temp_dir()
+            .join(format!("dockrev-missing-config-{}", ulid::Ulid::new()))
+            .join("config.json");
+
+        let outcome = run_update_job(
+            &runner,
+            "docker-compose",
+            Some(missing_path.as_path()),
+            IdempotentRetryPolicy::default(),
+            &stack,
+            &JobScope::Stack,
+            None,
+            "live",
+            None,
+            None,
+            false,
+            "ui",
+            Some("ghcr.io/ivanli-cn/dockrev"),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.status, "success");
+        assert_eq!(outcome.summary_json["changedServices"].as_u64(), Some(0));
+        assert!(runner.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn update_job_without_docker_config_keeps_command_env_empty() {
+        let stack = single_service_stack("ghcr.io/org/web:1.0", None);
+        let runner = EnvCaptureUpdateRunner::default();
+
+        let outcome = run_update_job(
+            &runner,
+            "docker-compose",
+            None,
+            IdempotentRetryPolicy::default(),
+            &stack,
+            &JobScope::Service,
+            Some("svc_1"),
+            "live",
+            None,
+            None,
+            false,
+            "ui",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.status, "success");
+        assert!(
+            runner
+                .specs
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|spec| spec.env.is_empty())
+        );
     }
 
     #[derive(Default)]
@@ -1716,6 +2218,7 @@ mod tests {
         let outcome = run_update_job(
             &runner,
             "docker-compose",
+            None,
             IdempotentRetryPolicy::default(),
             &stack,
             &JobScope::Stack,
@@ -1774,6 +2277,7 @@ mod tests {
         let outcome = run_update_job(
             &runner,
             "docker-compose",
+            None,
             IdempotentRetryPolicy::default(),
             &stack,
             &JobScope::Service,
@@ -1835,6 +2339,7 @@ mod tests {
         let outcome = run_update_job(
             &runner,
             "docker-compose",
+            None,
             IdempotentRetryPolicy::default(),
             &stack,
             &JobScope::Service,
@@ -2177,7 +2682,7 @@ mod tests {
             {
                 CommandOutput {
                     status: 0,
-                    stdout: "0.7.7\n".to_string(),
+                    stdout: "v0.7.7\n".to_string(),
                     stderr: String::new(),
                 }
             } else if spec.program == "docker"
@@ -2214,6 +2719,7 @@ mod tests {
         let outcome = run_update_job(
             &runner,
             "docker-compose",
+            None,
             IdempotentRetryPolicy {
                 max_attempts: 1,
                 base_ms: 1,
@@ -2253,6 +2759,7 @@ mod tests {
         let outcome = run_update_job(
             &runner,
             "docker-compose",
+            None,
             IdempotentRetryPolicy::default(),
             &stack,
             &JobScope::Service,
@@ -2280,6 +2787,7 @@ mod tests {
         let outcome = run_update_job(
             &runner,
             "docker-compose",
+            None,
             IdempotentRetryPolicy::default(),
             &stack,
             &JobScope::Service,
@@ -2316,6 +2824,7 @@ mod tests {
         let outcome = run_update_job(
             &runner,
             "docker-compose",
+            None,
             IdempotentRetryPolicy::default(),
             &stack,
             &JobScope::Stack,
@@ -2332,6 +2841,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(outcome.status, "success");
+        assert_eq!(
+            outcome.summary_json["semverPulled"],
+            json!(["ghcr.io/org/web:v0.7.7"])
+        );
         let calls = runner.calls.lock().unwrap();
         let sync_idx = calls
             .iter()
@@ -2350,7 +2863,7 @@ mod tests {
             .iter()
             .position(|(program, args)| {
                 program == "docker"
-                    && args == &vec!["pull".to_string(), "ghcr.io/org/web:0.7.7".to_string()]
+                    && args == &vec!["pull".to_string(), "ghcr.io/org/web:v0.7.7".to_string()]
             })
             .expect("semver pull should exist");
         assert!(sync_idx < semver_idx);
@@ -2512,6 +3025,7 @@ mod tests {
         let err = run_update_job(
             &runner,
             "docker-compose",
+            None,
             IdempotentRetryPolicy {
                 max_attempts: 5,
                 base_ms: 1,
@@ -2534,9 +3048,301 @@ mod tests {
         assert_eq!(*runner.up_calls.lock().unwrap(), 1);
     }
 
+    #[test]
+    fn semver_tag_candidates_preserve_raw_tag_and_dedupe_normalized_variant() {
+        assert_eq!(
+            semver_tag_candidates_from_oci_version(" v0.7.7\n"),
+            vec!["v0.7.7".to_string(), "0.7.7".to_string()]
+        );
+        assert_eq!(
+            semver_tag_candidates_from_oci_version("0.7.7"),
+            vec!["0.7.7".to_string()]
+        );
+        assert!(semver_tag_candidates_from_oci_version("0.7.7+build.1").is_empty());
+    }
+
+    #[derive(Default)]
+    struct SemverRawTagRunner {
+        pull_calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for SemverRawTagRunner {
+        async fn run(
+            &self,
+            spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            if spec.program != "docker" {
+                return Ok(CommandOutput {
+                    status: 1,
+                    stdout: String::new(),
+                    stderr: "unexpected program".to_string(),
+                });
+            }
+            let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
+            if args
+                == vec![
+                    "image",
+                    "inspect",
+                    "--format",
+                    r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
+                    "sha256:new",
+                ]
+            {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: "v0.7.7\n".to_string(),
+                    stderr: String::new(),
+                });
+            }
+            if args
+                == vec![
+                    "image",
+                    "inspect",
+                    "--format",
+                    "{{json .RepoTags}}",
+                    "sha256:new",
+                ]
+            {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: r#"["ghcr.io/org/web:latest"]"#.to_string(),
+                    stderr: String::new(),
+                });
+            }
+            if args == vec!["pull", "ghcr.io/org/web:v0.7.7"] {
+                self.pull_calls.lock().unwrap().push(args[1].to_string());
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                });
+            }
+            Ok(CommandOutput {
+                status: 1,
+                stdout: String::new(),
+                stderr: "unexpected args".to_string(),
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct SemverFallbackRunner {
+        pull_calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for SemverFallbackRunner {
+        async fn run(
+            &self,
+            spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            if spec.program != "docker" {
+                return Ok(CommandOutput {
+                    status: 1,
+                    stdout: String::new(),
+                    stderr: "unexpected program".to_string(),
+                });
+            }
+            let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
+            if args
+                == vec![
+                    "image",
+                    "inspect",
+                    "--format",
+                    r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
+                    "sha256:new",
+                ]
+            {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: "v0.7.7\n".to_string(),
+                    stderr: String::new(),
+                });
+            }
+            if args
+                == vec![
+                    "image",
+                    "inspect",
+                    "--format",
+                    "{{json .RepoTags}}",
+                    "sha256:new",
+                ]
+            {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: r#"["ghcr.io/org/web:latest"]"#.to_string(),
+                    stderr: String::new(),
+                });
+            }
+            if args == vec!["pull", "ghcr.io/org/web:v0.7.7"] {
+                self.pull_calls.lock().unwrap().push(args[1].to_string());
+                return Ok(CommandOutput {
+                    status: 1,
+                    stdout: String::new(),
+                    stderr: "raw not found".to_string(),
+                });
+            }
+            if args == vec!["pull", "ghcr.io/org/web:0.7.7"] {
+                self.pull_calls.lock().unwrap().push(args[1].to_string());
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                });
+            }
+            Ok(CommandOutput {
+                status: 1,
+                stdout: String::new(),
+                stderr: "unexpected args".to_string(),
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct SemverNormalizedTagAlreadyPresentRunner {
+        inspect_repo_tags_calls: Mutex<usize>,
+        pull_calls: Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for SemverNormalizedTagAlreadyPresentRunner {
+        async fn run(
+            &self,
+            spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            if spec.program != "docker" {
+                return Ok(CommandOutput {
+                    status: 1,
+                    stdout: String::new(),
+                    stderr: "unexpected program".to_string(),
+                });
+            }
+            let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
+            if args
+                == vec![
+                    "image",
+                    "inspect",
+                    "--format",
+                    r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
+                    "sha256:new",
+                ]
+            {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: "v0.7.7\n".to_string(),
+                    stderr: String::new(),
+                });
+            }
+            if args
+                == vec![
+                    "image",
+                    "inspect",
+                    "--format",
+                    "{{json .RepoTags}}",
+                    "sha256:new",
+                ]
+            {
+                *self.inspect_repo_tags_calls.lock().unwrap() += 1;
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: r#"["ghcr.io/org/web:0.7.7"]"#.to_string(),
+                    stderr: String::new(),
+                });
+            }
+            if args == vec!["pull", "ghcr.io/org/web:v0.7.7"]
+                || args == vec!["pull", "ghcr.io/org/web:0.7.7"]
+            {
+                *self.pull_calls.lock().unwrap() += 1;
+                return Ok(CommandOutput {
+                    status: 1,
+                    stdout: String::new(),
+                    stderr: "pull should not run when a fallback tag already exists locally"
+                        .to_string(),
+                });
+            }
+            Ok(CommandOutput {
+                status: 1,
+                stdout: String::new(),
+                stderr: "unexpected args".to_string(),
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct SemverAlreadyTaggedRunner {
+        inspect_repo_tags_calls: Mutex<usize>,
+        pull_calls: Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for SemverAlreadyTaggedRunner {
+        async fn run(
+            &self,
+            spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            if spec.program != "docker" {
+                return Ok(CommandOutput {
+                    status: 1,
+                    stdout: String::new(),
+                    stderr: "unexpected program".to_string(),
+                });
+            }
+            let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
+            if args
+                == vec![
+                    "image",
+                    "inspect",
+                    "--format",
+                    r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
+                    "sha256:new",
+                ]
+            {
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: "v0.7.7\n".to_string(),
+                    stderr: String::new(),
+                });
+            }
+            if args
+                == vec![
+                    "image",
+                    "inspect",
+                    "--format",
+                    "{{json .RepoTags}}",
+                    "sha256:new",
+                ]
+            {
+                *self.inspect_repo_tags_calls.lock().unwrap() += 1;
+                return Ok(CommandOutput {
+                    status: 0,
+                    stdout: r#"["ghcr.io/org/web:v0.7.7"]"#.to_string(),
+                    stderr: String::new(),
+                });
+            }
+            if args == vec!["pull", "ghcr.io/org/web:v0.7.7"] {
+                *self.pull_calls.lock().unwrap() += 1;
+                return Ok(CommandOutput {
+                    status: 1,
+                    stdout: String::new(),
+                    stderr: "pull should not run when tag already exists locally".to_string(),
+                });
+            }
+            Ok(CommandOutput {
+                status: 1,
+                stdout: String::new(),
+                stderr: "unexpected args".to_string(),
+            })
+        }
+    }
+
     #[derive(Default)]
     struct SemverPullFailRunner {
-        pull_calls: Mutex<usize>,
+        pull_calls: Mutex<Vec<String>>,
     }
 
     #[async_trait::async_trait]
@@ -2565,7 +3371,7 @@ mod tests {
             {
                 return Ok(CommandOutput {
                     status: 0,
-                    stdout: "0.7.7\n".to_string(),
+                    stdout: "v0.7.7\n".to_string(),
                     stderr: String::new(),
                 });
             }
@@ -2584,8 +3390,10 @@ mod tests {
                     stderr: String::new(),
                 });
             }
-            if args == vec!["pull", "ghcr.io/org/web:0.7.7"] {
-                *self.pull_calls.lock().unwrap() += 1;
+            if args == vec!["pull", "ghcr.io/org/web:v0.7.7"]
+                || args == vec!["pull", "ghcr.io/org/web:0.7.7"]
+            {
+                self.pull_calls.lock().unwrap().push(args[1].to_string());
                 return Ok(CommandOutput {
                     status: 1,
                     stdout: String::new(),
@@ -2669,6 +3477,194 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn maybe_pull_semver_tag_prefers_raw_oci_tag_before_normalized_fallback() {
+        let runner = SemverRawTagRunner::default();
+        let docker_cfg = docker_runner::DockerRunnerConfig::default();
+
+        let mut semver_pulled: Vec<String> = Vec::new();
+        let mut semver_pulled_set: HashSet<String> = HashSet::new();
+        let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
+            serde_json::Map::new();
+
+        maybe_pull_semver_tag_for_image(
+            &runner,
+            &docker_cfg,
+            IdempotentRetryPolicy {
+                max_attempts: 3,
+                base_ms: 1,
+                max_ms: 2,
+            },
+            "svc_1",
+            "ghcr.io/org/web",
+            "sha256:new",
+            &mut semver_pulled,
+            &mut semver_pulled_set,
+            &mut semver_pull_warnings,
+        )
+        .await
+        .expect("raw OCI tag should be pulled first");
+
+        assert_eq!(semver_pulled, vec!["ghcr.io/org/web:v0.7.7".to_string()]);
+        assert!(semver_pulled_set.contains("ghcr.io/org/web:v0.7.7"));
+        assert_eq!(
+            *runner.pull_calls.lock().unwrap(),
+            vec!["ghcr.io/org/web:v0.7.7".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn maybe_pull_semver_tag_falls_back_to_normalized_tag_after_raw_failure() {
+        let runner = SemverFallbackRunner::default();
+        let docker_cfg = docker_runner::DockerRunnerConfig::default();
+
+        let mut semver_pulled: Vec<String> = Vec::new();
+        let mut semver_pulled_set: HashSet<String> = HashSet::new();
+        let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
+            serde_json::Map::new();
+
+        maybe_pull_semver_tag_for_image(
+            &runner,
+            &docker_cfg,
+            IdempotentRetryPolicy {
+                max_attempts: 1,
+                base_ms: 1,
+                max_ms: 2,
+            },
+            "svc_1",
+            "ghcr.io/org/web",
+            "sha256:new",
+            &mut semver_pulled,
+            &mut semver_pulled_set,
+            &mut semver_pull_warnings,
+        )
+        .await
+        .expect("normalized tag should be used as fallback");
+
+        assert_eq!(semver_pulled, vec!["ghcr.io/org/web:0.7.7".to_string()]);
+        assert!(semver_pulled_set.contains("ghcr.io/org/web:0.7.7"));
+        assert_eq!(
+            *runner.pull_calls.lock().unwrap(),
+            vec![
+                "ghcr.io/org/web:v0.7.7".to_string(),
+                "ghcr.io/org/web:0.7.7".to_string(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn maybe_pull_semver_tag_still_attempts_raw_tag_when_only_normalized_tag_was_previously_pulled()
+     {
+        let runner = SemverRawTagRunner::default();
+        let docker_cfg = docker_runner::DockerRunnerConfig::default();
+
+        let mut semver_pulled: Vec<String> = vec!["ghcr.io/org/web:0.7.7".to_string()];
+        let mut semver_pulled_set: HashSet<String> =
+            HashSet::from(["ghcr.io/org/web:0.7.7".to_string()]);
+        let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
+            serde_json::Map::new();
+
+        maybe_pull_semver_tag_for_image(
+            &runner,
+            &docker_cfg,
+            IdempotentRetryPolicy {
+                max_attempts: 3,
+                base_ms: 1,
+                max_ms: 2,
+            },
+            "svc_2",
+            "ghcr.io/org/web",
+            "sha256:new",
+            &mut semver_pulled,
+            &mut semver_pulled_set,
+            &mut semver_pull_warnings,
+        )
+        .await
+        .expect("raw tag should still be attempted before normalized set short-circuit");
+
+        assert_eq!(
+            semver_pulled,
+            vec![
+                "ghcr.io/org/web:0.7.7".to_string(),
+                "ghcr.io/org/web:v0.7.7".to_string(),
+            ]
+        );
+        assert!(semver_pulled_set.contains("ghcr.io/org/web:0.7.7"));
+        assert!(semver_pulled_set.contains("ghcr.io/org/web:v0.7.7"));
+        assert_eq!(
+            *runner.pull_calls.lock().unwrap(),
+            vec!["ghcr.io/org/web:v0.7.7".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn maybe_pull_semver_tag_short_circuits_when_raw_tag_already_exists_locally() {
+        let runner = SemverAlreadyTaggedRunner::default();
+        let docker_cfg = docker_runner::DockerRunnerConfig::default();
+
+        let mut semver_pulled: Vec<String> = Vec::new();
+        let mut semver_pulled_set: HashSet<String> = HashSet::new();
+        let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
+            serde_json::Map::new();
+
+        maybe_pull_semver_tag_for_image(
+            &runner,
+            &docker_cfg,
+            IdempotentRetryPolicy {
+                max_attempts: 3,
+                base_ms: 1,
+                max_ms: 2,
+            },
+            "svc_1",
+            "ghcr.io/org/web",
+            "sha256:new",
+            &mut semver_pulled,
+            &mut semver_pulled_set,
+            &mut semver_pull_warnings,
+        )
+        .await
+        .expect("local raw tag should short-circuit semver pull");
+
+        assert_eq!(semver_pulled, vec!["ghcr.io/org/web:v0.7.7".to_string()]);
+        assert!(semver_pulled_set.contains("ghcr.io/org/web:v0.7.7"));
+        assert_eq!(*runner.inspect_repo_tags_calls.lock().unwrap(), 1);
+        assert_eq!(*runner.pull_calls.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn maybe_pull_semver_tag_short_circuits_when_normalized_tag_already_exists_locally() {
+        let runner = SemverNormalizedTagAlreadyPresentRunner::default();
+        let docker_cfg = docker_runner::DockerRunnerConfig::default();
+
+        let mut semver_pulled: Vec<String> = Vec::new();
+        let mut semver_pulled_set: HashSet<String> = HashSet::new();
+        let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
+            serde_json::Map::new();
+
+        maybe_pull_semver_tag_for_image(
+            &runner,
+            &docker_cfg,
+            IdempotentRetryPolicy {
+                max_attempts: 3,
+                base_ms: 1,
+                max_ms: 2,
+            },
+            "svc_1",
+            "ghcr.io/org/web",
+            "sha256:new",
+            &mut semver_pulled,
+            &mut semver_pulled_set,
+            &mut semver_pull_warnings,
+        )
+        .await
+        .expect("normalized local tag should short-circuit before remote retries");
+
+        assert_eq!(semver_pulled, vec!["ghcr.io/org/web:0.7.7".to_string()]);
+        assert!(semver_pulled_set.contains("ghcr.io/org/web:0.7.7"));
+        assert_eq!(*runner.inspect_repo_tags_calls.lock().unwrap(), 1);
+        assert_eq!(*runner.pull_calls.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
     async fn semver_pull_failure_is_not_best_effort_anymore() {
         let runner = SemverPullFailRunner::default();
         let docker_cfg = docker_runner::DockerRunnerConfig::default();
@@ -2700,11 +3696,30 @@ mod tests {
             .downcast_ref::<UpdateStepFailure>()
             .expect("expected UpdateStepFailure");
         assert_eq!(detail.step, "semver_pull");
-        assert_eq!(detail.retry.attempts, 3);
-        assert_eq!(detail.retry.max_attempts, 3);
-        assert!(detail.last_error.contains("status=1"));
+        assert_eq!(detail.retry.attempts, 6);
+        assert_eq!(detail.retry.max_attempts, 6);
+        assert!(
+            detail
+                .last_error
+                .contains("ghcr.io/org/web:v0.7.7 => command failed: status=1 stderr=not found")
+        );
+        assert!(
+            detail
+                .last_error
+                .contains("ghcr.io/org/web:0.7.7 => command failed: status=1 stderr=not found")
+        );
         assert!(semver_pulled.is_empty());
-        assert_eq!(*runner.pull_calls.lock().unwrap(), 3);
+        assert_eq!(
+            *runner.pull_calls.lock().unwrap(),
+            vec![
+                "ghcr.io/org/web:v0.7.7".to_string(),
+                "ghcr.io/org/web:v0.7.7".to_string(),
+                "ghcr.io/org/web:v0.7.7".to_string(),
+                "ghcr.io/org/web:0.7.7".to_string(),
+                "ghcr.io/org/web:0.7.7".to_string(),
+                "ghcr.io/org/web:0.7.7".to_string(),
+            ]
+        );
     }
 
     #[tokio::test]
@@ -2739,6 +3754,47 @@ mod tests {
         assert!(semver_pulled_set.is_empty());
         assert_eq!(*runner.inspect_repo_tags_calls.lock().unwrap(), 0);
         assert_eq!(*runner.pull_calls.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn semver_pull_uses_docker_auth_env_when_configured() {
+        let runner = EnvCaptureSemverRunner::default();
+        let (docker_config_path, _docker_config_cleanup) = write_test_docker_config();
+        let auth_bridge = DockerCliAuthBridge::stage(&docker_config_path).unwrap();
+        let docker_cfg = docker_runner::DockerRunnerConfig {
+            docker_bin: "docker".to_string(),
+            env: auth_bridge.env(),
+        };
+
+        let mut semver_pulled: Vec<String> = Vec::new();
+        let mut semver_pulled_set: HashSet<String> = HashSet::new();
+        let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
+            serde_json::Map::new();
+
+        maybe_pull_semver_tag_for_image(
+            &runner,
+            &docker_cfg,
+            IdempotentRetryPolicy {
+                max_attempts: 1,
+                base_ms: 1,
+                max_ms: 2,
+            },
+            "svc_1",
+            "ghcr.io/org/web",
+            "sha256:new",
+            &mut semver_pulled,
+            &mut semver_pulled_set,
+            &mut semver_pull_warnings,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(semver_pulled, vec!["ghcr.io/org/web:0.7.7".to_string()]);
+
+        for spec in runner.specs.lock().unwrap().iter() {
+            assert_eq!(spec.env.len(), 1);
+            assert!(spec.env.iter().all(|(k, _)| k == "DOCKER_CONFIG"));
+        }
     }
 
     #[test]
