@@ -938,9 +938,42 @@ pub fn normalize_digest(input: &str) -> Option<String> {
 }
 
 pub fn image_repo_from_image_ref(image_ref: &str) -> Option<String> {
-    registry::ImageRef::parse(image_ref)
-        .ok()
-        .map(|img| format!("{}/{}", img.registry, img.name))
+    if let Ok(img) = registry::ImageRef::parse(image_ref) {
+        return Some(format!("{}/{}", img.registry, img.name));
+    }
+
+    let raw = image_ref.trim();
+    let (without_digest, digest) = raw.split_once('@')?;
+    if without_digest.trim().is_empty() || digest.trim().is_empty() {
+        return None;
+    }
+
+    let name_with_registry = without_digest.trim();
+    let first_slash = name_with_registry.find('/');
+    let (registry, name) = match first_slash {
+        Some(idx) => {
+            let (first_seg, rest_with_slash) = name_with_registry.split_at(idx);
+            let rest = rest_with_slash.strip_prefix('/')?.trim();
+            if rest.is_empty() {
+                return None;
+            }
+            let first_seg_trim = first_seg.trim();
+            if first_seg_trim.contains('.')
+                || first_seg_trim.contains(':')
+                || first_seg_trim == "localhost"
+            {
+                (first_seg_trim.to_string(), rest.to_string())
+            } else {
+                ("docker.io".to_string(), name_with_registry.to_string())
+            }
+        }
+        None => (
+            "docker.io".to_string(),
+            format!("library/{}", name_with_registry),
+        ),
+    };
+
+    Some(format!("{registry}/{name}"))
 }
 
 fn image_ref_from_repo(image_repo: &str) -> Option<registry::ImageRef> {
@@ -960,4 +993,25 @@ fn image_ref_from_repo(image_repo: &str) -> Option<registry::ImageRef> {
 
 fn now_rfc3339() -> anyhow::Result<String> {
     Ok(time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::image_repo_from_image_ref;
+
+    #[test]
+    fn image_repo_from_image_ref_supports_digest_only_refs() {
+        assert_eq!(
+            image_repo_from_image_ref("ghcr.io/acme/web@sha256:abcd"),
+            Some("ghcr.io/acme/web".to_string())
+        );
+        assert_eq!(
+            image_repo_from_image_ref("alpine@sha256:abcd"),
+            Some("docker.io/library/alpine".to_string())
+        );
+        assert_eq!(
+            image_repo_from_image_ref("ghcr.io/acme/web:latest@sha256:abcd"),
+            Some("ghcr.io/acme/web".to_string())
+        );
+    }
 }
