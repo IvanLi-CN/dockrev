@@ -91,20 +91,21 @@
 - Given 一个 maintainer / owner 作者 PR，When 没有额外 review，Then `Review Policy Gate` 通过。
 - Given 一个非 maintainer / 非 owner 作者 PR，When 未达到要求 review，Then `Review Policy Gate` 失败。
 - Given 一个 merge queue 组，When 任一 PR 未满足条件 review，Then `Review Policy Gate` 失败并标出具体 PR。
-- Given 运行本地 `quality-gates` validator，When 校验仓库声明与 workflow，Then 不再出现 `merge_group` drift、`pull_request_target` drift 或 review-policy 旧实现 drift。
+- Given 仓库内 workflow 与静态 contract-check，When 校验 trusted gate / merge queue / required-check 语义，Then 不再出现 merge queue member-resolution、trusted gate 来源或 main/PR check context 冲突。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
 ### Testing
 
-- `python3 /Users/ivan/.style-playbook-skills/skills/style-topic-quality-gates/scripts/check_quality_gates.py --repo-root . --declaration .github/quality-gates.json --allow-unchecked-branch-protection`
-- 与 workflow 变更直接相关的静态检查 / shell 语法检查（若涉及脚本）
+- `go run github.com/rhysd/actionlint/cmd/actionlint@latest .github/workflows/*.yml`
+- `bash ./.github/scripts/release-channel-contract-check.sh`
+- `git diff --check`
 - PR CI 全绿，且当前 `head_sha` 的 review-loop 收敛后才允许合并
 
 ## 实现里程碑（Milestones / Delivery checklist）
 
-- [x] M1: `Review Policy` 替换为最终 topic 模板口径，补齐 merge queue fail-closed 评估。
-- [x] M2: `PR Label Gate` 支持 merge queue 多 PR 校验，消除 `pull_request_target` 依赖。
+- [x] M1: `Review Policy` 收紧为 trusted gate 实现，补齐 merge queue fail-closed 评估。
+- [x] M2: `PR Label Gate` 支持 merge queue 多 PR 校验，并保持 trusted PR-path gate 语义。
 - [x] M3: `CI (PR)` 补齐 `merge_group`，让 required jobs 在 merge queue 上稳定产出。
 - [ ] M4: 完成规格同步、验证、PR 收敛与 GitHub required checks / branch protection 对齐。
 
