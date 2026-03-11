@@ -1634,7 +1634,9 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           return;
         }}
         const cachedTargetText = cached.target ? formatTargetRef(cached.target) : '';
-        const cachedPreviousText = cached.previous ? formatPreviousRef(cached.previous) : '';
+        const cachedPreviousText = hasPreviousRollbackTarget(cached.previous)
+          ? formatPreviousRef(cached.previous)
+          : '';
         statusOpIdEl.textContent = cached.opId ? `${{cached.opId}} · stale` : 'stale';
         statusStepEl.textContent = cached.progress?.step ? `${{cached.progress.step}} · stale` : 'stale';
         statusModeEl.textContent = `last seen ${{lastSeen}} · cached`;

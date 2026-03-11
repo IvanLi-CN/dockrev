@@ -411,6 +411,9 @@ fn render_ui_distinguishes_cached_and_uncached_offline_states() {
             "const cachedTargetText = cached.target ? formatTargetRef(cached.target) : '';"
         )
     );
+    assert!(html.contains("const cachedPreviousText = hasPreviousRollbackTarget(cached.previous)"));
+    assert!(html.contains("? formatPreviousRef(cached.previous)"));
+    assert!(html.contains(": '';"));
     assert!(html.contains("statusOpIdEl.textContent = cached.opId"));
     assert!(html.contains("statusTargetEl.textContent = cachedTargetText"));
     assert!(html.contains("setCopyButtonValue(copyTargetBtn, cachedTargetText);"));
