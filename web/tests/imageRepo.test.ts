@@ -27,6 +27,10 @@ describe('imageRepoFromImageRef', () => {
     expect(imageRepoFromImageRef('localhost:5000/acme/demo@sha256:deadbeef')).toBe('localhost:5000/acme/demo')
   })
 
+  test('parses digest-only refs for localhost registry', () => {
+    expect(imageRepoFromImageRef('localhost/acme/demo@sha256:deadbeef')).toBe('localhost/acme/demo')
+  })
+
   test('returns null for tagless refs without a digest', () => {
     expect(imageRepoFromImageRef('ghcr.io/org/app')).toBe(null)
   })

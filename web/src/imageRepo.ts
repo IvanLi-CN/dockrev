@@ -7,7 +7,7 @@ export function imageRepoFromImageRef(imageRef: string | null | undefined): stri
   // - `repo/name:tag`
   // - `repo/name:tag@sha256:...`
   // - `repo/name@sha256:...` (digest-only)
-  // - registry is the first segment if it contains '.' or ':', otherwise docker.io
+  // - registry is the first segment if it contains '.', ':', or is exactly 'localhost'
   // - docker.io names without a slash are normalized to `library/<name>`
   const at = raw.indexOf('@')
   const hasDigest = at >= 0
@@ -34,7 +34,7 @@ export function imageRepoFromImageRef(imageRef: string | null | undefined): stri
 
   let registry = 'docker.io'
   let name = ''
-  if (parts[0].includes('.') || parts[0].includes(':')) {
+  if (parts[0].includes('.') || parts[0].includes(':') || parts[0] === 'localhost') {
     registry = parts[0].trim() || registry
     name = parts.slice(1).join('/')
   } else {
