@@ -42,6 +42,7 @@ pub struct TriggerVersionInferenceRefreshResponse {
     pub status: String,
     pub service_id: String,
     pub image_repo: String,
+    pub digest: String,
     pub reason: String,
 }
 

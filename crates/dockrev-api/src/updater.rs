@@ -556,6 +556,19 @@ pub async fn run_update_job(
         .iter()
         .map(|target| (target.service_id.clone(), target.clone()))
         .collect::<HashMap<_, _>>();
+    if !explicit_targets_by_service.is_empty() {
+        let missing_target_service_ids = services
+            .iter()
+            .filter(|svc| !explicit_targets_by_service.contains_key(svc.id.as_str()))
+            .map(|svc| svc.id.clone())
+            .collect::<Vec<_>>();
+        if !missing_target_service_ids.is_empty() {
+            return Err(anyhow::anyhow!(
+                "explicit update targets no longer cover selected services: {}",
+                missing_target_service_ids.join(", ")
+            ));
+        }
+    }
 
     let auth_bridge = docker_config_path
         .map(DockerCliAuthBridge::stage)
@@ -1135,12 +1148,16 @@ fn build_override_file(
     for svc in services {
         let base = strip_tag_and_digest(&svc.image.reference)
             .unwrap_or_else(|| svc.image.reference.clone());
-        let override_image = if let Some(target) = explicit_targets.get(svc.id.as_str()) {
-            format!("{base}@{}", normalize_digest(&target.target_digest))
-        } else if let Some(candidate) = svc.candidate.as_ref() {
+        let override_image = if explicit_targets.is_empty() {
+            let Some(candidate) = svc.candidate.as_ref() else {
+                continue;
+            };
             format!("{base}@{}", normalize_digest(&candidate.digest))
         } else {
-            continue;
+            let target = explicit_targets.get(svc.id.as_str()).ok_or_else(|| {
+                anyhow::anyhow!("missing explicit update target for service {}", svc.id)
+            })?;
+            format!("{base}@{}", normalize_digest(&target.target_digest))
         };
 
         any = true;
@@ -2817,6 +2834,60 @@ mod tests {
         assert_eq!(outcome.status, "success");
         assert_eq!(outcome.summary_json["targetTagsPulled"], json!([]));
         assert_eq!(*runner.step.lock().unwrap(), 7);
+    }
+
+    #[tokio::test]
+    async fn explicit_targets_must_cover_selected_services_at_execution_time() {
+        let mut stack = single_service_stack(
+            "ghcr.io/org/web:1.0",
+            Some(Candidate {
+                tag: "1.0".to_string(),
+                resolved_tag: Some("1.0".to_string()),
+                digest: "sha256:new1".to_string(),
+                arch_match: ArchMatch::Match,
+                arch: vec!["linux/amd64".to_string()],
+            }),
+        );
+        let mut worker = stack.services[0].clone();
+        worker.id = "svc_2".to_string();
+        worker.name = "worker".to_string();
+        worker.image.reference = "ghcr.io/org/worker:2.0".to_string();
+        worker.image.tag = "2.0".to_string();
+        worker.candidate = Some(Candidate {
+            tag: "2.0".to_string(),
+            resolved_tag: Some("2.0".to_string()),
+            digest: "sha256:new2".to_string(),
+            arch_match: ArchMatch::Match,
+            arch: vec!["linux/amd64".to_string()],
+        });
+        stack.services.push(worker);
+
+        let runner = FakeRunner::default();
+        let explicit_targets = explicit_targets("svc_1", "1.0", "sha256:new1", &[]);
+
+        let err = run_update_job(
+            &runner,
+            "docker-compose",
+            None,
+            IdempotentRetryPolicy::default(),
+            &stack,
+            &JobScope::Stack,
+            None,
+            "live",
+            Some(explicit_targets.as_slice()),
+            false,
+            "ui",
+            None,
+            None,
+        )
+        .await
+        .expect_err("missing explicit target should fail before executing update commands");
+
+        assert!(
+            err.to_string()
+                .contains("explicit update targets no longer cover selected services: svc_2")
+        );
+        assert!(runner.calls.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

@@ -153,6 +153,7 @@ export type TriggerVersionInferenceRefreshResponse = {
   status: 'pending' | string
   serviceId: string
   imageRepo: string
+  digest: string
   reason: string
 }
 
@@ -855,10 +856,11 @@ export async function getServiceDigestTagsSnapshot(serviceId: string, digest: st
 
 export async function forceRefreshServiceVersionInference(
   serviceId: string,
+  digest: string,
 ): Promise<TriggerVersionInferenceRefreshResponse> {
   const resp = await apiFetch(
     `/api/services/${encodeURIComponent(serviceId)}/version-inference/refresh`,
-    { method: 'POST', body: '{}' },
+    { method: 'POST', body: JSON.stringify({ digest }) },
   )
   return (await resp.json()) as TriggerVersionInferenceRefreshResponse
 }

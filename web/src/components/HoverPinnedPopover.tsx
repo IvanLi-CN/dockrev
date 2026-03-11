@@ -58,9 +58,10 @@ export function useHoverPinnedPopover(options: HoverPinnedPopoverOptions = {}) {
 
   const popoverProps = {
     open,
-    onOpenChange: (next: boolean) => {
-      if (!next) close()
-    },
+    // Open/close is driven by the hover+pin state machine. Radix will still call
+    // `onOpenChange` for trigger clicks / outside interactions, but we intentionally
+    // ignore it here and handle dismissal explicitly via content event handlers.
+    onOpenChange: () => {},
   }
 
   const triggerProps = {
@@ -78,7 +79,13 @@ export function useHoverPinnedPopover(options: HoverPinnedPopoverOptions = {}) {
 
   const contentProps: Pick<
     ComponentPropsWithoutRef<typeof PopoverContent>,
-    'onPointerEnter' | 'onPointerLeave' | 'onEscapeKeyDown' | 'onOpenAutoFocus' | 'onCloseAutoFocus'
+    | 'onPointerEnter'
+    | 'onPointerLeave'
+    | 'onEscapeKeyDown'
+    | 'onOpenAutoFocus'
+    | 'onCloseAutoFocus'
+    | 'onPointerDownOutside'
+    | 'onFocusOutside'
   > = {
     onPointerEnter: () => {
       clearHoverCloseTimer()
@@ -87,6 +94,8 @@ export function useHoverPinnedPopover(options: HoverPinnedPopoverOptions = {}) {
     onPointerLeave: () => {
       scheduleHoverClose()
     },
+    onPointerDownOutside: () => close(),
+    onFocusOutside: () => close(),
     onEscapeKeyDown: () => close(),
     onOpenAutoFocus: (event) => event.preventDefault(),
     onCloseAutoFocus: (event) => event.preventDefault(),
