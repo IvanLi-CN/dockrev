@@ -1,7 +1,7 @@
 name: PR Label Gate
 
 on:
-  pull_request_target:
+  pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
   merge_group:
@@ -107,7 +107,7 @@ jobs:
               if (missing.length) {
                 throw new Error(`Merge queue entry pull request mismatch: ${missing.join(', ')}`)
               }
-              return commitPullNumbers.sort((a, b) => a - b)
+              return parsed.sort((a, b) => a - b)
             }
 
             function describeLabels(labels) {

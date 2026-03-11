@@ -8,7 +8,8 @@
         "main"
       ],
       "require_pull_request": true,
-      "disallow_direct_pushes": true
+      "disallow_direct_pushes": true,
+      "require_merge_queue": false
     },
     "review_policy": {
       "mode": "conditional-required",
@@ -24,12 +25,13 @@
         "admin"
       ],
       "enforcement": {
-        "mode": "github-native",
-        "bypass_mode": "pull-request-only"
+        "mode": "required-check",
+        "check_name": "Review Policy Gate"
       }
     }
   },
   "required_checks": [
+    "Review Policy Gate",
     "Release intent label gate",
     "Detect changes",
     "Lint & Checks",
@@ -44,6 +46,12 @@
   ],
   "waivers": [],
   "expected_pr_workflows": [
+    {
+      "workflow": "Review Policy",
+      "jobs": [
+        "Review Policy Gate"
+      ]
+    },
     {
       "workflow": "PR Label Gate",
       "jobs": [

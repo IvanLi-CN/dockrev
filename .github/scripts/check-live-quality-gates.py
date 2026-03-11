@@ -165,7 +165,10 @@ def validate_rules(declaration: dict, rules: list[dict], branch: str) -> list[st
 
     require_signed_commits = bool(policy.get("require_signed_commits"))
     require_pull_request = bool(branch_policy.get("require_pull_request"))
+    require_merge_queue = bool(branch_policy.get("require_merge_queue", False))
     required_approvals = int(review_policy.get("required_approvals", 0))
+    enforcement_mode = review_enforcement.get("mode")
+    expected_native_approvals = required_approvals if enforcement_mode == "github-native" else 0
 
     grouped: dict[str, list[dict]] = {}
     for rule in rules:
@@ -173,6 +176,9 @@ def validate_rules(declaration: dict, rules: list[dict], branch: str) -> list[st
 
     if require_signed_commits and "required_signatures" not in grouped:
         errors.append(f"{branch}: missing required_signatures rule")
+
+    if require_merge_queue and "merge_queue" not in grouped:
+        errors.append(f"{branch}: missing merge_queue rule")
 
     if branch_policy.get("disallow_direct_pushes") and "pull_request" not in grouped:
         errors.append(f"{branch}: missing pull_request rule required to block direct pushes")
@@ -204,9 +210,9 @@ def validate_rules(declaration: dict, rules: list[dict], branch: str) -> list[st
                 allowed_merge_methods = parameters.get("allowed_merge_methods")
                 if isinstance(allowed_merge_methods, list) and allowed_merge_methods:
                     merge_method_block = merge_method_block or ("merge" not in allowed_merge_methods)
-            if max_approvals != required_approvals:
+            if max_approvals != expected_native_approvals:
                 errors.append(
-                    f"{branch}: required_approving_review_count={max_approvals} expected={required_approvals}"
+                    f"{branch}: required_approving_review_count={max_approvals} expected={expected_native_approvals}"
                 )
             if stale_review:
                 errors.append(f"{branch}: dismiss_stale_reviews_on_push must stay disabled")
@@ -219,8 +225,15 @@ def validate_rules(declaration: dict, rules: list[dict], branch: str) -> list[st
             if merge_method_block:
                 errors.append(f"{branch}: merge commits must remain allowed")
 
-    if review_enforcement.get("mode") != "github-native":
-        errors.append(f"{branch}: review_policy.enforcement.mode must stay github-native")
+    if enforcement_mode not in {"github-native", "required-check"}:
+        errors.append(f"{branch}: unsupported review_policy.enforcement.mode={enforcement_mode!r}")
+    elif enforcement_mode == "github-native":
+        if review_enforcement.get("bypass_mode") != "pull-request-only":
+            errors.append(f"{branch}: review_policy bypass must stay pull-request-only")
+    else:
+        check_name = review_enforcement.get("check_name")
+        if not isinstance(check_name, str) or not check_name:
+            errors.append(f"{branch}: review_policy.enforcement.check_name must be set for required-check mode")
 
     live_required_checks = normalize_status_contexts(grouped.get("required_status_checks", []))
     if live_required_checks != required_checks:

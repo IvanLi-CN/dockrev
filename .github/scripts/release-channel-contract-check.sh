@@ -6,7 +6,7 @@ cd "${repo_root}"
 
 echo "[contract-check] syntax + workflow yaml parse"
 bash -n .github/scripts/label-gate.sh .github/scripts/release-intent.sh .github/scripts/compute-version.sh
-ruby -e 'require "yaml"; YAML.load_file(".github/workflows/label-gate.yml"); YAML.load_file(".github/workflows/release.yml")'
+ruby -e 'require "yaml"; YAML.load_file(".github/workflows/label-gate.yml"); YAML.load_file(".github/workflows/review-policy.yml"); YAML.load_file(".github/workflows/release.yml")'
 
 has_rg() {
   command -v rg >/dev/null 2>&1
@@ -67,23 +67,29 @@ if [[ "${latest_gate_count}" -lt 2 ]]; then
 fi
 
 echo "[contract-check] quality-gate workflow invariants"
-search_regex "^[[:space:]]*pull_request_target:" .github/workflows/label-gate.yml
+search_regex "^[[:space:]]*pull_request:" .github/workflows/label-gate.yml
 search_regex "^[[:space:]]*merge_group:" .github/workflows/label-gate.yml
 search_regex "pull-requests:[[:space:]]*read" .github/workflows/label-gate.yml
 search_regex "uses:[[:space:]]*actions/github-script@" .github/workflows/label-gate.yml
 search_regex "resolveMergeGroupPullNumbers" .github/workflows/label-gate.yml
-search_regex "GET /repos/\\{owner\\}/\\{repo\\}/commits/\\{commit_sha\\}/pulls" .github/workflows/label-gate.yml
-search_regex "context\\.eventName === 'merge_group'" .github/workflows/label-gate.yml
-search_regex "context\\.payload\\.pull_request\\?\\.number" .github/workflows/label-gate.yml
-ensure_regex_absent "^[[:space:]]*pull_request:" .github/workflows/label-gate.yml
-ensure_regex_absent "run:[[:space:]]*bash[[:space:]]+\\./\\.github/scripts/label-gate\\.sh" .github/workflows/label-gate.yml
-ensure_regex_absent "context\\.eventName === 'pull_request'" .github/workflows/label-gate.yml
-ensure_regex_absent "head_commit\\?\\.message" .github/workflows/label-gate.yml
+search_regex "GET /repos/\{owner\}/\{repo\}/commits/\{commit_sha\}/pulls" .github/workflows/label-gate.yml
+search_regex "context\.eventName === 'merge_group'" .github/workflows/label-gate.yml
+search_regex "context\.payload\.pull_request\?\.number" .github/workflows/label-gate.yml
+ensure_regex_absent "^[[:space:]]*pull_request_target:" .github/workflows/label-gate.yml
+ensure_regex_absent "run:[[:space:]]*bash[[:space:]]+\./\.github/scripts/label-gate\.sh" .github/workflows/label-gate.yml
+ensure_regex_absent "head_commit\?\.message" .github/workflows/label-gate.yml
 
-if [[ -e .github/workflows/review-policy.yml ]]; then
-  echo "[contract-check] review-policy workflow must be removed; review policy is GitHub-native now" >&2
-  exit 1
-fi
+search_regex "^[[:space:]]*pull_request:" .github/workflows/review-policy.yml
+search_regex "^[[:space:]]*pull_request_review:" .github/workflows/review-policy.yml
+search_regex "^[[:space:]]*merge_group:" .github/workflows/review-policy.yml
+search_regex "pull-requests:[[:space:]]*read" .github/workflows/review-policy.yml
+search_regex "uses:[[:space:]]*actions/github-script@" .github/workflows/review-policy.yml
+search_regex "resolveMergeGroupPullNumbers" .github/workflows/review-policy.yml
+search_regex "getCollaboratorPermissionLevel" .github/workflows/review-policy.yml
+search_regex "listReviews" .github/workflows/review-policy.yml
+ensure_regex_absent "^[[:space:]]*pull_request_target:" .github/workflows/review-policy.yml
+ensure_regex_absent "statuses:[[:space:]]*write" .github/workflows/review-policy.yml
+ensure_regex_absent "createCommitStatus" .github/workflows/review-policy.yml
 
 python3 - <<'PY'
 from __future__ import annotations
@@ -102,16 +108,17 @@ expected_pr_workflows = data.get('expected_pr_workflows', [])
 assert policy['require_signed_commits'] is True, 'require_signed_commits must stay true'
 assert policy['branch_protection']['require_pull_request'] is True, 'default branch must stay PR-only'
 assert policy['branch_protection']['disallow_direct_pushes'] is True, 'default branch must disallow direct pushes'
+assert policy['branch_protection'].get('require_merge_queue') is False, 'dockrev should not require merge queue by default'
 assert review['mode'] == 'conditional-required', 'review_policy.mode must stay conditional-required'
 assert review['required_approvals'] == 1, 'review_policy.required_approvals must stay 1'
 assert review['exempt_repository_owner'] is True, 'repository owner must stay exempt'
 assert review['exempt_author_permissions'] == ['admin', 'maintain'], 'exempt author permissions drifted'
 assert review['allowed_reviewer_permissions'] == ['write', 'maintain', 'admin'], 'allowed reviewer permissions drifted'
-assert enforcement['mode'] == 'github-native', 'review policy enforcement must be github-native'
-assert enforcement['bypass_mode'] == 'pull-request-only', 'review policy bypass must stay PR-only'
-assert 'Review Policy Gate' not in required_checks, 'legacy Review Policy Gate must not stay required'
-assert 'Review Policy Gate' not in informational_checks, 'legacy Review Policy Gate must not stay informational'
-assert all(item.get('workflow') != 'Review Policy' for item in expected_pr_workflows), 'Review Policy workflow must not stay declared'
+assert enforcement['mode'] == 'required-check', 'review policy enforcement must stay workflow-backed for conditional exemptions'
+assert enforcement['check_name'] == 'Review Policy Gate', 'review policy check name drifted'
+assert 'Review Policy Gate' in required_checks, 'Review Policy Gate must stay required'
+assert 'Review Policy Gate' not in informational_checks, 'Review Policy Gate must not be informational'
+assert any(item.get('workflow') == 'Review Policy' for item in expected_pr_workflows), 'Review Policy workflow must stay declared'
 assert 'Release intent label gate' in required_checks, 'label gate must stay required'
 PY
 
@@ -166,6 +173,7 @@ LABELS = {
 }
 
 REQUIRED_CHECKS = [
+    "Review Policy Gate",
     "Release intent label gate",
     "Detect changes",
     "Lint & Checks",
@@ -194,8 +202,8 @@ def make_review_rules(required_approvals):
     ]
 
 
-def make_required_checks_rules(extra_checks=None):
-    checks = REQUIRED_CHECKS if extra_checks is None else REQUIRED_CHECKS + extra_checks
+def make_required_checks_rules(checks=None):
+    selected_checks = REQUIRED_CHECKS if checks is None else checks
     return [
         {
             "type": "required_status_checks",
@@ -203,7 +211,7 @@ def make_required_checks_rules(extra_checks=None):
                 "strict_required_status_checks_policy": True,
                 "required_status_checks": [
                     {"context": context, "integration_id": 15368}
-                    for context in checks
+                    for context in selected_checks
                 ],
             },
         }
@@ -211,9 +219,9 @@ def make_required_checks_rules(extra_checks=None):
 
 
 RULES_BY_BRANCH = {
-    "main": make_review_rules(1) + make_required_checks_rules(),
-    "main-missing-review": make_review_rules(0) + make_required_checks_rules(),
-    "main-stale-check": make_review_rules(1) + make_required_checks_rules(["Review Policy Gate"]),
+    "main": make_review_rules(0) + make_required_checks_rules(),
+    "main-extra-review": make_review_rules(1) + make_required_checks_rules(),
+    "main-missing-check": make_review_rules(0) + make_required_checks_rules(REQUIRED_CHECKS[1:]),
 }
 
 
@@ -317,18 +325,25 @@ extract_github_script() {
 
 run_inline_workflow_contract_checks() {
   local label_script="${tmp_dir}/label-gate.inline.js"
+  local review_script="${tmp_dir}/review-policy.inline.js"
   extract_github_script \
     .github/workflows/label-gate.yml \
     label-gate \
     "Validate release intent + channel labels" \
     "${label_script}"
+  extract_github_script \
+    .github/workflows/review-policy.yml \
+    review-policy \
+    "Evaluate review policy" \
+    "${review_script}"
 
-  node - "${label_script}" <<'NODE'
+  node - "${label_script}" "${review_script}" <<'NODE'
 const fs = require('fs')
 
 const labelScript = fs.readFileSync(process.argv[2], 'utf8')
+const reviewScript = fs.readFileSync(process.argv[3], 'utf8')
 
-function createCore() {
+function createCore(inputs = {}) {
   return {
     failed: null,
     notices: [],
@@ -340,12 +355,12 @@ function createCore() {
     },
     setFailed(message) { this.failed = String(message) },
     notice(message) { this.notices.push(String(message)) },
-    getInput() { return '' },
+    getInput(name) { return inputs[name] || '' },
   }
 }
 
-async function runGithubScript(script, { context, github, env = {} }) {
-  const core = createCore()
+async function runGithubScript(script, { context, github, env = {}, inputs = {} }) {
+  const core = createCore(inputs)
   const previous = new Map()
   for (const [key, value] of Object.entries(env)) {
     previous.set(key, process.env[key])
@@ -399,6 +414,48 @@ function makeLabelGithub({ labelsByPull, commitPullsBySha }) {
   }
 }
 
+function makeReviewGithub({ pullsByNumber, reviewsByPull, permissionsByUser, commitPullsBySha }) {
+  const listReviews = async ({ pull_number }) => ({
+    data: (reviewsByPull[pull_number] || []).map((review) => ({ ...review })),
+  })
+
+  return {
+    paginate: async (route, params) => {
+      if (typeof route === 'string' && route.includes('/commits/{commit_sha}/pulls')) {
+        return commitPullsBySha[params.commit_sha] || []
+      }
+      if (route === listReviews) {
+        return (reviewsByPull[params.pull_number] || []).map((review) => ({ ...review }))
+      }
+      throw new Error(`unexpected review-policy paginate route: ${String(route)}`)
+    },
+    rest: {
+      pulls: {
+        listReviews,
+        get: async ({ pull_number }) => {
+          const pull = pullsByNumber[pull_number]
+          if (!pull) {
+            throw new Error(`missing pull ${pull_number}`)
+          }
+          return {
+            data: {
+              number: pull_number,
+              user: { login: pull.author },
+              head: { sha: pull.headSha },
+              base: { ref: pull.baseRef || 'main' },
+            },
+          }
+        },
+      },
+      repos: {
+        getCollaboratorPermissionLevel: async ({ username }) => ({
+          data: { permission: permissionsByUser[username] || 'none' },
+        }),
+      },
+    },
+  }
+}
+
 async function main() {
   const repo = { owner: 'IvanLi-CN', repo: 'dockrev' }
 
@@ -421,12 +478,15 @@ async function main() {
         { number: 101, state: 'open', base: { ref: 'main' } },
         { number: 998, state: 'open', base: { ref: 'main' } },
       ],
+      'sha-label-mismatch': [
+        { number: 999, state: 'open', base: { ref: 'main' } },
+      ],
     },
   })
 
   let core = await runGithubScript(labelScript, {
     context: {
-      eventName: 'pull_request_target',
+      eventName: 'pull_request',
       repo,
       payload: { pull_request: { number: 101 } },
       ref: 'refs/heads/main',
@@ -434,7 +494,7 @@ async function main() {
     },
     github: labelGithub,
   })
-  assert(core.failed === null, `label gate pull_request_target should pass, got: ${core.failed}`)
+  assert(core.failed === null, `label gate pull_request should pass, got: ${core.failed}`)
 
   core = await runGithubScript(labelScript, {
     context: {
@@ -489,7 +549,161 @@ async function main() {
     },
     github: labelGithub,
   })
-  assert(core.failed !== null && core.failed.includes('PR #998'), `label gate merge_group should fail when any associated PR is invalid, got: ${core.failed}`)
+  assert(core.failed === null, `label gate merge_group should ignore unrelated associated PRs, got: ${core.failed}`)
+
+  core = await runGithubScript(labelScript, {
+    context: {
+      eventName: 'merge_group',
+      repo,
+      payload: {
+        merge_group: {
+          base_ref: 'refs/heads/main',
+          head_ref: 'gh-readonly-queue/main/pr-101-deadbeef',
+          head_sha: 'sha-label-mismatch',
+        },
+      },
+      ref: 'refs/heads/gh-readonly-queue/main/pr-101-deadbeef',
+      sha: 'sha-label-mismatch',
+    },
+    github: labelGithub,
+  })
+  assert(core.failed !== null && core.failed.includes('mismatch'), `label gate merge_group should fail when parsed PRs are not proven by commit metadata, got: ${core.failed}`)
+
+  const reviewGithub = makeReviewGithub({
+    pullsByNumber: {
+      201: { author: 'IvanLi-CN', headSha: 'sha-owner', baseRef: 'main' },
+      202: { author: 'alice', headSha: 'sha-alice', baseRef: 'main' },
+      203: { author: 'bob', headSha: 'sha-bob', baseRef: 'main' },
+    },
+    reviewsByPull: {
+      202: [],
+      203: [
+        {
+          user: { login: 'carol' },
+          state: 'APPROVED',
+          submitted_at: '2026-03-11T11:00:00Z',
+        },
+      ],
+    },
+    permissionsByUser: {
+      alice: 'write',
+      bob: 'write',
+      carol: 'write',
+    },
+    commitPullsBySha: {
+      'sha-review-pass': [
+        { number: 201, state: 'open', base: { ref: 'main' } },
+        { number: 203, state: 'open', base: { ref: 'main' } },
+        { number: 202, state: 'open', base: { ref: 'main' } },
+      ],
+      'sha-review-fail': [
+        { number: 201, state: 'open', base: { ref: 'main' } },
+        { number: 202, state: 'open', base: { ref: 'main' } },
+      ],
+    },
+  })
+
+  core = await runGithubScript(reviewScript, {
+    context: {
+      eventName: 'pull_request',
+      repo,
+      payload: { pull_request: { number: 201 } },
+      ref: 'refs/heads/main',
+      sha: 'sha-owner',
+    },
+    github: reviewGithub,
+    env: {
+      REVIEW_POLICY_REQUIRED_APPROVALS: '1',
+      REVIEW_POLICY_EXEMPT_PERMISSIONS: '["admin","maintain"]',
+      REVIEW_POLICY_REVIEWER_PERMISSIONS: '["write","maintain","admin"]',
+      REVIEW_POLICY_EXEMPT_REPOSITORY_OWNER: 'true',
+    },
+  })
+  assert(core.failed === null, `review policy should exempt repository owner, got: ${core.failed}`)
+
+  core = await runGithubScript(reviewScript, {
+    context: {
+      eventName: 'pull_request',
+      repo,
+      payload: { pull_request: { number: 202 } },
+      ref: 'refs/heads/main',
+      sha: 'sha-alice',
+    },
+    github: reviewGithub,
+    env: {
+      REVIEW_POLICY_REQUIRED_APPROVALS: '1',
+      REVIEW_POLICY_EXEMPT_PERMISSIONS: '["admin","maintain"]',
+      REVIEW_POLICY_REVIEWER_PERMISSIONS: '["write","maintain","admin"]',
+      REVIEW_POLICY_EXEMPT_REPOSITORY_OWNER: 'true',
+    },
+  })
+  assert(core.failed !== null && core.failed.includes('PR #202'), `review policy should fail unreviewed non-exempt author, got: ${core.failed}`)
+
+  core = await runGithubScript(reviewScript, {
+    context: {
+      eventName: 'pull_request',
+      repo,
+      payload: { pull_request: { number: 203 } },
+      ref: 'refs/heads/main',
+      sha: 'sha-bob',
+    },
+    github: reviewGithub,
+    env: {
+      REVIEW_POLICY_REQUIRED_APPROVALS: '1',
+      REVIEW_POLICY_EXEMPT_PERMISSIONS: '["admin","maintain"]',
+      REVIEW_POLICY_REVIEWER_PERMISSIONS: '["write","maintain","admin"]',
+      REVIEW_POLICY_EXEMPT_REPOSITORY_OWNER: 'true',
+    },
+  })
+  assert(core.failed === null, `review policy should pass with one valid approval, got: ${core.failed}`)
+
+  core = await runGithubScript(reviewScript, {
+    context: {
+      eventName: 'merge_group',
+      repo,
+      payload: {
+        merge_group: {
+          base_ref: 'refs/heads/main',
+          head_ref: 'gh-readonly-queue/main/pr-201-deadbeef/pr-203-cafebabe',
+          head_sha: 'sha-review-pass',
+        },
+      },
+      ref: 'refs/heads/gh-readonly-queue/main/pr-201-deadbeef/pr-203-cafebabe',
+      sha: 'sha-review-pass',
+    },
+    github: reviewGithub,
+    env: {
+      REVIEW_POLICY_REQUIRED_APPROVALS: '1',
+      REVIEW_POLICY_EXEMPT_PERMISSIONS: '["admin","maintain"]',
+      REVIEW_POLICY_REVIEWER_PERMISSIONS: '["write","maintain","admin"]',
+      REVIEW_POLICY_EXEMPT_REPOSITORY_OWNER: 'true',
+    },
+  })
+  assert(core.failed === null, `review policy merge_group should pass when every associated PR passes, got: ${core.failed}`)
+
+  core = await runGithubScript(reviewScript, {
+    context: {
+      eventName: 'merge_group',
+      repo,
+      payload: {
+        merge_group: {
+          base_ref: 'refs/heads/main',
+          head_ref: 'gh-readonly-queue/main/pr-201-deadbeef/pr-202-cafebabe',
+          head_sha: 'sha-review-fail',
+        },
+      },
+      ref: 'refs/heads/gh-readonly-queue/main/pr-201-deadbeef/pr-202-cafebabe',
+      sha: 'sha-review-fail',
+    },
+    github: reviewGithub,
+    env: {
+      REVIEW_POLICY_REQUIRED_APPROVALS: '1',
+      REVIEW_POLICY_EXEMPT_PERMISSIONS: '["admin","maintain"]',
+      REVIEW_POLICY_REVIEWER_PERMISSIONS: '["write","maintain","admin"]',
+      REVIEW_POLICY_EXEMPT_REPOSITORY_OWNER: 'true',
+    },
+  })
+  assert(core.failed !== null && core.failed.includes('PR #202'), `review policy merge_group should fail when any associated PR is unapproved, got: ${core.failed}`)
 }
 
 main().catch((error) => {
@@ -597,8 +811,8 @@ run_inline_workflow_contract_checks
 
 echo "[contract-check] live quality-gates scenarios"
 run_live_quality_gates main ok
-run_live_quality_gates main-missing-review fail
-run_live_quality_gates main-stale-check fail
+run_live_quality_gates main-extra-review fail
+run_live_quality_gates main-missing-check fail
 
 echo "[contract-check] label-gate scenarios"
 run_label_gate 101 ok
