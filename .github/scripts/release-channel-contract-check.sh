@@ -59,6 +59,12 @@ search_regex "resolveMergeGroupPullNumbers" .github/workflows/label-gate.yml
 search_regex "GET /repos/\{owner\}/\{repo\}/commits/\{commit_sha\}/pulls" .github/workflows/label-gate.yml
 ensure_regex_absent "^[[:space:]]*pull_request:" .github/workflows/label-gate.yml
 ensure_regex_absent "run:[[:space:]]*bash[[:space:]]+\./\.github/scripts/label-gate\.sh" .github/workflows/label-gate.yml
+search_regex "context\.eventName === 'merge_group'" .github/workflows/label-gate.yml
+search_regex "context\.payload\.pull_request\?\.number" .github/workflows/label-gate.yml
+ensure_regex_absent "context\.eventName === 'pull_request'" .github/workflows/label-gate.yml
+ensure_regex_absent "head_commit\?\.message" .github/workflows/label-gate.yml
+ensure_regex_absent "head_commit\?\.message" .github/workflows/review-policy.yml
+search_regex "if \(isExemptAuthor\) \{" .github/workflows/review-policy.yml
 tmp_dir="$(mktemp -d)"
 server_pid=""
 cleanup() {

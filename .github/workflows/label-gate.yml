@@ -171,13 +171,13 @@ jobs:
             }
 
             let pullNumbers = []
-            if (context.eventName === 'pull_request') {
+            if (context.eventName === 'merge_group') {
+              pullNumbers = await resolveMergeGroupPullNumbers()
+            } else {
               const pullNumber = Number(context.payload.pull_request?.number)
               if (Number.isInteger(pullNumber) && pullNumber > 0) {
                 pullNumbers = [pullNumber]
               }
-            } else if (context.eventName === 'merge_group') {
-              pullNumbers = await resolveMergeGroupPullNumbers()
             }
 
             if (!pullNumbers.length) {
