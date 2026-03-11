@@ -554,6 +554,42 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         background: var(--console-bg);
         border: 1px solid var(--panel-border);
       }}
+      .logLine {{
+        display: block;
+      }}
+      .logToken-ts {{
+        color: var(--muted);
+      }}
+      .logToken-level {{
+        font-weight: 700;
+        letter-spacing: 0.04em;
+      }}
+      .logLevel-trace,
+      .logLevel-debug {{
+        color: var(--muted);
+      }}
+      .logLevel-info {{
+        color: var(--info);
+      }}
+      .logLevel-warn {{
+        color: var(--warn);
+      }}
+      .logLevel-error,
+      .logLevel-fatal {{
+        color: var(--bad);
+      }}
+      .logToken-msg {{
+        color: var(--text);
+      }}
+      .logToken-ref {{
+        color: var(--link);
+      }}
+      .logToken-opid {{
+        color: var(--accent);
+      }}
+      .logToken-digest {{
+        color: var(--accent-warm);
+      }}
       .statusSidebar {{
         padding: 14px;
         background: linear-gradient(180deg, rgba(64, 180, 255, 0.08), rgba(255, 255, 255, 0.015));
@@ -1257,8 +1293,67 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         return `${{tag}}${{previous?.digest ? '@' + previous.digest : ''}}`;
       }}
 
-      function formatLogs(logs) {{
-        return (logs || []).map((line) => `[${{line.ts}}] ${{line.level}} ${{line.msg}}`).join('\n');
+      const LOG_TOKEN_PATTERN = /(sha256:[0-9a-f]{{12,}}|sup_[A-Za-z0-9]+|(?:[a-z0-9.-]+\.[a-z]{{2,}}(?::\d+)?\/[a-z0-9._/-]+(?::[\w.-]+)?(?:@sha256:[0-9a-f]{{12,}})?))/gi;
+
+      function setLogsText(text) {{
+        logsEl.replaceChildren(document.createTextNode(text));
+      }}
+
+      function appendLogToken(parent, className, text) {{
+        if (!text) return;
+        const span = document.createElement('span');
+        span.className = className;
+        span.textContent = text;
+        parent.appendChild(span);
+      }}
+
+      function appendHighlightedMessage(parent, message) {{
+        const text = String(message || '');
+        LOG_TOKEN_PATTERN.lastIndex = 0;
+        let cursor = 0;
+        let match = LOG_TOKEN_PATTERN.exec(text);
+        while (match) {{
+          const value = match[0];
+          const index = match.index;
+          if (index > cursor) {{
+            parent.appendChild(document.createTextNode(text.slice(cursor, index)));
+          }}
+          let className = 'logToken-ref';
+          if (value.startsWith('sha256:')) {{
+            className = 'logToken-digest';
+          }} else if (value.startsWith('sup_')) {{
+            className = 'logToken-opid';
+          }}
+          appendLogToken(parent, className, value);
+          cursor = index + value.length;
+          match = LOG_TOKEN_PATTERN.exec(text);
+        }}
+        if (cursor < text.length) {{
+          parent.appendChild(document.createTextNode(text.slice(cursor)));
+        }}
+      }}
+
+      function renderLogEntries(logs) {{
+        if (!Array.isArray(logs) || !logs.length) {{
+          setLogsText('暂无日志');
+          return;
+        }}
+        const fragment = document.createDocumentFragment();
+        for (const line of logs) {{
+          const row = document.createElement('span');
+          row.className = 'logLine';
+          appendLogToken(row, 'logToken-ts', `[${{line?.ts || '-'}}]`);
+          row.appendChild(document.createTextNode(' '));
+          const level = String(line?.level || 'info').toUpperCase();
+          appendLogToken(row, `logToken-level logLevel-${{level.toLowerCase()}}`, level);
+          row.appendChild(document.createTextNode(' '));
+          const msg = document.createElement('span');
+          msg.className = 'logToken-msg';
+          appendHighlightedMessage(msg, line?.msg || '');
+          row.appendChild(msg);
+          fragment.appendChild(row);
+        }}
+        logsEl.replaceChildren(fragment);
       }}
 
       function renderStatus(st) {{
@@ -1343,7 +1438,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           historyHintEl.textContent = '暂无 operation 历史，已回退到扁平日志视图。';
           logTitleEl.textContent = '当前日志';
           logSummaryEl.textContent = '未发现按 operation 分组的历史记录。';
-          logsEl.textContent = formatLogs(st.logs || []) || '暂无日志';
+          renderLogEntries(st.logs || []);
           return;
         }}
 
@@ -1431,7 +1526,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         historyHintEl.textContent = `最近 ${{operations.length}} 次 operation · 当前 ${{active.opId}}`;
         logTitleEl.textContent = `${{formatHistoryTime(active.startedAt)}} · ${{shortOpId(active.opId)}}`;
         logSummaryEl.textContent = `${{normalizeState(active.state)}} · updated ${{formatTimestamp(active.updatedAt)}} · ${{(active.logs || []).length}} lines`;
-        logsEl.textContent = formatLogs(active.logs || []) || '暂无日志';
+        renderLogEntries(active.logs || []);
       }}
 
       async function refresh() {{
@@ -1454,7 +1549,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
             historyHintEl.textContent = 'Supervisor 暂时离线，尚未拿到可展示的 operation 历史。';
             logTitleEl.textContent = '等待 supervisor 响应';
             logSummaryEl.textContent = '首次轮询失败；暂无可复用的缓存日志。';
-            logsEl.textContent = '等待日志…';
+            setLogsText('等待日志…');
             syncRollbackState({{}});
           }}
           setRollbackPopOpen(false);

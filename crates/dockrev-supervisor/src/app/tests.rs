@@ -69,10 +69,11 @@ fn rollback_image_ref_handles_full_refs_and_plain_tags() {
 }
 
 #[test]
-fn render_ui_joins_logs_with_real_newlines() {
+fn render_ui_renders_logs_as_semantic_lines() {
     let html = render_ui("/supervisor", &test_meta());
-    assert!(html.contains(r".join('\n')"));
-    assert!(!html.contains(r".join('\\n')"));
+    assert!(html.contains("function renderLogEntries(logs)"));
+    assert!(html.contains("row.className = 'logLine';"));
+    assert!(html.contains("logsEl.replaceChildren(fragment);"));
 }
 
 #[tokio::test]
@@ -352,6 +353,19 @@ fn render_ui_contains_status_tiles_and_textual_history_markup() {
     assert!(html.contains("function operationMarker(op)"));
     assert!(html.contains("stateBadge stateBadge-"));
     assert!(html.contains("latestHasNewer"));
+}
+
+#[test]
+fn render_ui_contains_semantic_log_highlighting() {
+    let html = render_ui("/supervisor", &test_meta());
+    assert!(html.contains("const LOG_TOKEN_PATTERN"));
+    assert!(html.contains("function appendHighlightedMessage(parent, message)"));
+    assert!(html.contains("function renderLogEntries(logs)"));
+    assert!(html.contains("logToken-level logLevel-"));
+    assert!(html.contains("logToken-ref"));
+    assert!(html.contains("logToken-opid"));
+    assert!(html.contains("logToken-digest"));
+    assert!(html.contains("renderLogEntries(active.logs || [])"));
 }
 
 #[test]
