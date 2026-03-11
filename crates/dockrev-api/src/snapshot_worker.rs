@@ -972,8 +972,17 @@ pub fn image_repo_from_image_ref(image_ref: &str) -> Option<String> {
             format!("library/{}", name_with_registry),
         ),
     };
+    let name = normalize_dockerhub_repo_name(&registry, &name);
 
     Some(format!("{registry}/{name}"))
+}
+
+fn normalize_dockerhub_repo_name(registry: &str, name: &str) -> String {
+    if registry == "docker.io" && !name.contains('/') {
+        format!("library/{name}")
+    } else {
+        name.to_string()
+    }
 }
 
 fn image_ref_from_repo(image_repo: &str) -> Option<registry::ImageRef> {
@@ -1007,6 +1016,10 @@ mod tests {
         );
         assert_eq!(
             image_repo_from_image_ref("alpine@sha256:abcd"),
+            Some("docker.io/library/alpine".to_string())
+        );
+        assert_eq!(
+            image_repo_from_image_ref("docker.io/alpine@sha256:abcd"),
             Some("docker.io/library/alpine".to_string())
         );
         assert_eq!(

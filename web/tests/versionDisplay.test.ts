@@ -5,6 +5,7 @@ import {
   formatCurrentTagDisplay,
   isStrictSemverTag,
   pickSnapshotDisplayTag,
+  shouldReleaseLocalDisplayTag,
 } from '../src/versionDisplay'
 
 describe('versionDisplay', () => {
@@ -55,5 +56,12 @@ describe('versionDisplay', () => {
 
     // Avoid rewriting already-stable semver tags.
     expect(pickSnapshotDisplayTag(['v1.2.3', '1.2.3'], 'v1.2.3')).toBeNull()
+  })
+
+  test('releases local display tag once parent resolved data catches up', () => {
+    expect(shouldReleaseLocalDisplayTag('v0.8.8', 'v0.8.8', null)).toBe(true)
+    expect(shouldReleaseLocalDisplayTag('v0.8.8', null, ['v0.8.8', '0.8.8'])).toBe(true)
+    expect(shouldReleaseLocalDisplayTag('v0.8.8', 'latest', ['0.8.7'])).toBe(false)
+    expect(shouldReleaseLocalDisplayTag(null, 'v0.8.8', ['v0.8.8'])).toBe(false)
   })
 })

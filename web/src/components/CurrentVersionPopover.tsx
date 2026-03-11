@@ -16,7 +16,11 @@ import {
 } from '../api'
 import { normalizeDigest, shortenDigest } from './digest'
 import { useHoverPinnedPopover } from './HoverPinnedPopover'
-import { inferResolvedTagsFromSnapshot, isStrictSemverTag } from '../versionDisplay'
+import {
+  inferResolvedTagsFromSnapshot,
+  isStrictSemverTag,
+  shouldReleaseLocalDisplayTag,
+} from '../versionDisplay'
 import {
   getDigestSnapshotInvalidationToken,
   invalidateDigestSnapshot,
@@ -136,6 +140,7 @@ export function CurrentVersionPopover(props: {
     imageDigest,
     onLocalResolvedTags,
     resolvedTag,
+    resolvedTags,
     serviceId,
   } = props
   const preferSource = props.preferSource ?? 'resolvedTag'
@@ -161,6 +166,10 @@ export function CurrentVersionPopover(props: {
   const resolvedTagTrim = useMemo(
     () => (resolvedTag ?? '').trim(),
     [resolvedTag],
+  )
+  const resolvedTagsList = useMemo(
+    () => uniquePreserveOrder(resolvedTags),
+    [resolvedTags],
   )
 
   const rawSeries = useMemo(() => parseTagSeries(imageTag), [imageTag])
@@ -476,15 +485,25 @@ export function CurrentVersionPopover(props: {
 
   useEffect(() => {
     // The popover-local snapshot-derived display tag is only meant as a temporary UX bridge.
-    // Only release the override once the parent actually reflects the same inferred value.
-    // Otherwise we'd flash the new tag for a render and immediately snap back to the old one.
+    // Release it only after the parent has adopted the same resolved tag data.
     if (localDisplayTag.key !== snapshotKey || !localDisplayTag.value) return
-    const base =
-      typeof children === 'string' ? children.trim() : displayTag.trim()
-    if (!base) return
-    if (base !== localDisplayTag.value.trim()) return
+    if (
+      !shouldReleaseLocalDisplayTag(
+        localDisplayTag.value,
+        resolvedTagTrim,
+        resolvedTagsList,
+      )
+    ) {
+      return
+    }
     setLocalDisplayTag({ key: snapshotKey, value: null })
-  }, [children, snapshotKey, displayTag, localDisplayTag.key, localDisplayTag.value])
+  }, [
+    snapshotKey,
+    localDisplayTag.key,
+    localDisplayTag.value,
+    resolvedTagTrim,
+    resolvedTagsList,
+  ])
 
   const inferenceBlock = useMemo<ReactNode>(() => {
     const rawTrim = (imageTag ?? '').trim()

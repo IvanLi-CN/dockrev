@@ -178,6 +178,18 @@ export function pickSnapshotDisplayTag(
   return inferred[0] ?? null
 }
 
+export function shouldReleaseLocalDisplayTag(
+  localDisplayTag: string | null | undefined,
+  resolvedTag: string | null | undefined,
+  resolvedTags: Array<string | null | undefined> | null | undefined,
+): boolean {
+  const local = trimOrEmpty(localDisplayTag)
+  if (!local) return false
+  if (trimOrEmpty(resolvedTag) === local) return true
+
+  return (resolvedTags ?? []).some((tag) => trimOrEmpty(tag) === local)
+}
+
 function isPending(status: string | null | undefined): boolean {
   return trimOrEmpty(status) === 'pending'
 }
