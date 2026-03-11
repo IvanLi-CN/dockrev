@@ -317,6 +317,20 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       .sectionHeadingMeta {{
         text-align: right;
       }}
+      .sectionLead {{
+        display: grid;
+        gap: 4px;
+        margin-bottom: 12px;
+      }}
+      .sectionLead h2 {{
+        margin: 0;
+        font-size: 18px;
+        line-height: 1.08;
+        letter-spacing: -0.02em;
+      }}
+      .sectionNote {{
+        max-width: 76ch;
+      }}
       .masthead {{
         padding-top: 10px;
         padding-bottom: 10px;
@@ -416,12 +430,19 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       .actionDeckGrid {{
         display: grid;
         grid-template-columns: minmax(220px, 250px) minmax(0, 1fr) auto;
-        gap: 12px;
-        align-items: center;
+        grid-template-areas:
+          'field primary aux'
+          'hint note note';
+        column-gap: 12px;
+        row-gap: 10px;
+        align-items: end;
       }}
+      .actionDeckGrid > * {{ min-width: 0; }}
       .fieldBlock {{
+        grid-area: field;
         display: grid;
         gap: 7px;
+        align-self: end;
       }}
       .fieldLabel {{
         font-size: 11px;
@@ -432,6 +453,10 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       .fieldHint {{
         font-size: 11px;
         color: var(--muted);
+      }}
+      .actionFieldHint {{
+        grid-area: hint;
+        margin-top: -2px;
       }}
       .actionControls {{
         display: grid;
@@ -444,8 +469,21 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         align-items: center;
       }}
       .buttonGroup > * {{ flex: 0 0 auto; }}
-      .buttonGroup-aux {{ justify-content: flex-end; }}
+      .buttonGroup-main {{
+        grid-area: primary;
+        align-self: end;
+      }}
+      .buttonGroup-aux {{
+        grid-area: aux;
+        justify-content: flex-end;
+        justify-self: end;
+        align-self: end;
+      }}
       .actionCallout {{
+        grid-area: note;
+        min-height: 40px;
+        display: flex;
+        align-items: center;
         padding: 10px 12px;
         border-radius: 14px;
         border: 1px dashed var(--panel-border);
@@ -543,6 +581,17 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         max-height: min(560px, calc(100vh - 190px));
         overflow: auto;
         overscroll-behavior: contain;
+      }}
+      .historyRailHeader {{
+        display: grid;
+        gap: 4px;
+        padding-bottom: 10px;
+        margin-bottom: 10px;
+        border-bottom: 1px solid var(--panel-border);
+      }}
+      .historyHint {{
+        font-size: 11px;
+        line-height: 1.45;
       }}
       .historyList {{
         display: grid;
@@ -773,13 +822,29 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         }}
         .panel {{ padding: 15px; }}
         .mastheadRow,
-        .actionDeckGrid,
         .workspaceGrid,
         .statusGrid {{
           grid-template-columns: 1fr;
         }}
+        .actionDeckGrid {{
+          grid-template-columns: 1fr;
+          grid-template-areas:
+            'field'
+            'hint'
+            'primary'
+            'note'
+            'aux';
+          align-items: stretch;
+        }}
         .buttonGroup-aux {{
           justify-content: flex-start;
+          justify-self: stretch;
+        }}
+        .actionCallout,
+        .buttonGroup-main,
+        .buttonGroup-aux,
+        .fieldBlock {{
+          align-self: stretch;
         }}
         .statusSidebarHeader {{
           align-items: flex-start;
@@ -886,26 +951,22 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       </section>
 
       <section class="panel actionDeck" data-panel="action-deck">
-        <div class="sectionHeadingRow">
-          <div>
-            <div class="sectionEyebrow">Action deck</div>
-            <h2>升级控制</h2>
-          </div>
-          <div class="muted sectionHeadingMeta">失败会尝试回滚到 previous digest（如可用）；操作过程会持续留在当前页。</div>
+        <div class="sectionLead">
+          <div class="sectionEyebrow">Action deck</div>
+          <h2>升级控制</h2>
+          <div class="muted sectionNote">失败会尝试回滚到 previous digest（如可用）；操作过程会持续留在当前页。</div>
         </div>
         <div class="actionDeckGrid">
           <label class="fieldBlock" for="tag">
             <span class="fieldLabel">Target tag</span>
             <input id="tag" value="latest" />
-            <span class="fieldHint">默认使用 <code>latest</code>，也支持输入固定 tag 进行验证或升级。</span>
           </label>
-          <div class="actionControls">
-            <div class="buttonGroup buttonGroup-main">
-              <button id="dry">预览（dry-run）</button>
-              <button id="apply" class="primary">开始升级（apply）</button>
-            </div>
-            <div class="actionCallout muted">先用 dry-run 看目标 tag 与 digest，再决定 apply；operation 结束后可直接回滚。</div>
+          <div class="fieldHint actionFieldHint">默认使用 <code>latest</code>，也支持输入固定 tag 进行验证或升级。</div>
+          <div class="buttonGroup buttonGroup-main">
+            <button id="dry">预览（dry-run）</button>
+            <button id="apply" class="primary">开始升级（apply）</button>
           </div>
+          <div class="actionCallout muted">先用 dry-run 看目标 tag 与 digest，再决定 apply；operation 结束后可直接回滚。</div>
           <div class="buttonGroup buttonGroup-aux">
             <div id="rollbackWrap" class="popWrap">
               <button id="rollback" aria-haspopup="dialog" aria-expanded="false">回滚</button>
@@ -925,12 +986,9 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       </section>
 
       <section class="panel workspacePanel" data-panel="workspace">
-        <div class="sectionHeadingRow">
-          <div>
-            <div class="sectionEyebrow">Operations workspace</div>
-            <h2>日志与运行态</h2>
-          </div>
-          <div id="historyHint" class="muted sectionHeadingMeta">loading…</div>
+        <div class="sectionLead">
+          <div class="sectionEyebrow">Operations workspace</div>
+          <h2>日志与运行态</h2>
         </div>
         <div id="workspaceGrid" class="workspaceGrid">
           <section class="logPanel">
@@ -971,6 +1029,10 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
               </div>
             </section>
             <aside id="historyRail" class="historyRail">
+              <div class="historyRailHeader">
+                <div class="sectionEyebrow">Recent operations</div>
+                <div id="historyHint" class="muted historyHint">loading…</div>
+              </div>
               <div id="historyList" class="historyList"></div>
             </aside>
           </aside>
@@ -978,12 +1040,10 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       </section>
 
       <section class="panel statusPanel" data-panel="status-grid">
-        <div class="sectionHeadingRow">
-          <div>
-            <div class="sectionEyebrow">Operation detail</div>
-            <h2>镜像与进度</h2>
-          </div>
-          <div class="muted sectionHeadingMeta">关键引用默认直出，方便复制与排障。</div>
+        <div class="sectionLead">
+          <div class="sectionEyebrow">Operation detail</div>
+          <h2>镜像与进度</h2>
+          <div class="muted sectionNote">关键引用默认直出，方便复制与排障。</div>
         </div>
         <div class="statusGrid">
           <article class="statusTile statusTile-full">
