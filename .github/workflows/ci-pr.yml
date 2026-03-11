@@ -3,6 +3,9 @@ name: CI (PR)
 on:
   pull_request:
     branches: [main]
+  merge_group:
+    types:
+      - checks_requested
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -21,10 +24,21 @@ jobs:
     permissions:
       pull-requests: read
     outputs:
-      web: ${{ steps.filter.outputs.web }}
-      docker: ${{ steps.filter.outputs.docker }}
+      web: ${{ steps.merge_queue_defaults.outputs.web || steps.filter.outputs.web || 'false' }}
+      docker: ${{ steps.merge_queue_defaults.outputs.docker || steps.filter.outputs.docker || 'false' }}
     steps:
+      - name: Mark merge queue as full sweep
+        if: github.event_name == 'merge_group'
+        id: merge_queue_defaults
+        shell: bash
+        run: |
+          {
+            echo "web=true"
+            echo "docker=true"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Paths filter
+        if: github.event_name != 'merge_group'
         uses: dorny/paths-filter@v3
         id: filter
         with:
