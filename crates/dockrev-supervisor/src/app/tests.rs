@@ -389,6 +389,11 @@ fn render_ui_contains_copy_buttons_for_key_refs() {
     assert!(html.contains("button.dataset.icon = icon.name;"));
     assert!(html.contains("function setCopyButtonValue(button, value)"));
     assert!(html.contains("function writeClipboardText(text)"));
+    assert!(html.contains("const copied = document.execCommand('copy');"));
+    assert!(html.contains("if (!copied) throw new Error('execCommand copy failed');"));
+    assert!(html.contains("function hasPreviousRollbackTarget(previous)"));
+    assert!(html.contains("tag !== 'unknown'"));
+    assert!(html.contains("hasPreviousRollbackTarget(st?.previous)"));
     assert!(html.contains("bindCopyButton(copyOpIdBtn);"));
     assert!(html.contains("renderCopyButtonIcon(button, 'copied');"));
 }

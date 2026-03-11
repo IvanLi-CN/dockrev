@@ -1320,7 +1320,9 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
 
       function canRollback(st) {{
-        return !!st.opId && (st.state === 'failed' || st.state === 'rolled_back' || st.state === 'succeeded');
+        return !!st.opId
+          && hasPreviousRollbackTarget(st?.previous)
+          && (st.state === 'failed' || st.state === 'rolled_back' || st.state === 'succeeded');
       }}
 
       function setRollbackPopOpen(open) {{
@@ -1414,8 +1416,9 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         area.style.top = '-9999px';
         document.body.appendChild(area);
         area.select();
-        document.execCommand('copy');
+        const copied = document.execCommand('copy');
         area.remove();
+        if (!copied) throw new Error('execCommand copy failed');
       }}
 
       function flashCopyButton(button, state) {{
@@ -1513,7 +1516,13 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         return `${{image}}${{tag}}${{digest}}`;
       }}
 
+      function hasPreviousRollbackTarget(previous) {{
+        const tag = String(previous?.tag || '').trim();
+        return !!previous?.digest || (tag && tag !== 'unknown');
+      }}
+
       function formatPreviousRef(previous) {{
+        if (!hasPreviousRollbackTarget(previous)) return '-';
         const tag = previous?.tag || '-';
         return `${{tag}}${{previous?.digest ? '@' + previous.digest : ''}}`;
       }}
