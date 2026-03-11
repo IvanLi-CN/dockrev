@@ -366,29 +366,36 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         line-height: 1.45;
       }}
       .metaFooter {{
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        padding: 2px 2px 0;
+        display: grid;
+        grid-template-columns: 180px minmax(0, 1fr) 160px;
+        gap: 18px;
+        align-items: start;
+        margin-top: 6px;
+        padding: 16px 4px 0;
+        border-top: 1px solid var(--panel-border);
       }}
       .metaPill {{
-        display: inline-flex;
-        align-items: baseline;
-        gap: 8px;
-        padding: 8px 12px;
-        border-radius: 999px;
-        border: 1px solid var(--panel-border);
-        background: var(--surface);
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        background: none;
+      }}
+      .metaPill + .metaPill {{
+        padding-left: 18px;
+        border-left: 1px solid var(--panel-border);
       }}
       .metaLabel {{
         color: var(--muted);
         font-size: 10px;
         text-transform: uppercase;
-        letter-spacing: 0.12em;
+        letter-spacing: 0.14em;
       }}
       .metaValue {{
-        font-size: 13px;
-        line-height: 1.35;
+        font-size: 12px;
+        line-height: 1.42;
         word-break: break-word;
       }}
       .linkButton {{
@@ -789,6 +796,13 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           text-align: left;
           max-width: none;
         }}
+        .metaFooter {{
+          grid-template-columns: 160px minmax(0, 1fr) 140px;
+          gap: 14px;
+        }}
+        .metaPill + .metaPill {{
+          padding-left: 14px;
+        }}
       }}
       @media (max-width: 720px) {{
         body {{
@@ -820,6 +834,17 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         .buttonGroup,
         .buttonGroup-aux {{
           width: 100%;
+        }}
+        .metaFooter {{
+          grid-template-columns: 1fr;
+          gap: 10px;
+          padding-top: 12px;
+        }}
+        .metaPill + .metaPill {{
+          padding-left: 0;
+          border-left: 0;
+          padding-top: 10px;
+          border-top: 1px solid var(--panel-border);
         }}
         .buttonGroup > *,
         .buttonGroup-aux > *,
