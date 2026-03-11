@@ -176,13 +176,15 @@ REQUIRED_CHECKS = [
     "Release build check (PR)",
 ]
 
-RULES_BY_BRANCH = {
-    "main": {
+def make_review_ruleset(required_approvals, bypass_actors):
+    return {
+        "name": "protect-main-review-policy",
+        "bypass_actors": bypass_actors,
         "rules": [
             {
                 "type": "pull_request",
                 "parameters": {
-                    "required_approving_review_count": 1,
+                    "required_approving_review_count": required_approvals,
                     "dismiss_stale_reviews_on_push": False,
                     "require_code_owner_review": False,
                     "require_last_push_approval": False,
@@ -190,65 +192,60 @@ RULES_BY_BRANCH = {
                     "allowed_merge_methods": ["merge", "squash", "rebase"],
                 },
             },
-            {
-                "type": "required_status_checks",
-                "parameters": {
-                    "strict_required_status_checks_policy": True,
-                    "required_status_checks": [
-                        {"context": context, "integration_id": 15368}
-                        for context in REQUIRED_CHECKS
-                    ],
-                },
-            },
             {"type": "required_signatures"},
             {"type": "non_fast_forward"},
-        ]
-    },
-    "main-missing-review": {
+        ],
+    }
+
+
+def make_required_checks_ruleset(extra_checks=None):
+    checks = REQUIRED_CHECKS if extra_checks is None else REQUIRED_CHECKS + extra_checks
+    return {
+        "name": "protect-main-required-checks",
+        "bypass_actors": [],
         "rules": [
-            {
-                "type": "pull_request",
-                "parameters": {
-                    "required_approving_review_count": 0,
-                    "allowed_merge_methods": ["merge", "squash", "rebase"],
-                },
-            },
             {
                 "type": "required_status_checks",
                 "parameters": {
                     "strict_required_status_checks_policy": True,
                     "required_status_checks": [
                         {"context": context, "integration_id": 15368}
-                        for context in REQUIRED_CHECKS
+                        for context in checks
                     ],
                 },
-            },
-            {"type": "required_signatures"},
-        ]
-    },
-    "main-stale-check": {
-        "rules": [
-            {
-                "type": "pull_request",
-                "parameters": {
-                    "required_approving_review_count": 1,
-                    "allowed_merge_methods": ["merge", "squash", "rebase"],
-                },
-            },
-            {
-                "type": "required_status_checks",
-                "parameters": {
-                    "strict_required_status_checks_policy": True,
-                    "required_status_checks": [
-                        {"context": context, "integration_id": 15368}
-                        for context in REQUIRED_CHECKS + ["Review Policy Gate"]
-                    ],
-                },
-            },
-            {"type": "required_signatures"},
-            {"type": "non_fast_forward"},
-        ]
-    },
+            }
+        ],
+    }
+
+
+PR_ONLY_BYPASS = [
+    {"actor_id": 2, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"},
+    {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"},
+]
+
+RULES_BY_BRANCH = {
+    "main": [
+        make_review_ruleset(1, PR_ONLY_BYPASS),
+        make_required_checks_ruleset(),
+    ],
+    "main-missing-review": [
+        make_review_ruleset(0, PR_ONLY_BYPASS),
+        make_required_checks_ruleset(),
+    ],
+    "main-bad-bypass": [
+        make_review_ruleset(
+            1,
+            [
+                {"actor_id": 2, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"},
+                {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"},
+            ],
+        ),
+        make_required_checks_ruleset(),
+    ],
+    "main-stale-check": [
+        make_review_ruleset(1, PR_ONLY_BYPASS),
+        make_required_checks_ruleset(["Review Policy Gate"]),
+    ],
 }
 
 
@@ -441,14 +438,20 @@ async function main() {
     labelsByPull: {
       101: ['type:patch', 'channel:stable'],
       102: ['type:minor', 'channel:rc'],
+      999: ['type:docs', 'channel:stable'],
+      998: ['type:minor'],
     },
     commitPullsBySha: {
       'sha-label-exact': [
         { number: 101, state: 'open', base: { ref: 'main' } },
       ],
-      'sha-label-extra': [
+      'sha-label-extra-pass': [
         { number: 101, state: 'open', base: { ref: 'main' } },
         { number: 999, state: 'open', base: { ref: 'main' } },
+      ],
+      'sha-label-extra-fail': [
+        { number: 101, state: 'open', base: { ref: 'main' } },
+        { number: 998, state: 'open', base: { ref: 'main' } },
       ],
     },
   })
@@ -492,15 +495,33 @@ async function main() {
         merge_group: {
           base_ref: 'refs/heads/main',
           head_ref: 'gh-readonly-queue/main/pr-101-deadbeef',
-          head_sha: 'sha-label-extra',
+          head_sha: 'sha-label-extra-pass',
         },
       },
       ref: 'refs/heads/gh-readonly-queue/main/pr-101-deadbeef',
-      sha: 'sha-label-extra',
+      sha: 'sha-label-extra-pass',
     },
     github: labelGithub,
   })
-  assert(core.failed === null, `label gate merge_group should ignore unrelated associated pulls, got: ${core.failed}`)
+  assert(core.failed === null, `label gate merge_group should validate every associated open PR, got: ${core.failed}`)
+
+  core = await runGithubScript(labelScript, {
+    context: {
+      eventName: 'merge_group',
+      repo,
+      payload: {
+        merge_group: {
+          base_ref: 'refs/heads/main',
+          head_ref: 'gh-readonly-queue/main/pr-101-deadbeef',
+          head_sha: 'sha-label-extra-fail',
+        },
+      },
+      ref: 'refs/heads/gh-readonly-queue/main/pr-101-deadbeef',
+      sha: 'sha-label-extra-fail',
+    },
+    github: labelGithub,
+  })
+  assert(core.failed !== null && core.failed.includes('PR #998'), `label gate merge_group should fail when any associated PR is invalid, got: ${core.failed}`)
 }
 
 main().catch((error) => {
@@ -609,6 +630,7 @@ run_inline_workflow_contract_checks
 echo "[contract-check] live quality-gates scenarios"
 run_live_quality_gates main ok
 run_live_quality_gates main-missing-review fail
+run_live_quality_gates main-bad-bypass fail
 run_live_quality_gates main-stale-check fail
 
 echo "[contract-check] label-gate scenarios"

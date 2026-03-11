@@ -107,7 +107,7 @@ jobs:
               if (missing.length) {
                 throw new Error(`Merge queue entry pull request mismatch: ${missing.join(', ')}`)
               }
-              return parsed.sort((a, b) => a - b)
+              return commitPullNumbers.sort((a, b) => a - b)
             }
 
             function describeLabels(labels) {

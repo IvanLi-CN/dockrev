@@ -10,8 +10,16 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-
 API_VERSION = "2022-11-28"
+REPOSITORY_ROLE_IDS = {
+    "maintain": 2,
+    "admin": 5,
+}
+BYPASS_MODE_MAP = {
+    0: "always",
+    1: "pull_request",
+    2: "exempt",
+}
 
 
 class ValidationError(RuntimeError):
@@ -117,28 +125,63 @@ def fetch_json(api_root: str, owner: str, repo: str, branch: str) -> object:
         raise ValidationError(f"GitHub API request failed: {exc.reason}") from exc
 
 
-def extract_rules(payload: object) -> list[dict]:
+def normalize_bypass_mode(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, int) and value in BYPASS_MODE_MAP:
+        return BYPASS_MODE_MAP[value]
+    return ""
+
+
+def normalize_actor_id(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def extract_rulesets(payload: object) -> list[dict]:
+    if isinstance(payload, dict) and isinstance(payload.get("data"), list):
+        payload = payload["data"]
+
     if isinstance(payload, list):
-        rules = payload
+        items = [item for item in payload if isinstance(item, dict)]
     elif isinstance(payload, dict):
-        if isinstance(payload.get("rules"), list):
-            rules = payload["rules"]
-        elif isinstance(payload.get("data"), list):
-            rules = payload["data"]
-        elif isinstance(payload.get("type"), str):
-            rules = [payload]
-        else:
-            raise ValidationError("Unsupported GitHub rules payload: missing rules array")
+        items = [payload]
     else:
         raise ValidationError("Unsupported GitHub rules payload type")
-    result = [rule for rule in rules if isinstance(rule, dict) and isinstance(rule.get("type"), str)]
+
+    if not items:
+        raise ValidationError("GitHub rules payload was empty")
+
+    rulesets: list[dict] = []
+    for item in items:
+        rules = item.get("rules")
+        if isinstance(rules, list):
+            rulesets.append(item)
+            continue
+        if isinstance(item.get("type"), str):
+            rulesets.append({"name": "<flattened-rules>", "rules": [item], "bypass_actors": []})
+            continue
+        raise ValidationError("Unsupported GitHub rules payload: missing rules array")
+    return rulesets
+
+
+def flatten_rules(rulesets: list[dict]) -> list[dict]:
+    result: list[dict] = []
+    for ruleset in rulesets:
+        rules = ruleset.get("rules")
+        if not isinstance(rules, list):
+            continue
+        for rule in rules:
+            if isinstance(rule, dict) and isinstance(rule.get("type"), str):
+                result.append(rule)
     if not result:
         raise ValidationError("GitHub rules payload did not contain any typed rules")
     return result
-
-
-def bool_field(parameters: dict, name: str) -> bool:
-    return bool(parameters.get(name, False))
 
 
 def normalize_status_contexts(rules: list[dict]) -> list[str]:
@@ -159,8 +202,77 @@ def normalize_status_contexts(rules: list[dict]) -> list[str]:
     return sorted(contexts)
 
 
-def validate_rules(declaration: dict, rules: list[dict], branch: str) -> list[str]:
+def bool_field(parameters: dict, name: str) -> bool:
+    return bool(parameters.get(name, False))
+
+
+def expected_bypass_actors(review_policy: dict) -> set[tuple[str, int, str]]:
+    enforcement = review_policy.get("enforcement", {})
+    bypass_mode = enforcement.get("bypass_mode")
+    if bypass_mode == "pull-request-only":
+        normalized_mode = "pull_request"
+    elif isinstance(bypass_mode, str):
+        normalized_mode = bypass_mode.replace("-", "_")
+    else:
+        raise ValidationError("review_policy.enforcement.bypass_mode must be a string")
+
+    expected: set[tuple[str, int, str]] = set()
+    permissions = review_policy.get("exempt_author_permissions", [])
+    if not isinstance(permissions, list):
+        raise ValidationError("review_policy.exempt_author_permissions must be an array")
+    for permission in permissions:
+        if not isinstance(permission, str):
+            raise ValidationError("review_policy.exempt_author_permissions must contain strings")
+        role_id = REPOSITORY_ROLE_IDS.get(permission)
+        if role_id is None:
+            raise ValidationError(
+                f"Unsupported exempt_author_permissions entry for live validation: {permission}"
+            )
+        expected.add(("RepositoryRole", role_id, normalized_mode))
+
+    if review_policy.get("exempt_repository_owner"):
+        expected.add(("RepositoryRole", REPOSITORY_ROLE_IDS["admin"], normalized_mode))
+
+    return expected
+
+
+def actual_bypass_actors(rulesets: list[dict]) -> set[tuple[str, int, str]]:
+    actors: set[tuple[str, int, str]] = set()
+    saw_metadata = False
+    for ruleset in rulesets:
+        raw_actors = ruleset.get("bypass_actors")
+        if raw_actors is None:
+            raw_actors = ruleset.get("bypassActors")
+        if raw_actors is None:
+            continue
+        saw_metadata = True
+        if not isinstance(raw_actors, list):
+            raise ValidationError("ruleset bypass_actors must be an array")
+        for actor in raw_actors:
+            if not isinstance(actor, dict):
+                continue
+            actor_type = actor.get("actor_type")
+            if actor_type is None:
+                actor_type = actor.get("actorType")
+            actor_id = actor.get("actor_id")
+            if actor_id is None:
+                actor_id = actor.get("actorId")
+            bypass_mode = actor.get("bypass_mode")
+            if bypass_mode is None:
+                bypass_mode = actor.get("bypassMode")
+            normalized_type = actor_type if isinstance(actor_type, str) else ""
+            normalized_id = normalize_actor_id(actor_id)
+            normalized_mode = normalize_bypass_mode(bypass_mode)
+            if normalized_type and normalized_id is not None and normalized_mode:
+                actors.add((normalized_type, normalized_id, normalized_mode))
+    if not saw_metadata:
+        raise ValidationError("GitHub rules payload did not expose ruleset bypass actors")
+    return actors
+
+
+def validate_rules(declaration: dict, rulesets: list[dict], branch: str) -> tuple[list[str], list[dict]]:
     errors: list[str] = []
+    rules = flatten_rules(rulesets)
     required_checks = declaration.get("required_checks", [])
     if not isinstance(required_checks, list):
         raise ValidationError("required_checks must be an array")
@@ -229,6 +341,23 @@ def validate_rules(declaration: dict, rules: list[dict], branch: str) -> list[st
 
     if review_enforcement.get("mode") != "github-native":
         errors.append(f"{branch}: review_policy.enforcement.mode must stay github-native")
+    else:
+        expected_actors = expected_bypass_actors(review_policy)
+        actual_actors = actual_bypass_actors(rulesets)
+        missing = sorted(expected_actors - actual_actors)
+        unexpected = sorted(actual_actors - expected_actors)
+        if missing or unexpected:
+            details: list[str] = []
+            if missing:
+                details.append(
+                    "missing=" + ", ".join(f"{actor_type}:{actor_id}:{mode}" for actor_type, actor_id, mode in missing)
+                )
+            if unexpected:
+                details.append(
+                    "unexpected="
+                    + ", ".join(f"{actor_type}:{actor_id}:{mode}" for actor_type, actor_id, mode in unexpected)
+                )
+            errors.append(f"{branch}: bypass actor drift ({'; '.join(details)})")
 
     live_required_checks = normalize_status_contexts(grouped.get("required_status_checks", []))
     if live_required_checks != required_checks:
@@ -243,7 +372,7 @@ def validate_rules(declaration: dict, rules: list[dict], branch: str) -> list[st
             details.append("required status check order/content drifted")
         errors.append(f"{branch}: required_status_checks drift ({'; '.join(details)})")
 
-    return errors
+    return errors, rules
 
 
 def main() -> int:
@@ -255,8 +384,8 @@ def main() -> int:
         declaration = load_declaration(args.declaration)
         branch = choose_branch(declaration, args.branch)
         owner, repo = split_repo(args.repo)
-        rules = extract_rules(fetch_json(args.api_root, owner, repo, branch))
-        errors = validate_rules(declaration, rules, branch)
+        rulesets = extract_rulesets(fetch_json(args.api_root, owner, repo, branch))
+        errors, rules = validate_rules(declaration, rulesets, branch)
     except ValidationError as exc:
         print(f"[live-quality-gates] {exc}", file=sys.stderr)
         return 1
@@ -273,7 +402,8 @@ def main() -> int:
                 "status": "ok",
                 "repo": args.repo,
                 "branch": branch,
-                "checked_rules": sorted({rule.get('type', '') for rule in rules}),
+                "checked_rules": sorted({rule.get("type", "") for rule in rules}),
+                "ruleset_count": len(rulesets),
             },
             indent=2,
             sort_keys=True,
