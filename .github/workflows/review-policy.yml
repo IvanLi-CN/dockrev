@@ -1,7 +1,7 @@
 name: Review Policy
 
 on:
-  pull_request_target:
+  pull_request:
     types:
       - opened
       - reopened
@@ -14,6 +14,9 @@ on:
       - submitted
       - dismissed
       - edited
+  merge_group:
+    types:
+      - checks_requested
   workflow_dispatch:
     inputs:
       pull_number:
@@ -35,7 +38,6 @@ env:
 permissions:
   contents: read
   pull-requests: read
-  statuses: write
 
 jobs:
   review-policy:
@@ -43,23 +45,96 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Evaluate review policy
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
         with:
           script: |
             const owner = context.repo.owner
             const repo = context.repo.repo
-            const runUrl = `${process.env.GITHUB_SERVER_URL}/${owner}/${repo}/actions/runs/${process.env.GITHUB_RUN_ID}`
             const exemptPermissions = new Set(JSON.parse(process.env.REVIEW_POLICY_EXEMPT_PERMISSIONS || '[]'))
             const reviewerPermissions = new Set(JSON.parse(process.env.REVIEW_POLICY_REVIEWER_PERMISSIONS || '[]'))
             const requiredApprovals = Number(process.env.REVIEW_POLICY_REQUIRED_APPROVALS || '1')
             const exemptRepositoryOwner = (process.env.REVIEW_POLICY_EXEMPT_REPOSITORY_OWNER || '').toLowerCase() === 'true'
-            const checkName = process.env.REVIEW_POLICY_CHECK_NAME || 'Review Policy Gate'
-            const rawInput = core.getInput('pull_number')
-            const pullNumber = context.payload.pull_request?.number ?? (rawInput ? Number(rawInput) : NaN)
+            const rawInput = context.payload.inputs?.pull_number ?? core.getInput('pull_number')
 
-            if (!Number.isInteger(pullNumber) || pullNumber <= 0) {
-              core.setFailed('Missing valid pull request number')
-              return
+            function normalizeHeadRef(ref) {
+              if (!ref) {
+                return ''
+              }
+              return String(ref).replace(/^refs\/heads\//, '')
+            }
+
+            function parsePullNumbersFromText(text) {
+              if (!text) {
+                return []
+              }
+              const input = String(text)
+              const numbers = new Set()
+              const patterns = [
+                /(?:^|\/)pr-(\d+)(?:-|$)/g,
+                /#(\d+)/g,
+              ]
+              for (const pattern of patterns) {
+                let match
+                while ((match = pattern.exec(input)) !== null) {
+                  const value = Number(match[1])
+                  if (Number.isInteger(value) && value > 0) {
+                    numbers.add(value)
+                  }
+                }
+              }
+              return Array.from(numbers)
+            }
+
+            async function listCommitAssociatedPullNumbers(commitSha) {
+              if (!commitSha) {
+                return []
+              }
+              const mergeGroupBaseRef = normalizeHeadRef(context.payload.merge_group?.base_ref || '')
+              const pulls = await github.paginate('GET /repos/{owner}/{repo}/commits/{commit_sha}/pulls', {
+                owner,
+                repo,
+                commit_sha: commitSha,
+                per_page: 100,
+              })
+              const numbers = new Set()
+              for (const pull of pulls) {
+                const pullNumber = Number(pull?.number)
+                if (!Number.isInteger(pullNumber) || pullNumber <= 0) {
+                  continue
+                }
+                if (pull?.state && pull.state !== 'open') {
+                  continue
+                }
+                if (mergeGroupBaseRef && pull?.base?.ref && pull.base.ref !== mergeGroupBaseRef) {
+                  continue
+                }
+                numbers.add(pullNumber)
+              }
+              return Array.from(numbers)
+            }
+
+            async function resolveMergeGroupPullNumbers() {
+              const headRef = normalizeHeadRef(context.payload.merge_group?.head_ref || context.ref || '')
+              const headMessage = context.payload.merge_group?.head_commit?.message || ''
+              const parsed = Array.from(
+                new Set([
+                  ...parsePullNumbersFromText(headRef),
+                  ...parsePullNumbersFromText(headMessage),
+                ])
+              )
+              const mergeGroupSha = context.payload.merge_group?.head_sha || context.sha
+              const commitPullNumbers = await listCommitAssociatedPullNumbers(mergeGroupSha)
+              if (!commitPullNumbers.length) {
+                throw new Error('Merge queue member set could not be proven from GitHub-disclosed data')
+              }
+              if (parsed.length) {
+                const commitSet = new Set(commitPullNumbers)
+                const missing = parsed.filter((value) => !commitSet.has(value))
+                if (missing.length) {
+                  throw new Error(`Merge queue member set mismatch: ${missing.join(', ')}`)
+                }
+              }
+              return commitPullNumbers.sort((a, b) => a - b)
             }
 
             async function getPermission(username) {
@@ -75,7 +150,7 @@ jobs:
                   repo,
                   username,
                 })
-                return data.permission || 'none'
+                return data.role_name || data.permission || 'none'
               } catch (error) {
                 if (error.status === 404) {
                   return 'none'
@@ -84,28 +159,23 @@ jobs:
               }
             }
 
-            const { data: pull } = await github.rest.pulls.get({
-              owner,
-              repo,
-              pull_number: pullNumber,
-            })
+            async function evaluatePull(pullNumber) {
+              const { data: pull } = await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: pullNumber,
+              })
 
-            const author = pull.user?.login
-            const headSha = pull.head?.sha
-            if (!author || !headSha) {
-              core.setFailed('Pull request payload is missing author or head SHA')
-              return
-            }
+              const author = pull.user?.login
+              if (!author) {
+                throw new Error(`Pull request #${pullNumber} payload is missing author`)
+              }
 
-            const authorPermission = await getPermission(author)
-            const isExemptAuthor = exemptPermissions.has(authorPermission)
-            let pass = false
-            let description = ''
+              const authorPermission = await getPermission(author)
+              const isExemptAuthor = exemptPermissions.has(authorPermission)
+              let pass = false
+              let description = ''
 
-            if (isExemptAuthor) {
-              pass = true
-              description = `Author @${author} has ${authorPermission} permission; approval not required.`
-            } else {
               const reviews = await github.paginate(github.rest.pulls.listReviews, {
                 owner,
                 repo,
@@ -119,61 +189,107 @@ jobs:
                 return aTime - bTime
               })
 
-              const latestByUser = new Map()
+              const currentReviewStateByUser = new Map()
               for (const review of reviews) {
                 const reviewer = review.user?.login
                 if (!reviewer || review.state === 'PENDING') {
                   continue
                 }
-                latestByUser.set(reviewer, review)
+                if (review.state === 'DISMISSED') {
+                  currentReviewStateByUser.delete(reviewer)
+                  continue
+                }
+                if (review.state === 'CHANGES_REQUESTED' || review.state === 'APPROVED') {
+                  currentReviewStateByUser.set(reviewer, review)
+                }
               }
 
               const approvals = []
-              for (const [reviewer, review] of latestByUser.entries()) {
-                if (review.state !== 'APPROVED' || reviewer === author) {
+              const blockingRequests = []
+              for (const [reviewer, review] of currentReviewStateByUser.entries()) {
+                if (reviewer === author) {
                   continue
                 }
                 const permission = await getPermission(reviewer)
                 if (!reviewerPermissions.has(permission)) {
                   continue
                 }
-                approvals.push(`@${reviewer} (${permission})`)
+                if (review.state === 'CHANGES_REQUESTED') {
+                  blockingRequests.push(`@${reviewer} (${permission})`)
+                  continue
+                }
+                if (review.state === 'APPROVED') {
+                  approvals.push(`@${reviewer} (${permission})`)
+                }
               }
 
-              pass = approvals.length >= requiredApprovals
-              if (pass) {
-                description = `Approval satisfied by ${approvals.join(', ')}.`
+              if (blockingRequests.length > 0) {
+                description = `Blocking change requests from ${blockingRequests.join(', ')}.`
+              } else if (isExemptAuthor) {
+                pass = true
+                description = `Author @${author} has ${authorPermission} permission; approval not required.`
               } else {
-                description = `Author @${author} has ${authorPermission} permission; at least ${requiredApprovals} approval(s) from ${Array.from(reviewerPermissions).join('/')} reviewer(s) required.`
+                pass = approvals.length >= requiredApprovals
+                if (pass) {
+                  description = `Approval satisfied by ${approvals.join(', ')}.`
+                } else {
+                  description = `Author @${author} has ${authorPermission} permission; at least ${requiredApprovals} approval(s) from ${Array.from(reviewerPermissions).join('/')} reviewer(s) required.`
+                }
+              }
+
+              return {
+                pullNumber,
+                author,
+                authorPermission,
+                pass,
+                description,
               }
             }
 
-            await github.rest.repos.createCommitStatus({
-              owner,
-              repo,
-              sha: headSha,
-              state: pass ? 'success' : 'failure',
-              context: checkName,
-              description: description.slice(0, 140),
-              target_url: runUrl,
-            })
+            let pullNumbers
+            try {
+              pullNumbers = context.eventName === 'merge_group'
+                ? await resolveMergeGroupPullNumbers()
+                : [context.payload.pull_request?.number ?? (rawInput ? Number(rawInput) : NaN)]
+            } catch (error) {
+              core.setFailed(error instanceof Error ? error.message : 'Missing valid pull request number for review policy evaluation')
+              return
+            }
 
+            if (!pullNumbers.length || pullNumbers.some((value) => !Number.isInteger(value) || value <= 0)) {
+              core.setFailed('Missing valid pull request number for review policy evaluation')
+              return
+            }
+
+            const results = []
+            for (const pullNumber of pullNumbers) {
+              results.push(await evaluatePull(pullNumber))
+            }
+
+            core.summary.addHeading('Review policy result')
             core.summary
-              .addHeading('Review policy result')
-              .addRaw(`PR #${pullNumber}`)
+              .addRaw(`Scope: ${context.eventName}`)
               .addEOL()
-              .addRaw(`Author: @${author}`)
-              .addEOL()
-              .addRaw(`Author permission: ${authorPermission}`)
-              .addEOL()
-              .addRaw(`Result: ${pass ? 'pass' : 'fail'}`)
-              .addEOL()
-              .addRaw(description)
-              .addEOL()
+
+            for (const result of results) {
+              core.summary
+                .addRaw(`PR #${result.pullNumber}`)
+                .addEOL()
+                .addRaw(`Author: @${result.author}`)
+                .addEOL()
+                .addRaw(`Author permission: ${result.authorPermission}`)
+                .addEOL()
+                .addRaw(`Result: ${result.pass ? 'pass' : 'fail'}`)
+                .addEOL()
+                .addRaw(result.description)
+                .addEOL()
+                .addEOL()
+            }
             await core.summary.write()
 
-            if (pass) {
-              core.notice(description)
+            const failed = results.filter((result) => !result.pass)
+            if (failed.length === 0) {
+              core.notice(`Review policy satisfied for ${results.length} pull request(s).`)
             } else {
-              core.setFailed(description)
+              core.setFailed(failed.map((result) => `PR #${result.pullNumber}: ${result.description}`).join(' | '))
             }

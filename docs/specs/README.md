@@ -27,6 +27,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| kv9pg | Dockrev：quality-gates 最终版对齐（merge queue + 条件 review + required checks） | 已完成 | `kv9pg-quality-gates-final-alignment/SPEC.md` | 2026-03-11 | fast-track |
 | xyma9 | Dockrev：非 service update 的 semver pull 保留 OCI 原始 tag 并回退无 v 变体 | 已完成 | `xyma9-semver-pull-raw-tag-fallback/SPEC.md` | 2026-03-10 | fast-track |
 | ufxaq | Dockrev：Update Job Docker 凭据透传桥接 | 已完成 | `ufxaq-update-job-docker-auth-bridge/SPEC.md` | 2026-03-10 | fast-track（update job Docker auth bridge + private registry docs sync） |
 | bvxtm | Dockrev：Supervisor 暗色主题修复 + 同源主题偏好共享 | 已完成 | `bvxtm-supervisor-dark-theme-same-origin-share/SPEC.md` | 2026-03-09 | fast-track（PR #156；cargo test + browser smoke） |

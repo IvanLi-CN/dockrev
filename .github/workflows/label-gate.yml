@@ -1,17 +1,19 @@
 name: PR Label Gate
 
 on:
-  pull_request_target:
+  pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+  merge_group:
+    types:
+      - checks_requested
 
 concurrency:
-  group: label-gate-${{ github.event.pull_request.number }}
+  group: label-gate-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:
   contents: read
-  issues: read
   pull-requests: read
 
 jobs:
@@ -19,14 +21,208 @@ jobs:
     name: Release intent label gate
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout trusted gate script (base)
-        uses: actions/checkout@v4
+      - name: Validate release intent + channel labels
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          persist-credentials: false
+          script: |
+            const owner = context.repo.owner
+            const repo = context.repo.repo
+            const allowedTypes = new Set([
+              'type:docs',
+              'type:skip',
+              'type:patch',
+              'type:minor',
+              'type:major',
+            ])
+            const allowedChannels = new Set([
+              'channel:stable',
+              'channel:rc',
+            ])
 
-      - name: Validate release intent + channel labels (exactly one each)
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: bash ./.github/scripts/label-gate.sh
+            function normalizeHeadRef(ref) {
+              if (!ref) {
+                return ''
+              }
+              return String(ref).replace(/^refs\/heads\//, '')
+            }
+
+            function parsePullNumbersFromText(text) {
+              if (!text) {
+                return []
+              }
+              const input = String(text)
+              const numbers = new Set()
+              const patterns = [
+                /(?:^|\/)pr-(\d+)(?:-|$)/g,
+                /#(\d+)/g,
+              ]
+              for (const pattern of patterns) {
+                let match
+                while ((match = pattern.exec(input)) !== null) {
+                  const value = Number(match[1])
+                  if (Number.isInteger(value) && value > 0) {
+                    numbers.add(value)
+                  }
+                }
+              }
+              return Array.from(numbers)
+            }
+
+            async function listCommitAssociatedPullNumbers(commitSha) {
+              if (!commitSha) {
+                return []
+              }
+              const mergeGroupBaseRef = normalizeHeadRef(context.payload.merge_group?.base_ref || '')
+              const pulls = await github.paginate('GET /repos/{owner}/{repo}/commits/{commit_sha}/pulls', {
+                owner,
+                repo,
+                commit_sha: commitSha,
+                per_page: 100,
+              })
+              const numbers = new Set()
+              for (const pull of pulls) {
+                const pullNumber = Number(pull?.number)
+                if (!Number.isInteger(pullNumber) || pullNumber <= 0) {
+                  continue
+                }
+                if (pull?.state && pull.state !== 'open') {
+                  continue
+                }
+                if (mergeGroupBaseRef && pull?.base?.ref && pull.base.ref !== mergeGroupBaseRef) {
+                  continue
+                }
+                numbers.add(pullNumber)
+              }
+              return Array.from(numbers)
+            }
+
+            async function resolveMergeGroupPullNumbers() {
+              const headRef = normalizeHeadRef(context.payload.merge_group?.head_ref || context.ref || '')
+              const headMessage = context.payload.merge_group?.head_commit?.message || ''
+              const parsed = Array.from(
+                new Set([
+                  ...parsePullNumbersFromText(headRef),
+                  ...parsePullNumbersFromText(headMessage),
+                ])
+              )
+              const mergeGroupSha = context.payload.merge_group?.head_sha || context.sha
+              const commitPullNumbers = await listCommitAssociatedPullNumbers(mergeGroupSha)
+              if (!commitPullNumbers.length) {
+                throw new Error('Merge queue member set could not be proven from GitHub-disclosed data')
+              }
+              if (parsed.length) {
+                const commitSet = new Set(commitPullNumbers)
+                const missing = parsed.filter((value) => !commitSet.has(value))
+                if (missing.length) {
+                  throw new Error(`Merge queue member set mismatch: ${missing.join(', ')}`)
+                }
+              }
+              return commitPullNumbers.sort((a, b) => a - b)
+            }
+
+            function describeLabels(labels) {
+              if (!labels.length) {
+                return '(none)'
+              }
+              return Array.from(new Set(labels)).sort().join(', ')
+            }
+
+            function evaluateLabels(labels) {
+              const names = labels.filter((label) => typeof label === 'string' && label.length > 0)
+              const typeLabels = names.filter((label) => label.startsWith('type:'))
+              const channelLabels = names.filter((label) => label.startsWith('channel:'))
+              const unknownType = typeLabels.filter((label) => !allowedTypes.has(label))
+              const unknownChannel = channelLabels.filter((label) => !allowedChannels.has(label))
+              const selectedType = typeLabels.filter((label) => allowedTypes.has(label))
+              const selectedChannel = channelLabels.filter((label) => allowedChannels.has(label))
+
+              const problems = []
+              if (unknownType.length > 0) {
+                problems.push(`Unknown type label(s): ${Array.from(new Set(unknownType)).sort().join(', ')}`)
+              }
+              if (unknownChannel.length > 0) {
+                problems.push(`Unknown channel label(s): ${Array.from(new Set(unknownChannel)).sort().join(', ')}`)
+              }
+              if (selectedType.length !== 1) {
+                problems.push(`PR must have exactly one type:* label; found ${selectedType.length}`)
+              }
+              if (selectedChannel.length !== 1) {
+                problems.push(`PR must have exactly one channel:* label; found ${selectedChannel.length}`)
+              }
+
+              if (problems.length > 0) {
+                return {
+                  pass: false,
+                  description: `${problems.join('; ')} | labels=${describeLabels(names)}`,
+                }
+              }
+
+              return {
+                pass: true,
+                description: `Labels OK: ${selectedType[0]} + ${selectedChannel[0]}`,
+              }
+            }
+
+            async function evaluatePull(pullNumber) {
+              const { data: pull } = await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: pullNumber,
+              })
+              const labels = (pull.labels || [])
+                .map((label) => label?.name)
+                .filter(Boolean)
+              const result = evaluateLabels(labels)
+              return {
+                pullNumber,
+                pass: result.pass,
+                description: result.description,
+                labels: describeLabels(labels),
+              }
+            }
+
+            let pullNumbers = []
+            if (context.eventName === 'pull_request') {
+              const pullNumber = Number(context.payload.pull_request?.number)
+              if (Number.isInteger(pullNumber) && pullNumber > 0) {
+                pullNumbers = [pullNumber]
+              }
+            } else if (context.eventName === 'merge_group') {
+              pullNumbers = await resolveMergeGroupPullNumbers()
+            }
+
+            if (!pullNumbers.length) {
+              core.setFailed('Missing valid pull request number for label gate evaluation')
+              return
+            }
+
+            const results = []
+            for (const pullNumber of pullNumbers) {
+              results.push(await evaluatePull(pullNumber))
+            }
+
+            core.summary.addHeading('Release intent label gate result')
+            core.summary
+              .addRaw(`Scope: ${context.eventName}`)
+              .addEOL()
+
+            for (const result of results) {
+              core.summary
+                .addRaw(`PR #${result.pullNumber}`)
+                .addEOL()
+                .addRaw(`Result: ${result.pass ? 'pass' : 'fail'}`)
+                .addEOL()
+                .addRaw(`Labels: ${result.labels}`)
+                .addEOL()
+                .addRaw(result.description)
+                .addEOL()
+                .addEOL()
+            }
+            await core.summary.write()
+
+            const failed = results.filter((result) => !result.pass)
+            if (failed.length === 0) {
+              core.notice(`Release intent labels satisfied for ${results.length} pull request(s).`)
+            } else {
+              core.setFailed(failed.map((result) => `PR #${result.pullNumber}: ${result.description}`).join(' | '))
+            }
