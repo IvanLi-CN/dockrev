@@ -365,10 +365,11 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         font-size: 13px;
         line-height: 1.52;
       }}
-      .metaStrip {{
+      .metaFooter {{
         display: flex;
         flex-wrap: wrap;
         gap: 10px;
+        padding: 2px 2px 0;
       }}
       .metaPill {{
         display: inline-flex;
@@ -786,7 +787,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           flex-direction: column;
           align-items: flex-start;
         }}
-        .metaStrip,
+        .metaFooter,
         .buttonGroup,
         .buttonGroup-aux {{
           width: 100%;
@@ -824,20 +825,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
                 <p class="intro">该页面独立于 Dockrev 生命周期；Dockrev 重启期间仍可用。日志与主要操作保持首屏可见，方便你边执行边排障。</p>
               </div>
             </div>
-            <div class="metaStrip">
-              <div class="metaPill">
-                <span class="metaLabel">Supervisor 版本</span>
-                <span class="metaValue">{version_html}</span>
-              </div>
-              <div class="metaPill">
-                <span class="metaLabel">开源仓库</span>
-                <span class="metaValue">{repository_html}</span>
-              </div>
-              <div class="metaPill">
-                <span class="metaLabel">开发者</span>
-                <span class="metaValue">{developer_html}</span>
-              </div>
-            </div>
+
           </div>
           <a class="linkButton" href="/">返回 Dockrev</a>
         </div>
@@ -950,6 +938,21 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           </article>
         </div>
       </section>
+
+      <footer class="metaFooter muted">
+        <div class="metaPill">
+          <span class="metaLabel">Supervisor 版本</span>
+          <span class="metaValue">{version_html}</span>
+        </div>
+        <div class="metaPill">
+          <span class="metaLabel">开源仓库</span>
+          <span class="metaValue">{repository_html}</span>
+        </div>
+        <div class="metaPill">
+          <span class="metaLabel">开发者</span>
+          <span class="metaValue">{developer_html}</span>
+        </div>
+      </footer>
     </main>
 
     <script>
