@@ -318,52 +318,52 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         text-align: right;
       }}
       .masthead {{
-        padding-top: 14px;
-        padding-bottom: 14px;
+        padding-top: 10px;
+        padding-bottom: 10px;
       }}
       .mastheadRow {{
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto;
-        gap: 14px;
-        align-items: start;
-      }}
-      .titleBlock {{
-        display: grid;
-        gap: 10px;
-      }}
-      .brandRow {{
-        display: flex;
         gap: 12px;
         align-items: center;
       }}
+      .titleBlock {{
+        display: grid;
+        gap: 6px;
+      }}
+      .brandRow {{
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }}
       .brandMark {{
-        width: 40px;
-        height: 40px;
+        width: 36px;
+        height: 36px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        border-radius: 12px;
+        border-radius: 10px;
         background: linear-gradient(145deg, rgba(64, 180, 255, 0.16), rgba(255, 176, 87, 0.08));
         border: 1px solid rgba(64, 180, 255, 0.2);
         flex: 0 0 auto;
       }}
       .brandMark img {{
         display: block;
-        width: 22px;
-        height: 22px;
+        width: 20px;
+        height: 20px;
       }}
       .masthead h1 {{
-        margin: 4px 0 0;
-        font-size: clamp(26px, 3vw, 38px);
-        line-height: 0.98;
-        letter-spacing: -0.045em;
+        margin: 0;
+        font-size: clamp(24px, 2.2vw, 32px);
+        line-height: 1;
+        letter-spacing: -0.04em;
       }}
       .intro {{
         margin: 0;
-        max-width: 68ch;
+        max-width: 62ch;
         color: var(--muted);
-        font-size: 13px;
-        line-height: 1.52;
+        font-size: 12px;
+        line-height: 1.45;
       }}
       .metaFooter {{
         display: flex;
@@ -446,21 +446,27 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
       .workspaceGrid {{
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 280px;
+        grid-template-columns: minmax(0, 1fr) 320px;
         gap: 14px;
-        align-items: stretch;
+        align-items: start;
       }}
       .workspaceGrid.workspaceGrid-logsOnly {{
         grid-template-columns: minmax(0, 1fr);
       }}
+      .opsSidebar {{
+        display: grid;
+        gap: 12px;
+        align-content: start;
+      }}
       .historyRail,
-      .logPanel {{
-        min-height: 360px;
+      .logPanel,
+      .statusSidebar {{
         border-radius: 18px;
         border: 1px solid var(--panel-border);
         background: var(--surface);
       }}
       .logPanel {{
+        min-height: 420px;
         display: grid;
         grid-template-rows: auto 1fr;
         padding: 14px;
@@ -487,14 +493,45 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
       #logs {{
         height: 100%;
-        min-height: 270px;
+        min-height: 320px;
         padding: 10px 12px;
         font-size: 13px;
         line-height: 1.48;
         background: var(--console-bg);
         border: 1px solid var(--panel-border);
       }}
+      .statusSidebar {{
+        padding: 14px;
+        background: linear-gradient(180deg, rgba(64, 180, 255, 0.08), rgba(255, 255, 255, 0.015));
+      }}
+      html[data-theme='light'] .statusSidebar {{
+        background: linear-gradient(180deg, rgba(22, 135, 217, 0.06), rgba(255, 255, 255, 0.6));
+      }}
+      .statusSidebarHeader {{
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 12px;
+      }}
+      .statusSidebarTitle {{
+        display: grid;
+        gap: 6px;
+      }}
+      .snapshotGrid {{
+        display: grid;
+        gap: 10px;
+      }}
+      .snapshotItem {{
+        padding: 10px 12px;
+        border-radius: 14px;
+        border: 1px solid var(--panel-border);
+        background: var(--panel-strong);
+        display: grid;
+        gap: 6px;
+      }}
       .historyRail {{
+        min-height: 248px;
         padding: 12px;
         max-height: min(560px, calc(100vh - 190px));
         overflow: auto;
@@ -582,7 +619,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
       .statusGrid {{
         display: grid;
-        grid-template-columns: 1.15fr repeat(3, minmax(0, 0.7fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
       }}
       .statusTile {{
@@ -594,15 +631,8 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         gap: 8px;
         align-content: start;
       }}
-      .statusHero {{
-        background: linear-gradient(135deg, rgba(64, 180, 255, 0.12), rgba(255, 176, 87, 0.08));
-      }}
-      html[data-theme='light'] .statusHero {{
-        background: linear-gradient(135deg, rgba(22, 135, 217, 0.1), rgba(204, 122, 41, 0.07));
-      }}
-      .statusHero,
       .statusTile-wide {{
-        grid-column: span 2;
+        grid-column: auto;
       }}
       .statusTile-full {{
         grid-column: 1 / -1;
@@ -614,20 +644,20 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         letter-spacing: 0.12em;
       }}
       .statusValue {{
-        font-size: 14px;
+        font-size: 13px;
         line-height: 1.35;
         font-weight: 600;
         word-break: break-word;
       }}
       .statusValue-lg {{
-        font-size: clamp(22px, 2.8vw, 30px);
+        font-size: clamp(22px, 2.4vw, 28px);
         line-height: 0.96;
         letter-spacing: -0.05em;
       }}
       .statusMeta {{
         color: var(--muted);
-        font-size: 12px;
-        line-height: 1.48;
+        font-size: 11px;
+        line-height: 1.42;
       }}
       .statusTone {{
         display: inline-flex;
@@ -741,13 +771,11 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         .statusGrid {{
           grid-template-columns: 1fr;
         }}
-        .statusHero,
-        .statusTile-wide,
-        .statusTile-full {{
-          grid-column: auto;
-        }}
         .buttonGroup-aux {{
           justify-content: flex-start;
+        }}
+        .statusSidebarHeader {{
+          align-items: flex-start;
         }}
         .historyRail,
         .logPanel {{
@@ -780,7 +808,8 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         .sectionHeadingRow,
         .historyTop,
         .historyBottom,
-        .logHeader {{
+        .logHeader,
+        .statusSidebarHeader {{
           align-items: flex-start;
         }}
         .brandRow {{
@@ -822,7 +851,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
               </div>
               <div>
                 <h1>Dockrev 自我升级（Supervisor）</h1>
-                <p class="intro">该页面独立于 Dockrev 生命周期；Dockrev 重启期间仍可用。日志与主要操作保持首屏可见，方便你边执行边排障。</p>
+                <p class="intro">该页面独立于 Dockrev 生命周期；Dockrev 重启期间仍可用。操作、日志与状态会按工作流优先级排布。</p>
               </div>
             </div>
 
@@ -873,8 +902,8 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       <section class="panel workspacePanel" data-panel="workspace">
         <div class="sectionHeadingRow">
           <div>
-            <div class="sectionEyebrow">History & logs</div>
-            <h2>日志控制台</h2>
+            <div class="sectionEyebrow">Operations workspace</div>
+            <h2>日志与运行态</h2>
           </div>
           <div id="historyHint" class="muted sectionHeadingMeta">loading…</div>
         </div>
@@ -889,8 +918,36 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
             </div>
             <pre id="logs"></pre>
           </section>
-          <aside id="historyRail" class="historyRail">
-            <div id="historyList" class="historyList"></div>
+          <aside class="opsSidebar">
+            <section class="statusSidebar">
+              <div class="statusSidebarHeader">
+                <div class="statusSidebarTitle">
+                  <div class="sectionEyebrow">Live status</div>
+                  <div id="statusState" class="statusValue statusValue-lg">loading…</div>
+                  <div id="statusSummary" class="statusMeta">等待首次轮询结果…</div>
+                </div>
+                <div id="statusTone" class="statusTone" aria-live="polite">loading…</div>
+              </div>
+              <div class="snapshotGrid">
+                <article class="snapshotItem">
+                  <div class="statusLabel">Current opId</div>
+                  <div id="statusOpId" class="statusValue">-</div>
+                </article>
+                <article class="snapshotItem">
+                  <div class="statusLabel">Current step</div>
+                  <div id="statusStep" class="statusValue">-</div>
+                  <div id="statusMode" class="statusMeta">mode -</div>
+                </article>
+                <article class="snapshotItem">
+                  <div class="statusLabel">Timestamps</div>
+                  <div id="statusStartedAt" class="statusValue">-</div>
+                  <div id="statusUpdatedAt" class="statusMeta">updated -</div>
+                </article>
+              </div>
+            </section>
+            <aside id="historyRail" class="historyRail">
+              <div id="historyList" class="historyList"></div>
+            </aside>
           </aside>
         </div>
       </section>
@@ -898,32 +955,12 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       <section class="panel statusPanel" data-panel="status-grid">
         <div class="sectionHeadingRow">
           <div>
-            <div class="sectionEyebrow">Live status</div>
-            <h2>当前状态</h2>
+            <div class="sectionEyebrow">Operation detail</div>
+            <h2>镜像与进度</h2>
           </div>
-          <div id="statusTone" class="statusTone" aria-live="polite">loading…</div>
+          <div class="muted sectionHeadingMeta">关键引用默认直出，方便复制与排障。</div>
         </div>
         <div class="statusGrid">
-          <article class="statusTile statusHero">
-            <div class="statusLabel">State</div>
-            <div id="statusState" class="statusValue statusValue-lg">loading…</div>
-            <div id="statusSummary" class="statusMeta">等待首次轮询结果…</div>
-          </article>
-          <article class="statusTile">
-            <div class="statusLabel">Current opId</div>
-            <div id="statusOpId" class="statusValue">-</div>
-            <div class="statusMeta">当前正在追踪的 operation 标识。</div>
-          </article>
-          <article class="statusTile">
-            <div class="statusLabel">Current step</div>
-            <div id="statusStep" class="statusValue">-</div>
-            <div id="statusMode" class="statusMeta">mode -</div>
-          </article>
-          <article class="statusTile">
-            <div class="statusLabel">Timestamps</div>
-            <div id="statusStartedAt" class="statusValue">-</div>
-            <div id="statusUpdatedAt" class="statusMeta">updated -</div>
-          </article>
           <article class="statusTile statusTile-full">
             <div class="statusLabel">Progress message</div>
             <div id="statusProgressMessage" class="statusCodeInline">-</div>
