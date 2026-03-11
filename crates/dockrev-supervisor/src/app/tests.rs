@@ -378,6 +378,12 @@ fn render_ui_contains_copy_buttons_for_key_refs() {
     assert!(html.contains("id=\"copyPrevious\""));
     assert!(html.contains("name: 'mdi:content-copy'"));
     assert!(html.contains("name: 'mdi:check-bold'"));
+    assert!(html.contains("content: attr(data-tooltip);"));
+    assert!(html.contains("function setCopyButtonTooltip(button, text)"));
+    assert!(
+        html.contains("button.dataset.defaultTooltip = button.getAttribute('aria-label') || '';")
+    );
+    assert!(html.contains("setCopyButtonTooltip(button, '已复制');"));
     assert!(html.contains("button.dataset.icon = icon.name;"));
     assert!(html.contains("function setCopyButtonValue(button, value)"));
     assert!(html.contains("function writeClipboardText(text)"));

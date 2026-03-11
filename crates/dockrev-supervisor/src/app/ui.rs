@@ -775,6 +775,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         letter-spacing: 0.12em;
       }}
       .copyButton {{
+        position: relative;
         min-height: 28px;
         min-width: 28px;
         width: 28px;
@@ -785,6 +786,49 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         justify-content: center;
         color: var(--muted);
         background: var(--surface-strong);
+        overflow: visible;
+      }}
+      .copyButton::after {{
+        content: attr(data-tooltip);
+        position: absolute;
+        left: 50%;
+        bottom: calc(100% + 8px);
+        transform: translate(-50%, 4px);
+        padding: 4px 8px;
+        border-radius: 8px;
+        border: 1px solid var(--panel-border);
+        background: var(--pop-bg);
+        color: var(--text);
+        font-size: 10px;
+        line-height: 1.2;
+        white-space: nowrap;
+        box-shadow: var(--panel-shadow);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 140ms ease, transform 140ms ease;
+      }}
+      .copyButton::before {{
+        content: '';
+        position: absolute;
+        left: 50%;
+        bottom: calc(100% + 3px);
+        width: 8px;
+        height: 8px;
+        transform: translateX(-50%) rotate(45deg);
+        border-right: 1px solid var(--panel-border);
+        border-bottom: 1px solid var(--panel-border);
+        background: var(--pop-bg);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 140ms ease, transform 140ms ease;
+      }}
+      .copyButton:not([disabled]):is(:hover, :focus-visible)::after,
+      .copyButton:not([disabled]):is(:hover, :focus-visible)::before {{
+        opacity: 1;
+        transform: translate(-50%, 0);
+      }}
+      .copyButton:not([disabled]):is(:hover, :focus-visible)::before {{
+        transform: translateX(-50%) rotate(45deg);
       }}
       .copyButton svg {{
         width: 14px;
@@ -1322,10 +1366,16 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         button.innerHTML = `<svg viewBox="0 0 ${{icon.width}} ${{icon.height}}" aria-hidden="true" focusable="false">${{icon.body}}</svg>`;
       }}
 
+      function setCopyButtonTooltip(button, text) {{
+        if (!button) return;
+        button.dataset.tooltip = text || button.dataset.defaultTooltip || button.getAttribute('aria-label') || '';
+      }}
+
       function resetCopyButton(button) {{
         if (!button) return;
         button.classList.remove('copied', 'failed');
         renderCopyButtonIcon(button, 'copy');
+        setCopyButtonTooltip(button, button.dataset.defaultTooltip);
       }}
 
       function setCopyButtonValue(button, value) {{
@@ -1359,11 +1409,14 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         if (state === 'copied') {{
           button.classList.add('copied');
           renderCopyButtonIcon(button, 'copied');
+          setCopyButtonTooltip(button, '已复制');
         }} else if (state === 'failed') {{
           button.classList.add('failed');
           renderCopyButtonIcon(button, 'copy');
+          setCopyButtonTooltip(button, '复制失败');
         }} else {{
           renderCopyButtonIcon(button, 'copy');
+          setCopyButtonTooltip(button, button.dataset.defaultTooltip);
         }}
         if (state) {{
           button._copyTimer = window.setTimeout(() => resetCopyButton(button), 1400);
@@ -1372,7 +1425,9 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
 
       function bindCopyButton(button) {{
         if (!button) return;
+        button.dataset.defaultTooltip = button.getAttribute('aria-label') || '';
         renderCopyButtonIcon(button, 'copy');
+        setCopyButtonTooltip(button, button.dataset.defaultTooltip);
         button.addEventListener('click', async () => {{
           const value = button.dataset.copyValue || '';
           if (!value) return;
