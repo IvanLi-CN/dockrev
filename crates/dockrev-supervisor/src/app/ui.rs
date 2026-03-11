@@ -492,13 +492,21 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       .workspaceGrid {{
         display: grid;
         grid-template-columns: minmax(0, 1fr) 320px;
+        grid-template-areas:
+          'logs sidebar'
+          'detail sidebar';
         gap: 14px;
         align-items: start;
       }}
       .workspaceGrid.workspaceGrid-logsOnly {{
         grid-template-columns: minmax(0, 1fr);
+        grid-template-areas:
+          'logs'
+          'sidebar'
+          'detail';
       }}
       .opsSidebar {{
+        grid-area: sidebar;
         display: grid;
         gap: 12px;
         align-content: start;
@@ -511,6 +519,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         background: var(--surface);
       }}
       .logPanel {{
+        grid-area: logs;
         min-height: 420px;
         display: grid;
         grid-template-rows: auto 1fr;
@@ -673,6 +682,10 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         padding: 3px 8px;
         font-size: 10px;
       }}
+      .statusPanel {{
+        grid-area: detail;
+        margin: 0;
+      }}
       .statusGrid {{
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -822,9 +835,15 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         }}
         .panel {{ padding: 15px; }}
         .mastheadRow,
-        .workspaceGrid,
         .statusGrid {{
           grid-template-columns: 1fr;
+        }}
+        .workspaceGrid {{
+          grid-template-columns: 1fr;
+          grid-template-areas:
+            'logs'
+            'sidebar'
+            'detail';
         }}
         .actionDeckGrid {{
           grid-template-columns: 1fr;
@@ -1036,28 +1055,27 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
               <div id="historyList" class="historyList"></div>
             </aside>
           </aside>
-        </div>
-      </section>
-
-      <section class="panel statusPanel" data-panel="status-grid">
-        <div class="sectionLead">
-          <div class="sectionEyebrow">Operation detail</div>
-          <h2>镜像与进度</h2>
-          <div class="muted sectionNote">关键引用默认直出，方便复制与排障。</div>
-        </div>
-        <div class="statusGrid">
-          <article class="statusTile statusTile-full">
-            <div class="statusLabel">Progress message</div>
-            <div id="statusProgressMessage" class="statusCodeInline">-</div>
-          </article>
-          <article class="statusTile statusTile-wide">
-            <div class="statusLabel">Target</div>
-            <pre id="statusTarget" class="statusCode">-</pre>
-          </article>
-          <article class="statusTile statusTile-wide">
-            <div class="statusLabel">Previous</div>
-            <pre id="statusPrevious" class="statusCode">-</pre>
-          </article>
+          <section class="panel statusPanel" data-panel="status-grid">
+            <div class="sectionLead">
+              <div class="sectionEyebrow">Operation detail</div>
+              <h2>镜像与进度</h2>
+              <div class="muted sectionNote">关键引用默认直出，方便复制与排障。</div>
+            </div>
+            <div class="statusGrid">
+              <article class="statusTile statusTile-full">
+                <div class="statusLabel">Progress message</div>
+                <div id="statusProgressMessage" class="statusCodeInline">-</div>
+              </article>
+              <article class="statusTile statusTile-wide">
+                <div class="statusLabel">Target</div>
+                <pre id="statusTarget" class="statusCode">-</pre>
+              </article>
+              <article class="statusTile statusTile-wide">
+                <div class="statusLabel">Previous</div>
+                <pre id="statusPrevious" class="statusCode">-</pre>
+              </article>
+            </div>
+          </section>
         </div>
       </section>
 

@@ -100,3 +100,4 @@
 - 2026-03-11: 继续修正布局审美问题，将 workspace 重构为“日志主舞台 + 右侧状态/历史侧栏”，并把 status panel 收敛成下方 detail inspector，避免多个大卡片生硬纵向堆叠。
 - 2026-03-11: 重做页脚元信息布局，移除胶囊式块状设计，改为带顶部细分隔线的低强调信息条。
 - 2026-03-11: 基于真实 DOM 对齐复盘，重构 action deck 为共享网格（target / primary / aux / hints 两行对齐），并将 history hint 收回 sidebar 内部，消除页面右漂说明与三块孤岛式控件。
+- 2026-03-11: 继续修复 workspace 空洞，将 `Operation detail` 并入日志主列下方，改成 `logs + detail` 左列与 `status + history` 右列的双层网格，避免桌面端左下区域大面积留白。
