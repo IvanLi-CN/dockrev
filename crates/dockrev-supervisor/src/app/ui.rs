@@ -556,6 +556,26 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
       .logLine {{
         display: block;
+        margin: 0 -4px;
+        padding: 3px 8px;
+        border-radius: 10px;
+      }}
+      .logLine + .logLine {{
+        margin-top: 2px;
+      }}
+      .logLine-warn {{
+        background: rgba(255, 177, 85, 0.08);
+      }}
+      .logLine-error,
+      .logLine-fatal {{
+        background: rgba(255, 123, 123, 0.1);
+      }}
+      html[data-theme='light'] .logLine-warn {{
+        background: rgba(161, 98, 7, 0.09);
+      }}
+      html[data-theme='light'] .logLine-error,
+      html[data-theme='light'] .logLine-fatal {{
+        background: rgba(194, 65, 65, 0.1);
       }}
       .logToken-ts {{
         color: var(--muted);
@@ -1341,10 +1361,10 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         const fragment = document.createDocumentFragment();
         for (const line of logs) {{
           const row = document.createElement('span');
-          row.className = 'logLine';
+          const level = String(line?.level || 'info').toUpperCase();
+          row.className = `logLine logLine-${{level.toLowerCase()}}`;
           appendLogToken(row, 'logToken-ts', `[${{line?.ts || '-'}}]`);
           row.appendChild(document.createTextNode(' '));
-          const level = String(line?.level || 'info').toUpperCase();
           appendLogToken(row, `logToken-level logLevel-${{level.toLowerCase()}}`, level);
           row.appendChild(document.createTextNode(' '));
           const msg = document.createElement('span');

@@ -102,3 +102,4 @@
 - 2026-03-11: 基于真实 DOM 对齐复盘，重构 action deck 为共享网格（target / primary / aux / hints 两行对齐），并将 history hint 收回 sidebar 内部，消除页面右漂说明与三块孤岛式控件。
 - 2026-03-11: 继续修复 workspace 空洞，将 `Operation detail` 并入日志主列下方，改成 `logs + detail` 左列与 `status + history` 右列的双层网格，避免桌面端左下区域大面积留白。
 - 2026-03-11: 为日志控制台加入克制型语义高亮：按行渲染 `timestamp / level / message`，并对 `INFO/WARN/ERROR`、镜像引用、digest 与 opId 做前端 token 高亮，保持既有 schema 与轮询逻辑不变。
+- 2026-03-11: 在语义高亮基础上继续为 `WARN/ERROR/FATAL` 日志行增加低饱和整行底色，强化异常扫描效率，同时保持 `INFO` 行背景安静不抢眼。

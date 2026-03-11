@@ -72,7 +72,7 @@ fn rollback_image_ref_handles_full_refs_and_plain_tags() {
 fn render_ui_renders_logs_as_semantic_lines() {
     let html = render_ui("/supervisor", &test_meta());
     assert!(html.contains("function renderLogEntries(logs)"));
-    assert!(html.contains("row.className = 'logLine';"));
+    assert!(html.contains("row.className = `logLine logLine-${level.toLowerCase()}`;"));
     assert!(html.contains("logsEl.replaceChildren(fragment);"));
 }
 
@@ -361,6 +361,8 @@ fn render_ui_contains_semantic_log_highlighting() {
     assert!(html.contains("const LOG_TOKEN_PATTERN"));
     assert!(html.contains("function appendHighlightedMessage(parent, message)"));
     assert!(html.contains("function renderLogEntries(logs)"));
+    assert!(html.contains("logLine-warn"));
+    assert!(html.contains("logLine-error"));
     assert!(html.contains("logToken-level logLevel-"));
     assert!(html.contains("logToken-ref"));
     assert!(html.contains("logToken-opid"));
