@@ -41,11 +41,24 @@ if [[ "${latest_gate_count}" -lt 2 ]]; then
   exit 1
 fi
 
-echo "[contract-check] trusted label-gate workflow invariants"
-search_regex "^\\s*pull_request_target:" .github/workflows/label-gate.yml
-search_regex "ref:\\s*\\$\\{\\{\\s*github\\.event\\.pull_request\\.base\\.sha\\s*\\}\\}" .github/workflows/label-gate.yml
-search_regex "run:\\s*bash\\s+\\./\\.github/scripts/label-gate\\.sh" .github/workflows/label-gate.yml
+ensure_regex_absent() {
+  local pattern="$1"
+  local file="$2"
+  if search_regex "${pattern}" "${file}"; then
+    echo "[contract-check] unexpected pattern '${pattern}' in ${file}" >&2
+    exit 1
+  fi
+}
 
+echo "[contract-check] trusted label-gate workflow invariants"
+search_regex "^[[:space:]]*pull_request:" .github/workflows/label-gate.yml
+search_regex "^[[:space:]]*merge_group:" .github/workflows/label-gate.yml
+search_regex "pull-requests:[[:space:]]*read" .github/workflows/label-gate.yml
+search_regex "uses:[[:space:]]*actions/github-script@" .github/workflows/label-gate.yml
+search_regex "resolveMergeGroupPullNumbers" .github/workflows/label-gate.yml
+search_regex "GET /repos/\{owner\}/\{repo\}/commits/\{commit_sha\}/pulls" .github/workflows/label-gate.yml
+ensure_regex_absent "^[[:space:]]*pull_request_target:" .github/workflows/label-gate.yml
+ensure_regex_absent "run:[[:space:]]*bash[[:space:]]+\./\.github/scripts/label-gate\.sh" .github/workflows/label-gate.yml
 tmp_dir="$(mktemp -d)"
 server_pid=""
 cleanup() {

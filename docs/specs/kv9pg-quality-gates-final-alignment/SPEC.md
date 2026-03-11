@@ -35,6 +35,7 @@
 - `.github/workflows/label-gate.yml`
 - `.github/workflows/ci-pr.yml`
 - `.github/workflows/ci-main.yml`
+- `.github/scripts/release-channel-contract-check.sh`
 - `docs/specs/README.md`
 - 本规格文档
 
@@ -115,3 +116,4 @@
 
 - 2026-03-11: 新建规格，冻结 Dockrev `quality-gates` 最终版对齐目标与验收口径。
 - 2026-03-11: 完成 repo 内 workflow 对齐，补齐 merge queue required checks，并消除 main / PR check context 冲突。
+- 2026-03-11: 同步 release contract-check，使仓库内静态门禁改为校验新的 label-gate 最终实现。
