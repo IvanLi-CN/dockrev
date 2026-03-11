@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-03-10
-- Last: 2026-03-10
+- Last: 2026-03-11
 - Notes: fast-track · PR #160
 
 ## 背景 / 问题陈述
@@ -70,6 +70,11 @@
   - 主题：light / dark
   - 场景：idle + operation history + running buttons + rollback popconfirm
 
+
+## Visual Evidence (PR)
+
+![Dockrev Supervisor 全页界面](./assets/supervisor-fullpage.png)
+
 ## 实现里程碑（Milestones / Delivery checklist）
 
 - [x] M1: 重构 `/supervisor/` HTML 骨架为四区布局，拉开容器宽度、卡片层级与响应式节奏。
@@ -108,3 +113,4 @@
 - 2026-03-11: 为关键引用 icon 复制按钮补充 hover/focus tooltip；默认显示字段说明，复制成功后 tooltip 同步切换为“已复制”，与成功色勾形图标保持一致。
 - 2026-03-11: 根据视觉反馈将关键引用 icon 复制按钮进一步收小一档：按钮从 `28px` 收到 `24px`，图标从 `14px` 收到 `12px`，避免在状态卡内抢占视觉主导。
 - 2026-03-11: 继续细化复制反馈：复制成功时 tooltip 文本与边框同步切换为成功色，复制失败时切换为错误色，保证反馈语义与图标状态一致。
+- 2026-03-11: 补充当前 Supervisor 全页截图到 spec assets，并作为 PR 视觉证据源同步到评审正文。
