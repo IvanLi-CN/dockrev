@@ -103,3 +103,4 @@
 - 2026-03-11: 继续修复 workspace 空洞，将 `Operation detail` 并入日志主列下方，改成 `logs + detail` 左列与 `status + history` 右列的双层网格，避免桌面端左下区域大面积留白。
 - 2026-03-11: 为日志控制台加入克制型语义高亮：按行渲染 `timestamp / level / message`，并对 `INFO/WARN/ERROR`、镜像引用、digest 与 opId 做前端 token 高亮，保持既有 schema 与轮询逻辑不变。
 - 2026-03-11: 在语义高亮基础上继续为 `WARN/ERROR/FATAL` 日志行增加低饱和整行底色，强化异常扫描效率，同时保持 `INFO` 行背景安静不抢眼。
+- 2026-03-11: 为 `Current opId`、`Target`、`Previous` 增加内联复制按钮，支持复制成功/失败反馈，并在离线无缓存时自动禁用，优先服务排障与引用转贴。

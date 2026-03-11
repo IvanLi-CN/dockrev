@@ -371,6 +371,18 @@ fn render_ui_contains_semantic_log_highlighting() {
 }
 
 #[test]
+fn render_ui_contains_copy_buttons_for_key_refs() {
+    let html = render_ui("/supervisor", &test_meta());
+    assert!(html.contains("id=\"copyOpId\""));
+    assert!(html.contains("id=\"copyTarget\""));
+    assert!(html.contains("id=\"copyPrevious\""));
+    assert!(html.contains("function setCopyButtonValue(button, value)"));
+    assert!(html.contains("function writeClipboardText(text)"));
+    assert!(html.contains("bindCopyButton(copyOpIdBtn);"));
+    assert!(html.contains("button.textContent = '已复制';"));
+}
+
+#[test]
 fn render_ui_distinguishes_cached_and_uncached_offline_states() {
     let html = render_ui("/supervisor", &test_meta());
     assert!(html.contains("const cached = lastKnownSelfUpgradeState;"));
@@ -378,8 +390,14 @@ fn render_ui_distinguishes_cached_and_uncached_offline_states() {
     assert!(html.contains("if (!hasCachedState) {"));
     assert!(html.contains("statusOpIdEl.textContent = 'unavailable';"));
     assert!(html.contains("statusTargetEl.textContent = 'unavailable while offline';"));
+    assert!(
+        html.contains(
+            "const cachedTargetText = cached.target ? formatTargetRef(cached.target) : '';"
+        )
+    );
     assert!(html.contains("statusOpIdEl.textContent = cached.opId"));
-    assert!(html.contains("statusTargetEl.textContent = cached.target"));
+    assert!(html.contains("statusTargetEl.textContent = cachedTargetText"));
+    assert!(html.contains("setCopyButtonValue(copyTargetBtn, cachedTargetText);"));
 }
 
 #[test]

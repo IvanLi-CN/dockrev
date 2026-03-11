@@ -762,11 +762,37 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       .statusTile-full {{
         grid-column: 1 / -1;
       }}
+      .statusLabelRow {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }}
       .statusLabel {{
         color: var(--muted);
         font-size: 11px;
         text-transform: uppercase;
         letter-spacing: 0.12em;
+      }}
+      .copyButton {{
+        min-height: 0;
+        padding: 3px 8px;
+        border-radius: 999px;
+        font-size: 10px;
+        line-height: 1.2;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        background: var(--surface-strong);
+      }}
+      .copyButton.copied {{
+        color: var(--ok);
+        border-color: rgba(50, 201, 108, 0.32);
+        background: rgba(50, 201, 108, 0.12);
+      }}
+      .copyButton.failed {{
+        color: var(--bad);
+        border-color: rgba(255, 123, 123, 0.32);
+        background: rgba(255, 123, 123, 0.12);
       }}
       .statusValue {{
         font-size: 13px;
@@ -1088,7 +1114,10 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
               </div>
               <div class="snapshotGrid">
                 <article class="snapshotItem">
-                  <div class="statusLabel">Current opId</div>
+                  <div class="statusLabelRow">
+                    <div class="statusLabel">Current opId</div>
+                    <button id="copyOpId" class="copyButton" type="button" aria-label="复制当前 opId">复制</button>
+                  </div>
                   <div id="statusOpId" class="statusValue">-</div>
                 </article>
                 <article class="snapshotItem">
@@ -1123,11 +1152,17 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
                 <div id="statusProgressMessage" class="statusCodeInline">-</div>
               </article>
               <article class="statusTile statusTile-wide">
-                <div class="statusLabel">Target</div>
+                <div class="statusLabelRow">
+                  <div class="statusLabel">Target</div>
+                  <button id="copyTarget" class="copyButton" type="button" aria-label="复制 target 引用">复制</button>
+                </div>
                 <pre id="statusTarget" class="statusCode">-</pre>
               </article>
               <article class="statusTile statusTile-wide">
-                <div class="statusLabel">Previous</div>
+                <div class="statusLabelRow">
+                  <div class="statusLabel">Previous</div>
+                  <button id="copyPrevious" class="copyButton" type="button" aria-label="复制 previous 引用">复制</button>
+                </div>
                 <pre id="statusPrevious" class="statusCode">-</pre>
               </article>
             </div>
@@ -1180,6 +1215,9 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       const statusProgressMessageEl = document.getElementById('statusProgressMessage');
       const statusTargetEl = document.getElementById('statusTarget');
       const statusPreviousEl = document.getElementById('statusPrevious');
+      const copyOpIdBtn = document.getElementById('copyOpId');
+      const copyTargetBtn = document.getElementById('copyTarget');
+      const copyPreviousBtn = document.getElementById('copyPrevious');
       const historyRailEl = document.getElementById('historyRail');
       const historyListEl = document.getElementById('historyList');
       const historyHintEl = document.getElementById('historyHint');
@@ -1254,6 +1292,72 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       function normalizeState(value) {{
         return value || 'unknown';
       }}
+
+      function resetCopyButton(button) {{
+        if (!button) return;
+        button.textContent = '复制';
+        button.classList.remove('copied', 'failed');
+      }}
+
+      function setCopyButtonValue(button, value) {{
+        if (!button) return;
+        const nextValue = String(value || '').trim();
+        button.dataset.copyValue = nextValue;
+        button.disabled = !nextValue || nextValue === '-';
+        resetCopyButton(button);
+      }}
+
+      async function writeClipboardText(text) {{
+        if (navigator.clipboard?.writeText) {{
+          await navigator.clipboard.writeText(text);
+          return;
+        }}
+        const area = document.createElement('textarea');
+        area.value = text;
+        area.setAttribute('readonly', 'true');
+        area.style.position = 'fixed';
+        area.style.top = '-9999px';
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand('copy');
+        area.remove();
+      }}
+
+      function flashCopyButton(button, state) {{
+        if (!button) return;
+        window.clearTimeout(button._copyTimer);
+        button.classList.remove('copied', 'failed');
+        if (state === 'copied') {{
+          button.classList.add('copied');
+          button.textContent = '已复制';
+        }} else if (state === 'failed') {{
+          button.classList.add('failed');
+          button.textContent = '失败';
+        }} else {{
+          button.textContent = '复制';
+        }}
+        if (state) {{
+          button._copyTimer = window.setTimeout(() => resetCopyButton(button), 1400);
+        }}
+      }}
+
+      function bindCopyButton(button) {{
+        if (!button) return;
+        button.addEventListener('click', async () => {{
+          const value = button.dataset.copyValue || '';
+          if (!value) return;
+          try {{
+            await writeClipboardText(value);
+            flashCopyButton(button, 'copied');
+          }} catch (_error) {{
+            flashCopyButton(button, 'failed');
+          }}
+        }});
+      }}
+
+      bindCopyButton(copyOpIdBtn);
+      bindCopyButton(copyTargetBtn);
+      bindCopyButton(copyPreviousBtn);
 
       function statusToneClass(state) {{
         const normalized = normalizeState(state);
@@ -1377,18 +1481,24 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
       }}
 
       function renderStatus(st) {{
+        const opIdText = st?.opId || '-';
+        const targetText = formatTargetRef(st?.target);
+        const previousText = formatPreviousRef(st?.previous);
         statusToneEl.className = statusToneClass(st?.state);
         statusToneEl.textContent = normalizeState(st?.state);
         statusStateEl.textContent = normalizeState(st?.state);
         statusSummaryEl.textContent = `${{st?.request?.mode || 'mode -'}} · auto-refresh 1.5s`;
-        statusOpIdEl.textContent = st?.opId || '-';
+        statusOpIdEl.textContent = opIdText;
         statusStepEl.textContent = st?.progress?.step || '-';
         statusModeEl.textContent = `mode ${{st?.request?.mode || '-'}}`;
         statusStartedAtEl.textContent = formatTimestamp(st?.startedAt);
         statusUpdatedAtEl.textContent = `updated ${{formatTimestamp(st?.updatedAt)}}`;
         statusProgressMessageEl.textContent = st?.progress?.message || '-';
-        statusTargetEl.textContent = formatTargetRef(st?.target);
-        statusPreviousEl.textContent = formatPreviousRef(st?.previous);
+        statusTargetEl.textContent = targetText;
+        statusPreviousEl.textContent = previousText;
+        setCopyButtonValue(copyOpIdBtn, st?.opId || '');
+        setCopyButtonValue(copyTargetBtn, targetText !== '-' ? targetText : '');
+        setCopyButtonValue(copyPreviousBtn, previousText !== '-' ? previousText : '');
       }}
 
       function renderOffline(error) {{
@@ -1408,8 +1518,13 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           statusProgressMessageEl.textContent = 'supervisor unreachable on first poll; retrying…';
           statusTargetEl.textContent = 'unavailable while offline';
           statusPreviousEl.textContent = 'unavailable while offline';
+          setCopyButtonValue(copyOpIdBtn, '');
+          setCopyButtonValue(copyTargetBtn, '');
+          setCopyButtonValue(copyPreviousBtn, '');
           return;
         }}
+        const cachedTargetText = cached.target ? formatTargetRef(cached.target) : '';
+        const cachedPreviousText = cached.previous ? formatPreviousRef(cached.previous) : '';
         statusOpIdEl.textContent = cached.opId ? `${{cached.opId}} · stale` : 'stale';
         statusStepEl.textContent = cached.progress?.step ? `${{cached.progress.step}} · stale` : 'stale';
         statusModeEl.textContent = `last seen ${{lastSeen}} · cached`;
@@ -1418,12 +1533,15 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         statusProgressMessageEl.textContent = cached.progress?.message
           ? `${{cached.progress.message}} · stale while offline`
           : 'offline; waiting for supervisor to respond again';
-        statusTargetEl.textContent = cached.target
-          ? `${{formatTargetRef(cached.target)}} · stale`
+        statusTargetEl.textContent = cachedTargetText
+          ? `${{cachedTargetText}} · stale`
           : 'stale while offline';
-        statusPreviousEl.textContent = cached.previous
-          ? `${{formatPreviousRef(cached.previous)}} · stale`
+        statusPreviousEl.textContent = cachedPreviousText
+          ? `${{cachedPreviousText}} · stale`
           : 'stale while offline';
+        setCopyButtonValue(copyOpIdBtn, cached.opId || '');
+        setCopyButtonValue(copyTargetBtn, cachedTargetText);
+        setCopyButtonValue(copyPreviousBtn, cachedPreviousText);
       }}
 
       function syncWorkspaceMode(hasOperations) {{
