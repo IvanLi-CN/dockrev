@@ -84,7 +84,7 @@
 
 ### Edge cases / errors
 
-- 若 merge queue 无法从 `head_ref` + `commits/{sha}/pulls` 证明完整且一致的关联 PR 集合，`Review Policy Gate` 与 `PR Label Gate` 都必须 fail closed。
+- 若 merge queue 无法从 `head_ref` 证明队列入口 PR，或无法从 `commits/{sha}/pulls` 获取关联 open PR 集合，`Review Policy Gate` 与 `PR Label Gate` 都必须 fail closed；真正的校验范围以后者返回的整组 PR 为准。
 - 若 `changes` 无法在 merge queue 上做精确 diff，required jobs 必须继续运行，而不是跳过。
 - 若 GitHub live required checks / branch protection 与声明不一致，视为 drift，不因 GitHub merge 按钮可点击而视为完成。
 

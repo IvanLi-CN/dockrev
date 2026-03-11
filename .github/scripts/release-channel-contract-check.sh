@@ -220,6 +220,7 @@ def make_required_checks_rules(checks=None):
 
 RULES_BY_BRANCH = {
     "main": make_review_rules(0) + make_required_checks_rules(),
+    "main-mirror": make_review_rules(0) + make_required_checks_rules(),
     "main-extra-review": make_review_rules(1) + make_required_checks_rules(),
     "main-missing-check": make_review_rules(0) + make_required_checks_rules(REQUIRED_CHECKS[1:]),
     "main-unexpected-merge-queue": make_review_rules(0) + make_required_checks_rules() + [{"type": "merge_queue"}],
@@ -479,10 +480,6 @@ async function main() {
         { number: 101, state: 'open', base: { ref: 'main' } },
         { number: 998, state: 'open', base: { ref: 'main' } },
       ],
-      'sha-label-extra-mismatch': [
-        { number: 101, state: 'open', base: { ref: 'main' } },
-        { number: 999, state: 'open', base: { ref: 'main' } },
-      ],
       'sha-label-mismatch': [
         { number: 999, state: 'open', base: { ref: 'main' } },
       ],
@@ -527,11 +524,11 @@ async function main() {
       payload: {
         merge_group: {
           base_ref: 'refs/heads/main',
-          head_ref: 'gh-readonly-queue/main/pr-101-deadbeef/pr-999-cafebabe',
+          head_ref: 'gh-readonly-queue/main/pr-999-cafebabe',
           head_sha: 'sha-label-pass-multi',
         },
       },
-      ref: 'refs/heads/gh-readonly-queue/main/pr-101-deadbeef/pr-999-cafebabe',
+      ref: 'refs/heads/gh-readonly-queue/main/pr-999-cafebabe',
       sha: 'sha-label-pass-multi',
     },
     github: labelGithub,
@@ -545,34 +542,16 @@ async function main() {
       payload: {
         merge_group: {
           base_ref: 'refs/heads/main',
-          head_ref: 'gh-readonly-queue/main/pr-101-deadbeef/pr-998-cafebabe',
+          head_ref: 'gh-readonly-queue/main/pr-998-cafebabe',
           head_sha: 'sha-label-invalid-associated',
         },
       },
-      ref: 'refs/heads/gh-readonly-queue/main/pr-101-deadbeef/pr-998-cafebabe',
+      ref: 'refs/heads/gh-readonly-queue/main/pr-998-cafebabe',
       sha: 'sha-label-invalid-associated',
     },
     github: labelGithub,
   })
-  assert(core.failed !== null && core.failed.includes('PR #998'), `label gate merge_group should fail when any proven associated PR has invalid labels, got: ${core.failed}`)
-
-  core = await runGithubScript(labelScript, {
-    context: {
-      eventName: 'merge_group',
-      repo,
-      payload: {
-        merge_group: {
-          base_ref: 'refs/heads/main',
-          head_ref: 'gh-readonly-queue/main/pr-101-deadbeef',
-          head_sha: 'sha-label-extra-mismatch',
-        },
-      },
-      ref: 'refs/heads/gh-readonly-queue/main/pr-101-deadbeef',
-      sha: 'sha-label-extra-mismatch',
-    },
-    github: labelGithub,
-  })
-  assert(core.failed !== null && core.failed.includes('mismatch'), `label gate merge_group should fail when commit metadata contains extra open PRs, got: ${core.failed}`)
+  assert(core.failed !== null && core.failed.includes('PR #998'), `label gate merge_group should fail when any associated PR in the merge-group commit is invalid, got: ${core.failed}`)
 
   core = await runGithubScript(labelScript, {
     context: {
@@ -620,11 +599,6 @@ async function main() {
       ],
       'sha-review-fail': [
         { number: 201, state: 'open', base: { ref: 'main' } },
-        { number: 202, state: 'open', base: { ref: 'main' } },
-      ],
-      'sha-review-extra-mismatch': [
-        { number: 201, state: 'open', base: { ref: 'main' } },
-        { number: 203, state: 'open', base: { ref: 'main' } },
         { number: 202, state: 'open', base: { ref: 'main' } },
       ],
     },
@@ -691,11 +665,11 @@ async function main() {
       payload: {
         merge_group: {
           base_ref: 'refs/heads/main',
-          head_ref: 'gh-readonly-queue/main/pr-201-deadbeef/pr-203-cafebabe',
+          head_ref: 'gh-readonly-queue/main/pr-203-cafebabe',
           head_sha: 'sha-review-pass',
         },
       },
-      ref: 'refs/heads/gh-readonly-queue/main/pr-201-deadbeef/pr-203-cafebabe',
+      ref: 'refs/heads/gh-readonly-queue/main/pr-203-cafebabe',
       sha: 'sha-review-pass',
     },
     github: reviewGithub,
@@ -715,35 +689,11 @@ async function main() {
       payload: {
         merge_group: {
           base_ref: 'refs/heads/main',
-          head_ref: 'gh-readonly-queue/main/pr-201-deadbeef/pr-203-cafebabe',
-          head_sha: 'sha-review-extra-mismatch',
-        },
-      },
-      ref: 'refs/heads/gh-readonly-queue/main/pr-201-deadbeef/pr-203-cafebabe',
-      sha: 'sha-review-extra-mismatch',
-    },
-    github: reviewGithub,
-    env: {
-      REVIEW_POLICY_REQUIRED_APPROVALS: '1',
-      REVIEW_POLICY_EXEMPT_PERMISSIONS: '["admin","maintain"]',
-      REVIEW_POLICY_REVIEWER_PERMISSIONS: '["write","maintain","admin"]',
-      REVIEW_POLICY_EXEMPT_REPOSITORY_OWNER: 'true',
-    },
-  })
-  assert(core.failed !== null && core.failed.includes('mismatch'), `review policy merge_group should fail when commit metadata contains extra open PRs, got: ${core.failed}`)
-
-  core = await runGithubScript(reviewScript, {
-    context: {
-      eventName: 'merge_group',
-      repo,
-      payload: {
-        merge_group: {
-          base_ref: 'refs/heads/main',
-          head_ref: 'gh-readonly-queue/main/pr-201-deadbeef/pr-202-cafebabe',
+          head_ref: 'gh-readonly-queue/main/pr-202-cafebabe',
           head_sha: 'sha-review-fail',
         },
       },
-      ref: 'refs/heads/gh-readonly-queue/main/pr-201-deadbeef/pr-202-cafebabe',
+      ref: 'refs/heads/gh-readonly-queue/main/pr-202-cafebabe',
       sha: 'sha-review-fail',
     },
     github: reviewGithub,
@@ -862,6 +812,24 @@ run_inline_workflow_contract_checks
 
 echo "[contract-check] live quality-gates scenarios"
 run_live_quality_gates main ok
+python3 - <<'PY' "${tmp_dir}/quality-gates.multi-branch.json"
+from __future__ import annotations
+import json
+import sys
+from pathlib import Path
+
+out = Path(sys.argv[1])
+data = json.loads(Path('.github/quality-gates.json').read_text())
+data['policy']['branch_protection']['protected_branches'] = ['main', 'main-mirror']
+out.write_text(json.dumps(data, indent=2) + '\n')
+PY
+QUALITY_GATES_LIVE_RULES_MODE=require \
+  GITHUB_API_URL="http://127.0.0.1:${api_port}" \
+  GITHUB_REPOSITORY="IvanLi-CN/dockrev" \
+  GITHUB_TOKEN="x" \
+  python3 ./.github/scripts/check-live-quality-gates.py \
+    --declaration "${tmp_dir}/quality-gates.multi-branch.json" \
+    --repo IvanLi-CN/dockrev >/dev/null
 run_live_quality_gates main-extra-review fail
 run_live_quality_gates main-missing-check fail
 run_live_quality_gates main-unexpected-merge-queue fail

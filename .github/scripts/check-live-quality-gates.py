@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--branch",
         default="",
-        help="Protected branch to validate. Defaults to the first protected branch in the declaration.",
+        help="Protected branch to validate. Defaults to all protected branches declared in the contract.",
     )
     parser.add_argument(
         "--api-root",
@@ -67,20 +67,23 @@ def load_declaration(path: str) -> dict:
     return data
 
 
-def choose_branch(declaration: dict, override: str) -> str:
+def choose_branches(declaration: dict, override: str) -> list[str]:
     if override:
-        return override
-    branches = (
+        return [override]
+    raw_branches = (
         declaration.get("policy", {})
         .get("branch_protection", {})
         .get("protected_branches", [])
     )
-    if not isinstance(branches, list) or not branches:
+    if not isinstance(raw_branches, list) or not raw_branches:
         raise ValidationError("protected_branches must declare at least one protected branch")
-    branch = branches[0]
-    if not isinstance(branch, str) or not branch:
-        raise ValidationError("protected_branches[0] must be a non-empty string")
-    return branch
+    branches: list[str] = []
+    for index, branch in enumerate(raw_branches):
+        if not isinstance(branch, str) or not branch:
+            raise ValidationError(f"protected_branches[{index}] must be a non-empty string")
+        if branch not in branches:
+            branches.append(branch)
+    return branches
 
 
 def split_repo(repo: str) -> tuple[str, str]:
@@ -260,10 +263,14 @@ def main() -> int:
 
     try:
         declaration = load_declaration(args.declaration)
-        branch = choose_branch(declaration, args.branch)
+        branches = choose_branches(declaration, args.branch)
         owner, repo = split_repo(args.repo)
-        rules = extract_rules(fetch_branch_rules(args.api_root, owner, repo, branch))
-        errors = validate_rules(declaration, rules, branch)
+        errors: list[str] = []
+        checked_rules: dict[str, list[str]] = {}
+        for branch in branches:
+            rules = extract_rules(fetch_branch_rules(args.api_root, owner, repo, branch))
+            checked_rules[branch] = sorted({rule.get("type", "") for rule in rules})
+            errors.extend(validate_rules(declaration, rules, branch))
     except ValidationError as exc:
         print(f"[live-quality-gates] {exc}", file=sys.stderr)
         return 1
@@ -279,8 +286,8 @@ def main() -> int:
             {
                 "status": "ok",
                 "repo": args.repo,
-                "branch": branch,
-                "checked_rules": sorted({rule.get("type", "") for rule in rules}),
+                "branches": branches,
+                "checked_rules": checked_rules,
                 "notes": [
                     "Validated effective branch rules via GET /repos/{owner}/{repo}/rules/branches/{branch}.",
                     "Bypass actors are not exposed by that endpoint and must be verified during live ruleset configuration.",

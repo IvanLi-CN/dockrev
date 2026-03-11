@@ -104,11 +104,12 @@ jobs:
               }
               const parsedSorted = parsed.sort((a, b) => a - b)
               const commitSorted = Array.from(new Set(commitPullNumbers)).sort((a, b) => a - b)
-              const matches = parsedSorted.length === commitSorted.length && parsedSorted.every((value, index) => value === commitSorted[index])
-              if (!matches) {
-                throw new Error(`Merge queue member set mismatch: head_ref=[${parsedSorted.join(', ')}] commit_sha=[${commitSorted.join(', ')}]`)
+              const commitSet = new Set(commitSorted)
+              const missing = parsedSorted.filter((value) => !commitSet.has(value))
+              if (missing.length) {
+                throw new Error(`Merge queue entry pull request mismatch: ${missing.join(', ')}`)
               }
-              return parsedSorted
+              return commitSorted
             }
 
             function describeLabels(labels) {
