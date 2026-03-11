@@ -1448,7 +1448,48 @@ async function runInteractive({ baseUrl, browser }) {
     }
   }
 
-  // 12) ServicesPage: local refresh should backfill resolvedTag into host state.
+  // 12) Same-digest local refresh should refresh the sibling side after ready, without loading it.
+  {
+    const page = await openStory('components-versiontagspopover--same-digest')
+    try {
+      const line = page.locator('.versionLine').first()
+      const currentTrigger = line.locator('.versionTagsTrigger').nth(0)
+      const candidateTrigger = line.locator('.versionTagsTrigger').nth(1)
+
+      await candidateTrigger.waitFor({ timeout: 10_000 })
+      const currentBefore = (await currentTrigger.textContent())?.trim() ?? ''
+
+      await candidateTrigger.click()
+      const popover = page.locator(".versionTagsPopover[data-state='open']")
+      await popover.waitFor({ timeout: 10_000 })
+      await popover.getByRole('button', { name: '强制刷新' }).click()
+
+      await page.waitForFunction(() => {
+        const line = document.querySelector('.versionLine')
+        if (!line) return false
+        const triggers = line.querySelectorAll('.versionTagsTrigger')
+        if (triggers.length < 2) return false
+        return triggers[1]?.textContent?.trim() === '加载中…'
+      }, null, { timeout: 10_000 })
+
+      const currentDuring = (await currentTrigger.textContent())?.trim() ?? ''
+      if (currentDuring !== currentBefore) {
+        throw new Error(`Expected same-digest current trigger to avoid loading during candidate refresh (${currentBefore} -> ${currentDuring}).`)
+      }
+
+      await page.waitForFunction(() => {
+        const line = document.querySelector('.versionLine')
+        if (!line) return false
+        const triggers = line.querySelectorAll('.versionTagsTrigger')
+        if (triggers.length < 2) return false
+        return triggers[0]?.textContent?.trim() === 'v0.8.7' && triggers[1]?.textContent?.trim() === 'v0.8.7'
+      }, null, { timeout: 10_000 })
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
+  // 13) ServicesPage: local refresh should backfill resolvedTag into host state.
   {
     const page = await openStory('pages-servicespage--version-tags-popover-demo')
     try {

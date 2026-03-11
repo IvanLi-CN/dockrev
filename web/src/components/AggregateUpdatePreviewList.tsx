@@ -21,6 +21,35 @@ export type AggregateUpdatePreviewListItem = {
   stackId?: string
 }
 
+type ImageOverride = {
+  baseResolvedTag: string | null
+  baseResolvedTags: string[] | null
+  resolvedTag: string | null
+  resolvedTags: string[] | null
+}
+
+type CandidateOverride = {
+  baseResolvedTag: string | null
+  resolvedTag: string | null
+}
+
+function normalizeTag(value: string | null | undefined): string | null {
+  const trimmed = (value ?? '').trim()
+  return trimmed ? trimmed : null
+}
+
+function normalizeTags(value: string[] | null | undefined): string[] | null {
+  return value == null ? null : value.map((tag) => tag.trim())
+}
+
+function tagsKey(value: string[] | null | undefined): string {
+  return JSON.stringify(normalizeTags(value))
+}
+
+function buildDigestKey(serviceId: string, digest: string | null | undefined): string {
+  return `${serviceId}:${(digest ?? '').trim()}`
+}
+
 function splitImageRef(ref: string): { registry: string; name: string } {
   const s = ref.trim()
   const withoutDigest = s.includes('@') ? s.split('@', 1)[0] : s
@@ -70,39 +99,48 @@ export function AggregateUpdatePreviewList(props: {
     resolvedTag: string | null
   }) => void
 }) {
-  type ImageOverride = { resolvedTag: string | null; resolvedTags: string[] | null }
-
   // ConfirmProvider snapshots modal bodies. Track local overrides so popover-triggered refreshes
   // can update sibling rows inside the same modal (raw tag row, candidate trigger, etc.).
   const [imageOverrides, setImageOverrides] = useState<Map<string, ImageOverride>>(() => new Map())
-  const [candidateOverrides, setCandidateOverrides] = useState<Map<string, string | null>>(() => new Map())
+  const [candidateOverrides, setCandidateOverrides] = useState<Map<string, CandidateOverride>>(() => new Map())
 
   return (
     <div className="modalList">
       {props.items.map((item) => {
         const svcId = item.svc.id
-        const imageOverride = imageOverrides.get(svcId)
-        const hasCandidateOverride = candidateOverrides.has(svcId)
-        const candidateOverride = candidateOverrides.get(svcId) ?? null
+        const imageOverrideKey = buildDigestKey(svcId, item.svc.image.digest ?? null)
+        const candidateOverrideKey = buildDigestKey(svcId, item.svc.candidate?.digest ?? null)
 
-        const svc: Service =
-          imageOverride || hasCandidateOverride
+        const imageOverride = imageOverrides.get(imageOverrideKey)
+        const useImageOverride =
+          imageOverride != null &&
+          imageOverride.baseResolvedTag === normalizeTag(item.svc.image.resolvedTag) &&
+          tagsKey(imageOverride.baseResolvedTags) === tagsKey(item.svc.image.resolvedTags)
+        const effectiveImageResolvedTag = useImageOverride ? imageOverride.resolvedTag : item.svc.image.resolvedTag
+        const effectiveImageResolvedTags = useImageOverride ? imageOverride.resolvedTags : item.svc.image.resolvedTags
+
+        const candidateOverride = candidateOverrides.get(candidateOverrideKey)
+        const useCandidateOverride =
+          candidateOverride != null &&
+          candidateOverride.baseResolvedTag === normalizeTag(item.svc.candidate?.resolvedTag)
+        const effectiveCandidateResolvedTag = useCandidateOverride
+          ? candidateOverride.resolvedTag
+          : item.svc.candidate?.resolvedTag
+
+        const svc: Service = {
+          ...item.svc,
+          image: {
+            ...item.svc.image,
+            resolvedTag: effectiveImageResolvedTag,
+            resolvedTags: effectiveImageResolvedTags,
+          },
+          candidate: item.svc.candidate
             ? {
-                ...item.svc,
-                image: imageOverride
-                  ? {
-                      ...item.svc.image,
-                      resolvedTag: imageOverride.resolvedTag,
-                      resolvedTags: imageOverride.resolvedTags,
-                    }
-                  : item.svc.image,
-                candidate: item.svc.candidate
-                  ? hasCandidateOverride
-                    ? { ...item.svc.candidate, resolvedTag: candidateOverride }
-                    : item.svc.candidate
-                  : item.svc.candidate,
+                ...item.svc.candidate,
+                resolvedTag: effectiveCandidateResolvedTag,
               }
-            : item.svc
+            : item.svc.candidate,
+        }
 
         const currentDisplayTag = formatTagDisplay(
           svc.image.tag,
@@ -118,7 +156,11 @@ export function AggregateUpdatePreviewList(props: {
           : null
         const candidatePrefetchOnMount =
           candidateTag && candidateDisplayTag
-            ? shouldPrefetchFloatingCandidate(candidateTag, svc.candidate?.resolvedTag ?? null, svc.candidate?.digest ?? null)
+            ? shouldPrefetchFloatingCandidate(
+                candidateTag,
+                svc.candidate?.resolvedTag ?? null,
+                svc.candidate?.digest ?? null,
+              )
             : false
         const semverAnomaly = isSemverDowngradeAnomaly(svc)
         const arrowPulse = inferencePending
@@ -187,7 +229,12 @@ export function AggregateUpdatePreviewList(props: {
                     onLocalResolvedTags={(update) => {
                       setImageOverrides((prev) => {
                         const next = new Map(prev)
-                        next.set(svcId, update)
+                        next.set(imageOverrideKey, {
+                          baseResolvedTag: normalizeTag(item.svc.image.resolvedTag),
+                          baseResolvedTags: normalizeTags(item.svc.image.resolvedTags),
+                          resolvedTag: update.resolvedTag,
+                          resolvedTags: update.resolvedTags,
+                        })
                         return next
                       })
                       props.onServiceResolvedTags?.({
@@ -213,7 +260,10 @@ export function AggregateUpdatePreviewList(props: {
                       onLocalResolvedTag={(resolvedTag) => {
                         setCandidateOverrides((prev) => {
                           const next = new Map(prev)
-                          next.set(svcId, resolvedTag)
+                          next.set(candidateOverrideKey, {
+                            baseResolvedTag: normalizeTag(item.svc.candidate?.resolvedTag),
+                            resolvedTag,
+                          })
                           return next
                         })
                         props.onServiceCandidateResolvedTag?.({
@@ -241,7 +291,12 @@ export function AggregateUpdatePreviewList(props: {
                       onLocalResolvedTags={(update) => {
                         setImageOverrides((prev) => {
                           const next = new Map(prev)
-                          next.set(svcId, update)
+                          next.set(imageOverrideKey, {
+                            baseResolvedTag: normalizeTag(item.svc.image.resolvedTag),
+                            baseResolvedTags: normalizeTags(item.svc.image.resolvedTags),
+                            resolvedTag: update.resolvedTag,
+                            resolvedTags: update.resolvedTags,
+                          })
                           return next
                         })
                         props.onServiceResolvedTags?.({

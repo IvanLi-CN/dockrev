@@ -759,19 +759,10 @@ pub(super) async fn get_service_digest_tags_snapshot(
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
 
-    if state
+    let in_flight_reason = state
         .snapshot_worker
         .in_flight_reason(&image_repo, &digest, &host_platform)
-        .await
-        .is_some()
-    {
-        let pending = ServiceDigestTagsSnapshotPendingResponse {
-            status: "pending".to_string(),
-            digest: digest.clone(),
-            retry_after_ms: snapshot_worker::SNAPSHOT_PENDING_RETRY_AFTER_MS,
-        };
-        return Ok((StatusCode::ACCEPTED, Json(pending)).into_response());
-    }
+        .await;
 
     let snapshot = state
         .db
@@ -779,15 +770,19 @@ pub(super) async fn get_service_digest_tags_snapshot(
         .await
         .map_err(map_internal)?;
     let Some((snapshot_json, _checked_at, _updated_at)) = snapshot else {
-        state
-            .snapshot_worker
-            .enqueue(
-                &image_repo,
-                &digest,
-                &host_platform,
-                "api_snapshot_read_miss",
-            )
-            .await;
+        // If an inference task is already in flight (cache refresh / new version, etc.),
+        // just surface `pending` so callers can poll, but avoid enqueuing duplicate work.
+        if in_flight_reason.is_none() {
+            state
+                .snapshot_worker
+                .enqueue(
+                    &image_repo,
+                    &digest,
+                    &host_platform,
+                    "api_snapshot_read_miss",
+                )
+                .await;
+        }
         let pending = ServiceDigestTagsSnapshotPendingResponse {
             status: "pending".to_string(),
             digest: digest.clone(),
@@ -795,6 +790,17 @@ pub(super) async fn get_service_digest_tags_snapshot(
         };
         return Ok((StatusCode::ACCEPTED, Json(pending)).into_response());
     };
+
+    // When a user explicitly triggers a digest refresh, we want callers to wait for the new
+    // snapshot even if an older one is available.
+    if in_flight_reason.as_deref() == Some(VERSION_INFERENCE_REASON_FORCE) {
+        let pending = ServiceDigestTagsSnapshotPendingResponse {
+            status: "pending".to_string(),
+            digest: digest.clone(),
+            retry_after_ms: snapshot_worker::SNAPSHOT_PENDING_RETRY_AFTER_MS,
+        };
+        return Ok((StatusCode::ACCEPTED, Json(pending)).into_response());
+    }
 
     let parsed: ServiceDigestTagsSnapshotResponse =
         serde_json::from_str(&snapshot_json).map_err(|e| {

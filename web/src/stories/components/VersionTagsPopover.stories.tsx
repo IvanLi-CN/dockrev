@@ -97,6 +97,17 @@ export const MultiTags: Story = {
   },
 }
 
+export const SameDigest: Story = {
+  parameters: { dockrevApiScenario: 'version-tags-popover-same-digest' },
+  args: {
+    serviceId: 'svc-version-tags',
+    imageTag: '0.8',
+    imageDigest: d('a', 'b1'),
+    candidateTag: 'stable',
+    candidateDigest: d('a', 'b1'),
+  },
+}
+
 export const MissingDigest: Story = {
   parameters: { dockrevApiScenario: 'version-tags-popover-demo' },
   args: {

@@ -21,6 +21,7 @@ pub const SNAPSHOT_GC_RETENTION_DAYS: i64 = 30;
 pub const SNAPSHOT_GC_INTERVAL_SECONDS: u64 = 24 * 60 * 60;
 
 const SNAPSHOT_EVENT_RING_CAPACITY: usize = 2000;
+const SNAPSHOT_REASON_FORCE: &str = "force";
 
 #[derive(Clone, Debug)]
 pub struct SnapshotTaskProgress {
@@ -283,7 +284,25 @@ impl SnapshotWorker {
 
         {
             let mut runtime = self.runtime.lock().await;
-            if runtime.tasks.contains_key(&key) {
+            if let Some(existing) = runtime.tasks.get_mut(&key) {
+                if reason == SNAPSHOT_REASON_FORCE && existing.reason != SNAPSHOT_REASON_FORCE {
+                    let previous_reason = existing.reason.clone();
+                    existing.reason = reason.clone();
+                    existing.updated_at = now.clone();
+                    let _ = push_event_locked(
+                        &mut runtime,
+                        json!({
+                            "type": "task_reason_upgraded",
+                            "ts": now,
+                            "key": key,
+                            "imageRepo": repo,
+                            "digest": digest,
+                            "hostPlatform": host_platform,
+                            "fromReason": previous_reason,
+                            "reason": reason,
+                        }),
+                    );
+                }
                 return false;
             }
             runtime.tasks.insert(

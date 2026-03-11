@@ -125,10 +125,18 @@ export function trackDigestSnapshotRefresh(input: TrackDigestSnapshotRefreshInpu
   if (!serviceId || !imageRepo || !digest) return
   if (side !== 'current' && side !== 'candidate') return
 
-  const key = `${serviceId}:${side}:${digest}`
+  const key = `${serviceId}:${digest}`
   const existing = trackedByKey.get(key)
   if (existing) {
     existing.imageRepo = imageRepo
+    existing.side = side
+    // Manual refresh should always re-arm tracking, even when the same digest key is reused.
+    existing.errors = 0
+    existing.startedAtMs = Date.now()
+    if (existing.timer != null) window.clearTimeout(existing.timer)
+    existing.timer = window.setTimeout(() => {
+      void pollTracked(key)
+    }, 0)
     return
   }
 

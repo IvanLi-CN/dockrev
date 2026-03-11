@@ -3,7 +3,7 @@ type DigestKey = string
 type Listener = (token: number) => void
 
 // In-memory event bus to coordinate digest snapshot cache invalidation between multiple
-// popover instances that refer to the same `{serviceId}:{digest}` key.
+// popover instances that refer to the same `{serviceId}:{digest}` snapshot key.
 const tokensByKey = new Map<DigestKey, number>()
 const listenersByKey = new Map<DigestKey, Set<Listener>>()
 

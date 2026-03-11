@@ -10,6 +10,37 @@ type ResolvedTagsUpdate = {
   resolvedTags: string[] | null
 }
 
+type CurrentResolvedTagsOverride = {
+  key: string
+  baseResolvedTag: string | null
+  baseResolvedTags: string[] | null
+  resolvedTag: string | null
+  resolvedTags: string[] | null
+}
+
+type CandidateResolvedTagOverride = {
+  key: string
+  baseResolvedTag: string | null
+  resolvedTag: string | null
+}
+
+function normalizeTag(value: string | null | undefined): string | null {
+  const trimmed = (value ?? '').trim()
+  return trimmed ? trimmed : null
+}
+
+function normalizeTags(value: string[] | null | undefined): string[] | null {
+  return value == null ? null : value.map((tag) => tag.trim())
+}
+
+function tagsKey(value: string[] | null | undefined): string {
+  return JSON.stringify(normalizeTags(value))
+}
+
+function buildDigestKey(serviceId: string, digest: string | null | undefined): string {
+  return `${serviceId}:${(digest ?? '').trim()}`
+}
+
 export function ConfirmServiceVersionCell(props: {
   serviceId: string
   imageTag: string
@@ -34,16 +65,39 @@ export function ConfirmServiceVersionCell(props: {
     prefetchOnMount = false,
   } = props
 
-  const [localResolvedTag, setLocalResolvedTag] = useState<string | null>(props.resolvedTag ?? null)
-  const [localResolvedTags, setLocalResolvedTags] = useState<string[] | null>(props.resolvedTags ?? null)
-  const [localCandidateResolvedTag, setLocalCandidateResolvedTag] = useState<string | null>(
-    props.candidateResolvedTag ?? null,
+  const [currentOverride, setCurrentOverride] = useState<CurrentResolvedTagsOverride | null>(null)
+  const [candidateOverride, setCandidateOverride] = useState<CandidateResolvedTagOverride | null>(null)
+
+  const currentDigestKey = useMemo(() => buildDigestKey(serviceId, imageDigest), [serviceId, imageDigest])
+  const activeCurrentOverride =
+    currentOverride &&
+    currentOverride.key === currentDigestKey &&
+    currentOverride.baseResolvedTag === normalizeTag(props.resolvedTag) &&
+    tagsKey(currentOverride.baseResolvedTags) === tagsKey(props.resolvedTags)
+      ? currentOverride
+      : null
+
+  const effectiveResolvedTag = activeCurrentOverride ? activeCurrentOverride.resolvedTag : props.resolvedTag ?? null
+  const effectiveResolvedTags = activeCurrentOverride ? activeCurrentOverride.resolvedTags : props.resolvedTags ?? null
+
+  const candidateDigestKey = useMemo(
+    () => buildDigestKey(serviceId, props.candidateDigest),
+    [serviceId, props.candidateDigest],
   )
+  const activeCandidateOverride =
+    candidateOverride &&
+    candidateOverride.key === candidateDigestKey &&
+    candidateOverride.baseResolvedTag === normalizeTag(props.candidateResolvedTag)
+      ? candidateOverride
+      : null
+  const effectiveCandidateResolvedTag = activeCandidateOverride
+    ? activeCandidateOverride.resolvedTag
+    : props.candidateResolvedTag ?? null
 
   const inferencePending = (inferenceStatus ?? '').trim() === 'pending'
   const currentDisplayTag = useMemo(
-    () => formatCurrentTagDisplay(imageTag, localResolvedTag, inferenceStatus),
-    [imageTag, inferenceStatus, localResolvedTag],
+    () => formatCurrentTagDisplay(imageTag, effectiveResolvedTag, inferenceStatus),
+    [imageTag, inferenceStatus, effectiveResolvedTag],
   )
 
   const rawTrim = (imageTag ?? '').trim()
@@ -53,17 +107,26 @@ export function ConfirmServiceVersionCell(props: {
   const candidateTag = candidateTagTrim && candidateTagTrim !== '-' ? candidateTagTrim : null
   const candidateDisplayTag = useMemo(() => {
     if (!candidateTag) return null
-    return formatCandidateTagDisplay(candidateTag, localCandidateResolvedTag, inferenceStatus)
-  }, [candidateTag, inferenceStatus, localCandidateResolvedTag])
+    return formatCandidateTagDisplay(candidateTag, effectiveCandidateResolvedTag, inferenceStatus)
+  }, [candidateTag, inferenceStatus, effectiveCandidateResolvedTag])
 
   const handleLocalResolvedTags = (update: ResolvedTagsUpdate) => {
-    setLocalResolvedTag(update.resolvedTag)
-    setLocalResolvedTags(update.resolvedTags)
+    setCurrentOverride({
+      key: currentDigestKey,
+      baseResolvedTag: normalizeTag(props.resolvedTag),
+      baseResolvedTags: normalizeTags(props.resolvedTags),
+      resolvedTag: update.resolvedTag,
+      resolvedTags: update.resolvedTags,
+    })
     onHostResolvedTags?.(update)
   }
 
   const handleLocalCandidateResolvedTag = (resolvedTag: string | null) => {
-    setLocalCandidateResolvedTag(resolvedTag)
+    setCandidateOverride({
+      key: candidateDigestKey,
+      baseResolvedTag: normalizeTag(props.candidateResolvedTag),
+      resolvedTag,
+    })
     onHostCandidateResolvedTag?.(resolvedTag)
   }
 
@@ -75,8 +138,8 @@ export function ConfirmServiceVersionCell(props: {
           displayTag={currentDisplayTag}
           imageTag={imageTag}
           imageDigest={imageDigest}
-          resolvedTag={localResolvedTag}
-          resolvedTags={localResolvedTags}
+          resolvedTag={effectiveResolvedTag}
+          resolvedTags={effectiveResolvedTags}
           onLocalResolvedTags={handleLocalResolvedTags}
           inferenceLoading={inferencePending}
         />
@@ -107,8 +170,8 @@ export function ConfirmServiceVersionCell(props: {
             displayTag={imageTag}
             imageTag={imageTag}
             imageDigest={imageDigest}
-            resolvedTag={localResolvedTag}
-            resolvedTags={localResolvedTags}
+            resolvedTag={effectiveResolvedTag}
+            resolvedTags={effectiveResolvedTags}
             onLocalResolvedTags={handleLocalResolvedTags}
             preferSource="rawTag"
             triggerClassName="versionTagsTrigger mono monoSecondary"

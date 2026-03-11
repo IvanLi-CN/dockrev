@@ -357,15 +357,12 @@ export function ServicesPage(props: {
 
   const applyDigestSnapshotUpdate = useCallback(
     (detail: DigestSnapshotUpdatedDetail) => {
-      // Digest snapshots are stored per `imageRepo + digest`, but UI refresh from popovers is
-      // intentionally scoped to the clicked service + side. We avoid fanning out to other
-      // services that happen to share the same digest to preserve locality.
+      // Popover-triggered refresh stays local to the clicked service, but when that service's
+      // current/candidate happen to share one digest both sides should consume the new snapshot.
       const imageRepo = (detail.imageRepo ?? '').trim().toLowerCase()
       const digestNorm = normalizeDigest(detail.digest)?.toLowerCase() ?? null
       const triggerServiceId = (detail.triggerServiceId ?? '').trim()
-      const side = detail.side
       if (!imageRepo || !triggerServiceId || !digestNorm) return
-      if (side !== 'current' && side !== 'candidate') return
 
       const failures = scanHasFailures(detail.scan)
       const complete = scanIsComplete(detail.scan)
@@ -378,40 +375,36 @@ export function ServicesPage(props: {
         let changed = false
         let next: Service = svc
 
-        if (side === 'current') {
-          const currentDigest = normalizeDigest(svc.image.digest)?.toLowerCase() ?? null
-          if (currentDigest && currentDigest === digestNorm) {
-            const inferred = inferResolvedTagsFromSnapshot(detail.tags, svc.image.tag)
-            const inferredFirst = inferred[0] ?? null
-            if (inferredFirst || (!failures && complete)) {
-              changed = true
-              next = {
-                ...next,
-                image: {
-                  ...next.image,
-                  resolvedTag: inferredFirst,
-                  resolvedTags: inferred.length > 1 ? inferred : null,
-                },
-              }
+        const currentDigest = normalizeDigest(svc.image.digest)?.toLowerCase() ?? null
+        if (currentDigest && currentDigest === digestNorm && !isStrictSemverTag(svc.image.tag)) {
+          const inferred = inferResolvedTagsFromSnapshot(detail.tags, svc.image.tag)
+          const inferredFirst = inferred[0] ?? null
+          if (inferredFirst || (!failures && complete)) {
+            changed = true
+            next = {
+              ...next,
+              image: {
+                ...next.image,
+                resolvedTag: inferredFirst,
+                resolvedTags: inferred.length > 1 ? inferred : null,
+              },
             }
           }
         }
 
-        if (side === 'candidate') {
-          const candidate = svc.candidate
-          const candidateDigest = candidate ? normalizeDigest(candidate.digest)?.toLowerCase() ?? null : null
-          if (candidate && candidateDigest && candidateDigest === digestNorm) {
-            const inferred = inferResolvedTagsFromSnapshot(detail.tags, candidate.tag)
-            const inferredFirst = inferred[0] ?? null
-            if (inferredFirst || (!failures && complete)) {
-              changed = true
-              next = {
-                ...next,
-                candidate: {
-                  ...candidate,
-                  resolvedTag: inferredFirst,
-                },
-              }
+        const candidate = next.candidate
+        const candidateDigest = candidate ? normalizeDigest(candidate.digest)?.toLowerCase() ?? null : null
+        if (candidate && candidateDigest && candidateDigest === digestNorm && !isStrictSemverTag(candidate.tag)) {
+          const inferred = inferResolvedTagsFromSnapshot(detail.tags, candidate.tag)
+          const inferredFirst = inferred[0] ?? null
+          if (inferredFirst || (!failures && complete)) {
+            changed = true
+            next = {
+              ...next,
+              candidate: {
+                ...candidate,
+                resolvedTag: inferredFirst,
+              },
             }
           }
         }

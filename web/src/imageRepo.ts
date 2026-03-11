@@ -2,18 +2,32 @@ export function imageRepoFromImageRef(imageRef: string | null | undefined): stri
   const raw = (imageRef ?? '').trim()
   if (!raw) return null
 
-  // Align with backend `registry::ImageRef::parse`:
-  // - strip optional @digest
-  // - split `repo/name:tag` from the right
+  // Parse image references into `registry/name` (aka image repo).
+  // Supported forms:
+  // - `repo/name:tag`
+  // - `repo/name:tag@sha256:...`
+  // - `repo/name@sha256:...` (digest-only)
   // - registry is the first segment if it contains '.' or ':', otherwise docker.io
   // - docker.io names without a slash are normalized to `library/<name>`
-  const withoutDigest = raw.includes('@') ? raw.split('@', 1)[0] : raw
-  const lastColon = withoutDigest.lastIndexOf(':')
-  if (lastColon < 0) return null
+  const at = raw.indexOf('@')
+  const hasDigest = at >= 0
+  const withoutDigest = (hasDigest ? raw.slice(0, at) : raw).trim()
+  if (!withoutDigest) return null
 
-  const nameWithRegistry = withoutDigest.slice(0, lastColon).trim()
-  const tag = withoutDigest.slice(lastColon + 1).trim()
-  if (!nameWithRegistry || !tag || tag.includes('/')) return null
+  const lastSlash = withoutDigest.lastIndexOf('/')
+  const lastColon = withoutDigest.lastIndexOf(':')
+  const hasTag = lastColon > lastSlash
+
+  const nameWithRegistry = (hasTag ? withoutDigest.slice(0, lastColon) : withoutDigest).trim()
+  const tag = hasTag ? withoutDigest.slice(lastColon + 1).trim() : ''
+  if (!nameWithRegistry) return null
+  if (hasTag) {
+    if (!tag || tag.includes('/')) return null
+  } else if (!hasDigest) {
+    // For tagless refs, only accept digest-pinned form; keep behavior aligned with the
+    // backend parser for plain `repo/name` inputs.
+    return null
+  }
 
   const parts = nameWithRegistry.split('/').filter(Boolean)
   if (parts.length === 0) return null

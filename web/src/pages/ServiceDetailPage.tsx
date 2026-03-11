@@ -268,10 +268,8 @@ export function ServiceDetailPage(props: {
       const imageRepo = (detail.imageRepo ?? '').trim().toLowerCase()
       const digestNorm = normalizeDigest(detail.digest)?.toLowerCase() ?? null
       const triggerServiceId = (detail.triggerServiceId ?? '').trim()
-      const side = detail.side
       if (!imageRepo || !digestNorm) return
       if (!triggerServiceId || triggerServiceId !== serviceId) return
-      if (side !== 'current' && side !== 'candidate') return
 
       const failures = scanHasFailures(detail.scan)
       const complete = scanIsComplete(detail.scan)
@@ -283,37 +281,33 @@ export function ServiceDetailPage(props: {
         let changed = false
         let next: Service = prev
 
-        if (side === 'current') {
-          const currentDigest = normalizeDigest(prev.image.digest)?.toLowerCase() ?? null
-          if (currentDigest && currentDigest === digestNorm) {
-            const inferred = inferResolvedTagsFromSnapshot(detail.tags, prev.image.tag)
-            const inferredFirst = inferred[0] ?? null
-            if (inferredFirst || (!failures && complete)) {
-              changed = true
-              next = {
-                ...next,
-                image: {
-                  ...next.image,
-                  resolvedTag: inferredFirst,
-                  resolvedTags: inferred.length > 1 ? inferred : null,
-                },
-              }
+        const currentDigest = normalizeDigest(prev.image.digest)?.toLowerCase() ?? null
+        if (currentDigest && currentDigest === digestNorm && !isStrictSemverTag(prev.image.tag)) {
+          const inferred = inferResolvedTagsFromSnapshot(detail.tags, prev.image.tag)
+          const inferredFirst = inferred[0] ?? null
+          if (inferredFirst || (!failures && complete)) {
+            changed = true
+            next = {
+              ...next,
+              image: {
+                ...next.image,
+                resolvedTag: inferredFirst,
+                resolvedTags: inferred.length > 1 ? inferred : null,
+              },
             }
           }
         }
 
-        if (side === 'candidate') {
-          const candidate = prev.candidate
-          const candidateDigest = candidate ? normalizeDigest(candidate.digest)?.toLowerCase() ?? null : null
-          if (candidate && candidateDigest && candidateDigest === digestNorm) {
-            const inferred = inferResolvedTagsFromSnapshot(detail.tags, candidate.tag)
-            const inferredFirst = inferred[0] ?? null
-            if (inferredFirst || (!failures && complete)) {
-              changed = true
-              next = {
-                ...next,
-                candidate: { ...candidate, resolvedTag: inferredFirst },
-              }
+        const candidate = next.candidate
+        const candidateDigest = candidate ? normalizeDigest(candidate.digest)?.toLowerCase() ?? null : null
+        if (candidate && candidateDigest && candidateDigest === digestNorm && !isStrictSemverTag(candidate.tag)) {
+          const inferred = inferResolvedTagsFromSnapshot(detail.tags, candidate.tag)
+          const inferredFirst = inferred[0] ?? null
+          if (inferredFirst || (!failures && complete)) {
+            changed = true
+            next = {
+              ...next,
+              candidate: { ...candidate, resolvedTag: inferredFirst },
             }
           }
         }

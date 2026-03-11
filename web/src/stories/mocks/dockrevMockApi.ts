@@ -44,6 +44,7 @@ export type DockrevApiScenario =
   | 'version-inference-queue-backlog'
   | 'version-inference-stale-all-failed'
   | 'version-tags-popover-demo'
+  | 'version-tags-popover-same-digest'
   | 'version-tags-popover-snapshot-pending'
   | 'version-tags-popover-snapshot-missing'
   | 'multi-stack-mixed'
@@ -1192,12 +1193,16 @@ function buildServicesInferencePendingCandidateLoading(): Fixture {
   return f
 }
 
-function buildVersionTagsPopoverDemo(): Fixture {
+function buildVersionTagsPopoverDemo(options?: {
+  sameDigest?: boolean
+  candidateTag?: string
+}): Fixture {
   const f = baseEmpty()
   const lastCheckAt = nowIso(-60_000)
 
   const stackId = 'stack-version-tags'
   const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
+  const sameDigest = options?.sameDigest ?? false
 
   const service = {
     id: 'svc-version-tags',
@@ -1207,7 +1212,12 @@ function buildVersionTagsPopoverDemo(): Fixture {
       tag: '0.8',
       digest: d('a', 'b1'),
     },
-    candidate: { tag: 'v0.8.8-arm64', digest: d('b', '9f'), archMatch: 'match', arch: ['linux/arm64'] },
+    candidate: {
+      tag: options?.candidateTag ?? 'v0.8.8-arm64',
+      digest: sameDigest ? d('a', 'b1') : d('b', '9f'),
+      archMatch: 'match',
+      arch: ['linux/arm64'],
+    },
     ignore: null,
     settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} } },
   } satisfies StackDetail['services'][number]
@@ -2481,6 +2491,9 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   ) {
     return buildVersionTagsPopoverDemo()
   }
+  if (scenario === 'version-tags-popover-same-digest') {
+    return buildVersionTagsPopoverDemo({ sameDigest: true, candidateTag: 'stable' })
+  }
   if (scenario === 'queue-mixed') return buildQueueMixed()
   if (scenario === 'overview-jobs-card-heavy-inflight') return buildOverviewJobsCardHeavyInFlight()
   if (scenario === 'overview-jobs-card-running-progress-modes') return buildOverviewJobsCardRunningProgressModes()
@@ -2568,6 +2581,7 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
   ): { repoTags: string[]; tags: string[] } {
     const isVersionTagsDemoScenario =
       scenario === 'version-tags-popover-demo' ||
+      scenario === 'version-tags-popover-same-digest' ||
       scenario === 'version-tags-popover-snapshot-pending'
     const d = (fill: string, last2: string) => `sha256:${fill.repeat(62)}${last2}`
 
