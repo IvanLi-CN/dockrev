@@ -376,10 +376,13 @@ fn render_ui_contains_copy_buttons_for_key_refs() {
     assert!(html.contains("id=\"copyOpId\""));
     assert!(html.contains("id=\"copyTarget\""));
     assert!(html.contains("id=\"copyPrevious\""));
+    assert!(html.contains("name: 'mdi:content-copy'"));
+    assert!(html.contains("name: 'mdi:check-bold'"));
+    assert!(html.contains("button.dataset.icon = icon.name;"));
     assert!(html.contains("function setCopyButtonValue(button, value)"));
     assert!(html.contains("function writeClipboardText(text)"));
     assert!(html.contains("bindCopyButton(copyOpIdBtn);"));
-    assert!(html.contains("button.textContent = '已复制';"));
+    assert!(html.contains("renderCopyButtonIcon(button, 'copied');"));
 }
 
 #[test]

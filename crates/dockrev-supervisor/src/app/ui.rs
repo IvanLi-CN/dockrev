@@ -775,14 +775,21 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         letter-spacing: 0.12em;
       }}
       .copyButton {{
-        min-height: 0;
-        padding: 3px 8px;
-        border-radius: 999px;
-        font-size: 10px;
-        line-height: 1.2;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
+        min-height: 28px;
+        min-width: 28px;
+        width: 28px;
+        padding: 0;
+        border-radius: 10px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--muted);
         background: var(--surface-strong);
+      }}
+      .copyButton svg {{
+        width: 14px;
+        height: 14px;
+        display: block;
       }}
       .copyButton.copied {{
         color: var(--ok);
@@ -1116,7 +1123,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
                 <article class="snapshotItem">
                   <div class="statusLabelRow">
                     <div class="statusLabel">Current opId</div>
-                    <button id="copyOpId" class="copyButton" type="button" aria-label="复制当前 opId">复制</button>
+                    <button id="copyOpId" class="copyButton" type="button" aria-label="复制当前 opId"></button>
                   </div>
                   <div id="statusOpId" class="statusValue">-</div>
                 </article>
@@ -1154,14 +1161,14 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
               <article class="statusTile statusTile-wide">
                 <div class="statusLabelRow">
                   <div class="statusLabel">Target</div>
-                  <button id="copyTarget" class="copyButton" type="button" aria-label="复制 target 引用">复制</button>
+                  <button id="copyTarget" class="copyButton" type="button" aria-label="复制 target 引用"></button>
                 </div>
                 <pre id="statusTarget" class="statusCode">-</pre>
               </article>
               <article class="statusTile statusTile-wide">
                 <div class="statusLabelRow">
                   <div class="statusLabel">Previous</div>
-                  <button id="copyPrevious" class="copyButton" type="button" aria-label="复制 previous 引用">复制</button>
+                  <button id="copyPrevious" class="copyButton" type="button" aria-label="复制 previous 引用"></button>
                 </div>
                 <pre id="statusPrevious" class="statusCode">-</pre>
               </article>
@@ -1293,10 +1300,32 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         return value || 'unknown';
       }}
 
+      const ICONIFY_ICONS = {{
+        copy: {{
+          name: 'mdi:content-copy',
+          width: 24,
+          height: 24,
+          body: '<path fill="currentColor" d="M19 21H8V7h11m0-2H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2m-3-4H4a2 2 0 0 0-2 2v14h2V3h12V1Z"/>'
+        }},
+        copied: {{
+          name: 'mdi:check-bold',
+          width: 24,
+          height: 24,
+          body: '<path fill="currentColor" d="m9 20.42l-6.21-6.21l2.83-2.83L9 14.77l9.88-9.89l2.83 2.83L9 20.42Z"/>'
+        }}
+      }};
+
+      function renderCopyButtonIcon(button, state = 'copy') {{
+        if (!button) return;
+        const icon = ICONIFY_ICONS[state] || ICONIFY_ICONS.copy;
+        button.dataset.icon = icon.name;
+        button.innerHTML = `<svg viewBox="0 0 ${{icon.width}} ${{icon.height}}" aria-hidden="true" focusable="false">${{icon.body}}</svg>`;
+      }}
+
       function resetCopyButton(button) {{
         if (!button) return;
-        button.textContent = '复制';
         button.classList.remove('copied', 'failed');
+        renderCopyButtonIcon(button, 'copy');
       }}
 
       function setCopyButtonValue(button, value) {{
@@ -1329,12 +1358,12 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         button.classList.remove('copied', 'failed');
         if (state === 'copied') {{
           button.classList.add('copied');
-          button.textContent = '已复制';
+          renderCopyButtonIcon(button, 'copied');
         }} else if (state === 'failed') {{
           button.classList.add('failed');
-          button.textContent = '失败';
+          renderCopyButtonIcon(button, 'copy');
         }} else {{
-          button.textContent = '复制';
+          renderCopyButtonIcon(button, 'copy');
         }}
         if (state) {{
           button._copyTimer = window.setTimeout(() => resetCopyButton(button), 1400);
@@ -1343,6 +1372,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
 
       function bindCopyButton(button) {{
         if (!button) return;
+        renderCopyButtonIcon(button, 'copy');
         button.addEventListener('click', async () => {{
           const value = button.dataset.copyValue || '';
           if (!value) return;
