@@ -101,9 +101,18 @@ jobs:
               }
               if (parsed.length) {
                 const commitSet = new Set(commitPullNumbers)
+                const parsedSet = new Set(parsed)
                 const missing = parsed.filter((value) => !commitSet.has(value))
-                if (missing.length) {
-                  throw new Error(`Merge queue member set mismatch: ${missing.join(', ')}`)
+                const unexpected = commitPullNumbers.filter((value) => !parsedSet.has(value))
+                if (missing.length || unexpected.length) {
+                  const mismatch = []
+                  if (missing.length) {
+                    mismatch.push(`missing from API: ${missing.join(', ')}`)
+                  }
+                  if (unexpected.length) {
+                    mismatch.push(`unexpected from API: ${unexpected.join(', ')}`)
+                  }
+                  throw new Error(`Merge queue member set mismatch: ${mismatch.join('; ')}`)
                 }
               }
               return commitPullNumbers.sort((a, b) => a - b)

@@ -192,6 +192,324 @@ if ! start_mock_server; then
   exit 1
 fi
 
+
+extract_github_script() {
+  local workflow_path="$1"
+  local job_key="$2"
+  local step_name="$3"
+  local output_path="$4"
+  ruby -ryaml -e '
+    workflow = YAML.load_file(ARGV[0])
+    job = workflow.fetch("jobs").fetch(ARGV[1])
+    step = job.fetch("steps").find { |entry| entry["name"] == ARGV[2] } or abort("missing step")
+    script = step.dig("with", "script") or abort("missing github-script body")
+    File.write(ARGV[3], script)
+  ' "${workflow_path}" "${job_key}" "${step_name}" "${output_path}"
+}
+
+run_inline_workflow_contract_checks() {
+  local label_script="${tmp_dir}/label-gate.inline.js"
+  local review_script="${tmp_dir}/review-policy.inline.js"
+  extract_github_script \
+    .github/workflows/label-gate.yml \
+    label-gate \
+    "Validate release intent + channel labels" \
+    "${label_script}"
+  extract_github_script \
+    .github/workflows/review-policy.yml \
+    review-policy \
+    "Evaluate review policy" \
+    "${review_script}"
+
+  node - "${label_script}" "${review_script}" <<'NODE'
+const fs = require('fs')
+
+const labelScript = fs.readFileSync(process.argv[2], 'utf8')
+const reviewScript = fs.readFileSync(process.argv[3], 'utf8')
+
+function createCore() {
+  return {
+    failed: null,
+    notices: [],
+    summary: {
+      addHeading() { return this },
+      addRaw() { return this },
+      addEOL() { return this },
+      async write() { return this },
+    },
+    setFailed(message) { this.failed = String(message) },
+    notice(message) { this.notices.push(String(message)) },
+    getInput() { return '' },
+  }
+}
+
+async function runGithubScript(script, { context, github, env = {} }) {
+  const core = createCore()
+  const previous = new Map()
+  for (const [key, value] of Object.entries(env)) {
+    previous.set(key, process.env[key])
+    process.env[key] = value
+  }
+  try {
+    const fn = new Function('context', 'github', 'core', `"use strict"; return (async () => {
+${script}
+})();`)
+    await fn(context, github, core)
+  } catch (error) {
+    if (core.failed === null) {
+      core.failed = error instanceof Error ? error.message : String(error)
+    }
+  } finally {
+    for (const [key, value] of previous.entries()) {
+      if (value === undefined) {
+        delete process.env[key]
+      } else {
+        process.env[key] = value
+      }
+    }
+  }
+  return core
+}
+
+function assert(condition, message) {
+  if (!condition) {
+    throw new Error(message)
+  }
+}
+
+function makeLabelGithub({ labelsByPull, commitPullsBySha }) {
+  return {
+    paginate: async (route, params) => {
+      if (typeof route === 'string' && route.includes('/commits/{commit_sha}/pulls')) {
+        return commitPullsBySha[params.commit_sha] || []
+      }
+      throw new Error(`unexpected label-gate paginate route: ${String(route)}`)
+    },
+    rest: {
+      pulls: {
+        get: async ({ pull_number }) => ({
+          data: {
+            number: pull_number,
+            labels: (labelsByPull[pull_number] || []).map((name) => ({ name })),
+          },
+        }),
+      },
+    },
+  }
+}
+
+function makeReviewGithub({ pullsByNumber, reviewsByPull, commitPullsBySha, permissionsByUser }) {
+  const listReviewsMarker = Symbol('listReviews')
+  const github = {
+    paginate: async (route, params) => {
+      if (typeof route === 'string' && route.includes('/commits/{commit_sha}/pulls')) {
+        return commitPullsBySha[params.commit_sha] || []
+      }
+      if (route === github.rest.pulls.listReviews) {
+        return reviewsByPull[params.pull_number] || []
+      }
+      throw new Error(`unexpected review-policy paginate route: ${String(route)}`)
+    },
+    rest: {
+      pulls: {
+        listReviews: listReviewsMarker,
+        get: async ({ pull_number }) => ({ data: pullsByNumber[pull_number] }),
+      },
+      repos: {
+        getCollaboratorPermissionLevel: async ({ username }) => ({
+          data: permissionsByUser[username] || { role_name: 'none', permission: 'none' },
+        }),
+      },
+    },
+  }
+  return github
+}
+
+async function main() {
+  const repo = { owner: 'IvanLi-CN', repo: 'dockrev' }
+
+  const labelGithub = makeLabelGithub({
+    labelsByPull: {
+      101: ['type:patch', 'channel:stable'],
+      102: ['type:minor', 'channel:rc'],
+    },
+    commitPullsBySha: {
+      'sha-label-exact': [
+        { number: 101, state: 'open', base: { ref: 'main' } },
+      ],
+      'sha-label-extra': [
+        { number: 101, state: 'open', base: { ref: 'main' } },
+        { number: 999, state: 'open', base: { ref: 'main' } },
+      ],
+    },
+  })
+
+  let core = await runGithubScript(labelScript, {
+    context: {
+      eventName: 'pull_request_target',
+      repo,
+      payload: { pull_request: { number: 101 } },
+      ref: 'refs/heads/main',
+      sha: 'sha-pr',
+    },
+    github: labelGithub,
+  })
+  assert(core.failed === null, `label gate pull_request_target should pass, got: ${core.failed}`)
+
+  core = await runGithubScript(labelScript, {
+    context: {
+      eventName: 'merge_group',
+      repo,
+      payload: {
+        merge_group: {
+          base_ref: 'refs/heads/main',
+          head_ref: 'gh-readonly-queue/main/pr-101-deadbeef',
+          head_sha: 'sha-label-exact',
+          head_commit: { message: 'merge queue contains Fix #999' },
+        },
+      },
+      ref: 'refs/heads/gh-readonly-queue/main/pr-101-deadbeef',
+      sha: 'sha-label-exact',
+    },
+    github: labelGithub,
+  })
+  assert(core.failed === null, `label gate merge_group with noisy commit message should pass, got: ${core.failed}`)
+
+  core = await runGithubScript(labelScript, {
+    context: {
+      eventName: 'merge_group',
+      repo,
+      payload: {
+        merge_group: {
+          base_ref: 'refs/heads/main',
+          head_ref: 'gh-readonly-queue/main/pr-101-deadbeef',
+          head_sha: 'sha-label-extra',
+        },
+      },
+      ref: 'refs/heads/gh-readonly-queue/main/pr-101-deadbeef',
+      sha: 'sha-label-extra',
+    },
+    github: labelGithub,
+  })
+  assert(core.failed && core.failed.includes('unexpected from API'), `label gate extra merge-group member should fail, got: ${core.failed}`)
+
+  const reviewGithub = makeReviewGithub({
+    pullsByNumber: {
+      201: { number: 201, user: { login: 'IvanLi-CN' } },
+      202: { number: 202, user: { login: 'feature-author' } },
+      203: { number: 203, user: { login: 'feature-author' } },
+      204: { number: 204, user: { login: 'feature-author' } },
+    },
+    reviewsByPull: {
+      201: [
+        { user: { login: 'reviewer-write' }, state: 'CHANGES_REQUESTED', submitted_at: '2026-03-11T00:00:00Z' },
+      ],
+      202: [
+        { user: { login: 'reviewer-custom' }, state: 'APPROVED', submitted_at: '2026-03-11T00:00:00Z' },
+      ],
+      203: [
+        { user: { login: 'reviewer-custom' }, state: 'APPROVED', submitted_at: '2026-03-11T00:00:00Z' },
+      ],
+      204: [
+        { user: { login: 'reviewer-write' }, state: 'APPROVED', submitted_at: '2026-03-11T00:00:00Z' },
+      ],
+    },
+    commitPullsBySha: {
+      'sha-review-exact': [
+        { number: 203, state: 'open', base: { ref: 'main' } },
+      ],
+      'sha-review-extra': [
+        { number: 204, state: 'open', base: { ref: 'main' } },
+        { number: 999, state: 'open', base: { ref: 'main' } },
+      ],
+    },
+    permissionsByUser: {
+      'feature-author': { role_name: 'write', permission: 'write' },
+      'reviewer-write': { role_name: 'write', permission: 'write' },
+      'reviewer-custom': { role_name: 'release-manager', permission: 'write' },
+    },
+  })
+
+  const reviewEnv = {
+    REVIEW_POLICY_REQUIRED_APPROVALS: '1',
+    REVIEW_POLICY_EXEMPT_PERMISSIONS: '["admin", "maintain"]',
+    REVIEW_POLICY_REVIEWER_PERMISSIONS: '["write", "maintain", "admin"]',
+    REVIEW_POLICY_EXEMPT_REPOSITORY_OWNER: 'true',
+  }
+
+  core = await runGithubScript(reviewScript, {
+    context: {
+      eventName: 'pull_request_target',
+      repo,
+      payload: { pull_request: { number: 201 } },
+      ref: 'refs/heads/main',
+      sha: 'sha-owner',
+    },
+    github: reviewGithub,
+    env: reviewEnv,
+  })
+  assert(core.failed === null, `review policy owner exemption should pass, got: ${core.failed}`)
+
+  core = await runGithubScript(reviewScript, {
+    context: {
+      eventName: 'pull_request_target',
+      repo,
+      payload: { pull_request: { number: 202 } },
+      ref: 'refs/heads/main',
+      sha: 'sha-custom-reviewer',
+    },
+    github: reviewGithub,
+    env: reviewEnv,
+  })
+  assert(core.failed === null, `review policy should count custom role reviewer by base permission, got: ${core.failed}`)
+
+  core = await runGithubScript(reviewScript, {
+    context: {
+      eventName: 'merge_group',
+      repo,
+      payload: {
+        merge_group: {
+          base_ref: 'refs/heads/main',
+          head_ref: 'gh-readonly-queue/main/pr-203-deadbeef',
+          head_sha: 'sha-review-exact',
+          head_commit: { message: 'merge queue contains Fix #999' },
+        },
+      },
+      ref: 'refs/heads/gh-readonly-queue/main/pr-203-deadbeef',
+      sha: 'sha-review-exact',
+    },
+    github: reviewGithub,
+    env: reviewEnv,
+  })
+  assert(core.failed === null, `review policy merge_group with noisy commit message should pass, got: ${core.failed}`)
+
+  core = await runGithubScript(reviewScript, {
+    context: {
+      eventName: 'merge_group',
+      repo,
+      payload: {
+        merge_group: {
+          base_ref: 'refs/heads/main',
+          head_ref: 'gh-readonly-queue/main/pr-204-deadbeef',
+          head_sha: 'sha-review-extra',
+        },
+      },
+      ref: 'refs/heads/gh-readonly-queue/main/pr-204-deadbeef',
+      sha: 'sha-review-extra',
+    },
+    github: reviewGithub,
+    env: reviewEnv,
+  })
+  assert(core.failed && core.failed.includes('unexpected from API'), `review policy extra merge-group member should fail, got: ${core.failed}`)
+}
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.stack : error)
+  process.exit(1)
+})
+NODE
+}
+
 run_label_gate() {
   local pr_number="$1"
   local expected_status="$2"
@@ -252,6 +570,9 @@ run_release_intent() {
     exit 1
   fi
 }
+
+echo "[contract-check] inline github-script scenarios"
+run_inline_workflow_contract_checks
 
 echo "[contract-check] label-gate scenarios"
 run_label_gate 101 ok

@@ -118,13 +118,27 @@ jobs:
               }
               if (parsed.length) {
                 const commitSet = new Set(commitPullNumbers)
+                const parsedSet = new Set(parsed)
                 const missing = parsed.filter((value) => !commitSet.has(value))
-                if (missing.length) {
-                  throw new Error(`Merge queue member set mismatch: ${missing.join(', ')}`)
+                const unexpected = commitPullNumbers.filter((value) => !parsedSet.has(value))
+                if (missing.length || unexpected.length) {
+                  const mismatch = []
+                  if (missing.length) {
+                    mismatch.push(`missing from API: ${missing.join(', ')}`)
+                  }
+                  if (unexpected.length) {
+                    mismatch.push(`unexpected from API: ${unexpected.join(', ')}`)
+                  }
+                  throw new Error(`Merge queue member set mismatch: ${mismatch.join('; ')}`)
                 }
               }
               return commitPullNumbers.sort((a, b) => a - b)
             }
+
+            const recognizedPermissions = new Set([
+              ...exemptPermissions,
+              ...reviewerPermissions,
+            ])
 
             async function getPermission(username) {
               if (!username) {
@@ -139,7 +153,12 @@ jobs:
                   repo,
                   username,
                 })
-                return data.role_name || data.permission || 'none'
+                const roleName = typeof data.role_name === 'string' ? data.role_name : ''
+                const basePermission = typeof data.permission === 'string' ? data.permission : 'none'
+                if (roleName && recognizedPermissions.has(roleName)) {
+                  return roleName
+                }
+                return basePermission || roleName || 'none'
               } catch (error) {
                 if (error.status === 404) {
                   return 'none'

@@ -69,10 +69,10 @@
 ### Core flows
 
 - `PR Label Gate`
-  - `pull_request`：对当前 PR 校验 exactly-one `type:*` + exactly-one `channel:*`。
+  - `pull_request_target`：对当前 PR 校验 exactly-one `type:*` + exactly-one `channel:*`。
   - `merge_group`：先解析关联 PR 集合，再逐个复用相同的标签验证语义；任一 PR 不满足即整体失败。
 - `Review Policy`
-  - `pull_request` / `pull_request_review`：按声明的条件 review 规则直接评估当前 PR。
+  - `pull_request_target` / `pull_request_review`：按声明的条件 review 规则直接评估当前 PR。
   - `merge_group`：解析关联 PR 集合，逐个评估；任一 PR 不满足 review 契约则整体失败。
 - `CI (PR)`
   - `pull_request`：维持现有按路径裁剪的重活门禁。
@@ -81,7 +81,7 @@
 ### Edge cases / errors
 
 - 若 merge queue 无法从 commit-associated pulls 证明 PR 集合，`PR Label Gate` 与 `Review Policy` 都必须失败，不允许猜测放行。
-- 若 merge queue 解析到的 PR 集合与 `head_ref` / `head_commit.message` 中可解析编号不一致，必须视为异常并失败。
+- 若 merge queue 解析到的 PR 集合与 `head_ref` 中可证明的 PR 编号不一致，必须视为异常并失败。
 - 若 `changes` 无法在 merge queue 上做精确 diff，必须默认 required jobs 继续运行，而不是跳过。
 
 ## 验收标准（Acceptance Criteria）
