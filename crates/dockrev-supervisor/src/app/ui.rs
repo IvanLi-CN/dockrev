@@ -840,10 +840,26 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         border-color: rgba(50, 201, 108, 0.32);
         background: rgba(50, 201, 108, 0.12);
       }}
+      .copyButton.copied::after {{
+        color: var(--ok);
+        border-color: rgba(50, 201, 108, 0.28);
+      }}
+      .copyButton.copied::before {{
+        border-right-color: rgba(50, 201, 108, 0.28);
+        border-bottom-color: rgba(50, 201, 108, 0.28);
+      }}
       .copyButton.failed {{
         color: var(--bad);
         border-color: rgba(255, 123, 123, 0.32);
         background: rgba(255, 123, 123, 0.12);
+      }}
+      .copyButton.failed::after {{
+        color: var(--bad);
+        border-color: rgba(255, 123, 123, 0.28);
+      }}
+      .copyButton.failed::before {{
+        border-right-color: rgba(255, 123, 123, 0.28);
+        border-bottom-color: rgba(255, 123, 123, 0.28);
       }}
       .statusValue {{
         font-size: 13px;
