@@ -11,6 +11,7 @@ import * as VersionTagsPopoverStories from './VersionTagsPopover.stories'
 - 默认 hover 打开，点击 pin 住，外部点击和 `Esc` 关闭。
 - `prefetchOnMount` 场景会提前进入 loading，以减少首次悬浮等待。
 - 缺少 digest 时不做 registry 扫描，只提供候选 tag 的复制操作。
+- “强制刷新” 是 digest 级局部刷新：仅作用于候选 digest，不影响当前版本展示。
 
 <Primary />
 <Stories />

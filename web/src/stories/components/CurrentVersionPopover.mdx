@@ -10,7 +10,7 @@ import * as CurrentVersionPopoverStories from './CurrentVersionPopover.stories'
 ## 交互要求
 - 悬停可打开，点击可 pin 住，按 `Esc` 或点外部关闭。
 - 快照缺失或读取失败时，重新 pin 会触发一次显式重试。
-- “强制刷新” 继续复用现有版本推测刷新行为。
+- “强制刷新” 是 digest 级局部刷新：仅作用于当前气泡对应 digest，并在 snapshot ready 后可更新本气泡 trigger；不会触发页面级联动。
 
 <Primary />
 <Stories />

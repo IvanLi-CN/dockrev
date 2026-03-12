@@ -41,8 +41,8 @@ This page documents every HTTP route exposed in:
 | POST | `/api/services/{service_id}/archive` | Forward Auth | Archive service | `200` `404` `401` |
 | POST | `/api/services/{service_id}/restore` | Forward Auth | Restore service | `200` `404` `401` |
 | GET | `/api/services/{service_id}/digest-tags` | Forward Auth | Fetch digest-to-tags mapping | `200` `404` `401` |
-| GET | `/api/services/{service_id}/digest-tags-snapshot` | Forward Auth | Fetch digest-tag snapshot | `200` `404` `401` |
-| POST | `/api/services/{service_id}/version-inference/refresh` | Forward Auth | Trigger service-level version inference refresh | `200` `404` `401` |
+| GET | `/api/services/{service_id}/digest-tags-snapshot` | Forward Auth | Fetch digest-tag snapshot (`202 pending` while the target digest is refreshing) | `200` `202` `404` `401` |
+| POST | `/api/services/{service_id}/version-inference/refresh` | Forward Auth | Trigger digest-scoped version inference refresh (`digest` body required) | `202` `400` `404` `401` |
 | GET | `/api/version-inference/overview` | Forward Auth | Version inference overview | `200` `401` |
 | GET | `/api/version-inference/events` | Forward Auth | Version inference SSE stream | `200` `401` |
 
@@ -57,6 +57,10 @@ This page documents every HTTP route exposed in:
 | POST | `/api/checks` | Forward Auth | Create check job | `200` `400` `401` `409` |
 | POST | `/api/runtime-scans` | Forward Auth | Create runtime scan job | `200` `400` `401` `409` |
 | POST | `/api/updates` | Forward Auth | Create update job | `200` `400` `401` `409` |
+
+- `POST /api/updates` contract:
+  - `scope=service`: requires explicit `serviceId + targetTag + targetDigest + pullTags`.
+  - `scope=stack|all`: requires explicit `targets[]`, each entry shaped as `{ serviceId, targetTag, targetDigest, pullTags }`.
 
 ### 4) Jobs / Events
 
@@ -109,7 +113,7 @@ This page documents every HTTP route exposed in:
 | --- | --- | --- | --- | --- |
 | POST | `/api/web-push/subscriptions` | Forward Auth | Create/update web push subscription | `200` `400` `401` |
 | DELETE | `/api/web-push/subscriptions` | Forward Auth | Delete web push subscription | `200` `400` `401` |
-| POST | `/api/webhooks/trigger` | Webhook Secret | External trigger for check/update jobs (`action=update` only supports `all`/`stack`) | `200` `400` `401` |
+| POST | `/api/webhooks/trigger` | Webhook Secret | External trigger for check/update jobs (`action=update` requires explicit `targets[]`) | `200` `400` `401` |
 | POST | `/api/webhooks/github-packages` | GitHub Signature | Receive GH package webhook and enqueue discovery | `200` `202` `400` `401` |
 | GET | `/api/deploy-check/report` | Forward Auth | Deployment preflight report; anonymous or non-matching identities receive Dockrev-generated `401 auth_required` | `200` `401` |
 | GET | `/api/deploy-welcome` | Forward Auth | Get deploy welcome status | `200` `401` |
@@ -151,12 +155,12 @@ curl -X POST \
 curl -X POST \
   -H 'Content-Type: application/json' \
   -H 'X-Dockrev-Webhook-Secret: change-me' \
-  -d '{"action":"update","scope":"stack","stackId":"stk_xxx","allowArchMismatch":false,"backupMode":"inherit"}' \
+  -d '{"action":"update","scope":"stack","stackId":"stk_xxx","targets":[{"serviceId":"svc_web","targetTag":"latest","targetDigest":"sha256:abc123","pullTags":["v1.1.2"]}],"allowArchMismatch":false,"backupMode":"inherit"}' \
   http://127.0.0.1:50883/api/webhooks/trigger
 ```
 
-> Note: `POST /api/webhooks/trigger` rejects `{"action":"update","scope":"service"}` with `400 invalid_argument`.
-> Use `POST /api/updates` with explicit `targetTag` + `targetDigest` for service-level updates.
+> Note: `POST /api/webhooks/trigger` rejects legacy `action=update` payloads that omit `targets[]` with `400 invalid_argument`.
+> webhook update also supports `scope=service`, but you must still provide `serviceId` and a matching `{ serviceId, targetTag, targetDigest, pullTags }` entry inside `targets[]`.
 
 ### Read supervisor state
 

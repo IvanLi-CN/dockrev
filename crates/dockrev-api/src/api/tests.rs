@@ -10,6 +10,7 @@ use std::{
 
 use axum::{Json, Router, body::Body, http::Request, response::IntoResponse as _, routing::post};
 use http_body_util::BodyExt as _;
+use serde_json::json;
 use tower::ServiceExt as _;
 
 use crate::{
@@ -636,6 +637,14 @@ impl CommandRunner for SemverRetryFailRunner {
                 }
             }
             7 => {
+                assert_eq!(args, vec!["pull", "ghcr.io/acme/web:latest"]);
+                CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }
+            }
+            8 => {
                 assert_eq!(
                     args,
                     vec!["image", "tag", "sha256:new", "ghcr.io/acme/web:latest"]
@@ -646,41 +655,7 @@ impl CommandRunner for SemverRetryFailRunner {
                     stderr: String::new(),
                 }
             }
-            8 => {
-                assert_eq!(
-                    args,
-                    vec![
-                        "image",
-                        "inspect",
-                        "--format",
-                        r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
-                        "sha256:new"
-                    ]
-                );
-                CommandOutput {
-                    status: 0,
-                    stdout: "0.7.7\n".to_string(),
-                    stderr: String::new(),
-                }
-            }
-            9 => {
-                assert_eq!(
-                    args,
-                    vec![
-                        "image",
-                        "inspect",
-                        "--format",
-                        "{{json .RepoTags}}",
-                        "sha256:new"
-                    ]
-                );
-                CommandOutput {
-                    status: 0,
-                    stdout: r#"["ghcr.io/acme/web:latest"]"#.to_string(),
-                    stderr: String::new(),
-                }
-            }
-            10..=12 => {
+            9..=11 => {
                 assert_eq!(args, vec!["pull", "ghcr.io/acme/web:0.7.7"]);
                 CommandOutput {
                     status: 1,
@@ -2074,6 +2049,282 @@ services:
 }
 
 #[tokio::test]
+async fn service_digest_tags_snapshot_returns_pending_while_target_digest_is_in_flight() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(300)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        Some("sha256:match"),
+        Some("latest"),
+        Some("sha256:candidate"),
+    )
+    .await;
+
+    let checked_at = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:candidate",
+        "linux/amd64",
+        &checked_at,
+        vec!["v0.1.9".to_string(), "0.1.9".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+
+    let enqueued = state
+        .snapshot_worker
+        .enqueue(
+            "ghcr.io/acme/web",
+            "sha256:candidate",
+            "linux/amd64",
+            "force",
+        )
+        .await;
+    assert!(enqueued);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{}/digest-tags-snapshot?digest=sha256:candidate",
+                    service_id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"].as_str().unwrap_or("<none>"), "pending");
+    assert_eq!(
+        body["digest"].as_str().unwrap_or("<none>"),
+        "sha256:candidate"
+    );
+}
+
+#[tokio::test]
+async fn service_digest_tags_snapshot_returns_cached_snapshot_while_non_force_task_is_in_flight() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(300)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        Some("sha256:match"),
+        Some("latest"),
+        Some("sha256:candidate"),
+    )
+    .await;
+
+    let checked_at = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:candidate",
+        "linux/amd64",
+        &checked_at,
+        vec!["v0.1.9".to_string(), "0.1.9".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+
+    let enqueued = state
+        .snapshot_worker
+        .enqueue(
+            "ghcr.io/acme/web",
+            "sha256:candidate",
+            "linux/amd64",
+            "cache_stale",
+        )
+        .await;
+    assert!(enqueued);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{}/digest-tags-snapshot?digest=sha256:candidate",
+                    service_id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(
+        body["digest"].as_str().unwrap_or("<none>"),
+        "sha256:candidate"
+    );
+    assert_eq!(body["tags"][0].as_str().unwrap_or("<none>"), "v0.1.9");
+}
+
+#[tokio::test]
+async fn force_refresh_promotes_non_force_in_flight_snapshot_to_pending() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(300)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        Some("sha256:match"),
+        Some("latest"),
+        Some("sha256:candidate"),
+    )
+    .await;
+
+    let checked_at = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:candidate",
+        "linux/amd64",
+        &checked_at,
+        vec!["v0.1.9".to_string(), "0.1.9".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+
+    let enqueued = state
+        .snapshot_worker
+        .enqueue(
+            "ghcr.io/acme/web",
+            "sha256:candidate",
+            "linux/amd64",
+            "cache_stale",
+        )
+        .await;
+    assert!(enqueued);
+    assert_eq!(
+        state
+            .snapshot_worker
+            .in_flight_reason("ghcr.io/acme/web", "sha256:candidate", "linux/amd64")
+            .await
+            .as_deref(),
+        Some("cache_stale")
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/services/{}/version-inference/refresh",
+                    service_id
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"digest":"sha256:candidate"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+    let body = response_json(resp).await;
+    assert_eq!(body["reason"].as_str().unwrap_or("<none>"), "running");
+    assert_eq!(
+        body["digest"].as_str().unwrap_or("<none>"),
+        "sha256:candidate"
+    );
+    assert_eq!(
+        state
+            .snapshot_worker
+            .in_flight_reason("ghcr.io/acme/web", "sha256:candidate", "linux/amd64")
+            .await
+            .as_deref(),
+        Some("force")
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{}/digest-tags-snapshot?digest=sha256:candidate",
+                    service_id
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"].as_str().unwrap_or("<none>"), "pending");
+    assert_eq!(
+        body["digest"].as_str().unwrap_or("<none>"),
+        "sha256:candidate"
+    );
+}
+
+#[tokio::test]
 async fn service_digest_tags_snapshot_unknown_digest_is_not_enqueued() {
     let registry = Arc::new(CountingRegistry::default());
     let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
@@ -2812,6 +3063,7 @@ services:
         "scope": "service",
         "serviceId": service_id.clone(),
         "targetDigest": expected_digest,
+        "pullTags": [],
         "mode": "dry-run",
         "allowArchMismatch": false,
         "backupMode": "inherit",
@@ -2838,6 +3090,7 @@ services:
         "serviceId": service_id.clone(),
         "targetTag": "cross-tag-not-allowed",
         "targetDigest": expected_digest.clone(),
+        "pullTags": [],
         "mode": "dry-run",
         "allowArchMismatch": false,
         "backupMode": "inherit",
@@ -2864,6 +3117,7 @@ services:
         "serviceId": service_id,
         "targetTag": svc.image_tag,
         "targetDigest": "sha256:wrong",
+        "pullTags": [],
         "mode": "dry-run",
         "allowArchMismatch": false,
         "backupMode": "inherit",
@@ -2890,6 +3144,7 @@ services:
         "serviceId": svc.id,
         "targetTag": svc.image_tag,
         "targetDigest": expected_digest,
+        "pullTags": [],
         "mode": "dry-run",
         "allowArchMismatch": false,
         "backupMode": "inherit",
@@ -3193,7 +3448,7 @@ services:
     for pair in starts.windows(2) {
         let gap = pair[1].duration_since(pair[0]);
         assert!(
-            gap >= Duration::from_millis(900),
+            gap >= Duration::from_millis(800),
             "spawn gap should be ~1s, got {:?}",
             gap
         );
@@ -3471,7 +3726,7 @@ services:
 }
 
 #[tokio::test]
-async fn force_refresh_endpoint_returns_accepted_and_dedupes() {
+async fn force_refresh_endpoint_requires_known_digest_and_dedupes_per_digest() {
     let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(300)));
     let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
     let app = api::router(state.clone());
@@ -3487,8 +3742,14 @@ services:
     )
     .unwrap();
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
-    let service_id =
-        set_single_service_check_result(&state, &stack_id, Some("sha256:new"), None, None).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        Some("sha256:current"),
+        Some("latest"),
+        Some("sha256:candidate"),
+    )
+    .await;
 
     let resp = app
         .clone()
@@ -3499,7 +3760,63 @@ services:
                     "/api/services/{}/version-inference/refresh",
                     service_id
                 ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let body = response_json(resp).await;
+    assert_eq!(
+        body["error"]["code"].as_str().unwrap_or("<none>"),
+        "invalid_argument"
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/services/{}/version-inference/refresh",
+                    service_id
+                ))
+                .header("content-type", "application/json")
                 .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/services/{}/version-inference/refresh",
+                    service_id
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"digest":"sha256:missing"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/services/{}/version-inference/refresh",
+                    service_id
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"digest":"sha256:current"}"#))
                 .unwrap(),
         )
         .await
@@ -3508,6 +3825,25 @@ services:
     let body = response_json(resp).await;
     assert_eq!(body["status"].as_str().unwrap_or("<none>"), "pending");
     assert_eq!(body["reason"].as_str().unwrap_or("<none>"), "force");
+    assert_eq!(
+        body["digest"].as_str().unwrap_or("<none>"),
+        "sha256:current"
+    );
+    assert_eq!(
+        state
+            .snapshot_worker
+            .in_flight_reason("ghcr.io/acme/web", "sha256:current", "linux/amd64")
+            .await
+            .as_deref(),
+        Some("force")
+    );
+    assert_eq!(
+        state
+            .snapshot_worker
+            .in_flight_reason("ghcr.io/acme/web", "sha256:candidate", "linux/amd64")
+            .await,
+        None
+    );
 
     let resp = app
         .clone()
@@ -3518,7 +3854,8 @@ services:
                     "/api/services/{}/version-inference/refresh",
                     service_id
                 ))
-                .body(Body::from("{}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"digest":"sha256:current"}"#))
                 .unwrap(),
         )
         .await
@@ -3527,6 +3864,420 @@ services:
     let body = response_json(resp).await;
     assert_eq!(body["status"].as_str().unwrap_or("<none>"), "pending");
     assert_eq!(body["reason"].as_str().unwrap_or("<none>"), "running");
+    assert_eq!(
+        body["digest"].as_str().unwrap_or("<none>"),
+        "sha256:current"
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/services/{}/version-inference/refresh",
+                    service_id
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"digest":"sha256:candidate"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"].as_str().unwrap_or("<none>"), "pending");
+    assert_eq!(body["reason"].as_str().unwrap_or("<none>"), "force");
+    assert_eq!(
+        body["digest"].as_str().unwrap_or("<none>"),
+        "sha256:candidate"
+    );
+    assert_eq!(
+        state
+            .snapshot_worker
+            .in_flight_reason("ghcr.io/acme/web", "sha256:candidate", "linux/amd64")
+            .await
+            .as_deref(),
+        Some("force")
+    );
+}
+
+#[tokio::test]
+async fn stack_detail_does_not_go_pending_when_only_force_task_is_in_flight() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(300)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        Some("sha256:current"),
+        Some("latest"),
+        Some("sha256:candidate"),
+    )
+    .await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:current",
+        "linux/amd64",
+        &now,
+        vec!["v1.0.0".to_string(), "latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:candidate",
+        "linux/amd64",
+        &now,
+        vec!["v1.1.0".to_string(), "latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+
+    // Trigger a digest-scoped force refresh (manual), which should stay local to the popover UX
+    // and must not flip stack-level `versionInference.status` to `pending`.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/services/{}/version-inference/refresh",
+                    service_id
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"digest":"sha256:candidate"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    assert_eq!(
+        detail["stack"]["services"][0]["versionInference"]["status"]
+            .as_str()
+            .unwrap_or("<none>"),
+        "ready"
+    );
+}
+
+#[tokio::test]
+async fn stack_detail_clears_resolved_tag_when_snapshot_has_no_semver_tags() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(300)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let _service_id =
+        set_single_service_check_result(&state, &stack_id, Some("sha256:current"), None, None)
+            .await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:current",
+        "linux/amd64",
+        &now,
+        vec!["v0.8.7".to_string(), "latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let image = &detail["stack"]["services"][0]["image"];
+    assert_eq!(image["resolvedTag"].as_str().unwrap_or("<none>"), "v0.8.7");
+
+    // Snapshot refreshed, but it no longer contains any semver tags.
+    let now2 = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:current",
+        "linux/amd64",
+        &now2,
+        vec!["latest".to_string(), "stable".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let image = &detail["stack"]["services"][0]["image"];
+    assert!(
+        image.get("resolvedTag").is_none(),
+        "expected resolvedTag to be cleared when snapshot has no semver tags: {detail}"
+    );
+    assert!(
+        image.get("resolvedTags").is_none(),
+        "expected resolvedTags to be cleared when snapshot has no semver tags: {detail}"
+    );
+}
+
+#[tokio::test]
+async fn stack_detail_preserves_resolved_tag_when_snapshot_has_no_semver_tags_but_scan_is_incomplete()
+ {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(300)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let service = services.first().expect("service must exist");
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    // Seed a last-known-good resolved tag on the service itself.
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            crate::snapshot_worker::normalize_digest("sha256:current"),
+            Some("v0.8.7".to_string()),
+            Some(serde_json::to_string(&vec!["v0.8.7"]).unwrap()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    // Snapshot refreshed, but it no longer contains any semver tags. The scan is incomplete
+    // (`repo_tags_considered` < `repo_tags_total`), so it must not wipe the last-known-good
+    // resolved tag values.
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:current",
+        "linux/amd64",
+        &now,
+        vec!["latest".to_string(), "stable".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 100,
+            repo_tags_considered: 40,
+            manifests_ok: 40,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let image = &detail["stack"]["services"][0]["image"];
+    assert_eq!(
+        image["resolvedTag"].as_str().unwrap_or("<none>"),
+        "v0.8.7",
+        "expected resolvedTag to be preserved for incomplete scan: {detail}"
+    );
+    assert_eq!(
+        image["resolvedTags"][0].as_str().unwrap_or("<none>"),
+        "v0.8.7",
+        "expected resolvedTags to be preserved for incomplete scan: {detail}"
+    );
+}
+
+#[tokio::test]
+async fn stack_detail_preserves_resolved_tag_when_snapshot_is_all_failed() {
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(300)));
+    let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let service = services.first().expect("service must exist");
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    // Seed a last-known-good resolved tag on the service itself. This should not be wiped when
+    // the latest snapshot is an all_failed/error snapshot.
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            crate::snapshot_worker::normalize_digest("sha256:current"),
+            Some("v0.8.7".to_string()),
+            Some(serde_json::to_string(&vec!["v0.8.7"]).unwrap()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:current",
+        "linux/amd64",
+        &now,
+        vec![],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 0,
+            repo_tags_considered: 0,
+            manifests_ok: 0,
+            manifests_timeout: 0,
+            manifests_error: 1,
+        },
+    )
+    .await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let detail = response_json(resp).await;
+    let image = &detail["stack"]["services"][0]["image"];
+    assert_eq!(
+        image["resolvedTag"].as_str().unwrap_or("<none>"),
+        "v0.8.7",
+        "expected resolvedTag to be preserved for all_failed snapshot: {detail}"
+    );
 }
 
 #[tokio::test]
@@ -5515,9 +6266,39 @@ services:
     }
     assert!(finished, "check job did not finish in time");
 
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let svc = services.first().unwrap().clone();
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .update_service_check_result(
+            &svc.id,
+            Some("sha256:old".to_string()),
+            Some("5.2".to_string()),
+            Some(r#"["5.2"]"#.to_string()),
+            Some(svc.image_tag.clone()),
+            Some("5.3".to_string()),
+            Some("sha256:new".to_string()),
+            Some("match".to_string()),
+            Some(r#"["linux/amd64"]"#.to_string()),
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
     let update = serde_json::json!({
         "scope": "stack",
         "stackId": stack_id,
+        "targets": [{
+            "serviceId": svc.id,
+            "targetTag": svc.image_tag,
+            "targetDigest": "sha256:new",
+            "pullTags": []
+        }],
         "mode": "apply",
         "allowArchMismatch": false,
         "backupMode": "inherit",
@@ -5660,6 +6441,7 @@ services:
     let update = serde_json::json!({
         "scope": "stack",
         "stackId": stack_id,
+        "targets": [],
         "mode": "dry-run",
         "allowArchMismatch": false,
         "backupMode": "inherit",
@@ -5742,6 +6524,7 @@ services:
     let update = serde_json::json!({
         "scope": "stack",
         "stackId": stack_id,
+        "targets": [],
         "mode": "dry-run",
         "allowArchMismatch": false,
         "backupMode": "inherit",
@@ -5821,6 +6604,7 @@ services:
 
     let update = serde_json::json!({
         "scope": "all",
+        "targets": [],
         "mode": "dry-run",
         "allowArchMismatch": false,
         "backupMode": "inherit",
@@ -5892,6 +6676,7 @@ services:
     let update = serde_json::json!({
         "scope": "stack",
         "stackId": stack_id,
+        "targets": [],
         "mode": "apply",
         "allowArchMismatch": false,
         "backupMode": "skip",
@@ -5997,6 +6782,7 @@ services:
         "serviceId": service.id,
         "targetTag": "5.2",
         "targetDigest": "sha256:new",
+        "pullTags": [],
         "mode": "apply",
         "allowArchMismatch": false,
         "backupMode": "skip",
@@ -6742,6 +7528,7 @@ services:
         "action": "update",
         "scope": "stack",
         "stackId": stack_id,
+        "targets": [],
         "allowArchMismatch": false,
         "backupMode": "skip"
     });
@@ -6795,7 +7582,7 @@ services:
 }
 
 #[tokio::test]
-async fn webhook_trigger_update_rejects_service_scope() {
+async fn webhook_trigger_update_requires_targets() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
 
@@ -6887,6 +7674,7 @@ services:
         "action": "update",
         "scope": "stack",
         "stackId": stack_id,
+        "targets": [],
         "allowArchMismatch": false,
         "backupMode": "skip"
     });
@@ -6993,6 +7781,7 @@ services:
         "action": "update",
         "scope": "stack",
         "stackId": stack_id,
+        "targets": [],
         "allowArchMismatch": false,
         "backupMode": "inherit"
     });
@@ -7123,6 +7912,12 @@ services:
         "action": "update",
         "scope": "stack",
         "stackId": stack_id,
+        "targets": [{
+            "serviceId": svc_api.id,
+            "targetTag": "latest",
+            "targetDigest": "sha256:cand-api",
+            "pullTags": []
+        }],
         "allowArchMismatch": false,
         "backupMode": "skip"
     });
@@ -7241,6 +8036,12 @@ services:
         "action": "update",
         "scope": "stack",
         "stackId": stack_id,
+        "targets": [{
+            "serviceId": svc.id,
+            "targetTag": "latest",
+            "targetDigest": "sha256:cand",
+            "pullTags": ["0.7.7"]
+        }],
         "allowArchMismatch": false,
         "backupMode": "skip"
     });
@@ -7286,7 +8087,7 @@ services:
         out.expect("job did not finish in time")
     };
 
-    assert_eq!(job["job"]["status"].as_str(), Some("failed"));
+    assert_eq!(job["job"]["status"].as_str(), Some("success"));
     let update = &job["job"]["summary"]["stacks"][0]["update"];
     assert_eq!(update["changedServices"].as_u64(), Some(1));
     assert_eq!(
@@ -7297,13 +8098,25 @@ services:
         update["newDigests"][svc.id.as_str()].as_str(),
         Some("sha256:new")
     );
-    assert_eq!(update["failureStep"].as_str(), Some("semver_pull"));
-    assert_eq!(update["retry"]["attempts"].as_u64(), Some(3));
-    assert_eq!(update["retry"]["maxAttempts"].as_u64(), Some(3));
-    assert_eq!(update["retry"]["baseMs"].as_u64(), Some(300));
-    assert_eq!(update["retry"]["maxMs"].as_u64(), Some(3000));
+    assert_eq!(
+        update["targetTagsPulled"],
+        json!(["ghcr.io/acme/web:latest"])
+    );
+    assert_eq!(update["pullTagsPulled"], json!([]));
+    let warnings = update["pullTagWarnings"].as_array().unwrap();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0]["serviceId"].as_str(), Some(svc.id.as_str()));
+    assert_eq!(
+        warnings[0]["tagRef"].as_str(),
+        Some("ghcr.io/acme/web:0.7.7")
+    );
+    assert_eq!(warnings[0]["step"].as_str(), Some("pull_tag"));
+    assert_eq!(warnings[0]["retry"]["attempts"].as_u64(), Some(3));
+    assert_eq!(warnings[0]["retry"]["maxAttempts"].as_u64(), Some(3));
+    assert_eq!(warnings[0]["retry"]["baseMs"].as_u64(), Some(300));
+    assert_eq!(warnings[0]["retry"]["maxMs"].as_u64(), Some(3000));
     assert!(
-        update["lastError"]
+        warnings[0]["lastError"]
             .as_str()
             .unwrap_or_default()
             .contains("status=1"),

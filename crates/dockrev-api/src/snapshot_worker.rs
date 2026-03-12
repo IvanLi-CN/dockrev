@@ -14,13 +14,14 @@ use crate::{
 };
 
 pub const SNAPSHOT_PENDING_RETRY_AFTER_MS: u64 = 800;
-pub const SNAPSHOT_WORKER_MAX_CONCURRENCY: usize = 4;
+pub const SNAPSHOT_WORKER_MAX_CONCURRENCY: usize = 2;
 pub const SNAPSHOT_CACHE_TTL_DAYS: i64 = 7;
 pub const SNAPSHOT_ALL_FAILED_RETRY_MINUTES: i64 = 10;
 pub const SNAPSHOT_GC_RETENTION_DAYS: i64 = 30;
 pub const SNAPSHOT_GC_INTERVAL_SECONDS: u64 = 24 * 60 * 60;
 
 const SNAPSHOT_EVENT_RING_CAPACITY: usize = 2000;
+const SNAPSHOT_REASON_FORCE: &str = "force";
 
 #[derive(Clone, Debug)]
 pub struct SnapshotTaskProgress {
@@ -283,7 +284,25 @@ impl SnapshotWorker {
 
         {
             let mut runtime = self.runtime.lock().await;
-            if runtime.tasks.contains_key(&key) {
+            if let Some(existing) = runtime.tasks.get_mut(&key) {
+                if reason == SNAPSHOT_REASON_FORCE && existing.reason != SNAPSHOT_REASON_FORCE {
+                    let previous_reason = existing.reason.clone();
+                    existing.reason = reason.clone();
+                    existing.updated_at = now.clone();
+                    let _ = push_event_locked(
+                        &mut runtime,
+                        json!({
+                            "type": "task_reason_upgraded",
+                            "ts": now,
+                            "key": key,
+                            "imageRepo": repo,
+                            "digest": digest,
+                            "hostPlatform": host_platform,
+                            "fromReason": previous_reason,
+                            "reason": reason,
+                        }),
+                    );
+                }
                 return false;
             }
             runtime.tasks.insert(
@@ -919,9 +938,51 @@ pub fn normalize_digest(input: &str) -> Option<String> {
 }
 
 pub fn image_repo_from_image_ref(image_ref: &str) -> Option<String> {
-    registry::ImageRef::parse(image_ref)
-        .ok()
-        .map(|img| format!("{}/{}", img.registry, img.name))
+    if let Ok(img) = registry::ImageRef::parse(image_ref) {
+        return Some(format!("{}/{}", img.registry, img.name));
+    }
+
+    let raw = image_ref.trim();
+    let (without_digest, digest) = raw.split_once('@')?;
+    if without_digest.trim().is_empty() || digest.trim().is_empty() {
+        return None;
+    }
+
+    let name_with_registry = without_digest.trim();
+    let first_slash = name_with_registry.find('/');
+    let (registry, name) = match first_slash {
+        Some(idx) => {
+            let (first_seg, rest_with_slash) = name_with_registry.split_at(idx);
+            let rest = rest_with_slash.strip_prefix('/')?.trim();
+            if rest.is_empty() {
+                return None;
+            }
+            let first_seg_trim = first_seg.trim();
+            if first_seg_trim.contains('.')
+                || first_seg_trim.contains(':')
+                || first_seg_trim == "localhost"
+            {
+                (first_seg_trim.to_string(), rest.to_string())
+            } else {
+                ("docker.io".to_string(), name_with_registry.to_string())
+            }
+        }
+        None => (
+            "docker.io".to_string(),
+            format!("library/{}", name_with_registry),
+        ),
+    };
+    let name = normalize_dockerhub_repo_name(&registry, &name);
+
+    Some(format!("{registry}/{name}"))
+}
+
+fn normalize_dockerhub_repo_name(registry: &str, name: &str) -> String {
+    if registry == "docker.io" && !name.contains('/') {
+        format!("library/{name}")
+    } else {
+        name.to_string()
+    }
 }
 
 fn image_ref_from_repo(image_repo: &str) -> Option<registry::ImageRef> {
@@ -941,4 +1002,29 @@ fn image_ref_from_repo(image_repo: &str) -> Option<registry::ImageRef> {
 
 fn now_rfc3339() -> anyhow::Result<String> {
     Ok(time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::image_repo_from_image_ref;
+
+    #[test]
+    fn image_repo_from_image_ref_supports_digest_only_refs() {
+        assert_eq!(
+            image_repo_from_image_ref("ghcr.io/acme/web@sha256:abcd"),
+            Some("ghcr.io/acme/web".to_string())
+        );
+        assert_eq!(
+            image_repo_from_image_ref("alpine@sha256:abcd"),
+            Some("docker.io/library/alpine".to_string())
+        );
+        assert_eq!(
+            image_repo_from_image_ref("docker.io/alpine@sha256:abcd"),
+            Some("docker.io/library/alpine".to_string())
+        );
+        assert_eq!(
+            image_repo_from_image_ref("ghcr.io/acme/web:latest@sha256:abcd"),
+            Some("ghcr.io/acme/web".to_string())
+        );
+    }
 }

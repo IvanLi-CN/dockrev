@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -12,7 +12,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use ulid::Ulid;
 
 use crate::{
-    api::types::{JobScope, StackRecord},
+    api::types::{JobScope, StackRecord, UpdateServiceTarget},
     compose_runner::{ComposeRunnerConfig, ComposeStack},
     docker_runner,
     runner::{CommandRunner, CommandSpec},
@@ -177,11 +177,6 @@ impl UpdateStepFailure {
             partial_summary: None,
         }
     }
-
-    fn with_partial_summary(mut self, partial_summary: serde_json::Value) -> Self {
-        self.partial_summary = Some(partial_summary);
-        self
-    }
 }
 
 impl std::fmt::Display for UpdateStepFailure {
@@ -206,8 +201,12 @@ pub enum UpdateProgressStep {
     UpDone,
     HealthStart,
     HealthDone,
+    TargetTagPullStart,
+    TargetTagPullDone,
     SyncTagStart,
     SyncTagDone,
+    PullTagsStart,
+    PullTagsDone,
     ServiceDone,
 }
 
@@ -393,6 +392,108 @@ fn should_sync_local_tag(image_ref: &str) -> bool {
     !trimmed.is_empty() && !trimmed.contains('@')
 }
 
+fn insert_legacy_semver_compat_fields(summary: &mut serde_json::Map<String, serde_json::Value>) {
+    summary.insert("semverPulled".to_string(), json!(Vec::<String>::new()));
+    summary.insert(
+        "semverPullWarnings".to_string(),
+        serde_json::Value::Object(serde_json::Map::<String, serde_json::Value>::new()),
+    );
+}
+
+fn insert_tag_pull_summary_fields(
+    summary: &mut serde_json::Map<String, serde_json::Value>,
+    target_tags_pulled: &[String],
+    pull_tags_pulled: &[String],
+    pull_tag_warnings: &[serde_json::Value],
+) {
+    summary.insert("targetTagsPulled".to_string(), json!(target_tags_pulled));
+    summary.insert("pullTagsPulled".to_string(), json!(pull_tags_pulled));
+    summary.insert("pullTagWarnings".to_string(), json!(pull_tag_warnings));
+    insert_legacy_semver_compat_fields(summary);
+}
+
+fn build_update_summary(
+    changed: u32,
+    old_images: &serde_json::Map<String, serde_json::Value>,
+    new_images: &serde_json::Map<String, serde_json::Value>,
+    target_tags_pulled: &[String],
+    pull_tags_pulled: &[String],
+    pull_tag_warnings: &[serde_json::Value],
+    skipped_version_anomaly: &[serde_json::Value],
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut summary = serde_json::Map::new();
+    summary.insert("changedServices".to_string(), json!(changed));
+    summary.insert(
+        "oldDigests".to_string(),
+        serde_json::Value::Object(old_images.clone()),
+    );
+    summary.insert(
+        "newDigests".to_string(),
+        serde_json::Value::Object(new_images.clone()),
+    );
+    insert_tag_pull_summary_fields(
+        &mut summary,
+        target_tags_pulled,
+        pull_tags_pulled,
+        pull_tag_warnings,
+    );
+    summary.insert(
+        "skippedVersionAnomaly".to_string(),
+        json!(skipped_version_anomaly),
+    );
+    summary
+}
+
+fn record_unique_tag_ref(tag_ref: String, refs: &mut Vec<String>, seen: &mut HashSet<String>) {
+    if seen.insert(tag_ref.clone()) {
+        refs.push(tag_ref);
+    }
+}
+
+async fn ensure_explicit_tag_ref_pulled(
+    runner: &dyn CommandRunner,
+    docker_cfg: &docker_runner::DockerRunnerConfig,
+    retry_policy: IdempotentRetryPolicy,
+    step: &str,
+    tag_ref: &str,
+    successful_tag_refs: &mut HashSet<String>,
+) -> anyhow::Result<()> {
+    if successful_tag_refs.contains(tag_ref) {
+        return Ok(());
+    }
+    run_checked_with_retry(
+        runner,
+        docker_runner::pull_image(docker_cfg, tag_ref),
+        Duration::from_secs(300),
+        step,
+        retry_policy,
+    )
+    .await?;
+    successful_tag_refs.insert(tag_ref.to_string());
+    Ok(())
+}
+
+fn tag_pull_warning_value(
+    service_id: &str,
+    tag_ref: &str,
+    err: &anyhow::Error,
+) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("serviceId".to_string(), json!(service_id));
+    obj.insert("tagRef".to_string(), json!(tag_ref));
+    if let Some(step_failure) = err.downcast_ref::<UpdateStepFailure>() {
+        obj.insert("step".to_string(), json!(step_failure.step.clone()));
+        obj.insert("retry".to_string(), json!(step_failure.retry.clone()));
+        obj.insert(
+            "lastError".to_string(),
+            json!(step_failure.last_error.clone()),
+        );
+    } else {
+        obj.insert("error".to_string(), json!(err.to_string()));
+    }
+    serde_json::Value::Object(obj)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run_update_job(
     runner: &dyn CommandRunner,
@@ -403,8 +504,7 @@ pub async fn run_update_job(
     scope: &JobScope,
     service_id: Option<&str>,
     mode: &str,
-    target_tag: Option<&str>,
-    target_digest: Option<&str>,
+    explicit_targets: Option<&[UpdateServiceTarget]>,
     allow_arch_mismatch: bool,
     update_reason: &str,
     dockrev_image_repo: Option<&str>,
@@ -422,28 +522,52 @@ pub async fn run_update_job(
     let skipped_version_anomaly = selection.skipped_version_anomaly;
 
     if mode == "dry-run" {
+        let mut summary = serde_json::Map::new();
+        summary.insert("mode".to_string(), json!("dry-run"));
+        summary.insert("changedServices".to_string(), json!(services.len()));
+        insert_tag_pull_summary_fields(&mut summary, &[], &[], &[]);
+        summary.insert(
+            "skippedVersionAnomaly".to_string(),
+            json!(skipped_version_anomaly),
+        );
         return Ok(UpdateOutcome {
             status: "success".to_string(),
-            summary_json: json!({
-                "mode": "dry-run",
-                "changedServices": services.len(),
-                "skippedVersionAnomaly": skipped_version_anomaly,
-            }),
+            summary_json: serde_json::Value::Object(summary),
         });
     }
 
     if services.is_empty() {
         return Ok(UpdateOutcome {
             status: "success".to_string(),
-            summary_json: json!({
-                "changedServices": 0,
-                "oldDigests": serde_json::Map::<String, serde_json::Value>::new(),
-                "newDigests": serde_json::Map::<String, serde_json::Value>::new(),
-                "semverPulled": Vec::<String>::new(),
-                "semverPullWarnings": serde_json::Map::<String, serde_json::Value>::new(),
-                "skippedVersionAnomaly": skipped_version_anomaly,
-            }),
+            summary_json: serde_json::Value::Object(build_update_summary(
+                0,
+                &serde_json::Map::new(),
+                &serde_json::Map::new(),
+                &[],
+                &[],
+                &[],
+                &skipped_version_anomaly,
+            )),
         });
+    }
+
+    let explicit_targets_by_service = explicit_targets
+        .unwrap_or(&[])
+        .iter()
+        .map(|target| (target.service_id.clone(), target.clone()))
+        .collect::<HashMap<_, _>>();
+    if !explicit_targets_by_service.is_empty() {
+        let missing_target_service_ids = services
+            .iter()
+            .filter(|svc| !explicit_targets_by_service.contains_key(svc.id.as_str()))
+            .map(|svc| svc.id.clone())
+            .collect::<Vec<_>>();
+        if !missing_target_service_ids.is_empty() {
+            return Err(anyhow::anyhow!(
+                "explicit update targets no longer cover selected services: {}",
+                missing_target_service_ids.join(", ")
+            ));
+        }
     }
 
     let auth_bridge = docker_config_path
@@ -462,7 +586,7 @@ pub async fn run_update_job(
         compose: stack.compose.clone(),
     };
 
-    let override_path = build_override_file(stack, &services, target_tag, target_digest)?;
+    let override_path = build_override_file(stack, &services, &explicit_targets_by_service)?;
     let _override_cleanup = override_path.as_ref().map(|p| TempFileCleanup(p.clone()));
     let override_stack = override_path.as_ref().map(|p| ComposeStack {
         project_name: compose_stack.project_name.clone(),
@@ -481,16 +605,20 @@ pub async fn run_update_job(
     let mut changed = 0u32;
     let mut old_images = serde_json::Map::new();
     let mut new_images = serde_json::Map::new();
-    let mut semver_pulled: Vec<String> = Vec::new();
-    let mut semver_pulled_set: HashSet<String> = HashSet::new();
-    let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
-        serde_json::Map::new();
+    let mut target_tags_pulled: Vec<String> = Vec::new();
+    let mut target_tags_seen: HashSet<String> = HashSet::new();
+    let mut pull_tags_pulled: Vec<String> = Vec::new();
+    let mut pull_tags_seen: HashSet<String> = HashSet::new();
+    let mut pull_tag_warnings: Vec<serde_json::Value> = Vec::new();
+    let mut successful_tag_refs: HashSet<String> = HashSet::new();
 
     let compose_for_update = override_stack.as_ref().unwrap_or(&compose_stack);
 
     let service_total = services.len() as u32;
     for (service_index, svc) in services.into_iter().enumerate() {
         let service_index = service_index as u32;
+        let target = explicit_targets_by_service.get(svc.id.as_str());
+
         emit_update_progress(
             progress_events.as_ref(),
             UpdateProgressEvent {
@@ -626,7 +754,6 @@ pub async fn run_update_job(
             },
         );
 
-        // `up -d` may recreate the container, so refresh the container id before any inspect/health checks.
         let post_update_container_id = run_to_string(
             runner,
             compose_for_update.ps_q_service(&compose_cfg, &svc.name),
@@ -635,28 +762,21 @@ pub async fn run_update_job(
         .await?;
         let post_update_container_id = post_update_container_id.trim().to_string();
         if post_update_container_id.is_empty() {
-            return Ok(UpdateOutcome {
-                status: "failed".to_string(),
-                summary_json: failed_summary_with_skipped_anomaly(
-                    "container_missing_after_update",
-                    &skipped_version_anomaly,
-                ),
-            });
+            return Err(anyhow::anyhow!("container_missing_after_update"));
         }
 
-        let has_health = run_to_string_with_retry(
+        let active_container_id = post_update_container_id;
+        let mut active_container_id = active_container_id;
+        let has_health = has_healthcheck(
             runner,
-            docker_runner::inspect_has_healthcheck(&docker_cfg, &post_update_container_id),
-            Duration::from_secs(10),
-            "inspect_has_healthcheck",
+            &docker_cfg,
+            &active_container_id,
             idempotent_retry_policy,
         )
         .await?;
-
-        let has_health = has_health.trim() == "1";
         let mut rolled_back = false;
-        let mut rollback_failure_step: Option<&'static str> = None;
-        let mut active_container_id = post_update_container_id;
+        let mut rollback_failure_step: Option<&str> = None;
+
         if has_health {
             emit_update_progress(
                 progress_events.as_ref(),
@@ -666,10 +786,10 @@ pub async fn run_update_job(
                     service_index,
                     service_total,
                     pull_fraction: None,
-                    message: format!("waiting healthcheck for {}", svc.name),
+                    message: format!("waiting for healthcheck on {}", svc.name),
                 },
             );
-            let ok = wait_healthy(
+            let healthy = wait_healthy(
                 runner,
                 &docker_cfg,
                 &active_container_id,
@@ -677,7 +797,7 @@ pub async fn run_update_job(
                 idempotent_retry_policy,
             )
             .await?;
-            if !ok {
+            if !healthy {
                 match rollback_service_after_failed_update(
                     runner,
                     &compose_cfg,
@@ -729,6 +849,90 @@ pub async fn run_update_job(
         )
         .await?;
         new_image_id = new_image_id.trim().to_string();
+
+        if !rolled_back && let Some(target) = target {
+            let repo = strip_tag_and_digest(&svc.image.reference)
+                .unwrap_or_else(|| svc.image.reference.clone());
+            let target_tag_ref = format!("{repo}:{}", target.target_tag.trim());
+            emit_update_progress(
+                progress_events.as_ref(),
+                UpdateProgressEvent {
+                    step: UpdateProgressStep::TargetTagPullStart,
+                    service_name: svc.name.clone(),
+                    service_index,
+                    service_total,
+                    pull_fraction: None,
+                    message: format!("pulling target tag for {}", svc.name),
+                },
+            );
+            if let Err(_pull_err) = ensure_explicit_tag_ref_pulled(
+                runner,
+                &docker_cfg,
+                idempotent_retry_policy,
+                "pull_target_tag",
+                &target_tag_ref,
+                &mut successful_tag_refs,
+            )
+            .await
+            {
+                match rollback_service_after_failed_update(
+                    runner,
+                    &compose_cfg,
+                    &compose_stack,
+                    &docker_cfg,
+                    &svc.name,
+                    &svc.image.reference,
+                    &old_image_id,
+                    sync_local_tag,
+                    has_health,
+                    idempotent_retry_policy,
+                )
+                .await
+                {
+                    Ok(rollback_container_id) => {
+                        active_container_id = rollback_container_id;
+                        rolled_back = true;
+                        rollback_failure_step = Some("pull_target_tag");
+                        let final_image_id = run_to_string_with_retry(
+                            runner,
+                            docker_runner::inspect_image_id(&docker_cfg, &active_container_id),
+                            Duration::from_secs(10),
+                            "inspect_image_id",
+                            idempotent_retry_policy,
+                        )
+                        .await?;
+                        new_image_id = final_image_id.trim().to_string();
+                    }
+                    Err(err) => {
+                        return Ok(UpdateOutcome {
+                            status: "failed".to_string(),
+                            summary_json: failed_summary_with_failure_step(
+                                err.to_string().as_str(),
+                                Some("pull_target_tag"),
+                                &skipped_version_anomaly,
+                            ),
+                        });
+                    }
+                }
+            } else {
+                record_unique_tag_ref(
+                    target_tag_ref.clone(),
+                    &mut target_tags_pulled,
+                    &mut target_tags_seen,
+                );
+                emit_update_progress(
+                    progress_events.as_ref(),
+                    UpdateProgressEvent {
+                        step: UpdateProgressStep::TargetTagPullDone,
+                        service_name: svc.name.clone(),
+                        service_index,
+                        service_total,
+                        pull_fraction: None,
+                        message: format!("target tag pulled for {}", svc.name),
+                    },
+                );
+            }
+        }
 
         if !rolled_back && sync_local_tag {
             emit_update_progress(
@@ -805,6 +1009,69 @@ pub async fn run_update_job(
             }
         }
 
+        if !rolled_back && let Some(target) = target {
+            let repo = strip_tag_and_digest(&svc.image.reference)
+                .unwrap_or_else(|| svc.image.reference.clone());
+            let pull_tag_refs = target
+                .pull_tags
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|tag| format!("{repo}:{tag}"))
+                .collect::<Vec<_>>();
+            if !pull_tag_refs.is_empty() {
+                emit_update_progress(
+                    progress_events.as_ref(),
+                    UpdateProgressEvent {
+                        step: UpdateProgressStep::PullTagsStart,
+                        service_name: svc.name.clone(),
+                        service_index,
+                        service_total,
+                        pull_fraction: None,
+                        message: format!("pulling compatibility tags for {}", svc.name),
+                    },
+                );
+                for tag_ref in pull_tag_refs {
+                    if pull_tags_seen.contains(&tag_ref) {
+                        continue;
+                    }
+                    match ensure_explicit_tag_ref_pulled(
+                        runner,
+                        &docker_cfg,
+                        idempotent_retry_policy,
+                        "pull_tag",
+                        &tag_ref,
+                        &mut successful_tag_refs,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            record_unique_tag_ref(
+                                tag_ref,
+                                &mut pull_tags_pulled,
+                                &mut pull_tags_seen,
+                            );
+                        }
+                        Err(err) => {
+                            pull_tags_seen.insert(tag_ref.clone());
+                            pull_tag_warnings.push(tag_pull_warning_value(&svc.id, &tag_ref, &err));
+                        }
+                    }
+                }
+                emit_update_progress(
+                    progress_events.as_ref(),
+                    UpdateProgressEvent {
+                        step: UpdateProgressStep::PullTagsDone,
+                        service_name: svc.name.clone(),
+                        service_index,
+                        service_total,
+                        pull_fraction: None,
+                        message: format!("compatibility tags settled for {}", svc.name),
+                    },
+                );
+            }
+        }
+
         new_images.insert(svc.id.clone(), json!(&new_image_id));
         changed += 1;
 
@@ -820,24 +1087,14 @@ pub async fn run_update_job(
                     message: format!("service {} rolled back", svc.name),
                 },
             );
-            let mut summary = serde_json::Map::new();
-            summary.insert("changedServices".to_string(), json!(changed));
-            summary.insert(
-                "oldDigests".to_string(),
-                serde_json::Value::Object(old_images),
-            );
-            summary.insert(
-                "newDigests".to_string(),
-                serde_json::Value::Object(new_images),
-            );
-            summary.insert("semverPulled".to_string(), json!(semver_pulled));
-            summary.insert(
-                "semverPullWarnings".to_string(),
-                serde_json::Value::Object(semver_pull_warnings),
-            );
-            summary.insert(
-                "skippedVersionAnomaly".to_string(),
-                json!(skipped_version_anomaly),
+            let mut summary = build_update_summary(
+                changed,
+                &old_images,
+                &new_images,
+                &target_tags_pulled,
+                &pull_tags_pulled,
+                &pull_tag_warnings,
+                &skipped_version_anomaly,
             );
             if let Some(step) = rollback_failure_step {
                 summary.insert("failureStep".to_string(), json!(step));
@@ -846,39 +1103,6 @@ pub async fn run_update_job(
                 status: "rolled_back".to_string(),
                 summary_json: serde_json::Value::Object(summary),
             });
-        }
-
-        if !matches!(scope, JobScope::Service) {
-            let repo = strip_tag_and_digest(&svc.image.reference)
-                .unwrap_or_else(|| svc.image.reference.clone());
-            maybe_pull_semver_tag_for_image(
-                runner,
-                &docker_cfg,
-                idempotent_retry_policy,
-                &svc.id,
-                &repo,
-                &new_image_id,
-                &mut semver_pulled,
-                &mut semver_pulled_set,
-                &mut semver_pull_warnings,
-            )
-            .await
-            .map_err(|err| {
-                let partial_summary = json!({
-                    "changedServices": changed,
-                    "oldDigests": old_images.clone(),
-                    "newDigests": new_images.clone(),
-                    "semverPulled": semver_pulled.clone(),
-                    "semverPullWarnings": semver_pull_warnings.clone(),
-                    "skippedVersionAnomaly": skipped_version_anomaly.clone(),
-                });
-                match err.downcast::<UpdateStepFailure>() {
-                    Ok(step_failure) => {
-                        anyhow::Error::new(step_failure.with_partial_summary(partial_summary))
-                    }
-                    Err(err) => err,
-                }
-            })?;
         }
 
         emit_update_progress(
@@ -896,50 +1120,44 @@ pub async fn run_update_job(
 
     Ok(UpdateOutcome {
         status: "success".to_string(),
-        summary_json: json!({
-            "changedServices": changed,
-            "oldDigests": old_images,
-            "newDigests": new_images,
-            "semverPulled": semver_pulled,
-            "semverPullWarnings": semver_pull_warnings,
-            "skippedVersionAnomaly": skipped_version_anomaly,
-        }),
+        summary_json: serde_json::Value::Object(build_update_summary(
+            changed,
+            &old_images,
+            &new_images,
+            &target_tags_pulled,
+            &pull_tags_pulled,
+            &pull_tag_warnings,
+            &skipped_version_anomaly,
+        )),
     })
 }
 
 fn build_override_file(
     stack: &StackRecord,
     services: &[&crate::api::types::Service],
-    target_tag: Option<&str>,
-    target_digest: Option<&str>,
+    explicit_targets: &HashMap<String, UpdateServiceTarget>,
 ) -> anyhow::Result<Option<std::path::PathBuf>> {
     if services.is_empty() {
         return Ok(None);
     }
-
-    let has_explicit_target = target_tag.is_some() || target_digest.is_some();
 
     let mut lines: Vec<String> = Vec::new();
     lines.push("services:".to_string());
 
     let mut any = false;
     for svc in services {
-        let override_image = if has_explicit_target {
-            let base = strip_tag_and_digest(&svc.image.reference)
-                .unwrap_or_else(|| svc.image.reference.clone());
-            if let Some(d) = target_digest {
-                format!("{base}@{}", normalize_digest(d))
-            } else if let Some(t) = target_tag {
-                replace_tag(&svc.image.reference, t).unwrap_or_else(|| svc.image.reference.clone())
-            } else {
-                svc.image.reference.clone()
-            }
-        } else if let Some(candidate) = svc.candidate.as_ref() {
-            let base = strip_tag_and_digest(&svc.image.reference)
-                .unwrap_or_else(|| svc.image.reference.clone());
+        let base = strip_tag_and_digest(&svc.image.reference)
+            .unwrap_or_else(|| svc.image.reference.clone());
+        let override_image = if explicit_targets.is_empty() {
+            let Some(candidate) = svc.candidate.as_ref() else {
+                continue;
+            };
             format!("{base}@{}", normalize_digest(&candidate.digest))
         } else {
-            continue;
+            let target = explicit_targets.get(svc.id.as_str()).ok_or_else(|| {
+                anyhow::anyhow!("missing explicit update target for service {}", svc.id)
+            })?;
+            format!("{base}@{}", normalize_digest(&target.target_digest))
         };
 
         any = true;
@@ -981,148 +1199,6 @@ fn strip_tag_and_digest(image_ref: &str) -> Option<String> {
         return Some(without_digest.to_string());
     }
     Some(left.to_string())
-}
-
-fn replace_tag(image_ref: &str, tag: &str) -> Option<String> {
-    let (without_digest, digest) = image_ref.split_once('@').unwrap_or((image_ref, ""));
-    let (left, right) = without_digest.rsplit_once(':')?;
-    if right.is_empty() || right.contains('/') || left.is_empty() {
-        return None;
-    }
-    if digest.is_empty() {
-        Some(format!("{left}:{tag}"))
-    } else {
-        Some(format!("{left}:{tag}@{digest}"))
-    }
-}
-
-fn semver_tag_candidates_from_oci_version(raw: &str) -> Vec<String> {
-    let raw_tag = raw.trim();
-    if raw_tag.is_empty() || raw_tag == "<no value>" {
-        return Vec::new();
-    }
-
-    let normalized = raw_tag
-        .strip_prefix('v')
-        .or_else(|| raw_tag.strip_prefix('V'))
-        .unwrap_or(raw_tag);
-    let version = match Version::parse(normalized) {
-        Ok(version) if version.build.is_empty() => version,
-        _ => return Vec::new(),
-    };
-
-    let normalized_tag = version.to_string();
-    let mut candidates = vec![raw_tag.to_string()];
-    if normalized_tag != raw_tag {
-        candidates.push(normalized_tag);
-    }
-    candidates
-}
-
-fn record_semver_pull_success(
-    tag_ref: String,
-    semver_pulled: &mut Vec<String>,
-    semver_pulled_set: &mut HashSet<String>,
-) {
-    if semver_pulled_set.insert(tag_ref.clone()) {
-        semver_pulled.push(tag_ref);
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn maybe_pull_semver_tag_for_image(
-    runner: &dyn CommandRunner,
-    docker_cfg: &docker_runner::DockerRunnerConfig,
-    idempotent_retry_policy: IdempotentRetryPolicy,
-    _service_id: &str,
-    repo: &str,
-    image_id: &str,
-    semver_pulled: &mut Vec<String>,
-    semver_pulled_set: &mut HashSet<String>,
-    _semver_pull_warnings: &mut serde_json::Map<String, serde_json::Value>,
-) -> anyhow::Result<()> {
-    let raw_version = run_to_string_with_retry(
-        runner,
-        docker_runner::image_inspect_oci_version(docker_cfg, image_id),
-        Duration::from_secs(10),
-        "semver_inspect_version",
-        idempotent_retry_policy,
-    )
-    .await?;
-
-    let candidate_refs = semver_tag_candidates_from_oci_version(&raw_version)
-        .into_iter()
-        .map(|tag| format!("{repo}:{tag}"))
-        .collect::<Vec<_>>();
-    if candidate_refs.is_empty() {
-        return Ok(());
-    }
-
-    // Skip if the tag already exists locally for this image id.
-    let repo_tags = run_to_string_with_retry(
-        runner,
-        docker_runner::image_inspect_repo_tags(docker_cfg, image_id),
-        Duration::from_secs(10),
-        "semver_inspect_repo_tags",
-        idempotent_retry_policy,
-    )
-    .await?;
-    let parsed_repo_tags = serde_json::from_str::<Option<Vec<String>>>(repo_tags.trim())
-        .ok()
-        .flatten()
-        .unwrap_or_default();
-
-    for tag_ref in &candidate_refs {
-        if parsed_repo_tags.iter().any(|t| t == tag_ref) {
-            record_semver_pull_success(tag_ref.clone(), semver_pulled, semver_pulled_set);
-            return Ok(());
-        }
-    }
-
-    let mut pull_failures: Vec<String> = Vec::new();
-    let mut total_pull_attempts = 0usize;
-    for tag_ref in candidate_refs {
-        if semver_pulled_set.contains(&tag_ref) {
-            return Ok(());
-        }
-
-        match run_checked_with_retry(
-            runner,
-            docker_runner::pull_image(docker_cfg, &tag_ref),
-            Duration::from_secs(300),
-            "semver_pull",
-            idempotent_retry_policy,
-        )
-        .await
-        {
-            Ok(()) => {
-                record_semver_pull_success(tag_ref, semver_pulled, semver_pulled_set);
-                return Ok(());
-            }
-            Err(err) => match err.downcast::<UpdateStepFailure>() {
-                Ok(step_failure) => {
-                    total_pull_attempts += step_failure.retry.attempts as usize;
-                    pull_failures.push(format!("{tag_ref} => {}", step_failure.last_error));
-                }
-                Err(err) => {
-                    total_pull_attempts += idempotent_retry_policy.max_attempts;
-                    pull_failures.push(format!("{tag_ref} => {err}"));
-                }
-            },
-        }
-    }
-
-    Err(anyhow::Error::new(UpdateStepFailure {
-        step: "semver_pull".to_string(),
-        retry: RetrySummary {
-            attempts: total_pull_attempts as u32,
-            max_attempts: (idempotent_retry_policy.max_attempts * pull_failures.len()) as u32,
-            base_ms: idempotent_retry_policy.base_ms,
-            max_ms: idempotent_retry_policy.max_ms,
-        },
-        last_error: format!("all semver candidates failed: {}", pull_failures.join("; ")),
-        partial_summary: None,
-    }))
 }
 
 fn parse_size_to_bytes(input: &str) -> Option<f64> {
@@ -1309,6 +1385,23 @@ async fn rollback_service_after_failed_update(
     }
 
     Ok(rollback_container_id)
+}
+
+async fn has_healthcheck(
+    runner: &dyn CommandRunner,
+    docker_cfg: &docker_runner::DockerRunnerConfig,
+    container_id: &str,
+    retry_policy: IdempotentRetryPolicy,
+) -> anyhow::Result<bool> {
+    let out = run_to_string_with_retry(
+        runner,
+        docker_runner::inspect_has_healthcheck(docker_cfg, container_id),
+        Duration::from_secs(10),
+        "inspect_has_healthcheck",
+        retry_policy,
+    )
+    .await?;
+    Ok(out.trim() == "1")
 }
 
 async fn wait_healthy(
@@ -1571,6 +1664,20 @@ mod tests {
         }
     }
 
+    fn explicit_targets(
+        service_id: &str,
+        target_tag: &str,
+        target_digest: &str,
+        pull_tags: &[&str],
+    ) -> Vec<UpdateServiceTarget> {
+        vec![UpdateServiceTarget {
+            service_id: service_id.to_string(),
+            target_tag: target_tag.to_string(),
+            target_digest: target_digest.to_string(),
+            pull_tags: Some(pull_tags.iter().map(|tag| (*tag).to_string()).collect()),
+        }]
+    }
+
     fn write_test_docker_config() -> (PathBuf, TempDirCleanup) {
         let root = std::env::temp_dir().join(format!("dockrev-test-auth-{}", ulid::Ulid::new()));
         fs::create_dir_all(&root).unwrap();
@@ -1722,65 +1829,6 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
-    struct EnvCaptureSemverRunner {
-        specs: Mutex<Vec<CommandSpec>>,
-    }
-
-    #[async_trait::async_trait]
-    impl CommandRunner for EnvCaptureSemverRunner {
-        async fn run(
-            &self,
-            spec: CommandSpec,
-            _timeout: Duration,
-        ) -> anyhow::Result<CommandOutput> {
-            self.specs.lock().unwrap().push(spec.clone());
-            let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
-            if args
-                == vec![
-                    "image",
-                    "inspect",
-                    "--format",
-                    r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
-                    "sha256:new",
-                ]
-            {
-                return Ok(CommandOutput {
-                    status: 0,
-                    stdout: "0.7.7\n".to_string(),
-                    stderr: String::new(),
-                });
-            }
-            if args
-                == vec![
-                    "image",
-                    "inspect",
-                    "--format",
-                    "{{json .RepoTags}}",
-                    "sha256:new",
-                ]
-            {
-                return Ok(CommandOutput {
-                    status: 0,
-                    stdout: "[]\n".to_string(),
-                    stderr: String::new(),
-                });
-            }
-            if args == vec!["pull", "ghcr.io/org/web:0.7.7"] {
-                return Ok(CommandOutput {
-                    status: 0,
-                    stdout: String::new(),
-                    stderr: String::new(),
-                });
-            }
-            Ok(CommandOutput {
-                status: 1,
-                stdout: String::new(),
-                stderr: format!("unexpected args: {:?}", spec.args),
-            })
-        }
-    }
-
     fn selection_test_service(id: &str, name: &str, image_reference: &str) -> Service {
         Service {
             id: id.to_string(),
@@ -1911,7 +1959,6 @@ mod tests {
             None,
             "live",
             None,
-            None,
             false,
             "ui",
             Some("ghcr.io/ivanli-cn/dockrev"),
@@ -1940,7 +1987,6 @@ mod tests {
             &JobScope::Service,
             Some("svc_1"),
             "live",
-            None,
             None,
             false,
             "ui",
@@ -1995,7 +2041,6 @@ mod tests {
             None,
             "live",
             None,
-            None,
             false,
             "ui",
             Some("ghcr.io/ivanli-cn/dockrev"),
@@ -2023,7 +2068,6 @@ mod tests {
             &JobScope::Service,
             Some("svc_1"),
             "live",
-            None,
             None,
             false,
             "ui",
@@ -2225,7 +2269,6 @@ mod tests {
             None,
             "dry-run",
             None,
-            None,
             false,
             "ui",
             None,
@@ -2283,7 +2326,6 @@ mod tests {
             &JobScope::Service,
             Some("svc_1"),
             "live",
-            None,
             None,
             false,
             "ui",
@@ -2345,7 +2387,6 @@ mod tests {
             &JobScope::Service,
             Some("svc_1"),
             "live",
-            None,
             None,
             false,
             "ui",
@@ -2602,6 +2643,21 @@ mod tests {
                     assert_eq!(spec.program, "docker");
                     assert_eq!(
                         spec.args,
+                        vec!["pull", "ghcr.io/org/web:1.0"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                }
+                8 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
                         vec!["image", "tag", "sha256:new", "ghcr.io/org/web:1.0"]
                             .into_iter()
                             .map(|s| s.to_string())
@@ -2670,36 +2726,6 @@ mod tests {
                     stdout: "0\n".to_string(),
                     stderr: String::new(),
                 }
-            } else if spec.program == "docker"
-                && args
-                    == vec![
-                        "image",
-                        "inspect",
-                        "--format",
-                        r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
-                        "sha256:new",
-                    ]
-            {
-                CommandOutput {
-                    status: 0,
-                    stdout: "v0.7.7\n".to_string(),
-                    stderr: String::new(),
-                }
-            } else if spec.program == "docker"
-                && args
-                    == vec![
-                        "image",
-                        "inspect",
-                        "--format",
-                        "{{json .RepoTags}}",
-                        "sha256:new",
-                    ]
-            {
-                CommandOutput {
-                    status: 0,
-                    stdout: "[]\n".to_string(),
-                    stderr: String::new(),
-                }
             } else {
                 CommandOutput {
                     status: 0,
@@ -2730,7 +2756,6 @@ mod tests {
             Some("svc_1"),
             "live",
             None,
-            None,
             false,
             "ui",
             None,
@@ -2755,6 +2780,7 @@ mod tests {
     async fn explicit_target_digest_still_syncs_tag_based_service() {
         let stack = single_service_stack("ghcr.io/org/web:1.0", None);
         let runner = ExplicitTargetDigestSyncRunner::default();
+        let explicit_targets = explicit_targets("svc_1", "1.0", "sha256:explicit", &[]);
 
         let outcome = run_update_job(
             &runner,
@@ -2765,8 +2791,7 @@ mod tests {
             &JobScope::Service,
             Some("svc_1"),
             "live",
-            None,
-            Some("sha256:explicit"),
+            Some(explicit_targets.as_slice()),
             false,
             "ui",
             None,
@@ -2776,7 +2801,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(outcome.status, "success");
-        assert_eq!(*runner.step.lock().unwrap(), 8);
+        assert_eq!(
+            outcome.summary_json["targetTagsPulled"],
+            json!(["ghcr.io/org/web:1.0"])
+        );
+        assert_eq!(*runner.step.lock().unwrap(), 9);
     }
 
     #[tokio::test]
@@ -2794,7 +2823,6 @@ mod tests {
             Some("svc_1"),
             "live",
             None,
-            None,
             false,
             "ui",
             None,
@@ -2804,11 +2832,66 @@ mod tests {
         .unwrap();
 
         assert_eq!(outcome.status, "success");
+        assert_eq!(outcome.summary_json["targetTagsPulled"], json!([]));
         assert_eq!(*runner.step.lock().unwrap(), 7);
     }
 
     #[tokio::test]
-    async fn stack_update_syncs_local_tag_before_semver_pull() {
+    async fn explicit_targets_must_cover_selected_services_at_execution_time() {
+        let mut stack = single_service_stack(
+            "ghcr.io/org/web:1.0",
+            Some(Candidate {
+                tag: "1.0".to_string(),
+                resolved_tag: Some("1.0".to_string()),
+                digest: "sha256:new1".to_string(),
+                arch_match: ArchMatch::Match,
+                arch: vec!["linux/amd64".to_string()],
+            }),
+        );
+        let mut worker = stack.services[0].clone();
+        worker.id = "svc_2".to_string();
+        worker.name = "worker".to_string();
+        worker.image.reference = "ghcr.io/org/worker:2.0".to_string();
+        worker.image.tag = "2.0".to_string();
+        worker.candidate = Some(Candidate {
+            tag: "2.0".to_string(),
+            resolved_tag: Some("2.0".to_string()),
+            digest: "sha256:new2".to_string(),
+            arch_match: ArchMatch::Match,
+            arch: vec!["linux/amd64".to_string()],
+        });
+        stack.services.push(worker);
+
+        let runner = FakeRunner::default();
+        let explicit_targets = explicit_targets("svc_1", "1.0", "sha256:new1", &[]);
+
+        let err = run_update_job(
+            &runner,
+            "docker-compose",
+            None,
+            IdempotentRetryPolicy::default(),
+            &stack,
+            &JobScope::Stack,
+            None,
+            "live",
+            Some(explicit_targets.as_slice()),
+            false,
+            "ui",
+            None,
+            None,
+        )
+        .await
+        .expect_err("missing explicit target should fail before executing update commands");
+
+        assert!(
+            err.to_string()
+                .contains("explicit update targets no longer cover selected services: svc_2")
+        );
+        assert!(runner.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn stack_update_pulls_target_tag_before_sync_and_compatibility_tags_afterwards() {
         let stack = single_service_stack(
             "ghcr.io/org/web:1.0",
             Some(Candidate {
@@ -2820,6 +2903,7 @@ mod tests {
             }),
         );
         let runner = SyncBeforeSemverRunner::default();
+        let explicit_targets = explicit_targets("svc_1", "1.0", "sha256:candidate", &["v0.7.7"]);
 
         let outcome = run_update_job(
             &runner,
@@ -2830,8 +2914,7 @@ mod tests {
             &JobScope::Stack,
             None,
             "live",
-            None,
-            None,
+            Some(explicit_targets.as_slice()),
             false,
             "ui",
             None,
@@ -2842,10 +2925,21 @@ mod tests {
 
         assert_eq!(outcome.status, "success");
         assert_eq!(
-            outcome.summary_json["semverPulled"],
+            outcome.summary_json["targetTagsPulled"],
+            json!(["ghcr.io/org/web:1.0"])
+        );
+        assert_eq!(
+            outcome.summary_json["pullTagsPulled"],
             json!(["ghcr.io/org/web:v0.7.7"])
         );
         let calls = runner.calls.lock().unwrap();
+        let target_idx = calls
+            .iter()
+            .position(|(program, args)| {
+                program == "docker"
+                    && args == &vec!["pull".to_string(), "ghcr.io/org/web:1.0".to_string()]
+            })
+            .expect("target tag pull should exist");
         let sync_idx = calls
             .iter()
             .position(|(program, args)| {
@@ -2859,14 +2953,15 @@ mod tests {
                         ]
             })
             .expect("sync tag command should exist");
-        let semver_idx = calls
+        let compat_idx = calls
             .iter()
             .position(|(program, args)| {
                 program == "docker"
                     && args == &vec!["pull".to_string(), "ghcr.io/org/web:v0.7.7".to_string()]
             })
-            .expect("semver pull should exist");
-        assert!(sync_idx < semver_idx);
+            .expect("compatibility tag pull should exist");
+        assert!(target_idx < sync_idx);
+        assert!(sync_idx < compat_idx);
     }
 
     #[test]
@@ -3036,7 +3131,6 @@ mod tests {
             Some("svc_1"),
             "live",
             None,
-            None,
             false,
             "ui",
             None,
@@ -3048,753 +3142,352 @@ mod tests {
         assert_eq!(*runner.up_calls.lock().unwrap(), 1);
     }
 
-    #[test]
-    fn semver_tag_candidates_preserve_raw_tag_and_dedupe_normalized_variant() {
-        assert_eq!(
-            semver_tag_candidates_from_oci_version(" v0.7.7\n"),
-            vec!["v0.7.7".to_string(), "0.7.7".to_string()]
-        );
-        assert_eq!(
-            semver_tag_candidates_from_oci_version("0.7.7"),
-            vec!["0.7.7".to_string()]
-        );
-        assert!(semver_tag_candidates_from_oci_version("0.7.7+build.1").is_empty());
-    }
-
     #[derive(Default)]
-    struct SemverRawTagRunner {
-        pull_calls: Mutex<Vec<String>>,
+    struct CompatibilityTagWarningRunner {
+        step: Mutex<usize>,
     }
 
     #[async_trait::async_trait]
-    impl CommandRunner for SemverRawTagRunner {
+    impl CommandRunner for CompatibilityTagWarningRunner {
         async fn run(
             &self,
             spec: CommandSpec,
             _timeout: Duration,
         ) -> anyhow::Result<CommandOutput> {
-            if spec.program != "docker" {
-                return Ok(CommandOutput {
-                    status: 1,
-                    stdout: String::new(),
-                    stderr: "unexpected program".to_string(),
-                });
-            }
-            let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
-            if args
-                == vec![
-                    "image",
-                    "inspect",
-                    "--format",
-                    r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
-                    "sha256:new",
-                ]
-            {
-                return Ok(CommandOutput {
+            let mut step = self.step.lock().unwrap();
+            let out = match *step {
+                0 => CommandOutput {
                     status: 0,
-                    stdout: "v0.7.7\n".to_string(),
+                    stdout: "old_container
+"
+                    .to_string(),
                     stderr: String::new(),
-                });
-            }
-            if args
-                == vec![
-                    "image",
-                    "inspect",
-                    "--format",
-                    "{{json .RepoTags}}",
-                    "sha256:new",
-                ]
-            {
-                return Ok(CommandOutput {
+                },
+                1 => CommandOutput {
                     status: 0,
-                    stdout: r#"["ghcr.io/org/web:latest"]"#.to_string(),
+                    stdout: "sha256:old
+"
+                    .to_string(),
                     stderr: String::new(),
-                });
-            }
-            if args == vec!["pull", "ghcr.io/org/web:v0.7.7"] {
-                self.pull_calls.lock().unwrap().push(args[1].to_string());
-                return Ok(CommandOutput {
+                },
+                2 => CommandOutput {
                     status: 0,
                     stdout: String::new(),
                     stderr: String::new(),
-                });
-            }
-            Ok(CommandOutput {
-                status: 1,
-                stdout: String::new(),
-                stderr: "unexpected args".to_string(),
-            })
-        }
-    }
-
-    #[derive(Default)]
-    struct SemverFallbackRunner {
-        pull_calls: Mutex<Vec<String>>,
-    }
-
-    #[async_trait::async_trait]
-    impl CommandRunner for SemverFallbackRunner {
-        async fn run(
-            &self,
-            spec: CommandSpec,
-            _timeout: Duration,
-        ) -> anyhow::Result<CommandOutput> {
-            if spec.program != "docker" {
-                return Ok(CommandOutput {
-                    status: 1,
-                    stdout: String::new(),
-                    stderr: "unexpected program".to_string(),
-                });
-            }
-            let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
-            if args
-                == vec![
-                    "image",
-                    "inspect",
-                    "--format",
-                    r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
-                    "sha256:new",
-                ]
-            {
-                return Ok(CommandOutput {
-                    status: 0,
-                    stdout: "v0.7.7\n".to_string(),
-                    stderr: String::new(),
-                });
-            }
-            if args
-                == vec![
-                    "image",
-                    "inspect",
-                    "--format",
-                    "{{json .RepoTags}}",
-                    "sha256:new",
-                ]
-            {
-                return Ok(CommandOutput {
-                    status: 0,
-                    stdout: r#"["ghcr.io/org/web:latest"]"#.to_string(),
-                    stderr: String::new(),
-                });
-            }
-            if args == vec!["pull", "ghcr.io/org/web:v0.7.7"] {
-                self.pull_calls.lock().unwrap().push(args[1].to_string());
-                return Ok(CommandOutput {
-                    status: 1,
-                    stdout: String::new(),
-                    stderr: "raw not found".to_string(),
-                });
-            }
-            if args == vec!["pull", "ghcr.io/org/web:0.7.7"] {
-                self.pull_calls.lock().unwrap().push(args[1].to_string());
-                return Ok(CommandOutput {
+                },
+                3 => CommandOutput {
                     status: 0,
                     stdout: String::new(),
                     stderr: String::new(),
-                });
-            }
-            Ok(CommandOutput {
-                status: 1,
-                stdout: String::new(),
-                stderr: "unexpected args".to_string(),
-            })
-        }
-    }
-
-    #[derive(Default)]
-    struct SemverNormalizedTagAlreadyPresentRunner {
-        inspect_repo_tags_calls: Mutex<usize>,
-        pull_calls: Mutex<usize>,
-    }
-
-    #[async_trait::async_trait]
-    impl CommandRunner for SemverNormalizedTagAlreadyPresentRunner {
-        async fn run(
-            &self,
-            spec: CommandSpec,
-            _timeout: Duration,
-        ) -> anyhow::Result<CommandOutput> {
-            if spec.program != "docker" {
-                return Ok(CommandOutput {
-                    status: 1,
-                    stdout: String::new(),
-                    stderr: "unexpected program".to_string(),
-                });
-            }
-            let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
-            if args
-                == vec![
-                    "image",
-                    "inspect",
-                    "--format",
-                    r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
-                    "sha256:new",
-                ]
-            {
-                return Ok(CommandOutput {
+                },
+                4 => CommandOutput {
                     status: 0,
-                    stdout: "v0.7.7\n".to_string(),
+                    stdout: "new_container
+"
+                    .to_string(),
                     stderr: String::new(),
-                });
-            }
-            if args
-                == vec![
-                    "image",
-                    "inspect",
-                    "--format",
-                    "{{json .RepoTags}}",
-                    "sha256:new",
-                ]
-            {
-                *self.inspect_repo_tags_calls.lock().unwrap() += 1;
-                return Ok(CommandOutput {
+                },
+                5 => CommandOutput {
                     status: 0,
-                    stdout: r#"["ghcr.io/org/web:0.7.7"]"#.to_string(),
+                    stdout: "0
+"
+                    .to_string(),
                     stderr: String::new(),
-                });
-            }
-            if args == vec!["pull", "ghcr.io/org/web:v0.7.7"]
-                || args == vec!["pull", "ghcr.io/org/web:0.7.7"]
-            {
-                *self.pull_calls.lock().unwrap() += 1;
-                return Ok(CommandOutput {
-                    status: 1,
-                    stdout: String::new(),
-                    stderr: "pull should not run when a fallback tag already exists locally"
-                        .to_string(),
-                });
-            }
-            Ok(CommandOutput {
-                status: 1,
-                stdout: String::new(),
-                stderr: "unexpected args".to_string(),
-            })
-        }
-    }
-
-    #[derive(Default)]
-    struct SemverAlreadyTaggedRunner {
-        inspect_repo_tags_calls: Mutex<usize>,
-        pull_calls: Mutex<usize>,
-    }
-
-    #[async_trait::async_trait]
-    impl CommandRunner for SemverAlreadyTaggedRunner {
-        async fn run(
-            &self,
-            spec: CommandSpec,
-            _timeout: Duration,
-        ) -> anyhow::Result<CommandOutput> {
-            if spec.program != "docker" {
-                return Ok(CommandOutput {
-                    status: 1,
-                    stdout: String::new(),
-                    stderr: "unexpected program".to_string(),
-                });
-            }
-            let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
-            if args
-                == vec![
-                    "image",
-                    "inspect",
-                    "--format",
-                    r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
-                    "sha256:new",
-                ]
-            {
-                return Ok(CommandOutput {
+                },
+                6 => CommandOutput {
                     status: 0,
-                    stdout: "v0.7.7\n".to_string(),
+                    stdout: "sha256:new
+"
+                    .to_string(),
                     stderr: String::new(),
-                });
-            }
-            if args
-                == vec![
-                    "image",
-                    "inspect",
-                    "--format",
-                    "{{json .RepoTags}}",
-                    "sha256:new",
-                ]
-            {
-                *self.inspect_repo_tags_calls.lock().unwrap() += 1;
-                return Ok(CommandOutput {
-                    status: 0,
-                    stdout: r#"["ghcr.io/org/web:v0.7.7"]"#.to_string(),
-                    stderr: String::new(),
-                });
-            }
-            if args == vec!["pull", "ghcr.io/org/web:v0.7.7"] {
-                *self.pull_calls.lock().unwrap() += 1;
-                return Ok(CommandOutput {
-                    status: 1,
-                    stdout: String::new(),
-                    stderr: "pull should not run when tag already exists locally".to_string(),
-                });
-            }
-            Ok(CommandOutput {
-                status: 1,
-                stdout: String::new(),
-                stderr: "unexpected args".to_string(),
-            })
-        }
-    }
-
-    #[derive(Default)]
-    struct SemverPullFailRunner {
-        pull_calls: Mutex<Vec<String>>,
-    }
-
-    #[async_trait::async_trait]
-    impl CommandRunner for SemverPullFailRunner {
-        async fn run(
-            &self,
-            spec: CommandSpec,
-            _timeout: Duration,
-        ) -> anyhow::Result<CommandOutput> {
-            if spec.program != "docker" {
-                return Ok(CommandOutput {
-                    status: 1,
-                    stdout: String::new(),
-                    stderr: "unexpected program".to_string(),
-                });
-            }
-            let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
-            if args
-                == vec![
-                    "image",
-                    "inspect",
-                    "--format",
-                    r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
-                    "sha256:new",
-                ]
-            {
-                return Ok(CommandOutput {
-                    status: 0,
-                    stdout: "v0.7.7\n".to_string(),
-                    stderr: String::new(),
-                });
-            }
-            if args
-                == vec![
-                    "image",
-                    "inspect",
-                    "--format",
-                    "{{json .RepoTags}}",
-                    "sha256:new",
-                ]
-            {
-                return Ok(CommandOutput {
-                    status: 0,
-                    stdout: r#"["ghcr.io/org/web:latest"]"#.to_string(),
-                    stderr: String::new(),
-                });
-            }
-            if args == vec!["pull", "ghcr.io/org/web:v0.7.7"]
-                || args == vec!["pull", "ghcr.io/org/web:0.7.7"]
-            {
-                self.pull_calls.lock().unwrap().push(args[1].to_string());
-                return Ok(CommandOutput {
-                    status: 1,
-                    stdout: String::new(),
-                    stderr: "not found".to_string(),
-                });
-            }
-            Ok(CommandOutput {
-                status: 1,
-                stdout: String::new(),
-                stderr: "unexpected args".to_string(),
-            })
-        }
-    }
-
-    #[derive(Default)]
-    struct NoSemverOciVersionRunner {
-        inspect_repo_tags_calls: Mutex<usize>,
-        pull_calls: Mutex<usize>,
-    }
-
-    #[async_trait::async_trait]
-    impl CommandRunner for NoSemverOciVersionRunner {
-        async fn run(
-            &self,
-            spec: CommandSpec,
-            _timeout: Duration,
-        ) -> anyhow::Result<CommandOutput> {
-            if spec.program != "docker" {
-                return Ok(CommandOutput {
-                    status: 1,
-                    stdout: String::new(),
-                    stderr: "unexpected program".to_string(),
-                });
-            }
-            let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
-            if args
-                == vec![
-                    "image",
-                    "inspect",
-                    "--format",
-                    r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
-                    "sha256:no-semver",
-                ]
-            {
-                return Ok(CommandOutput {
-                    status: 0,
-                    stdout: "latest\n".to_string(),
-                    stderr: String::new(),
-                });
-            }
-            if args
-                == vec![
-                    "image",
-                    "inspect",
-                    "--format",
-                    "{{json .RepoTags}}",
-                    "sha256:no-semver",
-                ]
-            {
-                *self.inspect_repo_tags_calls.lock().unwrap() += 1;
-                return Ok(CommandOutput {
-                    status: 1,
-                    stdout: String::new(),
-                    stderr: "repo tags should not be inspected without a semver label".to_string(),
-                });
-            }
-            if args == vec!["pull", "ghcr.io/org/web:latest"] {
-                *self.pull_calls.lock().unwrap() += 1;
-                return Ok(CommandOutput {
-                    status: 1,
-                    stdout: String::new(),
-                    stderr: "pull should not be attempted without a semver label".to_string(),
-                });
-            }
-            Ok(CommandOutput {
-                status: 1,
-                stdout: String::new(),
-                stderr: "unexpected args".to_string(),
-            })
+                },
+                7 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec!["pull", "ghcr.io/org/web:1.0"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                }
+                8 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec!["image", "tag", "sha256:new", "ghcr.io/org/web:1.0"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                }
+                9 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec!["pull", "ghcr.io/org/web:v0.7.7"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: "compat tag missing".to_string(),
+                    }
+                }
+                _ => panic!(
+                    "unexpected extra command: program={} args={:?}",
+                    spec.program, spec.args
+                ),
+            };
+            *step += 1;
+            Ok(out)
         }
     }
 
     #[tokio::test]
-    async fn maybe_pull_semver_tag_prefers_raw_oci_tag_before_normalized_fallback() {
-        let runner = SemverRawTagRunner::default();
-        let docker_cfg = docker_runner::DockerRunnerConfig::default();
-
-        let mut semver_pulled: Vec<String> = Vec::new();
-        let mut semver_pulled_set: HashSet<String> = HashSet::new();
-        let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
-            serde_json::Map::new();
-
-        maybe_pull_semver_tag_for_image(
-            &runner,
-            &docker_cfg,
-            IdempotentRetryPolicy {
-                max_attempts: 3,
-                base_ms: 1,
-                max_ms: 2,
-            },
-            "svc_1",
-            "ghcr.io/org/web",
-            "sha256:new",
-            &mut semver_pulled,
-            &mut semver_pulled_set,
-            &mut semver_pull_warnings,
-        )
-        .await
-        .expect("raw OCI tag should be pulled first");
-
-        assert_eq!(semver_pulled, vec!["ghcr.io/org/web:v0.7.7".to_string()]);
-        assert!(semver_pulled_set.contains("ghcr.io/org/web:v0.7.7"));
-        assert_eq!(
-            *runner.pull_calls.lock().unwrap(),
-            vec!["ghcr.io/org/web:v0.7.7".to_string()]
+    async fn compatibility_tag_pull_failures_only_record_warnings() {
+        let stack = single_service_stack(
+            "ghcr.io/org/web:1.0",
+            Some(Candidate {
+                tag: "1.0".to_string(),
+                resolved_tag: Some("1.0".to_string()),
+                digest: "sha256:new".to_string(),
+                arch_match: ArchMatch::Match,
+                arch: vec!["linux/amd64".to_string()],
+            }),
         );
-    }
+        let explicit_targets = explicit_targets("svc_1", "1.0", "sha256:new", &["v0.7.7"]);
+        let runner = CompatibilityTagWarningRunner::default();
 
-    #[tokio::test]
-    async fn maybe_pull_semver_tag_falls_back_to_normalized_tag_after_raw_failure() {
-        let runner = SemverFallbackRunner::default();
-        let docker_cfg = docker_runner::DockerRunnerConfig::default();
-
-        let mut semver_pulled: Vec<String> = Vec::new();
-        let mut semver_pulled_set: HashSet<String> = HashSet::new();
-        let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
-            serde_json::Map::new();
-
-        maybe_pull_semver_tag_for_image(
+        let outcome = run_update_job(
             &runner,
-            &docker_cfg,
+            "docker-compose",
+            None,
             IdempotentRetryPolicy {
                 max_attempts: 1,
                 base_ms: 1,
                 max_ms: 2,
             },
-            "svc_1",
-            "ghcr.io/org/web",
-            "sha256:new",
-            &mut semver_pulled,
-            &mut semver_pulled_set,
-            &mut semver_pull_warnings,
-        )
-        .await
-        .expect("normalized tag should be used as fallback");
-
-        assert_eq!(semver_pulled, vec!["ghcr.io/org/web:0.7.7".to_string()]);
-        assert!(semver_pulled_set.contains("ghcr.io/org/web:0.7.7"));
-        assert_eq!(
-            *runner.pull_calls.lock().unwrap(),
-            vec![
-                "ghcr.io/org/web:v0.7.7".to_string(),
-                "ghcr.io/org/web:0.7.7".to_string(),
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn maybe_pull_semver_tag_still_attempts_raw_tag_when_only_normalized_tag_was_previously_pulled()
-     {
-        let runner = SemverRawTagRunner::default();
-        let docker_cfg = docker_runner::DockerRunnerConfig::default();
-
-        let mut semver_pulled: Vec<String> = vec!["ghcr.io/org/web:0.7.7".to_string()];
-        let mut semver_pulled_set: HashSet<String> =
-            HashSet::from(["ghcr.io/org/web:0.7.7".to_string()]);
-        let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
-            serde_json::Map::new();
-
-        maybe_pull_semver_tag_for_image(
-            &runner,
-            &docker_cfg,
-            IdempotentRetryPolicy {
-                max_attempts: 3,
-                base_ms: 1,
-                max_ms: 2,
-            },
-            "svc_2",
-            "ghcr.io/org/web",
-            "sha256:new",
-            &mut semver_pulled,
-            &mut semver_pulled_set,
-            &mut semver_pull_warnings,
-        )
-        .await
-        .expect("raw tag should still be attempted before normalized set short-circuit");
-
-        assert_eq!(
-            semver_pulled,
-            vec![
-                "ghcr.io/org/web:0.7.7".to_string(),
-                "ghcr.io/org/web:v0.7.7".to_string(),
-            ]
-        );
-        assert!(semver_pulled_set.contains("ghcr.io/org/web:0.7.7"));
-        assert!(semver_pulled_set.contains("ghcr.io/org/web:v0.7.7"));
-        assert_eq!(
-            *runner.pull_calls.lock().unwrap(),
-            vec!["ghcr.io/org/web:v0.7.7".to_string()]
-        );
-    }
-
-    #[tokio::test]
-    async fn maybe_pull_semver_tag_short_circuits_when_raw_tag_already_exists_locally() {
-        let runner = SemverAlreadyTaggedRunner::default();
-        let docker_cfg = docker_runner::DockerRunnerConfig::default();
-
-        let mut semver_pulled: Vec<String> = Vec::new();
-        let mut semver_pulled_set: HashSet<String> = HashSet::new();
-        let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
-            serde_json::Map::new();
-
-        maybe_pull_semver_tag_for_image(
-            &runner,
-            &docker_cfg,
-            IdempotentRetryPolicy {
-                max_attempts: 3,
-                base_ms: 1,
-                max_ms: 2,
-            },
-            "svc_1",
-            "ghcr.io/org/web",
-            "sha256:new",
-            &mut semver_pulled,
-            &mut semver_pulled_set,
-            &mut semver_pull_warnings,
-        )
-        .await
-        .expect("local raw tag should short-circuit semver pull");
-
-        assert_eq!(semver_pulled, vec!["ghcr.io/org/web:v0.7.7".to_string()]);
-        assert!(semver_pulled_set.contains("ghcr.io/org/web:v0.7.7"));
-        assert_eq!(*runner.inspect_repo_tags_calls.lock().unwrap(), 1);
-        assert_eq!(*runner.pull_calls.lock().unwrap(), 0);
-    }
-
-    #[tokio::test]
-    async fn maybe_pull_semver_tag_short_circuits_when_normalized_tag_already_exists_locally() {
-        let runner = SemverNormalizedTagAlreadyPresentRunner::default();
-        let docker_cfg = docker_runner::DockerRunnerConfig::default();
-
-        let mut semver_pulled: Vec<String> = Vec::new();
-        let mut semver_pulled_set: HashSet<String> = HashSet::new();
-        let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
-            serde_json::Map::new();
-
-        maybe_pull_semver_tag_for_image(
-            &runner,
-            &docker_cfg,
-            IdempotentRetryPolicy {
-                max_attempts: 3,
-                base_ms: 1,
-                max_ms: 2,
-            },
-            "svc_1",
-            "ghcr.io/org/web",
-            "sha256:new",
-            &mut semver_pulled,
-            &mut semver_pulled_set,
-            &mut semver_pull_warnings,
-        )
-        .await
-        .expect("normalized local tag should short-circuit before remote retries");
-
-        assert_eq!(semver_pulled, vec!["ghcr.io/org/web:0.7.7".to_string()]);
-        assert!(semver_pulled_set.contains("ghcr.io/org/web:0.7.7"));
-        assert_eq!(*runner.inspect_repo_tags_calls.lock().unwrap(), 1);
-        assert_eq!(*runner.pull_calls.lock().unwrap(), 0);
-    }
-
-    #[tokio::test]
-    async fn semver_pull_failure_is_not_best_effort_anymore() {
-        let runner = SemverPullFailRunner::default();
-        let docker_cfg = docker_runner::DockerRunnerConfig::default();
-
-        let mut semver_pulled: Vec<String> = Vec::new();
-        let mut semver_pulled_set: HashSet<String> = HashSet::new();
-        let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
-            serde_json::Map::new();
-
-        let err = maybe_pull_semver_tag_for_image(
-            &runner,
-            &docker_cfg,
-            IdempotentRetryPolicy {
-                max_attempts: 3,
-                base_ms: 1,
-                max_ms: 2,
-            },
-            "svc_1",
-            "ghcr.io/org/web",
-            "sha256:new",
-            &mut semver_pulled,
-            &mut semver_pulled_set,
-            &mut semver_pull_warnings,
-        )
-        .await
-        .expect_err("semver pull failures should now fail the update job");
-
-        let detail = err
-            .downcast_ref::<UpdateStepFailure>()
-            .expect("expected UpdateStepFailure");
-        assert_eq!(detail.step, "semver_pull");
-        assert_eq!(detail.retry.attempts, 6);
-        assert_eq!(detail.retry.max_attempts, 6);
-        assert!(
-            detail
-                .last_error
-                .contains("ghcr.io/org/web:v0.7.7 => command failed: status=1 stderr=not found")
-        );
-        assert!(
-            detail
-                .last_error
-                .contains("ghcr.io/org/web:0.7.7 => command failed: status=1 stderr=not found")
-        );
-        assert!(semver_pulled.is_empty());
-        assert_eq!(
-            *runner.pull_calls.lock().unwrap(),
-            vec![
-                "ghcr.io/org/web:v0.7.7".to_string(),
-                "ghcr.io/org/web:v0.7.7".to_string(),
-                "ghcr.io/org/web:v0.7.7".to_string(),
-                "ghcr.io/org/web:0.7.7".to_string(),
-                "ghcr.io/org/web:0.7.7".to_string(),
-                "ghcr.io/org/web:0.7.7".to_string(),
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn maybe_pull_semver_tag_skips_when_oci_version_is_not_semver() {
-        let runner = NoSemverOciVersionRunner::default();
-        let docker_cfg = docker_runner::DockerRunnerConfig::default();
-
-        let mut semver_pulled: Vec<String> = Vec::new();
-        let mut semver_pulled_set: HashSet<String> = HashSet::new();
-        let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
-            serde_json::Map::new();
-
-        maybe_pull_semver_tag_for_image(
-            &runner,
-            &docker_cfg,
-            IdempotentRetryPolicy {
-                max_attempts: 3,
-                base_ms: 1,
-                max_ms: 2,
-            },
-            "svc_1",
-            "ghcr.io/org/web",
-            "sha256:no-semver",
-            &mut semver_pulled,
-            &mut semver_pulled_set,
-            &mut semver_pull_warnings,
-        )
-        .await
-        .expect("non-semver OCI version should skip fallback pull");
-
-        assert!(semver_pulled.is_empty());
-        assert!(semver_pulled_set.is_empty());
-        assert_eq!(*runner.inspect_repo_tags_calls.lock().unwrap(), 0);
-        assert_eq!(*runner.pull_calls.lock().unwrap(), 0);
-    }
-
-    #[tokio::test]
-    async fn semver_pull_uses_docker_auth_env_when_configured() {
-        let runner = EnvCaptureSemverRunner::default();
-        let (docker_config_path, _docker_config_cleanup) = write_test_docker_config();
-        let auth_bridge = DockerCliAuthBridge::stage(&docker_config_path).unwrap();
-        let docker_cfg = docker_runner::DockerRunnerConfig {
-            docker_bin: "docker".to_string(),
-            env: auth_bridge.env(),
-        };
-
-        let mut semver_pulled: Vec<String> = Vec::new();
-        let mut semver_pulled_set: HashSet<String> = HashSet::new();
-        let mut semver_pull_warnings: serde_json::Map<String, serde_json::Value> =
-            serde_json::Map::new();
-
-        maybe_pull_semver_tag_for_image(
-            &runner,
-            &docker_cfg,
-            IdempotentRetryPolicy {
-                max_attempts: 1,
-                base_ms: 1,
-                max_ms: 2,
-            },
-            "svc_1",
-            "ghcr.io/org/web",
-            "sha256:new",
-            &mut semver_pulled,
-            &mut semver_pulled_set,
-            &mut semver_pull_warnings,
+            &stack,
+            &JobScope::Service,
+            Some("svc_1"),
+            "live",
+            Some(explicit_targets.as_slice()),
+            false,
+            "ui",
+            None,
+            None,
         )
         .await
         .unwrap();
 
-        assert_eq!(semver_pulled, vec!["ghcr.io/org/web:0.7.7".to_string()]);
+        assert_eq!(outcome.status, "success");
+        assert_eq!(
+            outcome.summary_json["targetTagsPulled"],
+            json!(["ghcr.io/org/web:1.0"])
+        );
+        assert_eq!(outcome.summary_json["pullTagsPulled"], json!([]));
+        assert_eq!(outcome.summary_json["semverPulled"], json!([]));
+        let warnings = outcome.summary_json["pullTagWarnings"].as_array().unwrap();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0]["tagRef"], json!("ghcr.io/org/web:v0.7.7"));
+        assert_eq!(warnings[0]["step"], json!("pull_tag"));
+    }
 
-        for spec in runner.specs.lock().unwrap().iter() {
-            assert_eq!(spec.env.len(), 1);
-            assert!(spec.env.iter().all(|(k, _)| k == "DOCKER_CONFIG"));
+    #[derive(Default)]
+    struct TargetTagPullRollbackRunner {
+        step: Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for TargetTagPullRollbackRunner {
+        async fn run(
+            &self,
+            spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            let mut step = self.step.lock().unwrap();
+            let out = match *step {
+                0 => CommandOutput {
+                    status: 0,
+                    stdout: "old_container
+"
+                    .to_string(),
+                    stderr: String::new(),
+                },
+                1 => CommandOutput {
+                    status: 0,
+                    stdout: "sha256:old
+"
+                    .to_string(),
+                    stderr: String::new(),
+                },
+                2 => CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+                3 => CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+                4 => CommandOutput {
+                    status: 0,
+                    stdout: "new_container
+"
+                    .to_string(),
+                    stderr: String::new(),
+                },
+                5 => CommandOutput {
+                    status: 0,
+                    stdout: "0
+"
+                    .to_string(),
+                    stderr: String::new(),
+                },
+                6 => CommandOutput {
+                    status: 0,
+                    stdout: "sha256:new
+"
+                    .to_string(),
+                    stderr: String::new(),
+                },
+                7 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec!["pull", "ghcr.io/org/web:1.0"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: "target tag missing".to_string(),
+                    }
+                }
+                8 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec!["image", "tag", "sha256:old", "ghcr.io/org/web:1.0"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                }
+                9 => {
+                    assert_eq!(spec.program, "docker-compose");
+                    assert!(args_end_with(
+                        &spec.args,
+                        &["up", "-d", "--pull", "never", "web"]
+                    ));
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                }
+                10 => CommandOutput {
+                    status: 0,
+                    stdout: "rollback_container
+"
+                    .to_string(),
+                    stderr: String::new(),
+                },
+                11 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec!["inspect", "--format", "{{.Image}}", "rollback_container"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: "sha256:old
+"
+                        .to_string(),
+                        stderr: String::new(),
+                    }
+                }
+                _ => panic!(
+                    "unexpected extra command: program={} args={:?}",
+                    spec.program, spec.args
+                ),
+            };
+            *step += 1;
+            Ok(out)
         }
+    }
+
+    #[tokio::test]
+    async fn target_tag_pull_failure_rolls_back_with_explicit_failure_step() {
+        let stack = single_service_stack(
+            "ghcr.io/org/web:1.0",
+            Some(Candidate {
+                tag: "1.0".to_string(),
+                resolved_tag: Some("1.0".to_string()),
+                digest: "sha256:new".to_string(),
+                arch_match: ArchMatch::Match,
+                arch: vec!["linux/amd64".to_string()],
+            }),
+        );
+        let explicit_targets = explicit_targets("svc_1", "1.0", "sha256:new", &[]);
+        let runner = TargetTagPullRollbackRunner::default();
+
+        let outcome = run_update_job(
+            &runner,
+            "docker-compose",
+            None,
+            IdempotentRetryPolicy {
+                max_attempts: 1,
+                base_ms: 1,
+                max_ms: 2,
+            },
+            &stack,
+            &JobScope::Service,
+            Some("svc_1"),
+            "live",
+            Some(explicit_targets.as_slice()),
+            false,
+            "ui",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.status, "rolled_back");
+        assert_eq!(
+            outcome.summary_json["failureStep"],
+            json!("pull_target_tag")
+        );
+        assert_eq!(outcome.summary_json["targetTagsPulled"], json!([]));
+        assert_eq!(
+            outcome.summary_json["newDigests"]["svc_1"],
+            json!("sha256:old")
+        );
     }
 
     #[test]

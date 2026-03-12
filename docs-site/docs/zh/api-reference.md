@@ -41,8 +41,8 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 | POST | `/api/services/{service_id}/archive` | Forward Auth | 归档 service | `200` `404` `401` |
 | POST | `/api/services/{service_id}/restore` | Forward Auth | 取消归档 service | `200` `404` `401` |
 | GET | `/api/services/{service_id}/digest-tags` | Forward Auth | 查询 digest 对应 tags | `200` `404` `401` |
-| GET | `/api/services/{service_id}/digest-tags-snapshot` | Forward Auth | 查询 digest tags 快照 | `200` `404` `401` |
-| POST | `/api/services/{service_id}/version-inference/refresh` | Forward Auth | 触发单服务版本推断刷新 | `200` `404` `401` |
+| GET | `/api/services/{service_id}/digest-tags-snapshot` | Forward Auth | 查询 digest tags 快照（目标 digest 正在刷新时返回 `202 pending`） | `200` `202` `404` `401` |
+| POST | `/api/services/{service_id}/version-inference/refresh` | Forward Auth | 触发指定 digest 的局部版本推断刷新（请求体必须带 `digest`） | `202` `400` `404` `401` |
 | GET | `/api/version-inference/overview` | Forward Auth | 版本推断总览 | `200` `401` |
 | GET | `/api/version-inference/events` | Forward Auth | 版本推断事件流（SSE） | `200` `401` |
 
@@ -57,6 +57,10 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 | POST | `/api/checks` | Forward Auth | 创建 check 任务 | `200` `400` `401` `409` |
 | POST | `/api/runtime-scans` | Forward Auth | 创建 runtime 扫描任务 | `200` `400` `401` `409` |
 | POST | `/api/updates` | Forward Auth | 创建 update 任务 | `200` `400` `401` `409` |
+
+- `POST /api/updates` 契约：
+  - `scope=service`：必须显式携带 `serviceId + targetTag + targetDigest + pullTags`。
+  - `scope=stack|all`：必须显式携带 `targets[]`，元素为 `{ serviceId, targetTag, targetDigest, pullTags }`。
 
 ### 4) Jobs / Events
 
@@ -109,7 +113,7 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 | --- | --- | --- | --- | --- |
 | POST | `/api/web-push/subscriptions` | Forward Auth | 创建/更新 Web Push 订阅 | `200` `400` `401` |
 | DELETE | `/api/web-push/subscriptions` | Forward Auth | 删除 Web Push 订阅 | `200` `400` `401` |
-| POST | `/api/webhooks/trigger` | Webhook Secret | 外部触发 check/update 任务（`action=update` 仅支持 `all`/`stack`） | `200` `400` `401` |
+| POST | `/api/webhooks/trigger` | Webhook Secret | 外部触发 check/update 任务（`action=update` 必须显式携带 `targets[]`） | `200` `400` `401` |
 | POST | `/api/webhooks/github-packages` | GitHub Signature | 接收 GH package webhook 并触发 discovery | `200` `202` `400` `401` |
 | GET | `/api/deploy-check/report` | Forward Auth | 返回部署预检报告；匿名或未命中 allowlist 时返回 Dockrev 生成的 `401 auth_required` | `200` `401` |
 | GET | `/api/deploy-welcome` | Forward Auth | 查询 deploy welcome 状态 | `200` `401` |
@@ -151,12 +155,12 @@ curl -X POST \
 curl -X POST \
   -H 'Content-Type: application/json' \
   -H 'X-Dockrev-Webhook-Secret: change-me' \
-  -d '{"action":"update","scope":"stack","stackId":"stk_xxx","allowArchMismatch":false,"backupMode":"inherit"}' \
+  -d '{"action":"update","scope":"stack","stackId":"stk_xxx","targets":[{"serviceId":"svc_web","targetTag":"latest","targetDigest":"sha256:abc123","pullTags":["v1.1.2"]}],"allowArchMismatch":false,"backupMode":"inherit"}' \
   http://127.0.0.1:50883/api/webhooks/trigger
 ```
 
-> 说明：`POST /api/webhooks/trigger` 会拒绝 `{"action":"update","scope":"service"}`，返回 `400 invalid_argument`。  
-> 若要更新单个 service，请改用 `POST /api/updates` 并显式携带 `targetTag` + `targetDigest`。
+> 说明：`POST /api/webhooks/trigger` 在 `action=update` 时会拒绝未携带 `targets[]` 的旧 payload，返回 `400 invalid_argument`。
+> webhook update 同样支持 `scope=service`，但仍需显式提供 `serviceId`，并在 `targets[]` 中给出对应 `{ serviceId, targetTag, targetDigest, pullTags }`。
 
 ### 查询 supervisor 状态
 

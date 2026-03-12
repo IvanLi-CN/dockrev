@@ -366,6 +366,8 @@ pub struct WebhookTriggerRequest {
     pub stack_id: Option<String>,
     #[serde(default)]
     pub service_id: Option<String>,
+    #[serde(default)]
+    pub targets: Option<Vec<UpdateServiceTarget>>,
     pub allow_arch_mismatch: bool,
     pub backup_mode: BackupMode,
 }

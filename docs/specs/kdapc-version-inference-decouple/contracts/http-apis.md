@@ -19,8 +19,8 @@
 
 ## `POST /api/services/{service_id}/version-inference/refresh`
 
-- 作用：强制触发该服务对应镜像的版本推测采集任务。
-- Request body: `{}`（保留空对象）
+- 作用：强制触发该服务指定 digest 的版本推测采集任务。
+- Request body: `{ "digest": "sha256:..." }`
 - Response: `202 Accepted`
 
 示例响应：
@@ -30,6 +30,7 @@
   "status": "pending",
   "serviceId": "svc_xxx",
   "imageRepo": "ghcr.io/acme/web",
+  "digest": "sha256:abc123",
   "reason": "force"
 }
 ```

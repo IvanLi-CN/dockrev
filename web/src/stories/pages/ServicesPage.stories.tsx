@@ -73,6 +73,19 @@ export const ResolvedTag: Story = {
   },
 }
 
+export const VersionTagsPopoverDemo: Story = {
+  parameters: { dockrevApiScenario: 'version-tags-popover-demo' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务" pageSubtitle="回归：popover 局部刷新回填 resolvedTag（不触发整页加载）">
+        {({ onLastScanHint, onTopActions }) => (
+          <ServicesPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
+        )}
+      </PageHarness>
+    )
+  },
+}
+
 export const Empty: Story = {
   parameters: { dockrevApiScenario: 'empty' },
   render: () => {
