@@ -19,6 +19,7 @@ import {
   type StackDetail,
 } from '../api'
 import { navigate } from '../routes'
+import { buildUpdateServiceTarget } from '../updateTargets'
 import { Button, Input, Mono, Pill, SelectField, Switch } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
@@ -485,9 +486,7 @@ export function ServiceDetailPage(props: {
                     const resp = await triggerUpdate({
                       scope: 'service',
                       stackId,
-                      serviceId,
-                      targetTag: service.image.tag,
-                      targetDigest: service.candidate.digest,
+                      ...(await buildUpdateServiceTarget(service)),
                       mode: 'dry-run',
                       allowArchMismatch: false,
                       backupMode: 'inherit',
@@ -659,9 +658,7 @@ export function ServiceDetailPage(props: {
                     const resp = await triggerUpdate({
                       scope: 'service',
                       stackId,
-                      serviceId,
-                      targetTag: service.image.tag,
-                      targetDigest: service.candidate.digest,
+                      ...(await buildUpdateServiceTarget(service)),
                       mode: 'apply',
                       allowArchMismatch: false,
                       backupMode: 'inherit',

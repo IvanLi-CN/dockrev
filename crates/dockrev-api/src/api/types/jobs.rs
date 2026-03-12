@@ -70,6 +70,16 @@ pub struct TriggerRuntimeScanResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UpdateServiceTarget {
+    pub service_id: String,
+    pub target_tag: String,
+    pub target_digest: String,
+    #[serde(default)]
+    pub pull_tags: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TriggerUpdateRequest {
     pub scope: JobScope,
     #[serde(default)]
@@ -80,6 +90,10 @@ pub struct TriggerUpdateRequest {
     pub target_tag: Option<String>,
     #[serde(default)]
     pub target_digest: Option<String>,
+    #[serde(default)]
+    pub pull_tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub targets: Option<Vec<UpdateServiceTarget>>,
     pub mode: UpdateMode,
     pub allow_arch_mismatch: bool,
     pub backup_mode: BackupMode,

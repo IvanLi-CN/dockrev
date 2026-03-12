@@ -24,6 +24,7 @@ import type {
   SyncGitHubPackagesWebhooksResponse,
 } from '../../api'
 import { imageRepoFromImageRef } from '../../imageRepo'
+import { isDockrevImageRef } from '../../runtimeConfig'
 
 export type DockrevApiScenario =
   | 'default'
@@ -2632,7 +2633,13 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
   }
 
   function canApplyMockUpdate(service: StackDetail['services'][number]) {
-    return Boolean(service.candidate && !service.archived && !service.ignore && service.candidate.archMatch === 'match')
+    return Boolean(
+      service.candidate &&
+        !service.archived &&
+        !service.ignore?.matched &&
+        service.candidate.archMatch === 'match' &&
+        !isDockrevImageRef(service.image.ref),
+    )
   }
 
   function countMockUpdates(stack: StackDetail) {
@@ -2660,21 +2667,29 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
     )
   }
 
-  function applyMockUpdateSettlement(serviceId: string, targetTag?: string | null, targetDigest?: string | null) {
+  function applyMockUpdateSettlement(
+    serviceId: string,
+    targetTag: string,
+    targetDigest: string,
+    pullTags: string[],
+  ) {
     const found = findService(serviceId)
     if (!found || !found.svc.candidate) return
 
     const candidate = found.svc.candidate
-    const nextTag = (targetTag ?? '').trim() || candidate.resolvedTag?.trim() || candidate.tag
-    const nextDigest = (targetDigest ?? '').trim() || candidate.digest
+    const nextTag = targetTag.trim()
+    const nextDigest = targetDigest.trim()
     const nextResolvedTag = candidate.resolvedTag?.trim() || nextTag
+    const normalizedPullTags = pullTags.map((tag) => tag.trim()).filter(Boolean)
 
     found.svc.image = {
       ...found.svc.image,
       tag: nextTag,
       digest: nextDigest,
       resolvedTag: nextResolvedTag,
-      resolvedTags: Array.from(new Set([nextResolvedTag, ...(found.svc.image.resolvedTags ?? [])].filter(Boolean))),
+      resolvedTags: Array.from(
+        new Set([nextResolvedTag, ...normalizedPullTags, ...(found.svc.image.resolvedTags ?? [])].filter(Boolean)),
+      ),
     }
     found.svc.candidate = null
     if (found.svc.versionInference) {
@@ -3356,6 +3371,12 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
       const mode = typeof parsed.mode === 'string' ? parsed.mode : 'dry-run'
       const targetTag = typeof parsed.targetTag === 'string' ? parsed.targetTag.trim() : ''
       const targetDigest = typeof parsed.targetDigest === 'string' ? parsed.targetDigest.trim() : ''
+      const pullTags = Array.isArray(parsed.pullTags)
+        ? parsed.pullTags.map((tag) => (typeof tag === 'string' ? tag.trim() : '')).filter(Boolean)
+        : null
+      const targets = Array.isArray(parsed.targets)
+        ? parsed.targets.map((item) => (item && typeof item === 'object' ? (item as Record<string, unknown>) : null))
+        : null
 
       if (scope === 'service' && !serviceId) {
         return json(
@@ -3369,17 +3390,69 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
           { status: 400 },
         )
       }
-      if (scope === 'service' && (!targetTag || !targetDigest)) {
-        return json(
-          { error: { code: 'invalid_argument', message: 'targetTag/targetDigest is required for scope=service' } },
-          { status: 400 },
-        )
-      }
-      if (scope !== 'service' && ('targetTag' in parsed || 'targetDigest' in parsed)) {
-        return json(
-          { error: { code: 'invalid_argument', message: 'targetTag/targetDigest is only supported for scope=service' } },
-          { status: 400 },
-        )
+
+      const affectedServiceIds = selectUpdateServiceIds(scope, stackId, serviceId)
+      const targetsByService = new Map<string, { targetTag: string; targetDigest: string; pullTags: string[] }>()
+      if (scope === 'service') {
+        if (!targetTag || !targetDigest || pullTags == null) {
+          return json(
+            { error: { code: 'invalid_argument', message: 'targetTag/targetDigest/pullTags is required for scope=service' } },
+            { status: 400 },
+          )
+        }
+        targetsByService.set(serviceId!, { targetTag, targetDigest, pullTags })
+      } else {
+        if ('targetTag' in parsed || 'targetDigest' in parsed || 'pullTags' in parsed) {
+          return json(
+            { error: { code: 'invalid_argument', message: 'targetTag/targetDigest/pullTags is only supported for scope=service' } },
+            { status: 400 },
+          )
+        }
+        if (targets == null) {
+          return json(
+            { error: { code: 'invalid_argument', message: 'targets is required for scope=stack/all' } },
+            { status: 400 },
+          )
+        }
+        for (const item of targets) {
+          const nextServiceId = typeof item?.serviceId === 'string' ? item.serviceId.trim() : ''
+          const nextTargetTag = typeof item?.targetTag === 'string' ? item.targetTag.trim() : ''
+          const nextTargetDigest = typeof item?.targetDigest === 'string' ? item.targetDigest.trim() : ''
+          const nextPullTags = Array.isArray(item?.pullTags)
+            ? item.pullTags.map((tag) => (typeof tag === 'string' ? tag.trim() : '')).filter(Boolean)
+            : null
+          if (!nextServiceId || !nextTargetTag || !nextTargetDigest || nextPullTags == null) {
+            return json(
+              { error: { code: 'invalid_argument', message: 'targets[*] must include serviceId/targetTag/targetDigest/pullTags' } },
+              { status: 400 },
+            )
+          }
+          if (targetsByService.has(nextServiceId)) {
+            return json(
+              { error: { code: 'invalid_argument', message: 'targets contains duplicate serviceId' } },
+              { status: 400 },
+            )
+          }
+          targetsByService.set(nextServiceId, {
+            targetTag: nextTargetTag,
+            targetDigest: nextTargetDigest,
+            pullTags: nextPullTags,
+          })
+        }
+        const missingServiceIds = affectedServiceIds.filter((id) => !targetsByService.has(id))
+        const extraServiceIds = [...targetsByService.keys()].filter((id) => !affectedServiceIds.includes(id))
+        if (missingServiceIds.length > 0 || extraServiceIds.length > 0) {
+          return json(
+            {
+              error: {
+                code: 'invalid_argument',
+                message: 'targets must exactly cover the selected services for this scope',
+                details: { missingServiceIds, extraServiceIds },
+              },
+            },
+            { status: 400 },
+          )
+        }
       }
 
       jobSeq += 1
@@ -3409,7 +3482,6 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         ],
         logsLastId: 2,
       }
-      const affectedServiceIds = selectUpdateServiceIds(scope, stackId, serviceId)
       const updateFinishDelayMs = scenario === 'dashboard-demo-slow-update' ? 4_500 : 1_400
       const settleDelayMs = scenario === 'dashboard-demo-slow-update' ? 280 : 220
       window.setTimeout(() => {
@@ -3430,8 +3502,14 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
         window.setTimeout(() => {
           if (!state) return
           for (const affectedId of affectedServiceIds) {
-            const isRequestedService = scope === 'service' && affectedId === serviceId
-            applyMockUpdateSettlement(affectedId, isRequestedService ? targetTag : null, isRequestedService ? targetDigest : null)
+            const target = targetsByService.get(affectedId)
+            if (!target) continue
+            applyMockUpdateSettlement(
+              affectedId,
+              target.targetTag,
+              target.targetDigest,
+              target.pullTags,
+            )
           }
         }, settleDelayMs)
       }, updateFinishDelayMs)

@@ -58,6 +58,10 @@ This page documents every HTTP route exposed in:
 | POST | `/api/runtime-scans` | Forward Auth | Create runtime scan job | `200` `400` `401` `409` |
 | POST | `/api/updates` | Forward Auth | Create update job | `200` `400` `401` `409` |
 
+- `POST /api/updates` contract:
+  - `scope=service`: requires explicit `serviceId + targetTag + targetDigest + pullTags`.
+  - `scope=stack|all`: requires explicit `targets[]`, each entry shaped as `{ serviceId, targetTag, targetDigest, pullTags }`.
+
 ### 4) Jobs / Events
 
 | Method | Path | Auth | Purpose | Key status codes |
@@ -109,7 +113,7 @@ This page documents every HTTP route exposed in:
 | --- | --- | --- | --- | --- |
 | POST | `/api/web-push/subscriptions` | Forward Auth | Create/update web push subscription | `200` `400` `401` |
 | DELETE | `/api/web-push/subscriptions` | Forward Auth | Delete web push subscription | `200` `400` `401` |
-| POST | `/api/webhooks/trigger` | Webhook Secret | External trigger for check/update jobs (`action=update` only supports `all`/`stack`) | `200` `400` `401` |
+| POST | `/api/webhooks/trigger` | Webhook Secret | External trigger for check/update jobs (`action=update` requires explicit `targets[]`) | `200` `400` `401` |
 | POST | `/api/webhooks/github-packages` | GitHub Signature | Receive GH package webhook and enqueue discovery | `200` `202` `400` `401` |
 | GET | `/api/deploy-check/report` | Forward Auth | Deployment preflight report; anonymous or non-matching identities receive Dockrev-generated `401 auth_required` | `200` `401` |
 | GET | `/api/deploy-welcome` | Forward Auth | Get deploy welcome status | `200` `401` |
@@ -151,12 +155,12 @@ curl -X POST \
 curl -X POST \
   -H 'Content-Type: application/json' \
   -H 'X-Dockrev-Webhook-Secret: change-me' \
-  -d '{"action":"update","scope":"stack","stackId":"stk_xxx","allowArchMismatch":false,"backupMode":"inherit"}' \
+  -d '{"action":"update","scope":"stack","stackId":"stk_xxx","targets":[{"serviceId":"svc_web","targetTag":"latest","targetDigest":"sha256:abc123","pullTags":["v1.1.2"]}],"allowArchMismatch":false,"backupMode":"inherit"}' \
   http://127.0.0.1:50883/api/webhooks/trigger
 ```
 
-> Note: `POST /api/webhooks/trigger` rejects `{"action":"update","scope":"service"}` with `400 invalid_argument`.
-> Use `POST /api/updates` with explicit `targetTag` + `targetDigest` for service-level updates.
+> Note: `POST /api/webhooks/trigger` rejects legacy `action=update` payloads that omit `targets[]` with `400 invalid_argument`.
+> webhook update also supports `scope=service`, but you must still provide `serviceId` and a matching `{ serviceId, targetTag, targetDigest, pullTags }` entry inside `targets[]`.
 
 ### Read supervisor state
 

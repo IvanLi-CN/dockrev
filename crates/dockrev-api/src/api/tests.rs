@@ -10,6 +10,7 @@ use std::{
 
 use axum::{Json, Router, body::Body, http::Request, response::IntoResponse as _, routing::post};
 use http_body_util::BodyExt as _;
+use serde_json::json;
 use tower::ServiceExt as _;
 
 use crate::{
@@ -636,6 +637,14 @@ impl CommandRunner for SemverRetryFailRunner {
                 }
             }
             7 => {
+                assert_eq!(args, vec!["pull", "ghcr.io/acme/web:latest"]);
+                CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }
+            }
+            8 => {
                 assert_eq!(
                     args,
                     vec!["image", "tag", "sha256:new", "ghcr.io/acme/web:latest"]
@@ -646,41 +655,7 @@ impl CommandRunner for SemverRetryFailRunner {
                     stderr: String::new(),
                 }
             }
-            8 => {
-                assert_eq!(
-                    args,
-                    vec![
-                        "image",
-                        "inspect",
-                        "--format",
-                        r#"{{ index .Config.Labels "org.opencontainers.image.version" }}"#,
-                        "sha256:new"
-                    ]
-                );
-                CommandOutput {
-                    status: 0,
-                    stdout: "0.7.7\n".to_string(),
-                    stderr: String::new(),
-                }
-            }
-            9 => {
-                assert_eq!(
-                    args,
-                    vec![
-                        "image",
-                        "inspect",
-                        "--format",
-                        "{{json .RepoTags}}",
-                        "sha256:new"
-                    ]
-                );
-                CommandOutput {
-                    status: 0,
-                    stdout: r#"["ghcr.io/acme/web:latest"]"#.to_string(),
-                    stderr: String::new(),
-                }
-            }
-            10..=12 => {
+            9..=11 => {
                 assert_eq!(args, vec!["pull", "ghcr.io/acme/web:0.7.7"]);
                 CommandOutput {
                     status: 1,
@@ -3088,6 +3063,7 @@ services:
         "scope": "service",
         "serviceId": service_id.clone(),
         "targetDigest": expected_digest,
+        "pullTags": [],
         "mode": "dry-run",
         "allowArchMismatch": false,
         "backupMode": "inherit",
@@ -3114,6 +3090,7 @@ services:
         "serviceId": service_id.clone(),
         "targetTag": "cross-tag-not-allowed",
         "targetDigest": expected_digest.clone(),
+        "pullTags": [],
         "mode": "dry-run",
         "allowArchMismatch": false,
         "backupMode": "inherit",
@@ -3140,6 +3117,7 @@ services:
         "serviceId": service_id,
         "targetTag": svc.image_tag,
         "targetDigest": "sha256:wrong",
+        "pullTags": [],
         "mode": "dry-run",
         "allowArchMismatch": false,
         "backupMode": "inherit",
@@ -3166,6 +3144,7 @@ services:
         "serviceId": svc.id,
         "targetTag": svc.image_tag,
         "targetDigest": expected_digest,
+        "pullTags": [],
         "mode": "dry-run",
         "allowArchMismatch": false,
         "backupMode": "inherit",
@@ -6287,9 +6266,39 @@ services:
     }
     assert!(finished, "check job did not finish in time");
 
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let svc = services.first().unwrap().clone();
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .update_service_check_result(
+            &svc.id,
+            Some("sha256:old".to_string()),
+            Some("5.2".to_string()),
+            Some(r#"["5.2"]"#.to_string()),
+            Some(svc.image_tag.clone()),
+            Some("5.3".to_string()),
+            Some("sha256:new".to_string()),
+            Some("match".to_string()),
+            Some(r#"["linux/amd64"]"#.to_string()),
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
     let update = serde_json::json!({
         "scope": "stack",
         "stackId": stack_id,
+        "targets": [{
+            "serviceId": svc.id,
+            "targetTag": svc.image_tag,
+            "targetDigest": "sha256:new",
+            "pullTags": []
+        }],
         "mode": "apply",
         "allowArchMismatch": false,
         "backupMode": "inherit",
@@ -6432,6 +6441,7 @@ services:
     let update = serde_json::json!({
         "scope": "stack",
         "stackId": stack_id,
+        "targets": [],
         "mode": "dry-run",
         "allowArchMismatch": false,
         "backupMode": "inherit",
@@ -6514,6 +6524,7 @@ services:
     let update = serde_json::json!({
         "scope": "stack",
         "stackId": stack_id,
+        "targets": [],
         "mode": "dry-run",
         "allowArchMismatch": false,
         "backupMode": "inherit",
@@ -6593,6 +6604,7 @@ services:
 
     let update = serde_json::json!({
         "scope": "all",
+        "targets": [],
         "mode": "dry-run",
         "allowArchMismatch": false,
         "backupMode": "inherit",
@@ -6664,6 +6676,7 @@ services:
     let update = serde_json::json!({
         "scope": "stack",
         "stackId": stack_id,
+        "targets": [],
         "mode": "apply",
         "allowArchMismatch": false,
         "backupMode": "skip",
@@ -6769,6 +6782,7 @@ services:
         "serviceId": service.id,
         "targetTag": "5.2",
         "targetDigest": "sha256:new",
+        "pullTags": [],
         "mode": "apply",
         "allowArchMismatch": false,
         "backupMode": "skip",
@@ -7514,6 +7528,7 @@ services:
         "action": "update",
         "scope": "stack",
         "stackId": stack_id,
+        "targets": [],
         "allowArchMismatch": false,
         "backupMode": "skip"
     });
@@ -7567,7 +7582,7 @@ services:
 }
 
 #[tokio::test]
-async fn webhook_trigger_update_rejects_service_scope() {
+async fn webhook_trigger_update_requires_targets() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
 
@@ -7659,6 +7674,7 @@ services:
         "action": "update",
         "scope": "stack",
         "stackId": stack_id,
+        "targets": [],
         "allowArchMismatch": false,
         "backupMode": "skip"
     });
@@ -7765,6 +7781,7 @@ services:
         "action": "update",
         "scope": "stack",
         "stackId": stack_id,
+        "targets": [],
         "allowArchMismatch": false,
         "backupMode": "inherit"
     });
@@ -7895,6 +7912,12 @@ services:
         "action": "update",
         "scope": "stack",
         "stackId": stack_id,
+        "targets": [{
+            "serviceId": svc_api.id,
+            "targetTag": "latest",
+            "targetDigest": "sha256:cand-api",
+            "pullTags": []
+        }],
         "allowArchMismatch": false,
         "backupMode": "skip"
     });
@@ -8013,6 +8036,12 @@ services:
         "action": "update",
         "scope": "stack",
         "stackId": stack_id,
+        "targets": [{
+            "serviceId": svc.id,
+            "targetTag": "latest",
+            "targetDigest": "sha256:cand",
+            "pullTags": ["0.7.7"]
+        }],
         "allowArchMismatch": false,
         "backupMode": "skip"
     });
@@ -8058,7 +8087,7 @@ services:
         out.expect("job did not finish in time")
     };
 
-    assert_eq!(job["job"]["status"].as_str(), Some("failed"));
+    assert_eq!(job["job"]["status"].as_str(), Some("success"));
     let update = &job["job"]["summary"]["stacks"][0]["update"];
     assert_eq!(update["changedServices"].as_u64(), Some(1));
     assert_eq!(
@@ -8069,13 +8098,25 @@ services:
         update["newDigests"][svc.id.as_str()].as_str(),
         Some("sha256:new")
     );
-    assert_eq!(update["failureStep"].as_str(), Some("semver_pull"));
-    assert_eq!(update["retry"]["attempts"].as_u64(), Some(3));
-    assert_eq!(update["retry"]["maxAttempts"].as_u64(), Some(3));
-    assert_eq!(update["retry"]["baseMs"].as_u64(), Some(300));
-    assert_eq!(update["retry"]["maxMs"].as_u64(), Some(3000));
+    assert_eq!(
+        update["targetTagsPulled"],
+        json!(["ghcr.io/acme/web:latest"])
+    );
+    assert_eq!(update["pullTagsPulled"], json!([]));
+    let warnings = update["pullTagWarnings"].as_array().unwrap();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0]["serviceId"].as_str(), Some(svc.id.as_str()));
+    assert_eq!(
+        warnings[0]["tagRef"].as_str(),
+        Some("ghcr.io/acme/web:0.7.7")
+    );
+    assert_eq!(warnings[0]["step"].as_str(), Some("pull_tag"));
+    assert_eq!(warnings[0]["retry"]["attempts"].as_u64(), Some(3));
+    assert_eq!(warnings[0]["retry"]["maxAttempts"].as_u64(), Some(3));
+    assert_eq!(warnings[0]["retry"]["baseMs"].as_u64(), Some(300));
+    assert_eq!(warnings[0]["retry"]["maxMs"].as_u64(), Some(3000));
     assert!(
-        update["lastError"]
+        warnings[0]["lastError"]
             .as_str()
             .unwrap_or_default()
             .contains("status=1"),

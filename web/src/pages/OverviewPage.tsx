@@ -15,11 +15,13 @@ import {
   type DiscoveredProject,
   type JobListItem,
   type Service,
+  type TriggerUpdateInput,
   type ServiceDigestTagsScanSummary,
   type StackDetail,
   type StackListItem,
 } from '../api'
 import { navigate } from '../routes'
+import { buildUpdateServiceTarget, buildUpdateServiceTargets } from '../updateTargets'
 import { ArrowRightIcon, Button, Mono, StatusRemark } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
@@ -1021,9 +1023,7 @@ export function OverviewPage(props: {
       stackId?: string
       serviceId?: string
       targetLabel: string
-      targetTag?: string
-      targetDigest?: string | null
-      getTarget?: () => { targetTag?: string; targetDigest?: string | null }
+      buildRequest: () => Promise<TriggerUpdateInput>
       confirmBody?: ReactNode
       confirmTitle?: string
     }) => {
@@ -1066,53 +1066,13 @@ export function OverviewPage(props: {
       })
       if (!ok) return
 
-      const finalTarget = input.getTarget
-        ? input.getTarget()
-        : { targetTag: input.targetTag, targetDigest: input.targetDigest }
       const targetKey = resolveUpdateActionTargetKey(input.scope, input.stackId, input.serviceId)
 
       setError(null)
       setNoticeJobId(null)
       if (targetKey) beginSubmitting(targetKey)
       try {
-        let resp: { jobId: string }
-        if (input.scope === 'service') {
-          const serviceId = (input.serviceId ?? '').trim()
-          const targetTag = (finalTarget.targetTag ?? '').trim()
-          const targetDigest = (finalTarget.targetDigest ?? '').trim()
-          if (!serviceId || !targetTag || !targetDigest) {
-            throw new Error('service update 缺少必要参数（serviceId/targetTag/targetDigest）')
-          }
-          resp = await triggerUpdate({
-            scope: 'service',
-            stackId: input.stackId,
-            serviceId,
-            targetTag,
-            targetDigest,
-            mode: 'apply',
-            allowArchMismatch: false,
-            backupMode: 'inherit',
-          })
-        } else if (input.scope === 'stack') {
-          const stackId = (input.stackId ?? '').trim()
-          if (!stackId) {
-            throw new Error('stack update 缺少 stackId')
-          }
-          resp = await triggerUpdate({
-            scope: 'stack',
-            stackId,
-            mode: 'apply',
-            allowArchMismatch: false,
-            backupMode: 'inherit',
-          })
-        } else {
-          resp = await triggerUpdate({
-            scope: 'all',
-            mode: 'apply',
-            allowArchMismatch: false,
-            backupMode: 'inherit',
-          })
-        }
+        const resp = await triggerUpdate(await input.buildRequest())
         setNoticeJobId(resp.jobId)
         if (targetKey) trackJob(targetKey, resp.jobId, 'queued')
       } catch (e: unknown) {
@@ -1251,7 +1211,21 @@ export function OverviewPage(props: {
 	                <div className="modalDivider" />
 	              </>
 	            )
-                        void triggerApply({ scope: 'all', targetLabel: '全部服务', confirmBody: body, confirmTitle: '确认更新全部服务？' })
+                        void triggerApply({
+                          scope: 'all',
+                          targetLabel: '全部服务',
+                          buildRequest: async () => ({
+                            scope: 'all',
+                            targets: await buildUpdateServiceTargets(
+                              aggregateAll.actionablePreviewItems.map((item) => item.svc),
+                            ),
+                            mode: 'apply',
+                            allowArchMismatch: false,
+                            backupMode: 'inherit',
+                          }),
+                          confirmBody: body,
+                          confirmTitle: '确认更新全部服务？',
+                        })
           }}
         >
           {allApplyActiveJob?.status === 'queued'
@@ -1559,6 +1533,16 @@ export function OverviewPage(props: {
 	                          scope: 'stack',
 	                          stackId: st.id,
 	                          targetLabel: `stack:${d.name}`,
+	                          buildRequest: async () => ({
+	                            scope: 'stack',
+	                            stackId: st.id,
+	                            targets: await buildUpdateServiceTargets(
+	                              aggregatePartition.actionable.map((item) => item.svc),
+	                            ),
+	                            mode: 'apply',
+	                            allowArchMismatch: false,
+	                            backupMode: 'inherit',
+	                          }),
 	                          confirmBody: body,
 	                          confirmTitle: `确认更新此 stack？`,
 	                        })
@@ -1880,8 +1864,14 @@ export function OverviewPage(props: {
 		                                    stackId: st.id,
 		                                    serviceId: svc.id,
 		                                    targetLabel: `service:${d.name}/${svc.name}`,
-		                                    targetTag: svc.image.tag,
-		                                    targetDigest: svc.candidate?.digest ?? null,
+		                                    buildRequest: async () => ({
+		                                      scope: 'service',
+		                                      stackId: st.id,
+		                                      ...(await buildUpdateServiceTarget(svc)),
+		                                      mode: 'apply',
+		                                      allowArchMismatch: false,
+		                                      backupMode: 'inherit',
+		                                    }),
 		                                    confirmBody: body,
 		                                    confirmTitle: `确认更新服务 ${svc.name}？`,
 		                                  })

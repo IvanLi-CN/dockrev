@@ -11,11 +11,13 @@ import {
   newJobEventsSource,
   ApiError,
   type Service,
+  type TriggerUpdateInput,
   type ServiceDigestTagsScanSummary,
   type StackDetail,
   type StackListItem,
 } from '../api'
 import { navigate } from '../routes'
+import { buildUpdateServiceTarget, buildUpdateServiceTargets } from '../updateTargets'
 import { ArrowRightIcon, Button, Input, Mono, Pill, StatusRemark } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
@@ -659,9 +661,7 @@ export function ServicesPage(props: {
       stackId: string
       serviceId?: string
       targetLabel: string
-      targetTag?: string
-      targetDigest?: string | null
-      getTarget?: () => { targetTag?: string; targetDigest?: string | null }
+      buildRequest: () => Promise<TriggerUpdateInput>
       confirmBody?: ReactNode
       confirmTitle?: string
     }) => {
@@ -704,42 +704,13 @@ export function ServicesPage(props: {
       })
       if (!ok) return
 
-      const finalTarget = input.getTarget
-        ? input.getTarget()
-        : { targetTag: input.targetTag, targetDigest: input.targetDigest }
       const targetKey = resolveUpdateActionTargetKey(input.scope, input.stackId, input.serviceId)
 
       setError(null)
       setNoticeJobId(null)
       if (targetKey) beginSubmitting(targetKey)
       try {
-        let resp: { jobId: string }
-        if (input.scope === 'service') {
-          const serviceId = (input.serviceId ?? '').trim()
-          const targetTag = (finalTarget.targetTag ?? '').trim()
-          const targetDigest = (finalTarget.targetDigest ?? '').trim()
-          if (!serviceId || !targetTag || !targetDigest) {
-            throw new Error('service update 缺少必要参数（serviceId/targetTag/targetDigest）')
-          }
-          resp = await triggerUpdate({
-            scope: 'service',
-            stackId: input.stackId,
-            serviceId,
-            targetTag,
-            targetDigest,
-            mode: 'apply',
-            allowArchMismatch: false,
-            backupMode: 'inherit',
-          })
-        } else {
-          resp = await triggerUpdate({
-            scope: 'stack',
-            stackId: input.stackId,
-            mode: 'apply',
-            allowArchMismatch: false,
-            backupMode: 'inherit',
-          })
-        }
+        const resp = await triggerUpdate(await input.buildRequest())
         setNoticeJobId(resp.jobId)
         if (targetKey) trackJob(targetKey, resp.jobId, 'queued')
       } catch (e: unknown) {
@@ -1057,6 +1028,16 @@ export function ServicesPage(props: {
 	                          scope: 'stack',
 	                          stackId: g.stackId,
 	                          targetLabel: `stack:${g.stackName}`,
+	                          buildRequest: async () => ({
+	                            scope: 'stack',
+	                            stackId: g.stackId,
+	                            targets: await buildUpdateServiceTargets(
+	                              g.aggregatePartition.actionable.map((item) => item.svc),
+	                            ),
+	                            mode: 'apply',
+	                            allowArchMismatch: false,
+	                            backupMode: 'inherit',
+	                          }),
 	                          confirmBody: body,
 	                          confirmTitle: '确认更新此 stack？',
 		                        })
@@ -1384,8 +1365,14 @@ export function ServicesPage(props: {
 			                                    stackId: g.stackId,
 			                                    serviceId: svc.id,
 			                                    targetLabel: `service:${g.stackName}/${svc.name}`,
-			                                    targetTag: svc.image.tag,
-			                                    targetDigest: svc.candidate?.digest ?? null,
+			                                    buildRequest: async () => ({
+			                                      scope: 'service',
+			                                      stackId: g.stackId,
+			                                      ...(await buildUpdateServiceTarget(svc)),
+			                                      mode: 'apply',
+			                                      allowArchMismatch: false,
+			                                      backupMode: 'inherit',
+			                                    }),
 			                                    confirmBody: body,
 			                                    confirmTitle: `确认更新服务 ${svc.name}？`,
 			                                  })
