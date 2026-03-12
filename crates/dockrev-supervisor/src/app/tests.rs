@@ -388,12 +388,23 @@ fn render_ui_contains_copy_buttons_for_key_refs() {
     assert!(html.contains(".copyButton.failed::after"));
     assert!(html.contains("button.dataset.icon = icon.name;"));
     assert!(html.contains("function setCopyButtonValue(button, value)"));
+    assert!(html.contains("function fallbackCopyText(text)"));
     assert!(html.contains("function writeClipboardText(text)"));
+    assert!(html.contains("await navigator.clipboard.writeText(text);"));
+    assert!(html.contains("catch (_error) {"));
+    assert!(html.contains("fallbackCopyText(text);"));
     assert!(html.contains("const copied = document.execCommand('copy');"));
     assert!(html.contains("if (!copied) throw new Error('execCommand copy failed');"));
     assert!(html.contains("function hasPreviousRollbackTarget(previous)"));
     assert!(html.contains("tag !== 'unknown'"));
+    assert!(html.contains("function formatPreviousCopyRef(target, previous)"));
+    assert!(html.contains("return repo ? `${repo}@${digest}` : digest;"));
+    assert!(html.contains("return `${repo}:${tag}`;"));
     assert!(html.contains("hasPreviousRollbackTarget(st?.previous)"));
+    assert!(
+        html.contains("const previousCopyText = formatPreviousCopyRef(st?.target, st?.previous);")
+    );
+    assert!(html.contains("setCopyButtonValue(copyPreviousBtn, previousCopyText);"));
     assert!(html.contains("bindCopyButton(copyOpIdBtn);"));
     assert!(html.contains("renderCopyButtonIcon(button, 'copied');"));
 }
@@ -414,9 +425,13 @@ fn render_ui_distinguishes_cached_and_uncached_offline_states() {
     assert!(html.contains("const cachedPreviousText = hasPreviousRollbackTarget(cached.previous)"));
     assert!(html.contains("? formatPreviousRef(cached.previous)"));
     assert!(html.contains(": '';"));
+    assert!(html.contains(
+        "const cachedPreviousCopyText = formatPreviousCopyRef(cached.target, cached.previous);"
+    ));
     assert!(html.contains("statusOpIdEl.textContent = cached.opId"));
     assert!(html.contains("statusTargetEl.textContent = cachedTargetText"));
     assert!(html.contains("setCopyButtonValue(copyTargetBtn, cachedTargetText);"));
+    assert!(html.contains("setCopyButtonValue(copyPreviousBtn, cachedPreviousCopyText);"));
 }
 
 #[test]

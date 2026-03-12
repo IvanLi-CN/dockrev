@@ -1404,11 +1404,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         resetCopyButton(button);
       }}
 
-      async function writeClipboardText(text) {{
-        if (navigator.clipboard?.writeText) {{
-          await navigator.clipboard.writeText(text);
-          return;
-        }}
+      function fallbackCopyText(text) {{
         const area = document.createElement('textarea');
         area.value = text;
         area.setAttribute('readonly', 'true');
@@ -1419,6 +1415,19 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         const copied = document.execCommand('copy');
         area.remove();
         if (!copied) throw new Error('execCommand copy failed');
+      }}
+
+      async function writeClipboardText(text) {{
+        if (navigator.clipboard?.writeText) {{
+          try {{
+            await navigator.clipboard.writeText(text);
+            return;
+          }} catch (_error) {{
+            fallbackCopyText(text);
+            return;
+          }}
+        }}
+        fallbackCopyText(text);
       }}
 
       function flashCopyButton(button, state) {{
@@ -1527,6 +1536,25 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         return `${{tag}}${{previous?.digest ? '@' + previous.digest : ''}}`;
       }}
 
+      function formatPreviousCopyRef(target, previous) {{
+        const repo = String(target?.image || '').trim();
+        const digest = String(previous?.digest || '').trim();
+        if (digest) return repo ? `${{repo}}@${{digest}}` : digest;
+
+        const tag = String(previous?.tag || '').trim();
+        if (!tag || tag === 'unknown') return '';
+        if (!repo) return tag;
+        if (tag === repo
+          || tag.startsWith(`${{repo}}:`)
+          || tag.startsWith(`${{repo}}@`)
+          || tag.includes('/')
+          || tag.includes(':')
+          || tag.includes('@')) {{
+          return tag;
+        }}
+        return `${{repo}}:${{tag}}`;
+      }}
+
       const LOG_TOKEN_PATTERN = /(sha256:[0-9a-f]{{12,}}|sup_[A-Za-z0-9]+|(?:[a-z0-9.-]+\.[a-z]{{2,}}(?::\d+)?\/[a-z0-9._/-]+(?::[\w.-]+)?(?:@sha256:[0-9a-f]{{12,}})?))/gi;
 
       function setLogsText(text) {{
@@ -1594,6 +1622,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         const opIdText = st?.opId || '-';
         const targetText = formatTargetRef(st?.target);
         const previousText = formatPreviousRef(st?.previous);
+        const previousCopyText = formatPreviousCopyRef(st?.target, st?.previous);
         statusToneEl.className = statusToneClass(st?.state);
         statusToneEl.textContent = normalizeState(st?.state);
         statusStateEl.textContent = normalizeState(st?.state);
@@ -1608,7 +1637,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         statusPreviousEl.textContent = previousText;
         setCopyButtonValue(copyOpIdBtn, st?.opId || '');
         setCopyButtonValue(copyTargetBtn, targetText !== '-' ? targetText : '');
-        setCopyButtonValue(copyPreviousBtn, previousText !== '-' ? previousText : '');
+        setCopyButtonValue(copyPreviousBtn, previousCopyText);
       }}
 
       function renderOffline(error) {{
@@ -1637,6 +1666,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
         const cachedPreviousText = hasPreviousRollbackTarget(cached.previous)
           ? formatPreviousRef(cached.previous)
           : '';
+        const cachedPreviousCopyText = formatPreviousCopyRef(cached.target, cached.previous);
         statusOpIdEl.textContent = cached.opId ? `${{cached.opId}} · stale` : 'stale';
         statusStepEl.textContent = cached.progress?.step ? `${{cached.progress.step}} · stale` : 'stale';
         statusModeEl.textContent = `last seen ${{lastSeen}} · cached`;
@@ -1653,7 +1683,7 @@ pub(crate) fn render_ui(base_path: &str, meta: &SupervisorMeta) -> String {
           : 'stale while offline';
         setCopyButtonValue(copyOpIdBtn, cached.opId || '');
         setCopyButtonValue(copyTargetBtn, cachedTargetText);
-        setCopyButtonValue(copyPreviousBtn, cachedPreviousText);
+        setCopyButtonValue(copyPreviousBtn, cachedPreviousCopyText);
       }}
 
       function syncWorkspaceMode(hasOperations) {{
