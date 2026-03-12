@@ -581,6 +581,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "cron",
+ "dockrev-common",
  "hex",
  "http-body-util",
  "include_dir",
@@ -607,11 +608,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dockrev-common"
+version = "0.1.0"
+dependencies = [
+ "semver",
+]
+
+[[package]]
 name = "dockrev-supervisor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "dockrev-common",
  "reqwest",
  "semver",
  "serde",

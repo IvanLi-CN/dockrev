@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::Path, time::Duration};
 
-use semver::Version;
+use dockrev_common::normalized_semver_from_oci_version;
 use serde::Deserialize;
 
 use crate::{config::Config, state_store::now_rfc3339};
@@ -618,22 +618,6 @@ async fn docker_image_inspect(
     Ok(serde_json::from_str::<DockerImageInspect>(out.trim())?)
 }
 
-fn semver_tag_from_oci_version(raw: &str) -> Option<String> {
-    let t = raw.trim();
-    if t.is_empty() {
-        return None;
-    }
-    let t = t
-        .strip_prefix('v')
-        .or_else(|| t.strip_prefix('V'))
-        .unwrap_or(t);
-    let v = Version::parse(t).ok()?;
-    if !v.build.is_empty() {
-        return None;
-    }
-    Some(v.to_string())
-}
-
 pub async fn docker_image_semver_tag_ref_to_pull(
     cfg: &Config,
     image_ref_or_id: &str,
@@ -644,7 +628,7 @@ pub async fn docker_image_semver_tag_ref_to_pull(
     let Some(raw_version) = labels.get("org.opencontainers.image.version") else {
         return Ok(None);
     };
-    let Some(tag) = semver_tag_from_oci_version(raw_version) else {
+    let Some(tag) = normalized_semver_from_oci_version(raw_version) else {
         return Ok(None);
     };
     let desired = format!("{repo}:{tag}");
@@ -760,11 +744,11 @@ mod tests {
     #[test]
     fn semver_tag_from_oci_version_parses_v_prefix_and_rejects_build() {
         assert_eq!(
-            semver_tag_from_oci_version("v0.7.7"),
+            normalized_semver_from_oci_version("v0.7.7"),
             Some("0.7.7".to_string())
         );
         assert_eq!(
-            semver_tag_from_oci_version("0.7.7+build.1"),
+            normalized_semver_from_oci_version("0.7.7+build.1"),
             None,
             "docker tags cannot include '+' build metadata"
         );

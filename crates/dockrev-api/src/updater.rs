@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::Context;
+use dockrev_common::normalized_semver_from_oci_version;
 use semver::Version;
 use serde::Serialize;
 use serde_json::json;
@@ -1002,16 +1003,9 @@ fn semver_tag_candidates_from_oci_version(raw: &str) -> Vec<String> {
         return Vec::new();
     }
 
-    let normalized = raw_tag
-        .strip_prefix('v')
-        .or_else(|| raw_tag.strip_prefix('V'))
-        .unwrap_or(raw_tag);
-    let version = match Version::parse(normalized) {
-        Ok(version) if version.build.is_empty() => version,
-        _ => return Vec::new(),
+    let Some(normalized_tag) = normalized_semver_from_oci_version(raw_tag) else {
+        return Vec::new();
     };
-
-    let normalized_tag = version.to_string();
     let mut candidates = vec![raw_tag.to_string()];
     if normalized_tag != raw_tag {
         candidates.push(normalized_tag);

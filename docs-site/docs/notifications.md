@@ -134,7 +134,8 @@ Dockrev 会生成两类路径（总能生成）：
 发送时机、去重与生命周期：
 
 - check job 会先写入 `success` 终态；通知只在 dispatch 前等待，不回退任务终态
-- 对仍依赖 floating tag 推测的服务，会按 digest snapshot + snapshot worker 在途状态等待版本推测收敛；固定等待上限为 **3 秒**
+- 对仍依赖 floating tag 推测的服务，通知会优先等待 `snapshot_worker task_finished` 明确事件后再统一重算 display tag；固定等待上限为 **10 秒**，只作为异常/缺失事件的兜底
+- 若 digest snapshot 已终态但 `tags[]` 仍无法给出可读版本，通知会额外尝试 OCI `org.opencontainers.image.version` 作为 display tag 兜底；raw tag 字段保持兼容不变
 - active 去重键为 `serviceId + candidateDigest`
 - 只有 `pending` / `sent` 状态会阻止重复通知
 - 当候选消失、候选 digest 变化、或服务基线 `imageRef:imageTag` 改变时，旧 active 记录会转成 `superseded`
@@ -148,7 +149,7 @@ Dockrev 会生成两类路径（总能生成）：
 - `links.jobUrl`：任务详情页（`/queue/{jobId}`）
 - `links.serviceUrls[]`：服务详情链接（`/services/{stackId}/{serviceId}`）
 - `links.serviceUrls[].currentTag` / `candidateTag`：保留 raw tag，兼容既有 webhook 消费方
-- `links.serviceUrls[].currentDisplayTag` / `candidateDisplayTag`：优先使用已解析的 resolved version/tag；若最终仍不可读，raw 字段仍保持不变
+- `links.serviceUrls[].currentDisplayTag` / `candidateDisplayTag`：优先级为 `snapshot 推断 > 已冻结/活体 resolved tag > OCI explicit version > raw tag`；若最终仍不可读，raw 字段仍保持不变
 - `links.primaryUrl`：若仅 1 个服务则指向服务详情，否则指向任务详情
 - `human.title`：用于 Email subject / Web Push title 的精简标题；单服务为服务名，多服务为聚合计数
 - `human.summary`：只收敛人类可读文案，不改变 schema version

@@ -28,6 +28,7 @@
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
 | kv9pg | Dockrev：quality-gates 最终版对齐（merge queue + 条件 review + required checks） | 进行中 | `kv9pg-quality-gates-final-alignment/SPEC.md` | 2026-03-11 | fast-track |
+| s4fqf | Dockrev：新版本通知事件驱动收敛 + 显式版本结果兜底 | 已完成 | `s4fqf-new-version-notify-event-settle-explicit-version/SPEC.md` | 2026-03-12 | fast-track |
 | xyma9 | Dockrev：非 service update 的 semver pull 保留 OCI 原始 tag 并回退无 v 变体 | 已完成 | `xyma9-semver-pull-raw-tag-fallback/SPEC.md` | 2026-03-10 | fast-track |
 | ufxaq | Dockrev：Update Job Docker 凭据透传桥接 | 已完成 | `ufxaq-update-job-docker-auth-bridge/SPEC.md` | 2026-03-10 | fast-track（update job Docker auth bridge + private registry docs sync） |
 | 6epk6 | Dockrev：Popover 局部刷新边界收敛 + Snapshot 并发调整 | 已完成 | `6epk6-popover-local-refresh-snapshot-concurrency/SPEC.md` | 2026-03-10 | fast-track |
