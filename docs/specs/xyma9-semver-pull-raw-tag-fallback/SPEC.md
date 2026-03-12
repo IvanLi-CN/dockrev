@@ -2,9 +2,14 @@
 
 ## 状态
 
-- Status: 已完成
+- Status: 重新设计（#99egq）
 - Created: 2026-03-10
 - Last: 2026-03-10
+
+
+## 说明
+
+- 本规格已被 `#99egq` 重新设计；Dockrev 后续不再通过服务端猜测 semver tag，而改为由更新任务发起方显式提供 `targetTag` 与 `pullTags[]`。
 
 ## 背景 / 问题陈述
 
