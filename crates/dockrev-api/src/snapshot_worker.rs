@@ -1186,7 +1186,11 @@ mod tests {
         worker.event_notify.notify_waiters();
 
         let outcomes = worker
-            .wait_for_task_finished_keys_since(after_id, &[key.clone()], Duration::from_millis(50))
+            .wait_for_task_finished_keys_since(
+                after_id,
+                std::slice::from_ref(&key),
+                Duration::from_millis(50),
+            )
             .await;
         assert_eq!(outcomes.get(&key), Some(&SnapshotTaskWaitStatus::Success));
     }
