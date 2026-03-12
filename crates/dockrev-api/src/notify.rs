@@ -1,6 +1,7 @@
 use std::{borrow::Cow, time::Duration};
 
 use anyhow::Context as _;
+use dockrev_common::normalized_semver_from_oci_version;
 use lettre::{
     AsyncSmtpTransport, AsyncTransport as _, Message, Tokio1Executor,
     message::{Mailbox, MultiPart, SinglePart, header::ContentType},
@@ -29,8 +30,7 @@ const MAX_JOB_ERROR_CHARS: usize = 1024;
 const MAX_NEW_VERSION_SERVICE_URLS: usize = 10;
 const MAX_GHCR_REPOS: usize = 10;
 const MAX_GHCR_REPO_ERROR_CHARS: usize = 256;
-const NEW_VERSION_NOTIFY_SETTLE_TIMEOUT: Duration = Duration::from_secs(3);
-const NEW_VERSION_NOTIFY_SETTLE_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const NEW_VERSION_NOTIFY_SETTLE_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub async fn notify_job_updated(
     state: &AppState,
@@ -464,21 +464,36 @@ async fn settle_new_version_discovered_services(
     let settle_targets =
         load_new_version_notification_settle_targets(state, discovered_services, &host_platform)
             .await?;
-    let deadline = tokio::time::Instant::now() + NEW_VERSION_NOTIFY_SETTLE_TIMEOUT;
-
-    loop {
-        let (settled, pending) = settle_new_version_discovered_services_once(
-            state,
-            discovered_services,
-            &settle_targets,
-            &host_platform,
-        )
-        .await?;
-        if !pending || tokio::time::Instant::now() >= deadline {
-            return Ok(settled);
-        }
-        tokio::time::sleep(NEW_VERSION_NOTIFY_SETTLE_POLL_INTERVAL).await;
+    let after_id = state.snapshot_worker.latest_event_id().await;
+    let (settled, pending_keys) = settle_new_version_discovered_services_once(
+        state,
+        discovered_services,
+        &settle_targets,
+        &host_platform,
+    )
+    .await?;
+    if pending_keys.is_empty() {
+        return Ok(settled);
     }
+
+    let pending_keys = pending_keys.into_iter().collect::<Vec<_>>();
+    let _outcomes = state
+        .snapshot_worker
+        .wait_for_task_finished_keys_since(
+            after_id,
+            &pending_keys,
+            NEW_VERSION_NOTIFY_SETTLE_TIMEOUT,
+        )
+        .await;
+
+    settle_new_version_discovered_services_once(
+        state,
+        discovered_services,
+        &settle_targets,
+        &host_platform,
+    )
+    .await
+    .map(|(settled, _pending_keys)| settled)
 }
 
 async fn load_notification_snapshot_ready(
@@ -582,14 +597,17 @@ async fn settle_new_version_discovered_services_once(
     discovered_services: &[NewVersionDiscoveredService],
     settle_targets: &std::collections::HashMap<String, NewVersionNotificationSettleTarget>,
     host_platform: &str,
-) -> anyhow::Result<(Vec<NewVersionDiscoveredService>, bool)> {
-    let mut pending = false;
+) -> anyhow::Result<(
+    Vec<NewVersionDiscoveredService>,
+    std::collections::BTreeSet<String>,
+)> {
+    let mut pending_keys = std::collections::BTreeSet::<String>::new();
     let mut settled = Vec::with_capacity(discovered_services.len());
 
     for item in discovered_services {
         let target = settle_targets.get(&item.service_id);
         let image_repo = target.and_then(|target| target.image_repo.as_deref());
-        let (current_display_tag, current_pending) = settle_new_version_display_tag(
+        let (current_display_tag, current_pending_key) = settle_new_version_display_tag(
             state,
             image_repo,
             &item.current_tag,
@@ -603,7 +621,7 @@ async fn settle_new_version_discovered_services_once(
             host_platform,
         )
         .await?;
-        let (candidate_display_tag, candidate_pending) = settle_new_version_display_tag(
+        let (candidate_display_tag, candidate_pending_key) = settle_new_version_display_tag(
             state,
             image_repo,
             &item.candidate_tag,
@@ -613,7 +631,12 @@ async fn settle_new_version_discovered_services_once(
             host_platform,
         )
         .await?;
-        pending |= current_pending || candidate_pending;
+        if let Some(key) = current_pending_key {
+            pending_keys.insert(key);
+        }
+        if let Some(key) = candidate_pending_key {
+            pending_keys.insert(key);
+        }
         settled.push(NewVersionDiscoveredService {
             current_display_tag,
             candidate_display_tag,
@@ -621,7 +644,7 @@ async fn settle_new_version_discovered_services_once(
         });
     }
 
-    Ok((settled, pending))
+    Ok((settled, pending_keys))
 }
 
 async fn settle_new_version_display_tag(
@@ -632,7 +655,7 @@ async fn settle_new_version_display_tag(
     existing_display_tag: Option<&str>,
     digest: Option<&str>,
     host_platform: &str,
-) -> anyhow::Result<(String, bool)> {
+) -> anyhow::Result<(String, Option<String>)> {
     let raw_tag = raw_tag.trim();
     let digest = digest.map(str::trim).filter(|digest| !digest.is_empty());
     let image_repo = image_repo.map(str::trim).filter(|repo| !repo.is_empty());
@@ -641,11 +664,15 @@ async fn settle_new_version_display_tag(
         existing_display_tag,
         None,
         existing_resolved_tag,
+        None,
     );
     let needs_inference = notification_tag_requires_settle(raw_tag, &stable_display);
+    if !needs_inference {
+        return Ok((stable_display, None));
+    }
 
     let mut inferred = None;
-    let mut in_flight_reason = None;
+    let mut explicit_version = None;
     let mut snapshot_ready = false;
     if needs_inference && let (Some(image_repo), Some(digest)) = (image_repo, digest) {
         let snapshot_result = infer_notification_display_tag_from_snapshot(
@@ -658,10 +685,15 @@ async fn settle_new_version_display_tag(
         .await?;
         inferred = snapshot_result.display_tag;
         snapshot_ready = snapshot_result.ready;
-        in_flight_reason = state
-            .snapshot_worker
-            .in_flight_reason(image_repo, digest, host_platform)
+        if snapshot_ready && inferred.is_none() {
+            explicit_version = infer_notification_explicit_version_from_registry(
+                state,
+                image_repo,
+                digest,
+                host_platform,
+            )
             .await;
+        }
     }
 
     let display = preferred_notification_display_tag(
@@ -669,9 +701,25 @@ async fn settle_new_version_display_tag(
         existing_display_tag,
         inferred.as_deref(),
         existing_resolved_tag,
+        explicit_version.as_deref(),
     );
-    let pending = in_flight_reason.is_some() && needs_inference && !snapshot_ready;
-    Ok((display, pending))
+    let pending_key = if !snapshot_ready {
+        match (image_repo, digest) {
+            (Some(image_repo), Some(digest))
+                if state
+                    .snapshot_worker
+                    .in_flight_reason(image_repo, digest, host_platform)
+                    .await
+                    .is_some() =>
+            {
+                crate::snapshot_worker::snapshot_task_key(image_repo, digest, host_platform)
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+    Ok((display, pending_key))
 }
 
 #[derive(Default)]
@@ -747,11 +795,44 @@ fn preferred_notification_display_tag(
     frozen_display_tag: Option<&str>,
     inferred_display_tag: Option<&str>,
     live_resolved_tag: Option<&str>,
+    explicit_version_tag: Option<&str>,
 ) -> String {
     best_notification_display_tag(
         raw_tag,
-        &[frozen_display_tag, inferred_display_tag, live_resolved_tag],
+        &[
+            inferred_display_tag,
+            frozen_display_tag,
+            live_resolved_tag,
+            explicit_version_tag,
+        ],
     )
+}
+
+async fn infer_notification_explicit_version_from_registry(
+    state: &AppState,
+    image_repo: &str,
+    digest: &str,
+    host_platform: &str,
+) -> Option<String> {
+    let image = crate::snapshot_worker::image_ref_from_repo(image_repo)?;
+    match state
+        .registry
+        .get_oci_version(&image, digest, host_platform)
+        .await
+    {
+        Ok(Some(raw_version)) => normalized_semver_from_oci_version(&raw_version),
+        Ok(None) => None,
+        Err(error) => {
+            tracing::debug!(
+                image_repo,
+                digest,
+                host_platform,
+                error = %error,
+                "notification explicit version lookup failed"
+            );
+            None
+        }
+    }
 }
 
 fn notification_tag_supports_settle(raw_tag: &str) -> bool {
@@ -3932,7 +4013,7 @@ mod tests {
     #[test]
     fn preferred_notification_display_keeps_frozen_summary_before_live_resolved() {
         let display =
-            preferred_notification_display_tag("latest", Some("5.2.0"), None, Some("5.1.0"));
+            preferred_notification_display_tag("latest", Some("5.2.0"), None, Some("5.1.0"), None);
         assert_eq!(display, "5.2.0");
     }
 
@@ -3943,6 +4024,7 @@ mod tests {
             Some("latest"),
             Some("5.2.0"),
             Some("5.1.0"),
+            None,
         );
         assert_eq!(display, "5.2.0");
     }

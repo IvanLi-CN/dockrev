@@ -116,7 +116,8 @@ Trigger: scheduled update checks and GHCR-webhook-triggered service checks. A no
 Dispatch timing, dedupe, and lifecycle:
 
 - the check job is finalized as `success` before any notification wait starts; only dispatch is delayed
-- services that still depend on floating-tag inference wait on digest snapshots + snapshot-worker in-flight state before dispatch, with a fixed **3 second** cap
+- services that still depend on floating-tag inference primarily wait for an explicit `snapshot_worker task_finished` event before one final display-tag recompute; the fixed **10 second** cap is now only a safety fallback when the event/result does not arrive cleanly
+- when a digest snapshot has already finished but `tags[]` still cannot produce a readable version, notifications also try OCI `org.opencontainers.image.version` as a display-tag fallback while leaving raw tag fields untouched for compatibility
 - active dedupe is keyed by `serviceId + candidateDigest`
 - only `pending` / `sent` records block repeats
 - when the candidate disappears, the candidate digest changes, or the service baseline `imageRef:imageTag` changes, the previous active record is marked `superseded`
@@ -130,7 +131,7 @@ Key fields:
 - `links.jobUrl`: `/queue/{jobId}`
 - `links.serviceUrls[]`: `/services/{stackId}/{serviceId}`
 - `links.serviceUrls[].currentTag` / `candidateTag`: raw tags kept for backward compatibility
-- `links.serviceUrls[].currentDisplayTag` / `candidateDisplayTag`: prefer resolved version/tag when available; raw fields remain unchanged for compatibility
+- `links.serviceUrls[].currentDisplayTag` / `candidateDisplayTag`: priority is `snapshot inference > frozen/live resolved tag > OCI explicit version > raw tag`; raw fields remain unchanged for compatibility
 - `links.primaryUrl`: service URL when exactly one service is affected, otherwise job URL
 - `human.title`: a compact headline for the Email subject / Web Push title; single-service payloads use the service name, while multi-service payloads use an aggregate count
 - `human.summary`: the human-facing copy is tightened without changing the schema version

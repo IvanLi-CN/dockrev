@@ -95,6 +95,15 @@ pub trait RegistryClient: Send + Sync {
         reference: &str,
         host_platform: &str,
     ) -> anyhow::Result<ManifestInfo>;
+    async fn get_oci_version(
+        &self,
+        image: &ImageRef,
+        reference: &str,
+        host_platform: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let _ = (image, reference, host_platform);
+        Ok(None)
+    }
 }
 
 #[derive(Clone)]
@@ -260,9 +269,7 @@ impl RegistryClient for HttpRegistryClient {
             reference
         );
 
-        let accept = Some(
-            "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json",
-        );
+        let accept = Some(manifest_accept_header());
         let resp = self
             .get_with_auth(&image.registry, &scope, url, accept)
             .await?;
@@ -276,9 +283,81 @@ impl RegistryClient for HttpRegistryClient {
         let body = resp.text().await?;
         parse_manifest_json(&body, digest, host_platform)
     }
+
+    async fn get_oci_version(
+        &self,
+        image: &ImageRef,
+        reference: &str,
+        host_platform: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let (manifest_json, _manifest_digest) = self.get_manifest_json(image, reference).await?;
+        let config_digest = if let Some(config_digest) = manifest_config_digest(&manifest_json) {
+            Some(config_digest)
+        } else {
+            let child_digest = select_platform_manifest_digest(&manifest_json, host_platform);
+            let Some(child_digest) = child_digest else {
+                return Ok(None);
+            };
+            let (child_manifest_json, _child_digest) =
+                self.get_manifest_json(image, &child_digest).await?;
+            manifest_config_digest(&child_manifest_json)
+        };
+        let Some(config_digest) = config_digest else {
+            return Ok(None);
+        };
+
+        let blob_json = self.get_blob_json(image, &config_digest).await?;
+        Ok(extract_oci_version_from_config_blob(&blob_json))
+    }
 }
 
 impl HttpRegistryClient {
+    async fn get_manifest_json(
+        &self,
+        image: &ImageRef,
+        reference: &str,
+    ) -> anyhow::Result<(serde_json::Value, Option<String>)> {
+        let scope = format!("repository:{}:pull", image.name);
+        let url = format!(
+            "https://{}/v2/{}/manifests/{}",
+            registry_api_host(&image.registry),
+            image.name,
+            reference
+        );
+
+        let resp = self
+            .get_with_auth(&image.registry, &scope, url, Some(manifest_accept_header()))
+            .await?;
+        let digest = resp
+            .headers()
+            .get("Docker-Content-Digest")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let body = resp.text().await?;
+        let value =
+            serde_json::from_str::<serde_json::Value>(&body).context("parse manifest json")?;
+        Ok((value, digest))
+    }
+
+    async fn get_blob_json(
+        &self,
+        image: &ImageRef,
+        digest: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        let scope = format!("repository:{}:pull", image.name);
+        let url = format!(
+            "https://{}/v2/{}/blobs/{}",
+            registry_api_host(&image.registry),
+            image.name,
+            digest
+        );
+        let resp = self
+            .get_with_auth(&image.registry, &scope, url, None)
+            .await?;
+        let body = resp.text().await?;
+        serde_json::from_str::<serde_json::Value>(&body).context("parse config blob json")
+    }
+
     async fn get_with_auth(
         &self,
         registry_host: &str,
@@ -511,6 +590,10 @@ fn registry_api_host(registry: &str) -> &str {
     } else {
         registry
     }
+}
+
+fn manifest_accept_header() -> &'static str {
+    "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json"
 }
 
 fn request_limit_host(url: &str, fallback_host: &str) -> String {
@@ -766,6 +849,72 @@ pub fn parse_manifest_json(
         platform_digest,
         arch,
     })
+}
+
+fn manifest_config_digest(value: &serde_json::Value) -> Option<String> {
+    value
+        .get("config")
+        .and_then(|config| config.get("digest"))
+        .and_then(|digest| digest.as_str())
+        .map(str::to_string)
+}
+
+fn select_platform_manifest_digest(
+    value: &serde_json::Value,
+    host_platform: &str,
+) -> Option<String> {
+    let manifests = value.get("manifests").and_then(|v| v.as_array())?;
+    let host_base = host_platform
+        .split('/')
+        .take(2)
+        .collect::<Vec<_>>()
+        .join("/");
+    let mut base_matches = Vec::<String>::new();
+
+    for manifest in manifests {
+        let os = manifest
+            .get("platform")
+            .and_then(|platform| platform.get("os"))
+            .and_then(|value| value.as_str());
+        let architecture = manifest
+            .get("platform")
+            .and_then(|platform| platform.get("architecture"))
+            .and_then(|value| value.as_str());
+        let variant = manifest
+            .get("platform")
+            .and_then(|platform| platform.get("variant"))
+            .and_then(|value| value.as_str());
+        let digest = manifest.get("digest").and_then(|value| value.as_str());
+        let Some(digest) = digest else {
+            continue;
+        };
+
+        if platform_matches(host_platform, os, architecture, variant) {
+            return Some(digest.to_string());
+        }
+
+        if let (Some(os), Some(architecture)) = (os, architecture) {
+            let base = format!("{os}/{architecture}");
+            if base == host_base {
+                base_matches.push(digest.to_string());
+            }
+        }
+    }
+
+    base_matches.sort();
+    base_matches.dedup();
+    (base_matches.len() == 1).then(|| base_matches.remove(0))
+}
+
+fn extract_oci_version_from_config_blob(value: &serde_json::Value) -> Option<String> {
+    let labels = value
+        .get("config")
+        .and_then(|config| config.get("Labels").or_else(|| config.get("labels")))
+        .and_then(|labels| labels.as_object())?;
+    labels
+        .get("org.opencontainers.image.version")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
 }
 
 #[cfg(test)]
@@ -1145,6 +1294,43 @@ mod tests {
 }"#;
         let info = parse_manifest_json(json, None, "linux/amd64/v3").unwrap();
         assert_eq!(info.digest.as_deref(), Some("sha256:amd64"));
+    }
+
+    #[test]
+    fn select_platform_manifest_digest_supports_multiarch_oci_version_lookup() {
+        let manifest_list = serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "manifests": [
+                {
+                    "digest": "sha256:amd64",
+                    "platform": { "os": "linux", "architecture": "amd64" }
+                },
+                {
+                    "digest": "sha256:arm64",
+                    "platform": { "os": "linux", "architecture": "arm64" }
+                }
+            ]
+        });
+        assert_eq!(
+            select_platform_manifest_digest(&manifest_list, "linux/amd64").as_deref(),
+            Some("sha256:amd64")
+        );
+    }
+
+    #[test]
+    fn extract_oci_version_from_config_blob_reads_config_labels() {
+        let blob = serde_json::json!({
+            "config": {
+                "Labels": {
+                    "org.opencontainers.image.version": "v1.2.3"
+                }
+            }
+        });
+        assert_eq!(
+            extract_oci_version_from_config_blob(&blob).as_deref(),
+            Some("v1.2.3")
+        );
     }
 
     #[test]
