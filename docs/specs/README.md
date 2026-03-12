@@ -29,6 +29,7 @@
 |-----:|-------|--------|------|------|-------|
 | kv9pg | Dockrev：quality-gates 最终版对齐（merge queue + 条件 review + required checks） | 进行中 | `kv9pg-quality-gates-final-alignment/SPEC.md` | 2026-03-11 | fast-track |
 | s4fqf | Dockrev：新版本通知事件驱动收敛 + 显式版本结果兜底 | 已完成 | `s4fqf-new-version-notify-event-settle-explicit-version/SPEC.md` | 2026-03-12 | fast-track |
+| np5fm | Dockrev：Supervisor 自我升级页低拥挤度重构 | 已完成 | `np5fm-supervisor-roomier-layout/SPEC.md` | 2026-03-12 | fast-track（PR #160；visual evidence + copy UX + review fixes） |
 | 99egq | Dockrev：显式 tag 驱动的 Update 契约 | 已完成 | `99egq-explicit-update-tag-contract/SPEC.md` | 2026-03-11 | fast-track（撤销 #162 的 semver raw fallback；统一 explicit targetTag + pullTags） |
 | xyma9 | Dockrev：非 service update 的 semver pull 保留 OCI 原始 tag 并回退无 v 变体 | 重新设计（#99egq） | `xyma9-semver-pull-raw-tag-fallback/SPEC.md` | 2026-03-11 | superseded by explicit target contract |
 | ufxaq | Dockrev：Update Job Docker 凭据透传桥接 | 已完成 | `ufxaq-update-job-docker-auth-bridge/SPEC.md` | 2026-03-10 | fast-track（update job Docker auth bridge + private registry docs sync） |

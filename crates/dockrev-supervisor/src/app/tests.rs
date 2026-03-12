@@ -69,10 +69,11 @@ fn rollback_image_ref_handles_full_refs_and_plain_tags() {
 }
 
 #[test]
-fn render_ui_joins_logs_with_real_newlines() {
+fn render_ui_renders_logs_as_semantic_lines() {
     let html = render_ui("/supervisor", &test_meta());
-    assert!(html.contains(r".join('\n')"));
-    assert!(!html.contains(r".join('\\n')"));
+    assert!(html.contains("function renderLogEntries(logs)"));
+    assert!(html.contains("row.className = `logLine logLine-${level.toLowerCase()}`;"));
+    assert!(html.contains("logsEl.replaceChildren(fragment);"));
 }
 
 #[tokio::test]
@@ -330,11 +331,139 @@ fn legacy_group_ids_stay_stable_after_retention() {
 }
 
 #[test]
-fn render_ui_contains_operation_tabs_markup() {
+fn render_ui_contains_roomier_four_panel_markup() {
     let html = render_ui("/supervisor", &test_meta());
-    assert!(html.contains("id=\"opTabs\""));
-    assert!(html.contains("id=\"tabsToggle\""));
+    assert!(html.contains(r#"data-panel="masthead""#));
+    assert!(html.contains(r#"data-panel="action-deck""#));
+    assert!(html.contains(r#"data-panel="status-grid""#));
+    assert!(html.contains(r#"data-panel="workspace""#));
+    assert!(html.contains("id=\"historyList\""));
+    assert!(!html.contains("id=\"opTabs\""));
+    assert!(!html.contains("id=\"tabsToggle\""));
+}
+
+#[test]
+fn render_ui_contains_status_tiles_and_textual_history_markup() {
+    let html = render_ui("/supervisor", &test_meta());
+    assert!(html.contains("id=\"statusTarget\""));
+    assert!(html.contains("id=\"statusPrevious\""));
+    assert!(html.contains("id=\"statusProgressMessage\""));
+    assert!(html.contains("function renderStatus(st)"));
+    assert!(html.contains("function createStateBadge(state)"));
+    assert!(html.contains("function operationMarker(op)"));
+    assert!(html.contains("stateBadge stateBadge-"));
     assert!(html.contains("latestHasNewer"));
+}
+
+#[test]
+fn render_ui_contains_semantic_log_highlighting() {
+    let html = render_ui("/supervisor", &test_meta());
+    assert!(html.contains("const LOG_TOKEN_PATTERN"));
+    assert!(html.contains("function appendHighlightedMessage(parent, message)"));
+    assert!(html.contains("function renderLogEntries(logs)"));
+    assert!(html.contains("logLine-warn"));
+    assert!(html.contains("logLine-error"));
+    assert!(html.contains("logToken-level logLevel-"));
+    assert!(html.contains("logToken-ref"));
+    assert!(html.contains("logToken-opid"));
+    assert!(html.contains("logToken-digest"));
+    assert!(html.contains("renderLogEntries(active.logs || [])"));
+}
+
+#[test]
+fn render_ui_contains_copy_buttons_for_key_refs() {
+    let html = render_ui("/supervisor", &test_meta());
+    assert!(html.contains("id=\"copyOpId\""));
+    assert!(html.contains("id=\"copyTarget\""));
+    assert!(html.contains("id=\"copyPrevious\""));
+    assert!(html.contains("name: 'mdi:content-copy'"));
+    assert!(html.contains("name: 'mdi:check-bold'"));
+    assert!(html.contains("content: attr(data-tooltip);"));
+    assert!(html.contains("function setCopyButtonTooltip(button, text)"));
+    assert!(
+        html.contains("button.dataset.defaultTooltip = button.getAttribute('aria-label') || '';")
+    );
+    assert!(html.contains("setCopyButtonTooltip(button, '已复制');"));
+    assert!(html.contains(".copyButton.copied::after"));
+    assert!(html.contains(".copyButton.failed::after"));
+    assert!(html.contains("button.dataset.icon = icon.name;"));
+    assert!(html.contains("function setCopyButtonValue(button, value)"));
+    assert!(html.contains("function fallbackCopyText(text)"));
+    assert!(html.contains("function writeClipboardText(text)"));
+    assert!(html.contains("await navigator.clipboard.writeText(text);"));
+    assert!(html.contains("catch (_error) {"));
+    assert!(html.contains("fallbackCopyText(text);"));
+    assert!(html.contains("const copied = document.execCommand('copy');"));
+    assert!(html.contains("if (!copied) throw new Error('execCommand copy failed');"));
+    assert!(html.contains("function hasPreviousRollbackTarget(previous)"));
+    assert!(html.contains("tag !== 'unknown'"));
+    assert!(html.contains("function formatPreviousCopyRef(target, previous)"));
+    assert!(html.contains("return repo ? `${repo}@${digest}` : digest;"));
+    assert!(html.contains("return `${repo}:${tag}`;"));
+    assert!(html.contains("hasPreviousRollbackTarget(st?.previous)"));
+    assert!(
+        html.contains("const previousCopyText = formatPreviousCopyRef(st?.target, st?.previous);")
+    );
+    assert!(html.contains("setCopyButtonValue(copyPreviousBtn, previousCopyText);"));
+    assert!(html.contains("bindCopyButton(copyOpIdBtn);"));
+    assert!(html.contains("renderCopyButtonIcon(button, 'copied');"));
+}
+
+#[test]
+fn render_ui_distinguishes_cached_and_uncached_offline_states() {
+    let html = render_ui("/supervisor", &test_meta());
+    assert!(html.contains("const cached = lastKnownSelfUpgradeState;"));
+    assert!(html.contains("const hasCachedState = !!cached;"));
+    assert!(html.contains("if (!hasCachedState) {"));
+    assert!(html.contains("statusOpIdEl.textContent = 'unavailable';"));
+    assert!(html.contains("statusTargetEl.textContent = 'unavailable while offline';"));
+    assert!(
+        html.contains(
+            "const cachedTargetText = cached.target ? formatTargetRef(cached.target) : '';"
+        )
+    );
+    assert!(html.contains("const cachedPreviousText = hasPreviousRollbackTarget(cached.previous)"));
+    assert!(html.contains("? formatPreviousRef(cached.previous)"));
+    assert!(html.contains(": '';"));
+    assert!(html.contains(
+        "const cachedPreviousCopyText = formatPreviousCopyRef(cached.target, cached.previous);"
+    ));
+    assert!(html.contains("statusOpIdEl.textContent = cached.opId"));
+    assert!(html.contains("statusTargetEl.textContent = cachedTargetText"));
+    assert!(html.contains("setCopyButtonValue(copyTargetBtn, cachedTargetText);"));
+    assert!(html.contains("setCopyButtonValue(copyPreviousBtn, cachedPreviousCopyText);"));
+}
+
+#[test]
+fn render_ui_constrains_history_rail_height() {
+    let html = render_ui("/supervisor", &test_meta());
+    assert!(html.contains("max-height: min(560px, calc(100vh - 190px));"));
+    assert!(html.contains("overscroll-behavior: contain;"));
+    assert!(html.contains("max-height: min(360px, 44vh);"));
+}
+
+#[test]
+fn render_ui_collapses_history_rail_when_operation_groups_are_absent() {
+    let html = render_ui("/supervisor", &test_meta());
+    assert!(html.contains("id=\"workspaceGrid\""));
+    assert!(html.contains("id=\"historyRail\""));
+    assert!(
+        html.contains(
+            "workspaceGridEl.classList.toggle('workspaceGrid-logsOnly', !hasOperations);"
+        )
+    );
+    assert!(html.contains("historyRailEl.hidden = !hasOperations;"));
+    assert!(html.contains("暂无 operation 历史，已回退到扁平日志视图。"));
+}
+
+#[test]
+fn render_ui_marks_latest_history_card_when_same_operation_gets_new_logs() {
+    let html = render_ui("/supervisor", &test_meta());
+    assert!(html.contains("let latestOpMarker = null;"));
+    assert!(html.contains("const previousLatestMarker = latestOpMarker;"));
+    assert!(html.contains("const nextLatestMarker = operationMarker(nextLatestOp);"));
+    assert!(html.contains("previousLatestMarker !== nextLatestMarker"));
+    assert!(html.contains("latestOpMarker = nextLatestMarker;"));
 }
 
 #[test]
@@ -352,9 +481,8 @@ fn render_ui_shows_mode_specific_spinner_for_running_operation() {
     assert!(html.contains("mode === 'dry-run'"));
     assert!(html.contains("mode === 'apply'"));
     assert!(html.contains("st?.progress?.step !== 'rollback'"));
-    assert!(html.contains(
-        "if (lastKnownSelfUpgradeState) syncUpgradeActionState(lastKnownSelfUpgradeState);"
-    ));
+    assert!(html.contains("if (lastKnownSelfUpgradeState) {"));
+    assert!(html.contains("syncUpgradeActionState(lastKnownSelfUpgradeState);"));
     assert!(html.contains("setRunningButton(dryBtn"));
     assert!(html.contains("setRunningButton(applyBtn"));
 }
