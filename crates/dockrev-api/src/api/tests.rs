@@ -778,6 +778,53 @@ impl RegistryClient for LatestOnlyRegistry {
 }
 
 #[derive(Clone)]
+struct ExplicitVersionFallbackRegistry {
+    candidate_version: String,
+}
+
+impl ExplicitVersionFallbackRegistry {
+    fn new(candidate_version: &str) -> Self {
+        Self {
+            candidate_version: candidate_version.to_string(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl RegistryClient for ExplicitVersionFallbackRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        Ok(vec!["latest".to_string()])
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        let digest = match reference {
+            "latest" => "sha256:new",
+            "0.29.12" => "sha256:old",
+            _ => "sha256:unknown",
+        };
+        Ok(ManifestInfo {
+            digest: Some(digest.to_string()),
+            platform_digest: None,
+            arch: vec!["linux/amd64".to_string()],
+        })
+    }
+
+    async fn get_oci_version(
+        &self,
+        _image: &ImageRef,
+        reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<Option<String>> {
+        Ok((reference == "sha256:new").then(|| self.candidate_version.clone()))
+    }
+}
+
+#[derive(Clone)]
 struct ScriptedRunner {
     calls: Arc<std::sync::Mutex<Vec<Vec<String>>>>,
 }
@@ -2060,7 +2107,7 @@ async fn service_digest_tags_snapshot_returns_pending_while_target_digest_is_in_
         r#"
 services:
   web:
-    image: ghcr.io/acme/web:latest
+    image: ghcr.io/acme/web:0.29.12
 "#,
     )
     .unwrap();
@@ -2139,7 +2186,7 @@ async fn service_digest_tags_snapshot_returns_cached_snapshot_while_non_force_ta
         r#"
 services:
   web:
-    image: ghcr.io/acme/web:latest
+    image: ghcr.io/acme/web:0.29.12
 "#,
     )
     .unwrap();
@@ -2218,7 +2265,7 @@ async fn force_refresh_promotes_non_force_in_flight_snapshot_to_pending() {
         r#"
 services:
   web:
-    image: ghcr.io/acme/web:latest
+    image: ghcr.io/acme/web:0.29.12
 "#,
     )
     .unwrap();
@@ -11966,7 +12013,7 @@ services:
 
 #[tokio::test]
 async fn schedule_new_version_notification_falls_back_when_stale_snapshot_times_out() {
-    let registry = Arc::new(CoalescingRegistry::new(Duration::from_secs(5)));
+    let registry = Arc::new(CoalescingRegistry::new(Duration::from_secs(15)));
     let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
 
     let compose_path = format!(
@@ -12093,7 +12140,7 @@ services:
         .unwrap();
     });
 
-    let payload = tokio::time::timeout(Duration::from_secs(4), rx.recv())
+    let payload = tokio::time::timeout(Duration::from_secs(12), rx.recv())
         .await
         .expect("notification should fall back after settle timeout")
         .expect("notification payload missing");
@@ -12108,6 +12155,219 @@ services:
         Some("latest")
     );
     notify_task.await.unwrap();
+    server.abort();
+}
+
+#[tokio::test]
+async fn schedule_new_version_notification_falls_back_to_oci_explicit_version_when_snapshot_tags_stay_latest()
+ {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(ExplicitVersionFallbackRegistry::new("0.30.0")),
+        Arc::new(FakeRunner),
+    )
+    .await;
+
+    let compose_path = format!(
+        "/tmp/dockrev-schedule-notify-explicit-version-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:0.29.12
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            Some("sha256:old".to_string()),
+            Some("0.29.12".to_string()),
+            Some("[\"0.29.12\"]".to_string()),
+            Some("0.29.12".to_string()),
+            None,
+            Some("sha256:new".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            "2026-03-12T00:00:00Z",
+            "2026-03-12T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:new",
+        "linux/amd64",
+        "2026-03-12T00:00:00Z",
+        vec!["latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 116,
+            repo_tags_considered: 40,
+            manifests_ok: 14,
+            manifests_timeout: 23,
+            manifests_error: 3,
+        },
+    )
+    .await;
+    let discovered = vec![crate::notify::NewVersionDiscoveredService {
+        stack_id: stack_id.clone(),
+        service_id: service.id.clone(),
+        image_ref: service.image_ref.clone(),
+        current_tag: "0.29.12".to_string(),
+        current_digest: Some("sha256:old".to_string()),
+        current_display_tag: "0.29.12".to_string(),
+        candidate_tag: "latest".to_string(),
+        candidate_display_tag: "latest".to_string(),
+        candidate_digest: "sha256:new".to_string(),
+    }];
+    let (mut rx, server) = configure_webhook_notifications(&state).await;
+
+    let now = "2026-03-12T00:00:00Z";
+    let job_id = insert_check_job(&state, "schedule", now).await;
+    state
+        .db
+        .finish_job(&job_id, "success", now, &serde_json::json!({}))
+        .await
+        .unwrap();
+
+    crate::notify::notify_new_versions_discovered(
+        state.as_ref(),
+        &job_id,
+        "schedule",
+        now,
+        1,
+        &discovered,
+    )
+    .await
+    .unwrap();
+
+    let payload = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .expect("explicit version fallback should still deliver immediately")
+        .expect("notification payload missing");
+    assert_eq!(
+        payload["human"]["summary"].as_str(),
+        Some("demo / web 服务有新版本（0.29.12 -> 0.30.0）。")
+    );
+    assert_eq!(
+        payload["links"]["serviceUrls"][0]["candidateDisplayTag"].as_str(),
+        Some("0.30.0")
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn schedule_new_version_notification_keeps_generic_copy_when_snapshot_and_explicit_version_stay_raw()
+ {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(LatestOnlyRegistry),
+        Arc::new(FakeRunner),
+    )
+    .await;
+
+    let compose_path = format!(
+        "/tmp/dockrev-schedule-notify-explicit-miss-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            Some("sha256:old".to_string()),
+            None,
+            None,
+            Some("latest".to_string()),
+            None,
+            Some("sha256:new".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            "2026-03-12T00:00:00Z",
+            "2026-03-12T00:00:00Z",
+        )
+        .await
+        .unwrap();
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:new",
+        "linux/amd64",
+        "2026-03-12T00:00:00Z",
+        vec!["latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 116,
+            repo_tags_considered: 40,
+            manifests_ok: 14,
+            manifests_timeout: 23,
+            manifests_error: 3,
+        },
+    )
+    .await;
+    let discovered = vec![crate::notify::NewVersionDiscoveredService {
+        stack_id: stack_id.clone(),
+        service_id: service.id.clone(),
+        image_ref: service.image_ref.clone(),
+        current_tag: "latest".to_string(),
+        current_digest: Some("sha256:old".to_string()),
+        current_display_tag: "latest".to_string(),
+        candidate_tag: "latest".to_string(),
+        candidate_display_tag: "latest".to_string(),
+        candidate_digest: "sha256:new".to_string(),
+    }];
+    let (mut rx, server) = configure_webhook_notifications(&state).await;
+
+    let now = "2026-03-12T00:00:00Z";
+    let job_id = insert_check_job(&state, "schedule", now).await;
+    state
+        .db
+        .finish_job(&job_id, "success", now, &serde_json::json!({}))
+        .await
+        .unwrap();
+
+    crate::notify::notify_new_versions_discovered(
+        state.as_ref(),
+        &job_id,
+        "schedule",
+        now,
+        1,
+        &discovered,
+    )
+    .await
+    .unwrap();
+
+    let payload = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .expect("ready raw-only snapshot should still send immediately")
+        .expect("notification payload missing");
+    let summary = payload["human"]["summary"].as_str().unwrap_or_default();
+    assert_eq!(summary, "demo / web 服务有新版本。");
+    assert!(!summary.contains("latest -> latest"));
+    assert_eq!(
+        payload["links"]["serviceUrls"][0]["candidateDisplayTag"].as_str(),
+        Some("latest")
+    );
     server.abort();
 }
 

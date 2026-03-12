@@ -1,11 +1,11 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use serde_json::json;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, Notify, mpsc};
 
 use crate::{
     api::types::{ServiceDigestTagsScanSummary, ServiceDigestTagsSnapshotResponse},
@@ -171,7 +171,16 @@ pub struct SnapshotWorker {
     db: Db,
     registry: Arc<dyn registry::RegistryClient>,
     runtime: Arc<Mutex<SnapshotRuntime>>,
+    event_notify: Arc<Notify>,
     queue_tx: mpsc::UnboundedSender<SnapshotTask>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SnapshotTaskWaitStatus {
+    Success,
+    Error,
+    AllFailed,
+    TimedOut,
 }
 
 impl SnapshotWorker {
@@ -181,6 +190,7 @@ impl SnapshotWorker {
             db,
             registry,
             runtime: Arc::new(Mutex::new(SnapshotRuntime::default())),
+            event_notify: Arc::new(Notify::new()),
             queue_tx,
         };
         worker.spawn_workers(queue_rx, SNAPSHOT_WORKER_MAX_CONCURRENCY);
@@ -279,7 +289,8 @@ impl SnapshotWorker {
             return false;
         }
 
-        let key = format!("{repo}@{digest}@{host_platform}");
+        let key = snapshot_task_key(&repo, &digest, &host_platform)
+            .expect("normalized enqueue key should always be valid");
         let now = now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
 
         {
@@ -356,8 +367,7 @@ impl SnapshotWorker {
         digest: &str,
         host_platform: &str,
     ) -> Option<String> {
-        let digest = normalize_digest(digest)?;
-        let key = format!("{}@{}@{}", image_repo.trim(), digest, host_platform.trim());
+        let key = snapshot_task_key(image_repo, digest, host_platform)?;
         let runtime = self.runtime.lock().await;
         runtime.tasks.get(&key).map(|task| task.reason.clone())
     }
@@ -451,6 +461,86 @@ impl SnapshotWorker {
             oldest_id,
             latest_id,
         }
+    }
+
+    pub async fn wait_for_task_finished_keys_since(
+        &self,
+        after_id: i64,
+        keys: &[String],
+        timeout: Duration,
+    ) -> HashMap<String, SnapshotTaskWaitStatus> {
+        let mut pending = keys
+            .iter()
+            .map(|key| key.trim())
+            .filter(|key| !key.is_empty())
+            .map(str::to_string)
+            .collect::<HashSet<_>>();
+        let mut outcomes = HashMap::<String, SnapshotTaskWaitStatus>::new();
+        if pending.is_empty() {
+            return outcomes;
+        }
+
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut cursor = after_id;
+        loop {
+            let notified = self.event_notify.notified();
+            {
+                let runtime = self.runtime.lock().await;
+                for event in runtime.events.iter() {
+                    if event.id <= cursor {
+                        continue;
+                    }
+                    if event.data.get("type").and_then(|value| value.as_str())
+                        != Some("task_finished")
+                    {
+                        continue;
+                    }
+                    let Some(key) = event.data.get("key").and_then(|value| value.as_str()) else {
+                        continue;
+                    };
+                    if !pending.contains(key) {
+                        continue;
+                    }
+                    let status = match event.data.get("status").and_then(|value| value.as_str()) {
+                        Some("success")
+                            if event
+                                .data
+                                .get("allFailed")
+                                .and_then(|value| value.as_bool())
+                                .unwrap_or(false) =>
+                        {
+                            SnapshotTaskWaitStatus::AllFailed
+                        }
+                        Some("success") => SnapshotTaskWaitStatus::Success,
+                        _ => SnapshotTaskWaitStatus::Error,
+                    };
+                    pending.remove(key);
+                    outcomes.insert(key.to_string(), status);
+                }
+                cursor = runtime
+                    .events
+                    .back()
+                    .map(|event| event.id)
+                    .unwrap_or(cursor);
+            }
+
+            if pending.is_empty() {
+                return outcomes;
+            }
+
+            let Some(remaining) = deadline.checked_duration_since(tokio::time::Instant::now())
+            else {
+                break;
+            };
+            if tokio::time::timeout(remaining, notified).await.is_err() {
+                break;
+            }
+        }
+
+        for key in pending {
+            outcomes.insert(key, SnapshotTaskWaitStatus::TimedOut);
+        }
+        outcomes
     }
 
     pub async fn emit_resync_required(
@@ -778,6 +868,7 @@ impl SnapshotWorker {
         };
         if let Some(payload) = payload {
             let _ = push_event_locked(&mut runtime, payload);
+            self.event_notify.notify_waiters();
         }
     }
 
@@ -851,6 +942,7 @@ impl SnapshotWorker {
         };
         if let Some(payload) = payload {
             let _ = push_event_locked(&mut runtime, payload);
+            self.event_notify.notify_waiters();
         }
     }
 
@@ -896,6 +988,7 @@ impl SnapshotWorker {
             })
         };
         let _ = push_event_locked(&mut runtime, payload);
+        self.event_notify.notify_waiters();
     }
 }
 
@@ -985,7 +1078,7 @@ fn normalize_dockerhub_repo_name(registry: &str, name: &str) -> String {
     }
 }
 
-fn image_ref_from_repo(image_repo: &str) -> Option<registry::ImageRef> {
+pub(crate) fn image_ref_from_repo(image_repo: &str) -> Option<registry::ImageRef> {
     let repo = image_repo.trim();
     let slash = repo.find('/')?;
     let (registry, name_with_slash) = repo.split_at(slash);
@@ -1000,13 +1093,56 @@ fn image_ref_from_repo(image_repo: &str) -> Option<registry::ImageRef> {
     })
 }
 
+pub fn snapshot_task_key(image_repo: &str, digest: &str, host_platform: &str) -> Option<String> {
+    let repo = image_repo.trim();
+    let host_platform = host_platform.trim();
+    let digest = normalize_digest(digest)?;
+    if repo.is_empty() || host_platform.is_empty() {
+        return None;
+    }
+    Some(format!("{repo}@{digest}@{host_platform}"))
+}
+
 fn now_rfc3339() -> anyhow::Result<String> {
     Ok(time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::image_repo_from_image_ref;
+    use std::{path::Path, sync::Arc, time::Duration};
+
+    use serde_json::json;
+
+    use super::{
+        SnapshotTaskWaitStatus, SnapshotWorker, image_repo_from_image_ref, push_event_locked,
+    };
+    use crate::{
+        db::Db,
+        registry::{ImageRef, ManifestInfo, RegistryClient},
+    };
+
+    #[derive(Clone, Default)]
+    struct SnapshotTestRegistry;
+
+    #[async_trait::async_trait]
+    impl RegistryClient for SnapshotTestRegistry {
+        async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        async fn get_manifest(
+            &self,
+            _image: &ImageRef,
+            _reference: &str,
+            _host_platform: &str,
+        ) -> anyhow::Result<ManifestInfo> {
+            Ok(ManifestInfo {
+                digest: None,
+                platform_digest: None,
+                arch: vec!["linux/amd64".to_string()],
+            })
+        }
+    }
 
     #[test]
     fn image_repo_from_image_ref_supports_digest_only_refs() {
@@ -1026,5 +1162,36 @@ mod tests {
             image_repo_from_image_ref("ghcr.io/acme/web:latest@sha256:abcd"),
             Some("ghcr.io/acme/web".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn wait_for_task_finished_keys_since_reads_existing_ring_events_before_waiting() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let worker = SnapshotWorker::new(db, Arc::new(SnapshotTestRegistry));
+        let key = "ghcr.io/acme/web@sha256:new@linux/amd64".to_string();
+        let after_id = worker.latest_event_id().await;
+
+        {
+            let mut runtime = worker.runtime.lock().await;
+            let _ = push_event_locked(
+                &mut runtime,
+                json!({
+                    "type": "task_finished",
+                    "key": key,
+                    "status": "success",
+                    "allFailed": false,
+                }),
+            );
+        }
+        worker.event_notify.notify_waiters();
+
+        let outcomes = worker
+            .wait_for_task_finished_keys_since(
+                after_id,
+                std::slice::from_ref(&key),
+                Duration::from_millis(50),
+            )
+            .await;
+        assert_eq!(outcomes.get(&key), Some(&SnapshotTaskWaitStatus::Success));
     }
 }
