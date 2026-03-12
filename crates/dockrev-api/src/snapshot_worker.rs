@@ -22,6 +22,11 @@ pub const SNAPSHOT_GC_INTERVAL_SECONDS: u64 = 24 * 60 * 60;
 
 const SNAPSHOT_EVENT_RING_CAPACITY: usize = 2000;
 const SNAPSHOT_REASON_FORCE: &str = "force";
+const SNAPSHOT_REASON_CACHE_MISS: &str = "cache_miss";
+const SNAPSHOT_REASON_CACHE_STALE: &str = "cache_stale";
+const SNAPSHOT_REASON_ALL_FAILED: &str = "all_failed";
+const SNAPSHOT_REASON_API_SNAPSHOT_READ_MISS: &str = "api_snapshot_read_miss";
+const SNAPSHOT_REASON_STARTUP_WARMUP: &str = "startup_warmup";
 
 #[derive(Clone, Debug)]
 pub struct SnapshotTaskProgress {
@@ -150,6 +155,7 @@ struct BuildProgress {
 #[derive(Debug)]
 struct SnapshotRuntime {
     tasks: HashMap<String, SnapshotTaskRuntime>,
+    low_priority_cooldowns: HashMap<String, Instant>,
     events: VecDeque<SnapshotEventRecord>,
     next_event_id: i64,
     gc: SnapshotGcSnapshot,
@@ -159,6 +165,7 @@ impl Default for SnapshotRuntime {
     fn default() -> Self {
         Self {
             tasks: HashMap::new(),
+            low_priority_cooldowns: HashMap::new(),
             events: VecDeque::new(),
             next_event_id: 1,
             gc: SnapshotGcSnapshot::default(),
@@ -288,13 +295,75 @@ impl SnapshotWorker {
         if repo.is_empty() || host_platform.is_empty() {
             return false;
         }
+        let low_priority_cooldown = low_priority_reason_cooldown(&reason).map(|cooldown| {
+            (
+                low_priority_cooldown_key(&repo, &digest, &host_platform, &reason)
+                    .expect("normalized cooldown key should always be valid"),
+                cooldown,
+            )
+        });
 
+        self.enqueue_internal(repo, digest, host_platform, reason, low_priority_cooldown)
+            .await
+    }
+
+    pub async fn ensure_low_priority_snapshot_scheduled(
+        &self,
+        image_repo: &str,
+        digest: &str,
+        host_platform: &str,
+        reason: &str,
+    ) -> bool {
+        let repo = image_repo.trim().to_string();
+        let host_platform = host_platform.trim().to_string();
+        let reason = reason.trim().to_string();
+        let Some(digest) = normalize_digest(digest) else {
+            return false;
+        };
+        if repo.is_empty() || host_platform.is_empty() {
+            return false;
+        }
+        let Some(cooldown) = low_priority_reason_cooldown(&reason) else {
+            return false;
+        };
+        let cooldown_key = low_priority_cooldown_key(&repo, &digest, &host_platform, &reason)
+            .expect("normalized cooldown key should always be valid");
+
+        self.enqueue_internal(
+            repo,
+            digest,
+            host_platform,
+            reason,
+            Some((cooldown_key, cooldown)),
+        )
+        .await
+    }
+
+    async fn enqueue_internal(
+        &self,
+        repo: String,
+        digest: String,
+        host_platform: String,
+        reason: String,
+        low_priority_cooldown: Option<(String, Duration)>,
+    ) -> bool {
         let key = snapshot_task_key(&repo, &digest, &host_platform)
             .expect("normalized enqueue key should always be valid");
         let now = now_rfc3339().unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+        let now_instant = Instant::now();
+        let cooldown_key = low_priority_cooldown
+            .as_ref()
+            .map(|(cooldown_key, _)| cooldown_key.clone());
+        let max_low_priority_cooldown = max_low_priority_cooldown();
 
         {
             let mut runtime = self.runtime.lock().await;
+            runtime.low_priority_cooldowns.retain(|_, scheduled_at| {
+                now_instant
+                    .checked_duration_since(*scheduled_at)
+                    .unwrap_or_default()
+                    < max_low_priority_cooldown
+            });
             if let Some(existing) = runtime.tasks.get_mut(&key) {
                 if reason == SNAPSHOT_REASON_FORCE && existing.reason != SNAPSHOT_REASON_FORCE {
                     let previous_reason = existing.reason.clone();
@@ -315,6 +384,38 @@ impl SnapshotWorker {
                     );
                 }
                 return false;
+            }
+            if let Some((cooldown_key, cooldown)) = low_priority_cooldown.as_ref()
+                && let Some(scheduled_at) = runtime.low_priority_cooldowns.get(cooldown_key)
+            {
+                let elapsed = now_instant
+                    .checked_duration_since(*scheduled_at)
+                    .unwrap_or_default();
+                if elapsed < *cooldown {
+                    let retry_after_ms = cooldown
+                        .saturating_sub(elapsed)
+                        .as_millis()
+                        .min(u64::MAX as u128) as u64;
+                    let _ = push_event_locked(
+                        &mut runtime,
+                        json!({
+                            "type": "task_enqueue_suppressed",
+                            "ts": now,
+                            "key": key,
+                            "imageRepo": repo,
+                            "digest": digest,
+                            "hostPlatform": host_platform,
+                            "reason": reason,
+                            "retryAfterMs": retry_after_ms,
+                        }),
+                    );
+                    return false;
+                }
+            }
+            if let Some((cooldown_key, _)) = low_priority_cooldown.as_ref() {
+                runtime
+                    .low_priority_cooldowns
+                    .insert(cooldown_key.clone(), now_instant);
             }
             runtime.tasks.insert(
                 key.clone(),
@@ -355,6 +456,9 @@ impl SnapshotWorker {
         if self.queue_tx.send(task).is_err() {
             let mut runtime = self.runtime.lock().await;
             runtime.tasks.remove(&key);
+            if let Some(cooldown_key) = cooldown_key {
+                runtime.low_priority_cooldowns.remove(&cooldown_key);
+            }
             return false;
         }
 
@@ -1013,6 +1117,31 @@ fn push_event_locked(
     record
 }
 
+fn low_priority_reason_cooldown(reason: &str) -> Option<Duration> {
+    match reason {
+        SNAPSHOT_REASON_CACHE_MISS | SNAPSHOT_REASON_API_SNAPSHOT_READ_MISS => {
+            Some(Duration::from_secs(15 * 60))
+        }
+        SNAPSHOT_REASON_CACHE_STALE => Some(Duration::from_secs(30 * 60)),
+        SNAPSHOT_REASON_ALL_FAILED => Some(Duration::from_secs(6 * 60 * 60)),
+        SNAPSHOT_REASON_STARTUP_WARMUP => Some(Duration::from_secs(24 * 60 * 60)),
+        _ => None,
+    }
+}
+
+fn max_low_priority_cooldown() -> Duration {
+    Duration::from_secs(24 * 60 * 60)
+}
+
+fn low_priority_cooldown_key(
+    image_repo: &str,
+    digest: &str,
+    host_platform: &str,
+    reason: &str,
+) -> Option<String> {
+    snapshot_task_key(image_repo, digest, host_platform).map(|key| format!("{key}@{reason}"))
+}
+
 pub fn snapshot_is_all_failed(snapshot: &ServiceDigestTagsSnapshotResponse) -> bool {
     snapshot.tags.is_empty()
         && snapshot.scan.manifests_ok == 0
@@ -1109,12 +1238,18 @@ fn now_rfc3339() -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, sync::Arc, time::Duration};
+    use std::{
+        path::Path,
+        sync::Arc,
+        time::{Duration, Instant},
+    };
 
     use serde_json::json;
 
     use super::{
-        SnapshotTaskWaitStatus, SnapshotWorker, image_repo_from_image_ref, push_event_locked,
+        SNAPSHOT_REASON_ALL_FAILED, SnapshotTaskWaitStatus, SnapshotWorker,
+        image_repo_from_image_ref, low_priority_cooldown_key, low_priority_reason_cooldown,
+        push_event_locked,
     };
     use crate::{
         db::Db,
@@ -1193,5 +1328,96 @@ mod tests {
             )
             .await;
         assert_eq!(outcomes.get(&key), Some(&SnapshotTaskWaitStatus::Success));
+    }
+
+    #[tokio::test]
+    async fn ensure_low_priority_snapshot_scheduled_suppresses_repeat_within_cooldown() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let worker = SnapshotWorker::new(db, Arc::new(SnapshotTestRegistry));
+        let cooldown_key = low_priority_cooldown_key(
+            "ghcr.io/acme/web",
+            "sha256:new",
+            "linux/amd64",
+            SNAPSHOT_REASON_ALL_FAILED,
+        )
+        .unwrap();
+
+        {
+            let mut runtime = worker.runtime.lock().await;
+            runtime
+                .low_priority_cooldowns
+                .insert(cooldown_key, Instant::now());
+        }
+
+        let enqueued = worker
+            .ensure_low_priority_snapshot_scheduled(
+                "ghcr.io/acme/web",
+                "sha256:new",
+                "linux/amd64",
+                SNAPSHOT_REASON_ALL_FAILED,
+            )
+            .await;
+
+        assert!(!enqueued);
+        assert!(worker.snapshot_tasks().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn ensure_low_priority_snapshot_scheduled_allows_retry_after_cooldown_expires() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let worker = SnapshotWorker::new(db, Arc::new(SnapshotTestRegistry));
+        let cooldown = low_priority_reason_cooldown(SNAPSHOT_REASON_ALL_FAILED).unwrap();
+        let cooldown_key = low_priority_cooldown_key(
+            "ghcr.io/acme/web",
+            "sha256:new",
+            "linux/amd64",
+            SNAPSHOT_REASON_ALL_FAILED,
+        )
+        .unwrap();
+
+        {
+            let mut runtime = worker.runtime.lock().await;
+            runtime.low_priority_cooldowns.insert(
+                cooldown_key,
+                Instant::now() - cooldown - Duration::from_secs(1),
+            );
+        }
+
+        let enqueued = worker
+            .ensure_low_priority_snapshot_scheduled(
+                "ghcr.io/acme/web",
+                "sha256:new",
+                "linux/amd64",
+                SNAPSHOT_REASON_ALL_FAILED,
+            )
+            .await;
+
+        assert!(enqueued);
+    }
+
+    #[tokio::test]
+    async fn ensure_low_priority_snapshot_scheduled_does_not_block_force_enqueue() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let worker = SnapshotWorker::new(db, Arc::new(SnapshotTestRegistry));
+        let cooldown_key = low_priority_cooldown_key(
+            "ghcr.io/acme/web",
+            "sha256:new",
+            "linux/amd64",
+            SNAPSHOT_REASON_ALL_FAILED,
+        )
+        .unwrap();
+
+        {
+            let mut runtime = worker.runtime.lock().await;
+            runtime
+                .low_priority_cooldowns
+                .insert(cooldown_key, Instant::now());
+        }
+
+        let enqueued = worker
+            .enqueue("ghcr.io/acme/web", "sha256:new", "linux/amd64", "force")
+            .await;
+
+        assert!(enqueued);
     }
 }

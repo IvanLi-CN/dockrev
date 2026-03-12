@@ -52,6 +52,22 @@ pub(super) async fn enqueue_snapshot_for_image_ref(
         .await;
 }
 
+async fn ensure_low_priority_snapshot_scheduled(
+    state: &Arc<AppState>,
+    image_repo: &str,
+    digest: &str,
+    host_platform: &str,
+    reason: &str,
+) {
+    let Some(normalized) = snapshot_worker::normalize_digest(digest) else {
+        return;
+    };
+    state
+        .snapshot_worker
+        .ensure_low_priority_snapshot_scheduled(image_repo, &normalized, host_platform, reason)
+        .await;
+}
+
 pub(super) fn needs_version_inference(service: &Service) -> bool {
     if !ignore::is_strict_semver(&service.image.tag) {
         return true;
@@ -265,10 +281,14 @@ pub(super) async fn enrich_stack_with_version_inference(
 
             if let Some(reason) = enqueue_reason {
                 pending = true;
-                let _ = state
-                    .snapshot_worker
-                    .enqueue(&image_repo, &digest, &host_platform, reason)
-                    .await;
+                ensure_low_priority_snapshot_scheduled(
+                    state,
+                    &image_repo,
+                    &digest,
+                    &host_platform,
+                    reason,
+                )
+                .await;
                 pending_reason.get_or_insert_with(|| reason.to_string());
             }
 
