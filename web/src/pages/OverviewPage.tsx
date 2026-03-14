@@ -290,7 +290,10 @@ export function OverviewPage(props: {
   const [busy, setBusy] = useState(false)
   const jobsRefreshErrorRef = useRef<string | null>(null)
   const refreshRequestIdRef = useRef(0)
-  const latestAppliedRefreshRequestIdRef = useRef(0)
+  const latestAppliedStacksRequestIdRef = useRef(0)
+  const latestAppliedDetailsRequestIdRef = useRef(0)
+  const latestAppliedJobsRequestIdRef = useRef(0)
+  const latestAppliedProjectsRequestIdRef = useRef(0)
   const { beginSubmitting, endSubmitting, trackJob, isTargetBusy, getActiveJobByTarget, isTargetSubmitting } =
     useUpdateActionTracker()
   const supervisor = useSupervisorHealth()
@@ -335,6 +338,28 @@ export function OverviewPage(props: {
       const s = stacksRes.value
       const maxLastScan = s.map((x) => x.lastCheckAt).sort().at(-1)
 
+      if (jobsRes.status === 'fulfilled' && requestId >= latestAppliedJobsRequestIdRef.current) {
+        latestAppliedJobsRequestIdRef.current = requestId
+        setJobs(jobsRes.value)
+      }
+      if (projectsRes.status === 'fulfilled' && requestId >= latestAppliedProjectsRequestIdRef.current) {
+        latestAppliedProjectsRequestIdRef.current = requestId
+        setDiscoveredProjects(projectsRes.value)
+      }
+      if (requestId >= latestAppliedStacksRequestIdRef.current) {
+        latestAppliedStacksRequestIdRef.current = requestId
+        setStacks(s)
+        onLastScanHint(maxLastScan)
+        setCollapsed((prev) => {
+          const next = { ...prev }
+          for (const st of s) {
+            if (next[st.id] == null) next[st.id] = st.updates === 0
+          }
+          return next
+        })
+        setError(errors.length > 0 ? errors.join(' · ') : null)
+      }
+
       const ids = s.map((x) => x.id)
       const results = await Promise.all(
         ids.map(async (id) => {
@@ -345,25 +370,12 @@ export function OverviewPage(props: {
           }
         }),
       )
-
-      if (requestId < latestAppliedRefreshRequestIdRef.current) return
-      latestAppliedRefreshRequestIdRef.current = requestId
-
-      if (jobsRes.status === 'fulfilled') setJobs(jobsRes.value)
-      if (projectsRes.status === 'fulfilled') setDiscoveredProjects(projectsRes.value)
-      setStacks(s)
-      setDetails(Object.fromEntries(results))
-      onLastScanHint(maxLastScan)
-      setCollapsed((prev) => {
-        const next = { ...prev }
-        for (const st of s) {
-          if (next[st.id] == null) next[st.id] = st.updates === 0
-        }
-        return next
-      })
-      setError(errors.length > 0 ? errors.join(' · ') : null)
+      if (requestId >= latestAppliedDetailsRequestIdRef.current) {
+        latestAppliedDetailsRequestIdRef.current = requestId
+        setDetails(Object.fromEntries(results))
+      }
     } catch (error: unknown) {
-      if (requestId < latestAppliedRefreshRequestIdRef.current) return
+      if (requestId < latestAppliedStacksRequestIdRef.current) return
       throw error
     }
   }, [onLastScanHint])

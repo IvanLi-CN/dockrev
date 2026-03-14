@@ -187,22 +187,34 @@ export function ServiceDetailPage(props: {
     onLastScanHint?.(undefined)
     try {
       const st = await getStack(stackId)
-      const nextSettings = await getServiceSettings(serviceId)
-      const allRules = await listIgnores()
-
-      if (requestId < latestAppliedRefreshRequestIdRef.current) return
-      latestAppliedRefreshRequestIdRef.current = requestId
-
       if (stackRequestId >= latestAppliedStackRefreshRequestIdRef.current) {
         latestAppliedStackRefreshRequestIdRef.current = stackRequestId
         setStack(st)
         const svc = st.services.find((s) => s.id === serviceId) ?? null
         setService(svc)
       }
-      setSettings(nextSettings)
-      setRules(allRules.filter((r) => r.scope.serviceId === serviceId))
-    } catch (error: unknown) {
+
+      const [settingsRes, rulesRes] = await Promise.allSettled([getServiceSettings(serviceId), listIgnores()])
+      const errors: string[] = []
+
+      if (settingsRes.status === 'rejected') errors.push(errorMessage(settingsRes.reason))
+      if (rulesRes.status === 'rejected') errors.push(errorMessage(rulesRes.reason))
+
       if (requestId < latestAppliedRefreshRequestIdRef.current) return
+      latestAppliedRefreshRequestIdRef.current = requestId
+
+      if (settingsRes.status === 'fulfilled') setSettings(settingsRes.value)
+      if (rulesRes.status === 'fulfilled') {
+        setRules(rulesRes.value.filter((r) => r.scope.serviceId === serviceId))
+      }
+      if (errors.length > 0) throw new Error(errors.join(' · '))
+    } catch (error: unknown) {
+      if (
+        requestId < latestAppliedRefreshRequestIdRef.current &&
+        stackRequestId < latestAppliedStackRefreshRequestIdRef.current
+      ) {
+        return
+      }
       throw error
     }
   }, [onLastScanHint, serviceId, stackId])

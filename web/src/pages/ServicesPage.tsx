@@ -163,7 +163,9 @@ export function ServicesPage(props: {
   const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const refreshRequestIdRef = useRef(0)
-  const latestAppliedRefreshRequestIdRef = useRef(0)
+  const latestAppliedStackListRequestIdRef = useRef(0)
+  const latestAppliedStackDetailsRequestIdRef = useRef(0)
+  const latestAppliedArchivedRequestIdRef = useRef(0)
   const { beginSubmitting, endSubmitting, trackJob, isTargetBusy, getActiveJobByTarget, isTargetSubmitting } =
     useUpdateActionTracker()
   const supervisor = useSupervisorHealth()
@@ -179,6 +181,19 @@ export function ServicesPage(props: {
       const s = await listStacks()
       const maxLastScan = s.map((x) => x.lastCheckAt).sort().at(-1)
 
+      if (requestId >= latestAppliedStackListRequestIdRef.current) {
+        latestAppliedStackListRequestIdRef.current = requestId
+        setStacks(s)
+        onLastScanHint(maxLastScan)
+        setCollapsed((prev) => {
+          const next = { ...prev }
+          for (const st of s) {
+            if (next[st.id] == null) next[st.id] = false
+          }
+          return next
+        })
+      }
+
       const ids = s.map((x) => x.id)
       const results = await Promise.all(
         ids.map(async (id) => {
@@ -189,6 +204,10 @@ export function ServicesPage(props: {
           }
         }),
       )
+      if (requestId >= latestAppliedStackDetailsRequestIdRef.current) {
+        latestAppliedStackDetailsRequestIdRef.current = requestId
+        setDetails(Object.fromEntries(results))
+      }
 
       const a = await listStacksArchived('only').catch(() => [])
       const aIds = a.map((x) => x.id)
@@ -202,23 +221,13 @@ export function ServicesPage(props: {
         }),
       )
 
-      if (requestId < latestAppliedRefreshRequestIdRef.current) return
-      latestAppliedRefreshRequestIdRef.current = requestId
-
-      setStacks(s)
-      setDetails(Object.fromEntries(results))
-      onLastScanHint(maxLastScan)
-      setCollapsed((prev) => {
-        const next = { ...prev }
-        for (const st of s) {
-          if (next[st.id] == null) next[st.id] = false
-        }
-        return next
-      })
-      setArchivedStacks(a)
-      setArchivedDetails(Object.fromEntries(aResults))
+      if (requestId >= latestAppliedArchivedRequestIdRef.current) {
+        latestAppliedArchivedRequestIdRef.current = requestId
+        setArchivedStacks(a)
+        setArchivedDetails(Object.fromEntries(aResults))
+      }
     } catch (error: unknown) {
-      if (requestId < latestAppliedRefreshRequestIdRef.current) return
+      if (requestId < latestAppliedStackListRequestIdRef.current) return
       throw error
     }
   }, [onLastScanHint])

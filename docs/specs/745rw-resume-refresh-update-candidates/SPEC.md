@@ -94,3 +94,4 @@
 - 2026-03-14: `cd web && bun test`、`cd web && bun run lint`、`cd web && bun run build` 通过；浏览器 smoke 仍待补证。
 - 2026-03-14: 按 review 反馈补上 `pageshow.persisted` 过滤，并为 Overview / Services / ServiceDetail 的 refresh 增加 request-id 保护，避免旧请求回写覆盖新结果。
 - 2026-03-14: 继续按 review 反馈收敛重叠 refresh 语义：允许旧成功结果在新请求失败时兜底落盘，并让 ServiceDetail 的 resume refresh 走完整 `refresh()`，同步 settings / rules 与详情卡片数据。
+- 2026-03-14: 调整 refresh 提交时序，恢复各数据面的独立落盘顺序：Overview 的 jobs/projects、Services 的 active/archived 列表、以及 ServiceDetail 的 stack 与 settings/rules 不再互相阻塞。
