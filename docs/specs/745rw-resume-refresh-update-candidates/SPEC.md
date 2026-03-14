@@ -82,7 +82,7 @@
 ## 风险 / 开放问题 / 假设（Risks, Open Questions, Assumptions）
 
 - 风险：浏览器在前后台切换时可能同时派发多个恢复事件；若不做 burst 合并，会出现重复 refresh 或多余排队。
-- 风险：ServiceDetail 直接复用全量 `refresh` 会额外刷新 settings / ignore rules；本次改为复用 `refreshStackOnly`，仅收敛详情数据面。
+- 风险：ServiceDetail 的恢复补拉需要走全量 `refresh()` 才能同步 settings / ignore rules，但任务结算等局部链路仍会触发 `refreshStackOnly()`；实现必须把两类刷新时序隔离，避免局部刷新意外废弃全量刷新尾段结果。
 - 风险：重叠 refresh 若简单按“最新 requestId 赢”直接丢弃旧成功结果，会在“新请求失败、旧请求成功”时把页面留在过时错误态；实现需要只阻止旧成功覆盖新成功，而不是无差别取消旧请求。
 - 假设：250ms 的恢复 burst 窗口足以覆盖常见的 `visibilitychange` / `focus` / `pageshow` 连发，不影响用户真正隔一段时间后的再次恢复。
 - 开放问题：当前 Codex `chrome-devtools` 会话在本机超时，真实浏览器 smoke 证据需在工具恢复后补齐。
@@ -95,3 +95,5 @@
 - 2026-03-14: 按 review 反馈补上 `pageshow.persisted` 过滤，并为 Overview / Services / ServiceDetail 的 refresh 增加 request-id 保护，避免旧请求回写覆盖新结果。
 - 2026-03-14: 继续按 review 反馈收敛重叠 refresh 语义：允许旧成功结果在新请求失败时兜底落盘，并让 ServiceDetail 的 resume refresh 走完整 `refresh()`，同步 settings / rules 与详情卡片数据。
 - 2026-03-14: 调整 refresh 提交时序，恢复各数据面的独立落盘顺序：Overview 的 jobs/projects、Services 的 active/archived 列表、以及 ServiceDetail 的 stack 与 settings/rules 不再互相阻塞。
+- 2026-03-14: 把 Overview / Services / ServiceDetail 的全量 refresh 入口统一收口到共享仲裁器，保证首屏、恢复可见、手动刷新与任务结算触发的全量刷新共享同一套 in-flight/排队规则。
+- 2026-03-14: ServiceDetail 拆分“全量刷新根结果”和“stack-only 局部刷新”的代际保护，避免任务结算触发的 `refreshStackOnly()` 把正在进行的完整详情刷新错误判定为过期。

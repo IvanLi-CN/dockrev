@@ -135,7 +135,7 @@ describe('createPageResumeRefreshController', () => {
     controller.dispose()
   })
 
-  test('queues at most one follow-up refresh while a refresh is in flight', async () => {
+  test('queues one follow-up refresh even when resume events arrive inside the burst window', async () => {
     const windowTarget = new FakeEventTarget()
     const documentTarget = new FakeDocument()
     const refresh1 = deferred<void>()
@@ -161,9 +161,9 @@ describe('createPageResumeRefreshController', () => {
     await flushAsync()
     expect(callCount).toBe(1)
 
-    now = 3_400
+    now = 3_100
     windowTarget.dispatchEvent(new Event('focus'))
-    now = 3_700
+    now = 3_150
     windowTarget.dispatchEvent(pageshowEvent(true))
     await flushAsync()
     expect(callCount).toBe(1)

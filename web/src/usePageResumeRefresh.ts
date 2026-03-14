@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 
 const DEFAULT_RESUME_BURST_WINDOW_MS = 250
 
@@ -26,10 +26,11 @@ export interface PageResumeRefreshControllerOptions {
 
 export class PageResumeRefreshController {
   private readonly burstWindowMs: number
+  private currentPromise: Promise<void> | null = null
   private readonly documentTarget: DocumentLike | null
   private disposed = false
   private lastRunStartedAt = Number.NEGATIVE_INFINITY
-  private queued = false
+  private pending = false
   private readonly now: () => number
   private readonly onError?: (error: unknown) => void
   private readonly refresh: () => Promise<void>
@@ -61,12 +62,12 @@ export class PageResumeRefreshController {
 
   dispose() {
     this.disposed = true
-    this.queued = false
+    this.pending = false
     this.detach()
   }
 
   requestRefresh() {
-    this.schedule()
+    return this.enqueueRefresh()
   }
 
   private readonly onPageShow = (event: Event) => {
@@ -75,48 +76,67 @@ export class PageResumeRefreshController {
         ? (event as PageTransitionEvent).persisted
         : false
     if (!persisted) return
-    this.schedule()
+    this.requestResumeRefresh()
   }
 
   private readonly onVisibilityChange = () => {
     if (this.documentTarget?.visibilityState !== 'visible') return
-    this.schedule()
+    this.requestResumeRefresh()
   }
 
   private readonly onWindowFocus = () => {
-    this.schedule()
+    this.requestResumeRefresh()
   }
 
-  private schedule() {
-    if (this.disposed) return
+  private enqueueRefresh(options?: { respectBurstWindow?: boolean }): Promise<void> {
+    if (this.disposed) return Promise.resolve()
+    const respectBurstWindow = options?.respectBurstWindow === true
     const now = this.now()
 
     if (this.running) {
-      if (now - this.lastRunStartedAt <= this.burstWindowMs) return
-      this.queued = true
-      return
+      this.pending = true
+      return this.currentPromise ?? Promise.resolve()
     }
 
-    if (now - this.lastRunStartedAt <= this.burstWindowMs) return
-    void this.run()
+    if (respectBurstWindow && now - this.lastRunStartedAt <= this.burstWindowMs) {
+      return this.currentPromise ?? Promise.resolve()
+    }
+
+    this.pending = true
+    if (!this.currentPromise) {
+      this.currentPromise = this.drain().finally(() => {
+        this.currentPromise = null
+      })
+    }
+    return this.currentPromise
   }
 
-  private async run() {
-    if (this.disposed || this.running) return
+  private requestResumeRefresh() {
+    void this.enqueueRefresh({ respectBurstWindow: true }).catch(() => {
+      // Errors are already forwarded through onError for passive resume refreshes.
+    })
+  }
 
-    this.running = true
-    this.lastRunStartedAt = this.now()
+  private async drain() {
+    let lastError: unknown = null
 
-    try {
-      await this.refresh()
-    } catch (error: unknown) {
-      this.onError?.(error)
-    } finally {
-      this.running = false
-      const shouldRerun = !this.disposed && this.queued
-      this.queued = false
-      if (shouldRerun) void this.run()
+    while (!this.disposed && this.pending) {
+      this.pending = false
+      this.running = true
+      this.lastRunStartedAt = this.now()
+
+      try {
+        await this.refresh()
+        lastError = null
+      } catch (error: unknown) {
+        lastError = error
+        this.onError?.(error)
+      } finally {
+        this.running = false
+      }
     }
+
+    if (lastError != null) throw lastError
   }
 }
 
@@ -132,6 +152,7 @@ export function usePageResumeRefresh(
     onError?: (error: unknown) => void
   },
 ) {
+  const controllerRef = useRef<PageResumeRefreshController | null>(null)
   const refreshRef = useRef(refresh)
   const onErrorRef = useRef(options?.onError)
 
@@ -151,7 +172,13 @@ export function usePageResumeRefresh(
       onError: (error) => onErrorRef.current?.(error),
       refresh: () => refreshRef.current(),
     })
+    controllerRef.current = controller
     controller.attach()
-    return () => controller.dispose()
+    return () => {
+      if (controllerRef.current === controller) controllerRef.current = null
+      controller.dispose()
+    }
   }, [options?.burstWindowMs, options?.enabled])
+
+  return useCallback(() => controllerRef.current?.requestRefresh() ?? refreshRef.current(), [])
 }
