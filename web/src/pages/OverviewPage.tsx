@@ -290,6 +290,7 @@ export function OverviewPage(props: {
   const [busy, setBusy] = useState(false)
   const jobsRefreshErrorRef = useRef<string | null>(null)
   const refreshRequestIdRef = useRef(0)
+  const latestAppliedRefreshRequestIdRef = useRef(0)
   const { beginSubmitting, endSubmitting, trackJob, isTargetBusy, getActiveJobByTarget, isTargetSubmitting } =
     useUpdateActionTracker()
   const supervisor = useSupervisorHealth()
@@ -320,51 +321,51 @@ export function OverviewPage(props: {
     const requestId = ++refreshRequestIdRef.current
     const errors: string[] = []
     setError(null)
+    try {
+      const stacksPromise = listStacks()
+      const jobsPromise = listJobs()
+      const projectsPromise = listDiscoveryProjects('exclude')
 
-    const stacksPromise = listStacks()
-    const jobsPromise = listJobs()
-    const projectsPromise = listDiscoveryProjects('exclude')
+      const [stacksRes, jobsRes, projectsRes] = await Promise.allSettled([stacksPromise, jobsPromise, projectsPromise])
 
-    const [stacksRes, jobsRes, projectsRes] = await Promise.allSettled([stacksPromise, jobsPromise, projectsPromise])
-    if (requestId !== refreshRequestIdRef.current) return
+      if (jobsRes.status === 'rejected') errors.push('jobs unavailable')
+      if (projectsRes.status === 'rejected') errors.push('discovery projects unavailable')
+      if (stacksRes.status === 'rejected') throw stacksRes.reason
 
-    if (jobsRes.status === 'fulfilled') setJobs(jobsRes.value)
-    else errors.push('jobs unavailable')
+      const s = stacksRes.value
+      const maxLastScan = s.map((x) => x.lastCheckAt).sort().at(-1)
 
-    if (projectsRes.status === 'fulfilled') setDiscoveredProjects(projectsRes.value)
-    else errors.push('discovery projects unavailable')
+      const ids = s.map((x) => x.id)
+      const results = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            return [id, await getStack(id)] as const
+          } catch {
+            return [id, undefined] as const
+          }
+        }),
+      )
 
-    if (stacksRes.status === 'rejected') {
-      throw stacksRes.reason
-    }
+      if (requestId < latestAppliedRefreshRequestIdRef.current) return
+      latestAppliedRefreshRequestIdRef.current = requestId
 
-    const s = stacksRes.value
-    setStacks(s)
-    const maxLastScan = s.map((x) => x.lastCheckAt).sort().at(-1)
-
-    const ids = s.map((x) => x.id)
-    const results = await Promise.all(
-      ids.map(async (id) => {
-        try {
-          return [id, await getStack(id)] as const
-        } catch {
-          return [id, undefined] as const
+      if (jobsRes.status === 'fulfilled') setJobs(jobsRes.value)
+      if (projectsRes.status === 'fulfilled') setDiscoveredProjects(projectsRes.value)
+      setStacks(s)
+      setDetails(Object.fromEntries(results))
+      onLastScanHint(maxLastScan)
+      setCollapsed((prev) => {
+        const next = { ...prev }
+        for (const st of s) {
+          if (next[st.id] == null) next[st.id] = st.updates === 0
         }
-      }),
-    )
-    if (requestId !== refreshRequestIdRef.current) return
-    setDetails(Object.fromEntries(results))
-    onLastScanHint(maxLastScan)
-
-    setCollapsed((prev) => {
-      const next = { ...prev }
-      for (const st of s) {
-        if (next[st.id] == null) next[st.id] = st.updates === 0
-      }
-      return next
-    })
-
-    if (errors.length > 0) setError(errors.join(' · '))
+        return next
+      })
+      setError(errors.length > 0 ? errors.join(' · ') : null)
+    } catch (error: unknown) {
+      if (requestId < latestAppliedRefreshRequestIdRef.current) return
+      throw error
+    }
   }, [onLastScanHint])
 
   const patchStackDetails = useCallback(async (stackIds: string[]) => {

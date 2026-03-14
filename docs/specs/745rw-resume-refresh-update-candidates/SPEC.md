@@ -83,6 +83,7 @@
 
 - 风险：浏览器在前后台切换时可能同时派发多个恢复事件；若不做 burst 合并，会出现重复 refresh 或多余排队。
 - 风险：ServiceDetail 直接复用全量 `refresh` 会额外刷新 settings / ignore rules；本次改为复用 `refreshStackOnly`，仅收敛详情数据面。
+- 风险：重叠 refresh 若简单按“最新 requestId 赢”直接丢弃旧成功结果，会在“新请求失败、旧请求成功”时把页面留在过时错误态；实现需要只阻止旧成功覆盖新成功，而不是无差别取消旧请求。
 - 假设：250ms 的恢复 burst 窗口足以覆盖常见的 `visibilitychange` / `focus` / `pageshow` 连发，不影响用户真正隔一段时间后的再次恢复。
 - 开放问题：当前 Codex `chrome-devtools` 会话在本机超时，真实浏览器 smoke 证据需在工具恢复后补齐。
 
@@ -92,3 +93,4 @@
 - 2026-03-14: 完成共享 resume-refresh hook 与页面接入，并补充控制层时序测试。
 - 2026-03-14: `cd web && bun test`、`cd web && bun run lint`、`cd web && bun run build` 通过；浏览器 smoke 仍待补证。
 - 2026-03-14: 按 review 反馈补上 `pageshow.persisted` 过滤，并为 Overview / Services / ServiceDetail 的 refresh 增加 request-id 保护，避免旧请求回写覆盖新结果。
+- 2026-03-14: 继续按 review 反馈收敛重叠 refresh 语义：允许旧成功结果在新请求失败时兜底落盘，并让 ServiceDetail 的 resume refresh 走完整 `refresh()`，同步 settings / rules 与详情卡片数据。

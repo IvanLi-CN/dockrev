@@ -172,7 +172,9 @@ export function ServiceDetailPage(props: {
   const applyActiveJob = applyActionKey ? getActiveJobByTarget(applyActionKey) : null
   const applySubmitting = applyActionKey ? isTargetSubmitting(applyActionKey) : false
   const refreshRequestIdRef = useRef(0)
+  const latestAppliedRefreshRequestIdRef = useRef(0)
   const stackRefreshRequestIdRef = useRef(0)
+  const latestAppliedStackRefreshRequestIdRef = useRef(0)
 
   const [newRuleKind, setNewRuleKind] = useState<'exact' | 'prefix' | 'regex' | 'semver'>('regex')
   const [newRuleValue, setNewRuleValue] = useState('.*')
@@ -183,28 +185,41 @@ export function ServiceDetailPage(props: {
     const stackRequestId = ++stackRefreshRequestIdRef.current
     setError(null)
     onLastScanHint?.(undefined)
-    const st = await getStack(stackId)
-    if (requestId !== refreshRequestIdRef.current) return
-    if (stackRequestId === stackRefreshRequestIdRef.current) {
-      setStack(st)
-      const svc = st.services.find((s) => s.id === serviceId) ?? null
-      setService(svc)
+    try {
+      const st = await getStack(stackId)
+      const nextSettings = await getServiceSettings(serviceId)
+      const allRules = await listIgnores()
+
+      if (requestId < latestAppliedRefreshRequestIdRef.current) return
+      latestAppliedRefreshRequestIdRef.current = requestId
+
+      if (stackRequestId >= latestAppliedStackRefreshRequestIdRef.current) {
+        latestAppliedStackRefreshRequestIdRef.current = stackRequestId
+        setStack(st)
+        const svc = st.services.find((s) => s.id === serviceId) ?? null
+        setService(svc)
+      }
+      setSettings(nextSettings)
+      setRules(allRules.filter((r) => r.scope.serviceId === serviceId))
+    } catch (error: unknown) {
+      if (requestId < latestAppliedRefreshRequestIdRef.current) return
+      throw error
     }
-    const nextSettings = await getServiceSettings(serviceId)
-    if (requestId !== refreshRequestIdRef.current) return
-    setSettings(nextSettings)
-    const allRules = await listIgnores()
-    if (requestId !== refreshRequestIdRef.current) return
-    setRules(allRules.filter((r) => r.scope.serviceId === serviceId))
   }, [onLastScanHint, serviceId, stackId])
 
   const refreshStackOnly = useCallback(async () => {
     const requestId = ++stackRefreshRequestIdRef.current
-    const st = await getStack(stackId)
-    if (requestId !== stackRefreshRequestIdRef.current) return
-    setStack(st)
-    const svc = st.services.find((s) => s.id === serviceId) ?? null
-    setService(svc)
+    try {
+      const st = await getStack(stackId)
+      if (requestId < latestAppliedStackRefreshRequestIdRef.current) return
+      latestAppliedStackRefreshRequestIdRef.current = requestId
+      setStack(st)
+      const svc = st.services.find((s) => s.id === serviceId) ?? null
+      setService(svc)
+    } catch (error: unknown) {
+      if (requestId < latestAppliedStackRefreshRequestIdRef.current) return
+      throw error
+    }
   }, [serviceId, stackId])
 
   const patchServiceInStack = useCallback(
@@ -233,7 +248,7 @@ export function ServiceDetailPage(props: {
     void refresh().catch((e: unknown) => setError(errorMessage(e)))
   }, [refresh])
 
-  usePageResumeRefresh(refreshStackOnly, {
+  usePageResumeRefresh(refresh, {
     onError: (e: unknown) => setError(errorMessage(e)),
   })
 

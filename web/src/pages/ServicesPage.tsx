@@ -163,6 +163,7 @@ export function ServicesPage(props: {
   const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const refreshRequestIdRef = useRef(0)
+  const latestAppliedRefreshRequestIdRef = useRef(0)
   const { beginSubmitting, endSubmitting, trackJob, isTargetBusy, getActiveJobByTarget, isTargetSubmitting } =
     useUpdateActionTracker()
   const supervisor = useSupervisorHealth()
@@ -174,49 +175,52 @@ export function ServicesPage(props: {
   const refresh = useCallback(async () => {
     const requestId = ++refreshRequestIdRef.current
     setError(null)
-    const s = await listStacks()
-    if (requestId !== refreshRequestIdRef.current) return
-    setStacks(s)
-    const maxLastScan = s.map((x) => x.lastCheckAt).sort().at(-1)
+    try {
+      const s = await listStacks()
+      const maxLastScan = s.map((x) => x.lastCheckAt).sort().at(-1)
 
-    const ids = s.map((x) => x.id)
-    const results = await Promise.all(
-      ids.map(async (id) => {
-        try {
-          return [id, await getStack(id)] as const
-        } catch {
-          return [id, undefined] as const
+      const ids = s.map((x) => x.id)
+      const results = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            return [id, await getStack(id)] as const
+          } catch {
+            return [id, undefined] as const
+          }
+        }),
+      )
+
+      const a = await listStacksArchived('only').catch(() => [])
+      const aIds = a.map((x) => x.id)
+      const aResults = await Promise.all(
+        aIds.map(async (id) => {
+          try {
+            return [id, await getStack(id)] as const
+          } catch {
+            return [id, undefined] as const
+          }
+        }),
+      )
+
+      if (requestId < latestAppliedRefreshRequestIdRef.current) return
+      latestAppliedRefreshRequestIdRef.current = requestId
+
+      setStacks(s)
+      setDetails(Object.fromEntries(results))
+      onLastScanHint(maxLastScan)
+      setCollapsed((prev) => {
+        const next = { ...prev }
+        for (const st of s) {
+          if (next[st.id] == null) next[st.id] = false
         }
-      }),
-    )
-    if (requestId !== refreshRequestIdRef.current) return
-    setDetails(Object.fromEntries(results))
-
-    onLastScanHint(maxLastScan)
-
-    setCollapsed((prev) => {
-      const next = { ...prev }
-      for (const st of s) {
-        if (next[st.id] == null) next[st.id] = false
-      }
-      return next
-    })
-
-    const a = await listStacksArchived('only').catch(() => [])
-    if (requestId !== refreshRequestIdRef.current) return
-    setArchivedStacks(a)
-    const aIds = a.map((x) => x.id)
-    const aResults = await Promise.all(
-      aIds.map(async (id) => {
-        try {
-          return [id, await getStack(id)] as const
-        } catch {
-          return [id, undefined] as const
-        }
-      }),
-    )
-    if (requestId !== refreshRequestIdRef.current) return
-    setArchivedDetails(Object.fromEntries(aResults))
+        return next
+      })
+      setArchivedStacks(a)
+      setArchivedDetails(Object.fromEntries(aResults))
+    } catch (error: unknown) {
+      if (requestId < latestAppliedRefreshRequestIdRef.current) return
+      throw error
+    }
   }, [onLastScanHint])
 
   const patchStackDetails = useCallback(async (stackIds: string[]) => {
