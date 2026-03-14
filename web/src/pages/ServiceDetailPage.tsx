@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   archiveService,
   ApiError,
@@ -48,6 +48,7 @@ import {
   type UpdateJobSettledDetail,
   useUpdateActionTracker,
 } from '../updateActionTracking'
+import { usePageResumeRefresh } from '../usePageResumeRefresh'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -170,28 +171,65 @@ export function ServiceDetailPage(props: {
   const applyActionBusy = applyActionKey ? isTargetBusy(applyActionKey) : false
   const applyActiveJob = applyActionKey ? getActiveJobByTarget(applyActionKey) : null
   const applySubmitting = applyActionKey ? isTargetSubmitting(applyActionKey) : false
+  const fullRefreshRequestIdRef = useRef(0)
+  const latestAppliedFullRefreshRequestIdRef = useRef(0)
+  const stackRefreshRequestIdRef = useRef(0)
+  const latestAppliedStackRefreshRequestIdRef = useRef(0)
 
   const [newRuleKind, setNewRuleKind] = useState<'exact' | 'prefix' | 'regex' | 'semver'>('regex')
   const [newRuleValue, setNewRuleValue] = useState('.*')
   const [newRuleNote, setNewRuleNote] = useState('blocked via UI')
 
   const refresh = useCallback(async () => {
+    const fullRefreshRequestId = ++fullRefreshRequestIdRef.current
+    const stackRequestId = ++stackRefreshRequestIdRef.current
+    let appliedFullRefreshRoot = false
     setError(null)
     onLastScanHint?.(undefined)
-    const st = await getStack(stackId)
-    setStack(st)
-    const svc = st.services.find((s) => s.id === serviceId) ?? null
-    setService(svc)
-    setSettings(await getServiceSettings(serviceId))
-    const allRules = await listIgnores()
-    setRules(allRules.filter((r) => r.scope.serviceId === serviceId))
+    try {
+      const st = await getStack(stackId)
+      if (stackRequestId >= latestAppliedStackRefreshRequestIdRef.current) {
+        latestAppliedStackRefreshRequestIdRef.current = stackRequestId
+        latestAppliedFullRefreshRequestIdRef.current = fullRefreshRequestId
+        appliedFullRefreshRoot = true
+        setStack(st)
+        const svc = st.services.find((s) => s.id === serviceId) ?? null
+        setService(svc)
+      }
+
+      const [settingsRes, rulesRes] = await Promise.allSettled([getServiceSettings(serviceId), listIgnores()])
+      const errors: string[] = []
+
+      if (settingsRes.status === 'rejected') errors.push(errorMessage(settingsRes.reason))
+      if (rulesRes.status === 'rejected') errors.push(errorMessage(rulesRes.reason))
+
+      if (fullRefreshRequestId < latestAppliedFullRefreshRequestIdRef.current) return
+
+      if (settingsRes.status === 'fulfilled') setSettings(settingsRes.value)
+      if (rulesRes.status === 'fulfilled') {
+        setRules(rulesRes.value.filter((r) => r.scope.serviceId === serviceId))
+      }
+      if (errors.length > 0) throw new Error(errors.join(' · '))
+    } catch (error: unknown) {
+      if (!appliedFullRefreshRoot && stackRequestId < latestAppliedStackRefreshRequestIdRef.current) return
+      if (appliedFullRefreshRoot && fullRefreshRequestId < latestAppliedFullRefreshRequestIdRef.current) return
+      throw error
+    }
   }, [onLastScanHint, serviceId, stackId])
 
   const refreshStackOnly = useCallback(async () => {
-    const st = await getStack(stackId)
-    setStack(st)
-    const svc = st.services.find((s) => s.id === serviceId) ?? null
-    setService(svc)
+    const requestId = ++stackRefreshRequestIdRef.current
+    try {
+      const st = await getStack(stackId)
+      if (requestId < latestAppliedStackRefreshRequestIdRef.current) return
+      latestAppliedStackRefreshRequestIdRef.current = requestId
+      setStack(st)
+      const svc = st.services.find((s) => s.id === serviceId) ?? null
+      setService(svc)
+    } catch (error: unknown) {
+      if (requestId < latestAppliedStackRefreshRequestIdRef.current) return
+      throw error
+    }
   }, [serviceId, stackId])
 
   const patchServiceInStack = useCallback(
@@ -216,9 +254,13 @@ export function ServiceDetailPage(props: {
     [serviceId],
   )
 
+  const requestRefresh = usePageResumeRefresh(refresh, {
+    onError: (e: unknown) => setError(errorMessage(e)),
+  })
+
   useEffect(() => {
-    void refresh().catch((e: unknown) => setError(errorMessage(e)))
-  }, [refresh])
+    void requestRefresh().catch((e: unknown) => setError(errorMessage(e)))
+  }, [requestRefresh, serviceId, stackId])
 
   useEffect(() => {
     let closed = false
@@ -497,7 +539,7 @@ export function ServiceDetailPage(props: {
                       if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
                       else if (e.status === 409) {
                         setError('扫描结果已变化，请刷新并重新扫描后再更新')
-                        await refresh()
+                        await requestRefresh()
                       } else setError(e.message)
                     } else {
                       setError(errorMessage(e))
@@ -670,7 +712,7 @@ export function ServiceDetailPage(props: {
                       if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
                       else if (e.status === 409) {
                         setError('扫描结果已变化，请刷新并重新扫描后再更新')
-                        await refresh()
+                        await requestRefresh()
                       } else setError(e.message)
                     } else {
                       setError(errorMessage(e))
@@ -705,7 +747,7 @@ export function ServiceDetailPage(props: {
                 } else {
                   await archiveService(service.id)
                 }
-                await refresh()
+                await requestRefresh()
               } catch (e: unknown) {
                 setError(errorMessage(e))
               } finally {
@@ -731,7 +773,7 @@ export function ServiceDetailPage(props: {
                   value: '.*',
                   note: 'blocked via UI',
                 })
-                await refresh()
+                await requestRefresh()
               } catch (e: unknown) {
                 setError(errorMessage(e))
               } finally {
@@ -756,7 +798,7 @@ export function ServiceDetailPage(props: {
     endSubmitting,
     onTopActions,
     patchServiceInStack,
-    refresh,
+    requestRefresh,
     selfUpgradeUrl,
     service,
     serviceId,
@@ -1078,7 +1120,7 @@ export function ServiceDetailPage(props: {
                       setError(null)
                       try {
                         await deleteIgnore(r.id)
-                        await refresh()
+                        await requestRefresh()
                       } catch (e: unknown) {
                         setError(errorMessage(e))
                       } finally {
@@ -1136,7 +1178,7 @@ export function ServiceDetailPage(props: {
                         value: newRuleValue,
                         note: newRuleNote,
                       })
-                      await refresh()
+                      await requestRefresh()
                     } catch (e: unknown) {
                       setError(errorMessage(e))
                     } finally {
@@ -1241,7 +1283,7 @@ export function ServiceDetailPage(props: {
                     setError(null)
                     try {
                       await putServiceSettings(props.serviceId, settings)
-                      await refresh()
+                      await requestRefresh()
                     } catch (e: unknown) {
                       setError(errorMessage(e))
                     } finally {

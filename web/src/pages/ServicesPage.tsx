@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   getStack,
   listStacks,
@@ -52,6 +52,7 @@ import {
   type UpdateJobSettledDetail,
   useUpdateActionTracker,
 } from '../updateActionTracking'
+import { usePageResumeRefresh } from '../usePageResumeRefresh'
 
 function formatShort(ts: string) {
   const d = new Date(ts)
@@ -161,6 +162,8 @@ export function ServicesPage(props: {
   const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
   const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const refreshRequestIdRef = useRef(0)
+  const latestAppliedStackListRequestIdRef = useRef(0)
   const { beginSubmitting, endSubmitting, trackJob, isTargetBusy, getActiveJobByTarget, isTargetSubmitting } =
     useUpdateActionTracker()
   const supervisor = useSupervisorHealth()
@@ -170,46 +173,56 @@ export function ServicesPage(props: {
   const [archivedDetails, setArchivedDetails] = useState<Record<string, StackDetail | undefined>>({})
 
   const refresh = useCallback(async () => {
+    const requestId = ++refreshRequestIdRef.current
     setError(null)
-    const s = await listStacks()
-    setStacks(s)
-    const maxLastScan = s.map((x) => x.lastCheckAt).sort().at(-1)
+    try {
+      const s = await listStacks()
+      const maxLastScan = s.map((x) => x.lastCheckAt).sort().at(-1)
 
-    const ids = s.map((x) => x.id)
-    const results = await Promise.all(
-      ids.map(async (id) => {
-        try {
-          return [id, await getStack(id)] as const
-        } catch {
-          return [id, undefined] as const
+      if (requestId < latestAppliedStackListRequestIdRef.current) return
+      latestAppliedStackListRequestIdRef.current = requestId
+      setStacks(s)
+      onLastScanHint(maxLastScan)
+      setCollapsed((prev) => {
+        const next = { ...prev }
+        for (const st of s) {
+          if (next[st.id] == null) next[st.id] = false
         }
-      }),
-    )
-    setDetails(Object.fromEntries(results))
+        return next
+      })
 
-    onLastScanHint(maxLastScan)
+      const ids = s.map((x) => x.id)
+      const results = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            return [id, await getStack(id)] as const
+          } catch {
+            return [id, undefined] as const
+          }
+        }),
+      )
+      if (requestId < latestAppliedStackListRequestIdRef.current) return
+      setDetails(Object.fromEntries(results))
 
-    setCollapsed((prev) => {
-      const next = { ...prev }
-      for (const st of s) {
-        if (next[st.id] == null) next[st.id] = false
-      }
-      return next
-    })
+      const a = await listStacksArchived('only').catch(() => [])
+      const aIds = a.map((x) => x.id)
+      const aResults = await Promise.all(
+        aIds.map(async (id) => {
+          try {
+            return [id, await getStack(id)] as const
+          } catch {
+            return [id, undefined] as const
+          }
+        }),
+      )
 
-    const a = await listStacksArchived('only').catch(() => [])
-    setArchivedStacks(a)
-    const aIds = a.map((x) => x.id)
-    const aResults = await Promise.all(
-      aIds.map(async (id) => {
-        try {
-          return [id, await getStack(id)] as const
-        } catch {
-          return [id, undefined] as const
-        }
-      }),
-    )
-    setArchivedDetails(Object.fromEntries(aResults))
+      if (requestId < latestAppliedStackListRequestIdRef.current) return
+      setArchivedStacks(a)
+      setArchivedDetails(Object.fromEntries(aResults))
+    } catch (error: unknown) {
+      if (requestId < latestAppliedStackListRequestIdRef.current) return
+      throw error
+    }
   }, [onLastScanHint])
 
   const patchStackDetails = useCallback(async (stackIds: string[]) => {
@@ -307,9 +320,13 @@ export function ServicesPage(props: {
     [archivedDetails, details, stacks],
   )
 
+  const requestRefresh = usePageResumeRefresh(refresh, {
+    onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
+  })
+
   useEffect(() => {
-    void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-  }, [refresh])
+    void requestRefresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+  }, [requestRefresh])
 
   useEffect(() => {
     let closed = false
@@ -335,9 +352,9 @@ export function ServicesPage(props: {
       const isAll = detail.scope === 'all' || detail.target === 'all'
       const stackIds = resolveSettledStackIds(detail)
       if (isAll || stackIds.length === 0) {
-        void refresh().catch(handleRefreshError)
+        void requestRefresh().catch(handleRefreshError)
         schedule(async () => {
-          await refresh()
+          await requestRefresh()
         })
         return
       }
@@ -355,7 +372,7 @@ export function ServicesPage(props: {
       for (const timer of timers) window.clearTimeout(timer)
       window.removeEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateJobSettled)
     }
-  }, [patchStackDetails, patchStackLists, refresh, resolveSettledStackIds])
+  }, [patchStackDetails, patchStackLists, requestRefresh, resolveSettledStackIds])
 
   const applyDigestSnapshotUpdate = useCallback(
     (detail: DigestSnapshotUpdatedDetail) => {
@@ -578,7 +595,7 @@ export function ServicesPage(props: {
 
       es.addEventListener('runtime_scan_finished', () => {
         es?.close()
-        void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+        void requestRefresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
       })
     }
 
@@ -589,7 +606,7 @@ export function ServicesPage(props: {
       if (timer != null) window.clearTimeout(timer)
       es?.close()
     }
-  }, [refresh])
+  }, [requestRefresh])
 
   useEffect(() => {
     onTopActions(
@@ -601,7 +618,7 @@ export function ServicesPage(props: {
             void (async () => {
               setBusy(true)
               try {
-                await refresh()
+                await requestRefresh()
               } catch (e: unknown) {
                 setError(e instanceof Error ? e.message : String(e))
               } finally {
@@ -623,7 +640,7 @@ export function ServicesPage(props: {
               try {
                 const resp = await triggerCheck('all')
                 setNoticeCheckJobId(resp.checkId)
-                await refresh()
+                await requestRefresh()
               } catch (e: unknown) {
                 if (e instanceof ApiError) {
                   if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
@@ -653,7 +670,7 @@ export function ServicesPage(props: {
         </Button>
       </>,
     )
-  }, [busy, onTopActions, refresh])
+  }, [busy, onTopActions, requestRefresh])
 
   const triggerApply = useCallback(
     async (input: {
@@ -718,7 +735,7 @@ export function ServicesPage(props: {
           if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
           else if (e.status === 409) {
             setError('扫描结果已变化，请刷新并重新扫描后再更新')
-            await refresh()
+            await requestRefresh()
           }
           else setError(e.message)
         } else {
@@ -728,7 +745,7 @@ export function ServicesPage(props: {
         if (targetKey) endSubmitting(targetKey)
       }
     },
-    [beginSubmitting, confirm, endSubmitting, refresh, trackJob],
+    [beginSubmitting, confirm, endSubmitting, requestRefresh, trackJob],
   )
 
   const groupsAll = useMemo(() => {
@@ -1442,7 +1459,7 @@ export function ServicesPage(props: {
                               setError(null)
                               try {
                                 await restoreStack(st.id)
-                                await refresh()
+                                await requestRefresh()
                               } catch (e: unknown) {
                                 setError(e instanceof Error ? e.message : String(e))
                               } finally {
@@ -1508,7 +1525,7 @@ export function ServicesPage(props: {
                             setError(null)
                             try {
                               await restoreService(x.svc.id)
-                              await refresh()
+                              await requestRefresh()
                             } catch (e: unknown) {
                               setError(e instanceof Error ? e.message : String(e))
                             } finally {

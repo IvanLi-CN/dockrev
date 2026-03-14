@@ -58,6 +58,7 @@ import {
   type UpdateJobSettledDetail,
   useUpdateActionTracker,
 } from '../updateActionTracking'
+import { usePageResumeRefresh } from '../usePageResumeRefresh'
 
 function formatShort(ts?: string | null) {
   if (!ts) return '-'
@@ -288,6 +289,10 @@ export function OverviewPage(props: {
   const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const jobsRefreshErrorRef = useRef<string | null>(null)
+  const refreshRequestIdRef = useRef(0)
+  const latestAppliedStacksRequestIdRef = useRef(0)
+  const latestAppliedJobsRequestIdRef = useRef(0)
+  const latestAppliedProjectsRequestIdRef = useRef(0)
   const { beginSubmitting, endSubmitting, trackJob, isTargetBusy, getActiveJobByTarget, isTargetSubmitting } =
     useUpdateActionTracker()
   const supervisor = useSupervisorHealth()
@@ -315,51 +320,60 @@ export function OverviewPage(props: {
   }, [discoveredProjects])
 
   const refresh = useCallback(async () => {
+    const requestId = ++refreshRequestIdRef.current
     const errors: string[] = []
     setError(null)
+    try {
+      const stacksPromise = listStacks()
+      const jobsPromise = listJobs()
+      const projectsPromise = listDiscoveryProjects('exclude')
 
-    const stacksPromise = listStacks()
-    const jobsPromise = listJobs()
-    const projectsPromise = listDiscoveryProjects('exclude')
+      const [stacksRes, jobsRes, projectsRes] = await Promise.allSettled([stacksPromise, jobsPromise, projectsPromise])
 
-    const [stacksRes, jobsRes, projectsRes] = await Promise.allSettled([stacksPromise, jobsPromise, projectsPromise])
+      if (jobsRes.status === 'rejected') errors.push('jobs unavailable')
+      if (projectsRes.status === 'rejected') errors.push('discovery projects unavailable')
+      if (stacksRes.status === 'rejected') throw stacksRes.reason
 
-    if (jobsRes.status === 'fulfilled') setJobs(jobsRes.value)
-    else errors.push('jobs unavailable')
+      const s = stacksRes.value
+      const maxLastScan = s.map((x) => x.lastCheckAt).sort().at(-1)
 
-    if (projectsRes.status === 'fulfilled') setDiscoveredProjects(projectsRes.value)
-    else errors.push('discovery projects unavailable')
-
-    if (stacksRes.status === 'rejected') {
-      throw stacksRes.reason
-    }
-
-    const s = stacksRes.value
-    setStacks(s)
-    const maxLastScan = s.map((x) => x.lastCheckAt).sort().at(-1)
-
-    const ids = s.map((x) => x.id)
-    const results = await Promise.all(
-      ids.map(async (id) => {
-        try {
-          return [id, await getStack(id)] as const
-        } catch {
-          return [id, undefined] as const
-        }
-      }),
-    )
-    setDetails(Object.fromEntries(results))
-    onLastScanHint(maxLastScan)
-
-    setCollapsed((prev) => {
-      const next = { ...prev }
-      for (const st of s) {
-        if (next[st.id] == null) next[st.id] = st.updates === 0
+      if (jobsRes.status === 'fulfilled' && requestId >= latestAppliedJobsRequestIdRef.current) {
+        latestAppliedJobsRequestIdRef.current = requestId
+        setJobs(jobsRes.value)
       }
-      return next
-    })
+      if (projectsRes.status === 'fulfilled' && requestId >= latestAppliedProjectsRequestIdRef.current) {
+        latestAppliedProjectsRequestIdRef.current = requestId
+        setDiscoveredProjects(projectsRes.value)
+      }
+      if (requestId < latestAppliedStacksRequestIdRef.current) return
+      latestAppliedStacksRequestIdRef.current = requestId
+      setStacks(s)
+      onLastScanHint(maxLastScan)
+      setCollapsed((prev) => {
+        const next = { ...prev }
+        for (const st of s) {
+          if (next[st.id] == null) next[st.id] = st.updates === 0
+        }
+        return next
+      })
+      setError(errors.length > 0 ? errors.join(' · ') : null)
 
-    if (errors.length > 0) setError(errors.join(' · '))
+      const ids = s.map((x) => x.id)
+      const results = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            return [id, await getStack(id)] as const
+          } catch {
+            return [id, undefined] as const
+          }
+        }),
+      )
+      if (requestId < latestAppliedStacksRequestIdRef.current) return
+      setDetails(Object.fromEntries(results))
+    } catch (error: unknown) {
+      if (requestId < latestAppliedStacksRequestIdRef.current) return
+      throw error
+    }
   }, [onLastScanHint])
 
   const patchStackDetails = useCallback(async (stackIds: string[]) => {
@@ -452,9 +466,13 @@ export function OverviewPage(props: {
     [details, stacks],
   )
 
+  const requestRefresh = usePageResumeRefresh(refresh, {
+    onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
+  })
+
   useEffect(() => {
-    void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-  }, [refresh])
+    void requestRefresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+  }, [requestRefresh])
 
   useEffect(() => {
     let closed = false
@@ -596,9 +614,9 @@ export function OverviewPage(props: {
       const isAll = detail.scope === 'all' || detail.target === 'all'
       const stackIds = resolveSettledStackIds(detail)
       if (isAll || stackIds.length === 0) {
-        void refresh().catch(handleRefreshError)
+        void requestRefresh().catch(handleRefreshError)
         schedule(async () => {
-          await refresh()
+          await requestRefresh()
         })
         return
       }
@@ -616,7 +634,7 @@ export function OverviewPage(props: {
       for (const timer of timers) window.clearTimeout(timer)
       window.removeEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateJobSettled)
     }
-  }, [patchStackDetails, patchStackList, refresh, resolveSettledStackIds])
+  }, [patchStackDetails, patchStackList, requestRefresh, resolveSettledStackIds])
 
   const applyDigestSnapshotUpdate = useCallback(
     (detail: DigestSnapshotUpdatedDetail) => {
@@ -828,7 +846,7 @@ export function OverviewPage(props: {
 
       es.addEventListener('runtime_scan_finished', () => {
         es?.close()
-        void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+        void requestRefresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
       })
     }
 
@@ -839,7 +857,7 @@ export function OverviewPage(props: {
       if (timer != null) window.clearTimeout(timer)
       es?.close()
     }
-  }, [refresh])
+  }, [requestRefresh])
 
   const applyFilter = useCallback(
     (next: UpdateCandidateFilter, mode: 'push' | 'replace') => {
@@ -1080,7 +1098,7 @@ export function OverviewPage(props: {
           if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
           else if (e.status === 409) {
             setError('扫描结果已变化，请刷新并重新扫描后再更新')
-            await refresh()
+            await requestRefresh()
           }
           else setError(e.message)
         } else {
@@ -1090,7 +1108,7 @@ export function OverviewPage(props: {
         if (targetKey) endSubmitting(targetKey)
       }
     },
-    [beginSubmitting, confirm, endSubmitting, refresh, trackJob],
+    [beginSubmitting, confirm, endSubmitting, requestRefresh, trackJob],
   )
 
   useEffect(() => {
@@ -1107,7 +1125,7 @@ export function OverviewPage(props: {
               try {
                 const resp = await triggerCheck('all')
                 setNoticeCheckJobId(resp.checkId)
-                await refresh()
+                await requestRefresh()
               } catch (e: unknown) {
                 if (e instanceof ApiError) {
                   if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
@@ -1247,7 +1265,7 @@ export function OverviewPage(props: {
 	    busy,
 	    onTopActions,
 	    patchServiceInStackDetails,
-	    refresh,
+	    requestRefresh,
 	    triggerApply,
 	  ])
 
