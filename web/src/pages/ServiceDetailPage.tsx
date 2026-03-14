@@ -48,6 +48,7 @@ import {
   type UpdateJobSettledDetail,
   useUpdateActionTracker,
 } from '../updateActionTracking'
+import { usePageResumeRefresh } from '../usePageResumeRefresh'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -219,6 +220,10 @@ export function ServiceDetailPage(props: {
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(errorMessage(e)))
   }, [refresh])
+
+  usePageResumeRefresh(refreshStackOnly, {
+    onError: (e: unknown) => setError(errorMessage(e)),
+  })
 
   useEffect(() => {
     let closed = false

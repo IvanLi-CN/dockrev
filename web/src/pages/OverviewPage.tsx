@@ -58,6 +58,7 @@ import {
   type UpdateJobSettledDetail,
   useUpdateActionTracker,
 } from '../updateActionTracking'
+import { usePageResumeRefresh } from '../usePageResumeRefresh'
 
 function formatShort(ts?: string | null) {
   if (!ts) return '-'
@@ -455,6 +456,10 @@ export function OverviewPage(props: {
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
   }, [refresh])
+
+  usePageResumeRefresh(refresh, {
+    onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
+  })
 
   useEffect(() => {
     let closed = false
