@@ -2,9 +2,9 @@
 
 ## 状态
 
-- Status: 部分完成（3/4）
+- Status: 已完成
 - Created: 2026-03-14
-- Last: 2026-03-14
+- Last: 2026-03-15
 
 ## 背景 / 问题陈述
 
@@ -70,14 +70,14 @@
 - `cd web && bun test`
 - `cd web && bun run lint`
 - `cd web && bun run build`
-- Browser smoke：`chrome-devtools` 打开本地 preview（`VITE_API_BASE_URL=https://dockrev.ivanli.cc`），验证 Overview / Services / ServiceDetail 恢复补拉；当前仍待补齐。
+- Browser smoke：`chrome-devtools` 打开当前 worktree 本地 dev（`127.0.0.1:50884`）+ 可控 mock API（`127.0.0.1:50883`），验证 Overview / Services / ServiceDetail 在 `focus` 恢复后都会自动补拉，并保留既有搜索/筛选状态。
 
 ## 实现里程碑（Milestones / Delivery checklist）
 
 - [x] M1: 新增共享恢复补拉控制层，并对恢复 burst / in-flight queue 做去重约束。
 - [x] M2: Overview / Services / ServiceDetail 接入共享 hook，复用现有 refresh 路径。
 - [x] M3: `bun test` / `lint` / `build` 通过，覆盖恢复补拉关键时序。
-- [ ] M4: `chrome-devtools` 浏览器 smoke 完成，确认列表与详情页恢复补拉的真实交互证据。
+- [x] M4: `chrome-devtools` 浏览器 smoke 完成，确认列表与详情页恢复补拉的真实交互证据。
 
 ## 风险 / 开放问题 / 假设（Risks, Open Questions, Assumptions）
 
@@ -85,7 +85,7 @@
 - 风险：ServiceDetail 的恢复补拉需要走全量 `refresh()` 才能同步 settings / ignore rules，但任务结算等局部链路仍会触发 `refreshStackOnly()`；实现必须把两类刷新时序隔离，避免局部刷新意外废弃全量刷新尾段结果。
 - 风险：重叠 refresh 若简单按“最新 requestId 赢”直接丢弃旧成功结果，会在“新请求失败、旧请求成功”时把页面留在过时错误态；实现需要只阻止旧成功覆盖新成功，而不是无差别取消旧请求。
 - 假设：250ms 的恢复 burst 窗口足以覆盖常见的 `visibilitychange` / `focus` / `pageshow` 连发，不影响用户真正隔一段时间后的再次恢复。
-- 开放问题：当前 Codex `chrome-devtools` 会话在本机超时，真实浏览器 smoke 证据需在工具恢复后补齐。
+- 开放问题：None。
 
 ## 变更记录（Change log）
 
@@ -97,3 +97,4 @@
 - 2026-03-14: 调整 refresh 提交时序，恢复各数据面的独立落盘顺序：Overview 的 jobs/projects、Services 的 active/archived 列表、以及 ServiceDetail 的 stack 与 settings/rules 不再互相阻塞。
 - 2026-03-14: 把 Overview / Services / ServiceDetail 的全量 refresh 入口统一收口到共享仲裁器，保证首屏、恢复可见、手动刷新与任务结算触发的全量刷新共享同一套 in-flight/排队规则。
 - 2026-03-14: ServiceDetail 拆分“全量刷新根结果”和“stack-only 局部刷新”的代际保护，避免任务结算触发的 `refreshStackOnly()` 把正在进行的完整详情刷新错误判定为过期。
+- 2026-03-15: 使用 `chrome-devtools` + 当前 worktree 本地 dev/mock 服务完成真实浏览器 smoke：Overview 从 `v1.1.0` 自动补拉到 `v1.2.0`，Services 保留搜索词 `api` 并更新最近扫描时间，ServiceDetail 在恢复后同步到最新 settings / rules 状态。
