@@ -289,6 +289,7 @@ export function OverviewPage(props: {
   const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const jobsRefreshErrorRef = useRef<string | null>(null)
+  const refreshRequestIdRef = useRef(0)
   const { beginSubmitting, endSubmitting, trackJob, isTargetBusy, getActiveJobByTarget, isTargetSubmitting } =
     useUpdateActionTracker()
   const supervisor = useSupervisorHealth()
@@ -316,6 +317,7 @@ export function OverviewPage(props: {
   }, [discoveredProjects])
 
   const refresh = useCallback(async () => {
+    const requestId = ++refreshRequestIdRef.current
     const errors: string[] = []
     setError(null)
 
@@ -324,6 +326,7 @@ export function OverviewPage(props: {
     const projectsPromise = listDiscoveryProjects('exclude')
 
     const [stacksRes, jobsRes, projectsRes] = await Promise.allSettled([stacksPromise, jobsPromise, projectsPromise])
+    if (requestId !== refreshRequestIdRef.current) return
 
     if (jobsRes.status === 'fulfilled') setJobs(jobsRes.value)
     else errors.push('jobs unavailable')
@@ -349,6 +352,7 @@ export function OverviewPage(props: {
         }
       }),
     )
+    if (requestId !== refreshRequestIdRef.current) return
     setDetails(Object.fromEntries(results))
     onLastScanHint(maxLastScan)
 

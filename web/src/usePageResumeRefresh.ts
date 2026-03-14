@@ -69,7 +69,12 @@ export class PageResumeRefreshController {
     this.schedule()
   }
 
-  private readonly onPageShow = () => {
+  private readonly onPageShow = (event: Event) => {
+    const persisted =
+      'persisted' in event && typeof (event as PageTransitionEvent).persisted === 'boolean'
+        ? (event as PageTransitionEvent).persisted
+        : false
+    if (!persisted) return
     this.schedule()
   }
 

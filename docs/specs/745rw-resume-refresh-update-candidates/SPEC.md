@@ -91,3 +91,4 @@
 - 2026-03-14: 创建规格，冻结恢复补拉范围、接口与验收标准。
 - 2026-03-14: 完成共享 resume-refresh hook 与页面接入，并补充控制层时序测试。
 - 2026-03-14: `cd web && bun test`、`cd web && bun run lint`、`cd web && bun run build` 通过；浏览器 smoke 仍待补证。
+- 2026-03-14: 按 review 反馈补上 `pageshow.persisted` 过滤，并为 Overview / Services / ServiceDetail 的 refresh 增加 request-id 保护，避免旧请求回写覆盖新结果。

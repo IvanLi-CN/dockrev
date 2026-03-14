@@ -27,7 +27,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
-| 745rw | Dockrev：标签页恢复后自动补拉更新候选 | 部分完成（3/4） | `745rw-resume-refresh-update-candidates/SPEC.md` | 2026-03-14 | fast-track（resume refresh hook + web gates passed；browser smoke blocked by chrome-devtools timeout） |
+| 745rw | Dockrev：标签页恢复后自动补拉更新候选 | 部分完成（3/4） | `745rw-resume-refresh-update-candidates/SPEC.md` | 2026-03-14 | fast-track（resume refresh hook + review fixes + web gates passed；browser smoke blocked by chrome-devtools timeout） |
 | kv9pg | Dockrev：quality-gates 最终版对齐（merge queue + 条件 review + required checks） | 进行中 | `kv9pg-quality-gates-final-alignment/SPEC.md` | 2026-03-11 | fast-track |
 | s4fqf | Dockrev：新版本通知事件驱动收敛 + 显式版本结果兜底 | 已完成 | `s4fqf-new-version-notify-event-settle-explicit-version/SPEC.md` | 2026-03-12 | fast-track |
 | np5fm | Dockrev：Supervisor 自我升级页低拥挤度重构 | 已完成 | `np5fm-supervisor-roomier-layout/SPEC.md` | 2026-03-12 | fast-track（PR #160；visual evidence + copy UX + review fixes） |

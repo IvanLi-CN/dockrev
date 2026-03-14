@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   archiveService,
   ApiError,
@@ -171,25 +171,37 @@ export function ServiceDetailPage(props: {
   const applyActionBusy = applyActionKey ? isTargetBusy(applyActionKey) : false
   const applyActiveJob = applyActionKey ? getActiveJobByTarget(applyActionKey) : null
   const applySubmitting = applyActionKey ? isTargetSubmitting(applyActionKey) : false
+  const refreshRequestIdRef = useRef(0)
+  const stackRefreshRequestIdRef = useRef(0)
 
   const [newRuleKind, setNewRuleKind] = useState<'exact' | 'prefix' | 'regex' | 'semver'>('regex')
   const [newRuleValue, setNewRuleValue] = useState('.*')
   const [newRuleNote, setNewRuleNote] = useState('blocked via UI')
 
   const refresh = useCallback(async () => {
+    const requestId = ++refreshRequestIdRef.current
+    const stackRequestId = ++stackRefreshRequestIdRef.current
     setError(null)
     onLastScanHint?.(undefined)
     const st = await getStack(stackId)
-    setStack(st)
-    const svc = st.services.find((s) => s.id === serviceId) ?? null
-    setService(svc)
-    setSettings(await getServiceSettings(serviceId))
+    if (requestId !== refreshRequestIdRef.current) return
+    if (stackRequestId === stackRefreshRequestIdRef.current) {
+      setStack(st)
+      const svc = st.services.find((s) => s.id === serviceId) ?? null
+      setService(svc)
+    }
+    const nextSettings = await getServiceSettings(serviceId)
+    if (requestId !== refreshRequestIdRef.current) return
+    setSettings(nextSettings)
     const allRules = await listIgnores()
+    if (requestId !== refreshRequestIdRef.current) return
     setRules(allRules.filter((r) => r.scope.serviceId === serviceId))
   }, [onLastScanHint, serviceId, stackId])
 
   const refreshStackOnly = useCallback(async () => {
+    const requestId = ++stackRefreshRequestIdRef.current
     const st = await getStack(stackId)
+    if (requestId !== stackRefreshRequestIdRef.current) return
     setStack(st)
     const svc = st.services.find((s) => s.id === serviceId) ?? null
     setService(svc)

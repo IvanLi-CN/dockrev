@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   getStack,
   listStacks,
@@ -162,6 +162,7 @@ export function ServicesPage(props: {
   const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
   const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const refreshRequestIdRef = useRef(0)
   const { beginSubmitting, endSubmitting, trackJob, isTargetBusy, getActiveJobByTarget, isTargetSubmitting } =
     useUpdateActionTracker()
   const supervisor = useSupervisorHealth()
@@ -171,8 +172,10 @@ export function ServicesPage(props: {
   const [archivedDetails, setArchivedDetails] = useState<Record<string, StackDetail | undefined>>({})
 
   const refresh = useCallback(async () => {
+    const requestId = ++refreshRequestIdRef.current
     setError(null)
     const s = await listStacks()
+    if (requestId !== refreshRequestIdRef.current) return
     setStacks(s)
     const maxLastScan = s.map((x) => x.lastCheckAt).sort().at(-1)
 
@@ -186,6 +189,7 @@ export function ServicesPage(props: {
         }
       }),
     )
+    if (requestId !== refreshRequestIdRef.current) return
     setDetails(Object.fromEntries(results))
 
     onLastScanHint(maxLastScan)
@@ -199,6 +203,7 @@ export function ServicesPage(props: {
     })
 
     const a = await listStacksArchived('only').catch(() => [])
+    if (requestId !== refreshRequestIdRef.current) return
     setArchivedStacks(a)
     const aIds = a.map((x) => x.id)
     const aResults = await Promise.all(
@@ -210,6 +215,7 @@ export function ServicesPage(props: {
         }
       }),
     )
+    if (requestId !== refreshRequestIdRef.current) return
     setArchivedDetails(Object.fromEntries(aResults))
   }, [onLastScanHint])
 

@@ -37,6 +37,15 @@ async function flushAsync() {
   await Promise.resolve()
 }
 
+function pageshowEvent(persisted: boolean) {
+  const event = new Event('pageshow')
+  Object.defineProperty(event, 'persisted', {
+    configurable: true,
+    value: persisted,
+  })
+  return event
+}
+
 describe('createPageResumeRefreshController', () => {
   test('refreshes when page returns to visible state', async () => {
     const windowTarget = new FakeEventTarget()
@@ -94,9 +103,34 @@ describe('createPageResumeRefreshController', () => {
     expect(callCount).toBe(1)
 
     now = 2_400
-    windowTarget.dispatchEvent(new Event('pageshow'))
+    windowTarget.dispatchEvent(pageshowEvent(true))
     await flushAsync()
     expect(callCount).toBe(2)
+
+    controller.dispose()
+  })
+
+  test('ignores non-persisted pageshow but refreshes persisted restores', async () => {
+    const windowTarget = new FakeEventTarget()
+    const documentTarget = new FakeDocument()
+    let callCount = 0
+
+    const controller = createPageResumeRefreshController({
+      documentTarget,
+      refresh: async () => {
+        callCount += 1
+      },
+      windowTarget,
+    })
+    controller.attach()
+
+    windowTarget.dispatchEvent(pageshowEvent(false))
+    await flushAsync()
+    expect(callCount).toBe(0)
+
+    windowTarget.dispatchEvent(pageshowEvent(true))
+    await flushAsync()
+    expect(callCount).toBe(1)
 
     controller.dispose()
   })
@@ -130,7 +164,7 @@ describe('createPageResumeRefreshController', () => {
     now = 3_400
     windowTarget.dispatchEvent(new Event('focus'))
     now = 3_700
-    windowTarget.dispatchEvent(new Event('pageshow'))
+    windowTarget.dispatchEvent(pageshowEvent(true))
     await flushAsync()
     expect(callCount).toBe(1)
 
