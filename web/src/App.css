@@ -1658,6 +1658,7 @@ html[data-theme='light'] .modalOverlay {
   font-size: 12px;
   font-weight: 650;
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 6px;
 }
