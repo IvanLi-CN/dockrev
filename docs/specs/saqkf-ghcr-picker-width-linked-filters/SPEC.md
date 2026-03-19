@@ -93,6 +93,15 @@
 - `bun run --cwd web lint`
 - `bun run --cwd web build`
 
+## Visual Evidence (PR)
+
+- source_type: storybook_canvas
+  story_id_or_title: Pages/SettingsPage / Default
+  state: GHCR owner resolve dialog open
+  evidence_note: 证明 GHCR 添加 Repo 弹窗以独立元素截图展示时，桌面宽屏宽度已放宽，右侧列表不再被压成窄列，并且范围筛选与 GHCR 关联/已部署标签同时可见。
+  image:
+  ![GHCR Repo Picker Dialog](./assets/ghcr-picker-dialog-only.png)
+
 ## 实现里程碑（Milestones / Delivery checklist）
 
 - [x] M1: 补齐 spec 与 README 索引，冻结 API 字段与筛选口径。
