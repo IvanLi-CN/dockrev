@@ -1131,6 +1131,7 @@ html[data-theme='light'] .versionTagsPopover {
 .statusLine {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   font-size: 12px;
   color: var(--muted);
@@ -1657,6 +1658,7 @@ html[data-theme='light'] .modalOverlay {
   font-size: 12px;
   font-weight: 650;
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 6px;
 }

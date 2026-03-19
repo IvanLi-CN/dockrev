@@ -499,6 +499,12 @@ export function Pill(props: {
   return <Badge className={className} variant="outline">{props.children}</Badge>
 }
 
+export function DiscoveryCountPill(props: { count: number | null | undefined }) {
+  const count = props.count ?? 0
+  if (count <= 0) return null
+  return <Pill tone="muted">{`发现 ${count} 次`}</Pill>
+}
+
 export function Switch(
   props: Omit<ComponentProps<typeof PrimitiveSwitch>, 'onCheckedChange' | 'onChange'> & {
     checked: boolean
@@ -528,11 +534,13 @@ function splitWarningMarker(note: string): { marker: string; content: string } |
 export function StatusRemark(props: { service: Service; status: RowStatus }) {
   const note = noteFor(props.service, props.status).trim()
   const warning = splitWarningMarker(note)
+  const discoveryCount = props.service.newVersionDiscoveryCount ?? 0
   return (
     <div className="statusCol">
       <div className="statusLine">
         <Icon icon={statusIcon(props.status)} className={statusDotClass(props.status)} aria-hidden="true" />
         <span className="label">{statusLabel(props.status)}</span>
+        <DiscoveryCountPill count={discoveryCount} />
       </div>
       {note ? (
         <div className={`muted statusNote${warning ? ' statusNoteAnomaly' : ''}`}>

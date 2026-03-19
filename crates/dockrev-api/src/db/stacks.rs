@@ -148,7 +148,19 @@ WHERE id = ?1
             )?;
             let mut rows = stmt.query(params![stack.id.clone()])?;
 
+            let mut services = Vec::<(
+                crate::api::types::Service,
+                Option<String>,
+                Option<String>,
+                bool,
+            )>::new();
+
             while let Some(row) = rows.next()? {
+                let service_id: String = row.get(0)?;
+                let service_name: String = row.get(1)?;
+                let image_reference: String = row.get(2)?;
+                let image_tag: String = row.get(3)?;
+                let image_digest: Option<String> = row.get(4)?;
                 let bind_paths_json: String = row.get(16)?;
                 let volume_names_json: String = row.get(17)?;
                 let bind_paths: BTreeMap<String, crate::api::types::TernaryChoice> =
@@ -210,29 +222,63 @@ WHERE id = ?1
                     }),
                     _ => None,
                 };
+                let has_candidate = candidate.is_some();
 
-                stack.services.push(crate::api::types::Service {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    image: ComposeRef {
-                        reference: row.get(2)?,
-                        tag: row.get(3)?,
-                        digest: row.get(4)?,
-                        resolved_tag: current_resolved_tag,
-                        resolved_tags: current_resolved_tags,
-                    },
-                    candidate,
-                    ignore,
-                    version_inference: None,
-                    settings: ServiceSettings {
-                        auto_rollback: row.get::<_, i64>(14)? != 0,
-                        backup_targets: crate::api::types::BackupTargetOverrides {
-                            bind_paths,
-                            volume_names,
+                services.push((
+                    crate::api::types::Service {
+                        id: service_id,
+                        name: service_name,
+                        image: ComposeRef {
+                            reference: image_reference,
+                            tag: image_tag,
+                            digest: image_digest.clone(),
+                            resolved_tag: current_resolved_tag.clone(),
+                            resolved_tags: current_resolved_tags,
                         },
+                        candidate,
+                        ignore,
+                        version_inference: None,
+                        new_version_discovery_count: None,
+                        settings: ServiceSettings {
+                            auto_rollback: row.get::<_, i64>(14)? != 0,
+                            backup_targets: crate::api::types::BackupTargetOverrides {
+                                bind_paths,
+                                volume_names,
+                            },
+                        },
+                        archived: Some(row.get::<_, i64>(15)? != 0),
                     },
-                    archived: Some(row.get::<_, i64>(15)? != 0),
-                });
+                    image_digest,
+                    current_resolved_tag.clone(),
+                    has_candidate,
+                ));
+            }
+
+            drop(rows);
+            drop(stmt);
+
+            let discovery_counts =
+                super::new_version_discoveries::count_new_version_discoveries_for_services_conn(
+                    conn,
+                    &services
+                        .iter()
+                        .filter(|(_, _, _, has_candidate)| *has_candidate)
+                        .map(|(service, current_digest, current_resolved_tag, _)| {
+                            super::new_version_discoveries::NewVersionDiscoveryBaseline {
+                                service_id: service.id.clone(),
+                                current_digest: current_digest.clone(),
+                                current_display_tag: current_resolved_tag
+                                    .clone()
+                                    .or_else(|| Some(service.image.tag.clone())),
+                                current_tag: service.image.tag.clone(),
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                )?;
+
+            for (mut service, _, _, _) in services {
+                service.new_version_discovery_count = discovery_counts.get(&service.id).copied();
+                stack.services.push(service);
             }
 
             Ok(Some(stack))

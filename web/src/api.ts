@@ -62,6 +62,7 @@ export type Service = {
     reason: string
   } | null
   versionInference?: VersionInferenceState | null
+  newVersionDiscoveryCount?: number | null
   settings: ServiceSettings
   archived?: boolean
 }

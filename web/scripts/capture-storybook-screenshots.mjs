@@ -121,6 +121,30 @@ async function main() {
       id: 'components-statusremark--all-statuses',
       file: 'status-remark-all-statuses.png',
       setup: async () => {},
+      screenshot: async (page, filePath) => {
+        const el = page.locator('.card')
+        await el.waitFor({ timeout: 10_000 })
+        await el.screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'components-aggregateupdatepreviewlist--all-states',
+      file: 'aggregate-update-preview-all-states.png',
+      setup: async (page) => {
+        await page.evaluate(() => {
+          const el = document.querySelector('.modalList')
+          if (!(el instanceof HTMLElement)) return
+          el.style.maxHeight = 'none'
+          el.style.overflow = 'visible'
+          el.style.paddingRight = '0'
+        })
+        await page.waitForTimeout(150)
+      },
+      screenshot: async (page, filePath) => {
+        const el = page.locator('.card')
+        await el.waitFor({ timeout: 10_000 })
+        await el.screenshot({ path: filePath })
+      },
     },
     {
       id: 'components-confirmdialog--demo',
