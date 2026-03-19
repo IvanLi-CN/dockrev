@@ -279,15 +279,15 @@ WHERE id = ?1 AND status = 'queued'
         let finished_at = finished_at.to_string();
         let mut summary_json = summary_json.clone();
         self.call(move |conn| {
-            let previous_summary_raw = conn
+            let previous = conn
                 .query_row(
                     r#"
-SELECT summary_json
+SELECT type, summary_json
 FROM jobs
 WHERE id = ?1
 "#,
                     params![&job_id],
-                    |row| row.get::<_, String>(0),
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
                 )
                 .optional()?;
 
@@ -295,9 +295,9 @@ WHERE id = ?1
                 summary_json = serde_json::json!({ "result": summary_json });
             }
 
-            if let Some(previous_summary_raw) = previous_summary_raw {
+            if let Some((_, previous_summary_raw)) = previous.as_ref() {
                 let previous_summary: serde_json::Value =
-                    serde_json::from_str(&previous_summary_raw)
+                    serde_json::from_str(previous_summary_raw)
                         .unwrap_or_else(|_| serde_json::json!({}));
                 if let Some(previous) = previous_summary.as_object()
                     && let Some(obj) = summary_json.as_object_mut()
@@ -308,15 +308,27 @@ WHERE id = ?1
                 }
             }
 
-            let summary_json = serde_json::to_string(&summary_json)?;
+            let summary_json_str = serde_json::to_string(&summary_json)?;
             conn.execute(
                 r#"
 UPDATE jobs
 SET status = ?2, finished_at = ?3, summary_json = ?4
 WHERE id = ?1
 "#,
-                params![job_id, status, finished_at, summary_json],
+                params![job_id, status, finished_at, summary_json_str],
             )?;
+            if status == "success"
+                && previous
+                    .as_ref()
+                    .is_some_and(|(job_type, _)| job_type == "check")
+            {
+                new_version_discoveries::record_new_version_discoveries_from_summary_conn(
+                    conn,
+                    &job_id,
+                    &finished_at,
+                    &summary_json,
+                )?;
+            }
             Ok(())
         })
         .await

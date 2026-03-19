@@ -1652,6 +1652,7 @@ mod tests {
                 candidate,
                 ignore: None,
                 version_inference: None,
+                new_version_discovery_count: None,
                 settings: ServiceSettings {
                     auto_rollback: true,
                     backup_targets: BackupTargetOverrides {
@@ -1849,6 +1850,7 @@ mod tests {
             }),
             ignore: None,
             version_inference: None,
+            new_version_discovery_count: None,
             settings: ServiceSettings {
                 auto_rollback: true,
                 backup_targets: BackupTargetOverrides {
@@ -2247,6 +2249,7 @@ mod tests {
                 candidate: None,
                 ignore: None,
                 version_inference: None,
+                new_version_discovery_count: None,
                 settings: ServiceSettings {
                     auto_rollback: true,
                     backup_targets: BackupTargetOverrides {
@@ -2305,6 +2308,7 @@ mod tests {
                 candidate: None,
                 ignore: None,
                 version_inference: None,
+                new_version_discovery_count: None,
                 settings: ServiceSettings {
                     auto_rollback: true,
                     backup_targets: BackupTargetOverrides {
@@ -2365,6 +2369,7 @@ mod tests {
                 candidate: None,
                 ignore: None,
                 version_inference: None,
+                new_version_discovery_count: None,
                 settings: ServiceSettings {
                     auto_rollback: true,
                     backup_targets: BackupTargetOverrides {
@@ -3105,6 +3110,7 @@ mod tests {
                 candidate: None,
                 ignore: None,
                 version_inference: None,
+                new_version_discovery_count: None,
                 settings: ServiceSettings {
                     auto_rollback: true,
                     backup_targets: BackupTargetOverrides {

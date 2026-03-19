@@ -35,6 +35,7 @@ export const AllStatuses: Story = {
       name: 'updatable',
       image: { ref: 'ghcr.io/acme/api', tag: '5.2.1', digest: d('a', 'b1') },
       candidate: { tag: '5.2.3', digest: d('b', '9f'), archMatch: 'match', arch: ['linux/amd64'] },
+      newVersionDiscoveryCount: 3,
     } satisfies Service
 
     const updatableForceBackup = {
@@ -50,6 +51,7 @@ export const AllStatuses: Story = {
           volumeNames: {},
         },
       },
+      newVersionDiscoveryCount: 2,
     } satisfies Service
 
     const hint = {
@@ -58,6 +60,7 @@ export const AllStatuses: Story = {
       name: 'hint',
       image: { ref: 'ghcr.io/grafana/loki', tag: '2.9.0', digest: d('1', '11') },
       candidate: { tag: '2.9.1', digest: d('2', '22'), archMatch: 'unknown', arch: ['linux/amd64', 'linux/arm64'] },
+      newVersionDiscoveryCount: 4,
     } satisfies Service
 
     const archMismatch = {

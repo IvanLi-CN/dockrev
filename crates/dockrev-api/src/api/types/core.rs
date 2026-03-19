@@ -60,6 +60,8 @@ pub struct Service {
     pub ignore: Option<IgnoreMatch>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version_inference: Option<VersionInferenceState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_version_discovery_count: Option<u32>,
     pub settings: ServiceSettings,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archived: Option<bool>,

@@ -28,6 +28,25 @@ async fn response_json(resp: axum::response::Response) -> serde_json::Value {
     serde_json::from_slice(&payload).unwrap()
 }
 
+fn format_test_rfc3339(ts: time::OffsetDateTime) -> String {
+    ts.format(&time::format_description::well_known::Rfc3339)
+        .unwrap()
+}
+
+fn test_now_rfc3339() -> String {
+    format_test_rfc3339(time::OffsetDateTime::now_utc())
+}
+
+fn test_offset_rfc3339(base: &str, delta: time::Duration) -> String {
+    let parsed =
+        time::OffsetDateTime::parse(base, &time::format_description::well_known::Rfc3339).unwrap();
+    format_test_rfc3339(parsed + delta)
+}
+
+fn test_offset_from_now_rfc3339(delta: time::Duration) -> String {
+    format_test_rfc3339(time::OffsetDateTime::now_utc() + delta)
+}
+
 #[derive(Debug)]
 struct ParsedSseEvent {
     id: Option<String>,
@@ -4543,15 +4562,15 @@ services:
     .unwrap();
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
 
-    let now = "2026-03-09T00:00:00Z";
+    let now = test_now_rfc3339();
     state
         .db
         .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
             project: "demo".to_string(),
             stack_id: Some(stack_id.clone()),
             status: "active".to_string(),
-            last_seen_at: Some(now.to_string()),
-            last_scan_at: now.to_string(),
+            last_seen_at: Some(now.clone()),
+            last_scan_at: now.clone(),
             last_error: None,
             last_config_files: Some(vec![compose_path.clone()]),
             unarchive_if_active: true,
@@ -4563,7 +4582,7 @@ services:
         "ghcr.io/acme/web",
         "sha256:old",
         "linux/amd64",
-        now,
+        &now,
         vec!["5.2.0".to_string(), "5.2".to_string()],
         crate::api::types::ServiceDigestTagsScanSummary {
             repo_tags_total: 2,
@@ -4579,7 +4598,7 @@ services:
         "ghcr.io/acme/web",
         "sha256:new",
         "linux/amd64",
-        now,
+        &now,
         vec!["5.3.0".to_string(), "5.3".to_string()],
         crate::api::types::ServiceDigestTagsScanSummary {
             repo_tags_total: 2,
@@ -4655,15 +4674,16 @@ services:
     .unwrap();
     let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
 
-    let now = "2026-03-09T00:00:00Z";
+    let now = test_now_rfc3339();
+    let stale_snapshot_at = test_offset_from_now_rfc3339(time::Duration::days(-28));
     state
         .db
         .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
             project: "demo".to_string(),
             stack_id: Some(stack_id.clone()),
             status: "active".to_string(),
-            last_seen_at: Some(now.to_string()),
-            last_scan_at: now.to_string(),
+            last_seen_at: Some(now.clone()),
+            last_scan_at: now.clone(),
             last_error: None,
             last_config_files: Some(vec![compose_path.clone()]),
             unarchive_if_active: true,
@@ -4685,8 +4705,8 @@ services:
             None,
             None,
             None,
-            now,
-            now,
+            &now,
+            &now,
         )
         .await
         .unwrap();
@@ -4695,7 +4715,7 @@ services:
         "ghcr.io/acme/web",
         "sha256:old",
         "linux/amd64",
-        "2026-02-20T00:00:00Z",
+        &stale_snapshot_at,
         vec!["5.1.0".to_string(), "5.2".to_string()],
         crate::api::types::ServiceDigestTagsScanSummary {
             repo_tags_total: 2,
@@ -11031,6 +11051,8 @@ services:
 #[tokio::test]
 async fn schedule_new_version_notifications_are_deduped_by_active_record() {
     let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+    let first_now = test_now_rfc3339();
+    let second_now = test_offset_rfc3339(&first_now, time::Duration::minutes(1));
 
     let compose_path = format!("/tmp/dockrev-schedule-notify-{}.yml", ulid::Ulid::new());
     std::fs::write(
@@ -11058,8 +11080,8 @@ services:
             Some("[\"linux/amd64\"]".to_string()),
             None,
             None,
-            "2026-03-09T00:00:00Z",
-            "2026-03-09T00:00:00Z",
+            &first_now,
+            &first_now,
         )
         .await
         .unwrap();
@@ -11068,7 +11090,7 @@ services:
         "ghcr.io/acme/web",
         "sha256:old",
         "linux/amd64",
-        "2026-03-09T00:00:00Z",
+        &first_now,
         vec!["1.0.0".to_string(), "latest".to_string()],
         crate::api::types::ServiceDigestTagsScanSummary {
             repo_tags_total: 2,
@@ -11084,7 +11106,7 @@ services:
         "ghcr.io/acme/web",
         "sha256:new",
         "linux/amd64",
-        "2026-03-09T00:00:00Z",
+        &first_now,
         vec!["1.1.0".to_string(), "latest".to_string()],
         crate::api::types::ServiceDigestTagsScanSummary {
             repo_tags_total: 2,
@@ -11108,13 +11130,12 @@ services:
     }];
     let (mut rx, server) = configure_webhook_notifications(&state).await;
 
-    let first_now = "2026-03-09T00:00:00Z";
-    let first_job_id = insert_check_job(&state, "schedule", first_now).await;
+    let first_job_id = insert_check_job(&state, "schedule", &first_now).await;
     crate::notify::notify_new_versions_discovered(
         state.as_ref(),
         &first_job_id,
         "schedule",
-        first_now,
+        &first_now,
         1,
         &discovered,
     )
@@ -11138,13 +11159,12 @@ services:
     assert!(summary.contains("1.0.0 -> 1.1.0"));
     assert!(!summary.contains("latest -> latest"));
 
-    let second_now = "2026-03-09T00:01:00Z";
-    let second_job_id = insert_check_job(&state, "schedule", second_now).await;
+    let second_job_id = insert_check_job(&state, "schedule", &second_now).await;
     crate::notify::notify_new_versions_discovered(
         state.as_ref(),
         &second_job_id,
         "schedule",
-        second_now,
+        &second_now,
         1,
         &discovered,
     )
@@ -11179,6 +11199,7 @@ services:
 async fn schedule_new_version_notification_waits_for_version_inference_settle() {
     let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(250)));
     let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let now = test_now_rfc3339();
 
     let compose_path = format!(
         "/tmp/dockrev-schedule-notify-settle-{}.yml",
@@ -11209,8 +11230,8 @@ services:
             Some("[\"linux/amd64\"]".to_string()),
             None,
             None,
-            "2026-03-09T00:00:00Z",
-            "2026-03-09T00:00:00Z",
+            &now,
+            &now,
         )
         .await
         .unwrap();
@@ -11227,11 +11248,10 @@ services:
     }];
     let (mut rx, server) = configure_webhook_notifications(&state).await;
 
-    let now = "2026-03-09T00:00:00Z";
-    let job_id = insert_check_job(&state, "schedule", now).await;
+    let job_id = insert_check_job(&state, "schedule", &now).await;
     state
         .db
-        .finish_job(&job_id, "success", now, &serde_json::json!({}))
+        .finish_job(&job_id, "success", &now, &serde_json::json!({}))
         .await
         .unwrap();
     assert!(
@@ -11270,12 +11290,13 @@ services:
 
     let notify_state = state.clone();
     let notify_discovered = discovered.clone();
+    let notify_now = now.clone();
     let notify_task = tokio::spawn(async move {
         crate::notify::notify_new_versions_discovered(
             notify_state.as_ref(),
             &job_id,
             "schedule",
-            now,
+            &notify_now,
             1,
             &notify_discovered,
         )
@@ -11307,7 +11328,7 @@ services:
     );
     let sent_at = payload["sentAt"].as_str().expect("sentAt missing");
     assert!(
-        sent_at > now,
+        sent_at > now.as_str(),
         "payload sentAt should reflect delayed dispatch"
     );
     notify_task.await.unwrap();
@@ -11326,6 +11347,7 @@ services:
 async fn schedule_new_version_notification_uses_frozen_current_digest_after_live_drift() {
     let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(250)));
     let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let now = test_now_rfc3339();
 
     let compose_path = format!(
         "/tmp/dockrev-schedule-notify-frozen-current-{}.yml",
@@ -11356,8 +11378,8 @@ services:
             Some("[\"linux/amd64\"]".to_string()),
             None,
             None,
-            "2026-03-09T00:00:00Z",
-            "2026-03-09T00:00:00Z",
+            &now,
+            &now,
         )
         .await
         .unwrap();
@@ -11374,11 +11396,10 @@ services:
     }];
     let (mut rx, server) = configure_webhook_notifications(&state).await;
 
-    let now = "2026-03-09T00:00:00Z";
-    let job_id = insert_check_job(&state, "schedule", now).await;
+    let job_id = insert_check_job(&state, "schedule", &now).await;
     state
         .db
-        .finish_job(&job_id, "success", now, &serde_json::json!({}))
+        .finish_job(&job_id, "success", &now, &serde_json::json!({}))
         .await
         .unwrap();
     state
@@ -11395,8 +11416,8 @@ services:
             Some("[\"linux/amd64\"]".to_string()),
             None,
             None,
-            now,
-            now,
+            &now,
+            &now,
         )
         .await
         .unwrap();
@@ -11425,7 +11446,7 @@ services:
             notify_state.as_ref(),
             &job_id,
             "schedule",
-            now,
+            &now,
             1,
             &notify_discovered,
         )
@@ -11456,6 +11477,7 @@ services:
 async fn schedule_new_version_notification_waits_for_non_strict_semver_aliases_like_main() {
     let registry = Arc::new(BranchAliasRegistry::new("main", Duration::from_millis(250)));
     let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let now = test_now_rfc3339();
 
     let compose_path = format!(
         "/tmp/dockrev-schedule-notify-main-{}.yml",
@@ -11486,8 +11508,8 @@ services:
             Some("[\"linux/amd64\"]".to_string()),
             None,
             None,
-            "2026-03-09T00:00:00Z",
-            "2026-03-09T00:00:00Z",
+            &now,
+            &now,
         )
         .await
         .unwrap();
@@ -11504,11 +11526,10 @@ services:
     }];
     let (mut rx, server) = configure_webhook_notifications(&state).await;
 
-    let now = "2026-03-09T00:00:00Z";
-    let job_id = insert_check_job(&state, "schedule", now).await;
+    let job_id = insert_check_job(&state, "schedule", &now).await;
     state
         .db
-        .finish_job(&job_id, "success", now, &serde_json::json!({}))
+        .finish_job(&job_id, "success", &now, &serde_json::json!({}))
         .await
         .unwrap();
     assert!(
@@ -11536,7 +11557,7 @@ services:
             notify_state.as_ref(),
             &job_id,
             "schedule",
-            now,
+            &now,
             1,
             &notify_discovered,
         )
@@ -11574,6 +11595,7 @@ services:
 async fn schedule_new_version_notification_does_not_wait_when_display_tags_are_already_resolved() {
     let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(250)));
     let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let now = test_now_rfc3339();
 
     let compose_path = format!(
         "/tmp/dockrev-schedule-notify-resolved-{}.yml",
@@ -11604,8 +11626,8 @@ services:
             Some("[\"linux/amd64\"]".to_string()),
             None,
             None,
-            "2026-03-09T00:00:00Z",
-            "2026-03-09T00:00:00Z",
+            &now,
+            &now,
         )
         .await
         .unwrap();
@@ -11614,7 +11636,7 @@ services:
         "ghcr.io/acme/web",
         "sha256:old",
         "linux/amd64",
-        "2026-03-09T00:00:00Z",
+        &now,
         vec!["5.2.0".to_string(), "latest".to_string()],
         crate::api::types::ServiceDigestTagsScanSummary {
             repo_tags_total: 2,
@@ -11630,7 +11652,7 @@ services:
         "ghcr.io/acme/web",
         "sha256:new",
         "linux/amd64",
-        "2026-03-09T00:00:00Z",
+        &now,
         vec!["5.3.0".to_string(), "latest".to_string()],
         crate::api::types::ServiceDigestTagsScanSummary {
             repo_tags_total: 2,
@@ -11654,11 +11676,10 @@ services:
     }];
     let (mut rx, server) = configure_webhook_notifications(&state).await;
 
-    let now = "2026-03-09T00:00:00Z";
-    let job_id = insert_check_job(&state, "schedule", now).await;
+    let job_id = insert_check_job(&state, "schedule", &now).await;
     state
         .db
-        .finish_job(&job_id, "success", now, &serde_json::json!({}))
+        .finish_job(&job_id, "success", &now, &serde_json::json!({}))
         .await
         .unwrap();
     assert!(
@@ -11691,7 +11712,7 @@ services:
             notify_state.as_ref(),
             &job_id,
             "schedule",
-            now,
+            &now,
             1,
             &notify_discovered,
         )
@@ -11716,6 +11737,7 @@ async fn schedule_new_version_notification_uses_cached_snapshot_without_waiting_
 {
     let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(250)));
     let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let now = test_now_rfc3339();
 
     let compose_path = format!(
         "/tmp/dockrev-schedule-notify-snapshot-ready-{}.yml",
@@ -11746,8 +11768,8 @@ services:
             Some("[\"linux/amd64\"]".to_string()),
             None,
             None,
-            "2026-03-09T00:00:00Z",
-            "2026-03-09T00:00:00Z",
+            &now,
+            &now,
         )
         .await
         .unwrap();
@@ -11756,7 +11778,7 @@ services:
         "ghcr.io/acme/web",
         "sha256:old",
         "linux/amd64",
-        "2026-03-09T00:00:00Z",
+        &now,
         vec!["5.2.0".to_string(), "latest".to_string()],
         crate::api::types::ServiceDigestTagsScanSummary {
             repo_tags_total: 2,
@@ -11772,7 +11794,7 @@ services:
         "ghcr.io/acme/web",
         "sha256:new",
         "linux/amd64",
-        "2026-03-09T00:00:00Z",
+        &now,
         vec!["5.3.0".to_string(), "latest".to_string()],
         crate::api::types::ServiceDigestTagsScanSummary {
             repo_tags_total: 2,
@@ -11796,11 +11818,10 @@ services:
     }];
     let (mut rx, server) = configure_webhook_notifications(&state).await;
 
-    let now = "2026-03-09T00:00:00Z";
-    let job_id = insert_check_job(&state, "schedule", now).await;
+    let job_id = insert_check_job(&state, "schedule", &now).await;
     state
         .db
-        .finish_job(&job_id, "success", now, &serde_json::json!({}))
+        .finish_job(&job_id, "success", &now, &serde_json::json!({}))
         .await
         .unwrap();
     assert!(
@@ -11828,7 +11849,7 @@ services:
             notify_state.as_ref(),
             &job_id,
             "schedule",
-            now,
+            &now,
             1,
             &notify_discovered,
         )
@@ -11860,6 +11881,8 @@ services:
 async fn schedule_new_version_notification_waits_for_stale_snapshot_refresh() {
     let registry = Arc::new(CoalescingRegistry::new(Duration::from_millis(250)));
     let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let now = test_now_rfc3339();
+    let stale_snapshot_at = test_offset_from_now_rfc3339(time::Duration::days(-28));
 
     let compose_path = format!(
         "/tmp/dockrev-schedule-notify-stale-snapshot-{}.yml",
@@ -11890,8 +11913,8 @@ services:
             Some("[\"linux/amd64\"]".to_string()),
             None,
             None,
-            "2026-03-09T00:00:00Z",
-            "2026-03-09T00:00:00Z",
+            &now,
+            &now,
         )
         .await
         .unwrap();
@@ -11900,7 +11923,7 @@ services:
         "ghcr.io/acme/web",
         "sha256:old",
         "linux/amd64",
-        "2026-02-20T00:00:00Z",
+        &stale_snapshot_at,
         vec!["5.1.0".to_string(), "latest".to_string()],
         crate::api::types::ServiceDigestTagsScanSummary {
             repo_tags_total: 2,
@@ -11916,7 +11939,7 @@ services:
         "ghcr.io/acme/web",
         "sha256:new",
         "linux/amd64",
-        "2026-02-20T00:00:00Z",
+        &stale_snapshot_at,
         vec!["5.2.0".to_string(), "latest".to_string()],
         crate::api::types::ServiceDigestTagsScanSummary {
             repo_tags_total: 2,
@@ -11940,11 +11963,10 @@ services:
     }];
     let (mut rx, server) = configure_webhook_notifications(&state).await;
 
-    let now = "2026-03-09T00:00:00Z";
-    let job_id = insert_check_job(&state, "schedule", now).await;
+    let job_id = insert_check_job(&state, "schedule", &now).await;
     state
         .db
-        .finish_job(&job_id, "success", now, &serde_json::json!({}))
+        .finish_job(&job_id, "success", &now, &serde_json::json!({}))
         .await
         .unwrap();
     assert!(
@@ -11977,7 +11999,7 @@ services:
             notify_state.as_ref(),
             &job_id,
             "schedule",
-            now,
+            &now,
             1,
             &notify_discovered,
         )
@@ -12015,6 +12037,8 @@ services:
 async fn schedule_new_version_notification_falls_back_when_stale_snapshot_times_out() {
     let registry = Arc::new(CoalescingRegistry::new(Duration::from_secs(15)));
     let state = test_state_with(":memory:", registry, Arc::new(FakeRunner)).await;
+    let now = test_now_rfc3339();
+    let stale_snapshot_at = test_offset_from_now_rfc3339(time::Duration::days(-28));
 
     let compose_path = format!(
         "/tmp/dockrev-schedule-notify-stale-timeout-{}.yml",
@@ -12045,8 +12069,8 @@ services:
             Some("[\"linux/amd64\"]".to_string()),
             None,
             None,
-            "2026-03-09T00:00:00Z",
-            "2026-03-09T00:00:00Z",
+            &now,
+            &now,
         )
         .await
         .unwrap();
@@ -12055,7 +12079,7 @@ services:
         "ghcr.io/acme/web",
         "sha256:old",
         "linux/amd64",
-        "2026-02-20T00:00:00Z",
+        &stale_snapshot_at,
         vec!["5.1.0".to_string(), "latest".to_string()],
         crate::api::types::ServiceDigestTagsScanSummary {
             repo_tags_total: 2,
@@ -12071,7 +12095,7 @@ services:
         "ghcr.io/acme/web",
         "sha256:new",
         "linux/amd64",
-        "2026-02-20T00:00:00Z",
+        &stale_snapshot_at,
         vec!["5.2.0".to_string(), "latest".to_string()],
         crate::api::types::ServiceDigestTagsScanSummary {
             repo_tags_total: 2,
@@ -12095,11 +12119,10 @@ services:
     }];
     let (mut rx, server) = configure_webhook_notifications(&state).await;
 
-    let now = "2026-03-09T00:00:00Z";
-    let job_id = insert_check_job(&state, "schedule", now).await;
+    let job_id = insert_check_job(&state, "schedule", &now).await;
     state
         .db
-        .finish_job(&job_id, "success", now, &serde_json::json!({}))
+        .finish_job(&job_id, "success", &now, &serde_json::json!({}))
         .await
         .unwrap();
     assert!(
@@ -12132,7 +12155,7 @@ services:
             notify_state.as_ref(),
             &job_id,
             "schedule",
-            now,
+            &now,
             1,
             &notify_discovered,
         )
@@ -12167,6 +12190,7 @@ async fn schedule_new_version_notification_falls_back_to_oci_explicit_version_wh
         Arc::new(FakeRunner),
     )
     .await;
+    let now = test_now_rfc3339();
 
     let compose_path = format!(
         "/tmp/dockrev-schedule-notify-explicit-version-{}.yml",
@@ -12197,8 +12221,8 @@ services:
             Some("[\"linux/amd64\"]".to_string()),
             None,
             None,
-            "2026-03-12T00:00:00Z",
-            "2026-03-12T00:00:00Z",
+            &now,
+            &now,
         )
         .await
         .unwrap();
@@ -12207,7 +12231,7 @@ services:
         "ghcr.io/acme/web",
         "sha256:new",
         "linux/amd64",
-        "2026-03-12T00:00:00Z",
+        &now,
         vec!["latest".to_string()],
         crate::api::types::ServiceDigestTagsScanSummary {
             repo_tags_total: 116,
@@ -12231,11 +12255,10 @@ services:
     }];
     let (mut rx, server) = configure_webhook_notifications(&state).await;
 
-    let now = "2026-03-12T00:00:00Z";
-    let job_id = insert_check_job(&state, "schedule", now).await;
+    let job_id = insert_check_job(&state, "schedule", &now).await;
     state
         .db
-        .finish_job(&job_id, "success", now, &serde_json::json!({}))
+        .finish_job(&job_id, "success", &now, &serde_json::json!({}))
         .await
         .unwrap();
 
@@ -12243,7 +12266,7 @@ services:
         state.as_ref(),
         &job_id,
         "schedule",
-        now,
+        &now,
         1,
         &discovered,
     )
@@ -12274,6 +12297,7 @@ async fn schedule_new_version_notification_keeps_generic_copy_when_snapshot_and_
         Arc::new(FakeRunner),
     )
     .await;
+    let now = test_now_rfc3339();
 
     let compose_path = format!(
         "/tmp/dockrev-schedule-notify-explicit-miss-{}.yml",
@@ -12304,8 +12328,8 @@ services:
             Some("[\"linux/amd64\"]".to_string()),
             None,
             None,
-            "2026-03-12T00:00:00Z",
-            "2026-03-12T00:00:00Z",
+            &now,
+            &now,
         )
         .await
         .unwrap();
@@ -12314,7 +12338,7 @@ services:
         "ghcr.io/acme/web",
         "sha256:new",
         "linux/amd64",
-        "2026-03-12T00:00:00Z",
+        &now,
         vec!["latest".to_string()],
         crate::api::types::ServiceDigestTagsScanSummary {
             repo_tags_total: 116,
@@ -12338,11 +12362,10 @@ services:
     }];
     let (mut rx, server) = configure_webhook_notifications(&state).await;
 
-    let now = "2026-03-12T00:00:00Z";
-    let job_id = insert_check_job(&state, "schedule", now).await;
+    let job_id = insert_check_job(&state, "schedule", &now).await;
     state
         .db
-        .finish_job(&job_id, "success", now, &serde_json::json!({}))
+        .finish_job(&job_id, "success", &now, &serde_json::json!({}))
         .await
         .unwrap();
 
@@ -12350,7 +12373,7 @@ services:
         state.as_ref(),
         &job_id,
         "schedule",
-        now,
+        &now,
         1,
         &discovered,
     )

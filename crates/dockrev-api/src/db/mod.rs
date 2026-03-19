@@ -12,6 +12,7 @@ mod backups;
 mod discovery;
 mod github_packages;
 mod jobs;
+mod new_version_discoveries;
 mod new_version_notifications;
 mod resource_usage;
 mod settings;
@@ -504,6 +505,7 @@ impl Db {
             apply_migration_0007_remove_manual_stacks(conn)?;
             apply_migration_0008_drop_version_inference_snapshots(conn)?;
             apply_migration_0009_add_new_version_notifications(conn)?;
+            apply_migration_0010_add_new_version_discoveries(conn)?;
             auto_archive_missing_discovery_projects_on_startup(conn)?;
             Ok(())
         })
@@ -1263,6 +1265,45 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_new_version_notifications_active_service_d
     Ok(())
 }
 
+fn apply_migration_0010_add_new_version_discoveries(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0010_add_new_version_discoveries";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute_batch(
+        r#"
+CREATE TABLE IF NOT EXISTS service_new_version_discoveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  service_id TEXT NOT NULL,
+  source_job_id TEXT NOT NULL,
+  discovered_at TEXT NOT NULL,
+  current_digest TEXT NOT NULL DEFAULT '',
+  current_display_tag TEXT NOT NULL DEFAULT '',
+  current_tag TEXT NOT NULL DEFAULT '',
+  candidate_digest TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_service_new_version_discoveries_unique_candidate
+  ON service_new_version_discoveries(
+    service_id,
+    current_digest,
+    current_display_tag,
+    current_tag,
+    candidate_digest
+  );
+CREATE INDEX IF NOT EXISTS idx_service_new_version_discoveries_service_discovered_at
+  ON service_new_version_discoveries(service_id, discovered_at DESC, id DESC);
+"#,
+    )?;
+    new_version_discoveries::backfill_new_version_discoveries_from_successful_checks_conn(&tx)?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
 fn auto_archive_missing_discovery_projects_on_startup(
     conn: &rusqlite::Connection,
 ) -> anyhow::Result<()> {
@@ -1484,6 +1525,27 @@ CREATE INDEX IF NOT EXISTS idx_new_version_notifications_service_status
 CREATE UNIQUE INDEX IF NOT EXISTS idx_new_version_notifications_active_service_digest
   ON new_version_notifications(service_id, candidate_digest)
   WHERE status IN ('pending', 'sent');
+
+CREATE TABLE IF NOT EXISTS service_new_version_discoveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  service_id TEXT NOT NULL,
+  source_job_id TEXT NOT NULL,
+  discovered_at TEXT NOT NULL,
+  current_digest TEXT NOT NULL DEFAULT '',
+  current_display_tag TEXT NOT NULL DEFAULT '',
+  current_tag TEXT NOT NULL DEFAULT '',
+  candidate_digest TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_service_new_version_discoveries_unique_candidate
+  ON service_new_version_discoveries(
+    service_id,
+    current_digest,
+    current_display_tag,
+    current_tag,
+    candidate_digest
+  );
+CREATE INDEX IF NOT EXISTS idx_service_new_version_discoveries_service_discovered_at
+  ON service_new_version_discoveries(service_id, discovered_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY NOT NULL,
