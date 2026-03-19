@@ -70,7 +70,28 @@ fn stable_candidate_display_tag<'a>(
 }
 
 fn canonical_visible_version_tag(tag: &str) -> String {
-    dockrev_common::normalized_semver_from_oci_version(tag).unwrap_or_else(|| tag.to_string())
+    let tag = tag.trim();
+    if let Some(normalized) = dockrev_common::normalized_semver_from_oci_version(tag) {
+        return normalized;
+    }
+
+    let numeric = tag
+        .strip_prefix('v')
+        .or_else(|| tag.strip_prefix('V'))
+        .unwrap_or(tag);
+    let parts = numeric.split('.').collect::<Vec<_>>();
+    if parts
+        .iter()
+        .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
+    {
+        return match parts.as_slice() {
+            [major] => format!("{major}.0.0"),
+            [major, minor] => format!("{major}.{minor}.0"),
+            _ => tag.to_string(),
+        };
+    }
+
+    tag.to_string()
 }
 
 fn discovery_inputs_from_summary(
@@ -584,6 +605,50 @@ mod tests {
 
         let stack = db.get_stack("stack_1").await.unwrap().unwrap();
         assert_eq!(stack.services[0].new_version_discovery_count, Some(2));
+    }
+
+    #[tokio::test]
+    async fn finish_job_canonicalizes_semver_equivalent_visible_versions() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(
+            &db,
+            "svc_1",
+            Some("sha256:current-v1"),
+            Some("1.0.0"),
+            "latest",
+            Some("sha256:live-candidate"),
+        )
+        .await;
+
+        insert_successful_check_job(
+            &db,
+            "job_1",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-a",
+                Some("5.2"),
+            ),
+        )
+        .await;
+        insert_successful_check_job(
+            &db,
+            "job_2",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-b",
+                Some("5.2.0"),
+            ),
+        )
+        .await;
+
+        let stack = db.get_stack("stack_1").await.unwrap().unwrap();
+        assert_eq!(stack.services[0].new_version_discovery_count, Some(1));
     }
 
     #[tokio::test]
