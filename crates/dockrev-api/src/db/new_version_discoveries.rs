@@ -69,6 +69,10 @@ fn stable_candidate_display_tag<'a>(
     crate::ignore::is_strict_semver(candidate_display_tag).then_some(candidate_display_tag)
 }
 
+fn canonical_visible_version_tag(tag: &str) -> String {
+    dockrev_common::normalized_semver_from_oci_version(tag).unwrap_or_else(|| tag.to_string())
+}
+
 fn discovery_inputs_from_summary(
     summary: &serde_json::Value,
     source_job_id: &str,
@@ -188,11 +192,11 @@ fn discovery_matches_baseline(
 
 fn candidate_identity_key(
     row: &NewVersionDiscoveryRow,
-    stable_tags_by_digest: &std::collections::HashMap<&str, std::collections::BTreeSet<&str>>,
+    stable_tags_by_digest: &std::collections::HashMap<&str, std::collections::BTreeSet<String>>,
 ) -> Option<String> {
     if let Some(tag) = stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag)
     {
-        return Some(format!("tag:{tag}"));
+        return Some(format!("tag:{}", canonical_visible_version_tag(tag)));
     }
 
     let digest = row.candidate_digest.trim();
@@ -222,14 +226,14 @@ fn count_new_version_discoveries_from_rows<'a>(
         })
         .collect::<Vec<_>>();
     let stable_tags_by_digest = matched_rows.iter().fold(
-        std::collections::HashMap::<&str, std::collections::BTreeSet<&str>>::new(),
+        std::collections::HashMap::<&str, std::collections::BTreeSet<String>>::new(),
         |mut acc, row| {
             if let Some(tag) =
                 stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag)
             {
                 acc.entry(row.candidate_digest.as_str())
                     .or_default()
-                    .insert(tag);
+                    .insert(canonical_visible_version_tag(tag));
             }
             acc
         },
@@ -534,7 +538,7 @@ mod tests {
                 Some("1.0.0"),
                 Some("sha256:current-v1"),
                 "sha256:candidate-a",
-                Some("1.1.0"),
+                Some("v1.1.0"),
             ),
         )
         .await;
