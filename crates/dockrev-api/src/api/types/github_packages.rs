@@ -19,6 +19,10 @@ pub struct GitHubPackagesRepoSelection {
     pub selected: bool,
     pub visibility: Option<String>,
     pub last_activity_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ghcr_linked: Option<bool>,
+    #[serde(default)]
+    pub deployed: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

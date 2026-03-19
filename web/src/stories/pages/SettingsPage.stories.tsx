@@ -125,7 +125,7 @@ export const ResolveLoading: Story = {
 
 export const RepoPickerUx: Story = {
   parameters: { dockrevApiScenario: 'settings-configured' },
-  render: () => renderSettingsPage('验证 GHCR 仓库选择弹窗：默认最近活动排序、搜索筛选与拖动批量开关'),
+  render: () => renderSettingsPage('验证 GHCR 仓库选择弹窗：宽屏布局、范围筛选与拖动批量开关'),
 }
 
 export const GhcrPreview: Story = {

@@ -475,6 +475,8 @@ export type ResolveGitHubPackagesTargetResponse = {
     selected: boolean
     visibility?: 'public' | 'private' | 'unknown' | string
     lastActivityAt?: string | null
+    ghcrLinked?: boolean | null
+    deployed: boolean
   }>
   warnings: string[]
 }

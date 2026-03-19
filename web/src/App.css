@@ -1498,7 +1498,7 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .modalCard.ghcrPickerDialogCard {
-  width: min(920px, calc(100vw - 48px));
+  width: min(1160px, calc(100vw - 48px));
   max-height: calc(100vh - 24px);
 }
 
@@ -1686,8 +1686,8 @@ html[data-theme='light'] .modalOverlay {
 .ghcrPickerLayout {
   margin-top: 10px;
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+  gap: 16px;
   flex: 1 1 auto;
   min-height: 0;
 }
@@ -1727,6 +1727,14 @@ html[data-theme='light'] .modalOverlay {
   max-height: min(620px, calc(100vh - 260px));
 }
 
+.ghcrPickerList .modalListItem {
+  gap: 16px;
+}
+
+.ghcrPickerList .modalListLeft {
+  flex: 1 1 auto;
+}
+
 .ghcrPickerList.ghcrPickerListCompact {
   gap: 7px;
 }
@@ -1750,9 +1758,9 @@ html[data-theme='light'] .modalOverlay {
   margin-top: 2px;
 }
 
-@media (max-width: 860px) {
+@media (max-width: 1040px) {
   .modalCard.ghcrPickerDialogCard {
-    width: min(560px, calc(100vw - 24px));
+    width: min(920px, calc(100vw - 24px));
   }
 
   .ghcrPickerLayout {
