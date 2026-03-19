@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-03-19
-- Last: 2026-03-19
+- Last: 2026-03-20
 
 ## 背景 / 问题陈述
 
@@ -17,7 +17,7 @@
 ### Goals
 
 - 为服务持久化“新版本发现历史”，来源仅限成功完成的 `check` 任务。
-- 基于当前版本基线，按不同 `candidateDigest` 去重统计发现次数，并包含当前最新候选。
+- 基于当前版本基线，按“稳定可见版本优先、浮动 alias 回退 `candidateDigest`”统计发现次数，并包含当前最新候选。
 - 在更新候选列表 `StatusRemark` 和 `AggregateUpdatePreviewList` 中显示中性计数 pill：`发现 N 次`。
 - 对外通过 `GET /api/stacks` 与 `GET /api/stacks/{id}` 返回 `newVersionDiscoveryCount`。
 
@@ -52,7 +52,7 @@
 ## 接口契约（Interfaces & Contracts）
 
 - `Service` 响应新增可选字段：`newVersionDiscoveryCount?: number | null`。
-- 计数规则固定为“同一当前版本基线下，不同 `candidateDigest` 的去重个数”。
+- 计数规则固定为“同一当前版本基线下，按稳定 `candidateDisplayTag` 去重；若候选仍是未 settle 的原始 tag（例如 `latest`、`15-alpine`）或无稳定展示值，则回退按 `candidateDigest` 去重”。
 - 当前版本基线匹配优先级：
   - `currentDigest`
   - `currentDisplayTag`
@@ -60,10 +60,14 @@
 
 ## 验收标准（Acceptance Criteria）
 
-- Given 同一当前版本基线下先后发现 `candidateDigest=A/B/C`，When 当前候选为 `C`，Then `newVersionDiscoveryCount=3`。
-- Given 同一 `candidateDigest` 被多次成功 `check` 重复发现，When 统计当前基线次数，Then 只计一次。
+- Given 同一当前版本基线下先后发现 `v1.16.1(digest A)`、`v1.16.1(digest B)`、`v1.16.2(digest C)`，When 当前候选为 `v1.16.2`，Then `newVersionDiscoveryCount=2`。
+- Given 同一 `candidateDisplayTag` 被多次成功 `check` 重复发现，When 统计当前基线次数，Then 只计一次。
+- Given 历史上同一稳定版本先后以 `v1.16.1` 和 `1.16.1` 形式出现，When 统计当前基线次数，Then 视为同一个可见版本。
+- Given 历史上同一稳定版本先后以 `5.2` 和 `5.2.0` 形式出现，When 统计当前基线次数，Then 视为同一个可见版本。
+- Given 候选仍是 `latest` 或 `15-alpine` 这类未 settle 的原始 tag，When 没有稳定 `candidateDisplayTag` 可用，Then 回退按不同 `candidateDigest` 计数。
 - Given 通知事件关闭或通知渠道全部关闭，When 成功 `check` 仍发现新版本，Then 计数仍可正确显示。
 - Given 服务当前版本已经从基线 `X` 升级到 `Y`，When 查询 `Y` 的候选计数，Then `X` 基线历史不会混入。
+- Given 历史上同一 `candidateDigest` 先以浮动 alias 出现、后又解析出稳定 `candidateDisplayTag`，When 统计当前基线次数，Then 不会因为这两条历史记录重复累计。
 - Given 更新候选列表与聚合预览同时展示同一服务，When `newVersionDiscoveryCount` 存在，Then 两处都显示 `发现 N 次` 且不覆盖原备注。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
@@ -100,6 +104,7 @@
 
 ## 变更记录（Change log）
 
-- 2026-03-19: 新建规格，冻结“发现次数”来自成功 `check` 历史且按当前基线 + `candidateDigest` 去重的口径。
+- 2026-03-19: 新建规格，冻结“发现次数”来自成功 `check` 历史的持久化与 UI 展示范围。
 - 2026-03-19: 完成后端 discovery 历史表、历史回填、API 字段透出与前端状态/聚合预览展示。
 - 2026-03-19: 补充 Storybook 证据故事与截图，作为 PR 可视完工证据来源。
+- 2026-03-20: 修正计数口径为“稳定可见版本优先、浮动 alias 回退 `candidateDigest`”，并通过 migration 自动重建历史 discovery 数据。

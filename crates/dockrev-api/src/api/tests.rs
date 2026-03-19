@@ -1856,6 +1856,34 @@ async fn insert_check_job(state: &Arc<AppState>, reason: &str, now: &str) -> Str
     job_id
 }
 
+fn make_new_version_summary_for_test(
+    service_id: &str,
+    current_tag: &str,
+    current_display_tag: &str,
+    current_digest: &str,
+    candidate_tag: &str,
+    candidate_display_tag: &str,
+    candidate_digest: &str,
+) -> serde_json::Value {
+    json!({
+        "newVersions": {
+            "count": 1,
+            "services": [{
+                "stackId": "unused",
+                "serviceId": service_id,
+                "serviceName": "web",
+                "imageRef": "ghcr.io/acme/web",
+                "currentTag": current_tag,
+                "currentDigest": current_digest,
+                "currentDisplayTag": current_display_tag,
+                "candidateTag": candidate_tag,
+                "candidateDisplayTag": candidate_display_tag,
+                "candidateDigest": candidate_digest,
+            }],
+        }
+    })
+}
+
 async fn configure_webhook_notifications(
     state: &Arc<AppState>,
 ) -> (
@@ -3399,6 +3427,139 @@ services:
     assert!(payload["plannedCurrent"].is_number());
     assert!(payload["plannedTotal"].is_number());
     assert!(payload["plannedPercent"].is_number());
+}
+
+#[tokio::test]
+async fn get_stack_reports_new_version_discovery_count_by_visible_version() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        Some("sha256:current-v1"),
+        Some("latest"),
+        Some("sha256:live-candidate"),
+    )
+    .await;
+    let now = test_now_rfc3339();
+    state
+        .db
+        .update_service_check_result(
+            &service_id,
+            Some("sha256:current-v1".to_string()),
+            Some("1.16.0".to_string()),
+            Some("[\"1.16.0\"]".to_string()),
+            Some("latest".to_string()),
+            Some("1.16.2".to_string()),
+            Some("sha256:live-candidate".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let job_1 = insert_check_job(&state, "schedule", &now).await;
+    state
+        .db
+        .finish_job(
+            &job_1,
+            "success",
+            &now,
+            &make_new_version_summary_for_test(
+                &service_id,
+                "latest",
+                "1.16.0",
+                "sha256:current-v1",
+                "latest",
+                "1.16.1",
+                "sha256:candidate-a",
+            ),
+        )
+        .await
+        .unwrap();
+    let job_2 = insert_check_job(
+        &state,
+        "schedule",
+        &test_offset_rfc3339(&now, time::Duration::minutes(1)),
+    )
+    .await;
+    state
+        .db
+        .finish_job(
+            &job_2,
+            "success",
+            &test_offset_rfc3339(&now, time::Duration::minutes(1)),
+            &make_new_version_summary_for_test(
+                &service_id,
+                "latest",
+                "1.16.0",
+                "sha256:current-v1",
+                "latest",
+                "1.16.1",
+                "sha256:candidate-b",
+            ),
+        )
+        .await
+        .unwrap();
+    let job_3 = insert_check_job(
+        &state,
+        "schedule",
+        &test_offset_rfc3339(&now, time::Duration::minutes(2)),
+    )
+    .await;
+    state
+        .db
+        .finish_job(
+            &job_3,
+            "success",
+            &test_offset_rfc3339(&now, time::Duration::minutes(2)),
+            &make_new_version_summary_for_test(
+                &service_id,
+                "latest",
+                "1.16.0",
+                "sha256:current-v1",
+                "latest",
+                "1.16.2",
+                "sha256:candidate-c",
+            ),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let detail = response_json(resp).await;
+    assert_eq!(
+        detail["stack"]["services"][0]["newVersionDiscoveryCount"].as_u64(),
+        Some(2)
+    );
 }
 
 #[tokio::test]

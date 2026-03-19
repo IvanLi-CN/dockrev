@@ -506,6 +506,7 @@ impl Db {
             apply_migration_0008_drop_version_inference_snapshots(conn)?;
             apply_migration_0009_add_new_version_notifications(conn)?;
             apply_migration_0010_add_new_version_discoveries(conn)?;
+            apply_migration_0011_track_candidate_display_tags_in_new_version_discoveries(conn)?;
             auto_archive_missing_discovery_projects_on_startup(conn)?;
             Ok(())
         })
@@ -1284,7 +1285,9 @@ CREATE TABLE IF NOT EXISTS service_new_version_discoveries (
   current_digest TEXT NOT NULL DEFAULT '',
   current_display_tag TEXT NOT NULL DEFAULT '',
   current_tag TEXT NOT NULL DEFAULT '',
-  candidate_digest TEXT NOT NULL
+  candidate_tag TEXT NOT NULL DEFAULT '',
+  candidate_digest TEXT NOT NULL,
+  candidate_display_tag TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_service_new_version_discoveries_unique_candidate
   ON service_new_version_discoveries(
@@ -1292,10 +1295,63 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_service_new_version_discoveries_unique_can
     current_digest,
     current_display_tag,
     current_tag,
-    candidate_digest
+    candidate_tag,
+    candidate_digest,
+    candidate_display_tag
   );
 CREATE INDEX IF NOT EXISTS idx_service_new_version_discoveries_service_discovered_at
   ON service_new_version_discoveries(service_id, discovered_at DESC, id DESC);
+"#,
+    )?;
+    new_version_discoveries::backfill_new_version_discoveries_from_successful_checks_conn(&tx)?;
+    record_migration_tx(&tx, id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+fn apply_migration_0011_track_candidate_display_tags_in_new_version_discoveries(
+    conn: &mut rusqlite::Connection,
+) -> anyhow::Result<()> {
+    let id = "0011_track_candidate_display_tags_in_new_version_discoveries";
+    if migration_applied(conn, id)? {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let mut stmt = tx.prepare("PRAGMA table_info(service_new_version_discoveries)")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let existing = rows.collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+
+    if !existing.iter().any(|column| column == "candidate_tag") {
+        tx.execute_batch(
+            "ALTER TABLE service_new_version_discoveries ADD COLUMN candidate_tag TEXT NOT NULL DEFAULT ''",
+        )?;
+    }
+
+    if !existing
+        .iter()
+        .any(|column| column == "candidate_display_tag")
+    {
+        tx.execute_batch(
+            "ALTER TABLE service_new_version_discoveries ADD COLUMN candidate_display_tag TEXT NOT NULL DEFAULT ''",
+        )?;
+    }
+
+    tx.execute_batch(
+        r#"
+DROP INDEX IF EXISTS idx_service_new_version_discoveries_unique_candidate;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_service_new_version_discoveries_unique_candidate
+  ON service_new_version_discoveries(
+    service_id,
+    current_digest,
+    current_display_tag,
+    current_tag,
+    candidate_tag,
+    candidate_digest,
+    candidate_display_tag
+  );
+DELETE FROM service_new_version_discoveries;
 "#,
     )?;
     new_version_discoveries::backfill_new_version_discoveries_from_successful_checks_conn(&tx)?;
@@ -1534,7 +1590,9 @@ CREATE TABLE IF NOT EXISTS service_new_version_discoveries (
   current_digest TEXT NOT NULL DEFAULT '',
   current_display_tag TEXT NOT NULL DEFAULT '',
   current_tag TEXT NOT NULL DEFAULT '',
-  candidate_digest TEXT NOT NULL
+  candidate_tag TEXT NOT NULL DEFAULT '',
+  candidate_digest TEXT NOT NULL,
+  candidate_display_tag TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_service_new_version_discoveries_unique_candidate
   ON service_new_version_discoveries(
@@ -1542,7 +1600,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_service_new_version_discoveries_unique_can
     current_digest,
     current_display_tag,
     current_tag,
-    candidate_digest
+    candidate_tag,
+    candidate_digest,
+    candidate_display_tag
   );
 CREATE INDEX IF NOT EXISTS idx_service_new_version_discoveries_service_discovered_at
   ON service_new_version_discoveries(service_id, discovered_at DESC, id DESC);

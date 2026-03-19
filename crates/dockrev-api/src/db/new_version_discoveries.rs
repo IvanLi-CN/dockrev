@@ -11,7 +11,9 @@ struct NewVersionDiscoveryInput {
     current_digest: String,
     current_display_tag: String,
     current_tag: String,
+    candidate_tag: String,
     candidate_digest: String,
+    candidate_display_tag: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -20,7 +22,9 @@ struct NewVersionDiscoveryRow {
     current_digest: String,
     current_display_tag: String,
     current_tag: String,
+    candidate_tag: String,
     candidate_digest: String,
+    candidate_display_tag: String,
 }
 
 pub(super) struct NewVersionDiscoveryBaseline {
@@ -36,6 +40,58 @@ fn normalize_discovery_key(input: Option<&str>) -> String {
         .filter(|value| !value.is_empty())
         .unwrap_or_default()
         .to_string()
+}
+
+fn stable_candidate_display_tag<'a>(
+    candidate_tag: &str,
+    candidate_display_tag: &'a str,
+) -> Option<&'a str> {
+    let candidate_display_tag = candidate_display_tag.trim();
+    if candidate_display_tag.is_empty() {
+        return None;
+    }
+
+    if candidate_display_tag
+        .to_ascii_lowercase()
+        .starts_with("sha256:")
+    {
+        return None;
+    }
+
+    let candidate_tag = candidate_tag.trim();
+    if !candidate_tag.is_empty() {
+        if crate::notify::notification_tag_requires_settle(candidate_tag, candidate_display_tag) {
+            return None;
+        }
+        return Some(candidate_display_tag);
+    }
+
+    crate::ignore::is_strict_semver(candidate_display_tag).then_some(candidate_display_tag)
+}
+
+fn canonical_visible_version_tag(tag: &str) -> String {
+    let tag = tag.trim();
+    if let Some(normalized) = dockrev_common::normalized_semver_from_oci_version(tag) {
+        return normalized;
+    }
+
+    let numeric = tag
+        .strip_prefix('v')
+        .or_else(|| tag.strip_prefix('V'))
+        .unwrap_or(tag);
+    let parts = numeric.split('.').collect::<Vec<_>>();
+    if parts
+        .iter()
+        .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
+    {
+        return match parts.as_slice() {
+            [major] => format!("{major}.0.0"),
+            [major, minor] => format!("{major}.{minor}.0"),
+            _ => tag.to_string(),
+        };
+    }
+
+    tag.to_string()
 }
 
 fn discovery_inputs_from_summary(
@@ -67,6 +123,14 @@ fn discovery_inputs_from_summary(
             .get("currentDisplayTag")
             .and_then(|value| value.as_str())
             .unwrap_or(current_tag);
+        let candidate_display_tag = item
+            .get("candidateDisplayTag")
+            .and_then(|value| value.as_str())
+            .or_else(|| item.get("candidateTag").and_then(|value| value.as_str()));
+        let candidate_tag = item
+            .get("candidateTag")
+            .and_then(|value| value.as_str())
+            .or(candidate_display_tag);
 
         out.push(NewVersionDiscoveryInput {
             service_id: service_id.to_string(),
@@ -77,7 +141,9 @@ fn discovery_inputs_from_summary(
             ),
             current_display_tag: normalize_discovery_key(Some(current_display_tag)),
             current_tag: normalize_discovery_key(Some(current_tag)),
+            candidate_tag: normalize_discovery_key(candidate_tag),
             candidate_digest: normalize_discovery_key(Some(candidate_digest)),
+            candidate_display_tag: normalize_discovery_key(candidate_display_tag),
         });
     }
     out
@@ -96,8 +162,10 @@ INSERT OR IGNORE INTO service_new_version_discoveries (
   current_digest,
   current_display_tag,
   current_tag,
-  candidate_digest
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+  candidate_tag,
+  candidate_digest,
+  candidate_display_tag
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
 "#,
         params![
             discovery.service_id,
@@ -106,7 +174,9 @@ INSERT OR IGNORE INTO service_new_version_discoveries (
             discovery.current_digest,
             discovery.current_display_tag,
             discovery.current_tag,
+            discovery.candidate_tag,
             discovery.candidate_digest,
+            discovery.candidate_display_tag,
         ],
     )
 }
@@ -141,18 +211,60 @@ fn discovery_matches_baseline(
     }
 }
 
+fn candidate_identity_key(
+    row: &NewVersionDiscoveryRow,
+    stable_tags_by_digest: &std::collections::HashMap<&str, std::collections::BTreeSet<String>>,
+) -> Option<String> {
+    if let Some(tag) = stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag)
+    {
+        return Some(format!("tag:{}", canonical_visible_version_tag(tag)));
+    }
+
+    let digest = row.candidate_digest.trim();
+    if digest.is_empty() {
+        return None;
+    }
+
+    if stable_tags_by_digest
+        .get(digest)
+        .is_some_and(|tags| !tags.is_empty())
+    {
+        return None;
+    }
+
+    Some(format!("digest:{digest}"))
+}
+
 fn count_new_version_discoveries_from_rows<'a>(
     rows: impl Iterator<Item = &'a NewVersionDiscoveryRow>,
     current_digest: &str,
     current_display_tag: &str,
     current_tag: &str,
 ) -> u32 {
-    rows.filter(|row| {
-        discovery_matches_baseline(row, current_digest, current_display_tag, current_tag)
-    })
-    .map(|row| row.candidate_digest.as_str())
-    .collect::<std::collections::BTreeSet<_>>()
-    .len() as u32
+    let matched_rows = rows
+        .filter(|row| {
+            discovery_matches_baseline(row, current_digest, current_display_tag, current_tag)
+        })
+        .collect::<Vec<_>>();
+    let stable_tags_by_digest = matched_rows.iter().fold(
+        std::collections::HashMap::<&str, std::collections::BTreeSet<String>>::new(),
+        |mut acc, row| {
+            if let Some(tag) =
+                stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag)
+            {
+                acc.entry(row.candidate_digest.as_str())
+                    .or_default()
+                    .insert(canonical_visible_version_tag(tag));
+            }
+            acc
+        },
+    );
+
+    matched_rows
+        .into_iter()
+        .filter_map(|row| candidate_identity_key(row, &stable_tags_by_digest))
+        .collect::<std::collections::BTreeSet<_>>()
+        .len() as u32
 }
 
 pub(super) fn record_new_version_discoveries_from_summary_conn(
@@ -235,7 +347,9 @@ SELECT
   current_digest,
   current_display_tag,
   current_tag,
-  candidate_digest
+  candidate_tag,
+  candidate_digest,
+  candidate_display_tag
 FROM service_new_version_discoveries
 WHERE service_id IN ({placeholders})
 "#,
@@ -251,7 +365,9 @@ WHERE service_id IN ({placeholders})
             current_digest: row.get(1)?,
             current_display_tag: row.get(2)?,
             current_tag: row.get(3)?,
-            candidate_digest: row.get(4)?,
+            candidate_tag: row.get(4)?,
+            candidate_digest: row.get(5)?,
+            candidate_display_tag: row.get(6)?,
         })
     })?;
     let rows = rows.collect::<Result<Vec<_>, _>>()?;
@@ -310,6 +426,26 @@ mod tests {
         candidate_digest: &str,
         candidate_display_tag: Option<&str>,
     ) -> serde_json::Value {
+        make_summary_with_candidate_tag(
+            service_id,
+            current_tag,
+            current_display_tag,
+            current_digest,
+            "latest",
+            candidate_digest,
+            candidate_display_tag,
+        )
+    }
+
+    fn make_summary_with_candidate_tag(
+        service_id: &str,
+        current_tag: &str,
+        current_display_tag: Option<&str>,
+        current_digest: Option<&str>,
+        candidate_tag: &str,
+        candidate_digest: &str,
+        candidate_display_tag: Option<&str>,
+    ) -> serde_json::Value {
         serde_json::json!({
             "newVersions": {
                 "count": 1,
@@ -321,8 +457,8 @@ mod tests {
                     "currentTag": current_tag,
                     "currentDigest": current_digest,
                     "currentDisplayTag": current_display_tag.unwrap_or(current_tag),
-                    "candidateTag": "latest",
-                    "candidateDisplayTag": candidate_display_tag.unwrap_or("1.1.0"),
+                    "candidateTag": candidate_tag,
+                    "candidateDisplayTag": candidate_display_tag.unwrap_or(candidate_tag),
                     "candidateDigest": candidate_digest,
                 }],
             }
@@ -402,7 +538,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn finish_job_records_unique_candidate_discoveries_for_current_baseline() {
+    async fn finish_job_counts_unique_visible_versions_for_current_baseline() {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
         seed_service(
             &db,
@@ -423,7 +559,7 @@ mod tests {
                 Some("1.0.0"),
                 Some("sha256:current-v1"),
                 "sha256:candidate-a",
-                Some("1.1.0"),
+                Some("v1.1.0"),
             ),
         )
         .await;
@@ -436,7 +572,7 @@ mod tests {
                 Some("1.0.0"),
                 Some("sha256:current-v1"),
                 "sha256:candidate-b",
-                Some("1.2.0"),
+                Some("1.1.0"),
             ),
         )
         .await;
@@ -450,6 +586,153 @@ mod tests {
                 Some("sha256:current-v1"),
                 "sha256:candidate-a",
                 Some("1.1.0"),
+            ),
+        )
+        .await;
+        insert_successful_check_job(
+            &db,
+            "job_4",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-c",
+                Some("1.2.0"),
+            ),
+        )
+        .await;
+
+        let stack = db.get_stack("stack_1").await.unwrap().unwrap();
+        assert_eq!(stack.services[0].new_version_discovery_count, Some(2));
+    }
+
+    #[tokio::test]
+    async fn finish_job_canonicalizes_semver_equivalent_visible_versions() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(
+            &db,
+            "svc_1",
+            Some("sha256:current-v1"),
+            Some("1.0.0"),
+            "latest",
+            Some("sha256:live-candidate"),
+        )
+        .await;
+
+        insert_successful_check_job(
+            &db,
+            "job_1",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-a",
+                Some("5.2"),
+            ),
+        )
+        .await;
+        insert_successful_check_job(
+            &db,
+            "job_2",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-b",
+                Some("5.2.0"),
+            ),
+        )
+        .await;
+
+        let stack = db.get_stack("stack_1").await.unwrap().unwrap();
+        assert_eq!(stack.services[0].new_version_discovery_count, Some(1));
+    }
+
+    #[tokio::test]
+    async fn finish_job_uses_digest_when_candidate_display_tag_is_floating_alias() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(
+            &db,
+            "svc_1",
+            Some("sha256:current-v1"),
+            Some("1.0.0"),
+            "latest",
+            Some("sha256:live-candidate"),
+        )
+        .await;
+
+        insert_successful_check_job(
+            &db,
+            "job_1",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-a",
+                Some("latest"),
+            ),
+        )
+        .await;
+        insert_successful_check_job(
+            &db,
+            "job_2",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-b",
+                Some("latest"),
+            ),
+        )
+        .await;
+
+        let stack = db.get_stack("stack_1").await.unwrap().unwrap();
+        assert_eq!(stack.services[0].new_version_discovery_count, Some(2));
+    }
+
+    #[tokio::test]
+    async fn finish_job_uses_digest_when_candidate_display_tag_is_unresolved_non_semver_tag() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(
+            &db,
+            "svc_1",
+            Some("sha256:current-v1"),
+            Some("1.0.0"),
+            "latest",
+            Some("sha256:live-candidate"),
+        )
+        .await;
+
+        insert_successful_check_job(
+            &db,
+            "job_1",
+            make_summary_with_candidate_tag(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "15-alpine",
+                "sha256:candidate-a",
+                Some("15-alpine"),
+            ),
+        )
+        .await;
+        insert_successful_check_job(
+            &db,
+            "job_2",
+            make_summary_with_candidate_tag(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "15-alpine",
+                "sha256:candidate-b",
+                Some("15-alpine"),
             ),
         )
         .await;
@@ -510,6 +793,50 @@ mod tests {
                 "latest",
                 Some("latest"),
                 None,
+                "sha256:candidate-a",
+                Some("1.1.0"),
+            ),
+        )
+        .await;
+
+        let stack = db.get_stack("stack_1").await.unwrap().unwrap();
+        assert_eq!(stack.services[0].new_version_discovery_count, Some(1));
+    }
+
+    #[tokio::test]
+    async fn finish_job_ignores_floating_candidate_alias_once_same_digest_resolves() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(
+            &db,
+            "svc_1",
+            Some("sha256:current-v1"),
+            Some("1.0.0"),
+            "latest",
+            Some("sha256:live-candidate"),
+        )
+        .await;
+
+        insert_successful_check_job(
+            &db,
+            "job_1",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-a",
+                Some("latest"),
+            ),
+        )
+        .await;
+        insert_successful_check_job(
+            &db,
+            "job_2",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
                 "sha256:candidate-a",
                 Some("1.1.0"),
             ),
@@ -605,6 +932,32 @@ mod tests {
             Some("1.1.0"),
         );
         db.insert_job(job).await.unwrap();
+        insert_successful_check_job(
+            &db,
+            "job_backfill_same_visible",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-backfill-2",
+                Some("1.1.0"),
+            ),
+        )
+        .await;
+        insert_successful_check_job(
+            &db,
+            "job_backfill_new_visible",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-backfill-3",
+                Some("1.2.0"),
+            ),
+        )
+        .await;
 
         db.call(|conn| {
             conn.execute("DELETE FROM service_new_version_discoveries", [])?;
@@ -617,10 +970,10 @@ mod tests {
             .rebuild_new_version_discoveries_from_successful_checks()
             .await
             .unwrap();
-        assert_eq!(inserted, 1);
+        assert_eq!(inserted, 3);
 
         let stack = db.get_stack("stack_1").await.unwrap().unwrap();
-        assert_eq!(stack.services[0].new_version_discovery_count, Some(1));
+        assert_eq!(stack.services[0].new_version_discovery_count, Some(2));
     }
 
     #[tokio::test]
