@@ -1285,6 +1285,7 @@ CREATE TABLE IF NOT EXISTS service_new_version_discoveries (
   current_digest TEXT NOT NULL DEFAULT '',
   current_display_tag TEXT NOT NULL DEFAULT '',
   current_tag TEXT NOT NULL DEFAULT '',
+  candidate_tag TEXT NOT NULL DEFAULT '',
   candidate_digest TEXT NOT NULL,
   candidate_display_tag TEXT NOT NULL DEFAULT ''
 );
@@ -1294,6 +1295,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_service_new_version_discoveries_unique_can
     current_digest,
     current_display_tag,
     current_tag,
+    candidate_tag,
     candidate_digest,
     candidate_display_tag
   );
@@ -1321,6 +1323,12 @@ fn apply_migration_0011_track_candidate_display_tags_in_new_version_discoveries(
     let existing = rows.collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
 
+    if !existing.iter().any(|column| column == "candidate_tag") {
+        tx.execute_batch(
+            "ALTER TABLE service_new_version_discoveries ADD COLUMN candidate_tag TEXT NOT NULL DEFAULT ''",
+        )?;
+    }
+
     if !existing
         .iter()
         .any(|column| column == "candidate_display_tag")
@@ -1339,6 +1347,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_service_new_version_discoveries_unique_can
     current_digest,
     current_display_tag,
     current_tag,
+    candidate_tag,
     candidate_digest,
     candidate_display_tag
   );
@@ -1581,6 +1590,7 @@ CREATE TABLE IF NOT EXISTS service_new_version_discoveries (
   current_digest TEXT NOT NULL DEFAULT '',
   current_display_tag TEXT NOT NULL DEFAULT '',
   current_tag TEXT NOT NULL DEFAULT '',
+  candidate_tag TEXT NOT NULL DEFAULT '',
   candidate_digest TEXT NOT NULL,
   candidate_display_tag TEXT NOT NULL DEFAULT ''
 );
@@ -1590,6 +1600,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_service_new_version_discoveries_unique_can
     current_digest,
     current_display_tag,
     current_tag,
+    candidate_tag,
     candidate_digest,
     candidate_display_tag
   );

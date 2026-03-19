@@ -2,10 +2,6 @@ use super::*;
 
 const JOB_TYPE_CHECK: &str = "check";
 const JOB_STATUS_SUCCESS: &str = "success";
-const FLOATING_CANDIDATE_ALIASES: &[&str] = &[
-    "latest", "edge", "stable", "main", "master", "head", "dev", "nightly", "rolling", "canary",
-    "snapshot", "beta", "alpha",
-];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct NewVersionDiscoveryInput {
@@ -15,6 +11,7 @@ struct NewVersionDiscoveryInput {
     current_digest: String,
     current_display_tag: String,
     current_tag: String,
+    candidate_tag: String,
     candidate_digest: String,
     candidate_display_tag: String,
 }
@@ -25,6 +22,7 @@ struct NewVersionDiscoveryRow {
     current_digest: String,
     current_display_tag: String,
     current_tag: String,
+    candidate_tag: String,
     candidate_digest: String,
     candidate_display_tag: String,
 }
@@ -44,22 +42,31 @@ fn normalize_discovery_key(input: Option<&str>) -> String {
         .to_string()
 }
 
-fn stable_candidate_display_tag(value: &str) -> Option<&str> {
-    let value = value.trim();
-    if value.is_empty() {
+fn stable_candidate_display_tag<'a>(
+    candidate_tag: &str,
+    candidate_display_tag: &'a str,
+) -> Option<&'a str> {
+    let candidate_display_tag = candidate_display_tag.trim();
+    if candidate_display_tag.is_empty() {
         return None;
     }
 
-    let lower = value.to_ascii_lowercase();
-    if lower.starts_with("sha256:")
-        || FLOATING_CANDIDATE_ALIASES
-            .iter()
-            .any(|alias| lower.eq_ignore_ascii_case(alias))
+    if candidate_display_tag
+        .to_ascii_lowercase()
+        .starts_with("sha256:")
     {
         return None;
     }
 
-    Some(value)
+    let candidate_tag = candidate_tag.trim();
+    if !candidate_tag.is_empty() {
+        if crate::notify::notification_tag_requires_settle(candidate_tag, candidate_display_tag) {
+            return None;
+        }
+        return Some(candidate_display_tag);
+    }
+
+    crate::ignore::is_strict_semver(candidate_display_tag).then_some(candidate_display_tag)
 }
 
 fn discovery_inputs_from_summary(
@@ -95,6 +102,10 @@ fn discovery_inputs_from_summary(
             .get("candidateDisplayTag")
             .and_then(|value| value.as_str())
             .or_else(|| item.get("candidateTag").and_then(|value| value.as_str()));
+        let candidate_tag = item
+            .get("candidateTag")
+            .and_then(|value| value.as_str())
+            .or(candidate_display_tag);
 
         out.push(NewVersionDiscoveryInput {
             service_id: service_id.to_string(),
@@ -105,6 +116,7 @@ fn discovery_inputs_from_summary(
             ),
             current_display_tag: normalize_discovery_key(Some(current_display_tag)),
             current_tag: normalize_discovery_key(Some(current_tag)),
+            candidate_tag: normalize_discovery_key(candidate_tag),
             candidate_digest: normalize_discovery_key(Some(candidate_digest)),
             candidate_display_tag: normalize_discovery_key(candidate_display_tag),
         });
@@ -125,9 +137,10 @@ INSERT OR IGNORE INTO service_new_version_discoveries (
   current_digest,
   current_display_tag,
   current_tag,
+  candidate_tag,
   candidate_digest,
   candidate_display_tag
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
 "#,
         params![
             discovery.service_id,
@@ -136,6 +149,7 @@ INSERT OR IGNORE INTO service_new_version_discoveries (
             discovery.current_digest,
             discovery.current_display_tag,
             discovery.current_tag,
+            discovery.candidate_tag,
             discovery.candidate_digest,
             discovery.candidate_display_tag,
         ],
@@ -176,7 +190,8 @@ fn candidate_identity_key(
     row: &NewVersionDiscoveryRow,
     stable_tags_by_digest: &std::collections::HashMap<&str, std::collections::BTreeSet<&str>>,
 ) -> Option<String> {
-    if let Some(tag) = stable_candidate_display_tag(&row.candidate_display_tag) {
+    if let Some(tag) = stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag)
+    {
         return Some(format!("tag:{tag}"));
     }
 
@@ -209,7 +224,9 @@ fn count_new_version_discoveries_from_rows<'a>(
     let stable_tags_by_digest = matched_rows.iter().fold(
         std::collections::HashMap::<&str, std::collections::BTreeSet<&str>>::new(),
         |mut acc, row| {
-            if let Some(tag) = stable_candidate_display_tag(&row.candidate_display_tag) {
+            if let Some(tag) =
+                stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag)
+            {
                 acc.entry(row.candidate_digest.as_str())
                     .or_default()
                     .insert(tag);
@@ -305,6 +322,7 @@ SELECT
   current_digest,
   current_display_tag,
   current_tag,
+  candidate_tag,
   candidate_digest,
   candidate_display_tag
 FROM service_new_version_discoveries
@@ -322,8 +340,9 @@ WHERE service_id IN ({placeholders})
             current_digest: row.get(1)?,
             current_display_tag: row.get(2)?,
             current_tag: row.get(3)?,
-            candidate_digest: row.get(4)?,
-            candidate_display_tag: row.get(5)?,
+            candidate_tag: row.get(4)?,
+            candidate_digest: row.get(5)?,
+            candidate_display_tag: row.get(6)?,
         })
     })?;
     let rows = rows.collect::<Result<Vec<_>, _>>()?;
@@ -382,6 +401,26 @@ mod tests {
         candidate_digest: &str,
         candidate_display_tag: Option<&str>,
     ) -> serde_json::Value {
+        make_summary_with_candidate_tag(
+            service_id,
+            current_tag,
+            current_display_tag,
+            current_digest,
+            "latest",
+            candidate_digest,
+            candidate_display_tag,
+        )
+    }
+
+    fn make_summary_with_candidate_tag(
+        service_id: &str,
+        current_tag: &str,
+        current_display_tag: Option<&str>,
+        current_digest: Option<&str>,
+        candidate_tag: &str,
+        candidate_digest: &str,
+        candidate_display_tag: Option<&str>,
+    ) -> serde_json::Value {
         serde_json::json!({
             "newVersions": {
                 "count": 1,
@@ -393,8 +432,8 @@ mod tests {
                     "currentTag": current_tag,
                     "currentDigest": current_digest,
                     "currentDisplayTag": current_display_tag.unwrap_or(current_tag),
-                    "candidateTag": "latest",
-                    "candidateDisplayTag": candidate_display_tag.unwrap_or("1.1.0"),
+                    "candidateTag": candidate_tag,
+                    "candidateDisplayTag": candidate_display_tag.unwrap_or(candidate_tag),
                     "candidateDigest": candidate_digest,
                 }],
             }
@@ -579,6 +618,52 @@ mod tests {
                 Some("sha256:current-v1"),
                 "sha256:candidate-b",
                 Some("latest"),
+            ),
+        )
+        .await;
+
+        let stack = db.get_stack("stack_1").await.unwrap().unwrap();
+        assert_eq!(stack.services[0].new_version_discovery_count, Some(2));
+    }
+
+    #[tokio::test]
+    async fn finish_job_uses_digest_when_candidate_display_tag_is_unresolved_non_semver_tag() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(
+            &db,
+            "svc_1",
+            Some("sha256:current-v1"),
+            Some("1.0.0"),
+            "latest",
+            Some("sha256:live-candidate"),
+        )
+        .await;
+
+        insert_successful_check_job(
+            &db,
+            "job_1",
+            make_summary_with_candidate_tag(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "15-alpine",
+                "sha256:candidate-a",
+                Some("15-alpine"),
+            ),
+        )
+        .await;
+        insert_successful_check_job(
+            &db,
+            "job_2",
+            make_summary_with_candidate_tag(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "15-alpine",
+                "sha256:candidate-b",
+                Some("15-alpine"),
             ),
         )
         .await;

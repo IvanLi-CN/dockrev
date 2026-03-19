@@ -52,7 +52,7 @@
 ## 接口契约（Interfaces & Contracts）
 
 - `Service` 响应新增可选字段：`newVersionDiscoveryCount?: number | null`。
-- 计数规则固定为“同一当前版本基线下，按稳定 `candidateDisplayTag` 去重；若候选仍是浮动 alias 或无稳定展示值，则回退按 `candidateDigest` 去重”。
+- 计数规则固定为“同一当前版本基线下，按稳定 `candidateDisplayTag` 去重；若候选仍是未 settle 的原始 tag（例如 `latest`、`15-alpine`）或无稳定展示值，则回退按 `candidateDigest` 去重”。
 - 当前版本基线匹配优先级：
   - `currentDigest`
   - `currentDisplayTag`
@@ -62,7 +62,7 @@
 
 - Given 同一当前版本基线下先后发现 `v1.16.1(digest A)`、`v1.16.1(digest B)`、`v1.16.2(digest C)`，When 当前候选为 `v1.16.2`，Then `newVersionDiscoveryCount=2`。
 - Given 同一 `candidateDisplayTag` 被多次成功 `check` 重复发现，When 统计当前基线次数，Then 只计一次。
-- Given 候选仍是 `latest` 这类浮动 alias，When 没有稳定 `candidateDisplayTag` 可用，Then 回退按不同 `candidateDigest` 计数。
+- Given 候选仍是 `latest` 或 `15-alpine` 这类未 settle 的原始 tag，When 没有稳定 `candidateDisplayTag` 可用，Then 回退按不同 `candidateDigest` 计数。
 - Given 通知事件关闭或通知渠道全部关闭，When 成功 `check` 仍发现新版本，Then 计数仍可正确显示。
 - Given 服务当前版本已经从基线 `X` 升级到 `Y`，When 查询 `Y` 的候选计数，Then `X` 基线历史不会混入。
 - Given 历史上同一 `candidateDigest` 先以浮动 alias 出现、后又解析出稳定 `candidateDisplayTag`，When 统计当前基线次数，Then 不会因为这两条历史记录重复累计。
