@@ -276,6 +276,67 @@ WHERE image_repo = ?1 AND digest = ?2 AND host_platform = ?3
         .context("get image digest tags snapshot")
     }
 
+    pub async fn list_image_digest_tags_snapshots_for_targets(
+        &self,
+        host_platform: &str,
+        targets: &[(String, String)],
+    ) -> anyhow::Result<Vec<ImageDigestTagsSnapshotRow>> {
+        let host_platform = host_platform.to_string();
+        let targets = targets
+            .iter()
+            .map(|(image_repo, digest)| (image_repo.trim(), digest.trim()))
+            .filter(|(image_repo, digest)| !image_repo.is_empty() && !digest.is_empty())
+            .map(|(image_repo, digest)| (image_repo.to_string(), digest.to_string()))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        if targets.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        self.call(move |conn| {
+            let clauses = targets
+                .iter()
+                .enumerate()
+                .map(|(index, _)| {
+                    let image_ref_pos = index * 2 + 2;
+                    let digest_pos = index * 2 + 3;
+                    format!("(image_repo = ?{image_ref_pos} AND digest = ?{digest_pos})")
+                })
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            let sql = format!(
+                r#"
+SELECT image_repo, digest, host_platform, snapshot_json, checked_at, updated_at
+FROM image_digest_tags_snapshots
+WHERE host_platform = ?1
+  AND ({clauses})
+ORDER BY updated_at DESC, image_repo ASC, digest ASC
+"#,
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(targets.len() * 2 + 1);
+            params.push(&host_platform);
+            for (image_repo, digest) in &targets {
+                params.push(image_repo);
+                params.push(digest);
+            }
+            let rows = stmt.query_map(params.as_slice(), |row| {
+                Ok(ImageDigestTagsSnapshotRow {
+                    image_repo: row.get(0)?,
+                    digest: row.get(1)?,
+                    host_platform: row.get(2)?,
+                    snapshot_json: row.get(3)?,
+                    checked_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        })
+        .await
+        .context("list image digest tags snapshots for targets")
+    }
+
     pub async fn list_image_digest_tags_snapshots(
         &self,
     ) -> anyhow::Result<Vec<ImageDigestTagsSnapshotRow>> {
@@ -290,6 +351,7 @@ ORDER BY updated_at DESC, image_repo ASC, digest ASC, host_platform ASC
             let rows = stmt.query_map([], |row| {
                 Ok(ImageDigestTagsSnapshotRow {
                     image_repo: row.get(0)?,
+                    digest: row.get(1)?,
                     host_platform: row.get(2)?,
                     snapshot_json: row.get(3)?,
                     checked_at: row.get(4)?,

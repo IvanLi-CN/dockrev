@@ -19,6 +19,11 @@ mod settings;
 mod snapshots;
 mod stacks;
 
+pub(crate) use new_version_discoveries::{
+    canonical_visible_version_tag, count_new_version_discoveries_from_rows,
+    normalize_discovery_key, stable_candidate_display_tag,
+};
+
 use crate::api::types::{
     BackupSettings, ComposeConfig, ComposeRef, DeployWelcomeSettings, GitHubPackagesRepoDb,
     GitHubPackagesSettingsDb, GitHubPackagesTargetDb, GitHubPackagesWebhookDeliveryDb,
@@ -86,10 +91,22 @@ pub struct VersionInferenceServiceTargetRow {
 #[derive(Clone, Debug)]
 pub struct ImageDigestTagsSnapshotRow {
     pub image_repo: String,
+    pub digest: String,
     pub host_platform: String,
     pub snapshot_json: String,
     pub checked_at: String,
     pub updated_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewVersionDiscoveryRow {
+    pub service_id: String,
+    pub current_digest: String,
+    pub current_display_tag: String,
+    pub current_tag: String,
+    pub candidate_tag: String,
+    pub candidate_digest: String,
+    pub candidate_display_tag: String,
 }
 
 #[derive(Clone, Debug)]

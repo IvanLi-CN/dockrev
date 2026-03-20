@@ -114,6 +114,86 @@ WHERE service_id = ?1
 }
 
 impl Db {
+    pub async fn list_latest_stable_candidate_display_tags_for_service_digests(
+        &self,
+        targets: &[(String, String)],
+    ) -> anyhow::Result<std::collections::HashMap<(String, String), String>> {
+        let targets = targets
+            .iter()
+            .map(|(service_id, candidate_digest)| (service_id.trim(), candidate_digest.trim()))
+            .filter(|(service_id, candidate_digest)| {
+                !service_id.is_empty() && !candidate_digest.is_empty()
+            })
+            .map(|(service_id, candidate_digest)| {
+                (service_id.to_string(), candidate_digest.to_string())
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        if targets.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+
+        self.call(move |conn| {
+            let clauses = targets
+                .iter()
+                .enumerate()
+                .map(|(index, _)| {
+                    let service_pos = index * 2 + 1;
+                    let digest_pos = index * 2 + 2;
+                    format!("(service_id = ?{service_pos} AND candidate_digest = ?{digest_pos})")
+                })
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            let sql = format!(
+                r#"
+SELECT
+  service_id,
+  candidate_digest,
+  candidate_tag,
+  candidate_display_tag
+FROM new_version_notifications
+WHERE {clauses}
+ORDER BY created_at DESC, id DESC
+"#,
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(targets.len() * 2);
+            for (service_id, candidate_digest) in &targets {
+                params.push(service_id);
+                params.push(candidate_digest);
+            }
+            let rows = stmt.query_map(params.as_slice(), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?;
+            let mut resolved = std::collections::HashMap::<(String, String), String>::new();
+            for row in rows {
+                let (service_id, candidate_digest, candidate_tag, candidate_display_tag) = row?;
+                let key = (service_id, candidate_digest);
+                if resolved.contains_key(&key) {
+                    continue;
+                }
+                let Some(stable_display_tag) =
+                    super::stable_candidate_display_tag(&candidate_tag, &candidate_display_tag)
+                else {
+                    continue;
+                };
+                resolved.insert(
+                    key,
+                    super::canonical_visible_version_tag(stable_display_tag),
+                );
+            }
+            Ok(resolved)
+        })
+        .await
+        .context("list latest stable candidate display tags for service digests")
+    }
+
     pub async fn reserve_new_version_notification(
         &self,
         pending: &NewVersionNotificationPending,

@@ -16,17 +16,6 @@ struct NewVersionDiscoveryInput {
     candidate_display_tag: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct NewVersionDiscoveryRow {
-    service_id: String,
-    current_digest: String,
-    current_display_tag: String,
-    current_tag: String,
-    candidate_tag: String,
-    candidate_digest: String,
-    candidate_display_tag: String,
-}
-
 pub(super) struct NewVersionDiscoveryBaseline {
     pub service_id: String,
     pub current_digest: Option<String>,
@@ -34,7 +23,7 @@ pub(super) struct NewVersionDiscoveryBaseline {
     pub current_tag: String,
 }
 
-fn normalize_discovery_key(input: Option<&str>) -> String {
+pub(crate) fn normalize_discovery_key(input: Option<&str>) -> String {
     input
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -42,7 +31,7 @@ fn normalize_discovery_key(input: Option<&str>) -> String {
         .to_string()
 }
 
-fn stable_candidate_display_tag<'a>(
+pub(crate) fn stable_candidate_display_tag<'a>(
     candidate_tag: &str,
     candidate_display_tag: &'a str,
 ) -> Option<&'a str> {
@@ -69,7 +58,7 @@ fn stable_candidate_display_tag<'a>(
     crate::ignore::is_strict_semver(candidate_display_tag).then_some(candidate_display_tag)
 }
 
-fn canonical_visible_version_tag(tag: &str) -> String {
+pub(crate) fn canonical_visible_version_tag(tag: &str) -> String {
     let tag = tag.trim();
     if let Some(normalized) = dockrev_common::normalized_semver_from_oci_version(tag) {
         return normalized;
@@ -225,28 +214,31 @@ fn candidate_identity_key(
         return None;
     }
 
-    if stable_tags_by_digest
-        .get(digest)
-        .is_some_and(|tags| !tags.is_empty())
+    if let Some(tags) = stable_tags_by_digest.get(digest)
+        && tags.len() == 1
     {
-        return None;
+        return tags.iter().next().cloned().map(|tag| format!("tag:{tag}"));
     }
 
     Some(format!("digest:{digest}"))
 }
 
-fn count_new_version_discoveries_from_rows<'a>(
+pub(crate) fn count_new_version_discoveries_from_rows<'a>(
     rows: impl Iterator<Item = &'a NewVersionDiscoveryRow>,
     current_digest: &str,
     current_display_tag: &str,
     current_tag: &str,
+    effective_stable_tags_by_digest: &std::collections::HashMap<
+        String,
+        std::collections::BTreeSet<String>,
+    >,
 ) -> u32 {
     let matched_rows = rows
         .filter(|row| {
             discovery_matches_baseline(row, current_digest, current_display_tag, current_tag)
         })
         .collect::<Vec<_>>();
-    let stable_tags_by_digest = matched_rows.iter().fold(
+    let mut stable_tags_by_digest = matched_rows.iter().fold(
         std::collections::HashMap::<&str, std::collections::BTreeSet<String>>::new(),
         |mut acc, row| {
             if let Some(tag) =
@@ -259,12 +251,75 @@ fn count_new_version_discoveries_from_rows<'a>(
             acc
         },
     );
+    for (digest, tags) in effective_stable_tags_by_digest {
+        if digest.trim().is_empty() || tags.is_empty() {
+            continue;
+        }
+        stable_tags_by_digest
+            .entry(digest.as_str())
+            .or_default()
+            .extend(tags.iter().cloned());
+    }
 
     matched_rows
         .into_iter()
         .filter_map(|row| candidate_identity_key(row, &stable_tags_by_digest))
         .collect::<std::collections::BTreeSet<_>>()
         .len() as u32
+}
+
+pub(super) fn list_new_version_discoveries_for_services_conn(
+    conn: &rusqlite::Connection,
+    service_ids: &[String],
+) -> rusqlite::Result<Vec<NewVersionDiscoveryRow>> {
+    let service_ids = service_ids
+        .iter()
+        .map(|service_id| service_id.trim())
+        .filter(|service_id| !service_id.is_empty())
+        .map(ToString::to_string)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if service_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = service_ids
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        r#"
+SELECT
+  service_id,
+  current_digest,
+  current_display_tag,
+  current_tag,
+  candidate_tag,
+  candidate_digest,
+  candidate_display_tag
+FROM service_new_version_discoveries
+WHERE service_id IN ({placeholders})
+"#,
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(service_ids.len());
+    for service_id in &service_ids {
+        params.push(service_id);
+    }
+    let rows = stmt.query_map(params.as_slice(), |row| {
+        Ok(NewVersionDiscoveryRow {
+            service_id: row.get(0)?,
+            current_digest: row.get(1)?,
+            current_display_tag: row.get(2)?,
+            current_tag: row.get(3)?,
+            candidate_tag: row.get(4)?,
+            candidate_digest: row.get(5)?,
+            candidate_display_tag: row.get(6)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>()
 }
 
 pub(super) fn record_new_version_discoveries_from_summary_conn(
@@ -325,52 +380,13 @@ pub(super) fn count_new_version_discoveries_for_services_conn(
     conn: &rusqlite::Connection,
     baselines: &[NewVersionDiscoveryBaseline],
 ) -> rusqlite::Result<std::collections::HashMap<String, u32>> {
-    let service_ids = baselines
-        .iter()
-        .map(|baseline| baseline.service_id.clone())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    if service_ids.is_empty() {
-        return Ok(std::collections::HashMap::new());
-    }
-
-    let placeholders = service_ids
-        .iter()
-        .map(|_| "?")
-        .collect::<Vec<_>>()
-        .join(",");
-    let sql = format!(
-        r#"
-SELECT
-  service_id,
-  current_digest,
-  current_display_tag,
-  current_tag,
-  candidate_tag,
-  candidate_digest,
-  candidate_display_tag
-FROM service_new_version_discoveries
-WHERE service_id IN ({placeholders})
-"#,
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(service_ids.len());
-    for service_id in &service_ids {
-        params.push(service_id);
-    }
-    let rows = stmt.query_map(params.as_slice(), |row| {
-        Ok(NewVersionDiscoveryRow {
-            service_id: row.get(0)?,
-            current_digest: row.get(1)?,
-            current_display_tag: row.get(2)?,
-            current_tag: row.get(3)?,
-            candidate_tag: row.get(4)?,
-            candidate_digest: row.get(5)?,
-            candidate_display_tag: row.get(6)?,
-        })
-    })?;
-    let rows = rows.collect::<Result<Vec<_>, _>>()?;
+    let rows = list_new_version_discoveries_for_services_conn(
+        conn,
+        &baselines
+            .iter()
+            .map(|baseline| baseline.service_id.clone())
+            .collect::<Vec<_>>(),
+    )?;
     let rows_by_service = rows.into_iter().fold(
         std::collections::HashMap::<String, Vec<NewVersionDiscoveryRow>>::new(),
         |mut acc, row| {
@@ -388,10 +404,28 @@ WHERE service_id IN ({placeholders})
                 &normalize_discovery_key(baseline.current_digest.as_deref()),
                 &normalize_discovery_key(baseline.current_display_tag.as_deref()),
                 &normalize_discovery_key(Some(baseline.current_tag.as_str())),
+                &std::collections::HashMap::new(),
             );
             (count > 0).then_some((baseline.service_id.clone(), count))
         })
         .collect())
+}
+
+impl Db {
+    pub async fn list_new_version_discoveries_for_services(
+        &self,
+        service_ids: &[String],
+    ) -> anyhow::Result<Vec<NewVersionDiscoveryRow>> {
+        let service_ids = service_ids.to_vec();
+        self.call(move |conn| {
+            Ok(list_new_version_discoveries_for_services_conn(
+                conn,
+                &service_ids,
+            )?)
+        })
+        .await
+        .context("list new version discoveries for services")
+    }
 }
 
 #[cfg(test)]
