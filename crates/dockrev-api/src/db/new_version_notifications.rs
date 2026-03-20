@@ -5,6 +5,117 @@ const STATUS_SENT: &str = "sent";
 const STATUS_FAILED: &str = "failed";
 const STATUS_SUPERSEDED: &str = "superseded";
 const ACTIVE_INDEX_NAME: &str = "idx_new_version_notifications_active_service_digest";
+const TARGET_BATCH_SIZE: usize = 200;
+
+pub(super) type NotificationTargetKey = (String, String, String, String);
+pub(super) type StableCandidateDisplayTags = std::collections::BTreeSet<String>;
+pub(super) type StableCandidateDisplayTagsByNotificationTarget =
+    std::collections::HashMap<NotificationTargetKey, StableCandidateDisplayTags>;
+
+pub(super) fn list_stable_candidate_display_tags_for_notification_targets_conn(
+    conn: &rusqlite::Connection,
+    targets: &[NotificationTargetKey],
+) -> rusqlite::Result<StableCandidateDisplayTagsByNotificationTarget> {
+    let targets = targets
+        .iter()
+        .map(|(service_id, image_ref, image_tag, candidate_digest)| {
+            (
+                service_id.trim(),
+                image_ref.trim(),
+                image_tag.trim(),
+                candidate_digest.trim(),
+            )
+        })
+        .filter(|(service_id, image_ref, image_tag, candidate_digest)| {
+            !service_id.is_empty()
+                && !image_ref.is_empty()
+                && !image_tag.is_empty()
+                && !candidate_digest.is_empty()
+        })
+        .map(|(service_id, image_ref, image_tag, candidate_digest)| {
+            (
+                service_id.to_string(),
+                image_ref.to_string(),
+                image_tag.to_string(),
+                candidate_digest.to_string(),
+            )
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if targets.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let mut resolved = StableCandidateDisplayTagsByNotificationTarget::new();
+    for chunk in targets.chunks(TARGET_BATCH_SIZE) {
+        let clauses = chunk
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let service_pos = index * 4 + 1;
+                let image_ref_pos = index * 4 + 2;
+                let image_tag_pos = index * 4 + 3;
+                let digest_pos = index * 4 + 4;
+                format!(
+                    "(service_id = ?{service_pos} AND image_ref = ?{image_ref_pos} AND image_tag = ?{image_tag_pos} AND candidate_digest = ?{digest_pos})"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        let sql = format!(
+            r#"
+SELECT
+  service_id,
+  image_ref,
+  image_tag,
+  candidate_digest,
+  candidate_tag,
+  candidate_display_tag
+FROM new_version_notifications
+WHERE {clauses}
+"#,
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() * 4);
+        for (service_id, image_ref, image_tag, candidate_digest) in chunk {
+            params.push(service_id);
+            params.push(image_ref);
+            params.push(image_tag);
+            params.push(candidate_digest);
+        }
+        let rows = stmt.query_map(params.as_slice(), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        })?;
+        for row in rows {
+            let (
+                service_id,
+                image_ref,
+                image_tag,
+                candidate_digest,
+                candidate_tag,
+                candidate_display_tag,
+            ) = row?;
+            let Some(stable_display_tag) =
+                super::stable_candidate_display_tag(&candidate_tag, &candidate_display_tag)
+            else {
+                continue;
+            };
+            resolved
+                .entry((service_id, image_ref, image_tag, candidate_digest))
+                .or_default()
+                .insert(super::canonical_visible_version_tag(stable_display_tag));
+        }
+    }
+    Ok(resolved)
+}
 
 #[cfg(test)]
 fn map_new_version_notification_row(
@@ -114,6 +225,18 @@ WHERE service_id = ?1
 }
 
 impl Db {
+    pub async fn list_stable_candidate_display_tags_for_notification_targets(
+        &self,
+        targets: &[NotificationTargetKey],
+    ) -> anyhow::Result<StableCandidateDisplayTagsByNotificationTarget> {
+        let targets = targets.to_vec();
+        self.call(move |conn| {
+            Ok(list_stable_candidate_display_tags_for_notification_targets_conn(conn, &targets)?)
+        })
+        .await
+        .context("list stable candidate display tags for notification targets")
+    }
+
     pub async fn reserve_new_version_notification(
         &self,
         pending: &NewVersionNotificationPending,
@@ -797,5 +920,119 @@ mod tests {
         assert_eq!(target[0].image_ref, "ghcr.io/acme/web-next");
         assert_eq!(target[0].image_tag, "stable");
         assert_eq!(target[0].candidate_digest, None);
+    }
+
+    #[tokio::test]
+    async fn list_stable_candidate_display_tags_batches_large_target_sets() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(&db, "svc_1", Some("sha256:seed")).await;
+
+        let mut targets = Vec::new();
+        for idx in 0..450 {
+            let digest = format!("sha256:{idx:064x}");
+            let mut row = pending(&format!("nvn_{idx}"), "svc_1", &digest);
+            row.candidate_display_tag = format!("1.{}.0", idx + 1);
+            db.reserve_new_version_notification(&row).await.unwrap();
+            targets.push((
+                "svc_1".to_string(),
+                "ghcr.io/acme/web".to_string(),
+                "latest".to_string(),
+                digest,
+            ));
+        }
+
+        let resolved = db
+            .list_stable_candidate_display_tags_for_notification_targets(&targets)
+            .await
+            .unwrap();
+
+        assert_eq!(resolved.len(), 450);
+        assert_eq!(
+            resolved.get(&(
+                "svc_1".to_string(),
+                "ghcr.io/acme/web".to_string(),
+                "latest".to_string(),
+                format!("sha256:{:064x}", 0)
+            )),
+            Some(&std::collections::BTreeSet::from(["1.1.0".to_string()]))
+        );
+        assert_eq!(
+            resolved.get(&(
+                "svc_1".to_string(),
+                "ghcr.io/acme/web".to_string(),
+                "latest".to_string(),
+                format!("sha256:{:064x}", 449)
+            )),
+            Some(&std::collections::BTreeSet::from(["1.450.0".to_string()]))
+        );
+    }
+
+    #[tokio::test]
+    async fn list_stable_candidate_display_tags_keeps_repo_track_provenance_separate() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(&db, "svc_1", Some("sha256:seed")).await;
+
+        let digest = "sha256:shared".to_string();
+        let mut web = pending("nvn_web", "svc_1", &digest);
+        web.image_ref = "ghcr.io/acme/web".to_string();
+        web.image_tag = "latest".to_string();
+        web.candidate_display_tag = "1.16.2".to_string();
+        db.reserve_new_version_notification(&web).await.unwrap();
+
+        db.sync_stack_from_compose(
+            "stack_1",
+            &["/tmp/demo.yml".to_string()],
+            &[ComposeServiceSpec {
+                name: "web".to_string(),
+                image_ref: "ghcr.io/acme/worker".to_string(),
+                image_tag: "stable".to_string(),
+            }],
+            "2026-03-09T00:02:00Z",
+        )
+        .await
+        .unwrap();
+
+        let mut worker = pending("nvn_worker", "svc_1", &digest);
+        worker.image_ref = "ghcr.io/acme/worker".to_string();
+        worker.image_tag = "stable".to_string();
+        worker.candidate_display_tag = "2.0.0".to_string();
+        db.reserve_new_version_notification(&worker).await.unwrap();
+
+        let resolved = db
+            .list_stable_candidate_display_tags_for_notification_targets(&[
+                (
+                    "svc_1".to_string(),
+                    "ghcr.io/acme/web".to_string(),
+                    "latest".to_string(),
+                    digest.clone(),
+                ),
+                (
+                    "svc_1".to_string(),
+                    "ghcr.io/acme/worker".to_string(),
+                    "stable".to_string(),
+                    digest.clone(),
+                ),
+            ])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resolved.get(&(
+                "svc_1".to_string(),
+                "ghcr.io/acme/web".to_string(),
+                "latest".to_string(),
+                digest.clone()
+            )),
+            Some(&std::collections::BTreeSet::from(["1.16.2".to_string()]))
+        );
+        assert_eq!(
+            resolved.get(&(
+                "svc_1".to_string(),
+                "ghcr.io/acme/worker".to_string(),
+                "stable".to_string(),
+                digest
+            )),
+            Some(&std::collections::BTreeSet::from(["2.0.0".to_string()]))
+        );
     }
 }

@@ -1865,6 +1865,29 @@ fn make_new_version_summary_for_test(
     candidate_display_tag: &str,
     candidate_digest: &str,
 ) -> serde_json::Value {
+    make_new_version_summary_for_test_with_image_ref(
+        service_id,
+        "ghcr.io/acme/web",
+        current_tag,
+        current_display_tag,
+        current_digest,
+        candidate_tag,
+        candidate_display_tag,
+        candidate_digest,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn make_new_version_summary_for_test_with_image_ref(
+    service_id: &str,
+    image_ref: &str,
+    current_tag: &str,
+    current_display_tag: &str,
+    current_digest: &str,
+    candidate_tag: &str,
+    candidate_display_tag: &str,
+    candidate_digest: &str,
+) -> serde_json::Value {
     json!({
         "newVersions": {
             "count": 1,
@@ -1872,7 +1895,7 @@ fn make_new_version_summary_for_test(
                 "stackId": "unused",
                 "serviceId": service_id,
                 "serviceName": "web",
-                "imageRef": "ghcr.io/acme/web",
+                "imageRef": image_ref,
                 "currentTag": current_tag,
                 "currentDigest": current_digest,
                 "currentDisplayTag": current_display_tag,
@@ -1882,6 +1905,39 @@ fn make_new_version_summary_for_test(
             }],
         }
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn reserve_new_version_notification_for_test(
+    state: &Arc<AppState>,
+    service_id: &str,
+    job_id: &str,
+    image_ref: &str,
+    current_tag: &str,
+    current_display_tag: &str,
+    candidate_tag: &str,
+    candidate_display_tag: &str,
+    candidate_digest: &str,
+    created_at: &str,
+) {
+    state
+        .db
+        .reserve_new_version_notification(&crate::db::NewVersionNotificationPending {
+            id: format!("nvn_{}", ulid::Ulid::new()),
+            service_id: service_id.to_string(),
+            job_id: job_id.to_string(),
+            reason: "schedule".to_string(),
+            image_ref: image_ref.to_string(),
+            image_tag: current_tag.to_string(),
+            current_tag: current_tag.to_string(),
+            current_display_tag: current_display_tag.to_string(),
+            candidate_tag: candidate_tag.to_string(),
+            candidate_display_tag: candidate_display_tag.to_string(),
+            candidate_digest: candidate_digest.to_string(),
+            created_at: created_at.to_string(),
+        })
+        .await
+        .unwrap();
 }
 
 async fn configure_webhook_notifications(
@@ -3542,6 +3598,772 @@ services:
         )
         .await
         .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let detail = response_json(resp).await;
+    assert_eq!(
+        detail["stack"]["services"][0]["newVersionDiscoveryCount"].as_u64(),
+        Some(2)
+    );
+}
+
+#[tokio::test]
+async fn get_stack_normalizes_unsettled_discovery_history_from_notifications() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        Some("sha256:current-v1"),
+        Some("latest"),
+        Some("sha256:live-candidate"),
+    )
+    .await;
+    let now = test_now_rfc3339();
+    state
+        .db
+        .update_service_check_result(
+            &service_id,
+            Some("sha256:current-v1".to_string()),
+            Some("1.16.0".to_string()),
+            Some("[\"1.16.0\"]".to_string()),
+            Some("latest".to_string()),
+            Some("1.17.0".to_string()),
+            Some("sha256:live-candidate".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let job_1 = insert_check_job(&state, "schedule", &now).await;
+    state
+        .db
+        .finish_job(
+            &job_1,
+            "success",
+            &now,
+            &make_new_version_summary_for_test(
+                &service_id,
+                "latest",
+                "1.16.0",
+                "sha256:current-v1",
+                "latest",
+                "latest",
+                "sha256:candidate-a",
+            ),
+        )
+        .await
+        .unwrap();
+    let job_2 = insert_check_job(
+        &state,
+        "schedule",
+        &test_offset_rfc3339(&now, time::Duration::minutes(1)),
+    )
+    .await;
+    state
+        .db
+        .finish_job(
+            &job_2,
+            "success",
+            &test_offset_rfc3339(&now, time::Duration::minutes(1)),
+            &make_new_version_summary_for_test(
+                &service_id,
+                "latest",
+                "1.16.0",
+                "sha256:current-v1",
+                "latest",
+                "latest",
+                "sha256:candidate-b",
+            ),
+        )
+        .await
+        .unwrap();
+    let job_3 = insert_check_job(
+        &state,
+        "schedule",
+        &test_offset_rfc3339(&now, time::Duration::minutes(2)),
+    )
+    .await;
+    state
+        .db
+        .finish_job(
+            &job_3,
+            "success",
+            &test_offset_rfc3339(&now, time::Duration::minutes(2)),
+            &make_new_version_summary_for_test(
+                &service_id,
+                "latest",
+                "1.16.0",
+                "sha256:current-v1",
+                "latest",
+                "latest",
+                "sha256:candidate-c",
+            ),
+        )
+        .await
+        .unwrap();
+
+    reserve_new_version_notification_for_test(
+        &state,
+        &service_id,
+        &job_1,
+        "ghcr.io/acme/web",
+        "latest",
+        "1.16.0",
+        "latest",
+        "1.16.2",
+        "sha256:candidate-a",
+        &test_offset_rfc3339(&now, time::Duration::minutes(3)),
+    )
+    .await;
+    reserve_new_version_notification_for_test(
+        &state,
+        &service_id,
+        &job_2,
+        "ghcr.io/acme/web",
+        "latest",
+        "1.16.0",
+        "latest",
+        "1.16.2",
+        "sha256:candidate-b",
+        &test_offset_rfc3339(&now, time::Duration::minutes(3)),
+    )
+    .await;
+    reserve_new_version_notification_for_test(
+        &state,
+        &service_id,
+        &job_3,
+        "ghcr.io/acme/web",
+        "latest",
+        "1.16.0",
+        "latest",
+        "1.17.0",
+        "sha256:candidate-c",
+        &test_offset_rfc3339(&now, time::Duration::minutes(3)),
+    )
+    .await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let detail = response_json(resp).await;
+    assert_eq!(
+        detail["stack"]["services"][0]["newVersionDiscoveryCount"].as_u64(),
+        Some(2)
+    );
+}
+
+#[tokio::test]
+async fn get_stack_does_not_use_current_repo_snapshot_to_relabel_old_unsettled_history() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        None,
+        Some("latest"),
+        Some("sha256:live-candidate"),
+    )
+    .await;
+    let now = test_now_rfc3339();
+
+    let job_1 = insert_check_job(&state, "schedule", &now).await;
+    state
+        .db
+        .finish_job(
+            &job_1,
+            "success",
+            &now,
+            &make_new_version_summary_for_test(
+                &service_id,
+                "latest",
+                "latest",
+                "",
+                "latest",
+                "latest",
+                "sha256:candidate-a",
+            ),
+        )
+        .await
+        .unwrap();
+    let job_2 = insert_check_job(
+        &state,
+        "schedule",
+        &test_offset_rfc3339(&now, time::Duration::minutes(1)),
+    )
+    .await;
+    state
+        .db
+        .finish_job(
+            &job_2,
+            "success",
+            &test_offset_rfc3339(&now, time::Duration::minutes(1)),
+            &make_new_version_summary_for_test(
+                &service_id,
+                "latest",
+                "latest",
+                "",
+                "latest",
+                "latest",
+                "sha256:candidate-b",
+            ),
+        )
+        .await
+        .unwrap();
+
+    let replacement_compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &replacement_compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/worker:latest
+"#,
+    )
+    .unwrap();
+    state
+        .db
+        .sync_stack_from_compose(
+            &stack_id,
+            std::slice::from_ref(&replacement_compose_path),
+            &[crate::db::ComposeServiceSpec {
+                name: "web".to_string(),
+                image_ref: "ghcr.io/acme/worker".to_string(),
+                image_tag: "latest".to_string(),
+            }],
+            &test_offset_rfc3339(&now, time::Duration::minutes(2)),
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .update_service_check_result(
+            &service_id,
+            None,
+            None,
+            None,
+            Some("latest".to_string()),
+            None,
+            Some("sha256:live-candidate".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            &test_offset_rfc3339(&now, time::Duration::minutes(2)),
+            &test_offset_rfc3339(&now, time::Duration::minutes(2)),
+        )
+        .await
+        .unwrap();
+
+    let ready_scan = crate::api::types::ServiceDigestTagsScanSummary {
+        repo_tags_total: 2,
+        repo_tags_considered: 2,
+        manifests_ok: 2,
+        manifests_timeout: 0,
+        manifests_error: 0,
+    };
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/worker",
+        "sha256:candidate-a",
+        "linux/amd64",
+        &test_offset_rfc3339(&now, time::Duration::minutes(3)),
+        vec!["latest".to_string(), "v2.0.0".to_string()],
+        ready_scan.clone(),
+    )
+    .await;
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/worker",
+        "sha256:candidate-b",
+        "linux/amd64",
+        &test_offset_rfc3339(&now, time::Duration::minutes(3)),
+        vec!["latest".to_string(), "v2.0.0".to_string()],
+        ready_scan,
+    )
+    .await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let detail = response_json(resp).await;
+    assert_eq!(
+        detail["stack"]["services"][0]["newVersionDiscoveryCount"].as_u64(),
+        Some(2)
+    );
+}
+
+#[tokio::test]
+async fn get_stack_does_not_use_new_repo_notifications_to_relabel_old_unsettled_history() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        None,
+        Some("latest"),
+        Some("sha256:live-candidate"),
+    )
+    .await;
+    let now = test_now_rfc3339();
+
+    let job_1 = insert_check_job(&state, "schedule", &now).await;
+    state
+        .db
+        .finish_job(
+            &job_1,
+            "success",
+            &now,
+            &make_new_version_summary_for_test_with_image_ref(
+                &service_id,
+                "ghcr.io/acme/web",
+                "latest",
+                "latest",
+                "",
+                "latest",
+                "latest",
+                "sha256:candidate-a",
+            ),
+        )
+        .await
+        .unwrap();
+    let job_2 = insert_check_job(
+        &state,
+        "schedule",
+        &test_offset_rfc3339(&now, time::Duration::minutes(1)),
+    )
+    .await;
+    state
+        .db
+        .finish_job(
+            &job_2,
+            "success",
+            &test_offset_rfc3339(&now, time::Duration::minutes(1)),
+            &make_new_version_summary_for_test_with_image_ref(
+                &service_id,
+                "ghcr.io/acme/web",
+                "latest",
+                "latest",
+                "",
+                "latest",
+                "latest",
+                "sha256:candidate-b",
+            ),
+        )
+        .await
+        .unwrap();
+
+    let replacement_compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &replacement_compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/worker:latest
+"#,
+    )
+    .unwrap();
+    state
+        .db
+        .sync_stack_from_compose(
+            &stack_id,
+            std::slice::from_ref(&replacement_compose_path),
+            &[crate::db::ComposeServiceSpec {
+                name: "web".to_string(),
+                image_ref: "ghcr.io/acme/worker".to_string(),
+                image_tag: "latest".to_string(),
+            }],
+            &test_offset_rfc3339(&now, time::Duration::minutes(2)),
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .update_service_check_result(
+            &service_id,
+            None,
+            None,
+            None,
+            Some("latest".to_string()),
+            None,
+            Some("sha256:live-candidate".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            &test_offset_rfc3339(&now, time::Duration::minutes(2)),
+            &test_offset_rfc3339(&now, time::Duration::minutes(2)),
+        )
+        .await
+        .unwrap();
+
+    reserve_new_version_notification_for_test(
+        &state,
+        &service_id,
+        "job_worker_1",
+        "ghcr.io/acme/worker",
+        "latest",
+        "2.0.0",
+        "latest",
+        "2.0.0",
+        "sha256:candidate-a",
+        &test_offset_rfc3339(&now, time::Duration::minutes(3)),
+    )
+    .await;
+    reserve_new_version_notification_for_test(
+        &state,
+        &service_id,
+        "job_worker_2",
+        "ghcr.io/acme/worker",
+        "latest",
+        "2.0.0",
+        "latest",
+        "2.0.0",
+        "sha256:candidate-b",
+        &test_offset_rfc3339(&now, time::Duration::minutes(3)),
+    )
+    .await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let detail = response_json(resp).await;
+    assert_eq!(
+        detail["stack"]["services"][0]["newVersionDiscoveryCount"].as_u64(),
+        Some(2)
+    );
+}
+
+#[tokio::test]
+async fn get_stack_does_not_reuse_same_digest_tags_across_repo_provenances() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        None,
+        Some("latest"),
+        Some("sha256:shared-digest"),
+    )
+    .await;
+    let now = test_now_rfc3339();
+
+    let job_1 = insert_check_job(&state, "schedule", &now).await;
+    state
+        .db
+        .finish_job(
+            &job_1,
+            "success",
+            &now,
+            &make_new_version_summary_for_test_with_image_ref(
+                &service_id,
+                "ghcr.io/acme/web",
+                "latest",
+                "latest",
+                "",
+                "latest",
+                "1.16.2",
+                "sha256:shared-digest",
+            ),
+        )
+        .await
+        .unwrap();
+
+    let replacement_compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &replacement_compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/worker:latest
+"#,
+    )
+    .unwrap();
+    state
+        .db
+        .sync_stack_from_compose(
+            &stack_id,
+            std::slice::from_ref(&replacement_compose_path),
+            &[crate::db::ComposeServiceSpec {
+                name: "web".to_string(),
+                image_ref: "ghcr.io/acme/worker".to_string(),
+                image_tag: "latest".to_string(),
+            }],
+            &test_offset_rfc3339(&now, time::Duration::minutes(1)),
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .update_service_check_result(
+            &service_id,
+            None,
+            None,
+            None,
+            Some("latest".to_string()),
+            None,
+            Some("sha256:shared-digest".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            &test_offset_rfc3339(&now, time::Duration::minutes(1)),
+            &test_offset_rfc3339(&now, time::Duration::minutes(1)),
+        )
+        .await
+        .unwrap();
+
+    let job_2 = insert_check_job(
+        &state,
+        "schedule",
+        &test_offset_rfc3339(&now, time::Duration::minutes(2)),
+    )
+    .await;
+    state
+        .db
+        .finish_job(
+            &job_2,
+            "success",
+            &test_offset_rfc3339(&now, time::Duration::minutes(2)),
+            &make_new_version_summary_for_test_with_image_ref(
+                &service_id,
+                "ghcr.io/acme/worker",
+                "latest",
+                "latest",
+                "",
+                "latest",
+                "latest",
+                "sha256:shared-digest",
+            ),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let detail = response_json(resp).await;
+    assert_eq!(
+        detail["stack"]["services"][0]["newVersionDiscoveryCount"].as_u64(),
+        Some(2)
+    );
+}
+
+#[tokio::test]
+async fn get_stack_does_not_collapse_ambiguous_snapshot_tags_into_one_version() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        Some("sha256:current-v1"),
+        Some("latest"),
+        Some("sha256:live-candidate"),
+    )
+    .await;
+    let now = test_now_rfc3339();
+    state
+        .db
+        .update_service_check_result(
+            &service_id,
+            Some("sha256:current-v1".to_string()),
+            Some("1.16.0".to_string()),
+            Some("[\"1.16.0\"]".to_string()),
+            Some("latest".to_string()),
+            Some("1.16.2".to_string()),
+            Some("sha256:live-candidate".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let job_1 = insert_check_job(&state, "schedule", &now).await;
+    state
+        .db
+        .finish_job(
+            &job_1,
+            "success",
+            &now,
+            &make_new_version_summary_for_test(
+                &service_id,
+                "latest",
+                "1.16.0",
+                "sha256:current-v1",
+                "latest",
+                "latest",
+                "sha256:candidate-a",
+            ),
+        )
+        .await
+        .unwrap();
+    let job_2 = insert_check_job(
+        &state,
+        "schedule",
+        &test_offset_rfc3339(&now, time::Duration::minutes(1)),
+    )
+    .await;
+    state
+        .db
+        .finish_job(
+            &job_2,
+            "success",
+            &test_offset_rfc3339(&now, time::Duration::minutes(1)),
+            &make_new_version_summary_for_test(
+                &service_id,
+                "latest",
+                "1.16.0",
+                "sha256:current-v1",
+                "latest",
+                "1.16.2",
+                "sha256:candidate-b",
+            ),
+        )
+        .await
+        .unwrap();
+
+    let ready_scan = crate::api::types::ServiceDigestTagsScanSummary {
+        repo_tags_total: 3,
+        repo_tags_considered: 3,
+        manifests_ok: 3,
+        manifests_timeout: 0,
+        manifests_error: 0,
+    };
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:candidate-a",
+        "linux/amd64",
+        &test_offset_rfc3339(&now, time::Duration::minutes(2)),
+        vec![
+            "latest".to_string(),
+            "1.16".to_string(),
+            "1.16.2".to_string(),
+        ],
+        ready_scan,
+    )
+    .await;
 
     let resp = app
         .clone()

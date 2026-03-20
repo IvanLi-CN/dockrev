@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(test)]
+const TARGET_BATCH_SIZE: usize = 400;
+
 impl Db {
     pub async fn list_ignore_rules_for_service(
         &self,
@@ -276,6 +279,72 @@ WHERE image_repo = ?1 AND digest = ?2 AND host_platform = ?3
         .context("get image digest tags snapshot")
     }
 
+    #[cfg(test)]
+    pub async fn list_image_digest_tags_snapshots_for_targets(
+        &self,
+        host_platform: &str,
+        targets: &[(String, String)],
+    ) -> anyhow::Result<Vec<ImageDigestTagsSnapshotRow>> {
+        let host_platform = host_platform.to_string();
+        let targets = targets
+            .iter()
+            .map(|(image_repo, digest)| (image_repo.trim(), digest.trim()))
+            .filter(|(image_repo, digest)| !image_repo.is_empty() && !digest.is_empty())
+            .map(|(image_repo, digest)| (image_repo.to_string(), digest.to_string()))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        if targets.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        self.call(move |conn| {
+            let mut out = Vec::new();
+            for chunk in targets.chunks(TARGET_BATCH_SIZE) {
+                let clauses = chunk
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| {
+                        let image_ref_pos = index * 2 + 2;
+                        let digest_pos = index * 2 + 3;
+                        format!("(image_repo = ?{image_ref_pos} AND digest = ?{digest_pos})")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" OR ");
+                let sql = format!(
+                    r#"
+SELECT image_repo, digest, host_platform, snapshot_json, checked_at, updated_at
+FROM image_digest_tags_snapshots
+WHERE host_platform = ?1
+  AND ({clauses})
+ORDER BY updated_at DESC, image_repo ASC, digest ASC
+"#,
+                );
+                let mut stmt = conn.prepare(&sql)?;
+                let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() * 2 + 1);
+                params.push(&host_platform);
+                for (image_repo, digest) in chunk {
+                    params.push(image_repo);
+                    params.push(digest);
+                }
+                let rows = stmt.query_map(params.as_slice(), |row| {
+                    Ok(ImageDigestTagsSnapshotRow {
+                        image_repo: row.get(0)?,
+                        digest: row.get(1)?,
+                        host_platform: row.get(2)?,
+                        snapshot_json: row.get(3)?,
+                        checked_at: row.get(4)?,
+                        updated_at: row.get(5)?,
+                    })
+                })?;
+                out.extend(rows.collect::<Result<Vec<_>, _>>()?);
+            }
+            Ok(out)
+        })
+        .await
+        .context("list image digest tags snapshots for targets")
+    }
+
     pub async fn list_image_digest_tags_snapshots(
         &self,
     ) -> anyhow::Result<Vec<ImageDigestTagsSnapshotRow>> {
@@ -290,6 +359,7 @@ ORDER BY updated_at DESC, image_repo ASC, digest ASC, host_platform ASC
             let rows = stmt.query_map([], |row| {
                 Ok(ImageDigestTagsSnapshotRow {
                     image_repo: row.get(0)?,
+                    digest: row.get(1)?,
                     host_platform: row.get(2)?,
                     snapshot_json: row.get(3)?,
                     checked_at: row.get(4)?,
@@ -344,5 +414,63 @@ ORDER BY image_ref ASC
         })
         .await
         .context("list version inference service targets")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn list_image_digest_tags_snapshots_for_targets_batches_large_target_sets() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        let checked_at = "2026-03-20T00:00:00Z";
+        let snapshot = crate::api::types::ServiceDigestTagsSnapshotResponse {
+            digest: "sha256:placeholder".to_string(),
+            tags: vec!["latest".to_string(), "1.0.0".to_string()],
+            checked_at: checked_at.to_string(),
+            scan: crate::api::types::ServiceDigestTagsScanSummary {
+                repo_tags_total: 2,
+                repo_tags_considered: 2,
+                manifests_ok: 2,
+                manifests_timeout: 0,
+                manifests_error: 0,
+            },
+        };
+
+        let mut targets = Vec::new();
+        for idx in 0..450 {
+            let digest = format!("sha256:{idx:064x}");
+            let mut snapshot = snapshot.clone();
+            snapshot.digest = digest.clone();
+            db.upsert_image_digest_tags_snapshot(
+                "ghcr.io/acme/web",
+                &digest,
+                "linux/amd64",
+                &serde_json::to_string(&snapshot).unwrap(),
+                checked_at,
+                checked_at,
+            )
+            .await
+            .unwrap();
+            targets.push(("ghcr.io/acme/web".to_string(), digest));
+        }
+
+        let rows = db
+            .list_image_digest_tags_snapshots_for_targets("linux/amd64", &targets)
+            .await
+            .unwrap();
+
+        assert_eq!(rows.len(), 450);
+        assert!(
+            rows.iter()
+                .any(|row| row.digest == format!("sha256:{:064x}", 0))
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.digest == format!("sha256:{:064x}", 449))
+        );
     }
 }
