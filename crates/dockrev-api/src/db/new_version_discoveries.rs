@@ -210,7 +210,10 @@ fn discovery_matches_baseline(
 
 fn candidate_identity_key(
     row: &NewVersionDiscoveryRow,
-    stable_tags_by_digest: &std::collections::HashMap<&str, std::collections::BTreeSet<String>>,
+    stable_tags_by_provenance: &std::collections::HashMap<
+        (String, String, String, String),
+        std::collections::BTreeSet<String>,
+    >,
 ) -> Option<String> {
     if let Some(tag) = stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag)
     {
@@ -222,7 +225,14 @@ fn candidate_identity_key(
         return None;
     }
 
-    if let Some(tags) = stable_tags_by_digest.get(digest)
+    let key = (
+        row.service_id.clone(),
+        row.image_ref.clone(),
+        row.current_tag.clone(),
+        digest.to_string(),
+    );
+
+    if let Some(tags) = stable_tags_by_provenance.get(&key)
         && tags.len() == 1
     {
         return tags.iter().next().cloned().map(|tag| format!("tag:{tag}"));
@@ -236,8 +246,8 @@ pub(crate) fn count_new_version_discoveries_from_rows<'a>(
     current_digest: &str,
     current_display_tag: &str,
     current_tag: &str,
-    effective_stable_tags_by_digest: &std::collections::HashMap<
-        String,
+    effective_stable_tags_by_provenance: &std::collections::HashMap<
+        (String, String, String, String),
         std::collections::BTreeSet<String>,
     >,
 ) -> u32 {
@@ -246,32 +256,45 @@ pub(crate) fn count_new_version_discoveries_from_rows<'a>(
             discovery_matches_baseline(row, current_digest, current_display_tag, current_tag)
         })
         .collect::<Vec<_>>();
-    let mut stable_tags_by_digest = matched_rows.iter().fold(
-        std::collections::HashMap::<&str, std::collections::BTreeSet<String>>::new(),
+    let mut stable_tags_by_provenance = matched_rows.iter().fold(
+        std::collections::HashMap::<
+            (String, String, String, String),
+            std::collections::BTreeSet<String>,
+        >::new(),
         |mut acc, row| {
-            if let Some(tag) =
+            let Some(tag) =
                 stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag)
-            {
-                acc.entry(row.candidate_digest.as_str())
-                    .or_default()
-                    .insert(canonical_visible_version_tag(tag));
+            else {
+                return acc;
+            };
+            let digest = row.candidate_digest.trim();
+            if digest.is_empty() {
+                return acc;
             }
+            acc.entry((
+                row.service_id.clone(),
+                row.image_ref.clone(),
+                row.current_tag.clone(),
+                digest.to_string(),
+            ))
+            .or_default()
+            .insert(canonical_visible_version_tag(tag));
             acc
         },
     );
-    for (digest, tags) in effective_stable_tags_by_digest {
-        if digest.trim().is_empty() || tags.is_empty() {
+    for (key, tags) in effective_stable_tags_by_provenance {
+        if key.3.trim().is_empty() || tags.is_empty() {
             continue;
         }
-        stable_tags_by_digest
-            .entry(digest.as_str())
+        stable_tags_by_provenance
+            .entry(key.clone())
             .or_default()
             .extend(tags.iter().cloned());
     }
 
     matched_rows
         .into_iter()
-        .filter_map(|row| candidate_identity_key(row, &stable_tags_by_digest))
+        .filter_map(|row| candidate_identity_key(row, &stable_tags_by_provenance))
         .collect::<std::collections::BTreeSet<_>>()
         .len() as u32
 }

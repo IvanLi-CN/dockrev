@@ -462,45 +462,12 @@ async fn enrich_stack_with_new_version_discovery_counts(
             continue;
         };
 
-        let effective_stable_tags_by_digest = rows.iter().fold(
-            HashMap::<String, BTreeSet<String>>::new(),
-            |mut acc, row| {
-                if crate::db::stable_candidate_display_tag(
-                    &row.candidate_tag,
-                    &row.candidate_display_tag,
-                )
-                .is_some()
-                {
-                    return acc;
-                }
-
-                let digest = snapshot_worker::normalize_digest(&row.candidate_digest)
-                    .unwrap_or_else(|| {
-                        crate::db::normalize_discovery_key(Some(&row.candidate_digest))
-                    });
-                if digest.is_empty() {
-                    return acc;
-                }
-
-                let key = (
-                    row.service_id.clone(),
-                    row.image_ref.clone(),
-                    row.current_tag.clone(),
-                    digest.clone(),
-                );
-                if let Some(tags) = notification_tags.get(&key) {
-                    acc.entry(digest).or_default().extend(tags.iter().cloned());
-                }
-                acc
-            },
-        );
-
         let count = crate::db::count_new_version_discoveries_from_rows(
             rows.iter(),
             &context.current_digest,
             &context.current_display_tag,
             &context.current_tag,
-            &effective_stable_tags_by_digest,
+            &notification_tags,
         );
         service.new_version_discovery_count = (count > 0).then_some(count);
     }

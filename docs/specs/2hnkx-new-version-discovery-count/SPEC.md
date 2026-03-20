@@ -75,6 +75,7 @@
 - Given 候选仍是 `latest` 或 `15-alpine` 这类未 settle 的原始 tag，When 没有稳定 `candidateDisplayTag` 可用，Then 回退按不同 `candidateDigest` 计数。
 - Given 历史 discovery 全都只记录了 `candidateDisplayTag=latest`，When 稳定通知记录后来已经能把这些 digest 归一到 `v1.16.2 / v1.17.0`，Then `newVersionDiscoveryCount` 仍按最终可见版本折叠，而不是继续按 digest 膨胀。
 - Given 服务后续仍沿用原 `service_id` 但已切到别的镜像仓库或 tag 轨道，When 新 repo 的通知记录与旧 unresolved discovery 恰好共享 digest，Then 新 repo 通知不会重写旧 discovery 的可见版本。
+- Given 两条匹配当前基线的 discovery 历史来自不同 `image_ref` 或 `current_tag` provenance，但恰好共享同一个 `candidateDigest`，When 其中一条已有稳定可见版本而另一条仍 unresolved，Then 稳定版本不会跨 provenance 重写另一条历史，计数仍保持分离。
 - Given 服务后续已经切到别的镜像仓库，When 旧 discovery 仍是 unresolved 历史，Then 当前服务 repo 的 snapshot 不会被拿来重写旧历史。
 - Given 某个 digest 的 snapshot 同时暴露多个稳定版本 tag，When 旧 discovery 仍 unresolved 且没有稳定通知记录，Then 该 digest 保持按 `candidateDigest` 计数，不会被强行折叠成其中任一版本。
 - Given 通知事件关闭或通知渠道全部关闭，When 成功 `check` 仍发现新版本，Then 计数仍可正确显示。
