@@ -10,7 +10,7 @@
 
 - 更新候选列表原本只显示“当前版本 -> 最新候选”，无法告诉操作者这次候选期间其实已经跨过了多少次不同的新版本发现。
 - 现有 `new_version_notifications` 只覆盖通知链路，不是完整发现历史，直接拿它计数会漏掉通知关闭或未触发通知的发现事件。
-- 线上 follow-up 暴露出第二层问题：部分历史成功 `check` 在写入 discovery 时，`candidateDisplayTag` 仍然是 `latest` 这类未 settle 值；后续即使 digest snapshot 或通知记录已经解析出稳定版本，旧 discovery 仍会继续按 digest 膨胀累计。
+- 线上 follow-up 暴露出第二层问题：部分历史成功 `check` 在写入 discovery 时，`candidateDisplayTag` 仍然是 `latest` 这类未 settle 值；若直接用“当前服务的 snapshot”去回填这些旧 digest，还会在服务改仓库或 snapshot 同 digest 多 tag 时把历史错误折叠。
 - 用户要求在列表行与聚合预览中明确标记“我们程序发现了几次版本更新”，并且计数必须来自线性的成功 `check` 历史。
 
 ## 目标 / 非目标
@@ -19,7 +19,7 @@
 
 - 为服务持久化“新版本发现历史”，来源仅限成功完成的 `check` 任务。
 - 基于当前版本基线，按“稳定可见版本优先、浮动 alias 回退 `candidateDigest`”统计发现次数，并包含当前最新候选。
-- 对历史里尚未 settle 的候选 digest，允许在读时使用 ready snapshot 与稳定通知记录做 digest -> visible version 的辅助归一，但不改变“成功 `check` 历史才是计数事件源”的前提。
+- 对历史里尚未 settle 的候选 digest，只允许在读时使用同一 discovery 行自带的稳定 `candidateDisplayTag`，以及同 `(service_id, candidate_digest)` 的稳定通知记录做 digest -> visible version 的辅助归一；不使用当前服务的 snapshot 直接改写旧历史。
 - 在更新候选列表 `StatusRemark` 和 `AggregateUpdatePreviewList` 中显示中性计数 pill：`发现 N 次`。
 - 对外通过 `GET /api/stacks` 与 `GET /api/stacks/{id}` 返回 `newVersionDiscoveryCount`。
 
@@ -38,7 +38,6 @@
 - `crates/dockrev-api/src/db/jobs.rs`
 - `crates/dockrev-api/src/db/stacks.rs`
 - `crates/dockrev-api/src/db/new_version_notifications.rs`
-- `crates/dockrev-api/src/db/snapshots.rs`
 - `crates/dockrev-api/src/api/stacks.rs`
 - `crates/dockrev-api/src/api/types/core.rs`
 - `web/src/api.ts`
@@ -60,7 +59,6 @@
 - 计数规则固定为“同一当前版本基线下，按稳定 `candidateDisplayTag` 去重；若候选仍是未 settle 的原始 tag（例如 `latest`、`15-alpine`）或无稳定展示值，则回退按 `candidateDigest` 去重”。
 - 对历史 discovery 行里仍未 settle 的候选 digest，归一顺序固定为：
   - discovery 行自带的稳定 `candidateDisplayTag`
-  - `image_digest_tags_snapshots` 的 ready 结果
   - `new_version_notifications` 中同 `(service_id, candidate_digest)` 最近一条稳定 `candidate_display_tag`
   - 若仍不可得，再回退按 `candidateDigest`
 - 当前版本基线匹配优先级：
@@ -75,7 +73,9 @@
 - Given 历史上同一稳定版本先后以 `v1.16.1` 和 `1.16.1` 形式出现，When 统计当前基线次数，Then 视为同一个可见版本。
 - Given 历史上同一稳定版本先后以 `5.2` 和 `5.2.0` 形式出现，When 统计当前基线次数，Then 视为同一个可见版本。
 - Given 候选仍是 `latest` 或 `15-alpine` 这类未 settle 的原始 tag，When 没有稳定 `candidateDisplayTag` 可用，Then 回退按不同 `candidateDigest` 计数。
-- Given 历史 discovery 全都只记录了 `candidateDisplayTag=latest`，When ready snapshot 或稳定通知记录后来已经能把这些 digest 归一到 `v1.16.2 / v1.17.0`，Then `newVersionDiscoveryCount` 仍按最终可见版本折叠，而不是继续按 digest 膨胀。
+- Given 历史 discovery 全都只记录了 `candidateDisplayTag=latest`，When 稳定通知记录后来已经能把这些 digest 归一到 `v1.16.2 / v1.17.0`，Then `newVersionDiscoveryCount` 仍按最终可见版本折叠，而不是继续按 digest 膨胀。
+- Given 服务后续已经切到别的镜像仓库，When 旧 discovery 仍是 unresolved 历史，Then 当前服务 repo 的 snapshot 不会被拿来重写旧历史。
+- Given 某个 digest 的 snapshot 同时暴露多个稳定版本 tag，When 旧 discovery 仍 unresolved 且没有稳定通知记录，Then 该 digest 保持按 `candidateDigest` 计数，不会被强行折叠成其中任一版本。
 - Given 通知事件关闭或通知渠道全部关闭，When 成功 `check` 仍发现新版本，Then 计数仍可正确显示。
 - Given 服务当前版本已经从基线 `X` 升级到 `Y`，When 查询 `Y` 的候选计数，Then `X` 基线历史不会混入。
 - Given 历史上同一 `candidateDigest` 先以浮动 alias 出现、后又解析出稳定 `candidateDisplayTag`，When 统计当前基线次数，Then 不会因为这两条历史记录重复累计。
@@ -119,5 +119,6 @@
 - 2026-03-19: 完成后端 discovery 历史表、历史回填、API 字段透出与前端状态/聚合预览展示。
 - 2026-03-19: 补充 Storybook 证据故事与截图，作为 PR 可视完工证据来源。
 - 2026-03-20: 修正计数口径为“稳定可见版本优先、浮动 alias 回退 `candidateDigest`”，并通过 migration 自动重建历史 discovery 数据。
-- 2026-03-20: 补齐 unresolved 历史的读时归一；对旧 discovery 里的 `latest`/未 settle 值，优先用 ready snapshot、其次用稳定通知记录把 digest 折叠回最终可见版本。
-- 2026-03-20: 修复大批量 unresolved 历史下的 SQLite 参数上限问题；snapshot / notification 辅助查询改为分批执行，避免把 `GET /api/stacks/{id}` 放大成 500。
+- 2026-03-20: 补齐 unresolved 历史的读时归一；对旧 discovery 里的 `latest`/未 settle 值，使用稳定通知记录把 digest 折叠回最终可见版本，不改变“成功 `check` 历史才是计数事件源”的前提。
+- 2026-03-20: 修复大批量 unresolved 历史下的 SQLite 参数上限问题；稳定通知记录辅助查询改为分批执行，避免把 `GET /api/stacks/{id}` 放大成 500。
+- 2026-03-20: 根据 fresh review proof 移除“用当前服务 snapshot 归一旧 unresolved 历史”的做法，避免在服务改仓库或 snapshot 同 digest 多 stable tags 时误改写历史计数。

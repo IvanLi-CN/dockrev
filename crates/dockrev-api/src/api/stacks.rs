@@ -368,7 +368,6 @@ struct DiscoveryCountServiceContext {
     current_digest: String,
     current_display_tag: String,
     current_tag: String,
-    image_repo: Option<String>,
 }
 
 async fn enrich_stack_with_new_version_discovery_counts(
@@ -377,8 +376,6 @@ async fn enrich_stack_with_new_version_discovery_counts(
 ) -> Result<(), ApiError> {
     use std::collections::{BTreeSet, HashMap};
 
-    let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
-        .unwrap_or_else(|| "linux/amd64".to_string());
     let contexts = stack
         .services
         .iter()
@@ -400,9 +397,6 @@ async fn enrich_stack_with_new_version_discovery_counts(
                     current_tag: crate::db::normalize_discovery_key(Some(
                         service.image.tag.as_str(),
                     )),
-                    image_repo: snapshot_worker::image_repo_from_image_ref(
-                        &service.image.reference,
-                    ),
                 },
             )
         })
@@ -427,49 +421,6 @@ async fn enrich_stack_with_new_version_discovery_counts(
             acc
         },
     );
-
-    let snapshot_targets = rows_by_service
-        .iter()
-        .flat_map(|(service_id, rows)| {
-            let Some(image_repo) = contexts
-                .get(service_id)
-                .and_then(|context| context.image_repo.as_deref())
-            else {
-                return Vec::new();
-            };
-            rows.iter()
-                .filter(|row| {
-                    crate::db::stable_candidate_display_tag(
-                        &row.candidate_tag,
-                        &row.candidate_display_tag,
-                    )
-                    .is_none()
-                })
-                .filter_map(|row| {
-                    snapshot_worker::normalize_digest(&row.candidate_digest)
-                        .map(|digest| (image_repo.to_string(), digest))
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let snapshot_rows = state
-        .db
-        .list_image_digest_tags_snapshots_for_targets(&host_platform, &snapshot_targets)
-        .await
-        .map_err(map_internal)?;
-    let snapshot_cache = snapshot_rows
-        .into_iter()
-        .filter_map(|row| {
-            let parsed = parse_digest_snapshot_row(&row.snapshot_json, &row.checked_at)?;
-            crate::notify::notification_snapshot_is_ready(
-                &parsed.snapshot,
-                parsed.checked_at.as_str(),
-            )
-            .then_some(((row.image_repo, row.digest), parsed))
-        })
-        .collect::<HashMap<_, _>>();
 
     let notification_targets = rows_by_service
         .iter()
@@ -522,24 +473,6 @@ async fn enrich_stack_with_new_version_discovery_counts(
                         crate::db::normalize_discovery_key(Some(&row.candidate_digest))
                     });
                 if digest.is_empty() {
-                    return acc;
-                }
-
-                let snapshot_resolved = context
-                    .image_repo
-                    .as_ref()
-                    .and_then(|image_repo| {
-                        snapshot_cache.get(&(image_repo.clone(), digest.clone()))
-                    })
-                    .and_then(|snapshot| {
-                        infer_semver_tags_from_snapshot(&snapshot.snapshot, &row.candidate_tag)
-                            .into_iter()
-                            .next()
-                    })
-                    .map(|tag| crate::db::canonical_visible_version_tag(&tag));
-
-                if let Some(tag) = snapshot_resolved {
-                    acc.entry(digest).or_default().insert(tag);
                     return acc;
                 }
 
