@@ -1884,6 +1884,7 @@ fn make_new_version_summary_for_test(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn reserve_new_version_notification_for_test(
     state: &Arc<AppState>,
     service_id: &str,

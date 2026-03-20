@@ -91,6 +91,7 @@ pub struct VersionInferenceServiceTargetRow {
 #[derive(Clone, Debug)]
 pub struct ImageDigestTagsSnapshotRow {
     pub image_repo: String,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub digest: String,
     pub host_platform: String,
     pub snapshot_json: String,
