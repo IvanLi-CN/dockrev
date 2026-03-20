@@ -5,6 +5,7 @@ const STATUS_SENT: &str = "sent";
 const STATUS_FAILED: &str = "failed";
 const STATUS_SUPERSEDED: &str = "superseded";
 const ACTIVE_INDEX_NAME: &str = "idx_new_version_notifications_active_service_digest";
+const TARGET_BATCH_SIZE: usize = 400;
 
 #[cfg(test)]
 fn map_new_version_notification_row(
@@ -135,18 +136,22 @@ impl Db {
         }
 
         self.call(move |conn| {
-            let clauses = targets
-                .iter()
-                .enumerate()
-                .map(|(index, _)| {
-                    let service_pos = index * 2 + 1;
-                    let digest_pos = index * 2 + 2;
-                    format!("(service_id = ?{service_pos} AND candidate_digest = ?{digest_pos})")
-                })
-                .collect::<Vec<_>>()
-                .join(" OR ");
-            let sql = format!(
-                r#"
+            let mut resolved = std::collections::HashMap::<(String, String), String>::new();
+            for chunk in targets.chunks(TARGET_BATCH_SIZE) {
+                let clauses = chunk
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| {
+                        let service_pos = index * 2 + 1;
+                        let digest_pos = index * 2 + 2;
+                        format!(
+                            "(service_id = ?{service_pos} AND candidate_digest = ?{digest_pos})"
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" OR ");
+                let sql = format!(
+                    r#"
 SELECT
   service_id,
   candidate_digest,
@@ -156,37 +161,37 @@ FROM new_version_notifications
 WHERE {clauses}
 ORDER BY created_at DESC, id DESC
 "#,
-            );
-            let mut stmt = conn.prepare(&sql)?;
-            let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(targets.len() * 2);
-            for (service_id, candidate_digest) in &targets {
-                params.push(service_id);
-                params.push(candidate_digest);
-            }
-            let rows = stmt.query_map(params.as_slice(), |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                ))
-            })?;
-            let mut resolved = std::collections::HashMap::<(String, String), String>::new();
-            for row in rows {
-                let (service_id, candidate_digest, candidate_tag, candidate_display_tag) = row?;
-                let key = (service_id, candidate_digest);
-                if resolved.contains_key(&key) {
-                    continue;
-                }
-                let Some(stable_display_tag) =
-                    super::stable_candidate_display_tag(&candidate_tag, &candidate_display_tag)
-                else {
-                    continue;
-                };
-                resolved.insert(
-                    key,
-                    super::canonical_visible_version_tag(stable_display_tag),
                 );
+                let mut stmt = conn.prepare(&sql)?;
+                let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() * 2);
+                for (service_id, candidate_digest) in chunk {
+                    params.push(service_id);
+                    params.push(candidate_digest);
+                }
+                let rows = stmt.query_map(params.as_slice(), |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })?;
+                for row in rows {
+                    let (service_id, candidate_digest, candidate_tag, candidate_display_tag) = row?;
+                    let key = (service_id, candidate_digest);
+                    if resolved.contains_key(&key) {
+                        continue;
+                    }
+                    let Some(stable_display_tag) =
+                        super::stable_candidate_display_tag(&candidate_tag, &candidate_display_tag)
+                    else {
+                        continue;
+                    };
+                    resolved.insert(
+                        key,
+                        super::canonical_visible_version_tag(stable_display_tag),
+                    );
+                }
             }
             Ok(resolved)
         })
@@ -877,5 +882,35 @@ mod tests {
         assert_eq!(target[0].image_ref, "ghcr.io/acme/web-next");
         assert_eq!(target[0].image_tag, "stable");
         assert_eq!(target[0].candidate_digest, None);
+    }
+
+    #[tokio::test]
+    async fn list_latest_stable_candidate_display_tags_batches_large_target_sets() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(&db, "svc_1", Some("sha256:seed")).await;
+
+        let mut targets = Vec::new();
+        for idx in 0..450 {
+            let digest = format!("sha256:{idx:064x}");
+            let mut row = pending(&format!("nvn_{idx}"), "svc_1", &digest);
+            row.candidate_display_tag = format!("1.{}.0", idx + 1);
+            db.reserve_new_version_notification(&row).await.unwrap();
+            targets.push(("svc_1".to_string(), digest));
+        }
+
+        let resolved = db
+            .list_latest_stable_candidate_display_tags_for_service_digests(&targets)
+            .await
+            .unwrap();
+
+        assert_eq!(resolved.len(), 450);
+        assert_eq!(
+            resolved.get(&("svc_1".to_string(), format!("sha256:{:064x}", 0))),
+            Some(&"1.1.0".to_string())
+        );
+        assert_eq!(
+            resolved.get(&("svc_1".to_string(), format!("sha256:{:064x}", 449))),
+            Some(&"1.450.0".to_string())
+        );
     }
 }

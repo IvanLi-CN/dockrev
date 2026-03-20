@@ -120,3 +120,4 @@
 - 2026-03-19: 补充 Storybook 证据故事与截图，作为 PR 可视完工证据来源。
 - 2026-03-20: 修正计数口径为“稳定可见版本优先、浮动 alias 回退 `candidateDigest`”，并通过 migration 自动重建历史 discovery 数据。
 - 2026-03-20: 补齐 unresolved 历史的读时归一；对旧 discovery 里的 `latest`/未 settle 值，优先用 ready snapshot、其次用稳定通知记录把 digest 折叠回最终可见版本。
+- 2026-03-20: 修复大批量 unresolved 历史下的 SQLite 参数上限问题；snapshot / notification 辅助查询改为分批执行，避免把 `GET /api/stacks/{id}` 放大成 500。
