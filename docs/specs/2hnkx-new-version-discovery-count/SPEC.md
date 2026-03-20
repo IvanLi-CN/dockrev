@@ -19,7 +19,7 @@
 
 - 为服务持久化“新版本发现历史”，来源仅限成功完成的 `check` 任务。
 - 基于当前版本基线，按“稳定可见版本优先、浮动 alias 回退 `candidateDigest`”统计发现次数，并包含当前最新候选。
-- 对历史里尚未 settle 的候选 digest，只允许在读时使用同一 discovery 行自带的稳定 `candidateDisplayTag`，以及同 `(service_id, candidate_digest)` 的稳定通知记录做 digest -> visible version 的辅助归一；不使用当前服务的 snapshot 直接改写旧历史。
+- 对历史里尚未 settle 的候选 digest，只允许在读时使用同一 discovery 行自带的稳定 `candidateDisplayTag`，以及同 `(service_id, image_ref, current_tag, candidate_digest)` 的稳定通知记录做 digest -> visible version 的辅助归一；不使用当前服务的 snapshot 直接改写旧历史。
 - 在更新候选列表 `StatusRemark` 和 `AggregateUpdatePreviewList` 中显示中性计数 pill：`发现 N 次`。
 - 对外通过 `GET /api/stacks` 与 `GET /api/stacks/{id}` 返回 `newVersionDiscoveryCount`。
 
@@ -59,7 +59,7 @@
 - 计数规则固定为“同一当前版本基线下，按稳定 `candidateDisplayTag` 去重；若候选仍是未 settle 的原始 tag（例如 `latest`、`15-alpine`）或无稳定展示值，则回退按 `candidateDigest` 去重”。
 - 对历史 discovery 行里仍未 settle 的候选 digest，归一顺序固定为：
   - discovery 行自带的稳定 `candidateDisplayTag`
-  - `new_version_notifications` 中同 `(service_id, candidate_digest)` 最近一条稳定 `candidate_display_tag`
+  - `new_version_notifications` 中同 `(service_id, image_ref, current_tag, candidate_digest)` 的稳定 `candidate_display_tag`
   - 若仍不可得，再回退按 `candidateDigest`
 - 当前版本基线匹配优先级：
   - `currentDigest`
@@ -74,6 +74,7 @@
 - Given 历史上同一稳定版本先后以 `5.2` 和 `5.2.0` 形式出现，When 统计当前基线次数，Then 视为同一个可见版本。
 - Given 候选仍是 `latest` 或 `15-alpine` 这类未 settle 的原始 tag，When 没有稳定 `candidateDisplayTag` 可用，Then 回退按不同 `candidateDigest` 计数。
 - Given 历史 discovery 全都只记录了 `candidateDisplayTag=latest`，When 稳定通知记录后来已经能把这些 digest 归一到 `v1.16.2 / v1.17.0`，Then `newVersionDiscoveryCount` 仍按最终可见版本折叠，而不是继续按 digest 膨胀。
+- Given 服务后续仍沿用原 `service_id` 但已切到别的镜像仓库或 tag 轨道，When 新 repo 的通知记录与旧 unresolved discovery 恰好共享 digest，Then 新 repo 通知不会重写旧 discovery 的可见版本。
 - Given 服务后续已经切到别的镜像仓库，When 旧 discovery 仍是 unresolved 历史，Then 当前服务 repo 的 snapshot 不会被拿来重写旧历史。
 - Given 某个 digest 的 snapshot 同时暴露多个稳定版本 tag，When 旧 discovery 仍 unresolved 且没有稳定通知记录，Then 该 digest 保持按 `candidateDigest` 计数，不会被强行折叠成其中任一版本。
 - Given 通知事件关闭或通知渠道全部关闭，When 成功 `check` 仍发现新版本，Then 计数仍可正确显示。

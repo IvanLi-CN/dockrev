@@ -6,6 +6,7 @@ const JOB_STATUS_SUCCESS: &str = "success";
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct NewVersionDiscoveryInput {
     service_id: String,
+    image_ref: String,
     source_job_id: String,
     discovered_at: String,
     current_digest: String,
@@ -101,6 +102,10 @@ fn discovery_inputs_from_summary(
         let Some(service_id) = item.get("serviceId").and_then(|value| value.as_str()) else {
             continue;
         };
+        let image_ref = item
+            .get("imageRef")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
         let Some(current_tag) = item.get("currentTag").and_then(|value| value.as_str()) else {
             continue;
         };
@@ -123,6 +128,7 @@ fn discovery_inputs_from_summary(
 
         out.push(NewVersionDiscoveryInput {
             service_id: service_id.to_string(),
+            image_ref: normalize_discovery_key(Some(image_ref)),
             source_job_id: source_job_id.to_string(),
             discovered_at: discovered_at.to_string(),
             current_digest: normalize_discovery_key(
@@ -146,6 +152,7 @@ fn insert_new_version_discovery_conn(
         r#"
 INSERT OR IGNORE INTO service_new_version_discoveries (
   service_id,
+  image_ref,
   source_job_id,
   discovered_at,
   current_digest,
@@ -154,10 +161,11 @@ INSERT OR IGNORE INTO service_new_version_discoveries (
   candidate_tag,
   candidate_digest,
   candidate_display_tag
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
 "#,
         params![
             discovery.service_id,
+            discovery.image_ref,
             discovery.source_job_id,
             discovery.discovered_at,
             discovery.current_digest,
@@ -293,6 +301,7 @@ pub(super) fn list_new_version_discoveries_for_services_conn(
         r#"
 SELECT
   service_id,
+  image_ref,
   current_digest,
   current_display_tag,
   current_tag,
@@ -311,12 +320,13 @@ WHERE service_id IN ({placeholders})
     let rows = stmt.query_map(params.as_slice(), |row| {
         Ok(NewVersionDiscoveryRow {
             service_id: row.get(0)?,
-            current_digest: row.get(1)?,
-            current_display_tag: row.get(2)?,
-            current_tag: row.get(3)?,
-            candidate_tag: row.get(4)?,
-            candidate_digest: row.get(5)?,
-            candidate_display_tag: row.get(6)?,
+            image_ref: row.get(1)?,
+            current_digest: row.get(2)?,
+            current_display_tag: row.get(3)?,
+            current_tag: row.get(4)?,
+            candidate_tag: row.get(5)?,
+            candidate_digest: row.get(6)?,
+            candidate_display_tag: row.get(7)?,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>()
@@ -1008,6 +1018,61 @@ mod tests {
 
         let stack = db.get_stack("stack_1").await.unwrap().unwrap();
         assert_eq!(stack.services[0].new_version_discovery_count, Some(2));
+    }
+
+    #[tokio::test]
+    async fn backfill_rebuild_preserves_image_ref_provenance() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(
+            &db,
+            "svc_1",
+            Some("sha256:current-v1"),
+            Some("1.0.0"),
+            "latest",
+            Some("sha256:live-candidate"),
+        )
+        .await;
+
+        insert_successful_check_job(
+            &db,
+            "job_backfill_image_ref",
+            serde_json::json!({
+                "newVersions": {
+                    "count": 1,
+                    "services": [{
+                        "stackId": "stack_1",
+                        "serviceId": "svc_1",
+                        "serviceName": "web",
+                        "imageRef": "ghcr.io/acme/legacy-web",
+                        "currentTag": "latest",
+                        "currentDigest": "sha256:current-v1",
+                        "currentDisplayTag": "1.0.0",
+                        "candidateTag": "latest",
+                        "candidateDisplayTag": "latest",
+                        "candidateDigest": "sha256:candidate-a"
+                    }],
+                }
+            }),
+        )
+        .await;
+
+        db.call(|conn| {
+            conn.execute("DELETE FROM service_new_version_discoveries", [])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        db.rebuild_new_version_discoveries_from_successful_checks()
+            .await
+            .unwrap();
+
+        let rows = db
+            .list_new_version_discoveries_for_services(&["svc_1".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].image_ref, "ghcr.io/acme/legacy-web");
     }
 
     #[tokio::test]

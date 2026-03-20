@@ -423,8 +423,8 @@ async fn enrich_stack_with_new_version_discovery_counts(
     );
 
     let notification_targets = rows_by_service
-        .iter()
-        .flat_map(|(service_id, rows)| {
+        .values()
+        .flat_map(|rows| {
             rows.iter()
                 .filter(|row| {
                     crate::db::stable_candidate_display_tag(
@@ -434,8 +434,14 @@ async fn enrich_stack_with_new_version_discovery_counts(
                     .is_none()
                 })
                 .filter_map(|row| {
-                    snapshot_worker::normalize_digest(&row.candidate_digest)
-                        .map(|digest| (service_id.clone(), digest))
+                    snapshot_worker::normalize_digest(&row.candidate_digest).map(|digest| {
+                        (
+                            row.service_id.clone(),
+                            row.image_ref.clone(),
+                            row.current_tag.clone(),
+                            digest,
+                        )
+                    })
                 })
                 .collect::<Vec<_>>()
         })
@@ -444,7 +450,7 @@ async fn enrich_stack_with_new_version_discovery_counts(
         .collect::<Vec<_>>();
     let notification_tags = state
         .db
-        .list_latest_stable_candidate_display_tags_for_service_digests(&notification_targets)
+        .list_stable_candidate_display_tags_for_notification_targets(&notification_targets)
         .await
         .map_err(map_internal)?;
 
@@ -476,8 +482,14 @@ async fn enrich_stack_with_new_version_discovery_counts(
                     return acc;
                 }
 
-                if let Some(tag) = notification_tags.get(&(service.id.clone(), digest.clone())) {
-                    acc.entry(digest).or_default().insert(tag.clone());
+                let key = (
+                    row.service_id.clone(),
+                    row.image_ref.clone(),
+                    row.current_tag.clone(),
+                    digest.clone(),
+                );
+                if let Some(tags) = notification_tags.get(&key) {
+                    acc.entry(digest).or_default().extend(tags.iter().cloned());
                 }
                 acc
             },
