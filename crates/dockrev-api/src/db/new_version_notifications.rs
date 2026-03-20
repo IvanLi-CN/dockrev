@@ -7,6 +7,116 @@ const STATUS_SUPERSEDED: &str = "superseded";
 const ACTIVE_INDEX_NAME: &str = "idx_new_version_notifications_active_service_digest";
 const TARGET_BATCH_SIZE: usize = 200;
 
+pub(super) type NotificationTargetKey = (String, String, String, String);
+pub(super) type StableCandidateDisplayTags = std::collections::BTreeSet<String>;
+pub(super) type StableCandidateDisplayTagsByNotificationTarget =
+    std::collections::HashMap<NotificationTargetKey, StableCandidateDisplayTags>;
+
+pub(super) fn list_stable_candidate_display_tags_for_notification_targets_conn(
+    conn: &rusqlite::Connection,
+    targets: &[NotificationTargetKey],
+) -> rusqlite::Result<StableCandidateDisplayTagsByNotificationTarget> {
+    let targets = targets
+        .iter()
+        .map(|(service_id, image_ref, image_tag, candidate_digest)| {
+            (
+                service_id.trim(),
+                image_ref.trim(),
+                image_tag.trim(),
+                candidate_digest.trim(),
+            )
+        })
+        .filter(|(service_id, image_ref, image_tag, candidate_digest)| {
+            !service_id.is_empty()
+                && !image_ref.is_empty()
+                && !image_tag.is_empty()
+                && !candidate_digest.is_empty()
+        })
+        .map(|(service_id, image_ref, image_tag, candidate_digest)| {
+            (
+                service_id.to_string(),
+                image_ref.to_string(),
+                image_tag.to_string(),
+                candidate_digest.to_string(),
+            )
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if targets.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let mut resolved = StableCandidateDisplayTagsByNotificationTarget::new();
+    for chunk in targets.chunks(TARGET_BATCH_SIZE) {
+        let clauses = chunk
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let service_pos = index * 4 + 1;
+                let image_ref_pos = index * 4 + 2;
+                let image_tag_pos = index * 4 + 3;
+                let digest_pos = index * 4 + 4;
+                format!(
+                    "(service_id = ?{service_pos} AND image_ref = ?{image_ref_pos} AND image_tag = ?{image_tag_pos} AND candidate_digest = ?{digest_pos})"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        let sql = format!(
+            r#"
+SELECT
+  service_id,
+  image_ref,
+  image_tag,
+  candidate_digest,
+  candidate_tag,
+  candidate_display_tag
+FROM new_version_notifications
+WHERE {clauses}
+"#,
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() * 4);
+        for (service_id, image_ref, image_tag, candidate_digest) in chunk {
+            params.push(service_id);
+            params.push(image_ref);
+            params.push(image_tag);
+            params.push(candidate_digest);
+        }
+        let rows = stmt.query_map(params.as_slice(), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        })?;
+        for row in rows {
+            let (
+                service_id,
+                image_ref,
+                image_tag,
+                candidate_digest,
+                candidate_tag,
+                candidate_display_tag,
+            ) = row?;
+            let Some(stable_display_tag) =
+                super::stable_candidate_display_tag(&candidate_tag, &candidate_display_tag)
+            else {
+                continue;
+            };
+            resolved
+                .entry((service_id, image_ref, image_tag, candidate_digest))
+                .or_default()
+                .insert(super::canonical_visible_version_tag(stable_display_tag));
+        }
+    }
+    Ok(resolved)
+}
+
 #[cfg(test)]
 fn map_new_version_notification_row(
     row: &rusqlite::Row<'_>,
@@ -117,116 +227,11 @@ WHERE service_id = ?1
 impl Db {
     pub async fn list_stable_candidate_display_tags_for_notification_targets(
         &self,
-        targets: &[(String, String, String, String)],
-    ) -> anyhow::Result<
-        std::collections::HashMap<
-            (String, String, String, String),
-            std::collections::BTreeSet<String>,
-        >,
-    > {
-        let targets = targets
-            .iter()
-            .map(|(service_id, image_ref, image_tag, candidate_digest)| {
-                (
-                    service_id.trim(),
-                    image_ref.trim(),
-                    image_tag.trim(),
-                    candidate_digest.trim(),
-                )
-            })
-            .filter(|(service_id, image_ref, image_tag, candidate_digest)| {
-                !service_id.is_empty()
-                    && !image_ref.is_empty()
-                    && !image_tag.is_empty()
-                    && !candidate_digest.is_empty()
-            })
-            .map(|(service_id, image_ref, image_tag, candidate_digest)| {
-                (
-                    service_id.to_string(),
-                    image_ref.to_string(),
-                    image_tag.to_string(),
-                    candidate_digest.to_string(),
-                )
-            })
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
-        if targets.is_empty() {
-            return Ok(std::collections::HashMap::new());
-        }
-
+        targets: &[NotificationTargetKey],
+    ) -> anyhow::Result<StableCandidateDisplayTagsByNotificationTarget> {
+        let targets = targets.to_vec();
         self.call(move |conn| {
-            let mut resolved = std::collections::HashMap::<
-                (String, String, String, String),
-                std::collections::BTreeSet<String>,
-            >::new();
-            for chunk in targets.chunks(TARGET_BATCH_SIZE) {
-                let clauses = chunk
-                    .iter()
-                    .enumerate()
-                    .map(|(index, _)| {
-                        let service_pos = index * 4 + 1;
-                        let image_ref_pos = index * 4 + 2;
-                        let image_tag_pos = index * 4 + 3;
-                        let digest_pos = index * 4 + 4;
-                        format!(
-                            "(service_id = ?{service_pos} AND image_ref = ?{image_ref_pos} AND image_tag = ?{image_tag_pos} AND candidate_digest = ?{digest_pos})"
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" OR ");
-                let sql = format!(
-                    r#"
-SELECT
-  service_id,
-  image_ref,
-  image_tag,
-  candidate_digest,
-  candidate_tag,
-  candidate_display_tag
-FROM new_version_notifications
-WHERE {clauses}
-"#,
-                );
-                let mut stmt = conn.prepare(&sql)?;
-                let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(chunk.len() * 4);
-                for (service_id, image_ref, image_tag, candidate_digest) in chunk {
-                    params.push(service_id);
-                    params.push(image_ref);
-                    params.push(image_tag);
-                    params.push(candidate_digest);
-                }
-                let rows = stmt.query_map(params.as_slice(), |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, String>(4)?,
-                        row.get::<_, String>(5)?,
-                    ))
-                })?;
-                for row in rows {
-                    let (
-                        service_id,
-                        image_ref,
-                        image_tag,
-                        candidate_digest,
-                        candidate_tag,
-                        candidate_display_tag,
-                    ) = row?;
-                    let Some(stable_display_tag) =
-                        super::stable_candidate_display_tag(&candidate_tag, &candidate_display_tag)
-                    else {
-                        continue;
-                    };
-                    resolved
-                        .entry((service_id, image_ref, image_tag, candidate_digest))
-                        .or_default()
-                        .insert(super::canonical_visible_version_tag(stable_display_tag));
-                }
-            }
-            Ok(resolved)
+            Ok(list_stable_candidate_display_tags_for_notification_targets_conn(conn, &targets)?)
         })
         .await
         .context("list stable candidate display tags for notification targets")

@@ -22,6 +22,7 @@
 - 对历史里尚未 settle 的候选 digest，只允许在读时使用同一 discovery 行自带的稳定 `candidateDisplayTag`，以及同 `(service_id, image_ref, current_tag, candidate_digest)` 的稳定通知记录做 digest -> visible version 的辅助归一；不使用当前服务的 snapshot 直接改写旧历史。
 - 在更新候选列表 `StatusRemark` 和 `AggregateUpdatePreviewList` 中显示中性计数 pill：`发现 N 次`。
 - 对外通过 `GET /api/stacks` 与 `GET /api/stacks/{id}` 返回 `newVersionDiscoveryCount`。
+- 同一份 stack 数据无论走 DB 聚合还是 API enrich，都必须对 unresolved 历史应用一致的 provenance-aware 归一规则，避免不同调用路径给出不同的发现次数。
 
 ### Non-goals
 
@@ -61,6 +62,7 @@
   - discovery 行自带的稳定 `candidateDisplayTag`
   - `new_version_notifications` 中同 `(service_id, image_ref, current_tag, candidate_digest)` 的稳定 `candidate_display_tag`
   - 若仍不可得，再回退按 `candidateDigest`
+- DB 层 `get_stack()` 与 API 层 `GET /api/stacks` / `GET /api/stacks/{id}` 都必须使用同一套 unresolved-history 归一输入，不能让某一路径退回旧的 digest-only 计数。
 - 当前版本基线匹配优先级：
   - `currentDigest`
   - `currentDisplayTag`
@@ -77,6 +79,7 @@
 - Given 服务后续仍沿用原 `service_id` 但已切到别的镜像仓库或 tag 轨道，When 新 repo 的通知记录与旧 unresolved discovery 恰好共享 digest，Then 新 repo 通知不会重写旧 discovery 的可见版本。
 - Given 两条匹配当前基线的 discovery 历史来自不同 `image_ref` 或 `current_tag` provenance，但恰好共享同一个 `candidateDigest`，When 其中一条已有稳定可见版本而另一条仍 unresolved，Then 稳定版本不会跨 provenance 重写另一条历史，计数仍保持分离。
 - Given 服务后续已经切到别的镜像仓库，When 旧 discovery 仍是 unresolved 历史，Then 当前服务 repo 的 snapshot 不会被拿来重写旧历史。
+- Given 同一服务的 stack 数据同时被 DB 聚合路径和 API enrich 路径消费，When 旧 discovery 仍依赖稳定通知记录做 provenance-aware 归一，Then 两条路径返回的 `newVersionDiscoveryCount` 必须一致。
 - Given 某个 digest 的 snapshot 同时暴露多个稳定版本 tag，When 旧 discovery 仍 unresolved 且没有稳定通知记录，Then 该 digest 保持按 `candidateDigest` 计数，不会被强行折叠成其中任一版本。
 - Given 通知事件关闭或通知渠道全部关闭，When 成功 `check` 仍发现新版本，Then 计数仍可正确显示。
 - Given 服务当前版本已经从基线 `X` 升级到 `Y`，When 查询 `Y` 的候选计数，Then `X` 基线历史不会混入。
@@ -124,3 +127,4 @@
 - 2026-03-20: 补齐 unresolved 历史的读时归一；对旧 discovery 里的 `latest`/未 settle 值，使用稳定通知记录把 digest 折叠回最终可见版本，不改变“成功 `check` 历史才是计数事件源”的前提。
 - 2026-03-20: 修复大批量 unresolved 历史下的 SQLite 参数上限问题；稳定通知记录辅助查询改为分批执行，避免把 `GET /api/stacks/{id}` 放大成 500。
 - 2026-03-20: 根据 fresh review proof 移除“用当前服务 snapshot 归一旧 unresolved 历史”的做法，避免在服务改仓库或 snapshot 同 digest 多 stable tags 时误改写历史计数。
+- 2026-03-20: 根据后续 review fix，把 DB 层 `get_stack()` 的 discovery 次数计算也切到同一套 provenance-aware 通知归一逻辑，确保 stack consumer 不会回退成 digest-only 计数。

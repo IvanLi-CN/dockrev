@@ -413,6 +413,8 @@ pub(super) fn count_new_version_discoveries_for_services_conn(
     conn: &rusqlite::Connection,
     baselines: &[NewVersionDiscoveryBaseline],
 ) -> rusqlite::Result<std::collections::HashMap<String, u32>> {
+    use std::collections::BTreeSet;
+
     let rows = list_new_version_discoveries_for_services_conn(
         conn,
         &baselines
@@ -427,6 +429,34 @@ pub(super) fn count_new_version_discoveries_for_services_conn(
             acc
         },
     );
+    let notification_targets = rows_by_service
+        .values()
+        .flat_map(|rows| {
+            rows.iter()
+                .filter(|row| {
+                    stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag)
+                        .is_none()
+                })
+                .filter_map(|row| {
+                    crate::snapshot_worker::normalize_digest(&row.candidate_digest).map(|digest| {
+                        (
+                            row.service_id.clone(),
+                            row.image_ref.clone(),
+                            row.current_tag.clone(),
+                            digest,
+                        )
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let notification_tags =
+        super::new_version_notifications::list_stable_candidate_display_tags_for_notification_targets_conn(
+            conn,
+            &notification_targets,
+        )?;
 
     Ok(baselines
         .iter()
@@ -437,7 +467,7 @@ pub(super) fn count_new_version_discoveries_for_services_conn(
                 &normalize_discovery_key(baseline.current_digest.as_deref()),
                 &normalize_discovery_key(baseline.current_display_tag.as_deref()),
                 &normalize_discovery_key(Some(baseline.current_tag.as_str())),
-                &std::collections::HashMap::new(),
+                &notification_tags,
             );
             (count > 0).then_some((baseline.service_id.clone(), count))
         })
@@ -1137,5 +1167,85 @@ mod tests {
 
         let stack = db.get_stack("stack_1").await.unwrap().unwrap();
         assert_eq!(stack.services[0].new_version_discovery_count, Some(1));
+    }
+
+    #[tokio::test]
+    async fn get_stack_normalizes_unsettled_discovery_history_from_notifications() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(
+            &db,
+            "svc_1",
+            Some("sha256:current-v1"),
+            Some("1.16.0"),
+            "latest",
+            Some("sha256:live-candidate"),
+        )
+        .await;
+
+        insert_successful_check_job(
+            &db,
+            "job_unsettled_a",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.16.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-a",
+                Some("latest"),
+            ),
+        )
+        .await;
+        insert_successful_check_job(
+            &db,
+            "job_unsettled_b",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.16.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-b",
+                Some("latest"),
+            ),
+        )
+        .await;
+        insert_successful_check_job(
+            &db,
+            "job_unsettled_c",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.16.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-c",
+                Some("latest"),
+            ),
+        )
+        .await;
+
+        for (id, digest, display_tag) in [
+            ("nvn_a", "sha256:candidate-a", "1.16.2"),
+            ("nvn_b", "sha256:candidate-b", "1.16.2"),
+            ("nvn_c", "sha256:candidate-c", "1.17.0"),
+        ] {
+            db.reserve_new_version_notification(&crate::db::NewVersionNotificationPending {
+                id: id.to_string(),
+                service_id: "svc_1".to_string(),
+                job_id: "job_notifications".to_string(),
+                reason: "schedule".to_string(),
+                image_ref: "ghcr.io/acme/web".to_string(),
+                image_tag: "latest".to_string(),
+                current_tag: "latest".to_string(),
+                current_display_tag: "1.16.0".to_string(),
+                candidate_tag: "latest".to_string(),
+                candidate_display_tag: display_tag.to_string(),
+                candidate_digest: digest.to_string(),
+                created_at: "2026-03-19T00:03:00Z".to_string(),
+            })
+            .await
+            .unwrap();
+        }
+
+        let stack = db.get_stack("stack_1").await.unwrap().unwrap();
+        assert_eq!(stack.services[0].new_version_discovery_count, Some(2));
     }
 }
