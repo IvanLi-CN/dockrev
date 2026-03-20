@@ -309,6 +309,7 @@ function errorTestState(
 }
 
 type RepoSelectedFilter = 'all' | 'selected' | 'unselected'
+type RepoScopeFilter = 'all' | 'ghcr_linked' | 'deployed'
 type RepoVisibilityFilter = 'all' | 'public' | 'private'
 type RepoSortKey = 'activity_desc' | 'name_asc'
 type RepoListDensity = 'cozy' | 'compact'
@@ -318,6 +319,8 @@ type RepoPickerItem = {
   selected: boolean
   visibility: RepoVisibility
   lastActivityAt: string | null
+  ghcrLinked: boolean | null
+  deployed: boolean
 }
 const GHCR_PICKER_LIST_DENSITY_STORAGE_KEY = 'dockrev:settings:ghcrPicker:listDensity'
 const INSTANCE_PUBLIC_BASE_URL_SUGGEST_DISMISSED_STORAGE_KEY =
@@ -407,9 +410,12 @@ function GitHubPackagesRepoPicker({
       selected: r.selected,
       visibility: normalizeRepoVisibility(r.visibility),
       lastActivityAt: r.lastActivityAt ?? null,
+      ghcrLinked: typeof r.ghcrLinked === 'boolean' ? r.ghcrLinked : null,
+      deployed: r.deployed === true,
     })),
   )
   const [searchQuery, setSearchQuery] = useState('')
+  const [scopeFilter, setScopeFilter] = useState<RepoScopeFilter>('all')
   const [selectedFilter, setSelectedFilter] = useState<RepoSelectedFilter>('all')
   const [visibilityFilter, setVisibilityFilter] = useState<RepoVisibilityFilter>('all')
   const [sortKey, setSortKey] = useState<RepoSortKey>('activity_desc')
@@ -442,6 +448,11 @@ function GitHubPackagesRepoPicker({
 
     const list = repos
       .filter((repo) => {
+        if (scopeFilter === 'ghcr_linked') return repo.ghcrLinked === true
+        if (scopeFilter === 'deployed') return repo.deployed
+        return true
+      })
+      .filter((repo) => {
         if (selectedFilter === 'selected') return repo.selected
         if (selectedFilter === 'unselected') return !repo.selected
         return true
@@ -469,7 +480,7 @@ function GitHubPackagesRepoPicker({
     })
 
     return list
-  }, [repos, searchQuery, selectedFilter, visibilityFilter, sortKey])
+  }, [repos, scopeFilter, searchQuery, selectedFilter, visibilityFilter, sortKey])
 
   const onWindowPointerMove = useCallback(
     (event: PointerEvent) => {
@@ -570,6 +581,20 @@ function GitHubPackagesRepoPicker({
             />
           </div>
           <div className="ghcrPickerField">
+            <div className="ghcrPickerFieldLabel">范围筛选</div>
+            <SelectField
+              className="select"
+              onChange={(value) => setScopeFilter(value as RepoScopeFilter)}
+              options={[
+                { value: 'all', label: '全部' },
+                { value: 'ghcr_linked', label: '有镜像' },
+                { value: 'deployed', label: '已部署' },
+              ]}
+              title="按 GHCR 关联或部署状态筛选"
+              value={scopeFilter}
+            />
+          </div>
+          <div className="ghcrPickerField">
             <div className="ghcrPickerFieldLabel">已添加状态</div>
             <SelectField
               className="select"
@@ -648,6 +673,8 @@ function GitHubPackagesRepoPicker({
                     </span>
                   </div>
                   <div className="ghcrPickerMeta">
+                    {r.ghcrLinked ? <span>GHCR 已关联</span> : null}
+                    {r.deployed ? <span>已部署</span> : null}
                     <span>{r.visibility === 'private' ? '私有' : r.visibility === 'public' ? '公开' : '可见性未知'}</span>
                     <span>{formatRepoActivity(r.lastActivityAt)}</span>
                   </div>

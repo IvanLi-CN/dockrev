@@ -717,6 +717,269 @@ pub(super) async fn remove_github_packages_target(
     Ok(Json(RemoveGitHubPackagesTargetResponse { ok: true }))
 }
 
+fn normalize_repo_full_name(full_name: &str) -> String {
+    full_name.trim().to_ascii_lowercase()
+}
+
+fn normalize_github_source_repo_key(source: &str) -> Option<String> {
+    match github::parse_target_input(source).ok()? {
+        github::TargetKind::Repo { owner, repo } => Some(format!(
+            "{}/{}",
+            owner.to_ascii_lowercase(),
+            repo.to_ascii_lowercase()
+        )),
+        github::TargetKind::Owner { .. } => None,
+    }
+}
+
+fn ghcr_deployed_repo_keys(
+    targets: Vec<crate::db::GithubWebhookServiceTarget>,
+) -> std::collections::HashSet<String> {
+    targets
+        .into_iter()
+        .filter_map(|target| crate::snapshot_worker::image_repo_from_image_ref(&target.image_ref))
+        .filter_map(|image_repo| image_repo.strip_prefix("ghcr.io/").map(str::to_string))
+        .map(|repo| repo.to_ascii_lowercase())
+        .collect()
+}
+
+fn preferred_ghcr_inspection_reference(tags: &[String]) -> Option<&str> {
+    if tags.iter().any(|tag| tag == "latest") {
+        return Some("latest");
+    }
+    tags.iter()
+        .rev()
+        .map(|tag| tag.trim())
+        .find(|tag| !tag.is_empty())
+}
+
+fn push_warning_limited(warnings: &mut Vec<String>, message: String) {
+    if warnings.len() >= 5 {
+        return;
+    }
+    if warnings.iter().any(|existing| existing == &message) {
+        return;
+    }
+    warnings.push(message);
+}
+
+struct GhcrLinkedRepoProbeResult {
+    linked_repo_keys: std::collections::HashSet<String>,
+    probe_complete: bool,
+}
+
+struct GhcrPackageProbeOutcome {
+    linked_repo_key: Option<String>,
+    warning: Option<String>,
+    probe_complete: bool,
+}
+
+async fn inspect_owner_ghcr_package_link(
+    registry: crate::registry::HttpRegistryClient,
+    owner: String,
+    package_name: String,
+    host_platform: String,
+) -> GhcrPackageProbeOutcome {
+    let image =
+        match crate::registry::ImageRef::parse(&format!("ghcr.io/{owner}/{package_name}:latest")) {
+            Ok(image) => image,
+            Err(err) => {
+                return GhcrPackageProbeOutcome {
+                    linked_repo_key: None,
+                    warning: Some(format!(
+                        "skip invalid GHCR package ref {owner}/{package_name}: {err}"
+                    )),
+                    probe_complete: false,
+                };
+            }
+        };
+    let tags = match crate::registry::RegistryClient::list_tags(&registry, &image).await {
+        Ok(tags) => tags,
+        Err(err) => {
+            return GhcrPackageProbeOutcome {
+                linked_repo_key: None,
+                warning: Some(format!(
+                    "skip GHCR package {owner}/{package_name}: list tags failed ({err})"
+                )),
+                probe_complete: false,
+            };
+        }
+    };
+    let Some(reference) = preferred_ghcr_inspection_reference(&tags) else {
+        return GhcrPackageProbeOutcome {
+            linked_repo_key: None,
+            warning: None,
+            probe_complete: true,
+        };
+    };
+    let source = match crate::registry::RegistryClient::get_oci_source(
+        &registry,
+        &image,
+        reference,
+        &host_platform,
+    )
+    .await
+    {
+        Ok(source) => source,
+        Err(err) => {
+            return GhcrPackageProbeOutcome {
+                linked_repo_key: None,
+                warning: Some(format!(
+                    "skip GHCR package {owner}/{package_name}: read OCI source failed ({err})"
+                )),
+                probe_complete: false,
+            };
+        }
+    };
+
+    GhcrPackageProbeOutcome {
+        linked_repo_key: source.as_deref().and_then(normalize_github_source_repo_key),
+        warning: None,
+        probe_complete: true,
+    }
+}
+
+async fn resolve_owner_ghcr_linked_repo_keys(
+    state: &Arc<AppState>,
+    client: &github::GitHubClient,
+    owner: &str,
+    pat: &str,
+    authenticated_login: Option<&str>,
+) -> (Option<GhcrLinkedRepoProbeResult>, Vec<String>) {
+    let package_names = match client
+        .list_owner_container_package_names(owner, authenticated_login)
+        .await
+    {
+        Ok(packages) => packages,
+        Err(err) => {
+            return (
+                None,
+                vec![format!("GHCR package metadata unavailable: {err}")],
+            );
+        }
+    };
+
+    if package_names.is_empty() {
+        return (
+            Some(GhcrLinkedRepoProbeResult {
+                linked_repo_keys: std::collections::HashSet::new(),
+                probe_complete: true,
+            }),
+            Vec::new(),
+        );
+    }
+
+    let mut warnings = Vec::new();
+    let mut auth_overrides = std::collections::HashMap::new();
+    if let Some(login) = authenticated_login {
+        let trimmed = login.trim();
+        if !trimmed.is_empty() {
+            auth_overrides.insert(
+                "ghcr.io".to_string(),
+                (trimmed.to_string(), pat.to_string()),
+            );
+        }
+    }
+    let registry = match crate::registry::HttpRegistryClient::new_with_basic_auth_overrides(
+        state.config.docker_config_path.as_deref(),
+        crate::registry::HttpRegistryClientOptions {
+            per_host_concurrency: state.config.registry_per_host_concurrency,
+            retry_max_attempts: state.config.registry_retry_max_attempts,
+            retry_base_ms: state.config.registry_retry_base_ms,
+            retry_max_ms: state.config.registry_retry_max_ms,
+        },
+        auth_overrides,
+    ) {
+        Ok(client) => client,
+        Err(err) => {
+            return (
+                None,
+                vec![format!("GHCR registry client unavailable: {err}")],
+            );
+        }
+    };
+    let host_platform =
+        crate::registry::host_platform_override(state.config.host_platform.as_deref())
+            .unwrap_or_else(|| "linux/amd64".to_string());
+    let mut linked = std::collections::HashSet::new();
+    let mut probe_complete = true;
+    let max_in_flight = state
+        .config
+        .registry_per_host_concurrency
+        .max(1)
+        .min(package_names.len().max(1));
+    let owner = owner.to_string();
+    let mut pending = package_names.into_iter();
+    let mut join_set = tokio::task::JoinSet::new();
+
+    for _ in 0..max_in_flight {
+        let Some(package_name) = pending.next() else {
+            break;
+        };
+        join_set.spawn(inspect_owner_ghcr_package_link(
+            registry.clone(),
+            owner.clone(),
+            package_name,
+            host_platform.clone(),
+        ));
+    }
+
+    while let Some(result) = join_set.join_next().await {
+        match result {
+            Ok(outcome) => {
+                if let Some(repo_key) = outcome.linked_repo_key {
+                    linked.insert(repo_key);
+                }
+                if let Some(warning) = outcome.warning {
+                    push_warning_limited(&mut warnings, warning);
+                }
+                if !outcome.probe_complete {
+                    probe_complete = false;
+                }
+            }
+            Err(err) => {
+                probe_complete = false;
+                push_warning_limited(
+                    &mut warnings,
+                    format!("GHCR package inspection task failed: {err}"),
+                );
+            }
+        }
+
+        if let Some(package_name) = pending.next() {
+            join_set.spawn(inspect_owner_ghcr_package_link(
+                registry.clone(),
+                owner.clone(),
+                package_name,
+                host_platform.clone(),
+            ));
+        }
+    }
+
+    (
+        Some(GhcrLinkedRepoProbeResult {
+            linked_repo_keys: linked,
+            probe_complete,
+        }),
+        warnings,
+    )
+}
+
+fn ghcr_linked_selection_value(
+    ghcr_linked_probe: Option<&GhcrLinkedRepoProbeResult>,
+    full_name: &str,
+) -> Option<bool> {
+    let normalized_full_name = normalize_repo_full_name(full_name);
+    let probe = ghcr_linked_probe?;
+    if probe.linked_repo_keys.contains(&normalized_full_name) {
+        return Some(true);
+    }
+    if probe.probe_complete {
+        return Some(false);
+    }
+    None
+}
+
 pub(super) async fn resolve_github_packages_target(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -729,6 +992,14 @@ pub(super) async fn resolve_github_packages_target(
             .with_details(json!({"input": req.input, "error": e.to_string()}))
     })?;
 
+    let deployed_repo_keys = ghcr_deployed_repo_keys(
+        state
+            .db
+            .list_active_github_webhook_service_targets()
+            .await
+            .map_err(map_internal)?,
+    );
+
     match parsed {
         github::TargetKind::Repo { owner, repo } => {
             let selected = state
@@ -737,14 +1008,17 @@ pub(super) async fn resolve_github_packages_target(
                 .await
                 .map_err(map_internal)?
                 .unwrap_or(true);
+            let full_name = format!("{owner}/{repo}");
             Ok(Json(ResolveGitHubPackagesTargetResponse {
                 kind: "repo".to_string(),
                 owner: owner.clone(),
                 repos: vec![GitHubPackagesRepoSelection {
-                    full_name: format!("{owner}/{repo}"),
+                    full_name: full_name.clone(),
                     selected,
                     visibility: Some("unknown".to_string()),
                     last_activity_at: None,
+                    ghcr_linked: None,
+                    deployed: deployed_repo_keys.contains(&normalize_repo_full_name(&full_name)),
                 }],
                 warnings: Vec::new(),
             }))
@@ -762,10 +1036,19 @@ pub(super) async fn resolve_github_packages_target(
                 );
             };
             let client = github::GitHubClient::new(&pat).map_err(map_internal)?;
+            let authenticated_login = client.get_authenticated_user_login().await.ok();
             let repos = client
                 .list_owner_repos(&owner)
                 .await
                 .map_err(|e| map_github_owner_resolve_error(&owner, e))?;
+            let (ghcr_linked_probe, ghcr_warnings) = resolve_owner_ghcr_linked_repo_keys(
+                &state,
+                &client,
+                &owner,
+                &pat,
+                authenticated_login.as_deref(),
+            )
+            .await;
             // Default to "not selected", but keep existing tracked repos selected.
             let existing = state
                 .db
@@ -798,14 +1081,20 @@ pub(super) async fn resolve_github_packages_target(
                             existing_selected.contains(&rr.to_lowercase())
                         };
                         Some(GitHubPackagesRepoSelection {
-                            full_name,
+                            full_name: full_name.clone(),
                             selected,
                             visibility: Some(visibility.to_string()),
                             last_activity_at,
+                            ghcr_linked: ghcr_linked_selection_value(
+                                ghcr_linked_probe.as_ref(),
+                                &full_name,
+                            ),
+                            deployed: deployed_repo_keys
+                                .contains(&normalize_repo_full_name(&full_name)),
                         })
                     })
                     .collect(),
-                warnings: Vec::new(),
+                warnings: ghcr_warnings,
             }))
         }
     }
@@ -1647,5 +1936,79 @@ pub(super) async fn github_packages_webhook(
             }
             Err(err)
         }
+    }
+}
+
+#[cfg(test)]
+mod resolve_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn github_packages_resolve_normalize_github_source_repo_key_accepts_repo_url() {
+        assert_eq!(
+            normalize_github_source_repo_key("https://github.com/Acme/Widgets").as_deref(),
+            Some("acme/widgets")
+        );
+    }
+
+    #[test]
+    fn github_packages_resolve_preferred_ghcr_inspection_reference_prefers_latest() {
+        let tags = vec![
+            "1.0.0".to_string(),
+            "latest".to_string(),
+            "2.0.0".to_string(),
+        ];
+        assert_eq!(preferred_ghcr_inspection_reference(&tags), Some("latest"));
+    }
+
+    #[test]
+    fn github_packages_resolve_deployed_repo_keys_only_keeps_ghcr_targets() {
+        let keys = ghcr_deployed_repo_keys(vec![
+            crate::db::GithubWebhookServiceTarget {
+                stack_id: "stack-1".to_string(),
+                service_id: "svc-1".to_string(),
+                image_ref: "ghcr.io/acme/api:latest".to_string(),
+            },
+            crate::db::GithubWebhookServiceTarget {
+                stack_id: "stack-2".to_string(),
+                service_id: "svc-2".to_string(),
+                image_ref: "docker.io/library/nginx:latest".to_string(),
+            },
+        ]);
+        assert!(keys.contains("acme/api"));
+        assert_eq!(keys.len(), 1);
+    }
+
+    #[test]
+    fn github_packages_resolve_ghcr_linked_selection_value_preserves_unknown_state() {
+        assert_eq!(ghcr_linked_selection_value(None, "acme/widgets"), None);
+
+        let mut linked_repo_keys = std::collections::HashSet::new();
+        linked_repo_keys.insert("acme/widgets".to_string());
+        let complete_probe = GhcrLinkedRepoProbeResult {
+            linked_repo_keys: linked_repo_keys.clone(),
+            probe_complete: true,
+        };
+        let partial_probe = GhcrLinkedRepoProbeResult {
+            linked_repo_keys,
+            probe_complete: false,
+        };
+
+        assert_eq!(
+            ghcr_linked_selection_value(Some(&complete_probe), "acme/widgets"),
+            Some(true)
+        );
+        assert_eq!(
+            ghcr_linked_selection_value(Some(&complete_probe), "acme/api"),
+            Some(false)
+        );
+        assert_eq!(
+            ghcr_linked_selection_value(Some(&partial_probe), "acme/widgets"),
+            Some(true)
+        );
+        assert_eq!(
+            ghcr_linked_selection_value(Some(&partial_probe), "acme/api"),
+            None
+        );
     }
 }

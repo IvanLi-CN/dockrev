@@ -9720,6 +9720,8 @@ async fn github_packages_resolve_repo_returns_visibility_and_activity_fields() {
     assert_eq!(body["repos"][0]["selected"], true);
     assert_eq!(body["repos"][0]["visibility"], "unknown");
     assert!(body["repos"][0]["lastActivityAt"].is_null());
+    assert!(body["repos"][0]["ghcrLinked"].is_null());
+    assert_eq!(body["repos"][0]["deployed"], false);
 }
 
 #[test]
