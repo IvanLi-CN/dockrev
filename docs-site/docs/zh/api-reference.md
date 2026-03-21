@@ -114,7 +114,7 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 | POST | `/api/web-push/subscriptions` | Forward Auth | 创建/更新 Web Push 订阅 | `200` `400` `401` |
 | DELETE | `/api/web-push/subscriptions` | Forward Auth | 删除 Web Push 订阅 | `200` `400` `401` |
 | POST | `/api/webhooks/trigger` | Webhook Secret | 外部触发 check/update 任务（`action=update` 必须显式携带 `targets[]`） | `200` `400` `401` |
-| POST | `/api/webhooks/github-packages` | GitHub Signature | 接收 GH package webhook 并触发 discovery | `200` `202` `400` `401` |
+| POST | `/api/webhooks/github-packages` | GitHub Signature | 接收 GH package webhook，并优先触发命中服务的 `check.service`；零命中时回退到 1 个 discovery | `200` `202` `400` `401` |
 | GET | `/api/deploy-check/report` | Forward Auth | 返回部署预检报告；匿名或未命中 allowlist 时返回 Dockrev 生成的 `401 auth_required` | `200` `401` |
 | GET | `/api/deploy-welcome` | Forward Auth | 查询 deploy welcome 状态 | `200` `401` |
 | PUT | `/api/deploy-welcome` | Forward Auth | 更新 deploy welcome 状态 | `200` `400` `401` |

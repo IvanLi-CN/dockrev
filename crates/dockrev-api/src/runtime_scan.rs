@@ -800,3 +800,17 @@ fn repo_candidates(img: &registry::ImageRef) -> Vec<String> {
 fn now_rfc3339() -> anyhow::Result<String> {
     Ok(time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repo_candidates_support_digest_only_image_refs() {
+        let image = crate::registry::ImageRef::parse("ghcr.io/acme/web@sha256:deadbeef").unwrap();
+        assert_eq!(
+            repo_candidates(&image),
+            vec!["ghcr.io/acme/web".to_string()]
+        );
+    }
+}

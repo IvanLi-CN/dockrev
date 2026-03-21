@@ -185,6 +185,38 @@ impl RegistryClient for DigestOnlyUpdateRegistry {
 }
 
 #[derive(Clone)]
+struct LatestTagUpdateRegistry;
+
+#[async_trait::async_trait]
+impl RegistryClient for LatestTagUpdateRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        Ok(vec![
+            "latest".to_string(),
+            "5.2".to_string(),
+            "5.3".to_string(),
+        ])
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        let digest = match reference {
+            "latest" => "sha256:new",
+            "5.2" => "sha256:old",
+            _ => "sha256:other",
+        };
+        Ok(ManifestInfo {
+            digest: Some(digest.to_string()),
+            platform_digest: None,
+            arch: vec!["linux/amd64".to_string()],
+        })
+    }
+}
+
+#[derive(Clone)]
 struct AliasDriftRegistry {
     list_tags_delay: Duration,
 }
@@ -2049,6 +2081,64 @@ services:
     assert_eq!(tags[49].as_str().unwrap(), "1.0.0");
     assert_eq!(repo_tags[0].as_str().unwrap(), "1.0.0");
     assert_eq!(repo_tags[49].as_str().unwrap(), "1.0.49");
+}
+
+#[tokio::test]
+async fn service_digest_tags_accept_digest_only_image_refs() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(DigestTagsRegistry),
+        Arc::new(FakeRunner),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-digest-only-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web@sha256:match
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let detail = response_json(resp).await;
+    let service_id = detail["stack"]["services"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{service_id}/digest-tags?digest=match"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body = response_json(resp).await;
+    let tags = body["tags"].as_array().unwrap();
+    assert_eq!(tags.len(), 50);
+    assert_eq!(body["repoTags"][0].as_str(), Some("1.0.0"));
 }
 
 #[tokio::test]
@@ -10056,6 +10146,81 @@ services:
     assert_eq!(job.summary_json["repo"].as_str(), Some("ghcr.io/acme/web"));
     assert_eq!(job.summary_json["deliveryId"].as_str(), Some("svc-match-1"));
     assert_eq!(job.summary_json["fallbackUsed"], false);
+}
+
+#[tokio::test]
+async fn github_packages_webhook_digest_only_service_ref_still_discovers_candidate() {
+    let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
+    let state = test_state_with(":memory:", Arc::new(LatestTagUpdateRegistry), runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!(
+        "/tmp/dockrev-ghcr-webhook-digest-only-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web@sha256:old
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo-digest-only").await;
+    enable_github_packages_webhook(&state, "secret123", &[("acme", "web", true)]).await;
+
+    let service_id = state.db.list_services_for_check(&stack_id).await.unwrap()[0]
+        .id
+        .clone();
+    let payload = serde_json::json!({
+        "action": "published",
+        "repository": { "full_name": "acme/web", "owner": { "login": "acme" } }
+    });
+    let (payload_bytes, sig) = sign_github_package_payload("secret123", &payload);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/webhooks/github-packages")
+                .header("X-GitHub-Event", "package")
+                .header("X-GitHub-Delivery", "svc-digest-only-1")
+                .header("X-Hub-Signature-256", sig)
+                .body(Body::from(payload_bytes))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    let job_id = body["jobId"].as_str().unwrap().to_string();
+
+    let job = wait_for_job_terminal(&state, &job_id).await;
+    assert_eq!(job.scope.as_str(), "service");
+    assert_eq!(job.service_id.as_deref(), Some(service_id.as_str()));
+    let logs = state.db.list_job_logs(&job_id).await.unwrap();
+    assert!(
+        logs.iter()
+            .all(|line| !line.msg.contains("invalid image ref")),
+        "digest-only refs should no longer be rejected: {logs:?}"
+    );
+
+    let stack = state.db.get_stack(&stack_id).await.unwrap().unwrap();
+    let service = stack
+        .services
+        .iter()
+        .find(|svc| svc.id == service_id)
+        .unwrap();
+    assert_eq!(service.image.tag, "latest");
+    let candidate = service
+        .candidate
+        .as_ref()
+        .expect("candidate should be discovered for digest-only ref");
+    assert_eq!(candidate.tag, "latest");
+    assert_eq!(candidate.digest, "sha256:new");
 }
 
 #[tokio::test]

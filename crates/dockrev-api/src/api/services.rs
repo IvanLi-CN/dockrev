@@ -865,8 +865,9 @@ pub(super) async fn list_service_digest_tags(
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
 
-    let img = registry::ImageRef::parse(&svc.image.reference)
-        .map_err(|_| ApiError::invalid_argument("invalid image ref (expected repo/name:tag)"))?;
+    let img = registry::ImageRef::parse(&svc.image.reference).map_err(|_| {
+        ApiError::invalid_argument("invalid image ref (expected repo/name[:tag][@sha256:digest])")
+    })?;
 
     // Digest tag listing is used for UI debugging / observability, not as part of the "update
     // candidates" hot path. Still, we bound latency to avoid hanging requests forever.

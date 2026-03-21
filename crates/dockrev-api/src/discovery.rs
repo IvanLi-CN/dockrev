@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    path::Path,
     sync::LazyLock,
     time::Duration,
 };
@@ -345,6 +346,26 @@ fn variants_details_json(
     })
 }
 
+fn is_dockrev_temp_override_path(path: &str) -> bool {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let path = Path::new(trimmed);
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    if parent != std::env::temp_dir().as_path() {
+        return false;
+    }
+
+    let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    file_name.starts_with("dockrev-override-") && file_name.ends_with(".yml")
+}
+
 fn validate_image_only_override(
     path: &str,
     yaml: &str,
@@ -460,11 +481,80 @@ async fn resolve_project_compose_files(
     }
 
     if variants.len() == 1 {
-        let (compose_files, _) = variants.iter().next().expect("len=1");
-        return Ok(ResolvedProjectComposeFiles {
-            compose_files: compose_files.clone(),
-            warning: None,
-            details: None,
+        let (compose_files, services) = variants.iter().next().expect("len=1");
+        let mut readable_files = Vec::<String>::new();
+        let mut unreadable_dockrev_temp = Vec::<serde_json::Value>::new();
+        let mut unreadable_other = Vec::<serde_json::Value>::new();
+        for path in compose_files {
+            match tokio::fs::read_to_string(path).await {
+                Ok(_) => readable_files.push(path.clone()),
+                Err(e) => {
+                    let entry = serde_json::json!({
+                        "path": path,
+                        "error": e.to_string(),
+                    });
+                    if is_dockrev_temp_override_path(path) {
+                        unreadable_dockrev_temp.push(entry);
+                    } else {
+                        unreadable_other.push(entry);
+                    }
+                }
+            }
+        }
+
+        if unreadable_dockrev_temp.is_empty() && unreadable_other.is_empty() {
+            return Ok(ResolvedProjectComposeFiles {
+                compose_files: compose_files.clone(),
+                warning: None,
+                details: None,
+            });
+        }
+
+        if unreadable_other.is_empty()
+            && !unreadable_dockrev_temp.is_empty()
+            && !readable_files.is_empty()
+        {
+            let selected = serde_json::json!({
+                "mode": "single_variant_dockrev_temp_override_fallback",
+                "configFiles": readable_files.clone(),
+                "services": services.iter().cloned().collect::<Vec<_>>(),
+                "ignoredExtra": unreadable_dockrev_temp,
+            });
+            let details = variants_details_json(&variants, Some(selected));
+            return Ok(ResolvedProjectComposeFiles {
+                compose_files: readable_files,
+                warning: Some(
+                    "warning:config_files_single_variant_dockrev_temp_override_fallback: unreadable dockrev temp override ignored; using readable compose files. Hint: mount the override path into dockrev (same absolute path, read-only), or set DOCKREV_SUPERVISOR_STATE_PATH to a mounted directory".to_string(),
+                ),
+                details: Some(details),
+            });
+        }
+
+        let unreadable = unreadable_other
+            .first()
+            .or_else(|| unreadable_dockrev_temp.first())
+            .cloned();
+        let reason = unreadable
+            .as_ref()
+            .and_then(|entry| {
+                let path = entry.get("path")?.as_str()?;
+                let error = entry.get("error")?.as_str()?;
+                Some(format!(
+                    "compose_file_unreadable: {path} ({error}) (mount missing? ensure host path is mounted read-only at the same absolute path)"
+                ))
+            })
+            .unwrap_or_else(|| "compose_file_unreadable".to_string());
+        let selected = serde_json::json!({
+            "mode": "single_variant_invalid",
+            "configFiles": compose_files.clone(),
+            "services": services.iter().cloned().collect::<Vec<_>>(),
+            "unreadable": unreadable_other,
+            "ignoredDockrevTemp": unreadable_dockrev_temp,
+        });
+        let details = variants_details_json(&variants, Some(selected));
+        return Err(InvalidProjectComposeFiles {
+            reason,
+            details: Some(details),
         });
     }
 
@@ -1206,6 +1296,11 @@ mod tests {
         let override_yml = dir.join("self-upgrade.override.yml");
 
         std::fs::write(
+            &base,
+            "services:\n  dockrev:\n    image: ghcr.io/ivanli-cn/dockrev:latest\n",
+        )
+        .unwrap();
+        std::fs::write(
             &override_yml,
             "services:\n  dockrev:\n    image: ghcr.io/ivanli-cn/dockrev:latest\n",
         )
@@ -1419,6 +1514,61 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.reason.contains("unsafe override"));
+        assert!(err.details.is_some());
+    }
+
+    #[tokio::test]
+    async fn resolve_project_compose_files_single_variant_unreadable_dockrev_temp_override_falls_back()
+     {
+        let dir = make_temp_dir();
+        let base = dir.join("docker-compose.yml");
+        std::fs::write(
+            &base,
+            "services:\n  web:\n    image: ghcr.io/acme/web:latest\n",
+        )
+        .unwrap();
+        let temp_override =
+            std::env::temp_dir().join(format!("dockrev-override-demo-{}.yml", ulid::Ulid::new()));
+
+        let base_s = base.display().to_string();
+        let temp_override_s = temp_override.display().to_string();
+        let observed = vec![ObservedComposeContainer {
+            service: "web".to_string(),
+            config_files_raw: Some(format!("{base_s},{temp_override_s}")),
+        }];
+
+        let resolved = resolve_project_compose_files("demo", &observed)
+            .await
+            .unwrap();
+        assert_eq!(resolved.compose_files, vec![base_s]);
+        assert!(resolved.warning.as_deref().is_some_and(|warning| {
+            warning.contains("warning:config_files_single_variant_dockrev_temp_override_fallback")
+        }));
+        assert!(resolved.details.is_some());
+    }
+
+    #[tokio::test]
+    async fn resolve_project_compose_files_single_variant_missing_user_override_stays_invalid() {
+        let dir = make_temp_dir();
+        let base = dir.join("docker-compose.yml");
+        std::fs::write(
+            &base,
+            "services:\n  web:\n    image: ghcr.io/acme/web:latest\n",
+        )
+        .unwrap();
+        let missing_override = dir.join("missing.override.yml");
+
+        let base_s = base.display().to_string();
+        let missing_override_s = missing_override.display().to_string();
+        let observed = vec![ObservedComposeContainer {
+            service: "web".to_string(),
+            config_files_raw: Some(format!("{base_s},{missing_override_s}")),
+        }];
+
+        let err = resolve_project_compose_files("demo", &observed)
+            .await
+            .unwrap_err();
+        assert!(err.reason.contains("compose_file_unreadable"));
         assert!(err.details.is_some());
     }
 }

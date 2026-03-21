@@ -95,3 +95,4 @@
 | yhngp | Dockrev：固定 5 并行检查 + 双层任务进度 | 已完成 | `yhngp-check-parallel-dual-progress/SPEC.md` | 2026-02-24 | PR #90（checks 通过，review-loop 无 P0/P1 阻塞） |
 | kdapc | Dockrev：版本推测采集解耦 + 缓存门控 + 前端就绪等待 | 已实现 | `kdapc-version-inference-decouple/SPEC.md` | 2026-02-24 | Fast-track |
 | jjnz5 | Dockrev: 接入 UI UX Pro Max（Codex 团队共享） | 已完成 | `jjnz5-uipro-codex-integration/SPEC.md` | 2026-02-24 | PR #88 |
+| wpnmt | Dockrev：digest-only 镜像引用解析与 Discovery 临时 override 回退 | 已完成 | `wpnmt-digest-only-image-ref-discovery-fallback/SPEC.md` | 2026-03-21 | fast-track |
