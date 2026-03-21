@@ -30,6 +30,7 @@ description: Dockrev API 与 Supervisor 运行参数说明。
 | `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV` | `true` | 开发态匿名开关；配置允许用户/组后会自动失效 |
 | `DOCKREV_SELF_UPGRADE_URL` | `/supervisor/` | UI 中“升级 Dockrev”跳转地址 |
 | `DOCKREV_IMAGE_REPO` | `ghcr.io/ivanli-cn/dockrev` | 用于识别 Dockrev 自身服务 |
+| `DOCKREV_SUPERVISOR_STATE_PATH` | 空 | 可选；若要让 discovery 识别 Dockrev 自生成的 `self-upgrade.override.yml`，这里必须与 supervisor 使用同一个绝对路径 |
 | `DOCKREV_WEBHOOK_SECRET` | 空 | `/api/webhooks/trigger` 共享密钥 |
 | `DOCKREV_HOST_PLATFORM` | 空 | 覆盖主机平台（如 `linux/amd64`） |
 | `DOCKREV_DISCOVERY_INTERVAL_SECONDS` | `60` | 自动发现周期 |
@@ -41,6 +42,7 @@ description: Dockrev API 与 Supervisor 运行参数说明。
 - `DOCKREV_AUTH_ALLOWED_USER` 与 `DOCKREV_AUTH_ALLOWED_GROUP` 各只接受一个值；两者同时配置时，Dockrev 采用“用户或组命中其一即可通过”。
 - 生产匿名公共面固定为 `GET /api/health`、`GET /api/version`、`/api/webhooks/*`；其余 API/UI/`/supervisor/*` 即使走透明透传，也仍由 Dockrev 自己鉴权。
 - `DOCKREV_IMAGE_REPO` 配错会导致“升级 Dockrev”入口识别异常。
+- 若启用 self-upgrade discovery 回退，`dockrev-api` 与 `dockrev-supervisor` 必须共享同一个绝对 `DOCKREV_SUPERVISOR_STATE_PATH`，并把对应目录以相同绝对路径挂载进 `dockrev` 容器。
 
 ## 检查与重试参数
 

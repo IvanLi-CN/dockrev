@@ -27,14 +27,14 @@ description: Dockrev 常见问题的定位路径与修复建议。
 
 - 容器是否包含 `com.docker.compose.project` 与 `config_files` 标签
 - `config_files` 绝对路径是否在 dockrev 容器内同路径可读
-- 是否存在 Dockrev 自生成的 override 文件未挂载，例如 `self-upgrade.override.yml` 或 `/tmp/dockrev-override-*.yml`
+- 是否存在 Dockrev 自生成的 override 文件未挂载，例如位于绝对 `DOCKREV_SUPERVISOR_STATE_PATH` 同目录的 `self-upgrade.override.yml`，或 `/tmp/dockrev-override-<project>-<ulid>.yml`
 - 用户自己维护的额外 compose / override 文件是否仍然存在且已挂载
 
 立即处理：
 
 1. 在宿主机检查容器标签是否存在 compose 信息。
 2. 确认 `config_files` 路径已“同绝对路径只读挂载”到 Dockrev 容器。
-3. 若唯一缺失文件是 Dockrev 自生成的 override 文件（如 `self-upgrade.override.yml` 或 `/tmp/dockrev-override-*.yml`），重跑 discovery scan，Dockrev 会回退到仍可读的稳定 compose 文件。
+3. 若唯一缺失文件是 Dockrev 自生成的 override 文件（如位于 `dockrev` 与 `supervisor` 共享的绝对 `DOCKREV_SUPERVISOR_STATE_PATH` 同目录下的 `self-upgrade.override.yml`，或 `/tmp/dockrev-override-<project>-<ulid>.yml`），重跑 discovery scan，Dockrev 会回退到仍可读的稳定 compose 文件。
 4. 若缺失的是你自己维护的 compose / override 文件，仍会被判为 invalid；先恢复该文件或修复同绝对路径挂载，再重跑 discovery。
 
 ## 3) Check 频繁失败或变慢
