@@ -346,24 +346,30 @@ fn variants_details_json(
     })
 }
 
-fn is_dockrev_temp_override_path(path: &str) -> bool {
+fn is_dockrev_generated_override_path(path: &str) -> bool {
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return false;
     }
 
     let path = Path::new(trimmed);
-    let Some(parent) = path.parent() else {
-        return false;
-    };
-    if parent != std::env::temp_dir().as_path() {
-        return false;
-    }
-
     let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
         return false;
     };
-    file_name.starts_with("dockrev-override-") && file_name.ends_with(".yml")
+
+    // Dockrev currently generates overrides in two places:
+    // - updater temp files under the host temp dir: dockrev-override-<project>-<ulid>.yml
+    // - supervisor self-upgrade overrides next to DOCKREV_SUPERVISOR_STATE_PATH
+    if file_name == "self-upgrade.override.yml" {
+        return true;
+    }
+
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    parent == std::env::temp_dir().as_path()
+        && file_name.starts_with("dockrev-override-")
+        && file_name.ends_with(".yml")
 }
 
 fn validate_image_only_override(
@@ -483,7 +489,7 @@ async fn resolve_project_compose_files(
     if variants.len() == 1 {
         let (compose_files, services) = variants.iter().next().expect("len=1");
         let mut readable_files = Vec::<String>::new();
-        let mut unreadable_dockrev_temp = Vec::<serde_json::Value>::new();
+        let mut unreadable_dockrev_generated = Vec::<serde_json::Value>::new();
         let mut unreadable_other = Vec::<serde_json::Value>::new();
         for path in compose_files {
             match tokio::fs::read_to_string(path).await {
@@ -493,8 +499,8 @@ async fn resolve_project_compose_files(
                         "path": path,
                         "error": e.to_string(),
                     });
-                    if is_dockrev_temp_override_path(path) {
-                        unreadable_dockrev_temp.push(entry);
+                    if is_dockrev_generated_override_path(path) {
+                        unreadable_dockrev_generated.push(entry);
                     } else {
                         unreadable_other.push(entry);
                     }
@@ -502,7 +508,7 @@ async fn resolve_project_compose_files(
             }
         }
 
-        if unreadable_dockrev_temp.is_empty() && unreadable_other.is_empty() {
+        if unreadable_dockrev_generated.is_empty() && unreadable_other.is_empty() {
             return Ok(ResolvedProjectComposeFiles {
                 compose_files: compose_files.clone(),
                 warning: None,
@@ -511,20 +517,20 @@ async fn resolve_project_compose_files(
         }
 
         if unreadable_other.is_empty()
-            && !unreadable_dockrev_temp.is_empty()
+            && !unreadable_dockrev_generated.is_empty()
             && !readable_files.is_empty()
         {
             let selected = serde_json::json!({
-                "mode": "single_variant_dockrev_temp_override_fallback",
+                "mode": "single_variant_dockrev_generated_override_fallback",
                 "configFiles": readable_files.clone(),
                 "services": services.iter().cloned().collect::<Vec<_>>(),
-                "ignoredExtra": unreadable_dockrev_temp,
+                "ignoredExtra": unreadable_dockrev_generated,
             });
             let details = variants_details_json(&variants, Some(selected));
             return Ok(ResolvedProjectComposeFiles {
                 compose_files: readable_files,
                 warning: Some(
-                    "warning:config_files_single_variant_dockrev_temp_override_fallback: unreadable dockrev temp override ignored; using readable compose files. Hint: mount the override path into dockrev (same absolute path, read-only), or set DOCKREV_SUPERVISOR_STATE_PATH to a mounted directory".to_string(),
+                    "warning:config_files_single_variant_dockrev_generated_override_fallback: unreadable dockrev-generated override ignored; using readable compose files. Hint: mount the override path into dockrev (same absolute path, read-only), or set DOCKREV_SUPERVISOR_STATE_PATH to a mounted directory".to_string(),
                 ),
                 details: Some(details),
             });
@@ -532,7 +538,7 @@ async fn resolve_project_compose_files(
 
         let unreadable = unreadable_other
             .first()
-            .or_else(|| unreadable_dockrev_temp.first())
+            .or_else(|| unreadable_dockrev_generated.first())
             .cloned();
         let reason = unreadable
             .as_ref()
@@ -549,7 +555,7 @@ async fn resolve_project_compose_files(
             "configFiles": compose_files.clone(),
             "services": services.iter().cloned().collect::<Vec<_>>(),
             "unreadable": unreadable_other,
-            "ignoredDockrevTemp": unreadable_dockrev_temp,
+            "ignoredDockrevGenerated": unreadable_dockrev_generated,
         });
         let details = variants_details_json(&variants, Some(selected));
         return Err(InvalidProjectComposeFiles {
@@ -1542,7 +1548,38 @@ mod tests {
             .unwrap();
         assert_eq!(resolved.compose_files, vec![base_s]);
         assert!(resolved.warning.as_deref().is_some_and(|warning| {
-            warning.contains("warning:config_files_single_variant_dockrev_temp_override_fallback")
+            warning
+                .contains("warning:config_files_single_variant_dockrev_generated_override_fallback")
+        }));
+        assert!(resolved.details.is_some());
+    }
+
+    #[tokio::test]
+    async fn resolve_project_compose_files_single_variant_unreadable_self_upgrade_override_falls_back()
+     {
+        let dir = make_temp_dir();
+        let base = dir.join("docker-compose.yml");
+        std::fs::write(
+            &base,
+            "services:\n  web:\n    image: ghcr.io/acme/web:latest\n",
+        )
+        .unwrap();
+        let self_upgrade_override = dir.join("self-upgrade.override.yml");
+
+        let base_s = base.display().to_string();
+        let self_upgrade_override_s = self_upgrade_override.display().to_string();
+        let observed = vec![ObservedComposeContainer {
+            service: "web".to_string(),
+            config_files_raw: Some(format!("{base_s},{self_upgrade_override_s}")),
+        }];
+
+        let resolved = resolve_project_compose_files("demo", &observed)
+            .await
+            .unwrap();
+        assert_eq!(resolved.compose_files, vec![base_s]);
+        assert!(resolved.warning.as_deref().is_some_and(|warning| {
+            warning
+                .contains("warning:config_files_single_variant_dockrev_generated_override_fallback")
         }));
         assert!(resolved.details.is_some());
     }

@@ -9,7 +9,7 @@
 ## 背景 / 问题陈述
 
 - 线上存在服务记录被写成 `repo@sha256:digest` + `image_tag=latest` 的状态；Dockrev 能保存这类记录，但 `registry::ImageRef::parse` 仍只接受 `repo:tag`，导致 webhook / check / runtime 路径再次读取时直接报 `invalid image ref`。
-- Discovery 目前只在多 variant 冲突场景下才会处理失效的 Dockrev 临时 override。若单一 variant 里残留了已经消失的 `dockrev-override-*.yml`，项目仍会被标记为 `invalid`。
+- Discovery 目前只在多 variant 冲突场景下才会处理失效的 Dockrev 自生成 override。若单一 variant 里残留了已经消失的 `/tmp/dockrev-override-*.yml` 或 `self-upgrade.override.yml`，项目仍会被标记为 `invalid`。
 - 不修复这两点，会继续出现“GHCR 已更新 latest，但 Dockrev 不发现新版本”的漏检与错误排障结论。
 
 ## 目标 / 非目标
@@ -18,7 +18,7 @@
 
 - 让 Dockrev 统一接受 `repo/name[:tag][@sha256:digest]` 形式的镜像引用。
 - 保持现有“同一 `image_tag` 的 digest 变化检测”策略不变，只修复建模与读取不一致。
-- 让单 variant discovery 在唯一缺失文件是 Dockrev 临时 override 时回退到稳定 compose 文件，而不是整体失效。
+- 让单 variant discovery 在唯一缺失文件是 Dockrev 自生成 override 时回退到稳定 compose 文件，而不是整体失效。
 - 补齐回归测试与用户文档，明确 GHCR webhook 与 discovery fallback 的新口径。
 
 ### Non-goals
@@ -32,7 +32,7 @@
 ### In scope
 
 - `registry::ImageRef::parse` 与所有依赖它的服务检查/预检/runtime repo 匹配调用面。
-- Discovery 的 `variants.len()==1` 分支对失效 Dockrev 临时 override 的 fallback 行为。
+- Discovery 的 `variants.len()==1` 分支对失效 Dockrev 自生成 override 的 fallback 行为。
 - 与本次语义变化直接相关的 API reference / troubleshooting 文档。
 
 ### Out of scope
@@ -46,7 +46,7 @@
 
 - `repo@sha256:digest` 与 `repo:tag@sha256:digest` 都必须被视为合法镜像引用。
 - digest-only 服务记录在 webhook `check.service`、runtime scan、deploy preflight、service digest-tags 调试接口上都不能再被判为 `invalid image ref`。
-- 单 variant discovery 若只缺失 Dockrev 临时 override，必须回退到其余可读 compose 文件并留下 warning。
+- 单 variant discovery 若只缺失 Dockrev 自生成 override，必须回退到其余可读 compose 文件并留下 warning。
 - 单 variant discovery 若缺失的是用户管理的 compose / override 文件，仍必须保持 `invalid`。
 
 ### SHOULD
@@ -65,13 +65,13 @@
 - 服务记录为 `ghcr.io/acme/web@sha256:old`、`image_tag=latest` 时，GHCR webhook 命中该 repo 后，Dockrev 仍会正常执行 `check.service`，使用 `image_tag=latest` 查询 registry manifest，并在 digest 变化时写入 `candidate_tag=latest` + 新 digest。
 - runtime scan 在构建 repo candidate 时，对 digest-only 服务记录应能继续还原出镜像仓库名。
 - deploy preflight 在扫描受管服务镜像时，digest-only 引用不再被归入 invalid image refs。
-- single-variant discovery 若 compose 文件列表中既有可读稳定文件，又有不可读的 `dockrev-override-*.yml` 临时文件，则直接丢弃失效临时文件并继续使用其余可读文件。
+- single-variant discovery 若 compose 文件列表中既有可读稳定文件，又有不可读的 Dockrev 自生成 override 文件（`/tmp/dockrev-override-*.yml` 或 `self-upgrade.override.yml`），则直接丢弃失效 override 并继续使用其余可读文件。
 
 ### Edge cases / errors
 
 - `repo/name`（既无 tag 也无 digest）仍是非法镜像引用。
 - `repo/name:@digest`、空 digest、空路径仍是非法镜像引用。
-- 若 single-variant 中所有文件都不可读，或任一不可读文件不是 Dockrev 临时 override，则项目继续标记为 `invalid`。
+- 若 single-variant 中所有文件都不可读，或任一不可读文件不是 Dockrev 自生成 override，则项目继续标记为 `invalid`。
 
 ## 接口契约（Interfaces & Contracts）
 
@@ -97,7 +97,7 @@ None
 - Given service digest-tags 调试接口面向 digest-only 服务记录，
   When 请求 `/api/services/{id}/digest-tags?digest=...`，
   Then 返回 `200` 与 repo tags，而不是因为镜像引用格式被拒绝。
-- Given single-variant compose files 为 `[base.yml, /tmp/dockrev-override-xxx.yml]` 且仅后者缺失，
+- Given single-variant compose files 为 `[base.yml, /tmp/dockrev-override-xxx.yml]` 或 `[base.yml, self-upgrade.override.yml]` 且仅 override 缺失，
   When 执行 discovery，
   Then 项目继续可用并回退到 `base.yml`，同时留下 fallback warning。
 - Given single-variant 中缺失的是用户维护的 override 文件，
@@ -165,7 +165,7 @@ None
 ## 风险 / 开放问题 / 假设（Risks, Open Questions, Assumptions）
 
 - 风险：若某些内部路径隐式依赖 `ImageRef.reference` 一定是 tag，本次放宽解析可能暴露隐藏假设；通过搜索调用面与回归测试兜底。
-- 风险：single-variant fallback 若误把用户文件识别成 Dockrev 临时 override，会掩盖真实挂载问题；因此匹配条件必须限定在临时目录 + `dockrev-override-*.yml` 命名。
+- 风险：single-variant fallback 若误把用户文件识别成 Dockrev 自生成 override，会掩盖真实挂载问题；因此匹配条件必须限定在 Dockrev 已知的两种文件形态：临时目录下的 `dockrev-override-*.yml` 与 supervisor 的 `self-upgrade.override.yml`。
 - 假设：现有脏服务记录在新版本部署后可由下一轮正常 check/discovery 自然恢复，无需额外 backfill。
 
 ## 变更记录（Change log）
