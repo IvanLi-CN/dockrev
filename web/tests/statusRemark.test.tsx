@@ -46,6 +46,8 @@ describe('StatusRemark discovery count', () => {
 
     expect(html).toContain('可更新')
     expect(html).toContain('发现 3 次')
+    expect(html).toContain('aria-label="发现 3 次，查看版本时间线"')
+    expect(html).toContain('<button')
   })
 
   test('omits the discovery count pill when the count is absent', () => {

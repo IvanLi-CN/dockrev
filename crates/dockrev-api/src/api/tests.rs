@@ -626,10 +626,14 @@ impl CommandRunner for SemverRetryFailRunner {
                 }
             }
             1 => {
-                assert_eq!(
-                    args,
-                    vec!["inspect", "--format", "{{.Image}}", "container_old"]
+                assert_eq!(args.first().copied(), Some("inspect"));
+                assert_eq!(args.get(1).copied(), Some("--format"));
+                assert!(
+                    args.get(2)
+                        .copied()
+                        .is_some_and(|value| value.starts_with("{{.Image}}"))
                 );
+                assert_eq!(args.get(3).copied(), Some("container_old"));
                 CommandOutput {
                     status: 0,
                     stdout: "sha256:old\n".to_string(),
@@ -677,10 +681,14 @@ impl CommandRunner for SemverRetryFailRunner {
                 }
             }
             6 => {
-                assert_eq!(
-                    args,
-                    vec!["inspect", "--format", "{{.Image}}", "container_new"]
+                assert_eq!(args.first().copied(), Some("inspect"));
+                assert_eq!(args.get(1).copied(), Some("--format"));
+                assert!(
+                    args.get(2)
+                        .copied()
+                        .is_some_and(|value| value.starts_with("{{.Image}}"))
                 );
+                assert_eq!(args.get(3).copied(), Some("container_new"));
                 CommandOutput {
                     status: 0,
                     stdout: "sha256:new\n".to_string(),
@@ -899,7 +907,10 @@ impl CommandRunner for ScriptedRunner {
             (0, "cid1\n".to_string())
         } else if args.first().map(|s| s.as_str()) == Some("inspect")
             && args.get(1).map(|s| s.as_str()) == Some("--format")
-            && args.get(2).map(|s| s.as_str()) == Some("{{.Image}}")
+            && args
+                .get(2)
+                .map(|s| s.as_str())
+                .is_some_and(|s| s.starts_with("{{.Image}}"))
         {
             (0, "img1\n".to_string())
         } else if args.first().map(|s| s.as_str()) == Some("image")
@@ -946,7 +957,10 @@ impl CommandRunner for PlatformDigestRunner {
             (0, "cid1\n".to_string())
         } else if args.first().map(|s| s.as_str()) == Some("inspect")
             && args.get(1).map(|s| s.as_str()) == Some("--format")
-            && args.get(2).map(|s| s.as_str()) == Some("{{.Image}}")
+            && args
+                .get(2)
+                .map(|s| s.as_str())
+                .is_some_and(|s| s.starts_with("{{.Image}}"))
         {
             (0, "img1\n".to_string())
         } else if args.first().map(|s| s.as_str()) == Some("image")
@@ -996,7 +1010,10 @@ impl CommandRunner for CheckAndRuntimeScanRunner {
             (0, "cid1\n".to_string())
         } else if args.first().map(|s| s.as_str()) == Some("inspect")
             && args.get(1).map(|s| s.as_str()) == Some("--format")
-            && args.get(2).map(|s| s.as_str()) == Some("{{.Image}}")
+            && args
+                .get(2)
+                .map(|s| s.as_str())
+                .is_some_and(|s| s.starts_with("{{.Image}}"))
         {
             (0, "img1\n".to_string())
         } else if args.first().map(|s| s.as_str()) == Some("inspect")
@@ -1076,7 +1093,10 @@ impl CommandRunner for UpdateAndRuntimeScanRunner {
             (0, String::new())
         } else if args.first().map(|s| s.as_str()) == Some("inspect")
             && args.get(1).map(|s| s.as_str()) == Some("--format")
-            && args.get(2).map(|s| s.as_str()) == Some("{{.Image}}")
+            && args
+                .get(2)
+                .map(|s| s.as_str())
+                .is_some_and(|s| s.starts_with("{{.Image}}"))
         {
             match args.get(3).map(|s| s.as_str()) {
                 Some("container_old") => (
@@ -3059,7 +3079,9 @@ services:
         "job-test",
         &svc,
         // Ensure current digest is known even if the registry is inconsistent.
-        Some("sha256:cur".to_string()),
+        Some(
+            crate::service_check::RuntimeServiceObservation::digest_only("sha256:cur".to_string()),
+        ),
         "linux/amd64",
         &now,
         &manifest_digest_cache,
@@ -3161,7 +3183,9 @@ services:
         "job-test",
         &svc,
         // Simulate runtime being behind registry (digest-only update).
-        Some("sha256:old".to_string()),
+        Some(
+            crate::service_check::RuntimeServiceObservation::digest_only("sha256:old".to_string()),
+        ),
         "linux/amd64",
         &now,
         &manifest_digest_cache,
@@ -3269,7 +3293,9 @@ services:
         &state,
         "job-test",
         &svc,
-        Some("sha256:old".to_string()),
+        Some(
+            crate::service_check::RuntimeServiceObservation::digest_only("sha256:old".to_string()),
+        ),
         "linux/amd64",
         &now,
         &manifest_digest_cache,
@@ -3706,6 +3732,208 @@ services:
         detail["stack"]["services"][0]["newVersionDiscoveryCount"].as_u64(),
         Some(2)
     );
+}
+
+#[tokio::test]
+async fn service_new_version_discovery_timeline_returns_candidate_history_and_runtime_started_at() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        Some("sha256:current-v1"),
+        Some("latest"),
+        Some("sha256:live-candidate"),
+    )
+    .await;
+    let now = test_now_rfc3339();
+    let running_started_at = test_offset_rfc3339(&now, -time::Duration::hours(4));
+    state
+        .db
+        .update_service_check_result_with_runtime_started_at(
+            &service_id,
+            Some("sha256:current-v1".to_string()),
+            Some(running_started_at.clone()),
+            Some("1.16.0".to_string()),
+            Some("[\"1.16.0\"]".to_string()),
+            Some("latest".to_string()),
+            Some("1.16.2".to_string()),
+            Some("sha256:live-candidate".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let historical_discovered_at = test_offset_rfc3339(&now, time::Duration::minutes(-90));
+    let current_candidate_discovered_at = test_offset_rfc3339(&now, time::Duration::minutes(-30));
+
+    let historical_job_id = insert_check_job(&state, "schedule", &historical_discovered_at).await;
+    state
+        .db
+        .finish_job(
+            &historical_job_id,
+            "success",
+            &historical_discovered_at,
+            &make_new_version_summary_for_test(
+                &service_id,
+                "latest",
+                "1.16.0",
+                "sha256:current-v1",
+                "latest",
+                "1.16.1",
+                "sha256:candidate-a",
+            ),
+        )
+        .await
+        .unwrap();
+    let current_job_id =
+        insert_check_job(&state, "schedule", &current_candidate_discovered_at).await;
+    state
+        .db
+        .finish_job(
+            &current_job_id,
+            "success",
+            &current_candidate_discovered_at,
+            &make_new_version_summary_for_test(
+                &service_id,
+                "latest",
+                "1.16.0",
+                "sha256:current-v1",
+                "latest",
+                "1.16.2",
+                "sha256:live-candidate",
+            ),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{service_id}/new-version-discovery-timeline"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body = response_json(resp).await;
+    let items = body["items"].as_array().expect("timeline items");
+    assert_eq!(items.len(), 3);
+    assert_eq!(items[0]["kind"].as_str(), Some("currentCandidate"));
+    assert_eq!(items[0]["version"].as_str(), Some("1.16.2"));
+    assert_eq!(
+        items[0]["occurredAt"].as_str(),
+        Some(current_candidate_discovered_at.as_str())
+    );
+    assert_eq!(items[1]["kind"].as_str(), Some("historicalCandidate"));
+    assert_eq!(items[1]["version"].as_str(), Some("1.16.1"));
+    assert_eq!(
+        items[1]["occurredAt"].as_str(),
+        Some(historical_discovered_at.as_str())
+    );
+    assert_eq!(items[2]["kind"].as_str(), Some("currentRunning"));
+    assert_eq!(items[2]["version"].as_str(), Some("1.16.0"));
+    assert_eq!(
+        items[2]["occurredAt"].as_str(),
+        Some(running_started_at.as_str())
+    );
+}
+
+#[tokio::test]
+async fn sync_stack_compose_reset_clears_runtime_started_at_from_timeline_context() {
+    let state = test_state(":memory:").await;
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id =
+        set_single_service_check_result(&state, &stack_id, Some("sha256:current-v1"), None, None)
+            .await;
+    let now = test_now_rfc3339();
+    let runtime_started_at = test_offset_rfc3339(&now, -time::Duration::hours(2));
+    state
+        .db
+        .update_service_check_result_with_runtime_started_at(
+            &service_id,
+            Some("sha256:current-v1".to_string()),
+            Some(runtime_started_at),
+            Some("1.16.0".to_string()),
+            Some("[\"1.16.0\"]".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+    let before = state
+        .db
+        .get_service_new_version_timeline_context(&service_id)
+        .await
+        .unwrap()
+        .expect("timeline context before sync");
+    assert!(before.current_runtime_started_at.is_some());
+
+    let synced_at = test_offset_rfc3339(&now, time::Duration::minutes(5));
+    state
+        .db
+        .sync_stack_from_compose(
+            &stack_id,
+            std::slice::from_ref(&compose_path),
+            &[crate::db::ComposeServiceSpec {
+                name: "web".to_string(),
+                image_ref: "ghcr.io/acme/web:5.3".to_string(),
+                image_tag: "5.3".to_string(),
+            }],
+            &synced_at,
+        )
+        .await
+        .unwrap();
+
+    let after = state
+        .db
+        .get_service_new_version_timeline_context(&service_id)
+        .await
+        .unwrap()
+        .expect("timeline context after sync");
+    assert_eq!(after.current_runtime_started_at, None);
 }
 
 #[tokio::test]
@@ -8213,7 +8441,12 @@ services:
     )
     .await
     .unwrap();
-    assert_eq!(runtime.as_deref(), Some("sha256:match"));
+    assert_eq!(
+        runtime
+            .as_ref()
+            .map(|observation| observation.digest.as_str()),
+        Some("sha256:match")
+    );
 
     let check = serde_json::json!({
         "scope": "stack",
@@ -13917,7 +14150,9 @@ services:
         &state,
         "job-check-1",
         &service,
-        Some("sha256:old".to_string()),
+        Some(
+            crate::service_check::RuntimeServiceObservation::digest_only("sha256:old".to_string()),
+        ),
         "linux/amd64",
         first_check_now,
         &manifest_digest_cache,
@@ -13976,7 +14211,9 @@ services:
         &state,
         "job-check-3",
         &service,
-        Some("sha256:old".to_string()),
+        Some(
+            crate::service_check::RuntimeServiceObservation::digest_only("sha256:old".to_string()),
+        ),
         "linux/amd64",
         restored_now,
         &manifest_digest_cache,

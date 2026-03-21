@@ -48,6 +48,29 @@ pub struct TriggerVersionInferenceRefreshResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub enum NewVersionDiscoveryTimelineItemKind {
+    CurrentCandidate,
+    HistoricalCandidate,
+    CurrentRunning,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewVersionDiscoveryTimelineItem {
+    pub kind: NewVersionDiscoveryTimelineItemKind,
+    pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub occurred_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewVersionDiscoveryTimelineResponse {
+    pub items: Vec<NewVersionDiscoveryTimelineItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VersionInferenceOverviewResponse {
     pub worker: VersionInferenceWorkerState,
     pub gc: VersionInferenceGcState,

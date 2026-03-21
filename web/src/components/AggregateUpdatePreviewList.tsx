@@ -3,9 +3,10 @@ import { Icon } from '@iconify/react'
 import helpCircleOutline from '@iconify-icons/mdi/help-circle-outline'
 
 import type { Service } from '../api'
-import { DiscoveryCountPill, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui'
 import { isSemverDowngradeAnomaly, statusLabel, type RowStatus } from '../updateStatus'
 import { CurrentVersionPopover } from './CurrentVersionPopover'
+import { DiscoveryHistoryPopover } from './DiscoveryHistoryPopover'
 import { VersionTagsPopover } from './VersionTagsPopover'
 import {
   formatCandidateTagDisplay,
@@ -184,7 +185,7 @@ export function AggregateUpdatePreviewList(props: {
               <div className="modalListTitle">
                 <span className="mono">{item.displayName ?? svc.name}</span>
                 <span className="muted">{` · ${statusLabel(item.status)}`}</span>
-                <DiscoveryCountPill count={svc.newVersionDiscoveryCount} />
+                <DiscoveryHistoryPopover serviceId={svc.id} count={svc.newVersionDiscoveryCount} />
                 {item.guardedDockrev ? (
                   <TooltipProvider delayDuration={160}>
                     <Tooltip>

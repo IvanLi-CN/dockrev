@@ -139,6 +139,7 @@ export function VersionTagsPopover(props: {
     children,
   } = props
   const fetchTimer = useRef<number | null>(null)
+  const mountedRef = useRef(true)
   const {
     close,
     contentProps,
@@ -157,6 +158,7 @@ export function VersionTagsPopover(props: {
     () => `${serviceId}:${candidateDigestNorm ?? ''}`,
     [candidateDigestNorm, serviceId],
   )
+  const latestSnapshotKeyRef = useRef(snapshotKey)
 
   const [digestState, setDigestState] = useState<DigestTagsState>(() =>
     emptyDigestTagsState(snapshotKey),
@@ -219,7 +221,13 @@ export function VersionTagsPopover(props: {
       : candidateTagTrim
 
   useEffect(() => {
+    latestSnapshotKeyRef.current = snapshotKey
+  }, [snapshotKey])
+
+  useEffect(() => {
+    mountedRef.current = true
     return () => {
+      mountedRef.current = false
       if (fetchTimer.current != null) {
         window.clearTimeout(fetchTimer.current)
         fetchTimer.current = null
@@ -311,7 +319,9 @@ export function VersionTagsPopover(props: {
     if (prefetchOnMount && snapshotPhaseRef.current !== 'loading')
       setSnapshotPhase('loading')
 
-    let alive = true
+    const requestSnapshotKey = snapshotKey
+    const isStale = () =>
+      !mountedRef.current || latestSnapshotKeyRef.current !== requestSnapshotKey
     const prefetchJitter =
       prefetchOnMount && !open && !pinned
         ? stableJitterMs(
@@ -326,14 +336,14 @@ export function VersionTagsPopover(props: {
     }
 
     const timerId = window.setTimeout(() => {
-      if (!alive) return
       // Avoid stale request finalizers / callbacks clobbering newer debounce timers.
       if (fetchTimer.current === timerId) fetchTimer.current = null
 
       const poll = () => {
+        if (isStale()) return
         getServiceDigestTagsSnapshot(serviceId, candidateDigestNorm)
           .then((data) => {
-            if (!alive) return
+            if (isStale()) return
             if (isServiceDigestTagsSnapshotPending(data)) {
               setSnapshotPhase('loading')
               const retryAfterMs = Math.max(
@@ -413,7 +423,7 @@ export function VersionTagsPopover(props: {
             setSnapshotPhase('ready')
           })
           .catch((e: unknown) => {
-            if (!alive) return
+            if (isStale()) return
             if (e instanceof ApiError && e.status === 404) {
               setDigestState({
                 key: snapshotKey,
@@ -467,7 +477,6 @@ export function VersionTagsPopover(props: {
     fetchTimer.current = timerId
 
     return () => {
-      alive = false
       // Preserve server-directed retry timers (set after 202 pending) across re-renders.
       // Only cancel the debounce timer created by this effect instance.
       if (fetchTimer.current === timerId) {

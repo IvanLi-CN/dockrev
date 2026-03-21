@@ -2,11 +2,13 @@ import type { Meta, StoryObj } from '@storybook/react'
 
 import type { Service } from '../../api'
 import { AggregateUpdatePreviewList, type AggregateUpdatePreviewListItem } from '../../components/AggregateUpdatePreviewList'
+import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 
 const meta: Meta<typeof AggregateUpdatePreviewList> = {
   title: 'Components/AggregateUpdatePreviewList',
   tags: ['autodocs'],
   component: AggregateUpdatePreviewList,
+  decorators: [withDockrevMockApi],
 }
 
 export default meta
@@ -27,6 +29,7 @@ function baseService(): Service {
 }
 
 export const AllStates: Story = {
+  parameters: { dockrevApiScenario: 'default' },
   render: () => {
     const api = {
       ...baseService(),

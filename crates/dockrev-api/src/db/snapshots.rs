@@ -100,6 +100,70 @@ WHERE id = ?1
         .context("update service check result")
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_service_check_result_with_runtime_started_at(
+        &self,
+        service_id: &str,
+        current_digest: Option<String>,
+        current_runtime_started_at: Option<String>,
+        current_resolved_tag: Option<String>,
+        current_resolved_tags_json: Option<String>,
+        candidate_tag: Option<String>,
+        candidate_resolved_tag: Option<String>,
+        candidate_digest: Option<String>,
+        candidate_arch_match: Option<String>,
+        candidate_arch_json: Option<String>,
+        ignore_rule_id: Option<String>,
+        ignore_reason: Option<String>,
+        checked_at: &str,
+        now: &str,
+    ) -> anyhow::Result<bool> {
+        let service_id = service_id.to_string();
+        let checked_at = checked_at.to_string();
+        let now = now.to_string();
+        self.call(move |conn| {
+            let changed = conn.execute(
+                r#"
+UPDATE services
+SET
+  current_digest = ?2,
+  current_runtime_started_at = ?3,
+  current_resolved_tag = ?4,
+  current_resolved_tags_json = ?5,
+  candidate_tag = ?6,
+  candidate_resolved_tag = ?7,
+  candidate_digest = ?8,
+  candidate_arch_match = ?9,
+  candidate_arch_json = ?10,
+  ignore_rule_id = ?11,
+  ignore_reason = ?12,
+  checked_at = ?13,
+  updated_at = ?14
+WHERE id = ?1
+"#,
+                params![
+                    service_id,
+                    current_digest,
+                    current_runtime_started_at,
+                    current_resolved_tag,
+                    current_resolved_tags_json,
+                    candidate_tag,
+                    candidate_resolved_tag,
+                    candidate_digest,
+                    candidate_arch_match,
+                    candidate_arch_json,
+                    ignore_rule_id,
+                    ignore_reason,
+                    checked_at,
+                    now,
+                ],
+            )?;
+            Ok(changed > 0)
+        })
+        .await
+        .context("update service check result with runtime started at")
+    }
+
     pub async fn upsert_service_digest_tags_snapshot(
         &self,
         service_id: &str,

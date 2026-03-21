@@ -393,7 +393,7 @@ async fn run_runtime_scan_for_job(
 
         stacks_scanned += 1;
 
-        let runtime_digests = match docker_compose_project_runtime_digests(
+        let runtime_observations = match docker_compose_project_runtime_digests(
             state.as_ref(),
             project,
             &services,
@@ -429,7 +429,7 @@ async fn run_runtime_scan_for_job(
         };
 
         for svc in &services {
-            let Some(runtime_digest) = runtime_digests.get(&svc.name).cloned() else {
+            let Some(runtime) = runtime_observations.get(&svc.name).cloned() else {
                 continue;
             };
             services_with_runtime += 1;
@@ -437,7 +437,7 @@ async fn run_runtime_scan_for_job(
             if svc
                 .current_digest
                 .as_deref()
-                .is_some_and(|d| d == runtime_digest.as_str())
+                .is_some_and(|d| d == runtime.digest.as_str())
             {
                 continue;
             }
@@ -449,6 +449,7 @@ async fn run_runtime_scan_for_job(
                 image_ref: svc.image_ref.clone(),
                 image_tag: svc.image_tag.clone(),
                 current_digest: svc.current_digest.clone(),
+                current_runtime_started_at: svc.current_runtime_started_at.clone(),
                 current_resolved_tag: svc.current_resolved_tag.clone(),
                 current_resolved_tags_json: svc.current_resolved_tags_json.clone(),
                 candidate_digest: svc.candidate_digest.clone(),
@@ -460,7 +461,7 @@ async fn run_runtime_scan_for_job(
                 state,
                 job_id,
                 &svc_for_check,
-                Some(runtime_digest.clone()),
+                Some(runtime.clone()),
                 host_platform,
                 now,
                 &manifest_digest_cache,
@@ -482,12 +483,12 @@ async fn run_runtime_scan_for_job(
                     &svc.id,
                     &svc.image_ref,
                     &svc.image_tag,
-                    &runtime_digest,
+                    &runtime,
                     now,
                 )
                 .await?;
 
-                outcome.current_digest = Some(runtime_digest.clone());
+                outcome.current_digest = Some(runtime.digest.clone());
                 outcome.current_resolved_tag = None;
                 outcome.current_resolved_tags_json = None;
                 outcome.current_resolved_tags = None;
@@ -520,7 +521,7 @@ async fn run_runtime_scan_for_job(
                     .enqueue(&repo, &candidate_digest, host_platform, "new_version")
                     .await;
             }
-            let changed = before_digest.as_deref() != Some(runtime_digest.as_str());
+            let changed = before_digest.as_deref() != Some(runtime.digest.as_str());
             if changed
                 && let Some(d) = outcome.current_digest.as_deref()
                 && let Some(repo) =
@@ -546,7 +547,8 @@ async fn run_runtime_scan_for_job(
                 "serviceName": svc.name,
                 "imageRef": svc.image_ref,
                 "rawTag": svc.image_tag,
-                "runtimeDigest": runtime_digest,
+                "runtimeDigest": runtime.digest,
+                "runtimeStartedAt": runtime.started_at,
                 "dbDigestBefore": before_digest,
                 "updated": {
                     "currentDigest": outcome.current_digest,
@@ -612,7 +614,7 @@ pub(crate) async fn docker_compose_project_runtime_digests(
     state: &AppState,
     compose_project: &str,
     services: &[crate::db::ServiceForRuntimeScan],
-) -> anyhow::Result<BTreeMap<String, String>> {
+) -> anyhow::Result<BTreeMap<String, service_check::RuntimeServiceObservation>> {
     // docker ps (all containers in the compose project)
     let ps = state
         .runner
@@ -649,7 +651,7 @@ pub(crate) async fn docker_compose_project_runtime_digests(
         return Ok(BTreeMap::new());
     }
 
-    // docker inspect (service label + image id per container)
+    // docker inspect (service label + image id + container startedAt per container)
     let inspect = state
         .runner
         .run(
@@ -659,7 +661,7 @@ pub(crate) async fn docker_compose_project_runtime_digests(
                     let mut args = vec![
                         "inspect".to_string(),
                         "--format".to_string(),
-                        "{{index .Config.Labels \"com.docker.compose.service\"}}\t{{.Image}}"
+                        "{{index .Config.Labels \"com.docker.compose.service\"}}\t{{.Image}}\t{{.State.StartedAt}}"
                             .to_string(),
                     ];
                     args.extend(container_ids);
@@ -679,22 +681,31 @@ pub(crate) async fn docker_compose_project_runtime_digests(
         ));
     }
 
-    let mut container_images: Vec<(String, String)> = Vec::new();
+    let mut container_images: Vec<(String, String, Option<String>)> = Vec::new();
     let mut image_ids: BTreeSet<String> = BTreeSet::new();
     for line in inspect.stdout.lines() {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
-        let Some((svc_name, image_id)) = line.split_once('\t') else {
+        let mut parts = line.split('\t');
+        let Some(svc_name) = parts.next() else {
             continue;
         };
+        let Some(image_id) = parts.next() else {
+            continue;
+        };
+        let started_at_raw = parts.next();
         let svc_name = svc_name.trim().to_string();
         let image_id = image_id.trim().to_string();
         if svc_name.is_empty() || image_id.is_empty() {
             continue;
         }
-        container_images.push((svc_name, image_id.clone()));
+        container_images.push((
+            svc_name,
+            image_id.clone(),
+            service_check::normalize_runtime_started_at(started_at_raw),
+        ));
         image_ids.insert(image_id);
     }
 
@@ -755,13 +766,20 @@ pub(crate) async fn docker_compose_project_runtime_digests(
     }
 
     let mut digests_by_service: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for (svc_name, image_id) in container_images {
+    let mut started_ats_by_service: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (svc_name, image_id, started_at) in container_images {
         let Some(repo_candidates) = repo_candidates_by_service.get(&svc_name) else {
             continue;
         };
         let Some(repo_digests) = repo_digests_by_image_id.get(&image_id) else {
             continue;
         };
+        if let Some(started_at) = started_at {
+            started_ats_by_service
+                .entry(svc_name.clone())
+                .or_default()
+                .insert(started_at);
+        }
         let entry = digests_by_service.entry(svc_name).or_default();
         for d in repo_digests {
             for repo in repo_candidates {
@@ -774,10 +792,18 @@ pub(crate) async fn docker_compose_project_runtime_digests(
         }
     }
 
-    let mut out: BTreeMap<String, String> = BTreeMap::new();
+    let mut out: BTreeMap<String, service_check::RuntimeServiceObservation> = BTreeMap::new();
     for (svc_name, digests) in digests_by_service {
         if digests.len() == 1 {
-            out.insert(svc_name, digests.iter().next().cloned().unwrap_or_default());
+            out.insert(
+                svc_name.clone(),
+                service_check::RuntimeServiceObservation {
+                    digest: digests.iter().next().cloned().unwrap_or_default(),
+                    started_at: started_ats_by_service
+                        .get(&svc_name)
+                        .and_then(|values| values.iter().next().cloned()),
+                },
+            );
         }
     }
     Ok(out)

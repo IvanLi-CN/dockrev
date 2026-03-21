@@ -1,5 +1,160 @@
 use super::*;
 
+fn normalize_optional_value(input: Option<&str>) -> Option<String> {
+    input
+        .map(|value| crate::db::normalize_discovery_key(Some(value)))
+        .filter(|value| !value.is_empty())
+}
+
+fn timeline_candidate_identity(
+    context: &crate::db::ServiceNewVersionTimelineContext,
+) -> Option<String> {
+    let candidate_tag = crate::db::normalize_discovery_key(context.candidate_tag.as_deref());
+    let candidate_display_tag = crate::db::normalize_discovery_key(
+        context
+            .candidate_resolved_tag
+            .as_deref()
+            .or(context.candidate_tag.as_deref()),
+    );
+    if let Some(tag) =
+        crate::db::stable_candidate_display_tag(&candidate_tag, &candidate_display_tag)
+    {
+        return Some(format!(
+            "tag:{}",
+            crate::db::canonical_visible_version_tag(tag)
+        ));
+    }
+
+    normalize_optional_value(context.candidate_digest.as_deref())
+        .map(|digest| format!("digest:{digest}"))
+}
+
+fn timeline_candidate_version(
+    context: &crate::db::ServiceNewVersionTimelineContext,
+) -> Option<String> {
+    normalize_optional_value(context.candidate_resolved_tag.as_deref())
+        .map(|value| crate::db::canonical_visible_version_tag(&value))
+        .or_else(|| {
+            normalize_optional_value(context.candidate_tag.as_deref())
+                .map(|value| crate::db::canonical_visible_version_tag(&value))
+        })
+        .or_else(|| normalize_optional_value(context.candidate_digest.as_deref()))
+}
+
+fn timeline_running_version(
+    context: &crate::db::ServiceNewVersionTimelineContext,
+) -> Option<String> {
+    normalize_optional_value(context.current_resolved_tag.as_deref())
+        .map(|value| crate::db::canonical_visible_version_tag(&value))
+        .or_else(|| {
+            normalize_optional_value(Some(context.current_tag.as_str()))
+                .map(|value| crate::db::canonical_visible_version_tag(&value))
+        })
+        .or_else(|| normalize_optional_value(context.current_digest.as_deref()))
+}
+
+pub(super) async fn get_service_new_version_discovery_timeline(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(service_id): Path<String>,
+) -> Result<Json<NewVersionDiscoveryTimelineResponse>, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+    let context = state
+        .db
+        .get_service_new_version_timeline_context(&service_id)
+        .await
+        .map_err(map_internal)?;
+    let Some(context) = context else {
+        return Err(ApiError::not_found("service not found"));
+    };
+
+    let discovery_rows = state
+        .db
+        .list_new_version_discoveries_for_services(std::slice::from_ref(&service_id))
+        .await
+        .map_err(map_internal)?;
+    let notification_targets =
+        crate::db::new_version_discovery_notification_targets(&discovery_rows);
+    let notification_tags = state
+        .db
+        .list_stable_candidate_display_tags_for_notification_targets(&notification_targets)
+        .await
+        .map_err(map_internal)?;
+
+    let mut historical_candidates = crate::db::collect_new_version_discovery_candidates_from_rows(
+        discovery_rows.iter(),
+        &crate::db::normalize_discovery_key(context.current_digest.as_deref()),
+        &crate::db::normalize_discovery_key(
+            context
+                .current_resolved_tag
+                .as_deref()
+                .or(Some(context.current_tag.as_str())),
+        ),
+        &crate::db::normalize_discovery_key(Some(context.current_tag.as_str())),
+        &notification_tags,
+    );
+    historical_candidates.sort_by(|left, right| {
+        right
+            .first_discovered_at
+            .cmp(&left.first_discovered_at)
+            .then_with(|| left.version.cmp(&right.version))
+    });
+
+    let expected_candidate_count = historical_candidates.len();
+    let current_candidate_identity = timeline_candidate_identity(&context);
+    let current_candidate_version = timeline_candidate_version(&context);
+    let mut matched_current_candidate = false;
+
+    let current_candidate_item = current_candidate_identity.as_ref().and_then(|identity| {
+        historical_candidates
+            .iter()
+            .position(|candidate| candidate.identity_key == *identity)
+            .map(|index| {
+                matched_current_candidate = true;
+                let candidate = historical_candidates.remove(index);
+                NewVersionDiscoveryTimelineItem {
+                    kind: NewVersionDiscoveryTimelineItemKind::CurrentCandidate,
+                    version: current_candidate_version
+                        .clone()
+                        .unwrap_or(candidate.version),
+                    occurred_at: candidate.first_discovered_at,
+                }
+            })
+            .or_else(|| {
+                current_candidate_version
+                    .clone()
+                    .map(|version| NewVersionDiscoveryTimelineItem {
+                        kind: NewVersionDiscoveryTimelineItemKind::CurrentCandidate,
+                        version,
+                        occurred_at: None,
+                    })
+            })
+    });
+
+    if current_candidate_item.is_some() && !matched_current_candidate {
+        historical_candidates.truncate(expected_candidate_count.saturating_sub(1));
+    }
+
+    let mut items = Vec::with_capacity(historical_candidates.len() + 2);
+    if let Some(current_candidate_item) = current_candidate_item {
+        items.push(current_candidate_item);
+    }
+    items.extend(historical_candidates.into_iter().map(|candidate| {
+        NewVersionDiscoveryTimelineItem {
+            kind: NewVersionDiscoveryTimelineItemKind::HistoricalCandidate,
+            version: candidate.version,
+            occurred_at: candidate.first_discovered_at,
+        }
+    }));
+    items.push(NewVersionDiscoveryTimelineItem {
+        kind: NewVersionDiscoveryTimelineItemKind::CurrentRunning,
+        version: timeline_running_version(&context).unwrap_or_else(|| "-".to_string()),
+        occurred_at: normalize_optional_value(context.current_runtime_started_at.as_deref()),
+    });
+
+    Ok(Json(NewVersionDiscoveryTimelineResponse { items }))
+}
+
 pub(super) async fn get_service_settings(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

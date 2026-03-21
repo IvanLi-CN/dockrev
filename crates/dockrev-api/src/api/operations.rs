@@ -1107,7 +1107,7 @@ pub(crate) async fn run_check_for_job(
             let service_name = unit.service.name.clone();
             let service_image_ref = unit.service.image_ref.clone();
             let service_image_tag = unit.service.image_tag.clone();
-            let runtime_digest = match (
+            let runtime_observation = match (
                 unit.compose_project.as_deref(),
                 registry::ImageRef::parse(&unit.service.image_ref),
             ) {
@@ -1126,7 +1126,7 @@ pub(crate) async fn run_check_for_job(
                 &spawn_state,
                 &spawn_job_id,
                 &unit.service,
-                runtime_digest,
+                runtime_observation,
                 &spawn_host_platform,
                 &spawn_now,
                 &spawn_manifest_digest_cache,
@@ -1252,7 +1252,7 @@ pub(super) async fn docker_compose_service_runtime_digest(
     compose_project: &str,
     compose_service: &str,
     repo_candidates: &[String],
-) -> anyhow::Result<Option<String>> {
+) -> anyhow::Result<Option<crate::service_check::RuntimeServiceObservation>> {
     use crate::runner::CommandSpec;
 
     let ps = state
@@ -1293,8 +1293,9 @@ pub(super) async fn docker_compose_service_runtime_digest(
     }
 
     let mut digests = std::collections::BTreeSet::<String>::new();
+    let mut started_ats = std::collections::BTreeSet::<String>::new();
     for id in container_ids {
-        let img_id = state
+        let inspect_container = state
             .runner
             .run(
                 CommandSpec {
@@ -1302,7 +1303,7 @@ pub(super) async fn docker_compose_service_runtime_digest(
                     args: vec![
                         "inspect".to_string(),
                         "--format".to_string(),
-                        "{{.Image}}".to_string(),
+                        "{{.Image}}\t{{.State.StartedAt}}".to_string(),
                         id,
                     ],
                     env: Vec::new(),
@@ -1310,10 +1311,23 @@ pub(super) async fn docker_compose_service_runtime_digest(
                 std::time::Duration::from_secs(10),
             )
             .await?;
-        if img_id.status != 0 {
+        if inspect_container.status != 0 {
             continue;
         }
-        let img_id = img_id.stdout.trim().to_string();
+        let container_output = inspect_container.stdout.trim();
+        if container_output.is_empty() {
+            continue;
+        }
+        let mut parts = container_output.splitn(2, '\t');
+        let Some(img_id) = parts
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let started_at =
+            crate::service_check::normalize_runtime_started_at(parts.next().map(str::trim));
         if img_id.is_empty() {
             continue;
         }
@@ -1326,7 +1340,7 @@ pub(super) async fn docker_compose_service_runtime_digest(
                     args: vec![
                         "image".to_string(),
                         "inspect".to_string(),
-                        img_id,
+                        img_id.to_string(),
                         "--format".to_string(),
                         "{{json .RepoDigests}}".to_string(),
                     ],
@@ -1340,19 +1354,27 @@ pub(super) async fn docker_compose_service_runtime_digest(
         }
 
         let parsed = serde_json::from_str::<Vec<String>>(inspect.stdout.trim()).unwrap_or_default();
+        let mut matched = false;
         for d in parsed {
             for repo in repo_candidates {
                 if let Some(rest) = d.strip_prefix(&format!("{repo}@"))
                     && !rest.trim().is_empty()
                 {
                     digests.insert(rest.trim().to_string());
+                    matched = true;
                 }
             }
+        }
+        if matched && let Some(started_at) = started_at {
+            started_ats.insert(started_at);
         }
     }
 
     if digests.len() == 1 {
-        Ok(digests.iter().next().cloned())
+        Ok(Some(crate::service_check::RuntimeServiceObservation {
+            digest: digests.iter().next().cloned().unwrap_or_default(),
+            started_at: started_ats.iter().next().cloned(),
+        }))
     } else {
         Ok(None)
     }
@@ -2171,7 +2193,7 @@ pub(super) async fn run_update_job(
                             let Ok(img) = registry::ImageRef::parse(&svc.image.reference) else {
                                 continue;
                             };
-                            let runtime_digest = docker_compose_service_runtime_digest(
+                            let runtime_observation = docker_compose_service_runtime_digest(
                                 state.as_ref(),
                                 &project,
                                 &svc.name,
@@ -2180,7 +2202,7 @@ pub(super) async fn run_update_job(
                             .await
                             .ok()
                             .flatten();
-                            let Some(runtime_digest) = runtime_digest else {
+                            let Some(runtime_observation) = runtime_observation else {
                                 continue;
                             };
 
@@ -2190,6 +2212,7 @@ pub(super) async fn run_update_job(
                                 image_ref: svc.image.reference.clone(),
                                 image_tag: svc.image.tag.clone(),
                                 current_digest: svc.image.digest.clone(),
+                                current_runtime_started_at: None,
                                 current_resolved_tag: svc.image.resolved_tag.clone(),
                                 current_resolved_tags_json: svc
                                     .image
@@ -2209,7 +2232,7 @@ pub(super) async fn run_update_job(
                                 &state,
                                 &job_id,
                                 &svc_for_check,
-                                Some(runtime_digest.clone()),
+                                Some(runtime_observation.clone()),
                                 &host_platform,
                                 &settled_at,
                                 &manifest_digest_cache,
@@ -2224,11 +2247,12 @@ pub(super) async fn run_update_job(
                                     &svc.id,
                                     &svc.image.reference,
                                     &svc.image.tag,
-                                    &runtime_digest,
+                                    &runtime_observation,
                                     &settled_at,
                                 )
                                 .await?;
-                                settle_outcome.current_digest = Some(runtime_digest.clone());
+                                settle_outcome.current_digest =
+                                    Some(runtime_observation.digest.clone());
                                 settle_outcome.current_resolved_tag = None;
                                 settle_outcome.current_resolved_tags_json = None;
                                 settle_outcome.candidate_tag = None;
@@ -2247,7 +2271,8 @@ pub(super) async fn run_update_job(
                                 "stackId": stack_id,
                                 "serviceId": svc.id,
                                 "serviceName": svc.name,
-                                "runtimeDigest": runtime_digest,
+                                "runtimeDigest": runtime_observation.digest,
+                                "runtimeStartedAt": runtime_observation.started_at,
                                 "candidatePresent": settle_outcome.candidate_present,
                                 "inferenceOk": inference_ok,
                             });
@@ -2267,7 +2292,7 @@ pub(super) async fn run_update_job(
                             enqueue_snapshot_for_image_ref(
                                 &state,
                                 &svc.image.reference,
-                                &runtime_digest,
+                                &runtime_observation.digest,
                                 &host_platform,
                                 "update_digest_changed",
                             )

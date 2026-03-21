@@ -530,6 +530,7 @@ SET
   image_tag = ?3,
   current_digest = NULL,
   current_resolved_tag = NULL,
+  current_runtime_started_at = NULL,
   current_resolved_tags_json = NULL,
   candidate_tag = NULL,
   candidate_resolved_tag = NULL,
@@ -626,6 +627,7 @@ SELECT
   image_ref,
   image_tag,
   current_digest,
+  current_runtime_started_at,
   current_resolved_tag,
   current_resolved_tags_json,
   candidate_digest,
@@ -642,10 +644,11 @@ ORDER BY name ASC
                     image_ref: row.get(2)?,
                     image_tag: row.get(3)?,
                     current_digest: row.get(4)?,
-                    current_resolved_tag: row.get(5)?,
-                    current_resolved_tags_json: row.get(6)?,
-                    candidate_digest: row.get(7)?,
-                    candidate_resolved_tag: row.get(8)?,
+                    current_runtime_started_at: row.get(5)?,
+                    current_resolved_tag: row.get(6)?,
+                    current_resolved_tags_json: row.get(7)?,
+                    candidate_digest: row.get(8)?,
+                    candidate_resolved_tag: row.get(9)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -668,6 +671,7 @@ SELECT
   image_ref,
   image_tag,
   current_digest,
+  current_runtime_started_at,
   current_resolved_tag,
   current_resolved_tags_json,
   candidate_digest,
@@ -684,10 +688,11 @@ ORDER BY name ASC
                     image_ref: row.get(2)?,
                     image_tag: row.get(3)?,
                     current_digest: row.get(4)?,
-                    current_resolved_tag: row.get(5)?,
-                    current_resolved_tags_json: row.get(6)?,
-                    candidate_digest: row.get(7)?,
-                    candidate_resolved_tag: row.get(8)?,
+                    current_runtime_started_at: row.get(5)?,
+                    current_resolved_tag: row.get(6)?,
+                    current_resolved_tags_json: row.get(7)?,
+                    candidate_digest: row.get(8)?,
+                    candidate_resolved_tag: row.get(9)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -768,6 +773,45 @@ WHERE id = ?1
         })
         .await
         .context("get service snapshot target")
+    }
+
+    pub async fn get_service_new_version_timeline_context(
+        &self,
+        service_id: &str,
+    ) -> anyhow::Result<Option<ServiceNewVersionTimelineContext>> {
+        let service_id = service_id.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    r#"
+SELECT
+  image_tag,
+  current_digest,
+  current_runtime_started_at,
+  current_resolved_tag,
+  candidate_tag,
+  candidate_resolved_tag,
+  candidate_digest
+FROM services
+WHERE id = ?1
+"#,
+                    params![service_id],
+                    |row| {
+                        Ok(ServiceNewVersionTimelineContext {
+                            current_tag: row.get(0)?,
+                            current_digest: row.get(1)?,
+                            current_runtime_started_at: row.get(2)?,
+                            current_resolved_tag: row.get(3)?,
+                            candidate_tag: row.get(4)?,
+                            candidate_resolved_tag: row.get(5)?,
+                            candidate_digest: row.get(6)?,
+                        })
+                    },
+                )
+                .optional()?)
+        })
+        .await
+        .context("get service new version timeline context")
     }
 
     pub async fn list_snapshot_seed_targets(&self) -> anyhow::Result<Vec<(String, String)>> {

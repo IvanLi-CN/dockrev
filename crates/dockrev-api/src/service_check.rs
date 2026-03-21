@@ -27,6 +27,21 @@ pub(crate) type ManifestDigestCache =
     Arc<tokio::sync::RwLock<HashMap<String, (Option<String>, Option<String>)>>>;
 pub(crate) type RepoTagsCache = Arc<RepoTagsCacheInner>;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RuntimeServiceObservation {
+    pub digest: String,
+    pub started_at: Option<String>,
+}
+
+impl RuntimeServiceObservation {
+    pub(crate) fn digest_only(digest: impl Into<String>) -> Self {
+        Self {
+            digest: digest.into(),
+            started_at: None,
+        }
+    }
+}
+
 pub(crate) struct RepoTagsCacheInner;
 
 pub(crate) fn new_manifest_digest_cache() -> ManifestDigestCache {
@@ -37,12 +52,20 @@ pub(crate) fn new_repo_tags_cache() -> RepoTagsCache {
     Arc::new(RepoTagsCacheInner)
 }
 
+pub(crate) fn normalize_runtime_started_at(input: Option<&str>) -> Option<String> {
+    let trimmed = input.map(str::trim).filter(|value| !value.is_empty())?;
+    if trimmed.starts_with("0001-01-01T00:00:00") {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn check_service_and_persist(
     state: &Arc<AppState>,
     job_id: &str,
     svc: &crate::db::ServiceForCheck,
-    runtime_digest: Option<String>,
+    runtime: Option<RuntimeServiceObservation>,
     host_platform: &str,
     now: &str,
     manifest_digest_cache: &ManifestDigestCache,
@@ -97,6 +120,15 @@ pub(crate) async fn check_service_and_persist(
             )
         })
         .collect::<Vec<_>>();
+
+    let runtime_digest = runtime
+        .as_ref()
+        .map(|observation| observation.digest.clone());
+    let runtime_started_at = normalize_runtime_started_at(
+        runtime
+            .as_ref()
+            .and_then(|observation| observation.started_at.as_deref()),
+    );
 
     let mut current_manifest = state
         .registry
@@ -209,11 +241,25 @@ pub(crate) async fn check_service_and_persist(
         svc.candidate_resolved_tag.clone()
     };
 
+    let existing_runtime_started_at =
+        normalize_runtime_started_at(svc.current_runtime_started_at.as_deref());
+    let observed_runtime_started_at = if runtime_digest.as_deref() == current_digest.as_deref() {
+        runtime_started_at.clone()
+    } else {
+        None
+    };
+    let current_runtime_started_at = if current_digest_changed {
+        observed_runtime_started_at
+    } else {
+        existing_runtime_started_at.or(observed_runtime_started_at)
+    };
+
     state
         .db
-        .update_service_check_result(
+        .update_service_check_result_with_runtime_started_at(
             &svc.id,
             current_digest.clone(),
+            current_runtime_started_at,
             current_resolved_tag.clone(),
             current_resolved_tags_json.clone(),
             candidate_tag.clone(),
@@ -262,12 +308,13 @@ pub(crate) async fn persist_runtime_fallback_result(
     service_id: &str,
     _image_ref: &str,
     _image_tag: &str,
-    runtime_digest: &str,
+    runtime: &RuntimeServiceObservation,
     now: &str,
 ) -> anyhow::Result<()> {
-    db.update_service_check_result(
+    db.update_service_check_result_with_runtime_started_at(
         service_id,
-        Some(runtime_digest.to_string()),
+        Some(runtime.digest.clone()),
+        normalize_runtime_started_at(runtime.started_at.as_deref()),
         None,
         None,
         None,
@@ -697,7 +744,10 @@ async fn persist_digest_tags_snapshots_best_effort(
 mod tests {
     use std::{collections::BTreeMap, path::Path};
 
-    use super::{persist_runtime_fallback_result, pick_considered_tags_for_snapshot};
+    use super::{
+        RuntimeServiceObservation, persist_runtime_fallback_result,
+        pick_considered_tags_for_snapshot,
+    };
     use crate::{
         api::types::{BackupRetention, ComposeConfig, StackBackupConfig},
         db::{Db, NewVersionNotificationPending, NewVersionNotificationReserveResult},
@@ -855,7 +905,7 @@ mod tests {
             &service_id,
             "ghcr.io/acme/web:latest",
             "latest",
-            "sha256:runtime",
+            &RuntimeServiceObservation::digest_only("sha256:runtime"),
             "2026-03-09T00:01:00Z",
         )
         .await
@@ -919,7 +969,7 @@ mod tests {
             &service_id,
             "ghcr.io/acme/web:latest",
             "latest",
-            "sha256:runtime",
+            &RuntimeServiceObservation::digest_only("sha256:runtime"),
             "2026-03-09T00:01:00Z",
         )
         .await

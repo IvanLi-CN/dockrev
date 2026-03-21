@@ -30,6 +30,7 @@ export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 import type { Service } from './api'
+import { DiscoveryHistoryPopover } from './components/DiscoveryHistoryPopover'
 import { noteFor, statusDotClass, statusIcon, statusLabel, type RowStatus } from './updateStatus'
 
 export function ArrowRightIcon(props: { className?: string }) {
@@ -540,7 +541,7 @@ export function StatusRemark(props: { service: Service; status: RowStatus }) {
       <div className="statusLine">
         <Icon icon={statusIcon(props.status)} className={statusDotClass(props.status)} aria-hidden="true" />
         <span className="label">{statusLabel(props.status)}</span>
-        <DiscoveryCountPill count={discoveryCount} />
+        <DiscoveryHistoryPopover serviceId={props.service.id} count={discoveryCount} />
       </div>
       {note ? (
         <div className={`muted statusNote${warning ? ' statusNoteAnomaly' : ''}`}>

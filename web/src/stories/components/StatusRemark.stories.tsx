@@ -3,11 +3,13 @@ import type { Meta, StoryObj } from '@storybook/react'
 import type { Service } from '../../api'
 import { StatusRemark } from '../../ui'
 import { serviceRowStatus } from '../../updateStatus'
+import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 
 const meta: Meta<typeof StatusRemark> = {
   title: 'Components/StatusRemark',
   tags: ['autodocs'],
   component: StatusRemark,
+  decorators: [withDockrevMockApi],
 }
 
 export default meta
@@ -28,6 +30,7 @@ function baseService(): Service {
 }
 
 export const AllStatuses: Story = {
+  parameters: { dockrevApiScenario: 'default' },
   render: () => {
     const updatable = {
       ...baseService(),

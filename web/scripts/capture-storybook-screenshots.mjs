@@ -1,9 +1,12 @@
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
-import { mkdir } from 'node:fs/promises'
+import { access, mkdir, readFile } from 'node:fs/promises'
+import http from 'node:http'
+import net from 'node:net'
 import { chromium } from 'playwright'
 
 const DEFAULT_PORT = 50886
+const DEFAULT_OUTDIR = path.resolve(process.cwd(), 'storybook-static')
 
 function parseArgs(argv) {
   const out = { url: null, outdir: null }
@@ -57,6 +60,125 @@ function readBaseUrlFromDaemonStatus() {
   return null
 }
 
+async function findAvailablePort(preferredPort) {
+  return await new Promise((resolve, reject) => {
+    const probe = net.createServer()
+    let retriedWithRandomPort = false
+
+    const handleError = (error) => {
+      if (!retriedWithRandomPort && preferredPort !== 0 && error && typeof error === 'object' && error.code === 'EADDRINUSE') {
+        retriedWithRandomPort = true
+        probe.listen(0, '127.0.0.1')
+        return
+      }
+      reject(error)
+    }
+
+    probe.on('error', handleError)
+    probe.listen(preferredPort, '127.0.0.1', () => {
+      const address = probe.address()
+      const port = typeof address === 'object' && address ? address.port : preferredPort
+      probe.close((closeError) => {
+        if (closeError) reject(closeError)
+        else resolve(port)
+      })
+    })
+  })
+}
+
+function contentType(filePath) {
+  const ext = path.extname(filePath).toLowerCase()
+  if (ext === '.html') return 'text/html; charset=utf-8'
+  if (ext === '.js' || ext === '.mjs') return 'text/javascript; charset=utf-8'
+  if (ext === '.css') return 'text/css; charset=utf-8'
+  if (ext === '.json') return 'application/json; charset=utf-8'
+  if (ext === '.svg') return 'image/svg+xml'
+  if (ext === '.png') return 'image/png'
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg'
+  if (ext === '.woff') return 'font/woff'
+  if (ext === '.woff2') return 'font/woff2'
+  return 'application/octet-stream'
+}
+
+async function waitForHttpOk(url, timeoutMs = 60_000) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const resp = await fetch(url, { method: 'GET' })
+      if (resp.ok) return
+    } catch {
+      // ignore until timeout
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  throw new Error(`Timed out waiting for ${url}`)
+}
+
+async function isReachableBaseUrl(baseUrl) {
+  try {
+    const url = new URL('index.html', normalizeBaseUrl(baseUrl))
+    const resp = await fetch(url, { method: 'GET' })
+    return resp.ok
+  } catch {
+    return false
+  }
+}
+
+async function ensureStaticBuild() {
+  await access(path.join(DEFAULT_OUTDIR, 'index.html'))
+  await access(path.join(DEFAULT_OUTDIR, 'iframe.html'))
+}
+
+function startStaticServer({ port }) {
+  const sockets = new Set()
+  const server = http.createServer(async (req, res) => {
+    const reqUrl = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`)
+    const pathname = reqUrl.pathname === '/' ? '/index.html' : reqUrl.pathname
+    const filePath = path.resolve(DEFAULT_OUTDIR, `.${pathname}`)
+    if (!filePath.startsWith(DEFAULT_OUTDIR)) {
+      res.statusCode = 403
+      res.end('Forbidden')
+      return
+    }
+
+    try {
+      const body = await readFile(filePath)
+      res.statusCode = 200
+      res.setHeader('Content-Type', contentType(filePath))
+      res.end(body)
+    } catch {
+      res.statusCode = 404
+      res.end('Not found')
+    }
+  })
+
+  server.on('connection', (socket) => {
+    sockets.add(socket)
+    socket.on('close', () => sockets.delete(socket))
+  })
+
+  const listen = () =>
+    new Promise((resolve, reject) => {
+      const onError = (error) => {
+        server.off('error', onError)
+        reject(error)
+      }
+      server.on('error', onError)
+      server.listen(port, '127.0.0.1', () => {
+        server.off('error', onError)
+        resolve()
+      })
+    })
+
+  const cleanup = () =>
+    new Promise((resolve) => {
+      for (const socket of sockets) socket.destroy()
+      server.close(() => resolve())
+    })
+
+  return { cleanup, listen }
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2))
 
@@ -64,11 +186,29 @@ async function main() {
   const outDir = path.resolve(args.outdir ?? path.join(repoRoot, 'docs/screenshots/storybook'))
   await mkdir(outDir, { recursive: true })
 
-  const baseUrl =
+  const explicitBaseUrl =
     args.url ??
     process.env.DOCKREV_STORYBOOK_URL ??
-    readBaseUrlFromDaemonStatus() ??
-    `http://127.0.0.1:${DEFAULT_PORT}/`
+    readBaseUrlFromDaemonStatus()
+
+  let staticServer = null
+  let resolvedBaseUrl =
+    explicitBaseUrl && (await isReachableBaseUrl(explicitBaseUrl))
+      ? explicitBaseUrl
+      : null
+
+  if (!resolvedBaseUrl) {
+    await ensureStaticBuild()
+    const port = await findAvailablePort(DEFAULT_PORT)
+    staticServer = startStaticServer({ port })
+    await staticServer.listen()
+    const localUrl = `http://127.0.0.1:${port}/`
+    await waitForHttpOk(new URL('index.html', localUrl).toString())
+    resolvedBaseUrl = localUrl
+  }
+  if (!resolvedBaseUrl) {
+    throw new Error('Failed to resolve Storybook base URL.')
+  }
 
   const browser = await chromium.launch()
   const context = await browser.newContext({
@@ -79,7 +219,7 @@ async function main() {
   const openStory = async (id) => {
     const page = await context.newPage()
     page.on('dialog', (d) => d.accept().catch(() => {}))
-    await page.goto(iframeUrl(baseUrl, id), { waitUntil: 'domcontentloaded' })
+    await page.goto(iframeUrl(resolvedBaseUrl, id), { waitUntil: 'domcontentloaded' })
     await page.waitForFunction(() => document.body.classList.contains('sb-show-main'), null, { timeout: 60_000 })
     return page
   }
@@ -200,6 +340,7 @@ async function main() {
     }
   } finally {
     await browser.close().catch(() => {})
+    await staticServer?.cleanup?.().catch(() => {})
   }
 }
 

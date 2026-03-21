@@ -25,6 +25,7 @@ import type {
 } from '../../api'
 import { imageRepoFromImageRef } from '../../imageRepo'
 import { isDockrevImageRef } from '../../runtimeConfig'
+import { serviceRowStatus } from '../../updateStatus'
 
 export type DockrevApiScenario =
   | 'default'
@@ -407,6 +408,24 @@ function parseResourceWindow(windowRaw: string | null): { window: '15m' | '1h' |
   if (windowRaw === '15m') return { window: '15m', seconds: 15 * 60 }
   if (windowRaw === '6h') return { window: '6h', seconds: 6 * 60 * 60 }
   return { window: '1h', seconds: 60 * 60 }
+}
+
+function parseMockVersion(input: string | null | undefined): [number, number, number] | null {
+  const trimmed = (input ?? '').trim()
+  const match = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$/.exec(trimmed)
+  if (!match) return null
+  return [
+    Number.parseInt(match[1] ?? '0', 10),
+    Number.parseInt(match[2] ?? '0', 10),
+    Number.parseInt(match[3] ?? '0', 10),
+  ]
+}
+
+function offsetMockVersion(input: string | null | undefined, delta: number, fallback: string): string {
+  const parsed = parseMockVersion(input)
+  if (!parsed) return fallback
+  const [major, minor, patch] = parsed
+  return `${major}.${minor}.${Math.max(0, patch + delta)}`
 }
 
 function buildResourceHistorySamples(serviceId: string, seconds: number): ServiceResourceSample[] {
@@ -2632,14 +2651,55 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
     return { repoTags, tags }
   }
 
+  function buildMockDiscoveryTimeline(serviceId: string) {
+    const found = findService(serviceId)
+    const count = Math.max(1, found?.svc.newVersionDiscoveryCount ?? ((hashString(serviceId) % 3) + 2))
+    const runningVersion =
+      found?.svc.image.resolvedTag?.trim() ||
+      found?.svc.image.tag?.trim() ||
+      '1.0.0'
+    const candidateVersion =
+      found?.svc.candidate?.resolvedTag?.trim() ||
+      found?.svc.candidate?.tag?.trim() ||
+      offsetMockVersion(runningVersion, 2, '1.0.2')
+
+    const items: Array<{
+      kind: 'currentCandidate' | 'historicalCandidate' | 'currentRunning'
+      version: string
+      occurredAt: string | null
+    }> = [
+      {
+        kind: 'currentCandidate',
+        version: candidateVersion,
+        occurredAt: nowIso(-15 * 60 * 1000),
+      },
+    ]
+
+    for (let index = 1; index < count; index += 1) {
+      items.push({
+        kind: 'historicalCandidate',
+        version: offsetMockVersion(
+          candidateVersion,
+          -index,
+          `1.0.${Math.max(0, count - index)}`,
+        ),
+        occurredAt: nowIso(-(15 + index * 37) * 60 * 1000),
+      })
+    }
+
+    items.push({
+      kind: 'currentRunning',
+      version: runningVersion,
+      occurredAt: found ? nowIso(-4 * 60 * 60 * 1000) : null,
+    })
+
+    return { items }
+  }
+
   function canApplyMockUpdate(service: StackDetail['services'][number]) {
-    return Boolean(
-      service.candidate &&
-        !service.archived &&
-        !service.ignore?.matched &&
-        service.candidate.archMatch === 'match' &&
-        !isDockrevImageRef(service.image.ref),
-    )
+    if (service.archived || isDockrevImageRef(service.image.ref)) return false
+    const status = serviceRowStatus(service)
+    return status === 'updatable' || status === 'hint'
   }
 
   function countMockUpdates(stack: StackDetail) {
@@ -3810,6 +3870,16 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
     // service candidates (removed)
     if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/candidates')) {
       return json({ error: 'not found' }, { status: 404 })
+    }
+
+    if (
+      method === 'GET' &&
+      urlPath.startsWith('/api/services/') &&
+      urlPath.endsWith('/new-version-discovery-timeline')
+    ) {
+      const parts = urlPath.split('/').filter(Boolean)
+      const serviceId = decodeURIComponent(parts[2])
+      return json(buildMockDiscoveryTimeline(serviceId))
     }
 
     // service digest tags snapshot (used by version popovers)
