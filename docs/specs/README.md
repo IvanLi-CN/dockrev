@@ -96,3 +96,4 @@
 | kdapc | Dockrev：版本推测采集解耦 + 缓存门控 + 前端就绪等待 | 已实现 | `kdapc-version-inference-decouple/SPEC.md` | 2026-02-24 | Fast-track |
 | jjnz5 | Dockrev: 接入 UI UX Pro Max（Codex 团队共享） | 已完成 | `jjnz5-uipro-codex-integration/SPEC.md` | 2026-02-24 | PR #88 |
 | saqkf | Dockrev：GHCR 添加 Repo 弹窗加宽 + 镜像/部署筛选 | 已完成 | `saqkf-ghcr-picker-width-linked-filters/SPEC.md` | 2026-03-19 | fast-track（GHCR linked/deployed metadata + picker scope filter + review-loop fixes） |
+| wpnmt | Dockrev：digest-only 镜像引用解析与 Discovery 临时 override 回退 | 已完成 | `wpnmt-digest-only-image-ref-discovery-fallback/SPEC.md` | 2026-03-21 | fast-track |

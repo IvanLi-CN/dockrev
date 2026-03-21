@@ -30,6 +30,7 @@ description: Runtime configuration reference for Dockrev API and Supervisor.
 | `DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV` | `true` | Anonymous mode for dev; auto-disabled when an allowed user/group is configured |
 | `DOCKREV_SELF_UPGRADE_URL` | `/supervisor/` | Self-upgrade UI URL |
 | `DOCKREV_IMAGE_REPO` | `ghcr.io/ivanli-cn/dockrev` | Dockrev service image repo matcher |
+| `DOCKREV_SUPERVISOR_STATE_PATH` | empty | Optional for `dockrev-api`; set the same absolute path used by `dockrev-supervisor` so discovery can recognize the generated `self-upgrade.override.yml` |
 | `DOCKREV_WEBHOOK_SECRET` | empty | Shared secret for `/api/webhooks/trigger` |
 | `DOCKREV_HOST_PLATFORM` | empty | Host platform override |
 | `DOCKREV_DISCOVERY_INTERVAL_SECONDS` | `60` | Discovery interval |
@@ -41,6 +42,7 @@ Notes:
 - `DOCKREV_AUTH_ALLOWED_USER` and `DOCKREV_AUTH_ALLOWED_GROUP` are single-value allowlists; Dockrev accepts either match when both are configured.
 - The anonymous public surface is intentionally fixed to `GET /api/health`, `GET /api/version`, and `/api/webhooks/*`. Every other API/UI/supervisor route is still authorized inside Dockrev.
 - A wrong `DOCKREV_IMAGE_REPO` breaks Dockrev self-upgrade detection in the UI.
+- If you want discovery to classify the self-upgrade override as Dockrev-generated, `dockrev-api` and `dockrev-supervisor` must share the same absolute `DOCKREV_SUPERVISOR_STATE_PATH`, and that directory must be mounted into the Dockrev container at the same absolute path.
 
 ## Check and retry controls
 

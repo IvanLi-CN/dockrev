@@ -27,13 +27,15 @@ description: Dockrev 常见问题的定位路径与修复建议。
 
 - 容器是否包含 `com.docker.compose.project` 与 `config_files` 标签
 - `config_files` 绝对路径是否在 dockrev 容器内同路径可读
-- 是否存在 self-upgrade 生成的 override 文件未挂载
+- 是否存在 Dockrev 自生成的 override 文件未挂载，例如位于绝对 `DOCKREV_SUPERVISOR_STATE_PATH` 同目录的 `self-upgrade.override.yml`，或 `/tmp/dockrev-override-<project>-<ulid>.yml`
+- 用户自己维护的额外 compose / override 文件是否仍然存在且已挂载
 
 立即处理：
 
 1. 在宿主机检查容器标签是否存在 compose 信息。
 2. 确认 `config_files` 路径已“同绝对路径只读挂载”到 Dockrev 容器。
-3. 重跑一次 discovery scan，观察 Queue 日志是否仍报 unreadable。
+3. 若唯一缺失文件是 Dockrev 自生成的 override 文件（如位于 `dockrev` 与 `supervisor` 共享的绝对 `DOCKREV_SUPERVISOR_STATE_PATH` 同目录下的 `self-upgrade.override.yml`，或 `/tmp/dockrev-override-<project>-<ulid>.yml`），重跑 discovery scan，Dockrev 会回退到仍可读的稳定 compose 文件。
+4. 若缺失的是你自己维护的 compose / override 文件，仍会被判为 invalid；先恢复该文件或修复同绝对路径挂载，再重跑 discovery。
 
 ## 3) Check 频繁失败或变慢
 
@@ -57,12 +59,14 @@ description: Dockrev 常见问题的定位路径与修复建议。
 - GitHub webhook delivery 是否到达
 - 签名头 `X-Hub-Signature-256` 是否匹配
 - repo 是否处于“已选中跟踪”状态
+- Queue 中是否已经出现命中服务的 `check.service`（零命中才会回退到 discovery）
 
 立即处理：
 
 1. 在设置页确认：已启用、PAT 已保存（掩码可见）、已跟踪仓库数 > 0。
 2. 同步 webhook 后确认结果是 `created/updated/noop`，无 `error/conflict`。
 3. 在 GitHub 仓库 Webhooks 查看最近 delivery，检查状态码与响应体。
+4. 若 delivery 已返回 `200` 但 candidate 没刷新，查看对应 `check.service` job logs；升级后 digest-only 服务记录也应被正常检查，而不是报 `invalid image ref`。
 
 ## 5) 自升级按钮不可用
 

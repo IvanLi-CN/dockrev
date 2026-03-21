@@ -29,18 +29,45 @@ pub struct ImageRef {
 impl ImageRef {
     pub fn parse(input: &str) -> anyhow::Result<Self> {
         // Very small parser: registry host is the first segment if it contains '.' or ':'.
-        // Otherwise default to docker.io. Name is the rest. Reference is required.
-        let (without_digest, _) = input.split_once('@').unwrap_or((input, ""));
-
-        let (name_with_registry, reference) = without_digest
-            .rsplit_once(':')
-            .ok_or_else(|| anyhow::anyhow!("image ref missing tag (expected repo/name:tag)"))?;
-
-        if reference.is_empty() || reference.contains('/') {
-            return Err(anyhow::anyhow!(
-                "invalid tag in image ref (expected repo/name:tag)"
-            ));
+        // Otherwise default to docker.io. Accept repo/name[:tag][@sha256:digest]; when the tag is
+        // omitted, callers must pass the effective tag separately.
+        let raw = input.trim();
+        if raw.is_empty() {
+            return Err(anyhow::anyhow!("invalid image ref"));
         }
+
+        let (without_digest, digest) = match raw.split_once('@') {
+            Some((left, right)) => {
+                let left = left.trim();
+                let right = right.trim();
+                if left.is_empty() || !is_supported_digest_ref(right) {
+                    return Err(anyhow::anyhow!(
+                        "invalid digest in image ref (expected repo/name[:tag][@sha256:digest])"
+                    ));
+                }
+                (left, Some(right))
+            }
+            None => (raw, None),
+        };
+
+        let (name_with_registry, reference) = match without_digest.rsplit_once(':') {
+            Some((left, right)) if !right.is_empty() && !right.contains('/') => {
+                (left.trim(), right.trim().to_string())
+            }
+            Some((_left, "")) => {
+                return Err(anyhow::anyhow!(
+                    "invalid tag in image ref (expected repo/name[:tag][@sha256:digest])"
+                ));
+            }
+            _ => {
+                let Some(digest) = digest else {
+                    return Err(anyhow::anyhow!(
+                        "image ref missing tag or digest (expected repo/name[:tag][@sha256:digest])"
+                    ));
+                };
+                (without_digest, digest.to_string())
+            }
+        };
 
         let mut parts = name_with_registry.split('/').collect::<Vec<_>>();
         if parts.is_empty() {
@@ -62,6 +89,13 @@ impl ImageRef {
             reference: reference.to_string(),
         })
     }
+}
+
+fn is_supported_digest_ref(input: &str) -> bool {
+    let Some((algorithm, encoded)) = input.split_once(':') else {
+        return false;
+    };
+    algorithm.eq_ignore_ascii_case("sha256") && !encoded.trim().is_empty()
 }
 
 fn normalize_dockerhub_name(registry: &str, name: &str) -> String {
@@ -1255,6 +1289,47 @@ mod tests {
         assert_eq!(img.registry, "docker.io");
         assert_eq!(img.name, "library/postgres");
         assert_eq!(img.reference, "16");
+    }
+
+    #[test]
+    fn parse_image_ref_digest_only_with_registry() {
+        let img = ImageRef::parse("ghcr.io/org/app@sha256:deadbeef").unwrap();
+        assert_eq!(img.registry, "ghcr.io");
+        assert_eq!(img.name, "org/app");
+        assert_eq!(img.reference, "sha256:deadbeef");
+    }
+
+    #[test]
+    fn parse_image_ref_digest_only_dockerhub() {
+        let img = ImageRef::parse("postgres@sha256:deadbeef").unwrap();
+        assert_eq!(img.registry, "docker.io");
+        assert_eq!(img.name, "library/postgres");
+        assert_eq!(img.reference, "sha256:deadbeef");
+    }
+
+    #[test]
+    fn parse_image_ref_tag_plus_digest_keeps_tag_reference() {
+        let img = ImageRef::parse("ghcr.io/org/app:latest@sha256:deadbeef").unwrap();
+        assert_eq!(img.registry, "ghcr.io");
+        assert_eq!(img.name, "org/app");
+        assert_eq!(img.reference, "latest");
+    }
+
+    #[test]
+    fn parse_image_ref_without_tag_or_digest_is_invalid() {
+        assert!(ImageRef::parse("ghcr.io/org/app").is_err());
+    }
+
+    #[test]
+    fn parse_image_ref_rejects_non_digest_suffix() {
+        assert!(ImageRef::parse("ghcr.io/org/app@latest").is_err());
+        assert!(ImageRef::parse("ghcr.io/org/app:latest@latest").is_err());
+    }
+
+    #[test]
+    fn parse_image_ref_rejects_empty_digest_value() {
+        assert!(ImageRef::parse("ghcr.io/org/app@sha256").is_err());
+        assert!(ImageRef::parse("ghcr.io/org/app@sha256:").is_err());
     }
 
     #[test]

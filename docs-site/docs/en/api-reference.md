@@ -114,7 +114,7 @@ This page documents every HTTP route exposed in:
 | POST | `/api/web-push/subscriptions` | Forward Auth | Create/update web push subscription | `200` `400` `401` |
 | DELETE | `/api/web-push/subscriptions` | Forward Auth | Delete web push subscription | `200` `400` `401` |
 | POST | `/api/webhooks/trigger` | Webhook Secret | External trigger for check/update jobs (`action=update` requires explicit `targets[]`) | `200` `400` `401` |
-| POST | `/api/webhooks/github-packages` | GitHub Signature | Receive GH package webhook and enqueue discovery | `200` `202` `400` `401` |
+| POST | `/api/webhooks/github-packages` | GitHub Signature | Receive GH package webhooks and enqueue matching `check.service` jobs, or one discovery fallback when nothing matches | `200` `202` `400` `401` |
 | GET | `/api/deploy-check/report` | Forward Auth | Deployment preflight report; anonymous or non-matching identities receive Dockrev-generated `401 auth_required` | `200` `401` |
 | GET | `/api/deploy-welcome` | Forward Auth | Get deploy welcome status | `200` `401` |
 | PUT | `/api/deploy-welcome` | Forward Auth | Update deploy welcome status | `200` `400` `401` |

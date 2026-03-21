@@ -27,6 +27,7 @@ services:
       DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV: "false"
       DOCKREV_SELF_UPGRADE_URL: "/supervisor/"
       DOCKREV_IMAGE_REPO: "dockrev"
+      DOCKREV_SUPERVISOR_STATE_PATH: "/data/supervisor/self-upgrade.json"
       # DOCKREV_WEBHOOK_SECRET: "change-me"
       # DOCKREV_HOST_PLATFORM: "linux/amd64"
       # Option B (docker-socket-proxy):

@@ -100,6 +100,7 @@ Environment variables (API):
 - Anonymous public surface is intentionally limited to `GET /api/health`, `GET /api/version`, and `/api/webhooks/*`; all other API/UI/supervisor routes rely on Dockrev authorization even when the gateway transparently forwards anonymous requests.
 - `DOCKREV_SELF_UPGRADE_URL` (default `/supervisor/`) UI jump target for “升级 Dockrev”
 - `DOCKREV_IMAGE_REPO` (default `ghcr.io/ivanli-cn/dockrev`) image repo used by the UI to detect which service is “Dockrev” for showing “升级 Dockrev” (example: set to `dockrev` for local images like `dockrev:local`)
+- `DOCKREV_SUPERVISOR_STATE_PATH` (optional for `dockrev-api`; set the same absolute path used by `dockrev-supervisor` so discovery can recognize the generated `self-upgrade.override.yml`)
 - `DOCKREV_WEBHOOK_SECRET` (optional) shared secret for `/api/webhooks/trigger`
 - `DOCKREV_HOST_PLATFORM` (optional) override host platform (example `linux/amd64`)
 - `DOCKREV_DISCOVERY_INTERVAL_SECONDS` (default `60`; must be `>= 10`)
