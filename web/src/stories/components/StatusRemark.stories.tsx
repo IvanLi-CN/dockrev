@@ -1,6 +1,9 @@
 import { Fragment } from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
-import type { Service } from '../../api'
+import type {
+  NewVersionDiscoveryTimelineResponse,
+  Service,
+} from '../../api'
 import { StatusRemark } from '../../ui'
 import { serviceRowStatus } from '../../updateStatus'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
@@ -29,8 +32,38 @@ function baseService(): Service {
   }
 }
 
+const discoveryTimelineByServiceId = {
+  'svc-updatable': {
+    items: [
+      { kind: 'currentCandidate', version: '5.2.3', occurredAt: '2026-03-22T03:00:00+08:00' },
+      { kind: 'historicalCandidate', version: '5.2.2', occurredAt: '2026-03-22T02:23:00+08:00' },
+      { kind: 'historicalCandidate', version: '5.2.2-rc.1', occurredAt: '2026-03-21T23:42:00+08:00' },
+      { kind: 'currentRunning', version: '5.2.1', occurredAt: '2026-03-21T21:08:00+08:00' },
+    ],
+  },
+  'svc-updatable-force': {
+    items: [
+      { kind: 'currentCandidate', version: '5.2.7', occurredAt: '2026-03-22T01:46:00+08:00' },
+      { kind: 'historicalCandidate', version: '5.2.6', occurredAt: '2026-03-21T22:14:00+08:00' },
+      { kind: 'currentRunning', version: '5.2', occurredAt: '2026-03-21T18:32:00+08:00' },
+    ],
+  },
+  'svc-hint': {
+    items: [
+      { kind: 'currentCandidate', version: '2.9.1', occurredAt: '2026-03-22T00:56:00+08:00' },
+      { kind: 'historicalCandidate', version: '2.9.1-rc.3', occurredAt: '2026-03-21T22:48:00+08:00' },
+      { kind: 'historicalCandidate', version: '2.9.1-rc.2', occurredAt: '2026-03-21T20:11:00+08:00' },
+      { kind: 'historicalCandidate', version: '2.9.1-rc.1', occurredAt: '2026-03-21T18:05:00+08:00' },
+      { kind: 'currentRunning', version: '2.9.0', occurredAt: '2026-03-21T14:40:00+08:00' },
+    ],
+  },
+} satisfies Record<string, NewVersionDiscoveryTimelineResponse>
+
 export const AllStatuses: Story = {
-  parameters: { dockrevApiScenario: 'default' },
+  parameters: {
+    dockrevApiScenario: 'default',
+    dockrevDiscoveryTimelineByServiceId: discoveryTimelineByServiceId,
+  },
   render: () => {
     const updatable = {
       ...baseService(),

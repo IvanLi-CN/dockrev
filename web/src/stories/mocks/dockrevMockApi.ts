@@ -8,6 +8,7 @@ import type {
   JobDetail,
   JobListItem,
   ListGitHubPackagesReposResponse,
+  NewVersionDiscoveryTimelineResponse,
   NotificationConfig,
   NotificationTestChannel,
   BulkSetGitHubPackagesReposSelectedRequest,
@@ -66,6 +67,10 @@ export type DockrevApiScenario =
   | 'no-candidates'
   | 'empty'
   | 'error'
+
+export type DockrevMockApiOptions = {
+  discoveryTimelineByServiceId?: Record<string, NewVersionDiscoveryTimelineResponse>
+}
 
 const realFetch = globalThis.fetch.bind(globalThis)
 
@@ -2530,7 +2535,10 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   return buildDashboardDemo()
 }
 
-export function installDockrevMockApi(scenario: DockrevApiScenario) {
+export function installDockrevMockApi(
+  scenario: DockrevApiScenario,
+  options: DockrevMockApiOptions = {},
+) {
   const state = scenario === 'error' ? null : buildFixture(scenario)
   let ignoreSeq = 0
   let jobSeq = 0
@@ -2652,6 +2660,13 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
   }
 
   function buildMockDiscoveryTimeline(serviceId: string) {
+    const override = options.discoveryTimelineByServiceId?.[serviceId]
+    if (override) {
+      return {
+        items: override.items.map((item) => ({ ...item })),
+      }
+    }
+
     const found = findService(serviceId)
     const count = Math.max(1, found?.svc.newVersionDiscoveryCount ?? ((hashString(serviceId) % 3) + 2))
     const runningVersion =

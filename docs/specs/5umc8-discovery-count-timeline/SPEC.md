@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-03-21
-- Last: 2026-03-21
+- Last: 2026-03-22
 
 ## 背景 / 问题陈述
 
@@ -117,19 +117,21 @@
 - target_program: mock-only
 - capture_scope: element
 - sensitive_exclusion: N/A
-- submission_gate: pending-owner-approval
+- submission_gate: approved
 - story_id_or_title: Components/StatusRemark/AllStatuses
 - state: discovery timeline popover open
 - evidence_note: 验证状态列中的 `发现 N 次` 可打开时间线气泡，并展示当前候选 / 历史候选 / 当前运行三段信息。
+![StatusRemark Discovery Timeline](../../screenshots/storybook/status-remark-discovery-timeline-open.png)
 
 - source_type: storybook_canvas
 - target_program: mock-only
 - capture_scope: element
 - sensitive_exclusion: N/A
-- submission_gate: pending-owner-approval
+- submission_gate: approved
 - story_id_or_title: Components/AggregateUpdatePreviewList/AllStates
 - state: aggregate discovery timeline popover open
 - evidence_note: 验证聚合预览里的 discovery pill 使用同一气泡与时间线顺序。
+![Aggregate Update Preview Discovery Timeline](../../screenshots/storybook/aggregate-update-preview-discovery-timeline-open.png)
 
 ## 里程碑（Milestones / checklist）
 
@@ -147,3 +149,4 @@
 
 - 2026-03-21: 新建规格，冻结 discovery timeline lazy API、排序锚点、运行时间真相源与快车道 PR-ready 交付范围。
 - 2026-03-21: 实现 discovery timeline lazy API、runtime startedAt 持久化、共享时间线气泡与 storybook/mock 回归。
+- 2026-03-22: 修正 Storybook mock 时间线数据，补充裁剪后的完工截图，并将视觉证据写回规格。

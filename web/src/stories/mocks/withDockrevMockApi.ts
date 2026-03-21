@@ -1,8 +1,15 @@
 import type { Decorator } from '@storybook/react'
-import { installDockrevMockApi, type DockrevApiScenario } from './dockrevMockApi'
+import {
+  installDockrevMockApi,
+  type DockrevApiScenario,
+  type DockrevMockApiOptions,
+} from './dockrevMockApi'
 
 export const withDockrevMockApi: Decorator = (Story, context) => {
   const scenario = (context.parameters?.dockrevApiScenario ?? 'default') as DockrevApiScenario
-  installDockrevMockApi(scenario)
+  const options = {
+    discoveryTimelineByServiceId: context.parameters?.dockrevDiscoveryTimelineByServiceId,
+  } satisfies DockrevMockApiOptions
+  installDockrevMockApi(scenario, options)
   return Story()
 }

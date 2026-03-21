@@ -1,6 +1,9 @@
 import type { Meta, StoryObj } from '@storybook/react'
 
-import type { Service } from '../../api'
+import type {
+  NewVersionDiscoveryTimelineResponse,
+  Service,
+} from '../../api'
 import { AggregateUpdatePreviewList, type AggregateUpdatePreviewListItem } from '../../components/AggregateUpdatePreviewList'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 
@@ -28,8 +31,38 @@ function baseService(): Service {
   }
 }
 
+const discoveryTimelineByServiceId = {
+  'svc-api': {
+    items: [
+      { kind: 'currentCandidate', version: '5.2.3', occurredAt: '2026-03-22T03:00:00+08:00' },
+      { kind: 'historicalCandidate', version: '5.2.2', occurredAt: '2026-03-22T02:23:00+08:00' },
+      { kind: 'historicalCandidate', version: '5.2.2-rc.1', occurredAt: '2026-03-21T23:42:00+08:00' },
+      { kind: 'currentRunning', version: '5.2.1', occurredAt: '2026-03-21T21:08:00+08:00' },
+    ],
+  },
+  'svc-worker': {
+    items: [
+      { kind: 'currentCandidate', version: '5.2.2', occurredAt: '2026-03-22T02:12:00+08:00' },
+      { kind: 'historicalCandidate', version: '5.2.2-rc.3', occurredAt: '2026-03-22T00:41:00+08:00' },
+      { kind: 'historicalCandidate', version: '5.2.2-rc.2', occurredAt: '2026-03-21T22:18:00+08:00' },
+      { kind: 'historicalCandidate', version: '5.2.2-rc.1', occurredAt: '2026-03-21T19:36:00+08:00' },
+      { kind: 'currentRunning', version: '5.2.0', occurredAt: '2026-03-21T16:20:00+08:00' },
+    ],
+  },
+  'svc-dockrev': {
+    items: [
+      { kind: 'currentCandidate', version: '0.14.1', occurredAt: '2026-03-22T01:08:00+08:00' },
+      { kind: 'historicalCandidate', version: '0.14.1-rc.1', occurredAt: '2026-03-21T20:52:00+08:00' },
+      { kind: 'currentRunning', version: '0.14.0', occurredAt: '2026-03-21T15:27:00+08:00' },
+    ],
+  },
+} satisfies Record<string, NewVersionDiscoveryTimelineResponse>
+
 export const AllStates: Story = {
-  parameters: { dockrevApiScenario: 'default' },
+  parameters: {
+    dockrevApiScenario: 'default',
+    dockrevDiscoveryTimelineByServiceId: discoveryTimelineByServiceId,
+  },
   render: () => {
     const api = {
       ...baseService(),
