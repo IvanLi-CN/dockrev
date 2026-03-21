@@ -39,11 +39,48 @@ ORDER BY created_at DESC
         .context("list ignore rules for service")
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(dead_code, clippy::too_many_arguments)]
     pub async fn update_service_check_result(
         &self,
         service_id: &str,
         current_digest: Option<String>,
+        current_resolved_tag: Option<String>,
+        current_resolved_tags_json: Option<String>,
+        candidate_tag: Option<String>,
+        candidate_resolved_tag: Option<String>,
+        candidate_digest: Option<String>,
+        candidate_arch_match: Option<String>,
+        candidate_arch_json: Option<String>,
+        ignore_rule_id: Option<String>,
+        ignore_reason: Option<String>,
+        checked_at: &str,
+        now: &str,
+    ) -> anyhow::Result<bool> {
+        self.update_service_check_result_with_runtime_started_at(
+            service_id,
+            current_digest,
+            None,
+            current_resolved_tag,
+            current_resolved_tags_json,
+            candidate_tag,
+            candidate_resolved_tag,
+            candidate_digest,
+            candidate_arch_match,
+            candidate_arch_json,
+            ignore_rule_id,
+            ignore_reason,
+            checked_at,
+            now,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_service_check_result_with_runtime_started_at(
+        &self,
+        service_id: &str,
+        current_digest: Option<String>,
+        current_runtime_started_at: Option<String>,
         current_resolved_tag: Option<String>,
         current_resolved_tags_json: Option<String>,
         candidate_tag: Option<String>,
@@ -65,22 +102,24 @@ ORDER BY created_at DESC
 UPDATE services
 SET
   current_digest = ?2,
-  current_resolved_tag = ?3,
-  current_resolved_tags_json = ?4,
-  candidate_tag = ?5,
-  candidate_resolved_tag = ?6,
-  candidate_digest = ?7,
-  candidate_arch_match = ?8,
-  candidate_arch_json = ?9,
-  ignore_rule_id = ?10,
-  ignore_reason = ?11,
-  checked_at = ?12,
-  updated_at = ?13
+  current_runtime_started_at = ?3,
+  current_resolved_tag = ?4,
+  current_resolved_tags_json = ?5,
+  candidate_tag = ?6,
+  candidate_resolved_tag = ?7,
+  candidate_digest = ?8,
+  candidate_arch_match = ?9,
+  candidate_arch_json = ?10,
+  ignore_rule_id = ?11,
+  ignore_reason = ?12,
+  checked_at = ?13,
+  updated_at = ?14
 WHERE id = ?1
 "#,
                 params![
                     service_id,
                     current_digest,
+                    current_runtime_started_at,
                     current_resolved_tag,
                     current_resolved_tags_json,
                     candidate_tag,
@@ -97,7 +136,7 @@ WHERE id = ?1
             Ok(changed > 0)
         })
         .await
-        .context("update service check result")
+        .context("update service check result with runtime started at")
     }
 
     pub async fn upsert_service_digest_tags_snapshot(

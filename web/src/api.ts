@@ -158,6 +158,21 @@ export type TriggerVersionInferenceRefreshResponse = {
   reason: string
 }
 
+export type NewVersionDiscoveryTimelineItemKind =
+  | 'currentCandidate'
+  | 'historicalCandidate'
+  | 'currentRunning'
+
+export type NewVersionDiscoveryTimelineItem = {
+  kind: NewVersionDiscoveryTimelineItemKind
+  version: string
+  occurredAt?: string | null
+}
+
+export type NewVersionDiscoveryTimelineResponse = {
+  items: NewVersionDiscoveryTimelineItem[]
+}
+
 export type VersionInferenceOverviewStatus =
   | 'queued'
   | 'running'
@@ -866,6 +881,15 @@ export async function forceRefreshServiceVersionInference(
     { method: 'POST', body: JSON.stringify({ digest }) },
   )
   return (await resp.json()) as TriggerVersionInferenceRefreshResponse
+}
+
+export async function getServiceNewVersionDiscoveryTimeline(
+  serviceId: string,
+): Promise<NewVersionDiscoveryTimelineResponse> {
+  const resp = await apiFetch(
+    `/api/services/${encodeURIComponent(serviceId)}/new-version-discovery-timeline`,
+  )
+  return (await resp.json()) as NewVersionDiscoveryTimelineResponse
 }
 
 export async function getVersionInferenceOverview(

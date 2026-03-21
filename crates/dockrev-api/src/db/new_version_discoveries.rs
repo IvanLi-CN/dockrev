@@ -241,21 +241,58 @@ fn candidate_identity_key(
     Some(format!("digest:{digest}"))
 }
 
-pub(crate) fn count_new_version_discoveries_from_rows<'a>(
-    rows: impl Iterator<Item = &'a NewVersionDiscoveryRow>,
-    current_digest: &str,
-    current_display_tag: &str,
-    current_tag: &str,
+fn candidate_display_version(
+    row: &NewVersionDiscoveryRow,
+    stable_tags_by_provenance: &std::collections::HashMap<
+        (String, String, String, String),
+        std::collections::BTreeSet<String>,
+    >,
+) -> Option<String> {
+    if let Some(tag) = stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag)
+    {
+        return Some(canonical_visible_version_tag(tag));
+    }
+
+    let digest = row.candidate_digest.trim();
+    if !digest.is_empty() {
+        let key = (
+            row.service_id.clone(),
+            row.image_ref.clone(),
+            row.current_tag.clone(),
+            digest.to_string(),
+        );
+        if let Some(tags) = stable_tags_by_provenance.get(&key)
+            && tags.len() == 1
+        {
+            return tags.iter().next().cloned();
+        }
+    }
+
+    let candidate_display_tag = normalize_discovery_key(Some(row.candidate_display_tag.as_str()));
+    if !candidate_display_tag.is_empty()
+        && !candidate_display_tag
+            .to_ascii_lowercase()
+            .starts_with("sha256:")
+    {
+        return Some(canonical_visible_version_tag(&candidate_display_tag));
+    }
+
+    let candidate_tag = normalize_discovery_key(Some(row.candidate_tag.as_str()));
+    if !candidate_tag.is_empty() && !candidate_tag.to_ascii_lowercase().starts_with("sha256:") {
+        return Some(canonical_visible_version_tag(&candidate_tag));
+    }
+
+    (!digest.is_empty()).then_some(digest.to_string())
+}
+
+fn build_stable_tags_by_provenance(
+    matched_rows: &[&NewVersionDiscoveryRow],
     effective_stable_tags_by_provenance: &std::collections::HashMap<
         (String, String, String, String),
         std::collections::BTreeSet<String>,
     >,
-) -> u32 {
-    let matched_rows = rows
-        .filter(|row| {
-            discovery_matches_baseline(row, current_digest, current_display_tag, current_tag)
-        })
-        .collect::<Vec<_>>();
+) -> std::collections::HashMap<(String, String, String, String), std::collections::BTreeSet<String>>
+{
     let mut stable_tags_by_provenance = matched_rows.iter().fold(
         std::collections::HashMap::<
             (String, String, String, String),
@@ -291,12 +328,160 @@ pub(crate) fn count_new_version_discoveries_from_rows<'a>(
             .or_default()
             .extend(tags.iter().cloned());
     }
+    stable_tags_by_provenance
+}
 
-    matched_rows
-        .into_iter()
-        .filter_map(|row| candidate_identity_key(row, &stable_tags_by_provenance))
+pub(crate) fn collect_new_version_discovery_candidates_from_rows<'a>(
+    rows: impl Iterator<Item = &'a NewVersionDiscoveryRow>,
+    current_digest: &str,
+    current_display_tag: &str,
+    current_tag: &str,
+    effective_stable_tags_by_provenance: &std::collections::HashMap<
+        (String, String, String, String),
+        std::collections::BTreeSet<String>,
+    >,
+) -> Vec<NewVersionDiscoveryCandidate> {
+    let matched_rows = rows
+        .filter(|row| {
+            discovery_matches_baseline(row, current_digest, current_display_tag, current_tag)
+        })
+        .collect::<Vec<_>>();
+    let stable_tags_by_provenance =
+        build_stable_tags_by_provenance(&matched_rows, effective_stable_tags_by_provenance);
+    let mut candidates = std::collections::BTreeMap::<String, NewVersionDiscoveryCandidate>::new();
+
+    for row in matched_rows {
+        let Some(identity_key) = candidate_identity_key(row, &stable_tags_by_provenance) else {
+            continue;
+        };
+        let version =
+            candidate_display_version(row, &stable_tags_by_provenance).unwrap_or_else(|| {
+                identity_key
+                    .strip_prefix("tag:")
+                    .or_else(|| identity_key.strip_prefix("digest:"))
+                    .unwrap_or(identity_key.as_str())
+                    .to_string()
+            });
+        let discovered_at = normalize_discovery_key(Some(row.discovered_at.as_str()));
+        let discovered_at = (!discovered_at.is_empty()).then_some(discovered_at);
+        match candidates.entry(identity_key.clone()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(NewVersionDiscoveryCandidate {
+                    identity_key,
+                    version,
+                    first_discovered_at: discovered_at,
+                });
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                let existing = entry.get_mut();
+                if existing
+                    .first_discovered_at
+                    .as_deref()
+                    .is_none_or(|current| {
+                        discovered_at
+                            .as_deref()
+                            .is_some_and(|candidate| candidate < current)
+                    })
+                    && discovered_at.is_some()
+                {
+                    existing.first_discovered_at = discovered_at;
+                }
+                if existing.version.starts_with("sha256:") && !version.starts_with("sha256:") {
+                    existing.version = version;
+                }
+            }
+        }
+    }
+
+    candidates.into_values().collect()
+}
+
+pub(crate) fn count_new_version_discoveries_from_rows<'a>(
+    rows: impl Iterator<Item = &'a NewVersionDiscoveryRow>,
+    current_digest: &str,
+    current_display_tag: &str,
+    current_tag: &str,
+    effective_stable_tags_by_provenance: &std::collections::HashMap<
+        (String, String, String, String),
+        std::collections::BTreeSet<String>,
+    >,
+) -> u32 {
+    collect_new_version_discovery_candidates_from_rows(
+        rows,
+        current_digest,
+        current_display_tag,
+        current_tag,
+        effective_stable_tags_by_provenance,
+    )
+    .len() as u32
+}
+
+pub(crate) fn infer_stable_candidate_display_tag_from_rows<'a>(
+    rows: impl Iterator<Item = &'a NewVersionDiscoveryRow>,
+    current_digest: &str,
+    current_display_tag: &str,
+    current_tag: &str,
+    candidate_digest: &str,
+    effective_stable_tags_by_provenance: &std::collections::HashMap<
+        (String, String, String, String),
+        std::collections::BTreeSet<String>,
+    >,
+) -> Option<String> {
+    let candidate_digest = normalize_discovery_key(Some(candidate_digest));
+    if candidate_digest.is_empty() {
+        return None;
+    }
+
+    let matched_rows = rows
+        .filter(|row| {
+            discovery_matches_baseline(row, current_digest, current_display_tag, current_tag)
+        })
+        .collect::<Vec<_>>();
+    if matched_rows.is_empty() {
+        return None;
+    }
+
+    let stable_tags_by_provenance =
+        build_stable_tags_by_provenance(&matched_rows, effective_stable_tags_by_provenance);
+    let mut versions = std::collections::BTreeSet::<String>::new();
+    for row in matched_rows {
+        if normalize_discovery_key(Some(row.candidate_digest.as_str())) != candidate_digest {
+            continue;
+        }
+        let Some(version) = candidate_display_version(row, &stable_tags_by_provenance) else {
+            continue;
+        };
+        if version.to_ascii_lowercase().starts_with("sha256:") {
+            continue;
+        }
+        versions.insert(canonical_visible_version_tag(&version));
+    }
+
+    (versions.len() == 1)
+        .then(|| versions.iter().next().cloned())
+        .flatten()
+}
+
+pub(crate) fn new_version_discovery_notification_targets(
+    rows: &[NewVersionDiscoveryRow],
+) -> Vec<(String, String, String, String)> {
+    rows.iter()
+        .filter(|row| {
+            stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag).is_none()
+        })
+        .filter_map(|row| {
+            crate::snapshot_worker::normalize_digest(&row.candidate_digest).map(|digest| {
+                (
+                    row.service_id.clone(),
+                    row.image_ref.clone(),
+                    row.current_tag.clone(),
+                    digest,
+                )
+            })
+        })
         .collect::<std::collections::BTreeSet<_>>()
-        .len() as u32
+        .into_iter()
+        .collect()
 }
 
 pub(super) fn list_new_version_discoveries_for_services_conn(
@@ -325,6 +510,7 @@ pub(super) fn list_new_version_discoveries_for_services_conn(
 SELECT
   service_id,
   image_ref,
+  discovered_at,
   current_digest,
   current_display_tag,
   current_tag,
@@ -344,12 +530,13 @@ WHERE service_id IN ({placeholders})
         Ok(NewVersionDiscoveryRow {
             service_id: row.get(0)?,
             image_ref: row.get(1)?,
-            current_digest: row.get(2)?,
-            current_display_tag: row.get(3)?,
-            current_tag: row.get(4)?,
-            candidate_tag: row.get(5)?,
-            candidate_digest: row.get(6)?,
-            candidate_display_tag: row.get(7)?,
+            discovered_at: row.get(2)?,
+            current_digest: row.get(3)?,
+            current_display_tag: row.get(4)?,
+            current_tag: row.get(5)?,
+            candidate_tag: row.get(6)?,
+            candidate_digest: row.get(7)?,
+            candidate_display_tag: row.get(8)?,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>()
@@ -431,24 +618,7 @@ pub(super) fn count_new_version_discoveries_for_services_conn(
     );
     let notification_targets = rows_by_service
         .values()
-        .flat_map(|rows| {
-            rows.iter()
-                .filter(|row| {
-                    stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag)
-                        .is_none()
-                })
-                .filter_map(|row| {
-                    crate::snapshot_worker::normalize_digest(&row.candidate_digest).map(|digest| {
-                        (
-                            row.service_id.clone(),
-                            row.image_ref.clone(),
-                            row.current_tag.clone(),
-                            digest,
-                        )
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
+        .flat_map(|rows| new_version_discovery_notification_targets(rows))
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();

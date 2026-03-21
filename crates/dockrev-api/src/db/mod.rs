@@ -20,8 +20,10 @@ mod snapshots;
 mod stacks;
 
 pub(crate) use new_version_discoveries::{
-    canonical_visible_version_tag, count_new_version_discoveries_from_rows,
-    normalize_discovery_key, stable_candidate_display_tag,
+    canonical_visible_version_tag, collect_new_version_discovery_candidates_from_rows,
+    count_new_version_discoveries_from_rows, infer_stable_candidate_display_tag_from_rows,
+    new_version_discovery_notification_targets, normalize_discovery_key,
+    stable_candidate_display_tag,
 };
 
 use crate::api::types::{
@@ -55,6 +57,7 @@ pub struct ServiceForCheck {
     pub image_ref: String,
     pub image_tag: String,
     pub current_digest: Option<String>,
+    pub current_runtime_started_at: Option<String>,
     pub current_resolved_tag: Option<String>,
     pub current_resolved_tags_json: Option<String>,
     pub candidate_digest: Option<String>,
@@ -68,6 +71,7 @@ pub struct ServiceForRuntimeScan {
     pub image_ref: String,
     pub image_tag: String,
     pub current_digest: Option<String>,
+    pub current_runtime_started_at: Option<String>,
     pub current_resolved_tag: Option<String>,
     pub current_resolved_tags_json: Option<String>,
     pub candidate_digest: Option<String>,
@@ -103,12 +107,31 @@ pub struct ImageDigestTagsSnapshotRow {
 pub struct NewVersionDiscoveryRow {
     pub service_id: String,
     pub image_ref: String,
+    pub discovered_at: String,
     pub current_digest: String,
     pub current_display_tag: String,
     pub current_tag: String,
     pub candidate_tag: String,
     pub candidate_digest: String,
     pub candidate_display_tag: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewVersionDiscoveryCandidate {
+    pub identity_key: String,
+    pub version: String,
+    pub first_discovered_at: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ServiceNewVersionTimelineContext {
+    pub current_digest: Option<String>,
+    pub current_runtime_started_at: Option<String>,
+    pub current_resolved_tag: Option<String>,
+    pub current_tag: String,
+    pub candidate_tag: Option<String>,
+    pub candidate_resolved_tag: Option<String>,
+    pub candidate_digest: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -664,6 +687,10 @@ fn ensure_service_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
         Col {
             name: "current_resolved_tag",
             ddl: "ALTER TABLE services ADD COLUMN current_resolved_tag TEXT",
+        },
+        Col {
+            name: "current_runtime_started_at",
+            ddl: "ALTER TABLE services ADD COLUMN current_runtime_started_at TEXT",
         },
         Col {
             name: "current_resolved_tags_json",
@@ -1466,6 +1493,7 @@ CREATE TABLE IF NOT EXISTS services (
   image_tag TEXT NOT NULL,
   current_digest TEXT,
   current_resolved_tag TEXT,
+  current_runtime_started_at TEXT,
   current_resolved_tags_json TEXT,
   candidate_tag TEXT,
   candidate_resolved_tag TEXT,

@@ -693,6 +693,189 @@ html[data-theme='light'] .versionTagsPopover {
   margin-top: 10px;
 }
 
+.discoveryHistoryTrigger {
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    color 160ms ease,
+    background-color 160ms ease,
+    transform 160ms ease;
+}
+
+.discoveryHistoryTrigger:hover,
+.discoveryHistoryTrigger[data-state='open'] {
+  border-color: color-mix(in srgb, var(--color-info) 34%, var(--borderColor) 66%);
+  color: var(--text);
+  background: color-mix(in srgb, var(--dockrev-surface) 82%, var(--color-info) 18%);
+}
+
+.discoveryHistoryPopover {
+  position: fixed;
+  z-index: 1100;
+  min-width: 300px;
+  max-width: min(380px, calc(100vw - 20px));
+  border-radius: 16px;
+  border: 1px solid var(--borderColor);
+  background: var(--panel);
+  box-shadow: 0 24px 90px rgba(0, 0, 0, 0.42);
+  padding: 12px 12px 10px;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transform-origin: top left;
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+
+.discoveryHistoryPopover[data-state='closed'] {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
+  pointer-events: none;
+}
+
+.discoveryHistoryHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.discoveryHistoryTitle {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.discoveryHistoryMeta {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.discoveryHistoryState {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.discoveryHistoryStateError {
+  color: var(--color-error);
+}
+
+.discoveryHistoryRetry {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--color-primary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.discoveryHistoryRetry:hover {
+  text-decoration: underline;
+}
+
+.discoveryTimeline {
+  position: relative;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.discoveryTimeline::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  bottom: 6px;
+  width: 1px;
+  background: color-mix(in srgb, var(--color-info) 28%, var(--borderColor) 72%);
+}
+
+.discoveryTimelineItem {
+  position: relative;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  column-gap: 10px;
+}
+
+.discoveryTimelineDot {
+  width: 12px;
+  height: 12px;
+  margin-top: 3px;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--color-info) 38%, var(--borderColor) 62%);
+  background: var(--panel);
+  z-index: 1;
+}
+
+.discoveryTimelineItem-currentCandidate .discoveryTimelineDot {
+  border-color: color-mix(in srgb, var(--color-info) 70%, white 30%);
+  background: color-mix(in srgb, var(--color-info) 24%, var(--panel) 76%);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-info) 10%, transparent);
+}
+
+.discoveryTimelineItem-currentRunning .discoveryTimelineDot {
+  border-color: color-mix(in srgb, var(--color-success) 55%, var(--borderColor) 45%);
+  background: color-mix(in srgb, var(--color-success) 18%, var(--panel) 82%);
+}
+
+.discoveryTimelineBody {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.discoveryTimelineHeading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.discoveryTimelineVersion {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.discoveryTimelineKind {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--borderColor);
+  background: var(--dockrev-surface);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.discoveryTimelineTime {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+html[data-theme='light'] .discoveryHistoryPopover {
+  box-shadow: 0 18px 64px rgba(2, 6, 23, 0.18);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .discoveryHistoryTrigger,
+  .discoveryHistoryPopover {
+    transition: none;
+  }
+}
+
 .btn {
   height: 28px;
   padding: 0 12px;
