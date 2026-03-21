@@ -2185,18 +2185,27 @@ pub(super) async fn run_update_job(
                     {
                         let settled_at = now_rfc3339()
                             .unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+                        let settle_services_by_id = state
+                            .db
+                            .list_services_for_check(stack_id)
+                            .await?
+                            .into_iter()
+                            .map(|service| (service.id.clone(), service))
+                            .collect::<std::collections::HashMap<_, _>>();
                         let mut settled_services = 0usize;
                         for changed_service_id in &planned_service_ids {
-                            let Some(svc) = stack.services.iter().find(|svc| svc.id == *changed_service_id) else {
+                            let Some(svc_for_check) =
+                                settle_services_by_id.get(changed_service_id).cloned()
+                            else {
                                 continue;
                             };
-                            let Ok(img) = registry::ImageRef::parse(&svc.image.reference) else {
+                            let Ok(img) = registry::ImageRef::parse(&svc_for_check.image_ref) else {
                                 continue;
                             };
                             let runtime_observation = docker_compose_service_runtime_digest(
                                 state.as_ref(),
                                 &project,
-                                &svc.name,
+                                &svc_for_check.name,
                                 &repo_candidates(&img),
                             )
                             .await
@@ -2206,28 +2215,6 @@ pub(super) async fn run_update_job(
                                 continue;
                             };
 
-                            let svc_for_check = crate::db::ServiceForCheck {
-                                id: svc.id.clone(),
-                                name: svc.name.clone(),
-                                image_ref: svc.image.reference.clone(),
-                                image_tag: svc.image.tag.clone(),
-                                current_digest: svc.image.digest.clone(),
-                                current_runtime_started_at: None,
-                                current_resolved_tag: svc.image.resolved_tag.clone(),
-                                current_resolved_tags_json: svc
-                                    .image
-                                    .resolved_tags
-                                    .as_ref()
-                                    .and_then(|tags| serde_json::to_string(tags).ok()),
-                                candidate_digest: svc
-                                    .candidate
-                                    .as_ref()
-                                    .map(|candidate| candidate.digest.clone()),
-                                candidate_resolved_tag: svc
-                                    .candidate
-                                    .as_ref()
-                                    .and_then(|candidate| candidate.resolved_tag.clone()),
-                            };
                             let mut settle_outcome = service_check::check_service_and_persist(
                                 &state,
                                 &job_id,
@@ -2244,9 +2231,9 @@ pub(super) async fn run_update_job(
                                 inference_ok = false;
                                 service_check::persist_runtime_fallback_result(
                                     &state.db,
-                                    &svc.id,
-                                    &svc.image.reference,
-                                    &svc.image.tag,
+                                    &svc_for_check.id,
+                                    &svc_for_check.image_ref,
+                                    &svc_for_check.image_tag,
                                     &runtime_observation,
                                     &settled_at,
                                 )
@@ -2269,8 +2256,8 @@ pub(super) async fn run_update_job(
                                 "jobId": job_id,
                                 "ts": settled_at,
                                 "stackId": stack_id,
-                                "serviceId": svc.id,
-                                "serviceName": svc.name,
+                                "serviceId": svc_for_check.id,
+                                "serviceName": svc_for_check.name,
                                 "runtimeDigest": runtime_observation.digest,
                                 "runtimeStartedAt": runtime_observation.started_at,
                                 "candidatePresent": settle_outcome.candidate_present,
@@ -2291,7 +2278,7 @@ pub(super) async fn run_update_job(
 
                             enqueue_snapshot_for_image_ref(
                                 &state,
-                                &svc.image.reference,
+                                &svc_for_check.image_ref,
                                 &runtime_observation.digest,
                                 &host_platform,
                                 "update_digest_changed",

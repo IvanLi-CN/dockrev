@@ -62,6 +62,7 @@ export function DiscoveryHistoryPopover(props: {
   const fetchTimer = useRef<number | null>(null)
   const activeServiceId = useRef(props.serviceId)
   const mountedRef = useRef(true)
+  const [reloadToken, setReloadToken] = useState(0)
   const [state, setState] = useState<TimelineState>(() => {
     const cached = timelineCache.get(props.serviceId)
     return cached
@@ -87,11 +88,11 @@ export function DiscoveryHistoryPopover(props: {
   }, [])
 
   useEffect(() => {
-    if (!open || state.status !== 'idle') return
-
+    if (!open) return
     const requestedServiceId = props.serviceId
+    const cached = timelineCache.get(requestedServiceId) ?? null
+    setState({ status: 'loading', items: cached, error: null })
     fetchTimer.current = window.setTimeout(async () => {
-      setState((prev) => ({ status: 'loading', items: prev.items, error: null }))
       try {
         const response = await getServiceNewVersionDiscoveryTimeline(requestedServiceId)
         if (!mountedRef.current || activeServiceId.current !== requestedServiceId) return
@@ -113,13 +114,13 @@ export function DiscoveryHistoryPopover(props: {
         fetchTimer.current = null
       }
     }
-  }, [open, props.serviceId, state.status])
+  }, [count, open, props.serviceId, reloadToken])
 
   if (count <= 0) return null
 
   const retry = () => {
     timelineCache.delete(props.serviceId)
-    setState(emptyState())
+    setReloadToken((value) => value + 1)
   }
 
   return (

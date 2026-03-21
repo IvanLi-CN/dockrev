@@ -8191,6 +8191,103 @@ services:
 }
 
 #[tokio::test]
+async fn update_apply_settle_keeps_existing_runtime_started_at_when_inspect_time_is_missing() {
+    let runner = Arc::new(UpdateAndRuntimeScanRunner::new());
+    let state = test_state_with(":memory:", Arc::new(DigestOnlyUpdateRegistry), runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!(
+        "/tmp/dockrev-update-settle-runtime-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    seed_discovered_project(&state, &stack_id, "demo-update-settle-runtime").await;
+
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let prior_started_at = test_offset_rfc3339(&now, -time::Duration::hours(2));
+    let service = state
+        .db
+        .list_services_for_runtime_scan(&stack_id)
+        .await
+        .unwrap()[0]
+        .clone();
+    state
+        .db
+        .update_service_check_result_with_runtime_started_at(
+            &service.id,
+            Some("sha256:new".to_string()),
+            Some(prior_started_at.clone()),
+            None,
+            None,
+            Some("5.2".to_string()),
+            Some("5.2".to_string()),
+            Some("sha256:new".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let update = serde_json::json!({
+        "scope": "service",
+        "stackId": stack_id,
+        "serviceId": service.id,
+        "targetTag": "5.2",
+        "targetDigest": "sha256:new",
+        "pullTags": [],
+        "mode": "apply",
+        "allowArchMismatch": false,
+        "backupMode": "skip",
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/updates")
+                .header("content-type", "application/json")
+                .body(Body::from(update.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let job_id = triggered["jobId"].as_str().unwrap().to_string();
+
+    let job = wait_for_job_terminal(&state, &job_id).await;
+    assert_eq!(job.status, "success");
+
+    let context = state
+        .db
+        .get_service_new_version_timeline_context(&service.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        context.current_runtime_started_at.as_deref(),
+        Some(prior_started_at.as_str())
+    );
+}
+
+#[tokio::test]
 async fn webhook_trigger_check_creates_job_and_updates_stack() {
     let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
     let state = test_state_with(":memory:", Arc::new(DigestOnlyUpdateRegistry), runner).await;
