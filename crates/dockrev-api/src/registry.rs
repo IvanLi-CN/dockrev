@@ -131,12 +131,22 @@ pub trait RegistryClient: Send + Sync {
         let _ = (image, reference, host_platform);
         Ok(None)
     }
+    async fn get_oci_source(
+        &self,
+        image: &ImageRef,
+        reference: &str,
+        host_platform: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let _ = (image, reference, host_platform);
+        Ok(None)
+    }
 }
 
 #[derive(Clone)]
 pub struct HttpRegistryClient {
     http: reqwest::Client,
     docker: Option<DockerConfig>,
+    basic_auth_overrides: HashMap<String, (String, String)>,
     token_cache: Arc<Mutex<HashMap<String, String>>>,
     host_limiters: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
     options: HttpRegistryClientOptions,
@@ -166,6 +176,14 @@ impl HttpRegistryClient {
         docker_config_path: Option<&Path>,
         options: HttpRegistryClientOptions,
     ) -> anyhow::Result<Self> {
+        Self::new_with_basic_auth_overrides(docker_config_path, options, HashMap::new())
+    }
+
+    pub fn new_with_basic_auth_overrides(
+        docker_config_path: Option<&Path>,
+        options: HttpRegistryClientOptions,
+        basic_auth_overrides: HashMap<String, (String, String)>,
+    ) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(3))
             .timeout(Duration::from_secs(8))
@@ -175,6 +193,10 @@ impl HttpRegistryClient {
         Ok(Self {
             http,
             docker,
+            basic_auth_overrides: basic_auth_overrides
+                .into_iter()
+                .map(|(host, auth)| (normalize_auth_key(&host), auth))
+                .collect(),
             token_cache: Arc::new(Mutex::new(HashMap::new())),
             host_limiters: Arc::new(Mutex::new(HashMap::new())),
             options: HttpRegistryClientOptions {
@@ -182,6 +204,18 @@ impl HttpRegistryClient {
                 ..options
             },
         })
+    }
+
+    fn basic_auth_for_registry_host(&self, registry_host: &str) -> Option<(String, String)> {
+        let normalized_host = normalize_auth_key(registry_host);
+        self.basic_auth_overrides
+            .get(&normalized_host)
+            .cloned()
+            .or_else(|| {
+                self.docker
+                    .as_ref()
+                    .and_then(|d| d.basic_auth(&normalized_host))
+            })
     }
 }
 
@@ -336,6 +370,32 @@ impl RegistryClient for HttpRegistryClient {
         let blob_json = self.get_blob_json(image, &config_digest).await?;
         Ok(extract_oci_version_from_config_blob(&blob_json))
     }
+
+    async fn get_oci_source(
+        &self,
+        image: &ImageRef,
+        reference: &str,
+        host_platform: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let (manifest_json, _manifest_digest) = self.get_manifest_json(image, reference).await?;
+        let config_digest = if let Some(config_digest) = manifest_config_digest(&manifest_json) {
+            Some(config_digest)
+        } else {
+            let child_digest = select_platform_manifest_digest(&manifest_json, host_platform);
+            let Some(child_digest) = child_digest else {
+                return Ok(None);
+            };
+            let (child_manifest_json, _child_digest) =
+                self.get_manifest_json(image, &child_digest).await?;
+            manifest_config_digest(&child_manifest_json)
+        };
+        let Some(config_digest) = config_digest else {
+            return Ok(None);
+        };
+
+        let blob_json = self.get_blob_json(image, &config_digest).await?;
+        Ok(extract_oci_source_from_config_blob(&blob_json))
+    }
 }
 
 impl HttpRegistryClient {
@@ -393,9 +453,7 @@ impl HttpRegistryClient {
         accept: Option<&str>,
     ) -> anyhow::Result<reqwest::Response> {
         let basic_auth = self
-            .docker
-            .as_ref()
-            .and_then(|d| d.basic_auth(registry_host))
+            .basic_auth_for_registry_host(registry_host)
             .map(|(user, pass)| format!("Basic {}", BASE64.encode(format!("{user}:{pass}"))));
         let accept_header = accept.map(|s| s.to_string());
         let limit_host = request_limit_host(&url, registry_host);
@@ -579,11 +637,7 @@ impl HttpRegistryClient {
         }
 
         let mut req = self.http.get(url);
-        if let Some((user, pass)) = self
-            .docker
-            .as_ref()
-            .and_then(|d| d.basic_auth(registry_host))
-        {
+        if let Some((user, pass)) = self.basic_auth_for_registry_host(registry_host) {
             req = req.basic_auth(user, Some(pass));
         }
 
@@ -940,6 +994,17 @@ fn extract_oci_version_from_config_blob(value: &serde_json::Value) -> Option<Str
         .and_then(|labels| labels.as_object())?;
     labels
         .get("org.opencontainers.image.version")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+}
+
+fn extract_oci_source_from_config_blob(value: &serde_json::Value) -> Option<String> {
+    let labels = value
+        .get("config")
+        .and_then(|config| config.get("Labels").or_else(|| config.get("labels")))
+        .and_then(|labels| labels.as_object())?;
+    labels
+        .get("org.opencontainers.image.source")
         .and_then(|value| value.as_str())
         .map(str::to_string)
 }
@@ -1386,6 +1451,41 @@ mod tests {
         assert_eq!(
             extract_oci_version_from_config_blob(&blob).as_deref(),
             Some("v1.2.3")
+        );
+    }
+
+    #[test]
+    fn extract_oci_source_from_config_blob_reads_config_labels() {
+        let blob = serde_json::json!({
+            "config": {
+                "Labels": {
+                    "org.opencontainers.image.source": "https://github.com/acme/widgets"
+                }
+            }
+        });
+        assert_eq!(
+            extract_oci_source_from_config_blob(&blob).as_deref(),
+            Some("https://github.com/acme/widgets")
+        );
+    }
+
+    #[test]
+    fn http_registry_client_uses_basic_auth_override_for_token_requests() {
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "ghcr.io".to_string(),
+            ("octocat".to_string(), "secret".to_string()),
+        );
+        let client = HttpRegistryClient::new_with_basic_auth_overrides(
+            None,
+            HttpRegistryClientOptions::default(),
+            overrides,
+        )
+        .unwrap();
+
+        assert_eq!(
+            client.basic_auth_for_registry_host("ghcr.io"),
+            Some(("octocat".to_string(), "secret".to_string()))
         );
     }
 

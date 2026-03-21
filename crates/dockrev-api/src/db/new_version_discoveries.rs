@@ -6,21 +6,15 @@ const JOB_STATUS_SUCCESS: &str = "success";
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct NewVersionDiscoveryInput {
     service_id: String,
+    image_ref: String,
     source_job_id: String,
     discovered_at: String,
     current_digest: String,
     current_display_tag: String,
     current_tag: String,
+    candidate_tag: String,
     candidate_digest: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct NewVersionDiscoveryRow {
-    service_id: String,
-    current_digest: String,
-    current_display_tag: String,
-    current_tag: String,
-    candidate_digest: String,
+    candidate_display_tag: String,
 }
 
 pub(super) struct NewVersionDiscoveryBaseline {
@@ -30,12 +24,64 @@ pub(super) struct NewVersionDiscoveryBaseline {
     pub current_tag: String,
 }
 
-fn normalize_discovery_key(input: Option<&str>) -> String {
+pub(crate) fn normalize_discovery_key(input: Option<&str>) -> String {
     input
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or_default()
         .to_string()
+}
+
+pub(crate) fn stable_candidate_display_tag<'a>(
+    candidate_tag: &str,
+    candidate_display_tag: &'a str,
+) -> Option<&'a str> {
+    let candidate_display_tag = candidate_display_tag.trim();
+    if candidate_display_tag.is_empty() {
+        return None;
+    }
+
+    if candidate_display_tag
+        .to_ascii_lowercase()
+        .starts_with("sha256:")
+    {
+        return None;
+    }
+
+    let candidate_tag = candidate_tag.trim();
+    if !candidate_tag.is_empty() {
+        if crate::notify::notification_tag_requires_settle(candidate_tag, candidate_display_tag) {
+            return None;
+        }
+        return Some(candidate_display_tag);
+    }
+
+    crate::ignore::is_strict_semver(candidate_display_tag).then_some(candidate_display_tag)
+}
+
+pub(crate) fn canonical_visible_version_tag(tag: &str) -> String {
+    let tag = tag.trim();
+    if let Some(normalized) = dockrev_common::normalized_semver_from_oci_version(tag) {
+        return normalized;
+    }
+
+    let numeric = tag
+        .strip_prefix('v')
+        .or_else(|| tag.strip_prefix('V'))
+        .unwrap_or(tag);
+    let parts = numeric.split('.').collect::<Vec<_>>();
+    if parts
+        .iter()
+        .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
+    {
+        return match parts.as_slice() {
+            [major] => format!("{major}.0.0"),
+            [major, minor] => format!("{major}.{minor}.0"),
+            _ => tag.to_string(),
+        };
+    }
+
+    tag.to_string()
 }
 
 fn discovery_inputs_from_summary(
@@ -56,6 +102,10 @@ fn discovery_inputs_from_summary(
         let Some(service_id) = item.get("serviceId").and_then(|value| value.as_str()) else {
             continue;
         };
+        let image_ref = item
+            .get("imageRef")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
         let Some(current_tag) = item.get("currentTag").and_then(|value| value.as_str()) else {
             continue;
         };
@@ -67,9 +117,18 @@ fn discovery_inputs_from_summary(
             .get("currentDisplayTag")
             .and_then(|value| value.as_str())
             .unwrap_or(current_tag);
+        let candidate_display_tag = item
+            .get("candidateDisplayTag")
+            .and_then(|value| value.as_str())
+            .or_else(|| item.get("candidateTag").and_then(|value| value.as_str()));
+        let candidate_tag = item
+            .get("candidateTag")
+            .and_then(|value| value.as_str())
+            .or(candidate_display_tag);
 
         out.push(NewVersionDiscoveryInput {
             service_id: service_id.to_string(),
+            image_ref: normalize_discovery_key(Some(image_ref)),
             source_job_id: source_job_id.to_string(),
             discovered_at: discovered_at.to_string(),
             current_digest: normalize_discovery_key(
@@ -77,7 +136,9 @@ fn discovery_inputs_from_summary(
             ),
             current_display_tag: normalize_discovery_key(Some(current_display_tag)),
             current_tag: normalize_discovery_key(Some(current_tag)),
+            candidate_tag: normalize_discovery_key(candidate_tag),
             candidate_digest: normalize_discovery_key(Some(candidate_digest)),
+            candidate_display_tag: normalize_discovery_key(candidate_display_tag),
         });
     }
     out
@@ -91,22 +152,28 @@ fn insert_new_version_discovery_conn(
         r#"
 INSERT OR IGNORE INTO service_new_version_discoveries (
   service_id,
+  image_ref,
   source_job_id,
   discovered_at,
   current_digest,
   current_display_tag,
   current_tag,
-  candidate_digest
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+  candidate_tag,
+  candidate_digest,
+  candidate_display_tag
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
 "#,
         params![
             discovery.service_id,
+            discovery.image_ref,
             discovery.source_job_id,
             discovery.discovered_at,
             discovery.current_digest,
             discovery.current_display_tag,
             discovery.current_tag,
+            discovery.candidate_tag,
             discovery.candidate_digest,
+            discovery.candidate_display_tag,
         ],
     )
 }
@@ -141,18 +208,151 @@ fn discovery_matches_baseline(
     }
 }
 
-fn count_new_version_discoveries_from_rows<'a>(
+fn candidate_identity_key(
+    row: &NewVersionDiscoveryRow,
+    stable_tags_by_provenance: &std::collections::HashMap<
+        (String, String, String, String),
+        std::collections::BTreeSet<String>,
+    >,
+) -> Option<String> {
+    if let Some(tag) = stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag)
+    {
+        return Some(format!("tag:{}", canonical_visible_version_tag(tag)));
+    }
+
+    let digest = row.candidate_digest.trim();
+    if digest.is_empty() {
+        return None;
+    }
+
+    let key = (
+        row.service_id.clone(),
+        row.image_ref.clone(),
+        row.current_tag.clone(),
+        digest.to_string(),
+    );
+
+    if let Some(tags) = stable_tags_by_provenance.get(&key)
+        && tags.len() == 1
+    {
+        return tags.iter().next().cloned().map(|tag| format!("tag:{tag}"));
+    }
+
+    Some(format!("digest:{digest}"))
+}
+
+pub(crate) fn count_new_version_discoveries_from_rows<'a>(
     rows: impl Iterator<Item = &'a NewVersionDiscoveryRow>,
     current_digest: &str,
     current_display_tag: &str,
     current_tag: &str,
+    effective_stable_tags_by_provenance: &std::collections::HashMap<
+        (String, String, String, String),
+        std::collections::BTreeSet<String>,
+    >,
 ) -> u32 {
-    rows.filter(|row| {
-        discovery_matches_baseline(row, current_digest, current_display_tag, current_tag)
-    })
-    .map(|row| row.candidate_digest.as_str())
-    .collect::<std::collections::BTreeSet<_>>()
-    .len() as u32
+    let matched_rows = rows
+        .filter(|row| {
+            discovery_matches_baseline(row, current_digest, current_display_tag, current_tag)
+        })
+        .collect::<Vec<_>>();
+    let mut stable_tags_by_provenance = matched_rows.iter().fold(
+        std::collections::HashMap::<
+            (String, String, String, String),
+            std::collections::BTreeSet<String>,
+        >::new(),
+        |mut acc, row| {
+            let Some(tag) =
+                stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag)
+            else {
+                return acc;
+            };
+            let digest = row.candidate_digest.trim();
+            if digest.is_empty() {
+                return acc;
+            }
+            acc.entry((
+                row.service_id.clone(),
+                row.image_ref.clone(),
+                row.current_tag.clone(),
+                digest.to_string(),
+            ))
+            .or_default()
+            .insert(canonical_visible_version_tag(tag));
+            acc
+        },
+    );
+    for (key, tags) in effective_stable_tags_by_provenance {
+        if key.3.trim().is_empty() || tags.is_empty() {
+            continue;
+        }
+        stable_tags_by_provenance
+            .entry(key.clone())
+            .or_default()
+            .extend(tags.iter().cloned());
+    }
+
+    matched_rows
+        .into_iter()
+        .filter_map(|row| candidate_identity_key(row, &stable_tags_by_provenance))
+        .collect::<std::collections::BTreeSet<_>>()
+        .len() as u32
+}
+
+pub(super) fn list_new_version_discoveries_for_services_conn(
+    conn: &rusqlite::Connection,
+    service_ids: &[String],
+) -> rusqlite::Result<Vec<NewVersionDiscoveryRow>> {
+    let service_ids = service_ids
+        .iter()
+        .map(|service_id| service_id.trim())
+        .filter(|service_id| !service_id.is_empty())
+        .map(ToString::to_string)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    if service_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = service_ids
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        r#"
+SELECT
+  service_id,
+  image_ref,
+  current_digest,
+  current_display_tag,
+  current_tag,
+  candidate_tag,
+  candidate_digest,
+  candidate_display_tag
+FROM service_new_version_discoveries
+WHERE service_id IN ({placeholders})
+"#,
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(service_ids.len());
+    for service_id in &service_ids {
+        params.push(service_id);
+    }
+    let rows = stmt.query_map(params.as_slice(), |row| {
+        Ok(NewVersionDiscoveryRow {
+            service_id: row.get(0)?,
+            image_ref: row.get(1)?,
+            current_digest: row.get(2)?,
+            current_display_tag: row.get(3)?,
+            current_tag: row.get(4)?,
+            candidate_tag: row.get(5)?,
+            candidate_digest: row.get(6)?,
+            candidate_display_tag: row.get(7)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>()
 }
 
 pub(super) fn record_new_version_discoveries_from_summary_conn(
@@ -213,48 +413,15 @@ pub(super) fn count_new_version_discoveries_for_services_conn(
     conn: &rusqlite::Connection,
     baselines: &[NewVersionDiscoveryBaseline],
 ) -> rusqlite::Result<std::collections::HashMap<String, u32>> {
-    let service_ids = baselines
-        .iter()
-        .map(|baseline| baseline.service_id.clone())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    if service_ids.is_empty() {
-        return Ok(std::collections::HashMap::new());
-    }
+    use std::collections::BTreeSet;
 
-    let placeholders = service_ids
-        .iter()
-        .map(|_| "?")
-        .collect::<Vec<_>>()
-        .join(",");
-    let sql = format!(
-        r#"
-SELECT
-  service_id,
-  current_digest,
-  current_display_tag,
-  current_tag,
-  candidate_digest
-FROM service_new_version_discoveries
-WHERE service_id IN ({placeholders})
-"#,
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(service_ids.len());
-    for service_id in &service_ids {
-        params.push(service_id);
-    }
-    let rows = stmt.query_map(params.as_slice(), |row| {
-        Ok(NewVersionDiscoveryRow {
-            service_id: row.get(0)?,
-            current_digest: row.get(1)?,
-            current_display_tag: row.get(2)?,
-            current_tag: row.get(3)?,
-            candidate_digest: row.get(4)?,
-        })
-    })?;
-    let rows = rows.collect::<Result<Vec<_>, _>>()?;
+    let rows = list_new_version_discoveries_for_services_conn(
+        conn,
+        &baselines
+            .iter()
+            .map(|baseline| baseline.service_id.clone())
+            .collect::<Vec<_>>(),
+    )?;
     let rows_by_service = rows.into_iter().fold(
         std::collections::HashMap::<String, Vec<NewVersionDiscoveryRow>>::new(),
         |mut acc, row| {
@@ -262,6 +429,34 @@ WHERE service_id IN ({placeholders})
             acc
         },
     );
+    let notification_targets = rows_by_service
+        .values()
+        .flat_map(|rows| {
+            rows.iter()
+                .filter(|row| {
+                    stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag)
+                        .is_none()
+                })
+                .filter_map(|row| {
+                    crate::snapshot_worker::normalize_digest(&row.candidate_digest).map(|digest| {
+                        (
+                            row.service_id.clone(),
+                            row.image_ref.clone(),
+                            row.current_tag.clone(),
+                            digest,
+                        )
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let notification_tags =
+        super::new_version_notifications::list_stable_candidate_display_tags_for_notification_targets_conn(
+            conn,
+            &notification_targets,
+        )?;
 
     Ok(baselines
         .iter()
@@ -272,10 +467,28 @@ WHERE service_id IN ({placeholders})
                 &normalize_discovery_key(baseline.current_digest.as_deref()),
                 &normalize_discovery_key(baseline.current_display_tag.as_deref()),
                 &normalize_discovery_key(Some(baseline.current_tag.as_str())),
+                &notification_tags,
             );
             (count > 0).then_some((baseline.service_id.clone(), count))
         })
         .collect())
+}
+
+impl Db {
+    pub async fn list_new_version_discoveries_for_services(
+        &self,
+        service_ids: &[String],
+    ) -> anyhow::Result<Vec<NewVersionDiscoveryRow>> {
+        let service_ids = service_ids.to_vec();
+        self.call(move |conn| {
+            Ok(list_new_version_discoveries_for_services_conn(
+                conn,
+                &service_ids,
+            )?)
+        })
+        .await
+        .context("list new version discoveries for services")
+    }
 }
 
 #[cfg(test)]
@@ -310,6 +523,26 @@ mod tests {
         candidate_digest: &str,
         candidate_display_tag: Option<&str>,
     ) -> serde_json::Value {
+        make_summary_with_candidate_tag(
+            service_id,
+            current_tag,
+            current_display_tag,
+            current_digest,
+            "latest",
+            candidate_digest,
+            candidate_display_tag,
+        )
+    }
+
+    fn make_summary_with_candidate_tag(
+        service_id: &str,
+        current_tag: &str,
+        current_display_tag: Option<&str>,
+        current_digest: Option<&str>,
+        candidate_tag: &str,
+        candidate_digest: &str,
+        candidate_display_tag: Option<&str>,
+    ) -> serde_json::Value {
         serde_json::json!({
             "newVersions": {
                 "count": 1,
@@ -321,8 +554,8 @@ mod tests {
                     "currentTag": current_tag,
                     "currentDigest": current_digest,
                     "currentDisplayTag": current_display_tag.unwrap_or(current_tag),
-                    "candidateTag": "latest",
-                    "candidateDisplayTag": candidate_display_tag.unwrap_or("1.1.0"),
+                    "candidateTag": candidate_tag,
+                    "candidateDisplayTag": candidate_display_tag.unwrap_or(candidate_tag),
                     "candidateDigest": candidate_digest,
                 }],
             }
@@ -402,7 +635,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn finish_job_records_unique_candidate_discoveries_for_current_baseline() {
+    async fn finish_job_counts_unique_visible_versions_for_current_baseline() {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
         seed_service(
             &db,
@@ -423,7 +656,7 @@ mod tests {
                 Some("1.0.0"),
                 Some("sha256:current-v1"),
                 "sha256:candidate-a",
-                Some("1.1.0"),
+                Some("v1.1.0"),
             ),
         )
         .await;
@@ -436,7 +669,7 @@ mod tests {
                 Some("1.0.0"),
                 Some("sha256:current-v1"),
                 "sha256:candidate-b",
-                Some("1.2.0"),
+                Some("1.1.0"),
             ),
         )
         .await;
@@ -450,6 +683,153 @@ mod tests {
                 Some("sha256:current-v1"),
                 "sha256:candidate-a",
                 Some("1.1.0"),
+            ),
+        )
+        .await;
+        insert_successful_check_job(
+            &db,
+            "job_4",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-c",
+                Some("1.2.0"),
+            ),
+        )
+        .await;
+
+        let stack = db.get_stack("stack_1").await.unwrap().unwrap();
+        assert_eq!(stack.services[0].new_version_discovery_count, Some(2));
+    }
+
+    #[tokio::test]
+    async fn finish_job_canonicalizes_semver_equivalent_visible_versions() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(
+            &db,
+            "svc_1",
+            Some("sha256:current-v1"),
+            Some("1.0.0"),
+            "latest",
+            Some("sha256:live-candidate"),
+        )
+        .await;
+
+        insert_successful_check_job(
+            &db,
+            "job_1",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-a",
+                Some("5.2"),
+            ),
+        )
+        .await;
+        insert_successful_check_job(
+            &db,
+            "job_2",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-b",
+                Some("5.2.0"),
+            ),
+        )
+        .await;
+
+        let stack = db.get_stack("stack_1").await.unwrap().unwrap();
+        assert_eq!(stack.services[0].new_version_discovery_count, Some(1));
+    }
+
+    #[tokio::test]
+    async fn finish_job_uses_digest_when_candidate_display_tag_is_floating_alias() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(
+            &db,
+            "svc_1",
+            Some("sha256:current-v1"),
+            Some("1.0.0"),
+            "latest",
+            Some("sha256:live-candidate"),
+        )
+        .await;
+
+        insert_successful_check_job(
+            &db,
+            "job_1",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-a",
+                Some("latest"),
+            ),
+        )
+        .await;
+        insert_successful_check_job(
+            &db,
+            "job_2",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-b",
+                Some("latest"),
+            ),
+        )
+        .await;
+
+        let stack = db.get_stack("stack_1").await.unwrap().unwrap();
+        assert_eq!(stack.services[0].new_version_discovery_count, Some(2));
+    }
+
+    #[tokio::test]
+    async fn finish_job_uses_digest_when_candidate_display_tag_is_unresolved_non_semver_tag() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(
+            &db,
+            "svc_1",
+            Some("sha256:current-v1"),
+            Some("1.0.0"),
+            "latest",
+            Some("sha256:live-candidate"),
+        )
+        .await;
+
+        insert_successful_check_job(
+            &db,
+            "job_1",
+            make_summary_with_candidate_tag(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "15-alpine",
+                "sha256:candidate-a",
+                Some("15-alpine"),
+            ),
+        )
+        .await;
+        insert_successful_check_job(
+            &db,
+            "job_2",
+            make_summary_with_candidate_tag(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "15-alpine",
+                "sha256:candidate-b",
+                Some("15-alpine"),
             ),
         )
         .await;
@@ -510,6 +890,50 @@ mod tests {
                 "latest",
                 Some("latest"),
                 None,
+                "sha256:candidate-a",
+                Some("1.1.0"),
+            ),
+        )
+        .await;
+
+        let stack = db.get_stack("stack_1").await.unwrap().unwrap();
+        assert_eq!(stack.services[0].new_version_discovery_count, Some(1));
+    }
+
+    #[tokio::test]
+    async fn finish_job_ignores_floating_candidate_alias_once_same_digest_resolves() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(
+            &db,
+            "svc_1",
+            Some("sha256:current-v1"),
+            Some("1.0.0"),
+            "latest",
+            Some("sha256:live-candidate"),
+        )
+        .await;
+
+        insert_successful_check_job(
+            &db,
+            "job_1",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-a",
+                Some("latest"),
+            ),
+        )
+        .await;
+        insert_successful_check_job(
+            &db,
+            "job_2",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
                 "sha256:candidate-a",
                 Some("1.1.0"),
             ),
@@ -605,6 +1029,32 @@ mod tests {
             Some("1.1.0"),
         );
         db.insert_job(job).await.unwrap();
+        insert_successful_check_job(
+            &db,
+            "job_backfill_same_visible",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-backfill-2",
+                Some("1.1.0"),
+            ),
+        )
+        .await;
+        insert_successful_check_job(
+            &db,
+            "job_backfill_new_visible",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.0.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-backfill-3",
+                Some("1.2.0"),
+            ),
+        )
+        .await;
 
         db.call(|conn| {
             conn.execute("DELETE FROM service_new_version_discoveries", [])?;
@@ -617,10 +1067,65 @@ mod tests {
             .rebuild_new_version_discoveries_from_successful_checks()
             .await
             .unwrap();
-        assert_eq!(inserted, 1);
+        assert_eq!(inserted, 3);
 
         let stack = db.get_stack("stack_1").await.unwrap().unwrap();
-        assert_eq!(stack.services[0].new_version_discovery_count, Some(1));
+        assert_eq!(stack.services[0].new_version_discovery_count, Some(2));
+    }
+
+    #[tokio::test]
+    async fn backfill_rebuild_preserves_image_ref_provenance() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(
+            &db,
+            "svc_1",
+            Some("sha256:current-v1"),
+            Some("1.0.0"),
+            "latest",
+            Some("sha256:live-candidate"),
+        )
+        .await;
+
+        insert_successful_check_job(
+            &db,
+            "job_backfill_image_ref",
+            serde_json::json!({
+                "newVersions": {
+                    "count": 1,
+                    "services": [{
+                        "stackId": "stack_1",
+                        "serviceId": "svc_1",
+                        "serviceName": "web",
+                        "imageRef": "ghcr.io/acme/legacy-web",
+                        "currentTag": "latest",
+                        "currentDigest": "sha256:current-v1",
+                        "currentDisplayTag": "1.0.0",
+                        "candidateTag": "latest",
+                        "candidateDisplayTag": "latest",
+                        "candidateDigest": "sha256:candidate-a"
+                    }],
+                }
+            }),
+        )
+        .await;
+
+        db.call(|conn| {
+            conn.execute("DELETE FROM service_new_version_discoveries", [])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        db.rebuild_new_version_discoveries_from_successful_checks()
+            .await
+            .unwrap();
+
+        let rows = db
+            .list_new_version_discoveries_for_services(&["svc_1".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].image_ref, "ghcr.io/acme/legacy-web");
     }
 
     #[tokio::test]
@@ -662,5 +1167,85 @@ mod tests {
 
         let stack = db.get_stack("stack_1").await.unwrap().unwrap();
         assert_eq!(stack.services[0].new_version_discovery_count, Some(1));
+    }
+
+    #[tokio::test]
+    async fn get_stack_normalizes_unsettled_discovery_history_from_notifications() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(
+            &db,
+            "svc_1",
+            Some("sha256:current-v1"),
+            Some("1.16.0"),
+            "latest",
+            Some("sha256:live-candidate"),
+        )
+        .await;
+
+        insert_successful_check_job(
+            &db,
+            "job_unsettled_a",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.16.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-a",
+                Some("latest"),
+            ),
+        )
+        .await;
+        insert_successful_check_job(
+            &db,
+            "job_unsettled_b",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.16.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-b",
+                Some("latest"),
+            ),
+        )
+        .await;
+        insert_successful_check_job(
+            &db,
+            "job_unsettled_c",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("1.16.0"),
+                Some("sha256:current-v1"),
+                "sha256:candidate-c",
+                Some("latest"),
+            ),
+        )
+        .await;
+
+        for (id, digest, display_tag) in [
+            ("nvn_a", "sha256:candidate-a", "1.16.2"),
+            ("nvn_b", "sha256:candidate-b", "1.16.2"),
+            ("nvn_c", "sha256:candidate-c", "1.17.0"),
+        ] {
+            db.reserve_new_version_notification(&crate::db::NewVersionNotificationPending {
+                id: id.to_string(),
+                service_id: "svc_1".to_string(),
+                job_id: "job_notifications".to_string(),
+                reason: "schedule".to_string(),
+                image_ref: "ghcr.io/acme/web".to_string(),
+                image_tag: "latest".to_string(),
+                current_tag: "latest".to_string(),
+                current_display_tag: "1.16.0".to_string(),
+                candidate_tag: "latest".to_string(),
+                candidate_display_tag: display_tag.to_string(),
+                candidate_digest: digest.to_string(),
+                created_at: "2026-03-19T00:03:00Z".to_string(),
+            })
+            .await
+            .unwrap();
+        }
+
+        let stack = db.get_stack("stack_1").await.unwrap().unwrap();
+        assert_eq!(stack.services[0].new_version_discovery_count, Some(2));
     }
 }

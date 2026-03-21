@@ -83,6 +83,10 @@ pub struct GitHubClient {
 
 impl GitHubClient {
     pub fn new(pat: &str) -> anyhow::Result<Self> {
+        Self::new_with_base_url(pat, Url::parse("https://api.github.com/")?)
+    }
+
+    fn new_with_base_url(pat: &str, base_url: Url) -> anyhow::Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(
             USER_AGENT,
@@ -105,7 +109,7 @@ impl GitHubClient {
                 .timeout(std::time::Duration::from_secs(12))
                 .build()
                 .context("build reqwest client")?,
-            base_url: Url::parse("https://api.github.com/")?,
+            base_url,
             headers,
         })
     }
@@ -206,6 +210,75 @@ impl GitHubClient {
                 }
 
                 out.sort_by_key(|r| r.full_name.to_ascii_lowercase());
+                Ok(out)
+            }
+        }
+    }
+
+    pub async fn get_authenticated_user_login(&self) -> anyhow::Result<String> {
+        let user = self
+            .request_json::<GitHubAuthenticatedUser>(reqwest::Method::GET, "user", None)
+            .await?;
+        Ok(user.login)
+    }
+
+    pub async fn list_owner_container_package_names(
+        &self,
+        owner: &str,
+        authenticated_login: Option<&str>,
+    ) -> anyhow::Result<Vec<String>> {
+        let owner = owner.trim();
+        if owner.is_empty() {
+            return Err(anyhow::anyhow!("owner is empty"));
+        }
+
+        let is_self_owner =
+            authenticated_login.is_some_and(|login| login.eq_ignore_ascii_case(owner));
+        let mut out = Vec::<String>::new();
+        let mut seen = HashSet::<String>::new();
+
+        if is_self_owner {
+            let self_path = "user/packages?package_type=container&visibility=all";
+            for pkg in self
+                .paginated_get::<GitHubPackageSummary>(self_path)
+                .await?
+            {
+                let key = pkg.name.to_ascii_lowercase();
+                if seen.insert(key) {
+                    out.push(pkg.name);
+                }
+            }
+            out.sort_by_key(|name| name.to_ascii_lowercase());
+            return Ok(out);
+        }
+
+        let org_path = format!("orgs/{owner}/packages?package_type=container");
+        match self.paginated_get::<GitHubPackageSummary>(&org_path).await {
+            Ok(packages) => {
+                for pkg in packages {
+                    let key = pkg.name.to_ascii_lowercase();
+                    if seen.insert(key) {
+                        out.push(pkg.name);
+                    }
+                }
+                out.sort_by_key(|name| name.to_ascii_lowercase());
+                Ok(out)
+            }
+            Err(org_err) => {
+                let user_path = format!("users/{owner}/packages?package_type=container");
+                let packages = self
+                    .paginated_get::<GitHubPackageSummary>(&user_path)
+                    .await
+                    .with_context(|| {
+                        format!("list container packages failed (org_err={org_err})")
+                    })?;
+                for pkg in packages {
+                    let key = pkg.name.to_ascii_lowercase();
+                    if seen.insert(key) {
+                        out.push(pkg.name);
+                    }
+                }
+                out.sort_by_key(|name| name.to_ascii_lowercase());
                 Ok(out)
             }
         }
@@ -316,6 +389,8 @@ fn parse_next_link(link_header: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{Json, Router, routing::get};
+    use serde_json::json;
 
     #[test]
     fn parse_next_link_extracts_next() {
@@ -352,6 +427,49 @@ mod tests {
             }
         );
     }
+
+    #[tokio::test]
+    async fn list_owner_container_package_names_uses_user_packages_for_self_owner() {
+        async fn user() -> Json<serde_json::Value> {
+            Json(json!({ "login": "ivanli-cn" }))
+        }
+
+        async fn user_packages() -> Json<serde_json::Value> {
+            Json(json!([
+                { "name": "dockrev" },
+                { "name": "dockrev-supervisor" }
+            ]))
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new()
+                    .route("/user", get(user))
+                    .route("/user/packages", get(user_packages)),
+            )
+            .await
+            .unwrap();
+        });
+
+        let client = GitHubClient::new_with_base_url(
+            "test-token",
+            Url::parse(&format!("http://{addr}/")).unwrap(),
+        )
+        .unwrap();
+        let login = client.get_authenticated_user_login().await.unwrap();
+        let packages = client
+            .list_owner_container_package_names("IvanLi-CN", Some(&login))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            packages,
+            vec!["dockrev".to_string(), "dockrev-supervisor".to_string()]
+        );
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -380,6 +498,16 @@ struct GitHubRepoWithOwner {
 #[derive(Clone, Debug, Deserialize)]
 struct GitHubRepoOwner {
     pub login: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GitHubAuthenticatedUser {
+    pub login: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GitHubPackageSummary {
+    pub name: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

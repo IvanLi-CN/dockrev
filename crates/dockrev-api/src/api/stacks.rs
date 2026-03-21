@@ -363,6 +363,118 @@ pub(super) async fn enrich_stack_with_version_inference(
     Ok(())
 }
 
+#[derive(Clone)]
+struct DiscoveryCountServiceContext {
+    current_digest: String,
+    current_display_tag: String,
+    current_tag: String,
+}
+
+async fn enrich_stack_with_new_version_discovery_counts(
+    state: &Arc<AppState>,
+    stack: &mut StackRecord,
+) -> Result<(), ApiError> {
+    use std::collections::{BTreeSet, HashMap};
+
+    let contexts = stack
+        .services
+        .iter()
+        .filter(|service| service.candidate.is_some())
+        .map(|service| {
+            (
+                service.id.clone(),
+                DiscoveryCountServiceContext {
+                    current_digest: crate::db::normalize_discovery_key(
+                        service.image.digest.as_deref(),
+                    ),
+                    current_display_tag: crate::db::normalize_discovery_key(
+                        service
+                            .image
+                            .resolved_tag
+                            .as_deref()
+                            .or(Some(service.image.tag.as_str())),
+                    ),
+                    current_tag: crate::db::normalize_discovery_key(Some(
+                        service.image.tag.as_str(),
+                    )),
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
+    for service in stack.services.iter_mut() {
+        service.new_version_discovery_count = None;
+    }
+    if contexts.is_empty() {
+        return Ok(());
+    }
+
+    let discovery_rows = state
+        .db
+        .list_new_version_discoveries_for_services(&contexts.keys().cloned().collect::<Vec<_>>())
+        .await
+        .map_err(map_internal)?;
+    let rows_by_service = discovery_rows.into_iter().fold(
+        HashMap::<String, Vec<crate::db::NewVersionDiscoveryRow>>::new(),
+        |mut acc, row| {
+            acc.entry(row.service_id.clone()).or_default().push(row);
+            acc
+        },
+    );
+
+    let notification_targets = rows_by_service
+        .values()
+        .flat_map(|rows| {
+            rows.iter()
+                .filter(|row| {
+                    crate::db::stable_candidate_display_tag(
+                        &row.candidate_tag,
+                        &row.candidate_display_tag,
+                    )
+                    .is_none()
+                })
+                .filter_map(|row| {
+                    snapshot_worker::normalize_digest(&row.candidate_digest).map(|digest| {
+                        (
+                            row.service_id.clone(),
+                            row.image_ref.clone(),
+                            row.current_tag.clone(),
+                            digest,
+                        )
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let notification_tags = state
+        .db
+        .list_stable_candidate_display_tags_for_notification_targets(&notification_targets)
+        .await
+        .map_err(map_internal)?;
+
+    for service in stack.services.iter_mut() {
+        let Some(context) = contexts.get(&service.id) else {
+            continue;
+        };
+        let Some(rows) = rows_by_service.get(&service.id) else {
+            continue;
+        };
+
+        let count = crate::db::count_new_version_discoveries_from_rows(
+            rows.iter(),
+            &context.current_digest,
+            &context.current_display_tag,
+            &context.current_tag,
+            &notification_tags,
+        );
+        service.new_version_discovery_count = (count > 0).then_some(count);
+    }
+
+    Ok(())
+}
+
 pub(super) async fn get_stack(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -374,6 +486,7 @@ pub(super) async fn get_stack(
         return Err(ApiError::not_found("stack not found"));
     };
     enrich_stack_with_version_inference(&state, &mut stack).await?;
+    enrich_stack_with_new_version_discovery_counts(&state, &mut stack).await?;
 
     Ok(Json(GetStackResponse {
         stack: StackResponse {

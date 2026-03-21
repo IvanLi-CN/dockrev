@@ -3138,11 +3138,15 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
           .map((repo, idx) => {
             const visibility = repo.fullName.includes('private') || idx % 9 === 0 ? 'private' : 'public'
             const lastActivityAt = idx % 13 === 0 ? null : nowIso(-(idx + 1) * 21_600_000)
+            const ghcrLinked = idx % 4 === 0
+            const deployed = idx % 7 === 0
             return {
               fullName: repo.fullName,
               selected: repo.selected,
               visibility,
               lastActivityAt,
+              ghcrLinked,
+              deployed,
             }
           }),
         warnings: [],
@@ -3158,7 +3162,16 @@ export function installDockrevMockApi(scenario: DockrevApiScenario) {
           const resp: ResolveGitHubPackagesTargetResponse = {
             kind: 'repo',
             owner,
-            repos: [{ fullName, selected: existing?.selected ?? true, visibility: 'unknown', lastActivityAt: null }],
+            repos: [
+              {
+                fullName,
+                selected: existing?.selected ?? true,
+                visibility: 'unknown',
+                lastActivityAt: null,
+                ghcrLinked: null,
+                deployed: false,
+              },
+            ],
             warnings: [],
           }
           return json(resp)

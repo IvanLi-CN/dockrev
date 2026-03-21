@@ -23,19 +23,26 @@ AlertDialogOverlay.displayName = AlertDialogPrimitive.Overlay.displayName
 const AlertDialogContent = React.forwardRef<
   React.ElementRef<typeof AlertDialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Content>
->(({ className, ...props }, ref) => (
-  <AlertDialogPortal>
-    <AlertDialogOverlay />
-    <AlertDialogPrimitive.Content
-      ref={ref}
-      className={cn(
-        'fixed left-1/2 top-1/2 z-50 grid w-[min(92vw,42rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl border border-border bg-card p-6 text-card-foreground shadow-2xl outline-none animate-in fade-in-0 zoom-in-95',
-        className,
-      )}
-      {...props}
-    />
-  </AlertDialogPortal>
-))
+>(({ className, ...props }, ref) => {
+  const usesModalCard = className?.split(/\s+/).includes('modalCard') ?? false
+
+  return (
+    <AlertDialogPortal>
+      <AlertDialogOverlay />
+      <AlertDialogPrimitive.Content
+        ref={ref}
+        className={cn(
+          'fixed left-1/2 top-1/2 z-50 grid -translate-x-1/2 -translate-y-1/2 gap-4 outline-none animate-in fade-in-0 zoom-in-95',
+          usesModalCard
+            ? null
+            : 'w-[min(92vw,42rem)] max-w-lg rounded-xl border border-border bg-card p-6 text-card-foreground shadow-2xl',
+          className,
+        )}
+        {...props}
+      />
+    </AlertDialogPortal>
+  )
+})
 AlertDialogContent.displayName = AlertDialogPrimitive.Content.displayName
 
 function AlertDialogHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
