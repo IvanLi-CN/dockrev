@@ -54,7 +54,7 @@ impl ImageRef {
             Some((left, right)) if !right.is_empty() && !right.contains('/') => {
                 (left.trim(), right.trim().to_string())
             }
-            Some((_left, right)) if right.is_empty() => {
+            Some((_left, "")) => {
                 return Err(anyhow::anyhow!(
                     "invalid tag in image ref (expected repo/name[:tag][@sha256:digest])"
                 ));
