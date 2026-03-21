@@ -252,7 +252,7 @@ pub(crate) async fn check_service_and_persist(
     let current_runtime_started_at = if current_digest_changed {
         observed_runtime_started_at
     } else {
-        existing_runtime_started_at.or(observed_runtime_started_at)
+        observed_runtime_started_at.or(existing_runtime_started_at)
     };
 
     state

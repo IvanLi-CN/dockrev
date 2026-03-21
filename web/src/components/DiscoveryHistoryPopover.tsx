@@ -69,6 +69,8 @@ export function DiscoveryHistoryPopover(props: {
       ? { status: 'ready', items: cached, error: null }
       : emptyState()
   })
+  const loadedCandidateCount =
+    state.items?.filter((item) => item.kind !== 'currentRunning').length ?? count
 
   useEffect(() => {
     activeServiceId.current = props.serviceId
@@ -143,7 +145,7 @@ export function DiscoveryHistoryPopover(props: {
       >
         <div className="discoveryHistoryHeader">
           <div className="discoveryHistoryTitle">版本发现时间线</div>
-          <div className="discoveryHistoryMeta">{`${count} 个候选版本`}</div>
+          <div className="discoveryHistoryMeta">{`${loadedCandidateCount} 个候选版本`}</div>
         </div>
 
         {state.status === 'loading' && !state.items ? (

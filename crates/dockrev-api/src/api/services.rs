@@ -100,7 +100,6 @@ pub(super) async fn get_service_new_version_discovery_timeline(
             .then_with(|| left.version.cmp(&right.version))
     });
 
-    let expected_candidate_count = historical_candidates.len();
     let current_candidate_identity = timeline_candidate_identity(&context);
     let current_candidate_version = timeline_candidate_version(&context);
     let mut matched_current_candidate = false;
@@ -130,10 +129,6 @@ pub(super) async fn get_service_new_version_discovery_timeline(
                     })
             })
     });
-
-    if current_candidate_item.is_some() && !matched_current_candidate {
-        historical_candidates.truncate(expected_candidate_count.saturating_sub(1));
-    }
 
     let mut items = Vec::with_capacity(historical_candidates.len() + 2);
     if let Some(current_candidate_item) = current_candidate_item {

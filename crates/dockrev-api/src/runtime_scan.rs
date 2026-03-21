@@ -434,14 +434,21 @@ async fn run_runtime_scan_for_job(
             };
             services_with_runtime += 1;
 
-            if svc
+            let digest_changed = !svc
                 .current_digest
                 .as_deref()
-                .is_some_and(|d| d == runtime.digest.as_str())
-            {
+                .is_some_and(|d| d == runtime.digest.as_str());
+            let runtime_started_at_changed =
+                service_check::normalize_runtime_started_at(
+                    svc.current_runtime_started_at.as_deref(),
+                ) != service_check::normalize_runtime_started_at(runtime.started_at.as_deref());
+
+            if !digest_changed && !runtime_started_at_changed {
                 continue;
             }
-            services_drifted += 1;
+            if digest_changed {
+                services_drifted += 1;
+            }
 
             let svc_for_check = crate::db::ServiceForCheck {
                 id: svc.id.clone(),

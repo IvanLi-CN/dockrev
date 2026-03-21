@@ -986,13 +986,19 @@ impl CommandRunner for PlatformDigestRunner {
 #[derive(Clone)]
 struct CheckAndRuntimeScanRunner {
     runtime_digest: String,
+    runtime_started_at: Option<String>,
     calls: Arc<std::sync::Mutex<Vec<Vec<String>>>>,
 }
 
 impl CheckAndRuntimeScanRunner {
     fn new(runtime_digest: &str) -> Self {
+        Self::new_with_started_at(runtime_digest, None)
+    }
+
+    fn new_with_started_at(runtime_digest: &str, runtime_started_at: Option<String>) -> Self {
         Self {
             runtime_digest: runtime_digest.to_string(),
+            runtime_started_at,
             calls: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
@@ -1015,7 +1021,11 @@ impl CommandRunner for CheckAndRuntimeScanRunner {
                 .map(|s| s.as_str())
                 .is_some_and(|s| s.starts_with("{{.Image}}"))
         {
-            (0, "img1\n".to_string())
+            let stdout = self.runtime_started_at.as_deref().map_or_else(
+                || "img1\n".to_string(),
+                |started_at| format!("img1\t{started_at}\n"),
+            );
+            (0, stdout)
         } else if args.first().map(|s| s.as_str()) == Some("inspect")
             && args.get(1).map(|s| s.as_str()) == Some("--format")
             && args
@@ -1023,7 +1033,11 @@ impl CommandRunner for CheckAndRuntimeScanRunner {
                 .map(|s| s.as_str())
                 .is_some_and(|s| s.contains("com.docker.compose.service"))
         {
-            (0, "web\timg1\n".to_string())
+            let stdout = self.runtime_started_at.as_deref().map_or_else(
+                || "web\timg1\n".to_string(),
+                |started_at| format!("web\timg1\t{started_at}\n"),
+            );
+            (0, stdout)
         } else if args.first().map(|s| s.as_str()) == Some("image")
             && args.get(1).map(|s| s.as_str()) == Some("inspect")
             && args.iter().any(|s| s.contains("RepoDigests"))
@@ -3859,6 +3873,244 @@ services:
     assert_eq!(
         items[2]["occurredAt"].as_str(),
         Some(running_started_at.as_str())
+    );
+}
+
+#[tokio::test]
+async fn service_new_version_discovery_timeline_keeps_history_when_live_candidate_has_no_row() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        Some("sha256:current-v1"),
+        Some("latest"),
+        Some("sha256:live-candidate"),
+    )
+    .await;
+    let now = test_now_rfc3339();
+    let running_started_at = test_offset_rfc3339(&now, -time::Duration::hours(4));
+    state
+        .db
+        .update_service_check_result_with_runtime_started_at(
+            &service_id,
+            Some("sha256:current-v1".to_string()),
+            Some(running_started_at.clone()),
+            Some("1.16.0".to_string()),
+            Some("[\"1.16.0\"]".to_string()),
+            Some("latest".to_string()),
+            Some("1.16.3".to_string()),
+            Some("sha256:live-candidate".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let older_discovered_at = test_offset_rfc3339(&now, time::Duration::minutes(-120));
+    let newer_discovered_at = test_offset_rfc3339(&now, time::Duration::minutes(-45));
+
+    let older_job_id = insert_check_job(&state, "schedule", &older_discovered_at).await;
+    state
+        .db
+        .finish_job(
+            &older_job_id,
+            "success",
+            &older_discovered_at,
+            &make_new_version_summary_for_test(
+                &service_id,
+                "latest",
+                "1.16.0",
+                "sha256:current-v1",
+                "latest",
+                "1.16.1",
+                "sha256:candidate-a",
+            ),
+        )
+        .await
+        .unwrap();
+    let newer_job_id = insert_check_job(&state, "schedule", &newer_discovered_at).await;
+    state
+        .db
+        .finish_job(
+            &newer_job_id,
+            "success",
+            &newer_discovered_at,
+            &make_new_version_summary_for_test(
+                &service_id,
+                "latest",
+                "1.16.0",
+                "sha256:current-v1",
+                "latest",
+                "1.16.2",
+                "sha256:candidate-b",
+            ),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{service_id}/new-version-discovery-timeline"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body = response_json(resp).await;
+    let items = body["items"].as_array().expect("timeline items");
+    assert_eq!(items.len(), 4);
+    assert_eq!(items[0]["kind"].as_str(), Some("currentCandidate"));
+    assert_eq!(items[0]["version"].as_str(), Some("1.16.3"));
+    assert_eq!(items[0]["occurredAt"].as_str(), None);
+    assert_eq!(items[1]["version"].as_str(), Some("1.16.2"));
+    assert_eq!(items[2]["version"].as_str(), Some("1.16.1"));
+    assert_eq!(items[3]["kind"].as_str(), Some("currentRunning"));
+}
+
+#[tokio::test]
+async fn runtime_scan_updates_runtime_started_at_after_same_digest_restart() {
+    let now = test_now_rfc3339();
+    let restarted_at = test_offset_rfc3339(&now, time::Duration::minutes(5));
+    let runner: Arc<CheckAndRuntimeScanRunner> = Arc::new(
+        CheckAndRuntimeScanRunner::new_with_started_at("sha256:match", Some(restarted_at.clone())),
+    );
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), runner).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    state
+        .db
+        .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+            project: "demo".to_string(),
+            stack_id: Some(stack_id.clone()),
+            status: "active".to_string(),
+            last_seen_at: Some(now.clone()),
+            last_scan_at: now.clone(),
+            last_error: None,
+            last_config_files: Some(vec![compose_path.clone()]),
+            unarchive_if_active: true,
+        })
+        .await
+        .unwrap();
+
+    let service_id = state
+        .db
+        .list_services_for_runtime_scan(&stack_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name == "web")
+        .unwrap()
+        .id;
+    let old_started_at = test_offset_rfc3339(&now, -time::Duration::hours(1));
+    state
+        .db
+        .update_service_check_result_with_runtime_started_at(
+            &service_id,
+            Some("sha256:match".to_string()),
+            Some(old_started_at),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let payload = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "reason": "ui",
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/runtime-scans")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let job_id = triggered["jobId"].as_str().unwrap().to_string();
+
+    let mut finished = false;
+    for _ in 0..120 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{job_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(finished, "runtime scan job did not finish in time");
+
+    let context = state
+        .db
+        .get_service_new_version_timeline_context(&service_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        context.current_runtime_started_at.as_deref(),
+        Some(restarted_at.as_str())
     );
 }
 
