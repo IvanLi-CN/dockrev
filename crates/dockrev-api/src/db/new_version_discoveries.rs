@@ -285,8 +285,8 @@ fn candidate_display_version(
     (!digest.is_empty()).then_some(digest.to_string())
 }
 
-fn build_stable_tags_by_provenance<'a>(
-    matched_rows: &[&'a NewVersionDiscoveryRow],
+fn build_stable_tags_by_provenance(
+    matched_rows: &[&NewVersionDiscoveryRow],
     effective_stable_tags_by_provenance: &std::collections::HashMap<
         (String, String, String, String),
         std::collections::BTreeSet<String>,
@@ -382,10 +382,9 @@ pub(crate) fn collect_new_version_discovery_candidates_from_rows<'a>(
                             .as_deref()
                             .is_some_and(|candidate| candidate < current)
                     })
+                    && discovered_at.is_some()
                 {
-                    if discovered_at.is_some() {
-                        existing.first_discovered_at = discovered_at;
-                    }
+                    existing.first_discovered_at = discovered_at;
                 }
                 if existing.version.starts_with("sha256:") && !version.starts_with("sha256:") {
                     existing.version = version;

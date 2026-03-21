@@ -34,6 +34,7 @@ pub(crate) struct RuntimeServiceObservation {
 }
 
 impl RuntimeServiceObservation {
+    #[allow(dead_code)]
     pub(crate) fn digest_only(digest: impl Into<String>) -> Self {
         Self {
             digest: digest.into(),

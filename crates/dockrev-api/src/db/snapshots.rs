@@ -39,7 +39,7 @@ ORDER BY created_at DESC
         .context("list ignore rules for service")
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(dead_code, clippy::too_many_arguments)]
     pub async fn update_service_check_result(
         &self,
         service_id: &str,
@@ -56,48 +56,23 @@ ORDER BY created_at DESC
         checked_at: &str,
         now: &str,
     ) -> anyhow::Result<bool> {
-        let service_id = service_id.to_string();
-        let checked_at = checked_at.to_string();
-        let now = now.to_string();
-        self.call(move |conn| {
-            let changed = conn.execute(
-                r#"
-UPDATE services
-SET
-  current_digest = ?2,
-  current_resolved_tag = ?3,
-  current_resolved_tags_json = ?4,
-  candidate_tag = ?5,
-  candidate_resolved_tag = ?6,
-  candidate_digest = ?7,
-  candidate_arch_match = ?8,
-  candidate_arch_json = ?9,
-  ignore_rule_id = ?10,
-  ignore_reason = ?11,
-  checked_at = ?12,
-  updated_at = ?13
-WHERE id = ?1
-"#,
-                params![
-                    service_id,
-                    current_digest,
-                    current_resolved_tag,
-                    current_resolved_tags_json,
-                    candidate_tag,
-                    candidate_resolved_tag,
-                    candidate_digest,
-                    candidate_arch_match,
-                    candidate_arch_json,
-                    ignore_rule_id,
-                    ignore_reason,
-                    checked_at,
-                    now,
-                ],
-            )?;
-            Ok(changed > 0)
-        })
+        self.update_service_check_result_with_runtime_started_at(
+            service_id,
+            current_digest,
+            None,
+            current_resolved_tag,
+            current_resolved_tags_json,
+            candidate_tag,
+            candidate_resolved_tag,
+            candidate_digest,
+            candidate_arch_match,
+            candidate_arch_json,
+            ignore_rule_id,
+            ignore_reason,
+            checked_at,
+            now,
+        )
         .await
-        .context("update service check result")
     }
 
     #[allow(clippy::too_many_arguments)]
