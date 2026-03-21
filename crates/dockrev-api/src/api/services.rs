@@ -8,7 +8,15 @@ fn normalize_optional_value(input: Option<&str>) -> Option<String> {
 
 fn timeline_candidate_identity(
     context: &crate::db::ServiceNewVersionTimelineContext,
+    stable_candidate_display_tag: Option<&str>,
 ) -> Option<String> {
+    if let Some(tag) = stable_candidate_display_tag {
+        return Some(format!(
+            "tag:{}",
+            crate::db::canonical_visible_version_tag(tag)
+        ));
+    }
+
     let candidate_tag = crate::db::normalize_discovery_key(context.candidate_tag.as_deref());
     let candidate_display_tag = crate::db::normalize_discovery_key(
         context
@@ -31,7 +39,12 @@ fn timeline_candidate_identity(
 
 fn timeline_candidate_version(
     context: &crate::db::ServiceNewVersionTimelineContext,
+    stable_candidate_display_tag: Option<&str>,
 ) -> Option<String> {
+    if let Some(tag) = stable_candidate_display_tag {
+        return Some(crate::db::canonical_visible_version_tag(tag));
+    }
+
     normalize_optional_value(context.candidate_resolved_tag.as_deref())
         .map(|value| crate::db::canonical_visible_version_tag(&value))
         .or_else(|| {
@@ -81,16 +94,28 @@ pub(super) async fn get_service_new_version_discovery_timeline(
         .await
         .map_err(map_internal)?;
 
+    let current_digest = crate::db::normalize_discovery_key(context.current_digest.as_deref());
+    let current_display_tag = crate::db::normalize_discovery_key(
+        context
+            .current_resolved_tag
+            .as_deref()
+            .or(Some(context.current_tag.as_str())),
+    );
+    let current_tag = crate::db::normalize_discovery_key(Some(context.current_tag.as_str()));
+    let current_candidate_stable_tag = crate::db::infer_stable_candidate_display_tag_from_rows(
+        discovery_rows.iter(),
+        &current_digest,
+        &current_display_tag,
+        &current_tag,
+        &crate::db::normalize_discovery_key(context.candidate_digest.as_deref()),
+        &notification_tags,
+    );
+
     let mut historical_candidates = crate::db::collect_new_version_discovery_candidates_from_rows(
         discovery_rows.iter(),
-        &crate::db::normalize_discovery_key(context.current_digest.as_deref()),
-        &crate::db::normalize_discovery_key(
-            context
-                .current_resolved_tag
-                .as_deref()
-                .or(Some(context.current_tag.as_str())),
-        ),
-        &crate::db::normalize_discovery_key(Some(context.current_tag.as_str())),
+        &current_digest,
+        &current_display_tag,
+        &current_tag,
         &notification_tags,
     );
     historical_candidates.sort_by(|left, right| {
@@ -100,16 +125,16 @@ pub(super) async fn get_service_new_version_discovery_timeline(
             .then_with(|| left.version.cmp(&right.version))
     });
 
-    let current_candidate_identity = timeline_candidate_identity(&context);
-    let current_candidate_version = timeline_candidate_version(&context);
-    let mut matched_current_candidate = false;
+    let current_candidate_identity =
+        timeline_candidate_identity(&context, current_candidate_stable_tag.as_deref());
+    let current_candidate_version =
+        timeline_candidate_version(&context, current_candidate_stable_tag.as_deref());
 
     let current_candidate_item = current_candidate_identity.as_ref().and_then(|identity| {
         historical_candidates
             .iter()
             .position(|candidate| candidate.identity_key == *identity)
             .map(|index| {
-                matched_current_candidate = true;
                 let candidate = historical_candidates.remove(index);
                 NewVersionDiscoveryTimelineItem {
                     kind: NewVersionDiscoveryTimelineItemKind::CurrentCandidate,

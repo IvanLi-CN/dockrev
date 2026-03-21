@@ -416,6 +416,52 @@ pub(crate) fn count_new_version_discoveries_from_rows<'a>(
     .len() as u32
 }
 
+pub(crate) fn infer_stable_candidate_display_tag_from_rows<'a>(
+    rows: impl Iterator<Item = &'a NewVersionDiscoveryRow>,
+    current_digest: &str,
+    current_display_tag: &str,
+    current_tag: &str,
+    candidate_digest: &str,
+    effective_stable_tags_by_provenance: &std::collections::HashMap<
+        (String, String, String, String),
+        std::collections::BTreeSet<String>,
+    >,
+) -> Option<String> {
+    let candidate_digest = normalize_discovery_key(Some(candidate_digest));
+    if candidate_digest.is_empty() {
+        return None;
+    }
+
+    let matched_rows = rows
+        .filter(|row| {
+            discovery_matches_baseline(row, current_digest, current_display_tag, current_tag)
+        })
+        .collect::<Vec<_>>();
+    if matched_rows.is_empty() {
+        return None;
+    }
+
+    let stable_tags_by_provenance =
+        build_stable_tags_by_provenance(&matched_rows, effective_stable_tags_by_provenance);
+    let mut versions = std::collections::BTreeSet::<String>::new();
+    for row in matched_rows {
+        if normalize_discovery_key(Some(row.candidate_digest.as_str())) != candidate_digest {
+            continue;
+        }
+        let Some(version) = candidate_display_version(row, &stable_tags_by_provenance) else {
+            continue;
+        };
+        if version.to_ascii_lowercase().starts_with("sha256:") {
+            continue;
+        }
+        versions.insert(canonical_visible_version_tag(&version));
+    }
+
+    (versions.len() == 1)
+        .then(|| versions.iter().next().cloned())
+        .flatten()
+}
+
 pub(crate) fn new_version_discovery_notification_targets(
     rows: &[NewVersionDiscoveryRow],
 ) -> Vec<(String, String, String, String)> {

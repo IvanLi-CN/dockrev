@@ -31,6 +31,7 @@ pub(crate) type RepoTagsCache = Arc<RepoTagsCacheInner>;
 pub(crate) struct RuntimeServiceObservation {
     pub digest: String,
     pub started_at: Option<String>,
+    pub started_at_inferred: bool,
 }
 
 impl RuntimeServiceObservation {
@@ -39,6 +40,7 @@ impl RuntimeServiceObservation {
         Self {
             digest: digest.into(),
             started_at: None,
+            started_at_inferred: false,
         }
     }
 }
@@ -59,6 +61,16 @@ pub(crate) fn normalize_runtime_started_at(input: Option<&str>) -> Option<String
         return None;
     }
     Some(trimmed.to_string())
+}
+
+pub(crate) fn aggregate_runtime_started_at(
+    values: &std::collections::BTreeSet<String>,
+) -> (Option<String>, bool) {
+    match values.len() {
+        0 => (None, false),
+        1 => (values.iter().next().cloned(), true),
+        _ => (None, true),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -244,15 +256,18 @@ pub(crate) async fn check_service_and_persist(
 
     let existing_runtime_started_at =
         normalize_runtime_started_at(svc.current_runtime_started_at.as_deref());
-    let observed_runtime_started_at = if runtime_digest.as_deref() == current_digest.as_deref() {
-        runtime_started_at.clone()
-    } else {
-        None
-    };
+    let observed_runtime_started_at = runtime
+        .as_ref()
+        .filter(|_| runtime_digest.as_deref() == current_digest.as_deref())
+        .and_then(|observation| {
+            observation
+                .started_at_inferred
+                .then_some(runtime_started_at)
+        });
     let current_runtime_started_at = if current_digest_changed {
-        observed_runtime_started_at
+        observed_runtime_started_at.flatten()
     } else {
-        observed_runtime_started_at.or(existing_runtime_started_at)
+        observed_runtime_started_at.unwrap_or(existing_runtime_started_at)
     };
 
     state
@@ -312,10 +327,19 @@ pub(crate) async fn persist_runtime_fallback_result(
     runtime: &RuntimeServiceObservation,
     now: &str,
 ) -> anyhow::Result<()> {
+    let current_runtime_started_at = if runtime.started_at_inferred {
+        normalize_runtime_started_at(runtime.started_at.as_deref())
+    } else {
+        db.get_service_new_version_timeline_context(service_id)
+            .await?
+            .and_then(|context| {
+                normalize_runtime_started_at(context.current_runtime_started_at.as_deref())
+            })
+    };
     db.update_service_check_result_with_runtime_started_at(
         service_id,
         Some(runtime.digest.clone()),
-        normalize_runtime_started_at(runtime.started_at.as_deref()),
+        current_runtime_started_at,
         None,
         None,
         None,

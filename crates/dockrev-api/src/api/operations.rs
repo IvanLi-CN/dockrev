@@ -1371,9 +1371,12 @@ pub(super) async fn docker_compose_service_runtime_digest(
     }
 
     if digests.len() == 1 {
+        let (started_at, started_at_inferred) =
+            crate::service_check::aggregate_runtime_started_at(&started_ats);
         Ok(Some(crate::service_check::RuntimeServiceObservation {
             digest: digests.iter().next().cloned().unwrap_or_default(),
-            started_at: started_ats.iter().next().cloned(),
+            started_at,
+            started_at_inferred,
         }))
     } else {
         Ok(None)

@@ -802,13 +802,16 @@ pub(crate) async fn docker_compose_project_runtime_digests(
     let mut out: BTreeMap<String, service_check::RuntimeServiceObservation> = BTreeMap::new();
     for (svc_name, digests) in digests_by_service {
         if digests.len() == 1 {
+            let (started_at, started_at_inferred) = started_ats_by_service
+                .get(&svc_name)
+                .map(service_check::aggregate_runtime_started_at)
+                .unwrap_or((None, false));
             out.insert(
                 svc_name.clone(),
                 service_check::RuntimeServiceObservation {
                     digest: digests.iter().next().cloned().unwrap_or_default(),
-                    started_at: started_ats_by_service
-                        .get(&svc_name)
-                        .and_then(|values| values.iter().next().cloned()),
+                    started_at,
+                    started_at_inferred,
                 },
             );
         }
