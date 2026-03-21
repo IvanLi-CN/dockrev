@@ -54,11 +54,12 @@ services:
       DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV: "false"
       DOCKREV_SELF_UPGRADE_URL: /supervisor/
       DOCKREV_IMAGE_REPO: ghcr.io/ivanli-cn/dockrev
-      DOCKREV_SUPERVISOR_STATE_PATH: /data/self-upgrade.json
+      DOCKREV_SUPERVISOR_STATE_PATH: /shared/self-upgrade.json
       # DOCKREV_WEBHOOK_SECRET: change-me
       # DOCKER_HOST: tcp://docker-socket-proxy:2375
     volumes:
       - ./data/dockrev:/data
+      - ./data/shared:/shared:ro
       - /var/run/docker.sock:/var/run/docker.sock
       # If your compose files live on the host at /srv/compose/**, mount them read-only at the same path:
       # - /srv/compose:/srv/compose:ro
@@ -85,11 +86,12 @@ services:
       DOCKREV_AUTH_ALLOWED_GROUP: dockrev-users
       DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV: "false"
       DOCKREV_SUPERVISOR_TARGET_IMAGE_REPO: ghcr.io/ivanli-cn/dockrev
-      DOCKREV_SUPERVISOR_STATE_PATH: /data/self-upgrade.json
+      DOCKREV_SUPERVISOR_STATE_PATH: /shared/self-upgrade.json
       DOCKREV_SUPERVISOR_COMPOSE_BIN: docker-compose
       # DOCKREV_SUPERVISOR_DOCKER_HOST: tcp://docker-socket-proxy:2375
     volumes:
       - ./data/supervisor:/data
+      - ./data/shared:/shared
       - /var/run/docker.sock:/var/run/docker.sock
       # Self-upgrade also needs the target compose files to be readable at the same absolute path:
       # - /srv/compose:/srv/compose:ro

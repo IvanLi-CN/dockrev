@@ -349,7 +349,6 @@ fn variants_details_json(
 fn is_dockrev_generated_override_path(
     path: &str,
     project: &str,
-    services: &BTreeSet<String>,
     expected_self_upgrade_override: Option<&Path>,
 ) -> bool {
     let trimmed = path.trim();
@@ -364,13 +363,8 @@ fn is_dockrev_generated_override_path(
 
     // Dockrev currently generates overrides in two places:
     // - updater temp files under the host temp dir: dockrev-override-<project>-<ulid>.yml
-    // - supervisor self-upgrade overrides inside the Dockrev self-upgrade project
-    if file_name == "self-upgrade.override.yml"
-        && project.eq_ignore_ascii_case("dockrev")
-        && services.contains("dockrev")
-        && services.contains("dockrev-supervisor")
-        && expected_self_upgrade_override == Some(path)
-    {
+    // - supervisor self-upgrade overrides next to the configured state path
+    if file_name == "self-upgrade.override.yml" && expected_self_upgrade_override == Some(path) {
         return true;
     }
 
@@ -575,7 +569,6 @@ async fn resolve_project_compose_files_with_expected_override(
                     if is_dockrev_generated_override_path(
                         path,
                         project,
-                        services,
                         expected_self_upgrade_override,
                     ) {
                         unreadable_dockrev_generated.push(entry);
@@ -1659,6 +1652,46 @@ mod tests {
 
         let resolved = resolve_project_compose_files_with_expected_override(
             "dockrev",
+            &observed,
+            Some(self_upgrade_override.as_path()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resolved.compose_files, vec![base_s]);
+        assert!(resolved.warning.as_deref().is_some_and(|warning| {
+            warning
+                .contains("warning:config_files_single_variant_dockrev_generated_override_fallback")
+        }));
+        assert!(resolved.details.is_some());
+    }
+
+    #[tokio::test]
+    async fn resolve_project_compose_files_single_variant_unreadable_self_upgrade_override_allows_custom_project_and_service_names()
+     {
+        let dir = make_temp_dir();
+        let base = dir.join("docker-compose.yml");
+        std::fs::write(
+            &base,
+            "services:\n  app:\n    image: ghcr.io/ivanli-cn/dockrev:latest\n  updater:\n    image: ghcr.io/ivanli-cn/dockrev-supervisor:latest\n",
+        )
+        .unwrap();
+        let self_upgrade_override = dir.join("self-upgrade.override.yml");
+
+        let base_s = base.display().to_string();
+        let self_upgrade_override_s = self_upgrade_override.display().to_string();
+        let observed = vec![
+            ObservedComposeContainer {
+                service: "app".to_string(),
+                config_files_raw: Some(format!("{base_s},{self_upgrade_override_s}")),
+            },
+            ObservedComposeContainer {
+                service: "updater".to_string(),
+                config_files_raw: Some(format!("{base_s},{self_upgrade_override_s}")),
+            },
+        ];
+
+        let resolved = resolve_project_compose_files_with_expected_override(
+            "my-dockrev-stack",
             &observed,
             Some(self_upgrade_override.as_path()),
         )
