@@ -434,10 +434,10 @@ async fn run_runtime_scan_for_job(
             };
             services_with_runtime += 1;
 
-            let digest_changed = !svc
+            let digest_changed = svc
                 .current_digest
                 .as_deref()
-                .is_some_and(|d| d == runtime.digest.as_str());
+                .is_none_or(|d| d != runtime.digest.as_str());
             let runtime_started_at_changed =
                 service_check::normalize_runtime_started_at(
                     svc.current_runtime_started_at.as_deref(),
