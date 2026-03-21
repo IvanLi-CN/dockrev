@@ -40,7 +40,7 @@ impl ImageRef {
             Some((left, right)) => {
                 let left = left.trim();
                 let right = right.trim();
-                if left.is_empty() || right.is_empty() {
+                if left.is_empty() || !is_supported_digest_ref(right) {
                     return Err(anyhow::anyhow!(
                         "invalid digest in image ref (expected repo/name[:tag][@sha256:digest])"
                     ));
@@ -89,6 +89,13 @@ impl ImageRef {
             reference: reference.to_string(),
         })
     }
+}
+
+fn is_supported_digest_ref(input: &str) -> bool {
+    let Some((algorithm, encoded)) = input.split_once(':') else {
+        return false;
+    };
+    algorithm.eq_ignore_ascii_case("sha256") && !encoded.trim().is_empty()
 }
 
 fn normalize_dockerhub_name(registry: &str, name: &str) -> String {
@@ -1311,6 +1318,18 @@ mod tests {
     #[test]
     fn parse_image_ref_without_tag_or_digest_is_invalid() {
         assert!(ImageRef::parse("ghcr.io/org/app").is_err());
+    }
+
+    #[test]
+    fn parse_image_ref_rejects_non_digest_suffix() {
+        assert!(ImageRef::parse("ghcr.io/org/app@latest").is_err());
+        assert!(ImageRef::parse("ghcr.io/org/app:latest@latest").is_err());
+    }
+
+    #[test]
+    fn parse_image_ref_rejects_empty_digest_value() {
+        assert!(ImageRef::parse("ghcr.io/org/app@sha256").is_err());
+        assert!(ImageRef::parse("ghcr.io/org/app@sha256:").is_err());
     }
 
     #[test]
