@@ -18042,6 +18042,83 @@ services:
 }
 
 #[tokio::test]
+async fn put_service_settings_preserves_repo_url_when_field_is_omitted() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = state
+        .db
+        .list_services_for_check(&stack_id)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id
+        .clone();
+
+    state
+        .db
+        .put_service_settings(
+            &service_id,
+            &crate::api::types::ServiceSettings {
+                auto_rollback: false,
+                backup_targets: crate::api::types::BackupTargetOverrides {
+                    bind_paths: BTreeMap::new(),
+                    volume_names: BTreeMap::new(),
+                },
+                repo_url: Some("https://github.com/acme/web".to_string()),
+            },
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/services/{service_id}/settings"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "autoRollback": true,
+                        "backupTargets": { "bindPaths": {}, "volumeNames": {} }
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let settings = state
+        .db
+        .get_service_settings(&service_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        settings.repo_url.as_deref(),
+        Some("https://github.com/acme/web"),
+        "unexpected settings after omitted repoUrl field: {settings:?}"
+    );
+    assert!(settings.auto_rollback);
+}
+
+#[tokio::test]
 async fn sync_stack_from_compose_clears_repo_url_when_service_image_changes() {
     let state = test_state(":memory:").await;
 

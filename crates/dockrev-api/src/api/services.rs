@@ -1461,7 +1461,16 @@ pub(super) async fn put_service_settings(
 ) -> Result<Json<PutServiceSettingsResponse>, ApiError> {
     let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
-    let repo_url = normalize_repo_url_input(req.repo_url.as_deref())?;
+    let current_settings = state
+        .db
+        .get_service_settings(&service_id)
+        .await
+        .map_err(map_internal)?
+        .ok_or_else(|| ApiError::not_found("service not found"))?;
+    let repo_url = match req.repo_url {
+        Some(repo_url) => normalize_repo_url_input(repo_url.as_deref())?,
+        None => current_settings.repo_url,
+    };
 
     let settings = ServiceSettings {
         auto_rollback: req.auto_rollback,

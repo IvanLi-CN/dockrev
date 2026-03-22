@@ -56,11 +56,12 @@
 ### MUST
 
 - `repoUrl` 必须作为服务设置的一部分参与 `GET /api/stacks/{id}`、`GET /api/services/{id}/settings` 与 `PUT /api/services/{id}/settings`。
+- `PUT /api/services/{id}/settings` 在请求体省略 `repoUrl` 时必须保留已有值，兼容旧客户端；显式 `null` 或空字符串才表示清空。
 - 服务详情页 header 必须即时反映当前设置草稿中的 `repoUrl`。
 - 服务列表页只使用已持久化 `repoUrl`。
 - 新增 `POST /api/services/{service_id}/repo-link/infer`，返回 `{ repoUrl, strategy, reason? }`。
 - 推断顺序固定为 `OCI source -> GHCR exact fallback -> none`。
-- registry 外链规则固定为 GHCR 与 Docker Hub 两类；其它 registry 不显示入口。
+- registry 外链规则固定为“仅对可稳定推导公开仓库页的 registry 显示入口”：GHCR 用专属图标、Docker Hub 用专属图标、Quay 这类可稳定推导但暂无专属品牌 glyph 的入口使用通用 registry 图标；无法稳定推导网页地址的 registry 不显示入口。
 
 ### SHOULD
 

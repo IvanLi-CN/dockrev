@@ -22,6 +22,7 @@
 ### `PUT /api/services/{service_id}/settings`
 
 - Accepts the same `repoUrl?: string | null` field.
+- If `repoUrl` is omitted, the existing stored value is preserved for backward compatibility with older clients.
 - Empty string is normalized to `null`.
 - Only absolute `http` or `https` URLs are accepted when non-null.
 
