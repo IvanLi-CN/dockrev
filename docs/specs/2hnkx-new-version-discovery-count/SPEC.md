@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-03-19
-- Last: 2026-03-20
+- Last: 2026-03-22
 
 ## 背景 / 问题陈述
 
@@ -129,3 +129,4 @@
 - 2026-03-20: 修复大批量 unresolved 历史下的 SQLite 参数上限问题；稳定通知记录辅助查询改为分批执行，避免把 `GET /api/stacks/{id}` 放大成 500。
 - 2026-03-20: 根据 fresh review proof 移除“用当前服务 snapshot 归一旧 unresolved 历史”的做法，避免在服务改仓库或 snapshot 同 digest 多 stable tags 时误改写历史计数。
 - 2026-03-20: 根据后续 review fix，把 DB 层 `get_stack()` 的 discovery 次数计算也切到同一套 provenance-aware 通知归一逻辑，确保 stack consumer 不会回退成 digest-only 计数。
+- 2026-03-22: 修正 unresolved alias 历史的最终口径：重复暴露同一可见 alias（如 `latest`、`15-alpine`）时先按 alias 折叠，不再因为不同 digest 把发现次数和时间线一起膨胀。
