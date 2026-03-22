@@ -1328,6 +1328,58 @@ impl RegistryClient for CountingRegistry {
 }
 
 #[derive(Clone, Default)]
+struct RepoLinkRegistry {
+    oci_source: Option<String>,
+    observed_references: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl RepoLinkRegistry {
+    fn with_oci_source(source: Option<&str>) -> Self {
+        Self {
+            oci_source: source.map(ToString::to_string),
+            observed_references: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+
+    fn observed_references(&self) -> Vec<String> {
+        self.observed_references.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl RegistryClient for RepoLinkRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        Ok(vec!["latest".to_string()])
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        _reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        Ok(ManifestInfo {
+            digest: Some("sha256:latest".to_string()),
+            platform_digest: None,
+            arch: vec!["linux/amd64".to_string()],
+        })
+    }
+
+    async fn get_oci_source(
+        &self,
+        _image: &ImageRef,
+        reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<Option<String>> {
+        self.observed_references
+            .lock()
+            .unwrap()
+            .push(reference.to_string());
+        Ok(self.oci_source.clone())
+    }
+}
+
+#[derive(Clone, Default)]
 struct DualDigestRegistry;
 
 #[async_trait::async_trait]
@@ -17806,5 +17858,509 @@ services:
     assert!(
         in_flight.is_none(),
         "strict semver runtime-scan candidate changes should not enqueue version inference"
+    );
+}
+
+#[tokio::test]
+async fn service_settings_repo_url_roundtrip_and_empty_string_clear() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = state
+        .db
+        .list_services_for_check(&stack_id)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id
+        .clone();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/settings"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert!(body["repoUrl"].is_null(), "initial settings: {body}");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/services/{service_id}/settings"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "autoRollback": false,
+                        "backupTargets": { "bindPaths": {}, "volumeNames": {} },
+                        "repoUrl": "https://github.com/acme/web"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/settings"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(
+        body["repoUrl"].as_str(),
+        Some("https://github.com/acme/web")
+    );
+    assert_eq!(body["autoRollback"].as_bool(), Some(false));
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(
+        body["stack"]["services"][0]["settings"]["repoUrl"].as_str(),
+        Some("https://github.com/acme/web")
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/services/{service_id}/settings"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "autoRollback": true,
+                        "backupTargets": { "bindPaths": {}, "volumeNames": {} },
+                        "repoUrl": "   "
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/settings"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert!(body["repoUrl"].is_null(), "cleared settings: {body}");
+}
+
+#[tokio::test]
+async fn put_service_settings_rejects_invalid_repo_url() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = state
+        .db
+        .list_services_for_check(&stack_id)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id
+        .clone();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/services/{service_id}/settings"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "autoRollback": true,
+                        "backupTargets": { "bindPaths": {}, "volumeNames": {} },
+                        "repoUrl": "github.com/acme/web"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let body = response_json(resp).await;
+    assert_eq!(body["error"]["code"].as_str(), Some("invalid_argument"));
+}
+
+#[tokio::test]
+async fn infer_service_repo_link_prefers_oci_source_and_current_digest() {
+    let registry = Arc::new(RepoLinkRegistry::with_oci_source(Some(
+        "https://github.com/Acme/Web",
+    )));
+    let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id =
+        set_single_service_check_result(&state, &stack_id, Some("sha256:current"), None, None)
+            .await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/repo-link/infer"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(
+        body["repoUrl"].as_str(),
+        Some("https://github.com/acme/web")
+    );
+    assert_eq!(body["strategy"].as_str(), Some("oci_source"));
+    assert_eq!(registry.observed_references(), vec!["sha256:current"]);
+}
+
+#[tokio::test]
+async fn infer_service_repo_link_uses_parsed_digest_reference_before_first_runtime_scan() {
+    let registry = Arc::new(RepoLinkRegistry::with_oci_source(Some(
+        "https://github.com/Acme/Web",
+    )));
+    let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let digest = format!("sha256:{}", "a".repeat(64));
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        format!(
+            r#"
+services:
+  web:
+    image: ghcr.io/acme/web@{digest}
+"#
+        ),
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = state
+        .db
+        .list_services_for_check(&stack_id)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id
+        .clone();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/repo-link/infer"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(
+        body["repoUrl"].as_str(),
+        Some("https://github.com/acme/web")
+    );
+    assert_eq!(body["strategy"].as_str(), Some("oci_source"));
+    assert_eq!(registry.observed_references(), vec![digest]);
+}
+
+#[tokio::test]
+async fn infer_service_repo_link_falls_back_to_tracked_ghcr_repo() {
+    let registry = Arc::new(RepoLinkRegistry::with_oci_source(None));
+    let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = state
+        .db
+        .list_services_for_check(&stack_id)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id
+        .clone();
+    state
+        .db
+        .put_github_packages_repos(
+            &[("Acme".to_string(), "Web".to_string(), true)],
+            &super::now_rfc3339().unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/repo-link/infer"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(
+        body["repoUrl"].as_str(),
+        Some("https://github.com/acme/web")
+    );
+    assert_eq!(body["strategy"].as_str(), Some("ghcr_exact"));
+    assert_eq!(registry.observed_references(), vec!["latest"]);
+}
+
+#[tokio::test]
+async fn infer_service_repo_link_skips_deselected_ghcr_repo() {
+    let registry = Arc::new(RepoLinkRegistry::with_oci_source(None));
+    let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = state
+        .db
+        .list_services_for_check(&stack_id)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id
+        .clone();
+    state
+        .db
+        .put_github_packages_repos(
+            &[("Acme".to_string(), "Web".to_string(), false)],
+            &super::now_rfc3339().unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/repo-link/infer"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert!(body["repoUrl"].is_null(), "unexpected body: {body}");
+    assert_eq!(body["strategy"].as_str(), Some("none"));
+    assert!(
+        body["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("ghcr exact fallback skipped because repo is not tracked"),
+        "unexpected reason: {body}"
+    );
+}
+
+#[tokio::test]
+async fn infer_service_repo_link_returns_none_when_not_recognized() {
+    let registry = Arc::new(RepoLinkRegistry::with_oci_source(None));
+    let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: harbor.local/ops/web:1.0
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = state
+        .db
+        .list_services_for_check(&stack_id)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id
+        .clone();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/repo-link/infer"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert!(
+        body["repoUrl"].is_null(),
+        "unexpected fallback body: {body}"
+    );
+    assert_eq!(body["strategy"].as_str(), Some("none"));
+    assert!(
+        body["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("ghcr exact fallback not applicable"),
+        "unexpected reason: {body}"
+    );
+}
+
+#[tokio::test]
+async fn infer_service_repo_link_returns_none_for_invalid_service_image_ref() {
+    let registry = Arc::new(RepoLinkRegistry::with_oci_source(Some(
+        "https://github.com/acme/web",
+    )));
+    let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let stack_id = ids::new_stack_id();
+    let service_id = ids::new_service_id();
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let stack = crate::api::types::StackRecord {
+        id: stack_id.clone(),
+        name: "demo".to_string(),
+        archived: false,
+        compose: crate::api::types::ComposeConfig {
+            kind: "path".to_string(),
+            compose_files: vec!["/tmp/invalid-image-ref.yml".to_string()],
+            env_file: None,
+        },
+        backup: crate::api::types::StackBackupConfig::default(),
+        services: Vec::new(),
+    };
+    let seeds = vec![crate::api::types::ServiceSeed {
+        id: service_id.clone(),
+        name: "web".to_string(),
+        image_ref: "ghcr.io/acme/web".to_string(),
+        image_tag: "latest".to_string(),
+        auto_rollback: true,
+        backup_bind_paths: BTreeMap::new(),
+        backup_volume_names: BTreeMap::new(),
+    }];
+    state.db.insert_stack(&stack, &seeds, &now).await.unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/repo-link/infer"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert!(body["repoUrl"].is_null(), "unexpected body: {body}");
+    assert_eq!(body["strategy"].as_str(), Some("none"));
+    assert!(
+        body["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("invalid service image ref"),
+        "unexpected reason: {body}"
+    );
+    assert!(
+        registry.observed_references().is_empty(),
+        "registry should not be queried for invalid refs"
     );
 }

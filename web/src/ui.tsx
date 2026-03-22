@@ -58,6 +58,16 @@ export function RefreshIcon(props: { className?: string }) {
   )
 }
 
+export function ExternalLinkIcon(props: { className?: string }) {
+  return (
+    <svg className={props.className} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M14 5h5v5" />
+      <path d="M10 14 19 5" />
+      <path d="M19 13v5a1 1 0 0 1-1 1h-12a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" />
+    </svg>
+  )
+}
+
 export function TrashIcon(props: { className?: string }) {
   return (
     <svg className={props.className} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -193,6 +203,7 @@ export function IconButton(props: {
   disabled?: boolean
   onClick?: () => void
   title: string
+  hint?: string
   children: ReactNode
 }) {
   const variant = props.variant ?? 'ghost'
@@ -202,6 +213,7 @@ export function IconButton(props: {
       disabled={props.disabled}
       data-hint={props.title}
       onClick={props.onClick}
+      title={props.hint ? undefined : props.title}
       variant={mapButtonVariant(variant)}
       size="icon"
       type="button"
@@ -211,7 +223,31 @@ export function IconButton(props: {
     </PrimitiveButton>
   )
 
-  return maybeWithTooltip(button, props.title)
+  const tooltipAnchor = props.hint && props.disabled ? <span className="btnTooltipAnchor">{button}</span> : button
+  return maybeWithTooltip(tooltipAnchor, props.hint ?? props.title)
+}
+
+export function IconLink(props: {
+  href: string
+  title: string
+  children: ReactNode
+  className?: string
+  onClick?: ComponentProps<'a'>['onClick']
+}) {
+  const link = (
+    <a
+      aria-label={props.title}
+      className={cn('iconLink', props.className)}
+      href={props.href}
+      onClick={props.onClick}
+      rel="noopener noreferrer"
+      target="_blank"
+      title={props.title}
+    >
+      {props.children}
+    </a>
+  )
+  return maybeWithTooltip(link, props.title)
 }
 
 const SMALL_ACTION_BUTTON_QUERY = '(max-width: 700px)'

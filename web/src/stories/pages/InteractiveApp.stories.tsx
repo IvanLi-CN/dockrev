@@ -105,6 +105,18 @@ export const ServiceDetail: Story = {
   },
 }
 
+export const RepoLinkEditingFlow: Story = {
+  parameters: { dockrevApiScenario: 'repo-link-editing' },
+  render: () => {
+    return (
+      <>
+        <LocationReset pathname="/services/stack-prod/svc-prod-api" />
+        <App />
+      </>
+    )
+  },
+}
+
 export const Settings: Story = {
   parameters: { dockrevApiScenario: 'settings-configured' },
   render: () => {

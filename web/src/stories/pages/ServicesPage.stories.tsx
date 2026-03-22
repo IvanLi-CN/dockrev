@@ -130,6 +130,19 @@ export const DashboardDemo: Story = {
   },
 }
 
+export const RegistryAndRepoLinks: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务" pageSubtitle="镜像名旁展示 registry / repo icon 外链">
+        {({ onLastScanHint, onTopActions }) => (
+          <ServicesPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
+        )}
+      </PageHarness>
+    )
+  },
+}
+
 export const VersionAnomalyBatchList: Story = {
   parameters: { dockrevApiScenario: 'service-detail-version-anomaly' },
   render: () => {

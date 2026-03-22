@@ -528,6 +528,7 @@ mod tests {
                         bind_paths: BTreeMap::new(),
                         volume_names: BTreeMap::new(),
                     },
+                    repo_url: None,
                 },
                 archived: None,
             }],

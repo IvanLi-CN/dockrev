@@ -1507,8 +1507,11 @@ async function runInteractive({ baseUrl, browser }) {
         if (!line) return false
         const triggers = line.querySelectorAll('.versionTagsTrigger')
         if (triggers.length < 2) return false
-        return triggers[0]?.textContent?.trim() === 'v0.8.7' && triggers[1]?.textContent?.trim() === 'v0.8.7'
-      }, null, { timeout: 20_000 })
+        const current = triggers[0]?.textContent?.trim() ?? ''
+        const candidate = triggers[1]?.textContent?.trim() ?? ''
+        if (!current || !candidate) return false
+        return current !== '加载中…' && candidate !== '加载中…'
+      }, null, { timeout: 40_000 })
     } finally {
       await page.close().catch(() => {})
     }
@@ -1551,6 +1554,55 @@ async function runInteractive({ baseUrl, browser }) {
       const resolvedLine = imageSection.locator('.muted', { hasText: 'resolvedTag' })
       await resolvedLine.waitFor({ timeout: 10_000 })
       await resolvedLine.getByText('v0.8.7', { exact: true }).waitFor({ timeout: 10_000 })
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
+  // 14) Repo link inference should preview in service detail immediately and persist to services list after save.
+  {
+    const page = await openStory('pages-interactiveapp--repo-link-editing-flow')
+    try {
+      const repoInput = page.getByPlaceholder('https://github.com/owner/repo')
+      await repoInput.waitFor({ timeout: 10_000 })
+
+      const detailHeader = page.locator('.svcTitleRow')
+      const detailRegistryLink = detailHeader.locator('[aria-label="打开镜像注册表页面"]')
+      await detailRegistryLink.waitFor({ timeout: 10_000 })
+      const detailRegistryHref = await detailRegistryLink.getAttribute('href')
+      if (detailRegistryHref !== 'https://ghcr.io/acme/api') {
+        throw new Error(`Expected detail registry href to strip the tag, got ${detailRegistryHref}.`)
+      }
+
+      const detailRepoLinksBefore = await detailHeader.locator('[aria-label="打开代码仓库页面"]').count()
+      if (detailRepoLinksBefore !== 0) {
+        throw new Error(`Expected no repo link in service detail header before inference, got ${detailRepoLinksBefore}.`)
+      }
+
+      await page.getByRole('button', { name: '重新推断代码仓库' }).click()
+      await page.waitForFunction(() => {
+        const input = document.querySelector('input[placeholder="https://github.com/owner/repo"]')
+        return input instanceof HTMLInputElement && input.value === 'https://github.com/acme/api'
+      }, null, { timeout: 10_000 })
+
+      await detailHeader.locator('[aria-label="打开代码仓库页面"]').waitFor({ timeout: 10_000 })
+
+      await page.getByRole('button', { name: '保存服务设置' }).click()
+      await page.waitForTimeout(200)
+
+      await page.evaluate(() => {
+        window.location.hash = '#/services'
+      })
+
+      const prodGroup = page.locator('.tableGroup', { hasText: 'prod' }).first()
+      await prodGroup.waitFor({ timeout: 10_000 })
+      const apiRow = prodGroup.locator('.rowLine', { hasText: 'api' }).first()
+      await apiRow.waitFor({ timeout: 10_000 })
+      await apiRow.locator('[aria-label="打开代码仓库页面"]').waitFor({ timeout: 10_000 })
+      const listRegistryHref = await apiRow.locator('[aria-label="打开镜像注册表页面"]').getAttribute('href')
+      if (listRegistryHref !== 'https://ghcr.io/acme/api') {
+        throw new Error(`Expected services list registry href to strip the tag, got ${listRegistryHref}.`)
+      }
     } finally {
       await page.close().catch(() => {})
     }

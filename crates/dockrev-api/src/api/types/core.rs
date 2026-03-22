@@ -141,6 +141,7 @@ pub struct IgnoreMatch {
 pub struct ServiceSettings {
     pub auto_rollback: bool,
     pub backup_targets: BackupTargetOverrides,
+    pub repo_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

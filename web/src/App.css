@@ -506,6 +506,52 @@
   stroke-width: 1.8;
 }
 
+.iconLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  color: var(--muted2);
+  text-decoration: none;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease,
+    transform 160ms ease;
+}
+
+.iconLink:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel2) 72%, white 10%);
+  transform: translateY(-1px);
+}
+
+.iconLink:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.iconLink .inlineIcon,
+.iconLink .iconify {
+  width: 14px;
+  height: 14px;
+}
+
+.imageLinkRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.imageLinkIcons {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
 .versionTagsTrigger {
   display: inline-flex;
   align-items: center;
@@ -3410,6 +3456,17 @@ html[data-theme='light'] .modalOverlay {
 
 .svcComposeCard {
   margin-top: 12px;
+}
+
+.serviceRepoField {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.serviceRepoField .input {
+  flex: 1 1 auto;
 }
 
 .svcBanner {

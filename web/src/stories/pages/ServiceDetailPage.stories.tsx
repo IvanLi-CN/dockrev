@@ -87,6 +87,11 @@ export const ResourceMonitorStreamError: Story = {
   render: render('stack-prod', 'svc-prod-api'),
 }
 
+export const RepoLinkEditing: Story = {
+  parameters: { dockrevApiScenario: 'repo-link-editing' },
+  render: render('stack-prod', 'svc-prod-api'),
+}
+
 export const Error: Story = {
   parameters: { dockrevApiScenario: 'error' },
   render: render('stack-prod', 'svc-prod-api'),

@@ -29,6 +29,7 @@ export type BackupTargetOverrides = {
 export type ServiceSettings = {
   autoRollback: boolean
   backupTargets: BackupTargetOverrides
+  repoUrl?: string | null
 }
 
 export type ServiceImage = {
@@ -111,6 +112,12 @@ export type StackDetail = {
   compose: ComposeConfig
   services: Service[]
   archived?: boolean
+}
+
+export type ServiceRepoLinkInferenceResponse = {
+  repoUrl: string | null
+  strategy: 'oci_source' | 'ghcr_exact' | 'none'
+  reason?: string | null
 }
 
 export type DiscoveredProjectStatus = 'active' | 'missing' | 'invalid'
@@ -1313,4 +1320,11 @@ export async function putServiceSettings(serviceId: string, settings: ServiceSet
     body: JSON.stringify(settings),
   })
   return (await resp.json()) as { ok: boolean }
+}
+
+export async function inferServiceRepoLink(serviceId: string): Promise<ServiceRepoLinkInferenceResponse> {
+  const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/repo-link/infer`, {
+    method: 'POST',
+  })
+  return (await resp.json()) as ServiceRepoLinkInferenceResponse
 }
