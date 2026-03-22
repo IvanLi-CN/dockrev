@@ -27,7 +27,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
-| 2hnkx | Dockrev：更新候选跨版本发现次数标记 | 已完成 | `2hnkx-new-version-discovery-count/SPEC.md` | 2026-03-20 | fast-track（PR #170 merged；2026-03-20 follow-up fixes visible-version counting、backfill semantics、unresolved-history normalization、and DB/API stack-path parity） |
+| 2hnkx | Dockrev：更新候选跨版本发现次数标记 | 已完成 | `2hnkx-new-version-discovery-count/SPEC.md` | 2026-03-22 | fast-track（PR #170 merged；2026-03-20 follow-up fixes visible-version counting、backfill semantics、unresolved-history normalization、and DB/API stack-path parity；PR #176 collapses repeated unresolved alias history by visible label and keeps live/timeline alias identity in sync） |
 | 745rw | Dockrev：标签页恢复后自动补拉更新候选 | 已完成 | `745rw-resume-refresh-update-candidates/SPEC.md` | 2026-03-15 | fast-track（resume refresh hook + review fixes + local browser smoke passed on Overview / Services / ServiceDetail） |
 | kv9pg | Dockrev：quality-gates 最终版对齐（merge queue + 条件 review + required checks） | 进行中 | `kv9pg-quality-gates-final-alignment/SPEC.md` | 2026-03-11 | fast-track |
 | s4fqf | Dockrev：新版本通知事件驱动收敛 + 显式版本结果兜底 | 已完成 | `s4fqf-new-version-notify-event-settle-explicit-version/SPEC.md` | 2026-03-12 | fast-track |
@@ -97,4 +97,4 @@
 | jjnz5 | Dockrev: 接入 UI UX Pro Max（Codex 团队共享） | 已完成 | `jjnz5-uipro-codex-integration/SPEC.md` | 2026-02-24 | PR #88 |
 | saqkf | Dockrev：GHCR 添加 Repo 弹窗加宽 + 镜像/部署筛选 | 已完成 | `saqkf-ghcr-picker-width-linked-filters/SPEC.md` | 2026-03-19 | fast-track（GHCR linked/deployed metadata + picker scope filter + review-loop fixes） |
 | wpnmt | Dockrev：digest-only 镜像引用解析与 Discovery 临时 override 回退 | 已完成 | `wpnmt-digest-only-image-ref-discovery-fallback/SPEC.md` | 2026-03-21 | fast-track |
-| 5umc8 | Dockrev：发现次数气泡改为版本时间线 | 已完成 | `5umc8-discovery-count-timeline/SPEC.md` | 2026-03-21 | fast-track（runtime startedAt 真相源 + discovery timeline lazy API + shared hover-pin popover） |
+| 5umc8 | Dockrev：发现次数气泡改为版本时间线 | 已完成 | `5umc8-discovery-count-timeline/SPEC.md` | 2026-03-22 | fast-track（runtime startedAt 真相源 + discovery timeline lazy API + shared hover-pin popover；PR #176 restores count/timeline parity for repeated unresolved alias history and live alias dedupe） |

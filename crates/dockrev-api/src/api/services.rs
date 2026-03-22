@@ -8,20 +8,14 @@ fn normalize_optional_value(input: Option<&str>) -> Option<String> {
 
 fn timeline_candidate_identity(
     context: &crate::db::ServiceNewVersionTimelineContext,
-    stable_candidate_display_tag: Option<&str>,
+    candidate_display_tag_hint: Option<&str>,
 ) -> Option<String> {
-    if let Some(tag) = stable_candidate_display_tag {
-        return Some(format!(
-            "tag:{}",
-            crate::db::canonical_visible_version_tag(tag)
-        ));
-    }
-
     let candidate_tag = crate::db::normalize_discovery_key(context.candidate_tag.as_deref());
     let candidate_display_tag = crate::db::normalize_discovery_key(
         context
             .candidate_resolved_tag
             .as_deref()
+            .or(candidate_display_tag_hint)
             .or(context.candidate_tag.as_deref()),
     );
     if let Some(tag) =
@@ -30,6 +24,24 @@ fn timeline_candidate_identity(
         return Some(format!(
             "tag:{}",
             crate::db::canonical_visible_version_tag(tag)
+        ));
+    }
+
+    if !candidate_display_tag.is_empty()
+        && !candidate_display_tag
+            .to_ascii_lowercase()
+            .starts_with("sha256:")
+    {
+        return Some(format!(
+            "alias:{}",
+            crate::db::canonical_visible_version_tag(&candidate_display_tag)
+        ));
+    }
+
+    if !candidate_tag.is_empty() && !candidate_tag.to_ascii_lowercase().starts_with("sha256:") {
+        return Some(format!(
+            "alias:{}",
+            crate::db::canonical_visible_version_tag(&candidate_tag)
         ));
     }
 
