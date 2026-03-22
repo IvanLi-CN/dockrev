@@ -59,21 +59,48 @@ fn normalize_repo_url_input(input: Option<&str>) -> Result<Option<String>, ApiEr
     Ok(Some(value.to_string()))
 }
 
+fn normalize_repo_path_segments(segments: &[&str]) -> Option<Vec<String>> {
+    let mut normalized = segments
+        .iter()
+        .map(|segment| segment.trim())
+        .filter(|segment| !segment.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let last = normalized.last_mut()?;
+    if last.ends_with(".git") {
+        let trimmed = last.trim_end_matches(".git").trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        *last = trimmed.to_string();
+    }
+    Some(normalized)
+}
+
+fn build_normalized_browse_url(mut parsed: Url, segments: &[String]) -> Option<String> {
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+    parsed
+        .path_segments_mut()
+        .ok()?
+        .clear()
+        .extend(segments.iter().map(String::as_str));
+    Some(parsed.to_string())
+}
+
 fn normalize_external_repo_url(input: &str) -> Option<String> {
     let value = normalize_repo_url_input(Some(input)).ok().flatten()?;
     let parsed = Url::parse(&value).ok()?;
     let host = parsed.host_str()?.trim().to_ascii_lowercase();
-    let segments: Vec<_> = parsed
-        .path_segments()
-        .map(|parts| parts.filter(|part| !part.trim().is_empty()).collect())
-        .unwrap_or_default();
+    let segments = normalize_repo_path_segments(
+        &parsed
+            .path_segments()
+            .map(|parts| parts.collect::<Vec<_>>())
+            .unwrap_or_default(),
+    )?;
+    let normalized_value = build_normalized_browse_url(parsed, &segments)?;
 
-    if matches!(
-        github::parse_target_input(&value).ok(),
-        Some(github::TargetKind::Repo { .. })
-    ) {
-        return Some(value);
-    }
+    let first = segments.first().map(|segment| segment.to_ascii_lowercase());
 
     let is_gitlab_host = host == "gitlab.com"
         || host == "www.gitlab.com"
@@ -81,23 +108,27 @@ fn normalize_external_repo_url(input: &str) -> Option<String> {
         || host.ends_with(".gitlab.com")
         || host.contains(".gitlab.");
     if is_gitlab_host {
-        let first = segments.first().map(|segment| segment.to_ascii_lowercase());
         if segments.len() >= 2
             && !matches!(
                 first.as_deref(),
                 Some("groups" | "users" | "explore" | "help" | "admin" | "dashboard" | "projects")
             )
         {
-            return Some(value);
+            return Some(normalized_value);
         }
         return None;
     }
 
     if segments.len() >= 2 {
-        return Some(value);
+        return Some(normalized_value);
     }
 
     None
+}
+
+fn image_ref_pinned_digest(image_ref: &str) -> Option<String> {
+    let (_, digest) = image_ref.trim().split_once('@')?;
+    snapshot_worker::normalize_digest(digest)
 }
 
 fn timeline_candidate_identity(
@@ -337,6 +368,7 @@ pub(super) async fn infer_service_repo_link(
         .current_digest
         .as_deref()
         .and_then(snapshot_worker::normalize_digest)
+        .or_else(|| image_ref_pinned_digest(&snapshot_target.image_ref))
         .or_else(|| {
             if parsed_reference_is_digest {
                 Some(parsed_reference.clone())
