@@ -1567,14 +1567,14 @@ async function runInteractive({ baseUrl, browser }) {
       await repoInput.waitFor({ timeout: 10_000 })
 
       const detailHeader = page.locator('.svcTitleRow')
-      const detailRegistryLink = detailHeader.locator('[aria-label="打开镜像注册表页面"]')
+      const detailRegistryLink = detailHeader.locator('[data-link-kind="registry"]')
       await detailRegistryLink.waitFor({ timeout: 10_000 })
       const detailRegistryHref = await detailRegistryLink.getAttribute('href')
       if (detailRegistryHref !== 'https://ghcr.io/acme/api') {
         throw new Error(`Expected detail registry href to strip the tag, got ${detailRegistryHref}.`)
       }
 
-      const detailRepoLinksBefore = await detailHeader.locator('[aria-label="打开代码仓库页面"]').count()
+      const detailRepoLinksBefore = await detailHeader.locator('[data-link-kind="repo"]').count()
       if (detailRepoLinksBefore !== 0) {
         throw new Error(`Expected no repo link in service detail header before inference, got ${detailRepoLinksBefore}.`)
       }
@@ -1585,7 +1585,7 @@ async function runInteractive({ baseUrl, browser }) {
         return input instanceof HTMLInputElement && input.value === 'https://github.com/acme/api'
       }, null, { timeout: 10_000 })
 
-      await detailHeader.locator('[aria-label="打开代码仓库页面"]').waitFor({ timeout: 10_000 })
+      await detailHeader.locator('[data-link-kind="repo"]').waitFor({ timeout: 10_000 })
 
       await page.getByRole('button', { name: '保存服务设置' }).click()
       await page.waitForTimeout(200)
@@ -1598,8 +1598,8 @@ async function runInteractive({ baseUrl, browser }) {
       await prodGroup.waitFor({ timeout: 10_000 })
       const apiRow = prodGroup.locator('.rowLine', { hasText: 'api' }).first()
       await apiRow.waitFor({ timeout: 10_000 })
-      await apiRow.locator('[aria-label="打开代码仓库页面"]').waitFor({ timeout: 10_000 })
-      const listRegistryHref = await apiRow.locator('[aria-label="打开镜像注册表页面"]').getAttribute('href')
+      await apiRow.locator('[data-link-kind="repo"]').waitFor({ timeout: 10_000 })
+      const listRegistryHref = await apiRow.locator('[data-link-kind="registry"]').getAttribute('href')
       if (listRegistryHref !== 'https://ghcr.io/acme/api') {
         throw new Error(`Expected services list registry href to strip the tag, got ${listRegistryHref}.`)
       }
