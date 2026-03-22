@@ -18042,6 +18042,76 @@ services:
 }
 
 #[tokio::test]
+async fn sync_stack_from_compose_clears_repo_url_when_service_image_changes() {
+    let state = test_state(":memory:").await;
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = state
+        .db
+        .list_services_for_check(&stack_id)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id
+        .clone();
+
+    state
+        .db
+        .put_service_settings(
+            &service_id,
+            &crate::api::types::ServiceSettings {
+                auto_rollback: true,
+                backup_targets: crate::api::types::BackupTargetOverrides {
+                    bind_paths: BTreeMap::new(),
+                    volume_names: BTreeMap::new(),
+                },
+                repo_url: Some("https://github.com/acme/web".to_string()),
+            },
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    state
+        .db
+        .sync_stack_from_compose(
+            &stack_id,
+            std::slice::from_ref(&compose_path),
+            &[crate::db::ComposeServiceSpec {
+                name: "web".to_string(),
+                image_ref: "ghcr.io/acme/worker".to_string(),
+                image_tag: "latest".to_string(),
+            }],
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    let settings = state
+        .db
+        .get_service_settings(&service_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        settings.repo_url.is_none(),
+        "unexpected settings: {settings:?}"
+    );
+}
+
+#[tokio::test]
 async fn infer_service_repo_link_prefers_oci_source_and_current_digest() {
     let registry = Arc::new(RepoLinkRegistry::with_oci_source(Some(
         "https://github.com/Acme/Web",

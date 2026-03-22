@@ -530,6 +530,7 @@ UPDATE services
 SET
   image_ref = ?2,
   image_tag = ?3,
+  repo_url = NULL,
   current_digest = NULL,
   current_resolved_tag = NULL,
   current_runtime_started_at = NULL,
