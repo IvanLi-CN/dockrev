@@ -71,7 +71,7 @@
 - 候选项 identity 与去重规则必须和 `newVersionDiscoveryCount` 完全一致：
   - 稳定 `candidateDisplayTag` 优先；
   - unresolved 历史复用 notification 辅助归一；
-  - 无稳定展示值时回退到 `candidateDigest`。
+  - 无稳定展示值时先按可见 alias 折叠，只有完全没有可见值时才回退到 `candidateDigest`。
 
 ## 需求（Requirements）
 

@@ -238,6 +238,26 @@ fn candidate_identity_key(
         return tags.iter().next().cloned().map(|tag| format!("tag:{tag}"));
     }
 
+    let candidate_display_tag = normalize_discovery_key(Some(row.candidate_display_tag.as_str()));
+    if !candidate_display_tag.is_empty()
+        && !candidate_display_tag
+            .to_ascii_lowercase()
+            .starts_with("sha256:")
+    {
+        return Some(format!(
+            "alias:{}",
+            canonical_visible_version_tag(&candidate_display_tag)
+        ));
+    }
+
+    let candidate_tag = normalize_discovery_key(Some(row.candidate_tag.as_str()));
+    if !candidate_tag.is_empty() && !candidate_tag.to_ascii_lowercase().starts_with("sha256:") {
+        return Some(format!(
+            "alias:{}",
+            canonical_visible_version_tag(&candidate_tag)
+        ));
+    }
+
     Some(format!("digest:{digest}"))
 }
 
@@ -919,7 +939,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn finish_job_uses_digest_when_candidate_display_tag_is_floating_alias() {
+    async fn finish_job_collapses_repeated_floating_aliases_by_visible_label() {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
         seed_service(
             &db,
@@ -959,11 +979,11 @@ mod tests {
         .await;
 
         let stack = db.get_stack("stack_1").await.unwrap().unwrap();
-        assert_eq!(stack.services[0].new_version_discovery_count, Some(2));
+        assert_eq!(stack.services[0].new_version_discovery_count, Some(1));
     }
 
     #[tokio::test]
-    async fn finish_job_uses_digest_when_candidate_display_tag_is_unresolved_non_semver_tag() {
+    async fn finish_job_collapses_repeated_unresolved_non_semver_aliases_by_visible_label() {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
         seed_service(
             &db,
@@ -1005,7 +1025,7 @@ mod tests {
         .await;
 
         let stack = db.get_stack("stack_1").await.unwrap().unwrap();
-        assert_eq!(stack.services[0].new_version_discovery_count, Some(2));
+        assert_eq!(stack.services[0].new_version_discovery_count, Some(1));
     }
 
     #[tokio::test]
