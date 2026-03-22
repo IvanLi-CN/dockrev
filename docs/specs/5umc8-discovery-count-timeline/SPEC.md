@@ -151,3 +151,4 @@
 - 2026-03-21: 实现 discovery timeline lazy API、runtime startedAt 持久化、共享时间线气泡与 storybook/mock 回归。
 - 2026-03-22: 修正 Storybook mock 时间线数据，补充裁剪后的完工截图，并将视觉证据写回规格。
 - 2026-03-22: 同步 discovery count 的 alias 去重口径；重复暴露同一 unresolved alias 的历史只保留一条时间线候选，恢复时间线与 `发现次数` 的数量一致性。
+- 2026-03-22: 根据 fresh review fix，对齐 live candidate 的 alias identity fallback，避免 unresolved 当前候选与同名历史候选在时间线里重复并列。
