@@ -34,6 +34,7 @@ export type DockrevApiScenario =
   | 'dashboard-demo'
   | 'dashboard-demo-slow-update'
   | 'link-icon-catalog'
+  | 'digest-pinned-image-display'
   | 'services-inference-pending-candidate-loading'
   | 'service-detail-compose-fallbacks'
   | 'service-detail-version-anomaly'
@@ -1015,6 +1016,19 @@ function buildLinkIconCatalog(): Fixture {
   applyRepoUrl('stack-prod', 'svc-prod-worker', 'https://github.com/acme/worker')
   applyRepoUrl('stack-infra', 'svc-infra-loki', 'https://github.com/grafana/loki')
 
+  return fixture
+}
+
+function buildDigestPinnedImageDisplay(): Fixture {
+  const fixture = buildLinkIconCatalog()
+  const service = fixture.stackById['stack-prod']?.services.find((item) => item.id === 'svc-prod-api')
+  if (service) {
+    service.image = {
+      ...service.image,
+      ref: 'ghcr.io/acme/api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      tag: 'latest',
+    }
+  }
   return fixture
 }
 
@@ -2515,6 +2529,7 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'no-candidates') return buildNoCandidates()
   if (scenario === 'dashboard-demo' || scenario === 'dashboard-demo-slow-update') return buildDashboardDemo()
   if (scenario === 'link-icon-catalog') return buildLinkIconCatalog()
+  if (scenario === 'digest-pinned-image-display') return buildDigestPinnedImageDisplay()
   if (scenario === 'repo-link-editing') {
     const fixture = buildDashboardDemo()
     const serviceId = 'svc-prod-api'

@@ -23,19 +23,23 @@ function isDockerRegistryHost(host: string): boolean {
 
 export function splitImageRef(ref: string): { registry: string; name: string } {
   const s = ref.trim()
-  const withoutDigest = s.includes('@') ? s.split('@', 1)[0] : s
-  const lastSlash = withoutDigest.lastIndexOf('/')
-  const lastColon = withoutDigest.lastIndexOf(':')
-  const withoutTag = lastColon > lastSlash ? withoutDigest.slice(0, lastColon) : withoutDigest
-  const firstSlash = withoutTag.indexOf('/')
+  const firstSlash = s.indexOf('/')
   if (firstSlash < 0) {
-    return { registry: 'docker.io', name: withoutTag }
+    return { registry: 'docker.io', name: s }
   }
-  const firstSeg = withoutTag.slice(0, firstSlash)
-  const rest = withoutTag.slice(firstSlash + 1)
+  const firstSeg = s.slice(0, firstSlash)
+  const rest = s.slice(firstSlash + 1)
   const isRegistry = firstSeg.includes('.') || firstSeg.includes(':') || firstSeg === 'localhost'
   if (isRegistry) return { registry: firstSeg, name: rest }
-  return { registry: 'docker.io', name: withoutTag }
+  return { registry: 'docker.io', name: s }
+}
+
+function stripImageNameReference(name: string): string {
+  const trimmed = name.trim()
+  const withoutDigest = trimmed.includes('@') ? trimmed.split('@', 1)[0] : trimmed
+  const lastSlash = withoutDigest.lastIndexOf('/')
+  const lastColon = withoutDigest.lastIndexOf(':')
+  return lastColon > lastSlash ? withoutDigest.slice(0, lastColon) : withoutDigest
 }
 
 export function splitImageNameForDisplay(
@@ -60,12 +64,13 @@ export function splitImageNameForDisplay(
 
 export function buildRegistryWebUrl(imageRef: string): string | null {
   const { registry, name } = splitImageRef(imageRef)
+  const repoName = stripImageNameReference(name)
   const host = normalizeHost(registry)
-  if (host === 'ghcr.io') return `https://ghcr.io/${name}`
-  if (host === 'quay.io') return `https://quay.io/repository/${name}`
+  if (host === 'ghcr.io') return `https://ghcr.io/${repoName}`
+  if (host === 'quay.io') return `https://quay.io/repository/${repoName}`
   if (!isDockerRegistryHost(host)) return null
 
-  const parts = name
+  const parts = repoName
     .split('/')
     .map((part) => part.trim())
     .filter(Boolean)

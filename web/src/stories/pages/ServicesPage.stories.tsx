@@ -165,6 +165,34 @@ export const RegistryAndRepoLinks: Story = {
   },
 }
 
+export const DigestPinnedImageDisplay: Story = {
+  parameters: { dockrevApiScenario: 'digest-pinned-image-display' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务" pageSubtitle="digest-only 镜像应保持 @sha256 展示语义">
+        {({ onLastScanHint, onTopActions }) => (
+          <ServicesPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
+        )}
+      </PageHarness>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await sleep(120)
+
+    const imageRow = Array.from(canvasElement.querySelectorAll<HTMLElement>('.imageLinkRow')).find((element) =>
+      element.textContent?.includes('acme/api')
+    )
+    expectStory(imageRow, 'digest-pinned image row missing')
+    expectStory(
+      imageRow?.title === 'acme/api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      'digest-pinned image title should keep the digest instead of falling back to :latest'
+    )
+
+    const registryLink = imageRow?.querySelector<HTMLAnchorElement>('[data-link-kind="registry"]')
+    expectStory(registryLink?.href === 'https://ghcr.io/acme/api', 'digest-pinned registry icon should still link to the repo page')
+  },
+}
+
 export const VersionAnomalyBatchList: Story = {
   parameters: { dockrevApiScenario: 'service-detail-version-anomaly' },
   render: () => {

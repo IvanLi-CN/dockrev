@@ -1607,6 +1607,31 @@ async function runInteractive({ baseUrl, browser }) {
       await page.close().catch(() => {})
     }
   }
+
+  // 15) Digest-pinned services should preserve the digest in display metadata instead of falling back to :latest.
+  {
+    const page = await openStory('pages-servicespage--digest-pinned-image-display')
+    try {
+      const prodGroup = page.locator('.tableGroup', { hasText: 'prod' }).first()
+      await prodGroup.waitFor({ timeout: 10_000 })
+      const apiRow = prodGroup.locator('.rowLine', { hasText: 'api' }).first()
+      await apiRow.waitFor({ timeout: 10_000 })
+
+      const imageRow = apiRow.locator('.imageLinkRow')
+      await imageRow.waitFor({ timeout: 10_000 })
+      const imageTitle = await imageRow.getAttribute('title')
+      if (imageTitle !== 'acme/api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef') {
+        throw new Error(`Expected digest-pinned image title to preserve @sha256, got ${imageTitle}.`)
+      }
+
+      const registryHref = await imageRow.locator('[data-link-kind="registry"]').getAttribute('href')
+      if (registryHref !== 'https://ghcr.io/acme/api') {
+        throw new Error(`Expected digest-pinned registry href to point at the repo page, got ${registryHref}.`)
+      }
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
 }
 
 async function main() {
