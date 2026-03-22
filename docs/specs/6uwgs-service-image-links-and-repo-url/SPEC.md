@@ -148,6 +148,17 @@
 
 ## Visual Evidence (PR)
 
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: element
+  sensitive_exclusion: N/A
+  submission_gate: approved
+  story_id_or_title: Pages/ServicesPage/RegistryAndRepoLinks
+  state: common platform icons + compact spacing
+  evidence_note: 验证服务列表里的 GHCR、GitHub、GitLab、Docker Hub 与通用兜底图标已分流显示，且相邻入口间距已收紧。
+  image:
+  ![服务列表中的 registry / repo 图标外链](./assets/service-link-icons-storybook-canvas.png)
+
 ## 资产晋升（Asset promotion）
 
 None
