@@ -59,6 +59,10 @@ fn normalize_repo_url_input(input: Option<&str>) -> Result<Option<String>, ApiEr
     Ok(Some(value.to_string()))
 }
 
+fn normalize_external_repo_url(input: &str) -> Option<String> {
+    normalize_repo_url_input(Some(input)).ok().flatten()
+}
+
 fn timeline_candidate_identity(
     context: &crate::db::ServiceNewVersionTimelineContext,
     candidate_display_tag_hint: Option<&str>,
@@ -328,8 +332,16 @@ pub(super) async fn infer_service_repo_link(
                     reason: None,
                 }));
             }
+            if let Some(repo_url) = source.as_deref().and_then(normalize_external_repo_url) {
+                return Ok(Json(ServiceRepoLinkInferenceResponse {
+                    repo_url: Some(repo_url),
+                    strategy: ServiceRepoLinkInferenceStrategy::OciSource,
+                    reason: None,
+                }));
+            }
             if source.as_deref().is_some() {
-                miss_reasons.push("oci source not recognized as a GitHub repository".to_string());
+                miss_reasons
+                    .push("oci source not recognized as a valid repository URL".to_string());
             } else {
                 miss_reasons.push("oci source missing".to_string());
             }

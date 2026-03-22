@@ -522,6 +522,13 @@ WHERE id = ?1
                         continue;
                     }
 
+                    let preserve_repo_url =
+                        crate::snapshot_worker::image_repo_from_image_ref(existing_image_ref)
+                            .zip(crate::snapshot_worker::image_repo_from_image_ref(
+                                &svc.image_ref,
+                            ))
+                            .map(|(existing, incoming)| existing == incoming)
+                            .unwrap_or(false);
                     let image_ref = svc.image_ref.clone();
                     let image_tag = svc.image_tag.clone();
                     tx.execute(
@@ -530,7 +537,7 @@ UPDATE services
 SET
   image_ref = ?2,
   image_tag = ?3,
-  repo_url = NULL,
+  repo_url = CASE WHEN ?4 THEN repo_url ELSE NULL END,
   current_digest = NULL,
   current_resolved_tag = NULL,
   current_runtime_started_at = NULL,
@@ -543,10 +550,10 @@ SET
   ignore_rule_id = NULL,
   ignore_reason = NULL,
   checked_at = NULL,
-  updated_at = ?4
+  updated_at = ?5
 WHERE id = ?1
 "#,
-                        params![id, image_ref, image_tag, now],
+                        params![id, image_ref, image_tag, preserve_repo_url, now],
                     )?;
                     super::new_version_notifications::reconcile_service_new_version_notifications_tx(
                         &tx,

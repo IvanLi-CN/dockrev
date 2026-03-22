@@ -18112,6 +18112,77 @@ services:
 }
 
 #[tokio::test]
+async fn sync_stack_from_compose_preserves_repo_url_when_only_service_image_tag_changes() {
+    let state = test_state(":memory:").await;
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:1.0
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = state
+        .db
+        .list_services_for_check(&stack_id)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id
+        .clone();
+
+    state
+        .db
+        .put_service_settings(
+            &service_id,
+            &crate::api::types::ServiceSettings {
+                auto_rollback: true,
+                backup_targets: crate::api::types::BackupTargetOverrides {
+                    bind_paths: BTreeMap::new(),
+                    volume_names: BTreeMap::new(),
+                },
+                repo_url: Some("https://github.com/acme/web".to_string()),
+            },
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    state
+        .db
+        .sync_stack_from_compose(
+            &stack_id,
+            std::slice::from_ref(&compose_path),
+            &[crate::db::ComposeServiceSpec {
+                name: "web".to_string(),
+                image_ref: "ghcr.io/acme/web:1.1".to_string(),
+                image_tag: "1.1".to_string(),
+            }],
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    let settings = state
+        .db
+        .get_service_settings(&service_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        settings.repo_url.as_deref(),
+        Some("https://github.com/acme/web"),
+        "unexpected settings: {settings:?}"
+    );
+}
+
+#[tokio::test]
 async fn infer_service_repo_link_prefers_oci_source_and_current_digest() {
     let registry = Arc::new(RepoLinkRegistry::with_oci_source(Some(
         "https://github.com/Acme/Web",
@@ -18149,6 +18220,49 @@ services:
     assert_eq!(
         body["repoUrl"].as_str(),
         Some("https://github.com/acme/web")
+    );
+    assert_eq!(body["strategy"].as_str(), Some("oci_source"));
+    assert_eq!(registry.observed_references(), vec!["sha256:current"]);
+}
+
+#[tokio::test]
+async fn infer_service_repo_link_accepts_valid_non_github_oci_source() {
+    let registry = Arc::new(RepoLinkRegistry::with_oci_source(Some(
+        "https://gitlab.com/Acme/Web",
+    )));
+    let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id =
+        set_single_service_check_result(&state, &stack_id, Some("sha256:current"), None, None)
+            .await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/repo-link/infer"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(
+        body["repoUrl"].as_str(),
+        Some("https://gitlab.com/Acme/Web")
     );
     assert_eq!(body["strategy"].as_str(), Some("oci_source"));
     assert_eq!(registry.observed_references(), vec!["sha256:current"]);
