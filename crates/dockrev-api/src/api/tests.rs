@@ -18269,6 +18269,49 @@ services:
 }
 
 #[tokio::test]
+async fn infer_service_repo_link_rejects_non_repository_oci_source_url() {
+    let registry = Arc::new(RepoLinkRegistry::with_oci_source(Some(
+        "https://github.com/acme",
+    )));
+    let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id =
+        set_single_service_check_result(&state, &stack_id, Some("sha256:current"), None, None)
+            .await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/repo-link/infer"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["repoUrl"], serde_json::Value::Null);
+    assert_eq!(body["strategy"].as_str(), Some("none"));
+    assert!(body["reason"].as_str().is_some_and(|reason| {
+        reason.starts_with("oci source not recognized as a valid repository URL")
+    }));
+    assert_eq!(registry.observed_references(), vec!["sha256:current"]);
+}
+
+#[tokio::test]
 async fn infer_service_repo_link_uses_parsed_digest_reference_before_first_runtime_scan() {
     let registry = Arc::new(RepoLinkRegistry::with_oci_source(Some(
         "https://github.com/Acme/Web",

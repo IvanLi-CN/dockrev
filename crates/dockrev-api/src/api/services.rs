@@ -60,7 +60,44 @@ fn normalize_repo_url_input(input: Option<&str>) -> Result<Option<String>, ApiEr
 }
 
 fn normalize_external_repo_url(input: &str) -> Option<String> {
-    normalize_repo_url_input(Some(input)).ok().flatten()
+    let value = normalize_repo_url_input(Some(input)).ok().flatten()?;
+    let parsed = Url::parse(&value).ok()?;
+    let host = parsed.host_str()?.trim().to_ascii_lowercase();
+    let segments: Vec<_> = parsed
+        .path_segments()
+        .map(|parts| parts.filter(|part| !part.trim().is_empty()).collect())
+        .unwrap_or_default();
+
+    if matches!(
+        github::parse_target_input(&value).ok(),
+        Some(github::TargetKind::Repo { .. })
+    ) {
+        return Some(value);
+    }
+
+    let is_gitlab_host = host == "gitlab.com"
+        || host == "www.gitlab.com"
+        || host.starts_with("gitlab.")
+        || host.ends_with(".gitlab.com")
+        || host.contains(".gitlab.");
+    if is_gitlab_host {
+        let first = segments.first().map(|segment| segment.to_ascii_lowercase());
+        if segments.len() >= 2
+            && !matches!(
+                first.as_deref(),
+                Some("groups" | "users" | "explore" | "help" | "admin" | "dashboard" | "projects")
+            )
+        {
+            return Some(value);
+        }
+        return None;
+    }
+
+    if segments.len() >= 2 {
+        return Some(value);
+    }
+
+    None
 }
 
 fn timeline_candidate_identity(
