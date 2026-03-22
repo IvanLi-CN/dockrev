@@ -1,5 +1,25 @@
 import type { ComponentProps } from 'react'
-import { ExternalLinkIcon, GitHubIcon, IconLink } from './ui'
+import { DockerIcon, GhcrIcon, GitHubIcon, GitLabIcon, IconLink, RegistryIcon, RepositoryIcon } from './ui'
+
+type IconLinkClick = ComponentProps<'a'>['onClick']
+type RepositoryIconKind = 'generic' | 'github' | 'gitlab'
+type RegistryIconKind = 'docker' | 'generic' | 'ghcr'
+
+function normalizeHost(host: string): string {
+  return host.trim().toLowerCase().replace(/^www\./, '')
+}
+
+function isGitHubHost(host: string): boolean {
+  return host === 'github.com' || host.endsWith('.github.com')
+}
+
+function isGitLabHost(host: string): boolean {
+  return host === 'gitlab.com' || host.startsWith('gitlab.') || host.endsWith('.gitlab.com') || host.includes('.gitlab.')
+}
+
+function isDockerRegistryHost(host: string): boolean {
+  return host === 'docker.io' || host === 'index.docker.io' || host === 'registry-1.docker.io'
+}
 
 export function splitImageRef(ref: string): { registry: string; name: string } {
   const s = ref.trim()
@@ -40,8 +60,10 @@ export function splitImageNameForDisplay(
 
 export function buildRegistryWebUrl(imageRef: string): string | null {
   const { registry, name } = splitImageRef(imageRef)
-  if (registry === 'ghcr.io') return `https://ghcr.io/${name}`
-  if (registry !== 'docker.io') return null
+  const host = normalizeHost(registry)
+  if (host === 'ghcr.io') return `https://ghcr.io/${name}`
+  if (host === 'quay.io') return `https://quay.io/repository/${name}`
+  if (!isDockerRegistryHost(host)) return null
 
   const parts = name
     .split('/')
@@ -67,26 +89,71 @@ export function normalizeExternalHttpUrl(input: string | null | undefined): stri
   return null
 }
 
-export function isGitHubRepoUrl(input: string | null | undefined): boolean {
+function getExternalHost(input: string | null | undefined): string | null {
   const value = normalizeExternalHttpUrl(input)
-  if (!value) return false
+  if (!value) return null
   try {
-    const parsed = new URL(value)
-    const host = parsed.hostname.toLowerCase()
-    return host === 'github.com' || host === 'www.github.com'
+    return normalizeHost(new URL(value).hostname)
   } catch {
-    return false
+    return null
   }
 }
 
-type IconLinkClick = ComponentProps<'a'>['onClick']
+export function getRepositoryIconKind(input: string | null | undefined): RepositoryIconKind {
+  const host = getExternalHost(input)
+  if (!host) return 'generic'
+  if (isGitHubHost(host)) return 'github'
+  if (isGitLabHost(host)) return 'gitlab'
+  return 'generic'
+}
+
+export function getRegistryIconKind(imageRef: string): RegistryIconKind {
+  const { registry } = splitImageRef(imageRef)
+  const host = normalizeHost(registry)
+  if (host === 'ghcr.io') return 'ghcr'
+  if (isDockerRegistryHost(host)) return 'docker'
+  return 'generic'
+}
+
+function renderRepositoryIcon(kind: RepositoryIconKind) {
+  if (kind === 'github') return <GitHubIcon className="brandIcon" />
+  if (kind === 'gitlab') return <GitLabIcon className="brandIcon" />
+  return <RepositoryIcon className="brandIcon" />
+}
+
+function renderRegistryIcon(kind: RegistryIconKind) {
+  if (kind === 'ghcr') return <GhcrIcon className="brandIcon" />
+  if (kind === 'docker') return <DockerIcon className="brandIcon" />
+  return <RegistryIcon className="brandIcon" />
+}
+
+function repositoryLinkTitle(kind: RepositoryIconKind): string {
+  if (kind === 'github') return '打开 GitHub 仓库'
+  if (kind === 'gitlab') return '打开 GitLab 仓库'
+  return '打开代码仓库页面'
+}
+
+function registryLinkTitle(imageRef: string, kind: RegistryIconKind): string {
+  if (kind === 'ghcr') return '打开 GHCR 页面'
+  if (kind === 'docker') return '打开 Docker Hub 页面'
+  const { registry } = splitImageRef(imageRef)
+  if (normalizeHost(registry) === 'quay.io') return '打开 Quay 页面'
+  return '打开镜像注册表页面'
+}
 
 export function RegistryLinkIcon(props: { imageRef: string; onClick?: IconLinkClick }) {
   const href = buildRegistryWebUrl(props.imageRef)
   if (!href) return null
+  const iconKind = getRegistryIconKind(props.imageRef)
   return (
-    <IconLink href={href} onClick={props.onClick} title="打开镜像注册表页面">
-      <ExternalLinkIcon className="inlineIcon" />
+    <IconLink
+      href={href}
+      iconKind={iconKind}
+      linkKind="registry"
+      onClick={props.onClick}
+      title={registryLinkTitle(props.imageRef, iconKind)}
+    >
+      {renderRegistryIcon(iconKind)}
     </IconLink>
   )
 }
@@ -94,9 +161,16 @@ export function RegistryLinkIcon(props: { imageRef: string; onClick?: IconLinkCl
 export function RepositoryLinkIcon(props: { repoUrl?: string | null; onClick?: IconLinkClick }) {
   const href = normalizeExternalHttpUrl(props.repoUrl)
   if (!href) return null
+  const iconKind = getRepositoryIconKind(href)
   return (
-    <IconLink href={href} onClick={props.onClick} title="打开代码仓库页面">
-      {isGitHubRepoUrl(href) ? <GitHubIcon className="inlineIcon" /> : <ExternalLinkIcon className="inlineIcon" />}
+    <IconLink
+      href={href}
+      iconKind={iconKind}
+      linkKind="repo"
+      onClick={props.onClick}
+      title={repositoryLinkTitle(iconKind)}
+    >
+      {renderRepositoryIcon(iconKind)}
     </IconLink>
   )
 }

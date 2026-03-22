@@ -33,6 +33,7 @@ export type DockrevApiScenario =
   | 'default'
   | 'dashboard-demo'
   | 'dashboard-demo-slow-update'
+  | 'link-icon-catalog'
   | 'services-inference-pending-candidate-loading'
   | 'service-detail-compose-fallbacks'
   | 'service-detail-version-anomaly'
@@ -994,6 +995,27 @@ function buildDashboardDemo(): Fixture {
   ]
 
   return f
+}
+
+function buildLinkIconCatalog(): Fixture {
+  const fixture = buildDashboardDemo()
+
+  const applyRepoUrl = (stackId: string, serviceId: string, repoUrl: string | null) => {
+    const service = fixture.stackById[stackId]?.services.find((item) => item.id === serviceId)
+    if (!service) return
+    service.settings = { ...service.settings, repoUrl }
+    fixture.serviceSettingsById[serviceId] = {
+      ...fixture.serviceSettingsById[serviceId],
+      repoUrl,
+    }
+  }
+
+  applyRepoUrl('stack-prod', 'svc-prod-api', 'https://codeberg.org/acme/api')
+  applyRepoUrl('stack-prod', 'svc-prod-web', 'https://gitlab.com/ops/web')
+  applyRepoUrl('stack-prod', 'svc-prod-worker', 'https://github.com/acme/worker')
+  applyRepoUrl('stack-infra', 'svc-infra-loki', 'https://github.com/grafana/loki')
+
+  return fixture
 }
 
 function buildGuideLineLongNames(): Fixture {
@@ -2492,6 +2514,7 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'empty') return baseEmpty()
   if (scenario === 'no-candidates') return buildNoCandidates()
   if (scenario === 'dashboard-demo' || scenario === 'dashboard-demo-slow-update') return buildDashboardDemo()
+  if (scenario === 'link-icon-catalog') return buildLinkIconCatalog()
   if (scenario === 'repo-link-editing') {
     const fixture = buildDashboardDemo()
     const serviceId = 'svc-prod-api'

@@ -1,12 +1,17 @@
 import type { Meta, StoryObj } from '@storybook/react'
-import { ArrowRightIcon, GitHubIcon, RefreshIcon, TrashIcon } from '../../ui'
+import { ArrowRightIcon, DockerIcon, GhcrIcon, GitHubIcon, GitLabIcon, RefreshIcon, RegistryIcon, RepositoryIcon, TrashIcon } from '../../ui'
 
 function IconographyCatalog() {
   const items = [
     { name: 'ArrowRightIcon', icon: <ArrowRightIcon className="inlineIcon" /> },
     { name: 'RefreshIcon', icon: <RefreshIcon className="inlineIcon" /> },
     { name: 'TrashIcon', icon: <TrashIcon className="inlineIcon" /> },
-    { name: 'GitHubIcon', icon: <GitHubIcon className="inlineIcon" /> },
+    { name: 'GitHubIcon', icon: <GitHubIcon className="brandIcon" /> },
+    { name: 'GhcrIcon', icon: <GhcrIcon className="brandIcon" /> },
+    { name: 'GitLabIcon', icon: <GitLabIcon className="brandIcon" /> },
+    { name: 'DockerIcon', icon: <DockerIcon className="brandIcon" /> },
+    { name: 'RepositoryIcon', icon: <RepositoryIcon className="brandIcon" /> },
+    { name: 'RegistryIcon', icon: <RegistryIcon className="brandIcon" /> },
   ]
 
   return (

@@ -131,7 +131,7 @@ export const DashboardDemo: Story = {
 }
 
 export const RegistryAndRepoLinks: Story = {
-  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  parameters: { dockrevApiScenario: 'link-icon-catalog' },
   render: () => {
     return (
       <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务" pageSubtitle="镜像名旁展示 registry / repo icon 外链">
@@ -140,6 +140,28 @@ export const RegistryAndRepoLinks: Story = {
         )}
       </PageHarness>
     )
+  },
+  play: async ({ canvasElement }) => {
+    await sleep(120)
+
+    const githubRepo = canvasElement.querySelector<HTMLAnchorElement>('[data-link-kind="repo"][data-link-icon="github"]')
+    expectStory(githubRepo?.target === '_blank', 'github repo link icon should open in a new window')
+
+    const gitlabRepo = canvasElement.querySelector<HTMLAnchorElement>('[data-link-kind="repo"][data-link-icon="gitlab"]')
+    expectStory(gitlabRepo?.href === 'https://gitlab.com/ops/web', 'gitlab repo icon missing or wrong href')
+
+    const genericRepo = canvasElement.querySelector<HTMLAnchorElement>('[data-link-kind="repo"][data-link-icon="generic"]')
+    expectStory(genericRepo?.href === 'https://codeberg.org/acme/api', 'generic repo icon missing or wrong href')
+
+    const githubRegistry = canvasElement.querySelector<HTMLAnchorElement>('[data-link-kind="registry"][data-link-icon="ghcr"]')
+    expectStory(githubRegistry?.href === 'https://ghcr.io/acme/api', 'ghcr registry icon missing or wrong href')
+    expectStory(githubRegistry?.ariaLabel === '打开 GHCR 页面', 'ghcr registry icon should expose a GHCR-specific label')
+
+    const dockerRegistry = canvasElement.querySelector<HTMLAnchorElement>('[data-link-kind="registry"][data-link-icon="docker"]')
+    expectStory(dockerRegistry?.href === 'https://hub.docker.com/_/postgres', 'docker registry icon missing or wrong href')
+
+    const genericRegistry = canvasElement.querySelector<HTMLAnchorElement>('[data-link-kind="registry"][data-link-icon="generic"]')
+    expectStory(genericRegistry?.href === 'https://quay.io/repository/prometheus/prometheus', 'generic registry icon missing or wrong href')
   },
 }
 
