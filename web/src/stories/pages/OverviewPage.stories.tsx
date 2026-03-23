@@ -65,6 +65,14 @@ function expectStory(condition: unknown, message: string): asserts condition {
   if (!condition) throw new globalThis.Error(message)
 }
 
+function findGroup(root: ParentNode, stackName: string): HTMLElement | null {
+  return Array.from(root.querySelectorAll<HTMLElement>('.tableGroup')).find((group) => group.textContent?.includes(stackName)) ?? null
+}
+
+function findRowLine(root: ParentNode, text: string): HTMLElement | null {
+  return Array.from(root.querySelectorAll<HTMLElement>('.rowLine')).find((row) => row.textContent?.includes(text)) ?? null
+}
+
 function findButtonByText(root: ParentNode, text: string): HTMLButtonElement | null {
   return Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.trim() === text) ?? null
 }
@@ -84,6 +92,69 @@ export const Default: Story = {
         {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
       </PageHarness>
     )
+  },
+}
+
+export const RegistryAndRepoLinks: Story = {
+  parameters: { dockrevApiScenario: 'link-icon-catalog' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="更新候选里的镜像名展示 registry / repo icon 外链">
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await sleep(180)
+
+    const doc = canvasElement.ownerDocument
+    const apiRow = findRowLine(canvasElement, 'acme/api')
+    expectStory(apiRow, 'api row missing in overview link-icon story')
+
+    const apiRegistry = apiRow?.querySelector<HTMLAnchorElement>('[data-link-kind="registry"][data-link-icon="ghcr"]')
+    expectStory(apiRegistry?.href === 'https://ghcr.io/acme/api', 'overview GHCR registry icon missing or wrong href')
+
+    const apiRepo = apiRow?.querySelector<HTMLAnchorElement>('[data-link-kind="repo"][data-link-icon="generic"]')
+    expectStory(apiRepo?.href === 'https://codeberg.org/acme/api', 'overview generic repo icon missing or wrong href')
+
+    const hashBeforeClick = window.location.hash
+    apiRepo?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    await sleep(80)
+    expectStory(window.location.hash === hashBeforeClick, 'clicking overview image icon should not trigger row navigation')
+
+    const webRow = findRowLine(canvasElement, 'ops/web')
+    expectStory(webRow, 'web row missing in overview link-icon story')
+    expectStory(!webRow?.querySelector('[data-link-kind="registry"]'), 'unknown registry should not render a registry icon in overview rows')
+    const webRepo = webRow?.querySelector<HTMLAnchorElement>('[data-link-kind="repo"][data-link-icon="gitlab"]')
+    expectStory(webRepo?.href === 'https://gitlab.com/ops/web', 'overview GitLab repo icon missing or wrong href')
+
+    const infraGroup = findGroup(canvasElement, 'infra')
+    expectStory(infraGroup, 'infra group missing in overview link-icon story')
+    const infraHead = infraGroup?.querySelector<HTMLElement>('.groupHead')
+    infraHead?.click()
+    await sleep(120)
+
+    const prometheusRow = findRowLine(canvasElement, 'prometheus/prometheus')
+    expectStory(prometheusRow, 'prometheus row missing after expanding infra group')
+    const quayRegistry = prometheusRow?.querySelector<HTMLAnchorElement>('[data-link-kind="registry"][data-link-icon="generic"]')
+    expectStory(quayRegistry?.href === 'https://quay.io/repository/prometheus/prometheus', 'overview Quay registry icon missing or wrong href')
+
+    const postgresRow = findRowLine(canvasElement, 'library/postgres')
+    expectStory(postgresRow, 'postgres row missing after expanding infra group')
+    const dockerRegistry = postgresRow?.querySelector<HTMLAnchorElement>('[data-link-kind="registry"][data-link-icon="docker"]')
+    expectStory(dockerRegistry?.href === 'https://hub.docker.com/_/postgres', 'overview Docker Hub registry icon missing or wrong href')
+
+    const updateButton = findButtonByText(apiRow ?? canvasElement, '执行更新')
+    expectStory(updateButton, 'api row update button missing in overview link-icon story')
+    updateButton.click()
+    await sleep(160)
+
+    const dialog = doc.querySelector<HTMLElement>('[role="alertdialog"]')
+    expectStory(dialog, 'service update confirm dialog missing in overview link-icon story')
+    const dialogRegistry = dialog?.querySelector<HTMLAnchorElement>('[data-link-kind="registry"][data-link-icon="ghcr"]')
+    expectStory(dialogRegistry?.href === 'https://ghcr.io/acme/api', 'overview service dialog should reuse GHCR registry icon')
+    const dialogRepo = dialog?.querySelector<HTMLAnchorElement>('[data-link-kind="repo"][data-link-icon="generic"]')
+    expectStory(dialogRepo?.href === 'https://codeberg.org/acme/api', 'overview service dialog should reuse repo icon rendering')
   },
 }
 
