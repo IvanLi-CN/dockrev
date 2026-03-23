@@ -10,7 +10,61 @@ fn normalize_repo_full_name(full_name: &str) -> String {
     full_name.trim().to_ascii_lowercase()
 }
 
+fn is_reserved_github_path_root(segment: &str) -> bool {
+    matches!(
+        segment.trim().to_ascii_lowercase().as_str(),
+        "account"
+            | "apps"
+            | "collections"
+            | "contact"
+            | "customer-stories"
+            | "enterprise"
+            | "events"
+            | "explore"
+            | "features"
+            | "gist"
+            | "git-guides"
+            | "images"
+            | "issues"
+            | "login"
+            | "marketplace"
+            | "new"
+            | "notifications"
+            | "orgs"
+            | "organizations"
+            | "pricing"
+            | "pulls"
+            | "readme"
+            | "search"
+            | "security"
+            | "session"
+            | "settings"
+            | "showcases"
+            | "site"
+            | "sponsors"
+            | "stars"
+            | "team"
+            | "teams"
+            | "topics"
+            | "trending"
+            | "users"
+    )
+}
+
 fn normalize_github_source_repo_key(source: &str) -> Option<String> {
+    let trimmed = source.trim();
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        let parsed = Url::parse(trimmed).ok()?;
+        let host = parsed.host_str()?.trim().to_ascii_lowercase();
+        if host == "github.com" || host == "www.github.com" {
+            let first = parsed
+                .path_segments()
+                .and_then(|mut segments| segments.find(|segment| !segment.trim().is_empty()))?;
+            if is_reserved_github_path_root(first) {
+                return None;
+            }
+        }
+    }
     match github::parse_target_input(source).ok()? {
         github::TargetKind::Repo { owner, repo } => Some(format!(
             "{}/{}",
@@ -88,39 +142,51 @@ fn build_normalized_browse_url(mut parsed: Url, segments: &[String]) -> Option<S
     Some(parsed.to_string())
 }
 
+fn collapse_gitlab_repo_segments(segments: &[String]) -> Option<Vec<String>> {
+    let first = segments.first().map(|segment| segment.to_ascii_lowercase());
+    if segments.len() < 2
+        || matches!(
+            first.as_deref(),
+            Some("groups" | "users" | "explore" | "help" | "admin" | "dashboard" | "projects")
+        )
+    {
+        return None;
+    }
+    let repo_end = segments
+        .iter()
+        .position(|segment| segment == "-")
+        .unwrap_or(segments.len());
+    if repo_end < 2 {
+        return None;
+    }
+    Some(segments[..repo_end].to_vec())
+}
+
 fn normalize_external_repo_url(input: &str) -> Option<String> {
     let value = normalize_repo_url_input(Some(input)).ok().flatten()?;
     let parsed = Url::parse(&value).ok()?;
     let host = parsed.host_str()?.trim().to_ascii_lowercase();
+    if host == "github.com" || host == "www.github.com" {
+        return None;
+    }
     let segments = normalize_repo_path_segments(
         &parsed
             .path_segments()
             .map(|parts| parts.collect::<Vec<_>>())
             .unwrap_or_default(),
     )?;
-    let normalized_value = build_normalized_browse_url(parsed, &segments)?;
-
-    let first = segments.first().map(|segment| segment.to_ascii_lowercase());
-
     let is_gitlab_host = host == "gitlab.com"
         || host == "www.gitlab.com"
         || host.starts_with("gitlab.")
         || host.ends_with(".gitlab.com")
         || host.contains(".gitlab.");
     if is_gitlab_host {
-        if segments.len() >= 2
-            && !matches!(
-                first.as_deref(),
-                Some("groups" | "users" | "explore" | "help" | "admin" | "dashboard" | "projects")
-            )
-        {
-            return Some(normalized_value);
-        }
-        return None;
+        let repo_segments = collapse_gitlab_repo_segments(&segments)?;
+        return build_normalized_browse_url(parsed, &repo_segments);
     }
 
     if segments.len() >= 2 {
-        return Some(normalized_value);
+        return build_normalized_browse_url(parsed, &segments[..2]);
     }
 
     None
