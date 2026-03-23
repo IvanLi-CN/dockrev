@@ -174,6 +174,74 @@ pub(super) fn parse_digest_snapshot_row(
     })
 }
 
+fn trim_nonempty(input: Option<&str>) -> Option<String> {
+    input
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+pub(super) fn merge_inferred_resolved_tag(
+    persisted_resolved_tag: Option<&str>,
+    inferred_first: Option<String>,
+    scan_has_failures: bool,
+    scan_is_complete: bool,
+) -> Option<String> {
+    if inferred_first.is_some() || (!scan_has_failures && scan_is_complete) {
+        return inferred_first;
+    }
+    trim_nonempty(persisted_resolved_tag)
+}
+
+pub(super) async fn resolve_current_running_resolved_tag(
+    state: &Arc<AppState>,
+    image_ref: &str,
+    image_tag: &str,
+    current_digest: Option<&str>,
+    current_resolved_tag: Option<&str>,
+) -> Result<Option<String>, ApiError> {
+    if ignore::is_strict_semver(image_tag) {
+        return Ok(trim_nonempty(current_resolved_tag));
+    }
+
+    let Some(image_repo) = snapshot_worker::image_repo_from_image_ref(image_ref) else {
+        return Ok(trim_nonempty(current_resolved_tag));
+    };
+    let Some(current_digest) = current_digest.and_then(snapshot_worker::normalize_digest) else {
+        return Ok(trim_nonempty(current_resolved_tag));
+    };
+    let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
+        .unwrap_or_else(|| "linux/amd64".to_string());
+
+    let snapshot_entry = state
+        .db
+        .get_image_digest_tags_snapshot(&image_repo, &current_digest, &host_platform)
+        .await
+        .map_err(map_internal)?
+        .as_ref()
+        .and_then(|(snapshot_json, checked_at, _updated_at)| {
+            parse_digest_snapshot_row(snapshot_json, checked_at)
+        });
+
+    let Some(snapshot_entry) = snapshot_entry.as_ref() else {
+        return Ok(trim_nonempty(current_resolved_tag));
+    };
+
+    let tags = infer_semver_tags_from_snapshot(&snapshot_entry.snapshot, image_tag);
+    let inferred_first = tags.first().cloned();
+    let scan_has_failures = snapshot_entry.snapshot.scan.manifests_timeout > 0
+        || snapshot_entry.snapshot.scan.manifests_error > 0;
+    let scan_is_complete = snapshot_entry.snapshot.scan.repo_tags_considered
+        >= snapshot_entry.snapshot.scan.repo_tags_total;
+
+    Ok(merge_inferred_resolved_tag(
+        current_resolved_tag,
+        inferred_first,
+        scan_has_failures,
+        scan_is_complete,
+    ))
+}
+
 pub(super) async fn enrich_stack_with_version_inference(
     state: &Arc<AppState>,
     stack: &mut StackRecord,
@@ -336,10 +404,20 @@ pub(super) async fn enrich_stack_with_version_inference(
                 if inferred_first.is_some() || (!scan_has_failures && scan_is_complete) {
                     if for_candidate {
                         if let Some(candidate) = svc.candidate.as_mut() {
-                            candidate.resolved_tag = inferred_first;
+                            candidate.resolved_tag = merge_inferred_resolved_tag(
+                                candidate.resolved_tag.as_deref(),
+                                inferred_first,
+                                scan_has_failures,
+                                scan_is_complete,
+                            );
                         }
                     } else {
-                        svc.image.resolved_tag = inferred_first;
+                        svc.image.resolved_tag = merge_inferred_resolved_tag(
+                            svc.image.resolved_tag.as_deref(),
+                            inferred_first,
+                            scan_has_failures,
+                            scan_is_complete,
+                        );
                         svc.image.resolved_tags = if tags.len() > 1 { Some(tags) } else { None };
                     }
                 }

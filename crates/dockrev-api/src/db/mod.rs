@@ -126,6 +126,7 @@ pub struct NewVersionDiscoveryCandidate {
 
 #[derive(Clone, Debug)]
 pub struct ServiceNewVersionTimelineContext {
+    pub image_ref: String,
     pub current_digest: Option<String>,
     pub current_runtime_started_at: Option<String>,
     pub current_resolved_tag: Option<String>,
