@@ -109,6 +109,9 @@ fn normalize_repo_url_input(input: Option<&str>) -> Result<Option<String>, ApiEr
     if (scheme != "http" && scheme != "https") || !parsed.has_host() {
         return Err(ApiError::invalid_argument("invalid repoUrl"));
     }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(ApiError::invalid_argument("invalid repoUrl"));
+    }
 
     Ok(Some(value.to_string()))
 }
