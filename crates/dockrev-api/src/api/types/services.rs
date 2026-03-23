@@ -47,6 +47,23 @@ pub struct TriggerVersionInferenceRefreshResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceRepoLinkInferenceStrategy {
+    OciSource,
+    GhcrExact,
+    None,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceRepoLinkInferenceResponse {
+    pub repo_url: Option<String>,
+    pub strategy: ServiceRepoLinkInferenceStrategy,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NewVersionDiscoveryTimelineItemKind {
     CurrentCandidate,

@@ -100,6 +100,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(trigger_service_version_inference_refresh),
         )
         .route(
+            "/api/services/{service_id}/repo-link/infer",
+            post(infer_service_repo_link),
+        )
+        .route(
             "/api/services/{service_id}/new-version-discovery-timeline",
             get(get_service_new_version_discovery_timeline),
         )

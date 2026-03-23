@@ -81,6 +81,7 @@ pub struct ServiceForRuntimeScan {
 #[derive(Clone, Debug)]
 pub struct ServiceSnapshotTarget {
     pub image_ref: String,
+    pub current_tag: String,
     pub current_digest: Option<String>,
     pub candidate_digest: Option<String>,
 }
@@ -727,6 +728,10 @@ fn ensure_service_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
         Col {
             name: "checked_at",
             ddl: "ALTER TABLE services ADD COLUMN checked_at TEXT",
+        },
+        Col {
+            name: "repo_url",
+            ddl: "ALTER TABLE services ADD COLUMN repo_url TEXT",
         },
     ];
 
@@ -1509,6 +1514,7 @@ CREATE TABLE IF NOT EXISTS services (
   archived_reason TEXT,
   backup_targets_bind_paths_json TEXT NOT NULL,
   backup_targets_volume_names_json TEXT NOT NULL,
+  repo_url TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

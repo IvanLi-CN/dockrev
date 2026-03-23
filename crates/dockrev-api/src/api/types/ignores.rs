@@ -68,6 +68,7 @@ pub struct DeleteIgnoreResponse {
 pub struct ServiceSettingsResponse {
     pub auto_rollback: bool,
     pub backup_targets: BackupTargetOverrides,
+    pub repo_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -75,6 +76,7 @@ pub struct ServiceSettingsResponse {
 pub struct ServiceSettingsRequest {
     pub auto_rollback: bool,
     pub backup_targets: BackupTargetOverrides,
+    pub repo_url: Option<Option<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

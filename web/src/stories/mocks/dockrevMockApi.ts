@@ -17,6 +17,7 @@ import type {
   AddGitHubPackagesTargetRequest,
   RemoveGitHubPackagesTargetRequest,
   ResolveGitHubPackagesTargetResponse,
+  ServiceRepoLinkInferenceResponse,
   ServiceResourceSample,
   ServiceSettings,
   SettingsResponse,
@@ -32,12 +33,15 @@ export type DockrevApiScenario =
   | 'default'
   | 'dashboard-demo'
   | 'dashboard-demo-slow-update'
+  | 'link-icon-catalog'
+  | 'digest-pinned-image-display'
   | 'services-inference-pending-candidate-loading'
   | 'service-detail-compose-fallbacks'
   | 'service-detail-version-anomaly'
   | 'service-detail-resource-monitor-disabled'
   | 'service-detail-resource-monitor-empty'
   | 'service-detail-resource-monitor-stream-error'
+  | 'repo-link-editing'
   | 'guide-line-long-names'
   | 'resolved-tag-demo'
   | 'version-inference-overview'
@@ -307,6 +311,7 @@ type Fixture = {
   githubPackagesSettings: GitHubPackagesSettingsResponse
   githubPackagesRepos: GitHubPackagesRepo[]
   serviceSettingsById: Record<string, ServiceSettings>
+  repoLinkInferenceByServiceId: Record<string, ServiceRepoLinkInferenceResponse>
   deployCheckReport: DeployCheckReportResponse
   deployWelcome: DeployWelcomeResponse
   versionInferenceOverview: VersionInferenceOverviewMock
@@ -716,6 +721,7 @@ function baseEmpty(): Fixture {
     githubPackagesSettings: makeDefaultGitHubPackagesSettings(),
     githubPackagesRepos: [],
     serviceSettingsById: {},
+    repoLinkInferenceByServiceId: {},
     deployCheckReport: makeDefaultDeployCheckReport(),
     deployWelcome: makeDefaultDeployWelcome(),
     versionInferenceOverview: makeVersionInferenceOverview(),
@@ -735,10 +741,10 @@ function buildDashboardDemo(): Fixture {
   const serviceProdApi = {
     id: 'svc-prod-api',
     name: 'api',
-    image: { ref: 'ghcr.io/acme/api', tag: '5.2.1', digest: d('a', 'b1') },
+    image: { ref: 'ghcr.io/acme/api:5.2.1', tag: '5.2.1', digest: d('a', 'b1') },
     candidate: { tag: '5.2.3', digest: d('b', '9f'), archMatch: 'match', arch: ['linux/amd64'] },
     ignore: null,
-    settings: { autoRollback: true, backupTargets: { bindPaths: { '/var/lib/api/data': 'inherit' }, volumeNames: {} } },
+    settings: { autoRollback: true, backupTargets: { bindPaths: { '/var/lib/api/data': 'inherit' }, volumeNames: {} }, repoUrl: null },
   } satisfies StackDetail['services'][number]
 
   const serviceProdWeb = {
@@ -747,16 +753,16 @@ function buildDashboardDemo(): Fixture {
     image: { ref: 'harbor.local/ops/web', tag: '5.2', digest: d('c', 'c2') },
     candidate: { tag: '5.2.7', digest: d('d', '7a'), archMatch: 'match', arch: ['linux/amd64'] },
     ignore: null,
-    settings: { autoRollback: true, backupTargets: { bindPaths: { '/var/lib/web/uploads': 'force' }, volumeNames: { 'vol:web-data': 'inherit' } } },
+    settings: { autoRollback: true, backupTargets: { bindPaths: { '/var/lib/web/uploads': 'force' }, volumeNames: { 'vol:web-data': 'inherit' } }, repoUrl: null },
   } satisfies StackDetail['services'][number]
 
   const serviceProdWorker = {
     id: 'svc-prod-worker',
     name: 'worker',
-    image: { ref: 'ghcr.io/acme/worker', tag: '5.2.0', digest: d('e', 'aa') },
+    image: { ref: 'ghcr.io/acme/worker:5.2.0', tag: '5.2.0', digest: d('e', 'aa') },
     candidate: { tag: '5.2.2', digest: d('f', '0d'), archMatch: 'match', arch: ['linux/amd64'] },
     ignore: { matched: true, ruleId: 'ignore-prod-worker', reason: '备份失败（fail-closed）' },
-    settings: { autoRollback: false, backupTargets: { bindPaths: {}, volumeNames: {} } },
+    settings: { autoRollback: false, backupTargets: { bindPaths: {}, volumeNames: {} }, repoUrl: 'https://github.com/acme/worker' },
   } satisfies StackDetail['services'][number]
 
   const prodDetail = {
@@ -772,7 +778,7 @@ function buildDashboardDemo(): Fixture {
     image: { ref: 'ghcr.io/grafana/loki', tag: '2.9.0', digest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111' },
     candidate: { tag: '2.9.1', digest: 'sha256:2222222222222222222222222222222222222222222222222222222222222222', archMatch: 'unknown', arch: ['linux/amd64', 'linux/arm64'] },
     ignore: null,
-    settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} } },
+    settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} }, repoUrl: 'https://github.com/grafana/loki' },
   } satisfies StackDetail['services'][number]
 
   const infraSvcB = {
@@ -781,16 +787,16 @@ function buildDashboardDemo(): Fixture {
     image: { ref: 'quay.io/prometheus/prometheus', tag: '2.49.0', digest: 'sha256:3333333333333333333333333333333333333333333333333333333333333333' },
     candidate: { tag: '2.50.0', digest: 'sha256:4444444444444444444444444444444444444444444444444444444444444444', archMatch: 'mismatch', arch: ['linux/arm64'] },
     ignore: null,
-    settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} } },
+    settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} }, repoUrl: null },
   } satisfies StackDetail['services'][number]
 
   const infraSvcC = {
     id: 'svc-infra-postgres',
     name: 'postgres',
-    image: { ref: 'docker.io/library/postgres', tag: '16', digest: d('p', '16') },
+    image: { ref: 'docker.io/library/postgres:16', tag: '16', digest: d('p', '16') },
     candidate: { tag: '18.1', digest: d('p', '18'), archMatch: 'match', arch: ['linux/amd64'] },
     ignore: null,
-    settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} } },
+    settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} }, repoUrl: null },
   } satisfies StackDetail['services'][number]
 
   const infraDetail = {
@@ -990,6 +996,40 @@ function buildDashboardDemo(): Fixture {
   ]
 
   return f
+}
+
+function buildLinkIconCatalog(): Fixture {
+  const fixture = buildDashboardDemo()
+
+  const applyRepoUrl = (stackId: string, serviceId: string, repoUrl: string | null) => {
+    const service = fixture.stackById[stackId]?.services.find((item) => item.id === serviceId)
+    if (!service) return
+    service.settings = { ...service.settings, repoUrl }
+    fixture.serviceSettingsById[serviceId] = {
+      ...fixture.serviceSettingsById[serviceId],
+      repoUrl,
+    }
+  }
+
+  applyRepoUrl('stack-prod', 'svc-prod-api', 'https://codeberg.org/acme/api')
+  applyRepoUrl('stack-prod', 'svc-prod-web', 'https://gitlab.com/ops/web')
+  applyRepoUrl('stack-prod', 'svc-prod-worker', 'https://github.com/acme/worker')
+  applyRepoUrl('stack-infra', 'svc-infra-loki', 'https://github.com/grafana/loki')
+
+  return fixture
+}
+
+function buildDigestPinnedImageDisplay(): Fixture {
+  const fixture = buildLinkIconCatalog()
+  const service = fixture.stackById['stack-prod']?.services.find((item) => item.id === 'svc-prod-api')
+  if (service) {
+    service.image = {
+      ...service.image,
+      ref: 'ghcr.io/acme/api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      tag: 'latest',
+    }
+  }
+  return fixture
 }
 
 function buildGuideLineLongNames(): Fixture {
@@ -2488,6 +2528,26 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'empty') return baseEmpty()
   if (scenario === 'no-candidates') return buildNoCandidates()
   if (scenario === 'dashboard-demo' || scenario === 'dashboard-demo-slow-update') return buildDashboardDemo()
+  if (scenario === 'link-icon-catalog') return buildLinkIconCatalog()
+  if (scenario === 'digest-pinned-image-display') return buildDigestPinnedImageDisplay()
+  if (scenario === 'repo-link-editing') {
+    const fixture = buildDashboardDemo()
+    const serviceId = 'svc-prod-api'
+    const found = fixture.stackById['stack-prod']?.services.find((service) => service.id === serviceId)
+    if (found) {
+      found.settings = { ...found.settings, repoUrl: null }
+    }
+    fixture.serviceSettingsById[serviceId] = {
+      ...fixture.serviceSettingsById[serviceId],
+      repoUrl: null,
+    }
+    fixture.repoLinkInferenceByServiceId[serviceId] = {
+      repoUrl: 'https://github.com/acme/api',
+      strategy: 'ghcr_exact',
+      reason: null,
+    }
+    return fixture
+  }
   if (scenario === 'services-inference-pending-candidate-loading') return buildServicesInferencePendingCandidateLoading()
   if (scenario === 'service-detail-compose-fallbacks') return buildServiceDetailComposeFallbacks()
   if (scenario === 'service-detail-version-anomaly') return buildServiceDetailVersionAnomaly()
@@ -4140,8 +4200,25 @@ export function installDockrevMockApi(
       const serviceId = decodeURIComponent(parts[2])
       const body = typeof init?.body === 'string' ? init.body : ''
       const parsed = body ? (JSON.parse(body) as ServiceSettings) : null
-      if (parsed) f.serviceSettingsById[serviceId] = parsed
+      if (parsed) {
+        f.serviceSettingsById[serviceId] = parsed
+        const found = findService(serviceId)
+        if (found) found.svc.settings = parsed
+      }
       return json({ ok: true })
+    }
+    if (method === 'POST' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/repo-link/infer')) {
+      const parts = urlPath.split('/').filter(Boolean)
+      const serviceId = decodeURIComponent(parts[2])
+      const found = findService(serviceId)
+      if (!found) return json({ error: 'not found' }, { status: 404 })
+      const inferred = f.repoLinkInferenceByServiceId[serviceId]
+      if (inferred) return json(inferred)
+      return json({
+        repoUrl: null,
+        strategy: 'none',
+        reason: 'mock: repo link not inferred',
+      } satisfies ServiceRepoLinkInferenceResponse)
     }
     if (method === 'POST' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/archive')) {
       const parts = urlPath.split('/').filter(Boolean)

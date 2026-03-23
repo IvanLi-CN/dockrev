@@ -13,7 +13,8 @@ impl Db {
 SELECT
   auto_rollback,
   backup_targets_bind_paths_json,
-  backup_targets_volume_names_json
+  backup_targets_volume_names_json,
+  repo_url
 FROM services
 WHERE id = ?1
 "#,
@@ -42,6 +43,7 @@ WHERE id = ?1
                                 bind_paths,
                                 volume_names,
                             },
+                            repo_url: row.get(3)?,
                         })
                     },
                 )
@@ -68,7 +70,8 @@ SET
   auto_rollback = ?2,
   backup_targets_bind_paths_json = ?3,
   backup_targets_volume_names_json = ?4,
-  updated_at = ?5
+  repo_url = ?5,
+  updated_at = ?6
 WHERE id = ?1
 "#,
                 params![
@@ -76,6 +79,7 @@ WHERE id = ?1
                     settings.auto_rollback as i64,
                     serde_json::to_string(&settings.backup_targets.bind_paths)?,
                     serde_json::to_string(&settings.backup_targets.volume_names)?,
+                    settings.repo_url,
                     now
                 ],
             )?;

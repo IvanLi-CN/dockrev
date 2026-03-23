@@ -5,6 +5,7 @@ import {
   createIgnore,
   deleteIgnore,
   getServiceSettings,
+  inferServiceRepoLink,
   getStack,
   listIgnores,
   newJobEventsSource,
@@ -20,7 +21,7 @@ import {
 } from '../api'
 import { navigate } from '../routes'
 import { buildUpdateServiceTarget } from '../updateTargets'
-import { Button, Input, Mono, Pill, SelectField, Switch } from '../ui'
+import { Button, IconButton, Input, Mono, Pill, RefreshIcon, SelectField, Switch } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { isSemverDowngradeAnomaly, serviceRowStatus } from '../updateStatus'
@@ -36,6 +37,13 @@ import {
   isStrictSemverTag,
 } from '../versionDisplay'
 import { normalizeDigest } from '../components/digest'
+import {
+  ImageLinkIcons,
+  RepositoryLinkIcon,
+  normalizeExternalHttpUrl,
+  splitImageNameForDisplay,
+  splitImageRef,
+} from '../imageLinks'
 import {
   DIGEST_SNAPSHOT_UPDATED_EVENT,
   type DigestSnapshotUpdatedDetail,
@@ -93,40 +101,6 @@ function shortDigest(digest: string) {
   return `${digest.slice(0, 12)}…${digest.slice(-8)}`
 }
 
-function splitImageRef(ref: string): { registry: string; name: string } {
-  const s = ref.trim()
-  const withoutDigest = s.includes('@') ? s.split('@', 1)[0] : s
-  const firstSlash = withoutDigest.indexOf('/')
-  if (firstSlash < 0) {
-    return { registry: 'docker.io', name: withoutDigest }
-  }
-  const firstSeg = withoutDigest.slice(0, firstSlash)
-  const rest = withoutDigest.slice(firstSlash + 1)
-  const isRegistry = firstSeg.includes('.') || firstSeg.includes(':') || firstSeg === 'localhost'
-  if (isRegistry) return { registry: firstSeg, name: rest }
-  return { registry: 'docker.io', name: withoutDigest }
-}
-
-function splitImageNameForDisplay(
-  name: string,
-  tag: string | null | undefined,
-): { base: string; suffix: string } {
-  const n = name.trim()
-  if (!n) return { base: '', suffix: '' }
-
-  const at = n.indexOf('@')
-  if (at >= 0) return { base: n.slice(0, at), suffix: n.slice(at) }
-
-  const lastSlash = n.lastIndexOf('/')
-  const lastColon = n.lastIndexOf(':')
-  if (lastColon > lastSlash) return { base: n.slice(0, lastColon), suffix: n.slice(lastColon) }
-
-  const t = (tag ?? '').trim()
-  if (!t) return { base: n, suffix: '' }
-  if (t.startsWith('sha256:')) return { base: n, suffix: `@${t}` }
-  return { base: n, suffix: `:${t}` }
-}
-
 function isDockrevService(svc: Service): boolean {
   return isDockrevImageRef(svc.image.ref)
 }
@@ -156,6 +130,7 @@ export function ServiceDetailPage(props: {
   const [settings, setSettings] = useState<ServiceSettings | null>(null)
   const [rules, setRules] = useState<IgnoreRule[]>([])
   const [busy, setBusy] = useState(false)
+  const [repoInferBusy, setRepoInferBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
   const { beginSubmitting, endSubmitting, trackJob, isTargetBusy, getActiveJobByTarget, isTargetSubmitting } =
@@ -812,6 +787,8 @@ export function ServiceDetailPage(props: {
 
   const bindTargets = useMemo(() => (settings ? formatMap(settings.backupTargets.bindPaths) : []), [settings])
   const volTargets = useMemo(() => (settings ? formatMap(settings.backupTargets.volumeNames) : []), [settings])
+  const draftRepoUrl = useMemo(() => normalizeExternalHttpUrl(settings?.repoUrl), [settings?.repoUrl])
+  const settingsBusy = busy || repoInferBusy
 
   const tone = useMemo(() => (service ? svcTone(service) : 'muted'), [service])
   const bannerClass =
@@ -1014,10 +991,11 @@ export function ServiceDetailPage(props: {
             return (
               <div className="cellTwoLine">
                 <div
-                  className="mono monoPrimary monoSplit"
+                  className="mono monoPrimary monoSplit imageLinkRow"
                   title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}
                 >
                   <span className="monoSplitBase">{dn.base}</span>
+                  <ImageLinkIcons imageRef={service.image.ref} repoUrl={draftRepoUrl} />
                 </div>
                 <div className="mono monoSecondary">{img.registry}</div>
               </div>
@@ -1201,8 +1179,46 @@ export function ServiceDetailPage(props: {
             <div className="kvRow">
               <div className="label">失败回滚（autoRollback）</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <Switch checked={settings.autoRollback} disabled={busy} onChange={(v) => setSettings({ ...settings, autoRollback: v })} />
+                <Switch checked={settings.autoRollback} disabled={settingsBusy} onChange={(v) => setSettings({ ...settings, autoRollback: v })} />
                 <div className="muted">{settings.autoRollback ? 'on' : 'off'}</div>
+              </div>
+            </div>
+            <div className="kvRow">
+              <div className="label">代码仓库</div>
+              <div className="serviceRepoField">
+                <Input
+                  className="input"
+                  disabled={settingsBusy}
+                  onChange={(e) => setSettings({ ...settings, repoUrl: e.target.value })}
+                  placeholder="https://github.com/owner/repo"
+                  value={settings.repoUrl ?? ''}
+                />
+                <RepositoryLinkIcon repoUrl={draftRepoUrl} />
+                <IconButton
+                  disabled={settingsBusy}
+                  hint={repoInferBusy ? '正在重新推断代码仓库…' : '根据镜像 OCI source / GHCR 重新推断'}
+                  onClick={() => {
+                    void (async () => {
+                      setRepoInferBusy(true)
+                      setError(null)
+                      try {
+                        const result = await inferServiceRepoLink(props.serviceId)
+                        if (result.repoUrl) {
+                          setSettings((prev) => (prev ? { ...prev, repoUrl: result.repoUrl } : prev))
+                        } else {
+                          setError(result.reason?.trim() || '未识别到代码仓库入口')
+                        }
+                      } catch (e: unknown) {
+                        setError(errorMessage(e))
+                      } finally {
+                        setRepoInferBusy(false)
+                      }
+                    })()
+                  }}
+                  title="重新推断代码仓库"
+                >
+                  <RefreshIcon className={repoInferBusy ? 'inlineIcon inlineIconLoading' : 'inlineIcon'} />
+                </IconButton>
               </div>
             </div>
           </div>
@@ -1220,6 +1236,7 @@ export function ServiceDetailPage(props: {
                 <div className="mono">{t.key}</div>
                 <SelectField
                   className="input"
+                  disabled={settingsBusy}
                   onChange={(value) =>
                     setSettings({
                       ...settings,
@@ -1251,6 +1268,7 @@ export function ServiceDetailPage(props: {
                 <div className="mono">{t.key}</div>
                 <SelectField
                   className="input"
+                  disabled={settingsBusy}
                   onChange={(value) =>
                     setSettings({
                       ...settings,
@@ -1276,13 +1294,16 @@ export function ServiceDetailPage(props: {
             <div className="formActions">
               <Button
                 variant="primary"
-                disabled={busy}
+                disabled={settingsBusy}
                 onClick={() => {
                   void (async () => {
                     setBusy(true)
                     setError(null)
                     try {
-                      await putServiceSettings(props.serviceId, settings)
+                      await putServiceSettings(props.serviceId, {
+                        ...settings,
+                        repoUrl: (settings.repoUrl ?? '').trim() || null,
+                      })
                       await requestRefresh()
                     } catch (e: unknown) {
                       setError(errorMessage(e))

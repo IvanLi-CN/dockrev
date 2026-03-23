@@ -6,6 +6,229 @@ fn normalize_optional_value(input: Option<&str>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn normalize_repo_full_name(full_name: &str) -> String {
+    full_name.trim().to_ascii_lowercase()
+}
+
+fn is_reserved_github_path_root(segment: &str) -> bool {
+    matches!(
+        segment.trim().to_ascii_lowercase().as_str(),
+        "account"
+            | "apps"
+            | "collections"
+            | "contact"
+            | "customer-stories"
+            | "enterprise"
+            | "events"
+            | "explore"
+            | "features"
+            | "gist"
+            | "git-guides"
+            | "images"
+            | "issues"
+            | "login"
+            | "marketplace"
+            | "new"
+            | "notifications"
+            | "orgs"
+            | "organizations"
+            | "pricing"
+            | "pulls"
+            | "readme"
+            | "search"
+            | "security"
+            | "session"
+            | "settings"
+            | "showcases"
+            | "site"
+            | "sponsors"
+            | "stars"
+            | "team"
+            | "teams"
+            | "topics"
+            | "trending"
+            | "users"
+    )
+}
+
+fn normalize_github_source_repo_key(source: &str) -> Option<String> {
+    let trimmed = source.trim();
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        let parsed = Url::parse(trimmed).ok()?;
+        let host = parsed.host_str()?.trim().to_ascii_lowercase();
+        if host == "github.com" || host == "www.github.com" {
+            let first = parsed
+                .path_segments()
+                .and_then(|mut segments| segments.find(|segment| !segment.trim().is_empty()))?;
+            if is_reserved_github_path_root(first) {
+                return None;
+            }
+        }
+    }
+    match github::parse_target_input(source).ok()? {
+        github::TargetKind::Repo { owner, repo } => Some(format!(
+            "{}/{}",
+            owner.to_ascii_lowercase(),
+            repo.to_ascii_lowercase()
+        )),
+        github::TargetKind::Owner { .. } => None,
+    }
+}
+
+fn github_repo_url_from_key(repo_key: &str) -> String {
+    format!("https://github.com/{repo_key}")
+}
+
+fn ghcr_exact_repo_key(image: &registry::ImageRef) -> Option<String> {
+    if !image.registry.eq_ignore_ascii_case("ghcr.io") {
+        return None;
+    }
+    let mut parts = image.name.split('/');
+    let owner = parts.next()?.trim();
+    let repo = parts.next()?.trim();
+    if owner.is_empty() || repo.is_empty() || parts.next().is_some() {
+        return None;
+    }
+    Some(format!(
+        "{}/{}",
+        owner.to_ascii_lowercase(),
+        repo.to_ascii_lowercase()
+    ))
+}
+
+fn normalize_repo_url_input(input: Option<&str>) -> Result<Option<String>, ApiError> {
+    let Some(value) = input.map(str::trim) else {
+        return Ok(None);
+    };
+    if value.is_empty() {
+        return Ok(None);
+    }
+
+    let parsed = Url::parse(value).map_err(|_| ApiError::invalid_argument("invalid repoUrl"))?;
+    let scheme = parsed.scheme();
+    if (scheme != "http" && scheme != "https") || !parsed.has_host() {
+        return Err(ApiError::invalid_argument("invalid repoUrl"));
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(ApiError::invalid_argument("invalid repoUrl"));
+    }
+
+    Ok(Some(value.to_string()))
+}
+
+fn normalize_repo_path_segments(segments: &[&str]) -> Option<Vec<String>> {
+    let mut normalized = segments
+        .iter()
+        .map(|segment| segment.trim())
+        .filter(|segment| !segment.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let last = normalized.last_mut()?;
+    if last.ends_with(".git") {
+        let trimmed = last.trim_end_matches(".git").trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        *last = trimmed.to_string();
+    }
+    Some(normalized)
+}
+
+fn build_normalized_browse_url(mut parsed: Url, segments: &[String]) -> Option<String> {
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+    parsed
+        .path_segments_mut()
+        .ok()?
+        .clear()
+        .extend(segments.iter().map(String::as_str));
+    Some(parsed.to_string())
+}
+
+fn collapse_gitlab_repo_segments(segments: &[String]) -> Option<Vec<String>> {
+    let first = segments.first().map(|segment| segment.to_ascii_lowercase());
+    if segments.len() < 2
+        || matches!(
+            first.as_deref(),
+            Some("groups" | "users" | "explore" | "help" | "admin" | "dashboard" | "projects")
+        )
+    {
+        return None;
+    }
+    let repo_end = segments
+        .iter()
+        .position(|segment| segment == "-")
+        .unwrap_or(segments.len());
+    if repo_end < 2 {
+        return None;
+    }
+    Some(segments[..repo_end].to_vec())
+}
+
+fn is_repo_browse_marker(segment: &str) -> bool {
+    matches!(
+        segment.trim().to_ascii_lowercase().as_str(),
+        "-" | "blob"
+            | "branch"
+            | "branches"
+            | "commit"
+            | "commits"
+            | "compare"
+            | "raw"
+            | "releases"
+            | "src"
+            | "tree"
+    )
+}
+
+fn collapse_generic_repo_segments(segments: &[String]) -> Option<Vec<String>> {
+    if segments.len() < 2 {
+        return None;
+    }
+    let repo_end = segments
+        .iter()
+        .enumerate()
+        .skip(2)
+        .find_map(|(idx, segment)| is_repo_browse_marker(segment).then_some(idx))
+        .unwrap_or(segments.len());
+    if repo_end < 2 {
+        return None;
+    }
+    Some(segments[..repo_end].to_vec())
+}
+
+fn normalize_external_repo_url(input: &str) -> Option<String> {
+    let value = normalize_repo_url_input(Some(input)).ok().flatten()?;
+    let parsed = Url::parse(&value).ok()?;
+    let host = parsed.host_str()?.trim().to_ascii_lowercase();
+    if host == "github.com" || host == "www.github.com" {
+        return None;
+    }
+    let segments = normalize_repo_path_segments(
+        &parsed
+            .path_segments()
+            .map(|parts| parts.collect::<Vec<_>>())
+            .unwrap_or_default(),
+    )?;
+    let is_gitlab_host = host == "gitlab.com"
+        || host == "www.gitlab.com"
+        || host.starts_with("gitlab.")
+        || host.ends_with(".gitlab.com")
+        || host.contains(".gitlab.");
+    if is_gitlab_host {
+        let repo_segments = collapse_gitlab_repo_segments(&segments)?;
+        return build_normalized_browse_url(parsed, &repo_segments);
+    }
+
+    let repo_segments = collapse_generic_repo_segments(&segments)?;
+    build_normalized_browse_url(parsed, &repo_segments)
+}
+
+fn image_ref_pinned_digest(image_ref: &str) -> Option<String> {
+    let (_, digest) = image_ref.trim().split_once('@')?;
+    snapshot_worker::normalize_digest(digest)
+}
+
 fn timeline_candidate_identity(
     context: &crate::db::ServiceNewVersionTimelineContext,
     candidate_display_tag_hint: Option<&str>,
@@ -205,6 +428,126 @@ pub(super) async fn get_service_settings(
     Ok(Json(ServiceSettingsResponse {
         auto_rollback: settings.auto_rollback,
         backup_targets: settings.backup_targets,
+        repo_url: settings.repo_url,
+    }))
+}
+
+pub(super) async fn infer_service_repo_link(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(service_id): Path<String>,
+) -> Result<Json<ServiceRepoLinkInferenceResponse>, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+
+    let snapshot_target = state
+        .db
+        .get_service_snapshot_target(&service_id)
+        .await
+        .map_err(map_internal)?;
+    let Some(snapshot_target) = snapshot_target else {
+        return Err(ApiError::not_found("service not found"));
+    };
+
+    let image = match registry::ImageRef::parse(&snapshot_target.image_ref) {
+        Ok(image) => image,
+        Err(err) => {
+            return Ok(Json(ServiceRepoLinkInferenceResponse {
+                repo_url: None,
+                strategy: ServiceRepoLinkInferenceStrategy::None,
+                reason: Some(format!("invalid service image ref: {err}")),
+            }));
+        }
+    };
+    let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
+        .unwrap_or_else(|| "linux/amd64".to_string());
+    let parsed_reference = image.reference.trim().to_string();
+    let parsed_reference_is_digest = parsed_reference.starts_with("sha256:");
+    let inspection_reference = snapshot_target
+        .current_digest
+        .as_deref()
+        .and_then(snapshot_worker::normalize_digest)
+        .or_else(|| image_ref_pinned_digest(&snapshot_target.image_ref))
+        .or_else(|| {
+            if parsed_reference_is_digest {
+                Some(parsed_reference.clone())
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            let current_tag = snapshot_target.current_tag.trim();
+            if current_tag.is_empty() {
+                None
+            } else {
+                Some(current_tag.to_string())
+            }
+        })
+        .unwrap_or(parsed_reference);
+
+    let mut miss_reasons = Vec::new();
+
+    match state
+        .registry
+        .get_oci_source(&image, &inspection_reference, &host_platform)
+        .await
+    {
+        Ok(source) => {
+            if let Some(repo_key) = source.as_deref().and_then(normalize_github_source_repo_key) {
+                return Ok(Json(ServiceRepoLinkInferenceResponse {
+                    repo_url: Some(github_repo_url_from_key(&repo_key)),
+                    strategy: ServiceRepoLinkInferenceStrategy::OciSource,
+                    reason: None,
+                }));
+            }
+            if let Some(repo_url) = source.as_deref().and_then(normalize_external_repo_url) {
+                return Ok(Json(ServiceRepoLinkInferenceResponse {
+                    repo_url: Some(repo_url),
+                    strategy: ServiceRepoLinkInferenceStrategy::OciSource,
+                    reason: None,
+                }));
+            }
+            if source.as_deref().is_some() {
+                miss_reasons
+                    .push("oci source not recognized as a valid repository URL".to_string());
+            } else {
+                miss_reasons.push("oci source missing".to_string());
+            }
+        }
+        Err(err) => {
+            miss_reasons.push(format!("read oci source failed: {err}"));
+        }
+    }
+
+    if let Some(repo_key) = ghcr_exact_repo_key(&image) {
+        let tracked_repo_keys = state
+            .db
+            .list_github_packages_repos()
+            .await
+            .map_err(map_internal)?
+            .into_iter()
+            .filter(|repo| repo.selected)
+            .map(|repo| normalize_repo_full_name(&format!("{}/{}", repo.owner, repo.repo)))
+            .collect::<std::collections::BTreeSet<_>>();
+        if tracked_repo_keys.contains(&repo_key) {
+            return Ok(Json(ServiceRepoLinkInferenceResponse {
+                repo_url: Some(github_repo_url_from_key(&repo_key)),
+                strategy: ServiceRepoLinkInferenceStrategy::GhcrExact,
+                reason: None,
+            }));
+        }
+        miss_reasons.push("ghcr exact fallback skipped because repo is not tracked".to_string());
+    } else {
+        miss_reasons.push("ghcr exact fallback not applicable".to_string());
+    }
+
+    Ok(Json(ServiceRepoLinkInferenceResponse {
+        repo_url: None,
+        strategy: ServiceRepoLinkInferenceStrategy::None,
+        reason: if miss_reasons.is_empty() {
+            None
+        } else {
+            Some(miss_reasons.join("; "))
+        },
     }))
 }
 
@@ -1248,10 +1591,21 @@ pub(super) async fn put_service_settings(
 ) -> Result<Json<PutServiceSettingsResponse>, ApiError> {
     let _user = require_user(&state, &headers).await?;
     let now = now_rfc3339().map_err(map_internal)?;
+    let current_settings = state
+        .db
+        .get_service_settings(&service_id)
+        .await
+        .map_err(map_internal)?
+        .ok_or_else(|| ApiError::not_found("service not found"))?;
+    let repo_url = match req.repo_url {
+        Some(repo_url) => normalize_repo_url_input(repo_url.as_deref())?,
+        None => current_settings.repo_url,
+    };
 
     let settings = ServiceSettings {
         auto_rollback: req.auto_rollback,
         backup_targets: req.backup_targets,
+        repo_url,
     };
 
     let updated = state

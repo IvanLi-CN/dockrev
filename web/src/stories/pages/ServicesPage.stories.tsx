@@ -130,6 +130,69 @@ export const DashboardDemo: Story = {
   },
 }
 
+export const RegistryAndRepoLinks: Story = {
+  parameters: { dockrevApiScenario: 'link-icon-catalog' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务" pageSubtitle="镜像名旁展示 registry / repo icon 外链">
+        {({ onLastScanHint, onTopActions }) => (
+          <ServicesPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
+        )}
+      </PageHarness>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await sleep(120)
+
+    const githubRepo = canvasElement.querySelector<HTMLAnchorElement>('[data-link-kind="repo"][data-link-icon="github"]')
+    expectStory(githubRepo?.target === '_blank', 'github repo link icon should open in a new window')
+
+    const gitlabRepo = canvasElement.querySelector<HTMLAnchorElement>('[data-link-kind="repo"][data-link-icon="gitlab"]')
+    expectStory(gitlabRepo?.href === 'https://gitlab.com/ops/web', 'gitlab repo icon missing or wrong href')
+
+    const genericRepo = canvasElement.querySelector<HTMLAnchorElement>('[data-link-kind="repo"][data-link-icon="generic"]')
+    expectStory(genericRepo?.href === 'https://codeberg.org/acme/api', 'generic repo icon missing or wrong href')
+
+    const githubRegistry = canvasElement.querySelector<HTMLAnchorElement>('[data-link-kind="registry"][data-link-icon="ghcr"]')
+    expectStory(githubRegistry?.href === 'https://ghcr.io/acme/api', 'ghcr registry icon missing or wrong href')
+    expectStory(githubRegistry?.ariaLabel === '打开 GHCR 页面', 'ghcr registry icon should expose a GHCR-specific label')
+
+    const dockerRegistry = canvasElement.querySelector<HTMLAnchorElement>('[data-link-kind="registry"][data-link-icon="docker"]')
+    expectStory(dockerRegistry?.href === 'https://hub.docker.com/_/postgres', 'docker registry icon missing or wrong href')
+
+    const genericRegistry = canvasElement.querySelector<HTMLAnchorElement>('[data-link-kind="registry"][data-link-icon="generic"]')
+    expectStory(genericRegistry?.href === 'https://quay.io/repository/prometheus/prometheus', 'generic registry icon missing or wrong href')
+  },
+}
+
+export const DigestPinnedImageDisplay: Story = {
+  parameters: { dockrevApiScenario: 'digest-pinned-image-display' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务" pageSubtitle="digest-only 镜像应保持 @sha256 展示语义">
+        {({ onLastScanHint, onTopActions }) => (
+          <ServicesPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
+        )}
+      </PageHarness>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await sleep(120)
+
+    const imageRow = Array.from(canvasElement.querySelectorAll<HTMLElement>('.imageLinkRow')).find((element) =>
+      element.textContent?.includes('acme/api')
+    )
+    expectStory(imageRow, 'digest-pinned image row missing')
+    expectStory(
+      imageRow?.title === 'acme/api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      'digest-pinned image title should keep the digest instead of falling back to :latest'
+    )
+
+    const registryLink = imageRow?.querySelector<HTMLAnchorElement>('[data-link-kind="registry"]')
+    expectStory(registryLink?.href === 'https://ghcr.io/acme/api', 'digest-pinned registry icon should still link to the repo page')
+  },
+}
+
 export const VersionAnomalyBatchList: Story = {
   parameters: { dockrevApiScenario: 'service-detail-version-anomaly' },
   render: () => {

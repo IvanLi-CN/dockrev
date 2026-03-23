@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   getStack,
   listStacks,
@@ -19,6 +19,7 @@ import {
 import { navigate } from '../routes'
 import { buildUpdateServiceTarget, buildUpdateServiceTargets } from '../updateTargets'
 import { ArrowRightIcon, Button, Input, Mono, Pill, StatusRemark } from '../ui'
+import { ImageLinkIcons, splitImageNameForDisplay, splitImageRef } from '../imageLinks'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import { isSemverDowngradeAnomaly, serviceRowStatus, type RowStatus } from '../updateStatus'
@@ -79,40 +80,6 @@ function formatGroupSummary(services: number, counts: Record<Exclude<RowStatus, 
   if (counts.archMismatch > 0) parts.push(`${counts.archMismatch} 架构不匹配`)
   if (counts.blocked > 0) parts.push(`${counts.blocked} 被阻止`)
   return parts.join(' · ')
-}
-
-function splitImageRef(ref: string): { registry: string; name: string } {
-  const s = ref.trim()
-  const withoutDigest = s.includes('@') ? s.split('@', 1)[0] : s
-  const firstSlash = withoutDigest.indexOf('/')
-  if (firstSlash < 0) {
-    return { registry: 'docker.io', name: withoutDigest }
-  }
-  const firstSeg = withoutDigest.slice(0, firstSlash)
-  const rest = withoutDigest.slice(firstSlash + 1)
-  const isRegistry = firstSeg.includes('.') || firstSeg.includes(':') || firstSeg === 'localhost'
-  if (isRegistry) return { registry: firstSeg, name: rest }
-  return { registry: 'docker.io', name: withoutDigest }
-}
-
-function splitImageNameForDisplay(
-  name: string,
-  tag: string | null | undefined,
-): { base: string; suffix: string } {
-  const n = name.trim()
-  if (!n) return { base: '', suffix: '' }
-
-  const at = n.indexOf('@')
-  if (at >= 0) return { base: n.slice(0, at), suffix: n.slice(at) }
-
-  const lastSlash = n.lastIndexOf('/')
-  const lastColon = n.lastIndexOf(':')
-  if (lastColon > lastSlash) return { base: n.slice(0, lastColon), suffix: n.slice(lastColon) }
-
-  const t = (tag ?? '').trim()
-  if (!t) return { base: n, suffix: '' }
-  if (t.startsWith('sha256:')) return { base: n, suffix: `@${t}` }
-  return { base: n, suffix: `:${t}` }
 }
 
 function isDockrevService(svc: Service): boolean {
@@ -1149,18 +1116,22 @@ export function ServicesPage(props: {
 	                            <span className="svcBullet" aria-hidden="true" />
 	                            <span className="svcName">{svc.name}</span>
 	                          </div>
-	                          {(() => {
-	                            const img = splitImageRef(svc.image.ref)
-	                            const dn = splitImageNameForDisplay(img.name, svc.image.tag)
-	                            return (
-	                              <div className="cellTwoLine">
-	                                <div className="mono monoPrimary monoSplit" title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}>
-	                                  <span className="monoSplitBase">{dn.base}</span>
-	                                </div>
-	                                <div className="mono monoSecondary">{img.registry}</div>
-	                              </div>
-	                            )
-	                          })()}
+                          {(() => {
+                            const img = splitImageRef(svc.image.ref)
+                            const dn = splitImageNameForDisplay(img.name, svc.image.tag)
+                            const stopRowLink = (event: MouseEvent<HTMLAnchorElement>) => {
+                              event.stopPropagation()
+                            }
+                            return (
+                              <div className="cellTwoLine">
+                                <div className="mono monoPrimary monoSplit imageLinkRow" title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}>
+                                  <span className="monoSplitBase">{dn.base}</span>
+                                  <ImageLinkIcons imageRef={svc.image.ref} onClick={stopRowLink} repoUrl={svc.settings.repoUrl} />
+                                </div>
+                                <div className="mono monoSecondary">{img.registry}</div>
+                              </div>
+                            )
+                          })()}
 	                          <div className="cellTwoLine">
                               <div className="versionLine">
                                 <CurrentVersionPopover
@@ -1323,10 +1294,11 @@ export function ServicesPage(props: {
 		                                          {(() => {
 		                                        const img = splitImageRef(svc.image.ref)
 		                                        const dn = splitImageNameForDisplay(img.name, svc.image.tag)
-		                                        return (
-		                                          <div className="cellTwoLine">
-		                                            <div className="mono monoPrimary monoSplit" title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}>
+		                                          return (
+		                                            <div className="cellTwoLine">
+		                                            <div className="mono monoPrimary monoSplit imageLinkRow" title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}>
 		                                              <span className="monoSplitBase">{dn.base}</span>
+		                                              <ImageLinkIcons imageRef={svc.image.ref} repoUrl={svc.settings.repoUrl} />
 		                                            </div>
 		                                            <div className="mono monoSecondary">{img.registry}</div>
 		                                          </div>

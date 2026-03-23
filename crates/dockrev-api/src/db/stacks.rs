@@ -138,9 +138,10 @@ WHERE id = ?1
 	  ignore_rule_id,
 	  ignore_reason,
 	  auto_rollback,
-	  archived,
 	  backup_targets_bind_paths_json,
-	  backup_targets_volume_names_json
+	  backup_targets_volume_names_json,
+	  repo_url,
+	  archived
 	FROM services
 	WHERE stack_id = ?1
 	ORDER BY name ASC
@@ -161,8 +162,8 @@ WHERE id = ?1
                 let image_reference: String = row.get(2)?;
                 let image_tag: String = row.get(3)?;
                 let image_digest: Option<String> = row.get(4)?;
-                let bind_paths_json: String = row.get(16)?;
-                let volume_names_json: String = row.get(17)?;
+                let bind_paths_json: String = row.get(15)?;
+                let volume_names_json: String = row.get(16)?;
                 let bind_paths: BTreeMap<String, crate::api::types::TernaryChoice> =
                     serde_json::from_str(&bind_paths_json).map_err(|e| {
                         rusqlite::Error::FromSqlConversionFailure(
@@ -245,8 +246,9 @@ WHERE id = ?1
                                 bind_paths,
                                 volume_names,
                             },
+                            repo_url: row.get(17)?,
                         },
-                        archived: Some(row.get::<_, i64>(15)? != 0),
+                        archived: Some(row.get::<_, i64>(18)? != 0),
                     },
                     image_digest,
                     current_resolved_tag.clone(),
@@ -520,6 +522,13 @@ WHERE id = ?1
                         continue;
                     }
 
+                    let preserve_repo_url =
+                        crate::snapshot_worker::image_repo_from_image_ref(existing_image_ref)
+                            .zip(crate::snapshot_worker::image_repo_from_image_ref(
+                                &svc.image_ref,
+                            ))
+                            .map(|(existing, incoming)| existing == incoming)
+                            .unwrap_or(false);
                     let image_ref = svc.image_ref.clone();
                     let image_tag = svc.image_tag.clone();
                     tx.execute(
@@ -528,6 +537,7 @@ UPDATE services
 SET
   image_ref = ?2,
   image_tag = ?3,
+  repo_url = CASE WHEN ?4 THEN repo_url ELSE NULL END,
   current_digest = NULL,
   current_resolved_tag = NULL,
   current_runtime_started_at = NULL,
@@ -540,10 +550,10 @@ SET
   ignore_rule_id = NULL,
   ignore_reason = NULL,
   checked_at = NULL,
-  updated_at = ?4
+  updated_at = ?5
 WHERE id = ?1
 "#,
-                        params![id, image_ref, image_tag, now],
+                        params![id, image_ref, image_tag, preserve_repo_url, now],
                     )?;
                     super::new_version_notifications::reconcile_service_new_version_notifications_tx(
                         &tx,
@@ -756,7 +766,7 @@ WHERE id = ?1
             Ok(conn
                 .query_row(
                     r#"
-SELECT image_ref, current_digest, candidate_digest
+SELECT image_ref, image_tag, current_digest, candidate_digest
 FROM services
 WHERE id = ?1
 "#,
@@ -764,8 +774,9 @@ WHERE id = ?1
                     |row| {
                         Ok(ServiceSnapshotTarget {
                             image_ref: row.get(0)?,
-                            current_digest: row.get(1)?,
-                            candidate_digest: row.get(2)?,
+                            current_tag: row.get(1)?,
+                            current_digest: row.get(2)?,
+                            candidate_digest: row.get(3)?,
                         })
                     },
                 )
