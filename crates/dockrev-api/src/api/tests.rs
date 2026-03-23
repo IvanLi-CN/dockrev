@@ -4481,6 +4481,201 @@ services:
 }
 
 #[tokio::test]
+async fn service_new_version_discovery_timeline_uses_snapshot_resolved_current_running_version() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:4.39
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        Some("sha256:current"),
+        Some("4.39"),
+        Some("sha256:candidate"),
+    )
+    .await;
+    let now = test_now_rfc3339();
+    let running_started_at = test_offset_rfc3339(&now, -time::Duration::hours(2));
+    state
+        .db
+        .update_service_check_result_with_runtime_started_at(
+            &service_id,
+            Some("sha256:current".to_string()),
+            Some(running_started_at.clone()),
+            Some("4.39.0".to_string()),
+            Some("[\"4.39.0\"]".to_string()),
+            Some("4.39".to_string()),
+            Some("4.39.16".to_string()),
+            Some("sha256:candidate".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let ready_scan = crate::api::types::ServiceDigestTagsScanSummary {
+        repo_tags_total: 1,
+        repo_tags_considered: 1,
+        manifests_ok: 1,
+        manifests_timeout: 0,
+        manifests_error: 0,
+    };
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:current",
+        "linux/amd64",
+        &now,
+        vec!["4.39.15".to_string()],
+        ready_scan,
+    )
+    .await;
+
+    let discovered_at = test_offset_rfc3339(&now, -time::Duration::minutes(30));
+    let job_id = insert_check_job(&state, "schedule", &discovered_at).await;
+    state
+        .db
+        .finish_job(
+            &job_id,
+            "success",
+            &discovered_at,
+            &make_new_version_summary_for_test_with_image_ref(
+                &service_id,
+                "ghcr.io/acme/web",
+                "4.39",
+                "4.39.15",
+                "sha256:current",
+                "4.39",
+                "4.39.16",
+                "sha256:candidate",
+            ),
+        )
+        .await
+        .unwrap();
+
+    let stack_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stack_resp.status(), 200);
+    let stack_body = response_json(stack_resp).await;
+    assert_eq!(
+        stack_body["stack"]["services"][0]["image"]["resolvedTag"].as_str(),
+        Some("4.39.15")
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{service_id}/new-version-discovery-timeline"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body = response_json(resp).await;
+    let items = body["items"].as_array().expect("timeline items");
+    assert_eq!(items[0]["kind"].as_str(), Some("currentCandidate"));
+    assert_eq!(items[0]["version"].as_str(), Some("4.39.16"));
+    assert_eq!(items[1]["kind"].as_str(), Some("currentRunning"));
+    assert_eq!(items[1]["version"].as_str(), Some("4.39.15"));
+}
+
+#[tokio::test]
+async fn service_new_version_discovery_timeline_falls_back_to_current_tag_without_snapshot() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id =
+        set_single_service_check_result(&state, &stack_id, Some("sha256:current"), None, None)
+            .await;
+    let now = test_now_rfc3339();
+    let running_started_at = test_offset_rfc3339(&now, -time::Duration::minutes(20));
+    state
+        .db
+        .update_service_check_result_with_runtime_started_at(
+            &service_id,
+            Some("sha256:current".to_string()),
+            Some(running_started_at.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{service_id}/new-version-discovery-timeline"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body = response_json(resp).await;
+    let items = body["items"].as_array().expect("timeline items");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["kind"].as_str(), Some("currentRunning"));
+    assert_eq!(items[0]["version"].as_str(), Some("latest"));
+    assert_eq!(
+        items[0]["occurredAt"].as_str(),
+        Some(running_started_at.as_str())
+    );
+}
+
+#[tokio::test]
 async fn runtime_scan_updates_runtime_started_at_after_same_digest_restart() {
     let now = test_now_rfc3339();
     let restarted_at = test_offset_rfc3339(&now, time::Duration::minutes(5));

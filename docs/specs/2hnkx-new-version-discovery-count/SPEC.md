@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-03-19
-- Last: 2026-03-22
+- Last: 2026-03-23
 
 ## 背景 / 问题陈述
 
@@ -23,6 +23,7 @@
 - 在更新候选列表 `StatusRemark` 和 `AggregateUpdatePreviewList` 中显示中性计数 pill：`发现 N 次`。
 - 对外通过 `GET /api/stacks` 与 `GET /api/stacks/{id}` 返回 `newVersionDiscoveryCount`。
 - 同一份 stack 数据无论走 DB 聚合还是 API enrich，都必须对 unresolved 历史应用一致的 provenance-aware 归一规则，避免不同调用路径给出不同的发现次数。
+- 版本发现时间线里的 `当前运行` 版本必须与列表行当前版本共享同一套当前 digest 解析语义，不能因为持久化 `current_resolved_tag` 过时而分叉。
 
 ### Non-goals
 
@@ -63,6 +64,10 @@
   - `new_version_notifications` 中同 `(service_id, image_ref, current_tag, candidate_digest)` 的稳定 `candidate_display_tag`
   - 若仍不可得，则先按 discovery 行上的可见 alias（`candidateDisplayTag` / `candidateTag`）折叠；只有连 alias 都不存在时，再回退按 `candidateDigest`
 - DB 层 `get_stack()` 与 API 层 `GET /api/stacks` / `GET /api/stacks/{id}` 都必须使用同一套 unresolved-history 归一输入，不能让某一路径退回旧的 digest-only 计数。
+- `GET /api/services/{serviceId}/new-version-discovery-timeline` 中 `items[].kind === "currentRunning"` 的 `version` 必须与列表当前版本显示共享同一套当前 digest 归一逻辑：
+  - 优先使用当前 digest 对应 snapshot 推断出的稳定版本；
+  - 若 snapshot 不可用或无法给出稳定版本，则回退到持久化 `current_resolved_tag`；
+  - 若仍缺失，则回退到原始 `currentTag`，最后才回退 digest。
 - 当前版本基线匹配优先级：
   - `currentDigest`
   - `currentDisplayTag`
@@ -86,6 +91,7 @@
 - Given 服务当前版本已经从基线 `X` 升级到 `Y`，When 查询 `Y` 的候选计数，Then `X` 基线历史不会混入。
 - Given 历史上同一 `candidateDigest` 先以浮动 alias 出现、后又解析出稳定 `candidateDisplayTag`，When 统计当前基线次数，Then 不会因为这两条历史记录重复累计。
 - Given 更新候选列表与聚合预览同时展示同一服务，When `newVersionDiscoveryCount` 存在，Then 两处都显示 `发现 N 次` 且不覆盖原备注。
+- Given 当前服务的 DB 持久化 `current_resolved_tag` 已过时，但当前 digest 的 snapshot 已经解析出新的稳定版本，When 同时请求 stack 详情和版本发现时间线，Then 列表当前版本与时间线 `currentRunning.version` 必须显示为同一个版本。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
@@ -131,3 +137,4 @@
 - 2026-03-20: 根据后续 review fix，把 DB 层 `get_stack()` 的 discovery 次数计算也切到同一套 provenance-aware 通知归一逻辑，确保 stack consumer 不会回退成 digest-only 计数。
 - 2026-03-22: 修正 unresolved alias 历史的最终口径：重复暴露同一可见 alias（如 `latest`、`15-alpine`）时先按 alias 折叠，不再因为不同 digest 把发现次数和时间线一起膨胀。
 - 2026-03-22: 根据 fresh review fix，补齐 live candidate 与历史候选的同口径 alias identity，确保 `newVersionDiscoveryCount` 的 alias 折叠结果能被时间线正确复用。
+- 2026-03-23: 修复版本发现时间线 `currentRunning.version` 与列表当前版本不一致的问题；时间线当前运行版本改为复用列表的当前 digest snapshot 解析语义，并在 snapshot 缺失时继续回退到持久化 `current_resolved_tag`。

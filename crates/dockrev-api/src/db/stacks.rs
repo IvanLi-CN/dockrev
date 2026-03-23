@@ -796,6 +796,7 @@ WHERE id = ?1
                 .query_row(
                     r#"
 SELECT
+  image_ref,
   image_tag,
   current_digest,
   current_runtime_started_at,
@@ -809,13 +810,14 @@ WHERE id = ?1
                     params![service_id],
                     |row| {
                         Ok(ServiceNewVersionTimelineContext {
-                            current_tag: row.get(0)?,
-                            current_digest: row.get(1)?,
-                            current_runtime_started_at: row.get(2)?,
-                            current_resolved_tag: row.get(3)?,
-                            candidate_tag: row.get(4)?,
-                            candidate_resolved_tag: row.get(5)?,
-                            candidate_digest: row.get(6)?,
+                            image_ref: row.get(0)?,
+                            current_tag: row.get(1)?,
+                            current_digest: row.get(2)?,
+                            current_runtime_started_at: row.get(3)?,
+                            current_resolved_tag: row.get(4)?,
+                            candidate_tag: row.get(5)?,
+                            candidate_resolved_tag: row.get(6)?,
+                            candidate_digest: row.get(7)?,
                         })
                     },
                 )

@@ -291,9 +291,14 @@ fn timeline_candidate_version(
 
 fn timeline_running_version(
     context: &crate::db::ServiceNewVersionTimelineContext,
+    effective_current_display_tag: Option<&str>,
 ) -> Option<String> {
-    normalize_optional_value(context.current_resolved_tag.as_deref())
+    normalize_optional_value(effective_current_display_tag)
         .map(|value| crate::db::canonical_visible_version_tag(&value))
+        .or_else(|| {
+            normalize_optional_value(context.current_resolved_tag.as_deref())
+                .map(|value| crate::db::canonical_visible_version_tag(&value))
+        })
         .or_else(|| {
             normalize_optional_value(Some(context.current_tag.as_str()))
                 .map(|value| crate::db::canonical_visible_version_tag(&value))
@@ -316,6 +321,15 @@ pub(super) async fn get_service_new_version_discovery_timeline(
         return Err(ApiError::not_found("service not found"));
     };
 
+    let effective_current_resolved_tag = super::stacks::resolve_current_running_resolved_tag(
+        &state,
+        &context.image_ref,
+        &context.current_tag,
+        context.current_digest.as_deref(),
+        context.current_resolved_tag.as_deref(),
+    )
+    .await?;
+
     let discovery_rows = state
         .db
         .list_new_version_discoveries_for_services(std::slice::from_ref(&service_id))
@@ -331,9 +345,9 @@ pub(super) async fn get_service_new_version_discovery_timeline(
 
     let current_digest = crate::db::normalize_discovery_key(context.current_digest.as_deref());
     let current_display_tag = crate::db::normalize_discovery_key(
-        context
-            .current_resolved_tag
+        effective_current_resolved_tag
             .as_deref()
+            .or(context.current_resolved_tag.as_deref())
             .or(Some(context.current_tag.as_str())),
     );
     let current_tag = crate::db::normalize_discovery_key(Some(context.current_tag.as_str()));
@@ -403,7 +417,8 @@ pub(super) async fn get_service_new_version_discovery_timeline(
     }));
     items.push(NewVersionDiscoveryTimelineItem {
         kind: NewVersionDiscoveryTimelineItemKind::CurrentRunning,
-        version: timeline_running_version(&context).unwrap_or_else(|| "-".to_string()),
+        version: timeline_running_version(&context, effective_current_resolved_tag.as_deref())
+            .unwrap_or_else(|| "-".to_string()),
         occurred_at: normalize_optional_value(context.current_runtime_started_at.as_deref()),
     });
 
