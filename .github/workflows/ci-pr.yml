@@ -99,6 +99,15 @@ jobs:
       - name: Release channel contract check
         run: bash ./.github/scripts/release-channel-contract-check.sh
 
+      - name: Live quality-gates check
+        env:
+          QUALITY_GATES_LIVE_RULES_MODE: require
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 ./.github/scripts/check-live-quality-gates.py \
+            --declaration .github/quality-gates.json \
+            --repo "${GITHUB_REPOSITORY}"
+
   unit-tests:
     name: Backend Tests
     runs-on: ubuntu-latest

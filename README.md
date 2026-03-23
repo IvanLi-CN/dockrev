@@ -158,9 +158,11 @@ See `deploy/README.md` for a minimal Docker Compose deployment.
 ## Releases / Images
 
 - GHCR (Dockrev): `ghcr.io/ivanli-cn/dockrev:<semver>`
-- GHCR (Supervisor): `ghcr.io/ivanli-cn/dockrev-supervisor:<semver>` (also publishes `:latest`)
+- GHCR (Supervisor): `ghcr.io/ivanli-cn/dockrev-supervisor:<semver>`
 - Since `0.3.5`, images ensure shipped binaries are executable (0755); the release workflow validates this before pushing to GHCR.
-- The `Release` workflow runs only via `workflow_run` after `CI (main)` succeeds on `main`
+- `CI (main)` materializes immutable release snapshots into git notes `refs/notes/release-snapshots`; it backfills missing first-parent snapshots so burst merges on `main` do not skip intermediate releases.
+- The `Release` workflow still auto-starts from `workflow_run` after `CI (main)` succeeds on `main`, but it now releases the oldest pending snapshot up to that `head_sha` instead of re-deriving intent/version directly from the triggering commit.
+- `workflow_dispatch(head_sha=<main-commit-sha>)` keeps the same input name and serves as the manual backfill path for a specific `main` commit.
 - The `Release` workflow cleans up Actions artifacts after a successful run; on non-success, it keeps key artifacts with `retention-days: 1` and deletes `*.dockerbuild` build records to avoid long-tail storage usage
 - Automatic releases are gated by PR intent labels (exactly one required on PRs targeting `main`):
   - `type:docs` / `type:skip` → skip release
@@ -169,7 +171,8 @@ See `deploy/README.md` for a minimal Docker Compose deployment.
   - `channel:stable` → publish a stable release (tag: `<semver>`, updates `latest`)
   - `channel:rc` → publish an RC prerelease (tag: `<semver>-rc.<shortsha>`, GitHub Release marked as prerelease, and does **not** update `latest`)
 - Direct `push` to `main` without an associated PR conservatively skips release
-- `latest` is updated only by stable releases (`channel:stable`)
+- `latest` is updated only by the newest stable snapshot currently visible on `main`
+- Live quality-gates checks now run explicitly inside `CI (PR)` / `CI (main)` with authenticated `GITHUB_TOKEN`; `release-channel-contract-check.sh` stays offline and only covers contract + mock API self-tests
 - GitHub Releases include Linux binaries for `dockrev` and `dockrev-supervisor` (amd64/arm64 × gnu/musl) as `.tar.gz` + `.sha256`
 - Release assets are validated as executable binaries (the workflow enforces `chmod +x` before packaging to avoid artifacts losing exec bits)
 
