@@ -27,6 +27,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| 48mh8 | Dockrev：Release Snapshot Queue 对齐与 #176 补发 | 部分完成（4/5） | `48mh8-release-snapshot-queue-alignment/SPEC.md` | 2026-03-23 | fast-track |
 | 6uwgs | Dockrev：服务镜像外链与代码仓库字段 | 已完成 | `6uwgs-service-image-links-and-repo-url/SPEC.md` | 2026-03-22 | fast-track（repoUrl 持久化 + inference API + registry/repo icons + storybook/browser coverage） |
 | 2hnkx | Dockrev：更新候选跨版本发现次数标记 | 已完成 | `2hnkx-new-version-discovery-count/SPEC.md` | 2026-03-22 | fast-track（PR #170 merged；2026-03-20 follow-up fixes visible-version counting、backfill semantics、unresolved-history normalization、and DB/API stack-path parity；PR #176 collapses repeated unresolved alias history by visible label and keeps live/timeline alias identity in sync） |
 | 745rw | Dockrev：标签页恢复后自动补拉更新候选 | 已完成 | `745rw-resume-refresh-update-candidates/SPEC.md` | 2026-03-15 | fast-track（resume refresh hook + review fixes + local browser smoke passed on Overview / Services / ServiceDetail） |

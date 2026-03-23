@@ -5,8 +5,13 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${repo_root}"
 
 echo "[contract-check] syntax + workflow yaml parse"
-bash -n .github/scripts/label-gate.sh .github/scripts/release-intent.sh .github/scripts/compute-version.sh
-ruby -e 'require "yaml"; YAML.load_file(".github/workflows/label-gate.yml"); YAML.load_file(".github/workflows/review-policy.yml"); YAML.load_file(".github/workflows/release.yml")'
+bash -n \
+  .github/scripts/label-gate.sh \
+  .github/scripts/release-intent.sh \
+  .github/scripts/compute-version.sh \
+  .github/scripts/test-release-snapshot.sh
+python3 -m py_compile .github/scripts/check-live-quality-gates.py .github/scripts/release_snapshot.py
+ruby -e 'require "yaml"; YAML.load_file(".github/workflows/label-gate.yml"); YAML.load_file(".github/workflows/review-policy.yml"); YAML.load_file(".github/workflows/ci-pr.yml"); YAML.load_file(".github/workflows/ci-main.yml"); YAML.load_file(".github/workflows/release.yml")'
 
 has_rg() {
   command -v rg >/dev/null 2>&1
@@ -52,7 +57,14 @@ ensure_regex_absent() {
 }
 
 echo "[contract-check] release workflow rc gating invariants"
-search_regex "steps\\.intent\\.outputs\\.release_channel == 'rc'" .github/workflows/release.yml
+search_regex "group:[[:space:]]*release-main" .github/workflows/release.yml
+search_fixed "head_sha:" .github/workflows/release.yml
+search_fixed "python3 .github/scripts/release_snapshot.py ensure \\" .github/workflows/release.yml
+search_fixed "python3 .github/scripts/release_snapshot.py export \\" .github/workflows/release.yml
+search_fixed "python3 .github/scripts/release_snapshot.py next-pending \\" .github/workflows/release.yml
+search_fixed 'DOCKREV_TAGS_CSV: ${{ needs.prepare.outputs.tags_csv }}' .github/workflows/release.yml
+search_fixed 'SUPERVISOR_TAGS_CSV: ${{ needs.prepare.outputs.supervisor_tags_csv }}' .github/workflows/release.yml
+search_fixed "inputs: { head_sha: nextSha }" .github/workflows/release.yml
 python3 - <<'PY'
 from pathlib import Path
 text = Path('.github/workflows/release.yml').read_text()
@@ -60,11 +72,6 @@ needle = "prerelease: ${{ env.RELEASE_CHANNEL == 'rc' }}"
 if needle not in text:
     raise SystemExit('[contract-check] expected prerelease gate in release workflow')
 PY
-latest_gate_count="$(count_fixed_lines 'if [[ "${RELEASE_CHANNEL}" != "rc" ]]; then' .github/workflows/release.yml)"
-if [[ "${latest_gate_count}" -lt 2 ]]; then
-  echo "[contract-check] expected >=2 latest gates, got ${latest_gate_count}" >&2
-  exit 1
-fi
 
 echo "[contract-check] quality-gate workflow invariants"
 search_regex "^[[:space:]]*pull_request_target:" .github/workflows/label-gate.yml
@@ -90,6 +97,19 @@ search_regex "listReviews" .github/workflows/review-policy.yml
 ensure_regex_absent "^[[:space:]]*pull_request:" .github/workflows/review-policy.yml
 ensure_regex_absent "statuses:[[:space:]]*write" .github/workflows/review-policy.yml
 ensure_regex_absent "createCommitStatus" .github/workflows/review-policy.yml
+
+search_fixed "Live quality-gates check" .github/workflows/ci-pr.yml
+search_fixed "Live quality-gates check" .github/workflows/ci-main.yml
+live_gate_require_count="$(
+  (
+    count_fixed_lines 'QUALITY_GATES_LIVE_RULES_MODE: require' .github/workflows/ci-pr.yml
+    count_fixed_lines 'QUALITY_GATES_LIVE_RULES_MODE: require' .github/workflows/ci-main.yml
+  ) | awk '{sum += $1} END {print sum + 0}'
+)"
+if [[ "${live_gate_require_count}" -ne 2 ]]; then
+  echo "[contract-check] expected authenticated live quality-gates steps in CI workflows, got ${live_gate_require_count}" >&2
+  exit 1
+fi
 
 python3 - <<'PY'
 from __future__ import annotations
@@ -121,8 +141,6 @@ assert 'Review Policy Gate' not in informational_checks, 'Review Policy Gate mus
 assert any(item.get('workflow') == 'Review Policy' for item in expected_pr_workflows), 'Review Policy workflow must stay declared'
 assert 'Release intent label gate' in required_checks, 'label gate must stay required'
 PY
-
-python3 ./.github/scripts/check-live-quality-gates.py --declaration .github/quality-gates.json || exit 1
 
 tmp_dir="$(mktemp -d)"
 server_pid=""
@@ -809,6 +827,9 @@ run_release_intent() {
 
 echo "[contract-check] inline github-script scenarios"
 run_inline_workflow_contract_checks
+
+echo "[contract-check] release snapshot self-test"
+bash ./.github/scripts/test-release-snapshot.sh
 
 echo "[contract-check] live quality-gates scenarios"
 run_live_quality_gates main ok

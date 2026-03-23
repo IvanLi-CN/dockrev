@@ -4,7 +4,7 @@
 
 - Status: 进行中
 - Created: 2026-03-11
-- Last: 2026-03-11
+- Last: 2026-03-23
 
 ## 背景 / 问题陈述
 
@@ -124,3 +124,4 @@
 - 2026-03-11: 新建规格，冻结 Dockrev `quality-gates` 最终版对齐目标与验收口径。
 - 2026-03-11: 完成 repo 内 label gate / CI merge queue 对齐，并消除 main / PR check context 冲突。
 - 2026-03-11: 根据 live GitHub 行为复盘回修策略：dockrev 的条件 review 改回 workflow-backed `Review Policy Gate`，GitHub live 只保留 PR-only、required checks、signed commits 与 direct-push 防护。
+- 2026-03-23: live quality-gates 校验从 `release-channel-contract-check.sh` 的真实网络调用中拆出，改为 `CI (PR)` / `CI (main)` 显式 authenticated step；离线 contract-check 仅保留静态与 mock API 自测。

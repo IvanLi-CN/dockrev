@@ -24,15 +24,15 @@ env:
   SUPERVISOR_IMAGE_NAME: dockrev-supervisor
   PLATFORMS: linux/amd64,linux/arm64
   RUST_TOOLCHAIN: "1.91.0"
-  RELEASE_HEAD_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.workflow_run.head_sha }}
+  RELEASE_SNAPSHOT_NOTES_REF: refs/notes/release-snapshots
 
 concurrency:
-  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.workflow_run.head_sha }}
+  group: release-main
   cancel-in-progress: false
 
 jobs:
   prepare:
-    name: Prepare (version + tag)
+    name: Release Meta (snapshot + tags)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     if: >-
@@ -40,87 +40,116 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push') ||
       github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+      pull-requests: read
     outputs:
-      app_effective_version: ${{ steps.meta.outputs.app_effective_version }}
-      release_tag: ${{ steps.meta.outputs.release_tag }}
-      should_release: ${{ steps.meta.outputs.should_release }}
-      bump_level: ${{ steps.meta.outputs.bump_level }}
-      pr_number: ${{ steps.meta.outputs.pr_number }}
-      pr_url: ${{ steps.meta.outputs.pr_url }}
-      release_intent_label: ${{ steps.meta.outputs.release_intent_label }}
-      release_channel: ${{ steps.meta.outputs.release_channel }}
-      reason: ${{ steps.meta.outputs.reason }}
+      target_sha: ${{ steps.pending-target.outputs.target_sha }}
+      app_effective_version: ${{ steps.snapshot.outputs.app_effective_version }}
+      release_tag: ${{ steps.snapshot.outputs.release_tag }}
+      should_release: ${{ steps.snapshot.outputs.release_enabled }}
+      bump_level: ${{ steps.snapshot.outputs.release_bump }}
+      pr_number: ${{ steps.snapshot.outputs.pr_number }}
+      pr_title: ${{ steps.snapshot.outputs.pr_title }}
+      release_channel: ${{ steps.snapshot.outputs.release_channel }}
+      release_prerelease: ${{ steps.snapshot.outputs.release_prerelease }}
+      publish_latest: ${{ steps.snapshot.outputs.publish_latest }}
+      image_name_lower: ${{ steps.snapshot.outputs.image_name_lower }}
+      supervisor_image_name_lower: ${{ steps.snapshot.outputs.supervisor_image_name_lower }}
+      tags_csv: ${{ steps.snapshot.outputs.tags_csv }}
+      supervisor_tags_csv: ${{ steps.snapshot.outputs.supervisor_tags_csv }}
     steps:
-      - name: Checkout (workflow_run)
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ env.RELEASE_HEAD_SHA }}
 
-      - name: Determine release intent (labels)
-        id: intent
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WORKFLOW_RUN_SHA: ${{ env.RELEASE_HEAD_SHA }}
-        run: bash ./.github/scripts/release-intent.sh
-
-      - name: Compute effective version (label-driven)
-        if: ${{ steps.intent.outputs.should_release == 'true' }}
-        shell: bash
-        env:
-          BUMP_LEVEL: ${{ steps.intent.outputs.bump_level }}
-        run: bash ./.github/scripts/compute-version.sh
-
-      - name: Apply prerelease suffix (rc)
-        if: ${{ steps.intent.outputs.should_release == 'true' && steps.intent.outputs.release_channel == 'rc' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          short_sha="$(git rev-parse --short HEAD)"
-          echo "APP_EFFECTIVE_VERSION=${APP_EFFECTIVE_VERSION}-rc.${short_sha}" >> "$GITHUB_ENV"
-          echo "Computed prerelease APP_EFFECTIVE_VERSION=${APP_EFFECTIVE_VERSION}-rc.${short_sha}"
-
-      - name: Export release metadata
-        id: meta
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "should_release=${{ steps.intent.outputs.should_release }}" >> "$GITHUB_OUTPUT"
-          echo "bump_level=${{ steps.intent.outputs.bump_level }}" >> "$GITHUB_OUTPUT"
-          echo "pr_number=${{ steps.intent.outputs.pr_number }}" >> "$GITHUB_OUTPUT"
-          echo "pr_url=${{ steps.intent.outputs.pr_url }}" >> "$GITHUB_OUTPUT"
-          echo "release_intent_label=${{ steps.intent.outputs.release_intent_label }}" >> "$GITHUB_OUTPUT"
-          echo "release_channel=${{ steps.intent.outputs.release_channel }}" >> "$GITHUB_OUTPUT"
-          echo "reason=${{ steps.intent.outputs.reason }}" >> "$GITHUB_OUTPUT"
-
-          if [[ "${{ steps.intent.outputs.should_release }}" == "true" ]]; then
-            echo "app_effective_version=${APP_EFFECTIVE_VERSION}" >> "$GITHUB_OUTPUT"
-            echo "release_tag=${APP_EFFECTIVE_VERSION}" >> "$GITHUB_OUTPUT"
-          else
-            echo "app_effective_version=" >> "$GITHUB_OUTPUT"
-            echo "release_tag=" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Configure Git user
-        if: ${{ steps.intent.outputs.should_release == 'true' }}
+      - name: Configure git identity for release notes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Create and push tag (if missing)
-        if: ${{ steps.intent.outputs.should_release == 'true' }}
+      - name: Resolve requested commit
+        id: requested-target
         shell: bash
         run: |
           set -euo pipefail
-          tag="${APP_EFFECTIVE_VERSION}"
-          echo "target tag: $tag"
-          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
-            echo "Tag ${tag} already exists. Skipping push."
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            target_sha="${{ inputs.head_sha }}"
           else
-            git tag -a "${tag}" -m "${tag}"
-            git push origin "${tag}"
+            target_sha="${{ github.event.workflow_run.head_sha }}"
           fi
+
+          if [[ ! "${target_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid head_sha: ${target_sha}" >&2
+            exit 1
+          fi
+
+          git fetch --no-tags origin main
+          if ! git cat-file -e "${target_sha}^{commit}" 2>/dev/null; then
+            git fetch --no-tags origin "${target_sha}"
+          fi
+          git cat-file -e "${target_sha}^{commit}"
+
+          if ! git merge-base --is-ancestor "${target_sha}" origin/main; then
+            echo "Commit ${target_sha} is not contained in origin/main" >&2
+            exit 1
+          fi
+
+          echo "target_sha=${target_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure immutable release snapshot for manual backfill
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: ${{ steps.requested-target.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/release_snapshot.py ensure \
+            --target-sha "${TARGET_SHA}" \
+            --github-repository "${GITHUB_REPOSITORY}" \
+            --github-token "${GITHUB_TOKEN}" \
+            --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
+            --registry "${REGISTRY}" \
+            --target-only \
+            --output "$RUNNER_TEMP/release-snapshot.json"
+
+      - name: Select pending release target
+        id: pending-target
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ steps.requested-target.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "target_sha=${REQUESTED_SHA}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git fetch --no-tags origin "+${RELEASE_SNAPSHOT_NOTES_REF}:${RELEASE_SNAPSHOT_NOTES_REF}" || true
+          git fetch --tags origin
+          python3 .github/scripts/release_snapshot.py next-pending \
+            --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
+            --main-ref "origin/main" \
+            --upper-bound "${REQUESTED_SHA}" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Load immutable release snapshot
+        if: steps.pending-target.outputs.target_sha != ''
+        id: snapshot
+        shell: bash
+        env:
+          TARGET_SHA: ${{ steps.pending-target.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+${RELEASE_SNAPSHOT_NOTES_REF}:${RELEASE_SNAPSHOT_NOTES_REF}" || true
+          python3 .github/scripts/release_snapshot.py export \
+            --target-sha "${TARGET_SHA}" \
+            --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
+            --main-ref "origin/main" \
+            --resolve-publication-tags \
+            --github-output "$GITHUB_OUTPUT"
 
   build-web:
     name: Build web dist
@@ -130,11 +159,12 @@ jobs:
     if: ${{ needs.prepare.outputs.should_release == 'true' }}
     env:
       APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
+      TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
     steps:
-      - name: Checkout (workflow_run)
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_HEAD_SHA }}
+          ref: ${{ env.TARGET_SHA }}
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -159,7 +189,7 @@ jobs:
         if: ${{ hashFiles('web/dist/**') != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: web-dist-${{ env.RELEASE_HEAD_SHA }}
+          name: web-dist-${{ env.TARGET_SHA }}
           path: web/dist
           retention-days: 1
 
@@ -171,18 +201,19 @@ jobs:
     if: ${{ needs.prepare.outputs.should_release == 'true' }}
     env:
       APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
+      TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
       CARGO_TARGET_DIR: target/ci/amd64
     steps:
-      - name: Checkout (workflow_run)
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_HEAD_SHA }}
+          ref: ${{ env.TARGET_SHA }}
 
       - name: Download web dist artifact (best-effort)
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: web-dist-${{ env.RELEASE_HEAD_SHA }}
+          name: web-dist-${{ env.TARGET_SHA }}
           path: web/dist
 
       - name: Install system dependencies
@@ -234,7 +265,7 @@ jobs:
       - name: Upload binaries artifact (amd64)
         uses: actions/upload-artifact@v4
         with:
-          name: binaries-amd64-${{ env.RELEASE_HEAD_SHA }}
+          name: binaries-amd64-${{ env.TARGET_SHA }}
           path: |
             target/ci/amd64/release/dockrev
             target/ci/amd64/x86_64-unknown-linux-musl/release/dockrev
@@ -252,18 +283,19 @@ jobs:
     if: ${{ needs.prepare.outputs.should_release == 'true' }}
     env:
       APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
+      TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
       CARGO_TARGET_DIR: target/ci/arm64
     steps:
-      - name: Checkout (workflow_run)
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_HEAD_SHA }}
+          ref: ${{ env.TARGET_SHA }}
 
       - name: Download web dist artifact (best-effort)
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: web-dist-${{ env.RELEASE_HEAD_SHA }}
+          name: web-dist-${{ env.TARGET_SHA }}
           path: web/dist
 
       - name: Install system dependencies
@@ -308,7 +340,7 @@ jobs:
       - name: Upload binaries artifact (arm64)
         uses: actions/upload-artifact@v4
         with:
-          name: binaries-arm64-${{ env.RELEASE_HEAD_SHA }}
+          name: binaries-arm64-${{ env.TARGET_SHA }}
           path: |
             target/ci/arm64/release/dockrev
             target/ci/arm64/aarch64-unknown-linux-musl/release/dockrev
@@ -324,26 +356,36 @@ jobs:
     timeout-minutes: 60
     needs: [prepare, build-binaries-amd64, build-binaries-arm64]
     if: ${{ needs.prepare.outputs.should_release == 'true' }}
+    permissions:
+      actions: write
+      contents: write
+      issues: read
+      packages: write
+      pull-requests: read
     env:
       APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
       RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
       RELEASE_CHANNEL: ${{ needs.prepare.outputs.release_channel }}
+      TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+      DOCKREV_TAGS_CSV: ${{ needs.prepare.outputs.tags_csv }}
+      SUPERVISOR_TAGS_CSV: ${{ needs.prepare.outputs.supervisor_tags_csv }}
     steps:
-      - name: Checkout (workflow_run)
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_HEAD_SHA }}
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
 
       - name: Download binaries (amd64)
         uses: actions/download-artifact@v4
         with:
-          name: binaries-amd64-${{ env.RELEASE_HEAD_SHA }}
+          name: binaries-amd64-${{ env.TARGET_SHA }}
           path: .
 
       - name: Download binaries (arm64)
         uses: actions/download-artifact@v4
         with:
-          name: binaries-arm64-${{ env.RELEASE_HEAD_SHA }}
+          name: binaries-arm64-${{ env.TARGET_SHA }}
           path: .
 
       - name: Ensure docker artifacts are executable
@@ -468,25 +510,43 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          owner="${GITHUB_REPOSITORY_OWNER,,}"
-          dockrev_image="${REGISTRY}/${owner}/${IMAGE_NAME}"
-          supervisor_image="${REGISTRY}/${owner}/${SUPERVISOR_IMAGE_NAME}"
-          echo "dockrev_image=${dockrev_image}" >> "$GITHUB_OUTPUT"
-          echo "supervisor_image=${supervisor_image}" >> "$GITHUB_OUTPUT"
+          IFS=',' read -r -a dockrev_tags <<< "${DOCKREV_TAGS_CSV}"
+          IFS=',' read -r -a supervisor_tags <<< "${SUPERVISOR_TAGS_CSV}"
           {
             echo "dockrev_tags<<EOF"
-            echo "${dockrev_image}:${APP_EFFECTIVE_VERSION}"
-            if [[ "${RELEASE_CHANNEL}" != "rc" ]]; then
-              echo "${dockrev_image}:latest"
-            fi
+            for tag in "${dockrev_tags[@]}"; do
+              [[ -n "${tag}" ]] && echo "${tag}"
+            done
             echo "EOF"
             echo "supervisor_tags<<EOF"
-            echo "${supervisor_image}:${APP_EFFECTIVE_VERSION}"
-            if [[ "${RELEASE_CHANNEL}" != "rc" ]]; then
-              echo "${supervisor_image}:latest"
-            fi
+            for tag in "${supervisor_tags[@]}"; do
+              [[ -n "${tag}" ]] && echo "${tag}"
+            done
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          tag="${RELEASE_TAG}"
+          sha="${TARGET_SHA}"
+
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            existing="$(git rev-list -n 1 "${tag}")"
+            if [[ "${existing}" != "${sha}" ]]; then
+              echo "Tag ${tag} already exists but points to ${existing} (expected ${sha})" >&2
+              exit 1
+            fi
+            echo "Tag ${tag} already exists and points to ${sha}."
+          else
+            git tag -a "${tag}" "${sha}" -m "release ${APP_EFFECTIVE_VERSION}"
+          fi
+
+          git push origin "${tag}"
 
       - name: Build linux/amd64 image (smoke test; runtime-prebuilt)
         uses: docker/build-push-action@v6
@@ -655,7 +715,7 @@ jobs:
           tags: ${{ steps.docker-tags.outputs.dockrev_tags }}
           labels: |
             org.opencontainers.image.version=${{ env.APP_EFFECTIVE_VERSION }}
-            org.opencontainers.image.revision=${{ env.RELEASE_HEAD_SHA }}
+            org.opencontainers.image.revision=${{ env.TARGET_SHA }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
           build-args: |
             APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
@@ -673,7 +733,7 @@ jobs:
           tags: ${{ steps.docker-tags.outputs.supervisor_tags }}
           labels: |
             org.opencontainers.image.version=${{ env.APP_EFFECTIVE_VERSION }}
-            org.opencontainers.image.revision=${{ env.RELEASE_HEAD_SHA }}
+            org.opencontainers.image.revision=${{ env.TARGET_SHA }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
           build-args: |
             APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
@@ -704,6 +764,44 @@ jobs:
           echo "::error::Cause: see step 'Create or update GitHub Release + upload assets' logs above."
           echo "::error::Retry: Actions → workflow 'Release' → Re-run jobs (tag=${RELEASE_TAG})."
           exit 1
+
+      - name: Resolve next pending release target
+        if: github.event_name != 'workflow_dispatch'
+        id: next-pending
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          git fetch --tags origin
+          git fetch --no-tags origin "+${RELEASE_SNAPSHOT_NOTES_REF}:${RELEASE_SNAPSHOT_NOTES_REF}" || true
+          python3 .github/scripts/release_snapshot.py next-pending \
+            --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
+            --main-ref "origin/main" \
+            --upper-bound "$(git rev-parse origin/main)" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Continue release queue
+        if: github.event_name != 'workflow_dispatch' && steps.next-pending.outputs.target_sha != ''
+        uses: actions/github-script@v7
+        env:
+          NEXT_TARGET_SHA: ${{ steps.next-pending.outputs.target_sha }}
+        with:
+          script: |
+            const { owner, repo } = context.repo
+            const nextSha = process.env.NEXT_TARGET_SHA
+            if (!nextSha) {
+              core.notice('Release queue is empty.')
+              return
+            }
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner,
+              repo,
+              workflow_id: 'release.yml',
+              ref: 'main',
+              inputs: { head_sha: nextSha },
+            })
+            core.notice(`Queued next release target ${nextSha}`)
 
   cleanup-artifacts:
     name: Cleanup Actions artifacts
