@@ -18524,6 +18524,49 @@ services:
 }
 
 #[tokio::test]
+async fn infer_service_repo_link_accepts_generic_repo_root_when_repo_name_matches_browse_marker() {
+    let registry = Arc::new(RepoLinkRegistry::with_oci_source(Some(
+        "https://codeberg.org/acme/src",
+    )));
+    let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id =
+        set_single_service_check_result(&state, &stack_id, Some("sha256:current"), None, None)
+            .await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/repo-link/infer"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(
+        body["repoUrl"].as_str(),
+        Some("https://codeberg.org/acme/src")
+    );
+    assert_eq!(body["strategy"].as_str(), Some("oci_source"));
+    assert_eq!(registry.observed_references(), vec!["sha256:current"]);
+}
+
+#[tokio::test]
 async fn infer_service_repo_link_keeps_subgroup_paths_on_self_hosted_git_services() {
     let registry = Arc::new(RepoLinkRegistry::with_oci_source(Some(
         "https://git.example.com/team/platform/api/-/tree/main",

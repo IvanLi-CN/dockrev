@@ -187,7 +187,9 @@ fn collapse_generic_repo_segments(segments: &[String]) -> Option<Vec<String>> {
     }
     let repo_end = segments
         .iter()
-        .position(|segment| is_repo_browse_marker(segment))
+        .enumerate()
+        .skip(2)
+        .find_map(|(idx, segment)| is_repo_browse_marker(segment).then_some(idx))
         .unwrap_or(segments.len());
     if repo_end < 2 {
         return None;

@@ -93,7 +93,12 @@ export function normalizeExternalHttpUrl(input: string | null | undefined): stri
   if (!value) return null
   try {
     const parsed = new URL(value)
-    if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.host) {
+    if (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      parsed.host &&
+      !parsed.username &&
+      !parsed.password
+    ) {
       return value
     }
   } catch {
