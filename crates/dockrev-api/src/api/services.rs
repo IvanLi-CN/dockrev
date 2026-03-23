@@ -162,6 +162,36 @@ fn collapse_gitlab_repo_segments(segments: &[String]) -> Option<Vec<String>> {
     Some(segments[..repo_end].to_vec())
 }
 
+fn is_repo_browse_marker(segment: &str) -> bool {
+    matches!(
+        segment.trim().to_ascii_lowercase().as_str(),
+        "-" | "blob"
+            | "branch"
+            | "branches"
+            | "commit"
+            | "commits"
+            | "compare"
+            | "raw"
+            | "releases"
+            | "src"
+            | "tree"
+    )
+}
+
+fn collapse_generic_repo_segments(segments: &[String]) -> Option<Vec<String>> {
+    if segments.len() < 2 {
+        return None;
+    }
+    let repo_end = segments
+        .iter()
+        .position(|segment| is_repo_browse_marker(segment))
+        .unwrap_or(segments.len());
+    if repo_end < 2 {
+        return None;
+    }
+    Some(segments[..repo_end].to_vec())
+}
+
 fn normalize_external_repo_url(input: &str) -> Option<String> {
     let value = normalize_repo_url_input(Some(input)).ok().flatten()?;
     let parsed = Url::parse(&value).ok()?;
@@ -185,11 +215,8 @@ fn normalize_external_repo_url(input: &str) -> Option<String> {
         return build_normalized_browse_url(parsed, &repo_segments);
     }
 
-    if segments.len() >= 2 {
-        return build_normalized_browse_url(parsed, &segments[..2]);
-    }
-
-    None
+    let repo_segments = collapse_generic_repo_segments(&segments)?;
+    build_normalized_browse_url(parsed, &repo_segments)
 }
 
 fn image_ref_pinned_digest(image_ref: &str) -> Option<String> {

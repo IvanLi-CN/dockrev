@@ -50,16 +50,24 @@ export function splitImageNameForDisplay(
   if (!n) return { base: '', suffix: '' }
 
   const at = n.indexOf('@')
-  if (at >= 0) return { base: n.slice(0, at), suffix: n.slice(at) }
+  const digestSuffix = at >= 0 ? n.slice(at) : ''
+  const withoutDigest = at >= 0 ? n.slice(0, at) : n
 
-  const lastSlash = n.lastIndexOf('/')
-  const lastColon = n.lastIndexOf(':')
-  if (lastColon > lastSlash) return { base: n.slice(0, lastColon), suffix: n.slice(lastColon) }
+  const lastSlash = withoutDigest.lastIndexOf('/')
+  const lastColon = withoutDigest.lastIndexOf(':')
+  if (lastColon > lastSlash) {
+    return {
+      base: withoutDigest.slice(0, lastColon),
+      suffix: `${withoutDigest.slice(lastColon)}${digestSuffix}`,
+    }
+  }
+
+  if (digestSuffix) return { base: withoutDigest, suffix: digestSuffix }
 
   const t = (tag ?? '').trim()
-  if (!t) return { base: n, suffix: '' }
-  if (t.startsWith('sha256:')) return { base: n, suffix: `@${t}` }
-  return { base: n, suffix: `:${t}` }
+  if (!t) return { base: withoutDigest, suffix: '' }
+  if (t.startsWith('sha256:')) return { base: withoutDigest, suffix: `@${t}` }
+  return { base: withoutDigest, suffix: `:${t}` }
 }
 
 export function buildRegistryWebUrl(imageRef: string): string | null {
