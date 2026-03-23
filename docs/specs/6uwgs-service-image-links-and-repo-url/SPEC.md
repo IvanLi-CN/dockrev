@@ -4,11 +4,11 @@
 
 - Status: 已完成
 - Created: 2026-03-22
-- Last: 2026-03-22
+- Last: 2026-03-23
 
 ## 背景 / 问题陈述
 
-- 服务列表与服务详情页当前只展示镜像名与 registry 文本，无法直接打开镜像注册表网页。
+- 服务列表、服务详情页与概览页中的更新候选表都需要在镜像名旁提供稳定的外链入口，避免用户只能复制镜像名后再手动查找网页入口。
 - 代码仓库入口目前没有稳定的服务级持久化字段，导致列表页无法可靠展示 repo 外链，详情页也无法手工修正。
 - 镜像与仓库的对应关系不是永远可从镜像名安全推导，必须允许“人工编辑 + 按需重新推断”的双轨策略。
 
@@ -16,7 +16,7 @@
 
 ### Goals
 
-- 在服务列表与服务详情页的镜像名旁渲染 icon 外链，支持注册表网页入口与代码仓库入口。
+- 在服务列表、服务详情页与概览页更新候选表的镜像名旁渲染 icon 外链，支持注册表网页入口与代码仓库入口。
 - 将 `repoUrl` 作为服务级可持久化字段纳入现有服务设置。
 - 在服务详情页提供 `repoUrl` 输入、直接打开入口与“重新推断”按钮，推断结果只回填草稿。
 - 新增按需推断 API，优先使用 OCI `org.opencontainers.image.source`，其次做 GHCR 精确回退。
@@ -40,6 +40,7 @@
 - `crates/dockrev-api/src/updater.rs`
 - `crates/dockrev-api/src/backup.rs`
 - `web/src/api.ts`
+- `web/src/pages/OverviewPage.tsx`
 - `web/src/pages/ServiceDetailPage.tsx`
 - `web/src/pages/ServicesPage.tsx`
 - `web/src/App.css`
@@ -77,6 +78,7 @@
 ### Core flows
 
 - 服务详情页加载后，镜像名右侧显示 registry icon；若当前草稿 `repoUrl` 非空，再显示 repo icon。
+- 概览页更新候选表的 Image 列与单服务 apply 确认弹窗复用同一套镜像展示，按已持久化 `repoUrl` 与 registry 规则显示 icon 外链。
 - 用户编辑“代码仓库”输入框时，只更新本地草稿；点击“保存服务设置”后才持久化。
 - 用户点击“重新推断”时，前端调用推断 API；若返回 `repoUrl`，则覆盖输入框草稿并立即在 header 显示 repo icon。
 - 服务列表页 Image 列对每个服务显示镜像名、registry 文本以及已保存的外链 icon；点击 icon 不触发行跳转。
@@ -105,6 +107,8 @@
 ## 验收标准（Acceptance Criteria）
 
 - Given 服务详情页成功加载，When header 渲染镜像信息，Then registry icon 始终按规则显示，且草稿 `repoUrl` 存在时 repo icon 立即可见。
+- Given 概览页更新候选表渲染某个服务行，When 该镜像可稳定推导 registry 页或已存在持久化 `repoUrl`，Then Image 列显示对应 registry/repo icon，且点击 icon 不触发行导航。
+- Given 概览页打开单服务 apply 确认弹窗，When 渲染“镜像”字段，Then 该区块复用与主表一致的 registry/repo icon 规则，而不是退回纯文本。
 - Given 服务列表页已有持久化 `repoUrl`，When Image 列渲染，Then repo icon 可见且点击不会触发行导航。
 - Given 用户在服务详情页将 `repoUrl` 清空并保存，When 后端持久化成功，Then 后续详情页与列表页都不再显示 repo icon。
 - Given 推断接口通过 OCI source 找到 GitHub 仓库，When 用户点击“重新推断”，Then 输入框被回填该 URL，strategy 为 `oci_source`。
@@ -127,8 +131,8 @@
 
 ### UI / Storybook (if applicable)
 
-- Stories to add/update: `ServiceDetailPage`, `ServicesPage`
-- `play` / interaction coverage to add/update: infer repo link in detail page, then save and observe list page persisted icon
+- Stories to add/update: `OverviewPage`, `ServiceDetailPage`, `ServicesPage`
+- `play` / interaction coverage to add/update: infer repo link in detail page, save and observe list page persisted icon, and assert overview image-link icons do not trigger row navigation
 
 ### Quality checks
 
@@ -168,8 +172,8 @@ None
 
 - [x] M1: DB / API / service settings 链路补齐 `repoUrl`
 - [x] M2: 服务级 repo-link inference API 落地并覆盖 OCI/GHCR/none 分支
-- [x] M3: 服务详情页与服务列表页完成 registry/repo icon 外链与详情页编辑交互
-- [x] M4: Storybook 与自动化验证覆盖 infer + save + persisted rendering
+- [x] M3: 服务详情页、服务列表页与概览页更新候选完成 registry/repo icon 外链，详情页支持 repoUrl 编辑
+- [x] M4: Storybook 与自动化验证覆盖 infer + save + persisted rendering，以及概览页行内/弹窗外链渲染
 
 ## 方案概述（Approach, high-level）
 
@@ -187,6 +191,7 @@ None
 
 - 2026-03-22：创建规格，锁定 `repoUrl` 字段语义、推断顺序、registry 链接规则与详情页交互边界。
 - 2026-03-22：完成实现与验证，补齐 `repoUrl` 持久化、repo-link inference API、列表/详情 icon 外链、Storybook 交互回归，以及 review-loop 收敛修复。
+- 2026-03-23：补齐概览页更新候选主表与单服务 apply 确认弹窗中的镜像外链展示，消除 `OverviewPage` 与共享 image-link 组件的分叉。
 
 ## 参考（References）
 
