@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（4/5）
+- Status: 已完成
 - Created: 2026-03-24
 - Last: 2026-03-25
 
@@ -141,7 +141,7 @@
 - [x] M2: 修正 health rollback 进度状态机，不再误发 `HealthDone`。
 - [x] M3: 补齐 updater / API 回归测试，覆盖 health rollback 与其他 rollback 路径。
 - [x] M4: 补齐 Job Detail Storybook rollback 场景与视觉证据。
-- [ ] M5: 快车道推进到 latest PR merge-ready。
+- [x] M5: 快车道推进到 latest PR merge-ready。
 
 ## 风险 / 假设（Risks / Assumptions）
 
@@ -153,3 +153,4 @@
 - 2026-03-24: 创建规格，冻结 health rollback 的 digest 契约、进度口径与 Storybook 验收面。
 - 2026-03-24: 已完成后端状态机修复、`newDigests/finalDigests/rollback` 契约落地、updater/API 回归测试，以及 `Pages/JobDetailPage/HealthRollback` Storybook 视觉证据。
 - 2026-03-25: 主人已批准提交视觉证据，PR #183 已创建并补齐 `type:patch` / `channel:stable` 标签，等待远端 checks 收敛后进入 merge-ready。
+- 2026-03-25: PR #183 已通过 checks 并进入 merge-ready，规格状态收口为已完成。
