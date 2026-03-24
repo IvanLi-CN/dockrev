@@ -3766,7 +3766,7 @@ services:
     let service_id = set_single_service_check_result(
         &state,
         &stack_id,
-        Some("sha256:current-v1"),
+        None,
         Some("latest"),
         Some("sha256:live-candidate"),
     )
@@ -4259,9 +4259,9 @@ services:
         .db
         .update_service_check_result(
             &service_id,
-            Some("sha256:current-v1".to_string()),
-            Some("1.17.0".to_string()),
-            Some("[\"1.17.0\"]".to_string()),
+            None,
+            None,
+            None,
             Some("latest".to_string()),
             Some("1.18.1".to_string()),
             Some("sha256:live-candidate".to_string()),
@@ -4302,8 +4302,8 @@ services:
                 &make_new_version_summary_for_test(
                     &service_id,
                     "latest",
-                    "1.17.0",
-                    "sha256:current-v1",
+                    "latest",
+                    "",
                     "latest",
                     candidate_display_tag,
                     candidate_digest,
@@ -4356,7 +4356,150 @@ services:
         Some(test_offset_rfc3339(&now, time::Duration::minutes(-90)).as_str())
     );
     assert_eq!(items[2]["kind"].as_str(), Some("currentRunning"));
-    assert_eq!(items[2]["version"].as_str(), Some("1.17.0"));
+    assert_eq!(items[2]["version"].as_str(), Some("latest"));
+}
+
+#[tokio::test]
+async fn service_new_version_discovery_timeline_excludes_older_unresolved_current_alias_from_stable_baseline()
+ {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = set_single_service_check_result(
+        &state,
+        &stack_id,
+        Some("sha256:current-v1206"),
+        Some("latest"),
+        Some("sha256:live-candidate"),
+    )
+    .await;
+    let now = test_now_rfc3339();
+    state
+        .db
+        .update_service_check_result(
+            &service_id,
+            Some("sha256:current-v1206".to_string()),
+            Some("v1.20.6".to_string()),
+            Some("[\"v1.20.6\"]".to_string()),
+            Some("latest".to_string()),
+            Some("v1.21.1".to_string()),
+            Some("sha256:live-candidate".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    for (
+        discovered_at,
+        current_display_tag,
+        current_digest,
+        candidate_digest,
+        candidate_display_tag,
+    ) in [
+        (
+            test_offset_rfc3339(&now, time::Duration::days(-14)),
+            "latest",
+            "",
+            "sha256:legacy-candidate",
+            "latest",
+        ),
+        (
+            test_offset_rfc3339(&now, time::Duration::minutes(-90)),
+            "v1.20.6",
+            "sha256:current-v1206",
+            "sha256:candidate-v1210",
+            "1.21.0",
+        ),
+        (
+            test_offset_rfc3339(&now, time::Duration::minutes(-10)),
+            "v1.20.6",
+            "sha256:current-v1206",
+            "sha256:live-candidate",
+            "1.21.1",
+        ),
+    ] {
+        let job_id = insert_check_job(&state, "schedule", &discovered_at).await;
+        state
+            .db
+            .finish_job(
+                &job_id,
+                "success",
+                &discovered_at,
+                &make_new_version_summary_for_test(
+                    &service_id,
+                    "latest",
+                    current_display_tag,
+                    current_digest,
+                    "latest",
+                    candidate_display_tag,
+                    candidate_digest,
+                ),
+            )
+            .await
+            .unwrap();
+    }
+
+    let stack_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stack_resp.status(), 200);
+    let stack_body = response_json(stack_resp).await;
+    assert_eq!(
+        stack_body["stack"]["services"][0]["newVersionDiscoveryCount"].as_u64(),
+        Some(2)
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/services/{service_id}/new-version-discovery-timeline"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body = response_json(resp).await;
+    let items = body["items"].as_array().expect("timeline items");
+    assert_eq!(items.len(), 3);
+    assert_eq!(items[0]["kind"].as_str(), Some("currentCandidate"));
+    assert_eq!(items[0]["version"].as_str(), Some("1.21.1"));
+    assert_eq!(items[1]["kind"].as_str(), Some("historicalCandidate"));
+    assert_eq!(items[1]["version"].as_str(), Some("1.21.0"));
+    assert_eq!(
+        items[1]["occurredAt"].as_str(),
+        Some(test_offset_rfc3339(&now, time::Duration::minutes(-90)).as_str())
+    );
+    assert_eq!(items[2]["kind"].as_str(), Some("currentRunning"));
+    assert_eq!(items[2]["version"].as_str(), Some("1.20.6"));
 }
 
 #[tokio::test]
