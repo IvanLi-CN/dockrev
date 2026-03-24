@@ -4,7 +4,7 @@
 
 - Status: 部分完成（4/5）
 - Created: 2026-03-24
-- Last: 2026-03-24
+- Last: 2026-03-25
 
 ## 背景 / 问题陈述
 
@@ -129,7 +129,7 @@
 - target_program=mock-only
 - capture_scope=element
 - sensitive_exclusion=N/A
-- submission_gate=pending-owner-approval
+- submission_gate=owner-approved
 - story_id_or_title=Pages/JobDetailPage/HealthRollback
 - state=rolled_back after healthcheck failure
 - evidence_note=验证 Job Detail 的最终进度与日志明确表达“healthcheck failed -> rolled back”，且不存在误导性的 `healthcheck passed`。
@@ -152,3 +152,4 @@
 
 - 2026-03-24: 创建规格，冻结 health rollback 的 digest 契约、进度口径与 Storybook 验收面。
 - 2026-03-24: 已完成后端状态机修复、`newDigests/finalDigests/rollback` 契约落地、updater/API 回归测试，以及 `Pages/JobDetailPage/HealthRollback` Storybook 视觉证据。
+- 2026-03-25: 主人已批准提交视觉证据，PR #183 已创建并补齐 `type:patch` / `channel:stable` 标签，等待远端 checks 收敛后进入 merge-ready。
