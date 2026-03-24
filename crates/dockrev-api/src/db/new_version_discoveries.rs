@@ -112,10 +112,10 @@ pub(crate) fn canonical_candidate_identity_tag(
     raw_candidate_tag: &str,
     display_tag: &str,
 ) -> String {
-    if is_floating_alias_tag(raw_candidate_tag) {
-        if let Some(core) = semver_core_version_tag(display_tag) {
-            return core;
-        }
+    if is_floating_alias_tag(raw_candidate_tag)
+        && let Some(core) = semver_core_version_tag(display_tag)
+    {
+        return core;
     }
     canonical_visible_version_tag(display_tag)
 }
