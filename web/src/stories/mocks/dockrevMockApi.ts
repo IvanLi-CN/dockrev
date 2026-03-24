@@ -63,6 +63,7 @@ export type DockrevApiScenario =
   | 'overview-jobs-card-exact-five-non-terminal'
   | 'queue-mixed'
   | 'queue-progress-smoothing'
+  | 'queue-health-rollback'
   | 'queue-legacy-progress'
   | 'queue-long-logs'
   | 'settings-configured'
@@ -2272,6 +2273,90 @@ function buildQueueLegacyProgress(): Fixture {
   return f
 }
 
+function buildQueueHealthRollback(): Fixture {
+  const f = buildDashboardDemo()
+
+  const job: JobListItem = {
+    id: 'job-health-rollback',
+    type: 'update',
+    scope: 'service',
+    stackId: 'stack-prod',
+    serviceId: 'svc-prod-api',
+    status: 'rolled_back',
+    createdBy: 'ivan',
+    reason: 'ui',
+    createdAt: nowIso(-95_000),
+    startedAt: nowIso(-80_000),
+    finishedAt: nowIso(-62_000),
+    allowArchMismatch: false,
+    backupMode: 'skip',
+    summary: {
+      mode: 'apply',
+      progress: {
+        phase: 'done',
+        message: 'update rolled back after healthcheck failure',
+        current: 1,
+        total: 1,
+        percent: 100,
+        plannedCurrent: 1,
+        plannedTotal: 1,
+        plannedPercent: 100,
+        currentTarget: null,
+        updatedAt: nowIso(-62_000),
+      },
+      stacks: [
+        {
+          stackId: 'stack-prod',
+          backup: { status: 'skipped', reason: 'disabled' },
+          update: {
+            changedServices: 1,
+            oldDigests: { 'svc-prod-api': 'sha256:old' },
+            newDigests: { 'svc-prod-api': 'sha256:new' },
+            finalDigests: { 'svc-prod-api': 'sha256:old' },
+            failureStep: 'healthcheck',
+            rollback: {
+              trigger: 'healthcheck',
+              toDigests: { 'svc-prod-api': 'sha256:old' },
+            },
+            targetTagsPulled: [],
+            pullTagsPulled: [],
+            pullTagWarnings: [],
+            skippedVersionAnomaly: [],
+          },
+        },
+      ],
+    },
+    progress: {
+      phase: 'done',
+      message: 'update rolled back after healthcheck failure',
+      current: 1,
+      total: 1,
+      percent: 100,
+      plannedCurrent: 1,
+      plannedTotal: 1,
+      plannedPercent: 100,
+      currentTarget: 'api',
+      updatedAt: nowIso(-62_000),
+    },
+  }
+
+  f.jobs = [job]
+  f.jobById = {
+    [job.id]: {
+      ...job,
+      logs: [
+        { ts: nowIso(-78_000), level: 'info', msg: 'starting service api' },
+        { ts: nowIso(-74_000), level: 'info', msg: 'waiting for healthcheck on api' },
+        { ts: nowIso(-71_000), level: 'warn', msg: 'healthcheck failed for api; rolling back' },
+        { ts: nowIso(-67_000), level: 'warn', msg: 'service api rolled back after healthcheck failure' },
+      ],
+      logsLastId: 4,
+    } satisfies JobDetail,
+  }
+
+  return f
+}
+
 function buildSettingsConfigured(): Fixture {
   const f = buildDashboardDemo()
   f.notifications = {
@@ -2585,6 +2670,7 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'overview-jobs-card-terminal-only') return buildOverviewJobsCardTerminalOnly()
   if (scenario === 'overview-jobs-card-exact-five-non-terminal') return buildOverviewJobsCardExactFiveNonTerminal()
   if (scenario === 'queue-progress-smoothing') return buildQueueProgressSmoothing()
+  if (scenario === 'queue-health-rollback') return buildQueueHealthRollback()
   if (scenario === 'queue-legacy-progress') return buildQueueLegacyProgress()
   if (scenario === 'queue-long-logs') return buildQueueLongLogs()
   if (scenario === 'settings-configured' || scenario === 'settings-configured-resolve-slow') return buildSettingsConfigured()

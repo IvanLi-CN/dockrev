@@ -3,6 +3,10 @@ import { JobDetailPage } from '../../pages/JobDetailPage'
 import { PageHarness } from '../mocks/PageHarness'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 const meta: Meta<typeof JobDetailPage> = {
   title: 'Pages/JobDetailPage',
   component: JobDetailPage,
@@ -57,5 +61,38 @@ export const LegacyProgressFallback: Story = {
         {({ onTopActions }) => <JobDetailPage jobId="job-legacy-running" onTopActions={onTopActions} />}
       </PageHarness>
     )
+  },
+}
+
+export const HealthRollback: Story = {
+  parameters: { dockrevApiScenario: 'queue-health-rollback' },
+  render: () => {
+    return (
+      <PageHarness
+        route={{ name: 'job', jobId: 'job-health-rollback' }}
+        title="任务详情"
+        topbarHint="任务队列"
+        pageSubtitle="健康检查失败后已回滚：进度与日志都应明确表达 rollback，而不是误报 passed"
+      >
+        {({ onTopActions }) => <JobDetailPage jobId="job-health-rollback" onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await sleep(120)
+
+    const pageText = canvasElement.textContent ?? ''
+    if (!pageText.includes('rolled_back')) {
+      throw new globalThis.Error('rolled_back status pill missing')
+    }
+    if (!pageText.includes('update rolled back after healthcheck failure')) {
+      throw new globalThis.Error('final rollback progress message missing')
+    }
+    if (!pageText.includes('healthcheck failed for api; rolling back')) {
+      throw new globalThis.Error('healthcheck failure log missing')
+    }
+    if (pageText.includes('healthcheck passed for api')) {
+      throw new globalThis.Error('healthcheck passed log should not appear after rollback')
+    }
   },
 }

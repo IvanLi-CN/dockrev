@@ -139,6 +139,7 @@ pub(super) fn update_apply_fraction(evt: &updater::UpdateProgressEvent) -> f64 {
         S::UpStart => 0.60,
         S::UpDone => 0.82,
         S::HealthStart => 0.84,
+        S::HealthFailed => 0.86,
         S::HealthDone => 0.88,
         S::TargetTagPullStart => 0.90,
         S::TargetTagPullDone => 0.93,
@@ -1848,6 +1849,31 @@ fn extract_changed_service_ids(update: &serde_json::Value) -> Option<Vec<String>
     if ids.is_empty() { None } else { Some(ids) }
 }
 
+fn update_terminal_message(final_status: &str, stack_summaries: &[serde_json::Value]) -> String {
+    if final_status == "success" {
+        return "update finished".to_string();
+    }
+    if final_status == "rolled_back" {
+        let failure_step = stack_summaries.iter().find_map(|stack| {
+            stack
+                .get("update")
+                .and_then(|update| update.get("failureStep"))
+                .and_then(|v| v.as_str())
+        });
+        return match failure_step {
+            Some("healthcheck") => "update rolled back after healthcheck failure".to_string(),
+            Some("pull_target_tag") => {
+                "update rolled back after target tag pull failure".to_string()
+            }
+            Some("sync_configured_tag") => {
+                "update rolled back after compose tag sync failure".to_string()
+            }
+            _ => "update rolled back".to_string(),
+        };
+    }
+    "update finished with failures".to_string()
+}
+
 pub(super) async fn run_update_job(
     state: Arc<AppState>,
     job_id: String,
@@ -2116,6 +2142,7 @@ pub(super) async fn run_update_job(
                         evt.step,
                         updater::UpdateProgressStep::PullDone
                             | updater::UpdateProgressStep::UpDone
+                            | updater::UpdateProgressStep::HealthFailed
                             | updater::UpdateProgressStep::HealthDone
                             | updater::UpdateProgressStep::TargetTagPullDone
                             | updater::UpdateProgressStep::SyncTagDone
@@ -2379,11 +2406,7 @@ pub(super) async fn run_update_job(
 
         latest_progress = make_job_progress(
             "done",
-            if final_status == "success" {
-                "update finished".to_string()
-            } else {
-                "update finished with failures".to_string()
-            },
+            update_terminal_message(&final_status, &stack_summaries),
             processed_stacks,
             total_stacks,
             None,

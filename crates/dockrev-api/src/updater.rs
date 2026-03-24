@@ -200,6 +200,7 @@ pub enum UpdateProgressStep {
     UpStart,
     UpDone,
     HealthStart,
+    HealthFailed,
     HealthDone,
     TargetTagPullStart,
     TargetTagPullDone,
@@ -363,13 +364,6 @@ pub fn select_update_services<'a>(
     }
 }
 
-fn failed_summary_with_skipped_anomaly(
-    reason: &str,
-    skipped_version_anomaly: &[serde_json::Value],
-) -> serde_json::Value {
-    failed_summary_with_failure_step(reason, None, skipped_version_anomaly)
-}
-
 fn failed_summary_with_failure_step(
     reason: &str,
     failure_step: Option<&str>,
@@ -412,35 +406,55 @@ fn insert_tag_pull_summary_fields(
     insert_legacy_semver_compat_fields(summary);
 }
 
-fn build_update_summary(
+struct UpdateSummaryInput<'a> {
     changed: u32,
-    old_images: &serde_json::Map<String, serde_json::Value>,
-    new_images: &serde_json::Map<String, serde_json::Value>,
-    target_tags_pulled: &[String],
-    pull_tags_pulled: &[String],
-    pull_tag_warnings: &[serde_json::Value],
-    skipped_version_anomaly: &[serde_json::Value],
+    old_images: &'a serde_json::Map<String, serde_json::Value>,
+    new_images: &'a serde_json::Map<String, serde_json::Value>,
+    final_images: &'a serde_json::Map<String, serde_json::Value>,
+    target_tags_pulled: &'a [String],
+    pull_tags_pulled: &'a [String],
+    pull_tag_warnings: &'a [serde_json::Value],
+    rollback_trigger: Option<&'a str>,
+    skipped_version_anomaly: &'a [serde_json::Value],
+}
+
+fn build_update_summary(
+    input: UpdateSummaryInput<'_>,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut summary = serde_json::Map::new();
-    summary.insert("changedServices".to_string(), json!(changed));
+    summary.insert("changedServices".to_string(), json!(input.changed));
     summary.insert(
         "oldDigests".to_string(),
-        serde_json::Value::Object(old_images.clone()),
+        serde_json::Value::Object(input.old_images.clone()),
     );
     summary.insert(
         "newDigests".to_string(),
-        serde_json::Value::Object(new_images.clone()),
+        serde_json::Value::Object(input.new_images.clone()),
+    );
+    summary.insert(
+        "finalDigests".to_string(),
+        serde_json::Value::Object(input.final_images.clone()),
     );
     insert_tag_pull_summary_fields(
         &mut summary,
-        target_tags_pulled,
-        pull_tags_pulled,
-        pull_tag_warnings,
+        input.target_tags_pulled,
+        input.pull_tags_pulled,
+        input.pull_tag_warnings,
     );
     summary.insert(
         "skippedVersionAnomaly".to_string(),
-        json!(skipped_version_anomaly),
+        json!(input.skipped_version_anomaly),
     );
+    if let Some(trigger) = input.rollback_trigger {
+        summary.insert("failureStep".to_string(), json!(trigger));
+        summary.insert(
+            "rollback".to_string(),
+            json!({
+                "trigger": trigger,
+                "toDigests": input.final_images,
+            }),
+        );
+    }
     summary
 }
 
@@ -539,15 +553,17 @@ pub async fn run_update_job(
     if services.is_empty() {
         return Ok(UpdateOutcome {
             status: "success".to_string(),
-            summary_json: serde_json::Value::Object(build_update_summary(
-                0,
-                &serde_json::Map::new(),
-                &serde_json::Map::new(),
-                &[],
-                &[],
-                &[],
-                &skipped_version_anomaly,
-            )),
+            summary_json: serde_json::Value::Object(build_update_summary(UpdateSummaryInput {
+                changed: 0,
+                old_images: &serde_json::Map::new(),
+                new_images: &serde_json::Map::new(),
+                final_images: &serde_json::Map::new(),
+                target_tags_pulled: &[],
+                pull_tags_pulled: &[],
+                pull_tag_warnings: &[],
+                rollback_trigger: None,
+                skipped_version_anomaly: &skipped_version_anomaly,
+            })),
         });
     }
 
@@ -605,6 +621,7 @@ pub async fn run_update_job(
     let mut changed = 0u32;
     let mut old_images = serde_json::Map::new();
     let mut new_images = serde_json::Map::new();
+    let mut final_images = serde_json::Map::new();
     let mut target_tags_pulled: Vec<String> = Vec::new();
     let mut target_tags_seen: HashSet<String> = HashSet::new();
     let mut pull_tags_pulled: Vec<String> = Vec::new();
@@ -774,6 +791,16 @@ pub async fn run_update_job(
             idempotent_retry_policy,
         )
         .await?;
+        let attempted_image_id = run_to_string_with_retry(
+            runner,
+            docker_runner::inspect_image_id(&docker_cfg, &active_container_id),
+            Duration::from_secs(10),
+            "inspect_image_id",
+            idempotent_retry_policy,
+        )
+        .await?;
+        let attempted_image_id = attempted_image_id.trim().to_string();
+        let mut final_image_id = attempted_image_id.clone();
         let mut rolled_back = false;
         let mut rollback_failure_step: Option<&str> = None;
 
@@ -798,6 +825,18 @@ pub async fn run_update_job(
             )
             .await?;
             if !healthy {
+                rollback_failure_step = Some("healthcheck");
+                emit_update_progress(
+                    progress_events.as_ref(),
+                    UpdateProgressEvent {
+                        step: UpdateProgressStep::HealthFailed,
+                        service_name: svc.name.clone(),
+                        service_index,
+                        service_total,
+                        pull_fraction: None,
+                        message: format!("healthcheck failed for {}; rolling back", svc.name),
+                    },
+                );
                 match rollback_service_after_failed_update(
                     runner,
                     &compose_cfg,
@@ -815,40 +854,42 @@ pub async fn run_update_job(
                     Ok(rollback_container_id) => {
                         active_container_id = rollback_container_id;
                         rolled_back = true;
+                        let rollback_image_id = run_to_string_with_retry(
+                            runner,
+                            docker_runner::inspect_image_id(&docker_cfg, &active_container_id),
+                            Duration::from_secs(10),
+                            "inspect_image_id",
+                            idempotent_retry_policy,
+                        )
+                        .await?;
+                        final_image_id = rollback_image_id.trim().to_string();
                     }
                     Err(err) => {
                         return Ok(UpdateOutcome {
                             status: "failed".to_string(),
-                            summary_json: failed_summary_with_skipped_anomaly(
+                            summary_json: failed_summary_with_failure_step(
                                 err.to_string().as_str(),
+                                Some("healthcheck"),
                                 &skipped_version_anomaly,
                             ),
                         });
                     }
                 }
             }
-            emit_update_progress(
-                progress_events.as_ref(),
-                UpdateProgressEvent {
-                    step: UpdateProgressStep::HealthDone,
-                    service_name: svc.name.clone(),
-                    service_index,
-                    service_total,
-                    pull_fraction: None,
-                    message: format!("healthcheck passed for {}", svc.name),
-                },
-            );
+            if !rolled_back {
+                emit_update_progress(
+                    progress_events.as_ref(),
+                    UpdateProgressEvent {
+                        step: UpdateProgressStep::HealthDone,
+                        service_name: svc.name.clone(),
+                        service_index,
+                        service_total,
+                        pull_fraction: None,
+                        message: format!("healthcheck passed for {}", svc.name),
+                    },
+                );
+            }
         }
-
-        let mut new_image_id = run_to_string_with_retry(
-            runner,
-            docker_runner::inspect_image_id(&docker_cfg, &active_container_id),
-            Duration::from_secs(10),
-            "inspect_image_id",
-            idempotent_retry_policy,
-        )
-        .await?;
-        new_image_id = new_image_id.trim().to_string();
 
         if !rolled_back && let Some(target) = target {
             let repo = strip_tag_and_digest(&svc.image.reference)
@@ -893,7 +934,7 @@ pub async fn run_update_job(
                         active_container_id = rollback_container_id;
                         rolled_back = true;
                         rollback_failure_step = Some("pull_target_tag");
-                        let final_image_id = run_to_string_with_retry(
+                        let rollback_image_id = run_to_string_with_retry(
                             runner,
                             docker_runner::inspect_image_id(&docker_cfg, &active_container_id),
                             Duration::from_secs(10),
@@ -901,7 +942,7 @@ pub async fn run_update_job(
                             idempotent_retry_policy,
                         )
                         .await?;
-                        new_image_id = final_image_id.trim().to_string();
+                        final_image_id = rollback_image_id.trim().to_string();
                     }
                     Err(err) => {
                         return Ok(UpdateOutcome {
@@ -948,7 +989,7 @@ pub async fn run_update_job(
             );
             if let Err(_sync_err) = run_checked_with_retry(
                 runner,
-                docker_runner::tag_image(&docker_cfg, &new_image_id, &svc.image.reference),
+                docker_runner::tag_image(&docker_cfg, &attempted_image_id, &svc.image.reference),
                 Duration::from_secs(30),
                 "sync_configured_tag",
                 idempotent_retry_policy,
@@ -973,7 +1014,7 @@ pub async fn run_update_job(
                         active_container_id = rollback_container_id;
                         rolled_back = true;
                         rollback_failure_step = Some("sync_configured_tag");
-                        let final_image_id = run_to_string_with_retry(
+                        let rollback_image_id = run_to_string_with_retry(
                             runner,
                             docker_runner::inspect_image_id(&docker_cfg, &active_container_id),
                             Duration::from_secs(10),
@@ -981,7 +1022,7 @@ pub async fn run_update_job(
                             idempotent_retry_policy,
                         )
                         .await?;
-                        new_image_id = final_image_id.trim().to_string();
+                        final_image_id = rollback_image_id.trim().to_string();
                     }
                     Err(err) => {
                         return Ok(UpdateOutcome {
@@ -1072,7 +1113,8 @@ pub async fn run_update_job(
             }
         }
 
-        new_images.insert(svc.id.clone(), json!(&new_image_id));
+        new_images.insert(svc.id.clone(), json!(&attempted_image_id));
+        final_images.insert(svc.id.clone(), json!(&final_image_id));
         changed += 1;
 
         if rolled_back {
@@ -1084,21 +1126,37 @@ pub async fn run_update_job(
                     service_index,
                     service_total,
                     pull_fraction: None,
-                    message: format!("service {} rolled back", svc.name),
+                    message: match rollback_failure_step {
+                        Some("healthcheck") => {
+                            format!("service {} rolled back after healthcheck failure", svc.name)
+                        }
+                        Some("pull_target_tag") => {
+                            format!(
+                                "service {} rolled back after target tag pull failure",
+                                svc.name
+                            )
+                        }
+                        Some("sync_configured_tag") => {
+                            format!(
+                                "service {} rolled back after compose tag sync failure",
+                                svc.name
+                            )
+                        }
+                        _ => format!("service {} rolled back", svc.name),
+                    },
                 },
             );
-            let mut summary = build_update_summary(
+            let summary = build_update_summary(UpdateSummaryInput {
                 changed,
-                &old_images,
-                &new_images,
-                &target_tags_pulled,
-                &pull_tags_pulled,
-                &pull_tag_warnings,
-                &skipped_version_anomaly,
-            );
-            if let Some(step) = rollback_failure_step {
-                summary.insert("failureStep".to_string(), json!(step));
-            }
+                old_images: &old_images,
+                new_images: &new_images,
+                final_images: &final_images,
+                target_tags_pulled: &target_tags_pulled,
+                pull_tags_pulled: &pull_tags_pulled,
+                pull_tag_warnings: &pull_tag_warnings,
+                rollback_trigger: rollback_failure_step,
+                skipped_version_anomaly: &skipped_version_anomaly,
+            });
             return Ok(UpdateOutcome {
                 status: "rolled_back".to_string(),
                 summary_json: serde_json::Value::Object(summary),
@@ -1120,15 +1178,17 @@ pub async fn run_update_job(
 
     Ok(UpdateOutcome {
         status: "success".to_string(),
-        summary_json: serde_json::Value::Object(build_update_summary(
+        summary_json: serde_json::Value::Object(build_update_summary(UpdateSummaryInput {
             changed,
-            &old_images,
-            &new_images,
-            &target_tags_pulled,
-            &pull_tags_pulled,
-            &pull_tag_warnings,
-            &skipped_version_anomaly,
-        )),
+            old_images: &old_images,
+            new_images: &new_images,
+            final_images: &final_images,
+            target_tags_pulled: &target_tags_pulled,
+            pull_tags_pulled: &pull_tags_pulled,
+            pull_tag_warnings: &pull_tag_warnings,
+            rollback_trigger: None,
+            skipped_version_anomaly: &skipped_version_anomaly,
+        })),
     })
 }
 
@@ -2421,6 +2481,279 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct HealthRollbackRunner {
+        step: Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl CommandRunner for HealthRollbackRunner {
+        async fn run(
+            &self,
+            spec: CommandSpec,
+            _timeout: Duration,
+        ) -> anyhow::Result<CommandOutput> {
+            let mut step = self.step.lock().unwrap();
+            let out = match *step {
+                0 => {
+                    assert_eq!(spec.program, "docker-compose");
+                    assert!(args_end_with(&spec.args, &["ps", "-q", "web"]));
+                    CommandOutput {
+                        status: 0,
+                        stdout: "old_container\n".to_string(),
+                        stderr: String::new(),
+                    }
+                }
+                1 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec!["inspect", "--format", "{{.Image}}", "old_container"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: "sha256:old\n".to_string(),
+                        stderr: String::new(),
+                    }
+                }
+                2 => {
+                    assert_eq!(spec.program, "docker-compose");
+                    assert!(args_end_with(&spec.args, &["pull", "web"]));
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                }
+                3 => {
+                    assert_eq!(spec.program, "docker-compose");
+                    assert!(args_end_with(&spec.args, &["up", "-d", "web"]));
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                }
+                4 => {
+                    assert_eq!(spec.program, "docker-compose");
+                    assert!(args_end_with(&spec.args, &["ps", "-q", "web"]));
+                    CommandOutput {
+                        status: 0,
+                        stdout: "new_container\n".to_string(),
+                        stderr: String::new(),
+                    }
+                }
+                5 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec![
+                            "inspect",
+                            "--format",
+                            "{{if .State.Health}}1{{else}}0{{end}}",
+                            "new_container"
+                        ]
+                        .into_iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: "1\n".to_string(),
+                        stderr: String::new(),
+                    }
+                }
+                6 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec!["inspect", "--format", "{{.Image}}", "new_container"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: "sha256:new\n".to_string(),
+                        stderr: String::new(),
+                    }
+                }
+                7 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec![
+                            "inspect",
+                            "--format",
+                            "{{.State.Health.Status}}",
+                            "new_container"
+                        ]
+                        .into_iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: "unhealthy\n".to_string(),
+                        stderr: String::new(),
+                    }
+                }
+                8 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec!["image", "tag", "sha256:old", "ghcr.io/org/web:1.0"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                }
+                9 => {
+                    assert_eq!(spec.program, "docker-compose");
+                    assert!(args_end_with(
+                        &spec.args,
+                        &["up", "-d", "--pull", "never", "web"]
+                    ));
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                }
+                10 => {
+                    assert_eq!(spec.program, "docker-compose");
+                    assert!(args_end_with(&spec.args, &["ps", "-q", "web"]));
+                    CommandOutput {
+                        status: 0,
+                        stdout: "rollback_container\n".to_string(),
+                        stderr: String::new(),
+                    }
+                }
+                11 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec![
+                            "inspect",
+                            "--format",
+                            "{{.State.Health.Status}}",
+                            "rollback_container"
+                        ]
+                        .into_iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: "healthy\n".to_string(),
+                        stderr: String::new(),
+                    }
+                }
+                12 => {
+                    assert_eq!(spec.program, "docker");
+                    assert_eq!(
+                        spec.args,
+                        vec!["inspect", "--format", "{{.Image}}", "rollback_container"]
+                            .into_iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    );
+                    CommandOutput {
+                        status: 0,
+                        stdout: "sha256:old\n".to_string(),
+                        stderr: String::new(),
+                    }
+                }
+                _ => panic!(
+                    "unexpected extra command: program={} args={:?}",
+                    spec.program, spec.args
+                ),
+            };
+            *step += 1;
+            Ok(out)
+        }
+    }
+
+    #[tokio::test]
+    async fn healthcheck_failure_rolls_back_with_attempted_and_final_digests() {
+        let stack = single_service_stack("ghcr.io/org/web:1.0", None);
+        let runner = HealthRollbackRunner::default();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<UpdateProgressEvent>();
+
+        let outcome = run_update_job(
+            &runner,
+            "docker-compose",
+            None,
+            IdempotentRetryPolicy {
+                max_attempts: 1,
+                base_ms: 1,
+                max_ms: 2,
+            },
+            &stack,
+            &JobScope::Service,
+            Some("svc_1"),
+            "live",
+            None,
+            false,
+            "ui",
+            None,
+            Some(tx),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.status, "rolled_back");
+        assert_eq!(
+            outcome.summary_json["newDigests"]["svc_1"],
+            json!("sha256:new")
+        );
+        assert_eq!(
+            outcome.summary_json["finalDigests"]["svc_1"],
+            json!("sha256:old")
+        );
+        assert_eq!(
+            outcome.summary_json["failureStep"].as_str(),
+            Some("healthcheck")
+        );
+        assert_eq!(
+            outcome.summary_json["rollback"]["trigger"],
+            json!("healthcheck")
+        );
+        assert_eq!(
+            outcome.summary_json["rollback"]["toDigests"]["svc_1"],
+            json!("sha256:old")
+        );
+
+        let mut steps = Vec::new();
+        let mut messages = Vec::new();
+        while let Ok(evt) = rx.try_recv() {
+            steps.push(evt.step);
+            messages.push(evt.message);
+        }
+        assert!(steps.contains(&UpdateProgressStep::HealthStart));
+        assert!(steps.contains(&UpdateProgressStep::HealthFailed));
+        assert!(!steps.contains(&UpdateProgressStep::HealthDone));
+        assert!(
+            messages
+                .iter()
+                .any(|msg| msg.contains("healthcheck failed"))
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|msg| msg.contains("rolled back after healthcheck failure"))
+        );
+        assert_eq!(*runner.step.lock().unwrap(), 13);
+    }
+
+    #[derive(Default)]
     struct SyncTagRollbackRunner {
         step: Mutex<usize>,
     }
@@ -2777,11 +3110,23 @@ mod tests {
         assert_eq!(outcome.status, "rolled_back");
         assert_eq!(
             outcome.summary_json["newDigests"]["svc_1"],
+            json!("sha256:new")
+        );
+        assert_eq!(
+            outcome.summary_json["finalDigests"]["svc_1"],
             json!("sha256:old")
         );
         assert_eq!(
             outcome.summary_json["failureStep"].as_str(),
             Some("sync_configured_tag")
+        );
+        assert_eq!(
+            outcome.summary_json["rollback"]["trigger"],
+            json!("sync_configured_tag")
+        );
+        assert_eq!(
+            outcome.summary_json["rollback"]["toDigests"]["svc_1"],
+            json!("sha256:old")
         );
         assert_eq!(*runner.step.lock().unwrap(), 12);
     }
@@ -3498,6 +3843,18 @@ mod tests {
         assert_eq!(outcome.summary_json["targetTagsPulled"], json!([]));
         assert_eq!(
             outcome.summary_json["newDigests"]["svc_1"],
+            json!("sha256:new")
+        );
+        assert_eq!(
+            outcome.summary_json["finalDigests"]["svc_1"],
+            json!("sha256:old")
+        );
+        assert_eq!(
+            outcome.summary_json["rollback"]["trigger"],
+            json!("pull_target_tag")
+        );
+        assert_eq!(
+            outcome.summary_json["rollback"]["toDigests"]["svc_1"],
             json!("sha256:old")
         );
     }
