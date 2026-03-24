@@ -181,6 +181,31 @@ fn trim_nonempty(input: Option<&str>) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn image_repo_key_from_image_ref(image_ref: &str) -> Option<String> {
+    let trimmed = image_ref.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    crate::snapshot_worker::image_repo_from_image_ref(trimmed).or_else(|| Some(trimmed.to_string()))
+}
+
+fn resolved_tag_for_digest_from_snapshot(
+    snapshot_entry: &DigestSnapshotCacheValue,
+    raw_tag: &str,
+) -> Option<String> {
+    let ready = crate::notify::notification_snapshot_is_ready(
+        &snapshot_entry.snapshot,
+        snapshot_entry.snapshot.checked_at.as_str(),
+    );
+    ready
+        .then(|| {
+            infer_semver_tags_from_snapshot(&snapshot_entry.snapshot, raw_tag)
+                .into_iter()
+                .next()
+        })
+        .flatten()
+}
+
 pub(super) fn merge_inferred_resolved_tag(
     persisted_resolved_tag: Option<&str>,
     inferred_first: Option<String>,
@@ -193,29 +218,33 @@ pub(super) fn merge_inferred_resolved_tag(
     trim_nonempty(persisted_resolved_tag)
 }
 
-pub(super) async fn resolve_current_running_resolved_tag(
+pub(super) async fn resolve_resolved_tag_for_digest(
     state: &Arc<AppState>,
     image_ref: &str,
-    image_tag: &str,
-    current_digest: Option<&str>,
-    current_resolved_tag: Option<&str>,
+    raw_tag: Option<&str>,
+    digest: Option<&str>,
+    persisted_resolved_tag: Option<&str>,
 ) -> Result<Option<String>, ApiError> {
-    if ignore::is_strict_semver(image_tag) {
-        return Ok(trim_nonempty(current_resolved_tag));
+    let Some(raw_tag) = raw_tag.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(trim_nonempty(persisted_resolved_tag));
+    };
+
+    if ignore::is_strict_semver(raw_tag) {
+        return Ok(trim_nonempty(persisted_resolved_tag));
     }
 
     let Some(image_repo) = snapshot_worker::image_repo_from_image_ref(image_ref) else {
-        return Ok(trim_nonempty(current_resolved_tag));
+        return Ok(trim_nonempty(persisted_resolved_tag));
     };
-    let Some(current_digest) = current_digest.and_then(snapshot_worker::normalize_digest) else {
-        return Ok(trim_nonempty(current_resolved_tag));
+    let Some(digest) = digest.and_then(snapshot_worker::normalize_digest) else {
+        return Ok(trim_nonempty(persisted_resolved_tag));
     };
     let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
         .unwrap_or_else(|| "linux/amd64".to_string());
 
     let snapshot_entry = state
         .db
-        .get_image_digest_tags_snapshot(&image_repo, &current_digest, &host_platform)
+        .get_image_digest_tags_snapshot(&image_repo, &digest, &host_platform)
         .await
         .map_err(map_internal)?
         .as_ref()
@@ -224,22 +253,246 @@ pub(super) async fn resolve_current_running_resolved_tag(
         });
 
     let Some(snapshot_entry) = snapshot_entry.as_ref() else {
-        return Ok(trim_nonempty(current_resolved_tag));
+        return Ok(trim_nonempty(persisted_resolved_tag));
     };
 
-    let tags = infer_semver_tags_from_snapshot(&snapshot_entry.snapshot, image_tag);
-    let inferred_first = tags.first().cloned();
+    let inferred_first = resolved_tag_for_digest_from_snapshot(snapshot_entry, raw_tag);
     let scan_has_failures = snapshot_entry.snapshot.scan.manifests_timeout > 0
         || snapshot_entry.snapshot.scan.manifests_error > 0;
     let scan_is_complete = snapshot_entry.snapshot.scan.repo_tags_considered
         >= snapshot_entry.snapshot.scan.repo_tags_total;
 
     Ok(merge_inferred_resolved_tag(
-        current_resolved_tag,
+        persisted_resolved_tag,
         inferred_first,
         scan_has_failures,
         scan_is_complete,
     ))
+}
+
+pub(super) async fn resolve_current_running_resolved_tag(
+    state: &Arc<AppState>,
+    image_ref: &str,
+    image_tag: &str,
+    current_digest: Option<&str>,
+    current_resolved_tag: Option<&str>,
+) -> Result<Option<String>, ApiError> {
+    resolve_resolved_tag_for_digest(
+        state,
+        image_ref,
+        Some(image_tag),
+        current_digest,
+        current_resolved_tag,
+    )
+    .await
+}
+
+pub(super) async fn resolve_candidate_resolved_tag(
+    state: &Arc<AppState>,
+    service_id: &str,
+    image_ref: &str,
+    current_tag: &str,
+    candidate_tag: Option<&str>,
+    candidate_digest: Option<&str>,
+    candidate_resolved_tag: Option<&str>,
+) -> Result<Option<String>, ApiError> {
+    let resolved = resolve_resolved_tag_for_digest(
+        state,
+        image_ref,
+        candidate_tag,
+        candidate_digest,
+        candidate_resolved_tag,
+    )
+    .await?;
+    let raw_candidate_tag = candidate_tag.unwrap_or_default();
+    if crate::db::stable_candidate_display_tag(raw_candidate_tag, resolved.as_deref().unwrap_or(""))
+        .is_some()
+    {
+        return Ok(resolved);
+    }
+
+    let Some(candidate_digest) = candidate_digest.and_then(snapshot_worker::normalize_digest)
+    else {
+        return Ok(resolved);
+    };
+    let notification_image_ref =
+        image_repo_key_from_image_ref(image_ref).unwrap_or_else(|| image_ref.trim().to_string());
+    let notification_tags = state
+        .db
+        .list_stable_candidate_display_tags_for_notification_targets(&[(
+            service_id.to_string(),
+            notification_image_ref,
+            current_tag.to_string(),
+            candidate_digest,
+        )])
+        .await
+        .map_err(map_internal)?;
+    let fallback = notification_tags.values().next().and_then(|tags| {
+        crate::db::stable_candidate_display_tag_from_tags(raw_candidate_tag, tags)
+    });
+    Ok(fallback.or(resolved))
+}
+
+pub(super) async fn resolve_discovery_stable_tags_by_provenance(
+    state: &Arc<AppState>,
+    rows: &[crate::db::NewVersionDiscoveryRow],
+) -> Result<
+    std::collections::HashMap<(String, String, String, String), std::collections::BTreeSet<String>>,
+    ApiError,
+> {
+    use std::collections::{BTreeSet, HashMap};
+
+    let notification_targets = crate::db::new_version_discovery_notification_targets(rows);
+    let notification_tags = state
+        .db
+        .list_stable_candidate_display_tags_for_notification_targets(&notification_targets)
+        .await
+        .map_err(map_internal)?;
+    if rows.is_empty() {
+        return Ok(notification_tags);
+    }
+
+    let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
+        .unwrap_or_else(|| "linux/amd64".to_string());
+    let snapshot_targets = rows
+        .iter()
+        .filter(|row| {
+            crate::db::stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag)
+                .is_none()
+        })
+        .filter_map(|row| {
+            let image_repo = image_repo_key_from_image_ref(&row.image_ref)?;
+            let digest = snapshot_worker::normalize_digest(&row.candidate_digest)?;
+            Some((image_repo, digest))
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    let snapshot_rows = state
+        .db
+        .list_image_digest_tags_snapshots_for_targets(&host_platform, &snapshot_targets)
+        .await
+        .map_err(map_internal)?;
+    let snapshot_cache = snapshot_rows
+        .into_iter()
+        .filter_map(|row| {
+            parse_digest_snapshot_row(&row.snapshot_json, &row.checked_at)
+                .map(|entry| ((row.image_repo, row.digest), entry))
+        })
+        .collect::<HashMap<_, _>>();
+
+    let mut combined =
+        HashMap::<(String, String, String, String), std::collections::BTreeSet<String>>::new();
+    for row in rows {
+        let Some(digest) = snapshot_worker::normalize_digest(&row.candidate_digest) else {
+            continue;
+        };
+        let key = (
+            row.service_id.clone(),
+            row.image_ref.clone(),
+            row.current_tag.clone(),
+            digest.clone(),
+        );
+        if crate::db::stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag)
+            .is_some()
+        {
+            continue;
+        }
+
+        let snapshot_tag = image_repo_key_from_image_ref(&row.image_ref)
+            .and_then(|image_repo| snapshot_cache.get(&(image_repo, digest.clone())))
+            .and_then(|entry| resolved_tag_for_digest_from_snapshot(entry, &row.candidate_tag))
+            .map(|tag| crate::db::canonical_visible_version_tag(&tag));
+        if let Some(snapshot_tag) = snapshot_tag {
+            combined.entry(key).or_default().insert(snapshot_tag);
+            continue;
+        }
+
+        if let Some(tags) = notification_tags.get(&key) {
+            combined.entry(key).or_insert_with(|| tags.clone());
+        }
+    }
+
+    Ok(combined)
+}
+
+async fn apply_candidate_notification_fallbacks(
+    state: &Arc<AppState>,
+    stack: &mut StackRecord,
+) -> Result<(), ApiError> {
+    use std::collections::HashMap;
+
+    let targets = stack
+        .services
+        .iter()
+        .filter_map(|service| {
+            let candidate = service.candidate.as_ref()?;
+            if crate::db::stable_candidate_display_tag(
+                &candidate.tag,
+                candidate.resolved_tag.as_deref().unwrap_or(""),
+            )
+            .is_some()
+            {
+                return None;
+            }
+            let digest = snapshot_worker::normalize_digest(&candidate.digest)?;
+            let image_ref = image_repo_key_from_image_ref(&service.image.reference)
+                .unwrap_or_else(|| service.image.reference.trim().to_string());
+            Some((
+                service.id.clone(),
+                image_ref,
+                service.image.tag.clone(),
+                digest,
+            ))
+        })
+        .collect::<Vec<_>>();
+    if targets.is_empty() {
+        return Ok(());
+    }
+
+    let notification_tags = state
+        .db
+        .list_stable_candidate_display_tags_for_notification_targets(&targets)
+        .await
+        .map_err(map_internal)?;
+    let notification_tags = notification_tags.into_iter().collect::<HashMap<_, _>>();
+
+    for service in &mut stack.services {
+        let Some(candidate) = service.candidate.as_mut() else {
+            continue;
+        };
+        if crate::db::stable_candidate_display_tag(
+            &candidate.tag,
+            candidate.resolved_tag.as_deref().unwrap_or(""),
+        )
+        .is_some()
+        {
+            continue;
+        }
+        let Some(candidate_digest) = snapshot_worker::normalize_digest(&candidate.digest) else {
+            continue;
+        };
+        let image_ref = image_repo_key_from_image_ref(&service.image.reference)
+            .unwrap_or_else(|| service.image.reference.trim().to_string());
+        let key = (
+            service.id.clone(),
+            image_ref,
+            service.image.tag.clone(),
+            candidate_digest,
+        );
+        let Some(tags) = notification_tags.get(&key) else {
+            continue;
+        };
+        let Some(resolved_tag) =
+            crate::db::stable_candidate_display_tag_from_tags(&candidate.tag, tags)
+        else {
+            continue;
+        };
+        candidate.resolved_tag = Some(resolved_tag);
+    }
+
+    Ok(())
 }
 
 pub(super) async fn enrich_stack_with_version_inference(
@@ -438,6 +691,8 @@ pub(super) async fn enrich_stack_with_version_inference(
         });
     }
 
+    apply_candidate_notification_fallbacks(state, stack).await?;
+
     Ok(())
 }
 
@@ -452,7 +707,7 @@ async fn enrich_stack_with_new_version_discovery_counts(
     state: &Arc<AppState>,
     stack: &mut StackRecord,
 ) -> Result<(), ApiError> {
-    use std::collections::{BTreeSet, HashMap};
+    use std::collections::HashMap;
 
     let contexts = stack
         .services
@@ -492,6 +747,8 @@ async fn enrich_stack_with_new_version_discovery_counts(
         .list_new_version_discoveries_for_services(&contexts.keys().cloned().collect::<Vec<_>>())
         .await
         .map_err(map_internal)?;
+    let effective_stable_tags_by_provenance =
+        resolve_discovery_stable_tags_by_provenance(state, &discovery_rows).await?;
     let rows_by_service = discovery_rows.into_iter().fold(
         HashMap::<String, Vec<crate::db::NewVersionDiscoveryRow>>::new(),
         |mut acc, row| {
@@ -499,38 +756,6 @@ async fn enrich_stack_with_new_version_discovery_counts(
             acc
         },
     );
-
-    let notification_targets = rows_by_service
-        .values()
-        .flat_map(|rows| {
-            rows.iter()
-                .filter(|row| {
-                    crate::db::stable_candidate_display_tag(
-                        &row.candidate_tag,
-                        &row.candidate_display_tag,
-                    )
-                    .is_none()
-                })
-                .filter_map(|row| {
-                    snapshot_worker::normalize_digest(&row.candidate_digest).map(|digest| {
-                        (
-                            row.service_id.clone(),
-                            row.image_ref.clone(),
-                            row.current_tag.clone(),
-                            digest,
-                        )
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let notification_tags = state
-        .db
-        .list_stable_candidate_display_tags_for_notification_targets(&notification_targets)
-        .await
-        .map_err(map_internal)?;
 
     for service in stack.services.iter_mut() {
         let Some(context) = contexts.get(&service.id) else {
@@ -545,7 +770,7 @@ async fn enrich_stack_with_new_version_discovery_counts(
             &context.current_digest,
             &context.current_display_tag,
             &context.current_tag,
-            &notification_tags,
+            &effective_stable_tags_by_provenance,
         );
         service.new_version_discovery_count = (count > 0).then_some(count);
     }
