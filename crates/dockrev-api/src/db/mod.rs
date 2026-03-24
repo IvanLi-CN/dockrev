@@ -20,10 +20,11 @@ mod snapshots;
 mod stacks;
 
 pub(crate) use new_version_discoveries::{
-    canonical_candidate_identity_tag, canonical_visible_version_tag,
-    collect_new_version_discovery_candidates_from_rows, count_new_version_discoveries_from_rows,
-    infer_stable_candidate_display_tag_from_rows, new_version_discovery_notification_targets,
-    normalize_discovery_key, stable_candidate_display_tag, stable_candidate_display_tag_from_tags,
+    candidate_tag_allows_settled_fallback, canonical_candidate_identity_tag,
+    canonical_visible_version_tag, collect_new_version_discovery_candidates_from_rows,
+    count_new_version_discoveries_from_rows, infer_stable_candidate_display_tag_from_rows,
+    new_version_discovery_notification_targets, normalize_discovery_key,
+    stable_candidate_display_tag, stable_candidate_display_tag_from_tags,
 };
 
 use crate::api::types::{

@@ -307,6 +307,7 @@ pub(super) async fn resolve_candidate_resolved_tag(
     let raw_candidate_tag = candidate_tag.unwrap_or_default();
     if crate::db::stable_candidate_display_tag(raw_candidate_tag, resolved.as_deref().unwrap_or(""))
         .is_some()
+        || !crate::db::candidate_tag_allows_settled_fallback(raw_candidate_tag)
     {
         return Ok(resolved);
     }
@@ -315,8 +316,9 @@ pub(super) async fn resolve_candidate_resolved_tag(
     else {
         return Ok(resolved);
     };
-    let notification_image_ref =
-        image_repo_key_from_image_ref(image_ref).unwrap_or_else(|| image_ref.trim().to_string());
+    let Some(notification_image_ref) = trim_nonempty(Some(image_ref)) else {
+        return Ok(resolved);
+    };
     let notification_tags = state
         .db
         .list_stable_candidate_display_tags_for_notification_targets(&[(
@@ -399,6 +401,9 @@ pub(super) async fn resolve_discovery_stable_tags_by_provenance(
         {
             continue;
         }
+        if !crate::db::candidate_tag_allows_settled_fallback(&row.candidate_tag) {
+            continue;
+        }
 
         let snapshot_tag = image_repo_key_from_image_ref(&row.image_ref)
             .and_then(|image_repo| snapshot_cache.get(&(image_repo, digest.clone())))
@@ -436,9 +441,11 @@ async fn apply_candidate_notification_fallbacks(
             {
                 return None;
             }
+            if !crate::db::candidate_tag_allows_settled_fallback(&candidate.tag) {
+                return None;
+            }
             let digest = snapshot_worker::normalize_digest(&candidate.digest)?;
-            let image_ref = image_repo_key_from_image_ref(&service.image.reference)
-                .unwrap_or_else(|| service.image.reference.trim().to_string());
+            let image_ref = trim_nonempty(Some(service.image.reference.as_str()))?;
             Some((
                 service.id.clone(),
                 image_ref,
@@ -473,8 +480,9 @@ async fn apply_candidate_notification_fallbacks(
         let Some(candidate_digest) = snapshot_worker::normalize_digest(&candidate.digest) else {
             continue;
         };
-        let image_ref = image_repo_key_from_image_ref(&service.image.reference)
-            .unwrap_or_else(|| service.image.reference.trim().to_string());
+        let Some(image_ref) = trim_nonempty(Some(service.image.reference.as_str())) else {
+            continue;
+        };
         let key = (
             service.id.clone(),
             image_ref,

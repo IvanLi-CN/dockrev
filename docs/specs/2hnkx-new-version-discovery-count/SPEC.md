@@ -72,6 +72,8 @@
   - 持久化 `candidate_resolved_tag`；
   - 同 `(service_id, image_ref, current_tag, candidate_digest)` 的稳定通知记录；
   - 最后才回退原始 `candidateTag` / `candidateDigest`。
+- 上述 snapshot / notification settled fallback 只适用于仍 unresolved 的原始候选 tag（例如 `latest`、`stable`、`main`、`15-alpine` 或空 tag）；显式 pinned / strict-semver 候选必须保留自己的原始候选身份，不得被 fallback 改写成另一个 plain semver 标签。
+- notification fallback 的 provenance 匹配继续使用原始 `image_ref` 精确值；只允许 snapshot lookup 为了 digest tags 缓存命中做 repo-key 规范化，不能把 notification 的 `(service_id, image_ref, current_tag, candidate_digest)` 读写两端改成不同 key。
 - `GET /api/services/{serviceId}/new-version-discovery-timeline` 中 `items[].kind === "currentRunning"` 的 `version` 必须与列表当前版本显示共享同一套当前 digest 归一逻辑：
   - 优先使用当前 digest 对应 snapshot 推断出的稳定版本；
   - 若 snapshot 不可用或无法给出稳定版本，则回退到持久化 `current_resolved_tag`；
@@ -101,6 +103,7 @@
 - Given 更新候选列表与聚合预览同时展示同一服务，When `newVersionDiscoveryCount` 存在，Then 两处都显示 `发现 N 次` 且不覆盖原备注。
 - Given 当前服务的 DB 持久化 `current_resolved_tag` 已过时，但当前 digest 的 snapshot 已经解析出新的稳定版本，When 同时请求 stack 详情和版本发现时间线，Then 列表当前版本与时间线 `currentRunning.version` 必须显示为同一个版本。
 - Given 当前服务的 DB 持久化 `candidate_resolved_tag` 仍是 `latest` 或为空，但当前候选 digest 的 snapshot 已经解析出稳定版本，When 同时请求 stack 详情和版本发现时间线，Then 列表候选版本与时间线 `currentCandidate.version` 必须显示为同一个稳定版本。
+- Given 当前候选只依赖 notification fallback 且通知记录里的 `image_ref` 保留为完整原始镜像引用（例如 `ghcr.io/acme/web:latest`），When 请求列表或时间线候选版本，Then fallback 仍必须命中同一条 notification provenance，而不是因为读取端把 `image_ref` 先裁成 repo key 而失效。
 - Given 当前服务已经有稳定基线（例如 `currentDigest=sha256:*` 且 `currentDisplayTag=v1.20.6`），When 历史 discovery 里存在更早的 unresolved 行（`currentDigest=''` 且 `currentDisplayTag=latest`），Then 这些更早的浮动 alias 基线不得再并入当前稳定基线的 count 或 timeline。
 - Given 当前服务自己仍处于 unresolved alias 基线（例如 `currentTag=latest` 且没有稳定 `currentDigest/currentDisplayTag`），When 历史 discovery 也都属于同一个 alias 基线，Then timeline 仍保留这些 alias 历史，不做过度过滤。
 - Given 历史 discovery 在 raw candidate tag 为 `latest` 时先后解析出 `3.2.14-r0-ls73` 与 `3.2.14`，When 统计 count 或构造 timeline，Then 这些记录按同一个候选版本折叠；但若 raw candidate tag 本身就是显式 pinned suffix tag，则仍保持为不同候选。

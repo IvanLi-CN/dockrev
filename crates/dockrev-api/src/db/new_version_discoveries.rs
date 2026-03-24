@@ -59,6 +59,12 @@ pub(crate) fn stable_candidate_display_tag<'a>(
     crate::ignore::is_strict_semver(candidate_display_tag).then_some(candidate_display_tag)
 }
 
+pub(crate) fn candidate_tag_allows_settled_fallback(raw_candidate_tag: &str) -> bool {
+    let raw_candidate_tag = raw_candidate_tag.trim();
+    raw_candidate_tag.is_empty()
+        || crate::notify::notification_tag_requires_settle(raw_candidate_tag, raw_candidate_tag)
+}
+
 pub(crate) fn canonical_visible_version_tag(tag: &str) -> String {
     let tag = tag.trim();
     if let Some(normalized) = dockrev_common::normalized_semver_from_oci_version(tag) {
@@ -124,8 +130,19 @@ pub(crate) fn stable_candidate_display_tag_from_tags(
     raw_candidate_tag: &str,
     tags: &std::collections::BTreeSet<String>,
 ) -> Option<String> {
+    let raw_candidate_tag = raw_candidate_tag.trim();
     if tags.len() == 1 {
-        return tags.iter().next().cloned();
+        let tag = tags.iter().next().cloned()?;
+        if candidate_tag_allows_settled_fallback(raw_candidate_tag) {
+            return Some(tag);
+        }
+        if !raw_candidate_tag.is_empty()
+            && canonical_visible_version_tag(raw_candidate_tag)
+                == canonical_visible_version_tag(&tag)
+        {
+            return Some(tag);
+        }
+        return None;
     }
     if is_floating_alias_tag(raw_candidate_tag) {
         let semver_cores = tags
