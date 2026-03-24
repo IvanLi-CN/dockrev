@@ -406,48 +406,52 @@ fn insert_tag_pull_summary_fields(
     insert_legacy_semver_compat_fields(summary);
 }
 
-fn build_update_summary(
+struct UpdateSummaryInput<'a> {
     changed: u32,
-    old_images: &serde_json::Map<String, serde_json::Value>,
-    new_images: &serde_json::Map<String, serde_json::Value>,
-    final_images: &serde_json::Map<String, serde_json::Value>,
-    target_tags_pulled: &[String],
-    pull_tags_pulled: &[String],
-    pull_tag_warnings: &[serde_json::Value],
-    rollback_trigger: Option<&str>,
-    skipped_version_anomaly: &[serde_json::Value],
+    old_images: &'a serde_json::Map<String, serde_json::Value>,
+    new_images: &'a serde_json::Map<String, serde_json::Value>,
+    final_images: &'a serde_json::Map<String, serde_json::Value>,
+    target_tags_pulled: &'a [String],
+    pull_tags_pulled: &'a [String],
+    pull_tag_warnings: &'a [serde_json::Value],
+    rollback_trigger: Option<&'a str>,
+    skipped_version_anomaly: &'a [serde_json::Value],
+}
+
+fn build_update_summary(
+    input: UpdateSummaryInput<'_>,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut summary = serde_json::Map::new();
-    summary.insert("changedServices".to_string(), json!(changed));
+    summary.insert("changedServices".to_string(), json!(input.changed));
     summary.insert(
         "oldDigests".to_string(),
-        serde_json::Value::Object(old_images.clone()),
+        serde_json::Value::Object(input.old_images.clone()),
     );
     summary.insert(
         "newDigests".to_string(),
-        serde_json::Value::Object(new_images.clone()),
+        serde_json::Value::Object(input.new_images.clone()),
     );
     summary.insert(
         "finalDigests".to_string(),
-        serde_json::Value::Object(final_images.clone()),
+        serde_json::Value::Object(input.final_images.clone()),
     );
     insert_tag_pull_summary_fields(
         &mut summary,
-        target_tags_pulled,
-        pull_tags_pulled,
-        pull_tag_warnings,
+        input.target_tags_pulled,
+        input.pull_tags_pulled,
+        input.pull_tag_warnings,
     );
     summary.insert(
         "skippedVersionAnomaly".to_string(),
-        json!(skipped_version_anomaly),
+        json!(input.skipped_version_anomaly),
     );
-    if let Some(trigger) = rollback_trigger {
+    if let Some(trigger) = input.rollback_trigger {
         summary.insert("failureStep".to_string(), json!(trigger));
         summary.insert(
             "rollback".to_string(),
             json!({
                 "trigger": trigger,
-                "toDigests": final_images,
+                "toDigests": input.final_images,
             }),
         );
     }
@@ -549,17 +553,17 @@ pub async fn run_update_job(
     if services.is_empty() {
         return Ok(UpdateOutcome {
             status: "success".to_string(),
-            summary_json: serde_json::Value::Object(build_update_summary(
-                0,
-                &serde_json::Map::new(),
-                &serde_json::Map::new(),
-                &serde_json::Map::new(),
-                &[],
-                &[],
-                &[],
-                None,
-                &skipped_version_anomaly,
-            )),
+            summary_json: serde_json::Value::Object(build_update_summary(UpdateSummaryInput {
+                changed: 0,
+                old_images: &serde_json::Map::new(),
+                new_images: &serde_json::Map::new(),
+                final_images: &serde_json::Map::new(),
+                target_tags_pulled: &[],
+                pull_tags_pulled: &[],
+                pull_tag_warnings: &[],
+                rollback_trigger: None,
+                skipped_version_anomaly: &skipped_version_anomaly,
+            })),
         });
     }
 
@@ -1142,17 +1146,17 @@ pub async fn run_update_job(
                     },
                 },
             );
-            let summary = build_update_summary(
+            let summary = build_update_summary(UpdateSummaryInput {
                 changed,
-                &old_images,
-                &new_images,
-                &final_images,
-                &target_tags_pulled,
-                &pull_tags_pulled,
-                &pull_tag_warnings,
-                rollback_failure_step,
-                &skipped_version_anomaly,
-            );
+                old_images: &old_images,
+                new_images: &new_images,
+                final_images: &final_images,
+                target_tags_pulled: &target_tags_pulled,
+                pull_tags_pulled: &pull_tags_pulled,
+                pull_tag_warnings: &pull_tag_warnings,
+                rollback_trigger: rollback_failure_step,
+                skipped_version_anomaly: &skipped_version_anomaly,
+            });
             return Ok(UpdateOutcome {
                 status: "rolled_back".to_string(),
                 summary_json: serde_json::Value::Object(summary),
@@ -1174,17 +1178,17 @@ pub async fn run_update_job(
 
     Ok(UpdateOutcome {
         status: "success".to_string(),
-        summary_json: serde_json::Value::Object(build_update_summary(
+        summary_json: serde_json::Value::Object(build_update_summary(UpdateSummaryInput {
             changed,
-            &old_images,
-            &new_images,
-            &final_images,
-            &target_tags_pulled,
-            &pull_tags_pulled,
-            &pull_tag_warnings,
-            None,
-            &skipped_version_anomaly,
-        )),
+            old_images: &old_images,
+            new_images: &new_images,
+            final_images: &final_images,
+            target_tags_pulled: &target_tags_pulled,
+            pull_tags_pulled: &pull_tags_pulled,
+            pull_tag_warnings: &pull_tag_warnings,
+            rollback_trigger: None,
+            skipped_version_anomaly: &skipped_version_anomaly,
+        })),
     })
 }
 
