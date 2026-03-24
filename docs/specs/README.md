@@ -100,3 +100,4 @@
 | saqkf | Dockrev：GHCR 添加 Repo 弹窗加宽 + 镜像/部署筛选 | 已完成 | `saqkf-ghcr-picker-width-linked-filters/SPEC.md` | 2026-03-19 | fast-track（GHCR linked/deployed metadata + picker scope filter + review-loop fixes） |
 | wpnmt | Dockrev：digest-only 镜像引用解析与 Discovery 临时 override 回退 | 已完成 | `wpnmt-digest-only-image-ref-discovery-fallback/SPEC.md` | 2026-03-21 | fast-track |
 | 5umc8 | Dockrev：发现次数气泡改为版本时间线 | 已完成 | `5umc8-discovery-count-timeline/SPEC.md` | 2026-03-22 | fast-track（runtime startedAt 真相源 + discovery timeline lazy API + shared hover-pin popover；PR #176 restores count/timeline parity for repeated unresolved alias history and live alias dedupe） |
+| tvat2 | Dockrev：修复 Update Job 回滚后的 digest 摘要与健康进度误报 | 部分完成（4/5） | `tvat2-update-job-rollback-digest-contract/SPEC.md` | 2026-03-24 | fast-track（backend contract + tests + storybook rollback evidence；awaiting PR-ready push approval for screenshot-bearing branch） |

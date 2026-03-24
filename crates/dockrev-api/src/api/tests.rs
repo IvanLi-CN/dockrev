@@ -1290,6 +1290,160 @@ impl CommandRunner for UpdateAndRuntimeScanRunner {
     }
 }
 
+#[derive(Default)]
+struct HealthRollbackUpdateRunner {
+    step: std::sync::Mutex<usize>,
+}
+
+#[async_trait::async_trait]
+impl CommandRunner for HealthRollbackUpdateRunner {
+    async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        let mut step = self.step.lock().unwrap();
+        let out = match *step {
+            0 if spec
+                .args
+                .ends_with(&["ps".to_string(), "-q".to_string(), "web".to_string()]) =>
+            {
+                CommandOutput {
+                    status: 0,
+                    stdout: "container_old\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            1 if spec.args == vec!["inspect", "--format", "{{.Image}}", "container_old"] => {
+                CommandOutput {
+                    status: 0,
+                    stdout: "sha256:old\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            2 if spec
+                .args
+                .ends_with(&["pull".to_string(), "web".to_string()]) =>
+            {
+                CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }
+            }
+            3 if spec
+                .args
+                .ends_with(&["up".to_string(), "-d".to_string(), "web".to_string()]) =>
+            {
+                CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }
+            }
+            4 if spec
+                .args
+                .ends_with(&["ps".to_string(), "-q".to_string(), "web".to_string()]) =>
+            {
+                CommandOutput {
+                    status: 0,
+                    stdout: "container_new\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            5 if spec.args
+                == vec![
+                    "inspect",
+                    "--format",
+                    "{{if .State.Health}}1{{else}}0{{end}}",
+                    "container_new",
+                ] =>
+            {
+                CommandOutput {
+                    status: 0,
+                    stdout: "1\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            6 if spec.args == vec!["inspect", "--format", "{{.Image}}", "container_new"] => {
+                CommandOutput {
+                    status: 0,
+                    stdout: "sha256:new\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            7 if spec.args
+                == vec![
+                    "inspect",
+                    "--format",
+                    "{{.State.Health.Status}}",
+                    "container_new",
+                ] =>
+            {
+                CommandOutput {
+                    status: 0,
+                    stdout: "unhealthy\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            8 if spec.args == vec!["image", "tag", "sha256:old", "ghcr.io/acme/web:5.2"] => {
+                CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }
+            }
+            9 if spec.args.ends_with(&[
+                "up".to_string(),
+                "-d".to_string(),
+                "--pull".to_string(),
+                "never".to_string(),
+                "web".to_string(),
+            ]) =>
+            {
+                CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }
+            }
+            10 if spec
+                .args
+                .ends_with(&["ps".to_string(), "-q".to_string(), "web".to_string()]) =>
+            {
+                CommandOutput {
+                    status: 0,
+                    stdout: "container_rollback\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            11 if spec.args
+                == vec![
+                    "inspect",
+                    "--format",
+                    "{{.State.Health.Status}}",
+                    "container_rollback",
+                ] =>
+            {
+                CommandOutput {
+                    status: 0,
+                    stdout: "healthy\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            12 if spec.args == vec!["inspect", "--format", "{{.Image}}", "container_rollback"] => {
+                CommandOutput {
+                    status: 0,
+                    stdout: "sha256:old\n".to_string(),
+                    stderr: String::new(),
+                }
+            }
+            _ => panic!(
+                "unexpected command at step {}: program={} args={:?}",
+                *step, spec.program, spec.args
+            ),
+        };
+        *step += 1;
+        Ok(out)
+    }
+}
+
 #[derive(Clone, Default)]
 struct CountingRegistry {
     calls: Arc<std::sync::Mutex<std::collections::BTreeMap<String, u32>>>,
@@ -11673,6 +11827,10 @@ services:
         Some("sha256:new")
     );
     assert_eq!(
+        update["finalDigests"][svc.id.as_str()].as_str(),
+        Some("sha256:new")
+    );
+    assert_eq!(
         update["targetTagsPulled"],
         json!(["ghcr.io/acme/web:latest"])
     );
@@ -11695,6 +11853,121 @@ services:
             .unwrap_or_default()
             .contains("status=1"),
         "unexpected update summary: {update}"
+    );
+}
+
+#[tokio::test]
+async fn update_apply_healthcheck_rollback_exposes_attempted_and_final_digests_via_api() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(FakeRegistry),
+        Arc::new(HealthRollbackUpdateRunner::default()),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!(
+        "/tmp/dockrev-update-health-rollback-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            Some("sha256:old".to_string()),
+            None,
+            None,
+            Some("5.2".to_string()),
+            Some("5.2".to_string()),
+            Some("sha256:new".to_string()),
+            Some("match".to_string()),
+            Some("[\"linux/amd64\"]".to_string()),
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let update = serde_json::json!({
+        "scope": "service",
+        "stackId": stack_id,
+        "serviceId": service.id,
+        "targetTag": "5.2",
+        "targetDigest": "sha256:new",
+        "pullTags": [],
+        "mode": "apply",
+        "allowArchMismatch": false,
+        "backupMode": "skip",
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/updates")
+                .header("content-type", "application/json")
+                .body(Body::from(update.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let job_id = triggered["jobId"].as_str().unwrap().to_string();
+
+    let job = wait_for_job_terminal(&state, &job_id).await;
+    assert_eq!(job.status, "rolled_back");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/jobs/{job_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let payload = response_json(resp).await;
+
+    assert_eq!(payload["job"]["status"].as_str(), Some("rolled_back"));
+    assert_eq!(
+        payload["job"]["progress"]["message"].as_str(),
+        Some("update rolled back after healthcheck failure")
+    );
+    let update = &payload["job"]["summary"]["stacks"][0]["update"];
+    assert_eq!(update["failureStep"].as_str(), Some("healthcheck"));
+    assert_eq!(
+        update["newDigests"][service.id.as_str()].as_str(),
+        Some("sha256:new")
+    );
+    assert_eq!(
+        update["finalDigests"][service.id.as_str()].as_str(),
+        Some("sha256:old")
+    );
+    assert_eq!(update["rollback"]["trigger"].as_str(), Some("healthcheck"));
+    assert_eq!(
+        update["rollback"]["toDigests"][service.id.as_str()].as_str(),
+        Some("sha256:old")
     );
 }
 
