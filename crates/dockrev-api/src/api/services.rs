@@ -358,6 +358,7 @@ pub(super) async fn get_service_new_version_discovery_timeline(
     let current_tag = crate::db::normalize_discovery_key(Some(context.current_tag.as_str()));
     let current_candidate_stable_tag = crate::db::infer_stable_candidate_display_tag_from_rows(
         discovery_rows.iter(),
+        &crate::db::normalize_discovery_key(Some(context.image_ref.as_str())),
         &current_digest,
         &current_display_tag,
         &current_tag,
@@ -367,6 +368,7 @@ pub(super) async fn get_service_new_version_discovery_timeline(
 
     let mut historical_candidates = crate::db::collect_new_version_discovery_candidates_from_rows(
         discovery_rows.iter(),
+        &crate::db::normalize_discovery_key(Some(context.image_ref.as_str())),
         &current_digest,
         &current_display_tag,
         &current_tag,

@@ -19,6 +19,7 @@ struct NewVersionDiscoveryInput {
 
 pub(super) struct NewVersionDiscoveryBaseline {
     pub service_id: String,
+    pub current_image_ref: String,
     pub current_digest: Option<String>,
     pub current_display_tag: Option<String>,
     pub current_tag: String,
@@ -168,15 +169,39 @@ fn stable_current_baseline_tag(current_tag: &str, current_display_tag: &str) -> 
         .map(canonical_visible_version_tag)
 }
 
+fn current_baseline_pinned_digest(current_image_ref: &str) -> Option<String> {
+    let (_, digest) = current_image_ref.trim().split_once('@')?;
+    let digest = normalize_discovery_key(Some(digest));
+    (!digest.is_empty() && digest.to_ascii_lowercase().starts_with("sha256:")).then_some(digest)
+}
+
 fn unresolved_current_baseline_match(
     row: &NewVersionDiscoveryRow,
+    current_image_ref: &str,
     current_display_tag: &str,
     current_tag: &str,
 ) -> bool {
+    let current_raw_tag = current_baseline_pinned_digest(current_image_ref)
+        .unwrap_or_else(|| current_tag.trim().to_string());
     row.current_digest.is_empty()
         && ((row.current_display_tag == current_display_tag)
-            || (row.current_display_tag == current_tag && row.current_tag == current_tag)
-            || (row.current_display_tag.is_empty() && row.current_tag == current_tag))
+            || (row.current_display_tag == current_raw_tag && row.current_tag == current_raw_tag)
+            || (row.current_display_tag.is_empty() && row.current_tag == current_raw_tag))
+}
+
+fn current_baseline_is_digest_pinned(
+    current_image_ref: &str,
+    current_display_tag: &str,
+    current_tag: &str,
+) -> bool {
+    let current_image_ref = current_image_ref.trim();
+    let current_display_tag = current_display_tag.trim();
+    let current_tag = current_tag.trim();
+    current_image_ref.to_ascii_lowercase().contains("@sha256:")
+        || current_display_tag
+            .to_ascii_lowercase()
+            .starts_with("sha256:")
+        || current_tag.to_ascii_lowercase().starts_with("sha256:")
 }
 
 fn discovery_inputs_from_summary(
@@ -275,6 +300,7 @@ INSERT OR IGNORE INTO service_new_version_discoveries (
 
 fn discovery_matches_baseline(
     row: &NewVersionDiscoveryRow,
+    current_image_ref: &str,
     current_digest: &str,
     current_display_tag: &str,
     current_tag: &str,
@@ -289,14 +315,24 @@ fn discovery_matches_baseline(
         if !row.current_digest.is_empty() {
             return false;
         }
+        if current_baseline_is_digest_pinned(current_image_ref, current_display_tag, current_tag)
+            && unresolved_current_baseline_match(
+                row,
+                current_image_ref,
+                current_display_tag,
+                current_tag,
+            )
+        {
+            return true;
+        }
         if let Some(current_stable_tag) = current_stable_tag.as_deref() {
             return row_stable_tag.as_deref() == Some(current_stable_tag);
         }
-        unresolved_current_baseline_match(row, current_display_tag, current_tag)
+        false
     } else if let Some(current_stable_tag) = current_stable_tag.as_deref() {
         row.current_digest.is_empty() && row_stable_tag.as_deref() == Some(current_stable_tag)
     } else if !current_display_tag.is_empty() {
-        unresolved_current_baseline_match(row, current_display_tag, current_tag)
+        unresolved_current_baseline_match(row, current_image_ref, current_display_tag, current_tag)
     } else {
         row.current_digest.is_empty()
             && row.current_display_tag.is_empty()
@@ -449,6 +485,7 @@ fn build_stable_tags_by_provenance(
 
 pub(crate) fn collect_new_version_discovery_candidates_from_rows<'a>(
     rows: impl Iterator<Item = &'a NewVersionDiscoveryRow>,
+    current_image_ref: &str,
     current_digest: &str,
     current_display_tag: &str,
     current_tag: &str,
@@ -459,7 +496,13 @@ pub(crate) fn collect_new_version_discovery_candidates_from_rows<'a>(
 ) -> Vec<NewVersionDiscoveryCandidate> {
     let matched_rows = rows
         .filter(|row| {
-            discovery_matches_baseline(row, current_digest, current_display_tag, current_tag)
+            discovery_matches_baseline(
+                row,
+                current_image_ref,
+                current_digest,
+                current_display_tag,
+                current_tag,
+            )
         })
         .collect::<Vec<_>>();
     let stable_tags_by_provenance =
@@ -514,6 +557,7 @@ pub(crate) fn collect_new_version_discovery_candidates_from_rows<'a>(
 
 pub(crate) fn count_new_version_discoveries_from_rows<'a>(
     rows: impl Iterator<Item = &'a NewVersionDiscoveryRow>,
+    current_image_ref: &str,
     current_digest: &str,
     current_display_tag: &str,
     current_tag: &str,
@@ -524,6 +568,7 @@ pub(crate) fn count_new_version_discoveries_from_rows<'a>(
 ) -> u32 {
     collect_new_version_discovery_candidates_from_rows(
         rows,
+        current_image_ref,
         current_digest,
         current_display_tag,
         current_tag,
@@ -534,6 +579,7 @@ pub(crate) fn count_new_version_discoveries_from_rows<'a>(
 
 pub(crate) fn infer_stable_candidate_display_tag_from_rows<'a>(
     rows: impl Iterator<Item = &'a NewVersionDiscoveryRow>,
+    current_image_ref: &str,
     current_digest: &str,
     current_display_tag: &str,
     current_tag: &str,
@@ -550,7 +596,13 @@ pub(crate) fn infer_stable_candidate_display_tag_from_rows<'a>(
 
     let matched_rows = rows
         .filter(|row| {
-            discovery_matches_baseline(row, current_digest, current_display_tag, current_tag)
+            discovery_matches_baseline(
+                row,
+                current_image_ref,
+                current_digest,
+                current_display_tag,
+                current_tag,
+            )
         })
         .collect::<Vec<_>>();
     if matched_rows.is_empty() {
@@ -750,6 +802,7 @@ pub(super) fn count_new_version_discoveries_for_services_conn(
             let rows = rows_by_service.get(&baseline.service_id)?;
             let count = count_new_version_discoveries_from_rows(
                 rows.iter(),
+                &normalize_discovery_key(Some(baseline.current_image_ref.as_str())),
                 &normalize_discovery_key(baseline.current_digest.as_deref()),
                 &normalize_discovery_key(baseline.current_display_tag.as_deref()),
                 &normalize_discovery_key(Some(baseline.current_tag.as_str())),

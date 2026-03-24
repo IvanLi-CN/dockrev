@@ -706,6 +706,7 @@ pub(super) async fn enrich_stack_with_version_inference(
 
 #[derive(Clone)]
 struct DiscoveryCountServiceContext {
+    image_ref: String,
     current_digest: String,
     current_display_tag: String,
     current_tag: String,
@@ -725,6 +726,9 @@ async fn enrich_stack_with_new_version_discovery_counts(
             (
                 service.id.clone(),
                 DiscoveryCountServiceContext {
+                    image_ref: crate::db::normalize_discovery_key(Some(
+                        service.image.reference.as_str(),
+                    )),
                     current_digest: crate::db::normalize_discovery_key(
                         service.image.digest.as_deref(),
                     ),
@@ -775,6 +779,7 @@ async fn enrich_stack_with_new_version_discovery_counts(
 
         let count = crate::db::count_new_version_discoveries_from_rows(
             rows.iter(),
+            &context.image_ref,
             &context.current_digest,
             &context.current_display_tag,
             &context.current_tag,
