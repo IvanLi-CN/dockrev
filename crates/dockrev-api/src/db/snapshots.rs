@@ -1,6 +1,5 @@
 use super::*;
 
-#[cfg(test)]
 const TARGET_BATCH_SIZE: usize = 400;
 
 impl Db {
@@ -318,7 +317,6 @@ WHERE image_repo = ?1 AND digest = ?2 AND host_platform = ?3
         .context("get image digest tags snapshot")
     }
 
-    #[cfg(test)]
     pub async fn list_image_digest_tags_snapshots_for_targets(
         &self,
         host_platform: &str,

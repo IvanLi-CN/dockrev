@@ -59,6 +59,12 @@ pub(crate) fn stable_candidate_display_tag<'a>(
     crate::ignore::is_strict_semver(candidate_display_tag).then_some(candidate_display_tag)
 }
 
+pub(crate) fn candidate_tag_allows_settled_fallback(raw_candidate_tag: &str) -> bool {
+    let raw_candidate_tag = raw_candidate_tag.trim();
+    raw_candidate_tag.is_empty()
+        || crate::notify::notification_tag_requires_settle(raw_candidate_tag, raw_candidate_tag)
+}
+
 pub(crate) fn canonical_visible_version_tag(tag: &str) -> String {
     let tag = tag.trim();
     if let Some(normalized) = dockrev_common::normalized_semver_from_oci_version(tag) {
@@ -82,6 +88,72 @@ pub(crate) fn canonical_visible_version_tag(tag: &str) -> String {
     }
 
     tag.to_string()
+}
+
+fn semver_core_version_tag(tag: &str) -> Option<String> {
+    crate::ignore::parse_version(tag)
+        .map(|version| format!("{}.{}.{}", version.major, version.minor, version.patch))
+}
+
+fn is_floating_alias_tag(tag: &str) -> bool {
+    matches!(
+        tag.trim().to_ascii_lowercase().as_str(),
+        "latest"
+            | "edge"
+            | "stable"
+            | "main"
+            | "master"
+            | "head"
+            | "dev"
+            | "nightly"
+            | "rolling"
+            | "canary"
+            | "snapshot"
+            | "beta"
+            | "alpha"
+    )
+}
+
+pub(crate) fn canonical_candidate_identity_tag(
+    raw_candidate_tag: &str,
+    display_tag: &str,
+) -> String {
+    if is_floating_alias_tag(raw_candidate_tag)
+        && let Some(core) = semver_core_version_tag(display_tag)
+    {
+        return core;
+    }
+    canonical_visible_version_tag(display_tag)
+}
+
+pub(crate) fn stable_candidate_display_tag_from_tags(
+    raw_candidate_tag: &str,
+    tags: &std::collections::BTreeSet<String>,
+) -> Option<String> {
+    let raw_candidate_tag = raw_candidate_tag.trim();
+    if tags.len() == 1 {
+        let tag = tags.iter().next().cloned()?;
+        if candidate_tag_allows_settled_fallback(raw_candidate_tag) {
+            return Some(tag);
+        }
+        if !raw_candidate_tag.is_empty()
+            && canonical_visible_version_tag(raw_candidate_tag)
+                == canonical_visible_version_tag(&tag)
+        {
+            return Some(tag);
+        }
+        return None;
+    }
+    if is_floating_alias_tag(raw_candidate_tag) {
+        let semver_cores = tags
+            .iter()
+            .filter_map(|tag| semver_core_version_tag(tag))
+            .collect::<std::collections::BTreeSet<_>>();
+        if semver_cores.len() == 1 {
+            return semver_cores.iter().next().cloned();
+        }
+    }
+    None
 }
 
 fn stable_current_baseline_tag(current_tag: &str, current_display_tag: &str) -> Option<String> {
@@ -239,27 +311,11 @@ fn candidate_identity_key(
         std::collections::BTreeSet<String>,
     >,
 ) -> Option<String> {
-    if let Some(tag) = stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag)
-    {
-        return Some(format!("tag:{}", canonical_visible_version_tag(tag)));
-    }
-
-    let digest = row.candidate_digest.trim();
-    if digest.is_empty() {
-        return None;
-    }
-
-    let key = (
-        row.service_id.clone(),
-        row.image_ref.clone(),
-        row.current_tag.clone(),
-        digest.to_string(),
-    );
-
-    if let Some(tags) = stable_tags_by_provenance.get(&key)
-        && tags.len() == 1
-    {
-        return tags.iter().next().cloned().map(|tag| format!("tag:{tag}"));
+    if let Some(tag) = effective_stable_candidate_display_tag(row, stable_tags_by_provenance) {
+        return Some(format!(
+            "tag:{}",
+            canonical_candidate_identity_tag(&row.candidate_tag, &tag)
+        ));
     }
 
     let candidate_display_tag = normalize_discovery_key(Some(row.candidate_display_tag.as_str()));
@@ -282,6 +338,10 @@ fn candidate_identity_key(
         ));
     }
 
+    let digest = row.candidate_digest.trim();
+    if digest.is_empty() {
+        return None;
+    }
     Some(format!("digest:{digest}"))
 }
 
@@ -292,26 +352,11 @@ fn candidate_display_version(
         std::collections::BTreeSet<String>,
     >,
 ) -> Option<String> {
-    if let Some(tag) = stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag)
-    {
-        return Some(canonical_visible_version_tag(tag));
+    if let Some(tag) = effective_stable_candidate_display_tag(row, stable_tags_by_provenance) {
+        return Some(tag);
     }
 
     let digest = row.candidate_digest.trim();
-    if !digest.is_empty() {
-        let key = (
-            row.service_id.clone(),
-            row.image_ref.clone(),
-            row.current_tag.clone(),
-            digest.to_string(),
-        );
-        if let Some(tags) = stable_tags_by_provenance.get(&key)
-            && tags.len() == 1
-        {
-            return tags.iter().next().cloned();
-        }
-    }
-
     let candidate_display_tag = normalize_discovery_key(Some(row.candidate_display_tag.as_str()));
     if !candidate_display_tag.is_empty()
         && !candidate_display_tag
@@ -327,6 +372,33 @@ fn candidate_display_version(
     }
 
     (!digest.is_empty()).then_some(digest.to_string())
+}
+
+fn effective_stable_candidate_display_tag(
+    row: &NewVersionDiscoveryRow,
+    stable_tags_by_provenance: &std::collections::HashMap<
+        (String, String, String, String),
+        std::collections::BTreeSet<String>,
+    >,
+) -> Option<String> {
+    if let Some(tag) = stable_candidate_display_tag(&row.candidate_tag, &row.candidate_display_tag)
+    {
+        return Some(canonical_visible_version_tag(tag));
+    }
+
+    let digest = row.candidate_digest.trim();
+    if digest.is_empty() {
+        return None;
+    }
+
+    let key = (
+        row.service_id.clone(),
+        row.image_ref.clone(),
+        row.current_tag.clone(),
+        digest.to_string(),
+    );
+    let tags = stable_tags_by_provenance.get(&key)?;
+    stable_candidate_display_tag_from_tags(&row.candidate_tag, tags)
 }
 
 fn build_stable_tags_by_provenance(

@@ -10,7 +10,7 @@
 
 - 更新候选列表原本只显示“当前版本 -> 最新候选”，无法告诉操作者这次候选期间其实已经跨过了多少次不同的新版本发现。
 - 现有 `new_version_notifications` 只覆盖通知链路，不是完整发现历史，直接拿它计数会漏掉通知关闭或未触发通知的发现事件。
-- 线上 follow-up 暴露出第二层问题：部分历史成功 `check` 在写入 discovery 时，`candidateDisplayTag` 仍然是 `latest` 这类未 settle 值；若直接用“当前服务的 snapshot”去回填这些旧 digest，还会在服务改仓库或 snapshot 同 digest 多 tag 时把历史错误折叠。
+- 线上 follow-up 暴露出第二层问题：部分历史成功 `check` 在写入 discovery 时，`candidateDisplayTag` 仍然是 `latest` 这类未 settle 值；若时间线 `currentCandidate`、历史候选归一和列表候选各走各的 resolved-tag 来源，就会出现列表已经是稳定版本、时间线仍显示 `latest`，以及旧 unresolved 历史残留在时间线中间的分叉。
 - 用户要求在列表行与聚合预览中明确标记“我们程序发现了几次版本更新”，并且计数必须来自线性的成功 `check` 历史。
 
 ## 目标 / 非目标
@@ -19,11 +19,12 @@
 
 - 为服务持久化“新版本发现历史”，来源仅限成功完成的 `check` 任务。
 - 基于当前版本基线，按“稳定可见版本优先；未 settle 时先按可见 alias 折叠，只有完全没有可见值才回退 `candidateDigest`”统计发现次数，并包含当前最新候选。
-- 对历史里尚未 settle 的候选 digest，只允许在读时使用同一 discovery 行自带的稳定 `candidateDisplayTag`，以及同 `(service_id, image_ref, current_tag, candidate_digest)` 的稳定通知记录做 digest -> visible version 的辅助归一；不使用当前服务的 snapshot 直接改写旧历史。
+- 对历史里尚未 settle 的候选 digest，在读时按 provenance-aware 顺序归一：同一 discovery 行自带的稳定 `candidateDisplayTag` > 同 `(image_ref, candidate_digest)` 的 ready snapshot 稳定版本 > 同 `(service_id, image_ref, current_tag, candidate_digest)` 的稳定通知记录。
 - 在更新候选列表 `StatusRemark` 和 `AggregateUpdatePreviewList` 中显示中性计数 pill：`发现 N 次`。
 - 对外通过 `GET /api/stacks` 与 `GET /api/stacks/{id}` 返回 `newVersionDiscoveryCount`。
 - 同一份 stack 数据无论走 DB 聚合还是 API enrich，都必须对 unresolved 历史应用一致的 provenance-aware 归一规则，避免不同调用路径给出不同的发现次数。
 - 版本发现时间线里的 `当前运行` 版本必须与列表行当前版本共享同一套当前 digest 解析语义，不能因为持久化 `current_resolved_tag` 过时而分叉。
+- 版本发现时间线里的 `当前候选` 版本必须与列表行候选版本共享同一套 digest 解析语义，不能因为持久化 `candidate_resolved_tag` 过时而分叉。
 
 ### Non-goals
 
@@ -61,9 +62,18 @@
 - 计数规则固定为“同一当前版本基线下，按稳定 `candidateDisplayTag` 去重；若候选仍是未 settle 的原始 tag（例如 `latest`、`15-alpine`），则先按该可见 alias 去重；只有连可见 alias 都不存在时，才回退按 `candidateDigest` 去重”。
 - 对历史 discovery 行里仍未 settle 的候选 digest，归一顺序固定为：
   - discovery 行自带的稳定 `candidateDisplayTag`
+  - `image_digest_tags_snapshots` 中同 `(image_ref, candidate_digest, host_platform)` 的 ready 稳定版本
   - `new_version_notifications` 中同 `(service_id, image_ref, current_tag, candidate_digest)` 的稳定 `candidate_display_tag`
   - 若仍不可得，则先按 discovery 行上的可见 alias（`candidateDisplayTag` / `candidateTag`）折叠；只有连 alias 都不存在时，再回退按 `candidateDigest`
+- 当原始候选 tag 本身是浮动 alias 时，允许把 `3.2.14` 与 `3.2.14-r0-ls73` 这类仅 semver core 相同的 settled 版本折叠为同一候选；显式 pinned suffix tag 不参与这种折叠。
 - DB 层 `get_stack()` 与 API 层 `GET /api/stacks` / `GET /api/stacks/{id}` 都必须使用同一套 unresolved-history 归一输入，不能让某一路径退回旧的 digest-only 计数。
+- `GET /api/stacks` / `GET /api/stacks/{id}` 的列表候选版本与 `GET /api/services/{serviceId}/new-version-discovery-timeline` 的 `currentCandidate.version` 必须共享同一套候选 resolved-tag 解析顺序：
+  - 当前候选 digest 的 ready snapshot 推断结果；
+  - 持久化 `candidate_resolved_tag`；
+  - 同 `(service_id, image_ref, current_tag, candidate_digest)` 的稳定通知记录；
+  - 最后才回退原始 `candidateTag` / `candidateDigest`。
+- 上述 snapshot / notification settled fallback 只适用于仍 unresolved 的原始候选 tag（例如 `latest`、`stable`、`main`、`15-alpine` 或空 tag）；显式 pinned / strict-semver 候选必须保留自己的原始候选身份，不得被 fallback 改写成另一个 plain semver 标签。
+- notification fallback 的 provenance 匹配继续使用原始 `image_ref` 精确值；只允许 snapshot lookup 为了 digest tags 缓存命中做 repo-key 规范化，不能把 notification 的 `(service_id, image_ref, current_tag, candidate_digest)` 读写两端改成不同 key。
 - `GET /api/services/{serviceId}/new-version-discovery-timeline` 中 `items[].kind === "currentRunning"` 的 `version` 必须与列表当前版本显示共享同一套当前 digest 归一逻辑：
   - 优先使用当前 digest 对应 snapshot 推断出的稳定版本；
   - 若 snapshot 不可用或无法给出稳定版本，则回退到持久化 `current_resolved_tag`；
@@ -92,8 +102,11 @@
 - Given 历史上同一 `candidateDigest` 先以浮动 alias 出现、后又解析出稳定 `candidateDisplayTag`，When 统计当前基线次数，Then 不会因为这两条历史记录重复累计。
 - Given 更新候选列表与聚合预览同时展示同一服务，When `newVersionDiscoveryCount` 存在，Then 两处都显示 `发现 N 次` 且不覆盖原备注。
 - Given 当前服务的 DB 持久化 `current_resolved_tag` 已过时，但当前 digest 的 snapshot 已经解析出新的稳定版本，When 同时请求 stack 详情和版本发现时间线，Then 列表当前版本与时间线 `currentRunning.version` 必须显示为同一个版本。
+- Given 当前服务的 DB 持久化 `candidate_resolved_tag` 仍是 `latest` 或为空，但当前候选 digest 的 snapshot 已经解析出稳定版本，When 同时请求 stack 详情和版本发现时间线，Then 列表候选版本与时间线 `currentCandidate.version` 必须显示为同一个稳定版本。
+- Given 当前候选只依赖 notification fallback 且通知记录里的 `image_ref` 保留为完整原始镜像引用（例如 `ghcr.io/acme/web:latest`），When 请求列表或时间线候选版本，Then fallback 仍必须命中同一条 notification provenance，而不是因为读取端把 `image_ref` 先裁成 repo key 而失效。
 - Given 当前服务已经有稳定基线（例如 `currentDigest=sha256:*` 且 `currentDisplayTag=v1.20.6`），When 历史 discovery 里存在更早的 unresolved 行（`currentDigest=''` 且 `currentDisplayTag=latest`），Then 这些更早的浮动 alias 基线不得再并入当前稳定基线的 count 或 timeline。
 - Given 当前服务自己仍处于 unresolved alias 基线（例如 `currentTag=latest` 且没有稳定 `currentDigest/currentDisplayTag`），When 历史 discovery 也都属于同一个 alias 基线，Then timeline 仍保留这些 alias 历史，不做过度过滤。
+- Given 历史 discovery 在 raw candidate tag 为 `latest` 时先后解析出 `3.2.14-r0-ls73` 与 `3.2.14`，When 统计 count 或构造 timeline，Then 这些记录按同一个候选版本折叠；但若 raw candidate tag 本身就是显式 pinned suffix tag，则仍保持为不同候选。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
@@ -141,3 +154,4 @@
 - 2026-03-22: 根据 fresh review fix，补齐 live candidate 与历史候选的同口径 alias identity，确保 `newVersionDiscoveryCount` 的 alias 折叠结果能被时间线正确复用。
 - 2026-03-23: 修复版本发现时间线 `currentRunning.version` 与列表当前版本不一致的问题；时间线当前运行版本改为复用列表的当前 digest snapshot 解析语义，并在 snapshot 缺失时继续回退到持久化 `current_resolved_tag`。
 - 2026-03-24: 修复 discovery 基线匹配把更早 unresolved `latest` 历史误并入当前稳定基线的问题；当前已稳定的 `currentDisplayTag/currentDigest` 不再接受浮动 alias 作为跨基线 fallback，但当前自身仍 unresolved 时继续保留 alias 历史。
+- 2026-03-24: 修复列表候选、时间线 `currentCandidate` 与历史候选归一的事实源分叉；候选显示与 discovery 历史统一改为 `snapshot-first, notification-fallback`，并允许浮动 alias 场景按同一 semver core 折叠 vendor/package suffix 版本。

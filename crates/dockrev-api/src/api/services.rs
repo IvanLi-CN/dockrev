@@ -235,10 +235,8 @@ fn timeline_candidate_identity(
 ) -> Option<String> {
     let candidate_tag = crate::db::normalize_discovery_key(context.candidate_tag.as_deref());
     let candidate_display_tag = crate::db::normalize_discovery_key(
-        context
-            .candidate_resolved_tag
-            .as_deref()
-            .or(candidate_display_tag_hint)
+        candidate_display_tag_hint
+            .or(context.candidate_resolved_tag.as_deref())
             .or(context.candidate_tag.as_deref()),
     );
     if let Some(tag) =
@@ -246,7 +244,7 @@ fn timeline_candidate_identity(
     {
         return Some(format!(
             "tag:{}",
-            crate::db::canonical_visible_version_tag(tag)
+            crate::db::canonical_candidate_identity_tag(&candidate_tag, tag)
         ));
     }
 
@@ -280,13 +278,15 @@ fn timeline_candidate_version(
         return Some(crate::db::canonical_visible_version_tag(tag));
     }
 
-    normalize_optional_value(context.candidate_resolved_tag.as_deref())
-        .map(|value| crate::db::canonical_visible_version_tag(&value))
-        .or_else(|| {
-            normalize_optional_value(context.candidate_tag.as_deref())
-                .map(|value| crate::db::canonical_visible_version_tag(&value))
-        })
-        .or_else(|| normalize_optional_value(context.candidate_digest.as_deref()))
+    normalize_optional_value(
+        stable_candidate_display_tag.or(context.candidate_resolved_tag.as_deref()),
+    )
+    .map(|value| crate::db::canonical_visible_version_tag(&value))
+    .or_else(|| {
+        normalize_optional_value(context.candidate_tag.as_deref())
+            .map(|value| crate::db::canonical_visible_version_tag(&value))
+    })
+    .or_else(|| normalize_optional_value(context.candidate_digest.as_deref()))
 }
 
 fn timeline_running_version(
@@ -329,19 +329,24 @@ pub(super) async fn get_service_new_version_discovery_timeline(
         context.current_resolved_tag.as_deref(),
     )
     .await?;
+    let effective_candidate_resolved_tag = super::stacks::resolve_candidate_resolved_tag(
+        &state,
+        &service_id,
+        &context.image_ref,
+        &context.current_tag,
+        context.candidate_tag.as_deref(),
+        context.candidate_digest.as_deref(),
+        context.candidate_resolved_tag.as_deref(),
+    )
+    .await?;
 
     let discovery_rows = state
         .db
         .list_new_version_discoveries_for_services(std::slice::from_ref(&service_id))
         .await
         .map_err(map_internal)?;
-    let notification_targets =
-        crate::db::new_version_discovery_notification_targets(&discovery_rows);
-    let notification_tags = state
-        .db
-        .list_stable_candidate_display_tags_for_notification_targets(&notification_targets)
-        .await
-        .map_err(map_internal)?;
+    let effective_stable_tags_by_provenance =
+        super::stacks::resolve_discovery_stable_tags_by_provenance(&state, &discovery_rows).await?;
 
     let current_digest = crate::db::normalize_discovery_key(context.current_digest.as_deref());
     let current_display_tag = crate::db::normalize_discovery_key(
@@ -357,7 +362,7 @@ pub(super) async fn get_service_new_version_discovery_timeline(
         &current_display_tag,
         &current_tag,
         &crate::db::normalize_discovery_key(context.candidate_digest.as_deref()),
-        &notification_tags,
+        &effective_stable_tags_by_provenance,
     );
 
     let mut historical_candidates = crate::db::collect_new_version_discovery_candidates_from_rows(
@@ -365,7 +370,7 @@ pub(super) async fn get_service_new_version_discovery_timeline(
         &current_digest,
         &current_display_tag,
         &current_tag,
-        &notification_tags,
+        &effective_stable_tags_by_provenance,
     );
     historical_candidates.sort_by(|left, right| {
         right
@@ -374,10 +379,18 @@ pub(super) async fn get_service_new_version_discovery_timeline(
             .then_with(|| left.version.cmp(&right.version))
     });
 
-    let current_candidate_identity =
-        timeline_candidate_identity(&context, current_candidate_stable_tag.as_deref());
-    let current_candidate_version =
-        timeline_candidate_version(&context, current_candidate_stable_tag.as_deref());
+    let current_candidate_identity = timeline_candidate_identity(
+        &context,
+        effective_candidate_resolved_tag
+            .as_deref()
+            .or(current_candidate_stable_tag.as_deref()),
+    );
+    let current_candidate_version = timeline_candidate_version(
+        &context,
+        effective_candidate_resolved_tag
+            .as_deref()
+            .or(current_candidate_stable_tag.as_deref()),
+    );
 
     let current_candidate_item = current_candidate_identity.as_ref().and_then(|identity| {
         historical_candidates
