@@ -84,6 +84,29 @@ pub(crate) fn canonical_visible_version_tag(tag: &str) -> String {
     tag.to_string()
 }
 
+fn stable_current_baseline_tag(current_tag: &str, current_display_tag: &str) -> Option<String> {
+    let current_tag = current_tag.trim();
+    let current_display_tag = current_display_tag.trim();
+    let effective_display_tag = if current_display_tag.is_empty() {
+        current_tag
+    } else {
+        current_display_tag
+    };
+    stable_candidate_display_tag(current_tag, effective_display_tag)
+        .map(canonical_visible_version_tag)
+}
+
+fn unresolved_current_baseline_match(
+    row: &NewVersionDiscoveryRow,
+    current_display_tag: &str,
+    current_tag: &str,
+) -> bool {
+    row.current_digest.is_empty()
+        && ((row.current_display_tag == current_display_tag)
+            || (row.current_display_tag == current_tag && row.current_tag == current_tag)
+            || (row.current_display_tag.is_empty() && row.current_tag == current_tag))
+}
+
 fn discovery_inputs_from_summary(
     summary: &serde_json::Value,
     source_job_id: &str,
@@ -184,23 +207,24 @@ fn discovery_matches_baseline(
     current_display_tag: &str,
     current_tag: &str,
 ) -> bool {
+    let current_stable_tag = stable_current_baseline_tag(current_tag, current_display_tag);
+    let row_stable_tag = stable_current_baseline_tag(&row.current_tag, &row.current_display_tag);
+
     if !current_digest.is_empty() {
-        row.current_digest == current_digest
-            || (row.current_digest.is_empty() && row.current_display_tag == current_display_tag)
-            || (row.current_digest.is_empty()
-                && row.current_display_tag == current_tag
-                && row.current_tag == current_tag)
-            || (row.current_digest.is_empty()
-                && row.current_display_tag.is_empty()
-                && row.current_tag == current_tag)
+        if row.current_digest == current_digest {
+            return true;
+        }
+        if !row.current_digest.is_empty() {
+            return false;
+        }
+        if let Some(current_stable_tag) = current_stable_tag.as_deref() {
+            return row_stable_tag.as_deref() == Some(current_stable_tag);
+        }
+        unresolved_current_baseline_match(row, current_display_tag, current_tag)
+    } else if let Some(current_stable_tag) = current_stable_tag.as_deref() {
+        row.current_digest.is_empty() && row_stable_tag.as_deref() == Some(current_stable_tag)
     } else if !current_display_tag.is_empty() {
-        (row.current_digest.is_empty() && row.current_display_tag == current_display_tag)
-            || (row.current_digest.is_empty()
-                && row.current_display_tag == current_tag
-                && row.current_tag == current_tag)
-            || (row.current_digest.is_empty()
-                && row.current_display_tag.is_empty()
-                && row.current_tag == current_tag)
+        unresolved_current_baseline_match(row, current_display_tag, current_tag)
     } else {
         row.current_digest.is_empty()
             && row.current_display_tag.is_empty()
@@ -1060,13 +1084,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn finish_job_matches_unresolved_alias_history_after_display_tag_resolves() {
+    async fn finish_job_keeps_unresolved_alias_history_when_current_baseline_is_unresolved() {
         let db = Db::open(Path::new(":memory:")).await.unwrap();
         seed_service(
             &db,
             "svc_1",
             None,
-            Some("1.0.0"),
+            None,
             "latest",
             Some("sha256:live-candidate"),
         )
@@ -1088,6 +1112,37 @@ mod tests {
 
         let stack = db.get_stack("stack_1").await.unwrap().unwrap();
         assert_eq!(stack.services[0].new_version_discovery_count, Some(1));
+    }
+
+    #[tokio::test]
+    async fn finish_job_excludes_older_unresolved_alias_history_from_stable_baseline() {
+        let db = Db::open(Path::new(":memory:")).await.unwrap();
+        seed_service(
+            &db,
+            "svc_1",
+            Some("sha256:current-v1"),
+            Some("1.0.0"),
+            "latest",
+            Some("sha256:live-candidate"),
+        )
+        .await;
+
+        insert_successful_check_job(
+            &db,
+            "job_1",
+            make_summary(
+                "svc_1",
+                "latest",
+                Some("latest"),
+                None,
+                "sha256:candidate-a",
+                Some("1.1.0"),
+            ),
+        )
+        .await;
+
+        let stack = db.get_stack("stack_1").await.unwrap().unwrap();
+        assert_eq!(stack.services[0].new_version_discovery_count, None);
     }
 
     #[tokio::test]

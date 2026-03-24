@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-03-19
-- Last: 2026-03-23
+- Last: 2026-03-24
 
 ## 背景 / 问题陈述
 
@@ -92,6 +92,8 @@
 - Given 历史上同一 `candidateDigest` 先以浮动 alias 出现、后又解析出稳定 `candidateDisplayTag`，When 统计当前基线次数，Then 不会因为这两条历史记录重复累计。
 - Given 更新候选列表与聚合预览同时展示同一服务，When `newVersionDiscoveryCount` 存在，Then 两处都显示 `发现 N 次` 且不覆盖原备注。
 - Given 当前服务的 DB 持久化 `current_resolved_tag` 已过时，但当前 digest 的 snapshot 已经解析出新的稳定版本，When 同时请求 stack 详情和版本发现时间线，Then 列表当前版本与时间线 `currentRunning.version` 必须显示为同一个版本。
+- Given 当前服务已经有稳定基线（例如 `currentDigest=sha256:*` 且 `currentDisplayTag=v1.20.6`），When 历史 discovery 里存在更早的 unresolved 行（`currentDigest=''` 且 `currentDisplayTag=latest`），Then 这些更早的浮动 alias 基线不得再并入当前稳定基线的 count 或 timeline。
+- Given 当前服务自己仍处于 unresolved alias 基线（例如 `currentTag=latest` 且没有稳定 `currentDigest/currentDisplayTag`），When 历史 discovery 也都属于同一个 alias 基线，Then timeline 仍保留这些 alias 历史，不做过度过滤。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
@@ -138,3 +140,4 @@
 - 2026-03-22: 修正 unresolved alias 历史的最终口径：重复暴露同一可见 alias（如 `latest`、`15-alpine`）时先按 alias 折叠，不再因为不同 digest 把发现次数和时间线一起膨胀。
 - 2026-03-22: 根据 fresh review fix，补齐 live candidate 与历史候选的同口径 alias identity，确保 `newVersionDiscoveryCount` 的 alias 折叠结果能被时间线正确复用。
 - 2026-03-23: 修复版本发现时间线 `currentRunning.version` 与列表当前版本不一致的问题；时间线当前运行版本改为复用列表的当前 digest snapshot 解析语义，并在 snapshot 缺失时继续回退到持久化 `current_resolved_tag`。
+- 2026-03-24: 修复 discovery 基线匹配把更早 unresolved `latest` 历史误并入当前稳定基线的问题；当前已稳定的 `currentDisplayTag/currentDigest` 不再接受浮动 alias 作为跨基线 fallback，但当前自身仍 unresolved 时继续保留 alias 历史。
