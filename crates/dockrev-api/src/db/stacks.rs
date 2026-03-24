@@ -268,6 +268,7 @@ WHERE id = ?1
                         .map(|(service, current_digest, current_resolved_tag, _)| {
                             super::new_version_discoveries::NewVersionDiscoveryBaseline {
                                 service_id: service.id.clone(),
+                                current_image_ref: service.image.reference.clone(),
                                 current_digest: current_digest.clone(),
                                 current_display_tag: current_resolved_tag
                                     .clone()

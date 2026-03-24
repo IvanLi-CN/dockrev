@@ -82,6 +82,11 @@
   - `currentDigest`
   - `currentDisplayTag`
   - `currentTag`
+- 一旦当前服务已经有非空 `currentDigest`，基线匹配就必须先锁定在该 digest：
+  - 历史行若同样有 `currentDigest`，只允许 digest 精确匹配；
+  - 历史行若缺 `currentDigest`，只允许在当前存在稳定 `currentDisplayTag` 时按稳定版本等价 fallback；
+  - 当当前仅剩浮动 alias（例如 `latest`）而没有稳定 `currentDisplayTag` 时，不允许再把更早的 `currentDigest=''` alias 历史桥接进当前基线。
+  - 若当前显示本身就是 digest-pinned 精确值（例如 `currentDisplayTag=sha256:*`），则仍允许同样缺 `currentDigest` 但显示为同一 digest 的历史行继续匹配当前基线。
 
 ## 验收标准（Acceptance Criteria）
 
@@ -105,6 +110,8 @@
 - Given 当前服务的 DB 持久化 `candidate_resolved_tag` 仍是 `latest` 或为空，但当前候选 digest 的 snapshot 已经解析出稳定版本，When 同时请求 stack 详情和版本发现时间线，Then 列表候选版本与时间线 `currentCandidate.version` 必须显示为同一个稳定版本。
 - Given 当前候选只依赖 notification fallback 且通知记录里的 `image_ref` 保留为完整原始镜像引用（例如 `ghcr.io/acme/web:latest`），When 请求列表或时间线候选版本，Then fallback 仍必须命中同一条 notification provenance，而不是因为读取端把 `image_ref` 先裁成 repo key 而失效。
 - Given 当前服务已经有稳定基线（例如 `currentDigest=sha256:*` 且 `currentDisplayTag=v1.20.6`），When 历史 discovery 里存在更早的 unresolved 行（`currentDigest=''` 且 `currentDisplayTag=latest`），Then 这些更早的浮动 alias 基线不得再并入当前稳定基线的 count 或 timeline。
+- Given 当前服务已经有已知 `currentDigest`，但当前显示仍只能落在浮动 alias（例如 `currentTag=latest` 且 `currentResolvedTag/currentDisplayTag` 为空），When 历史 discovery 里存在更早的 unresolved 行（`currentDigest=''` 且 `currentDisplayTag=latest`），Then 这些更早的 alias 基线也不得并入当前 count 或 timeline。
+- Given 当前服务已经有已知 `currentDigest`，且当前显示值本身是 digest-pinned 精确值（例如 `currentDisplayTag=sha256:...`），When 历史 discovery 里存在更早的行（`currentDigest=''` 且 `currentDisplayTag` 为同一个 digest），Then 这些历史仍视为同一当前基线，不得被误过滤。
 - Given 当前服务自己仍处于 unresolved alias 基线（例如 `currentTag=latest` 且没有稳定 `currentDigest/currentDisplayTag`），When 历史 discovery 也都属于同一个 alias 基线，Then timeline 仍保留这些 alias 历史，不做过度过滤。
 - Given 历史 discovery 在 raw candidate tag 为 `latest` 时先后解析出 `3.2.14-r0-ls73` 与 `3.2.14`，When 统计 count 或构造 timeline，Then 这些记录按同一个候选版本折叠；但若 raw candidate tag 本身就是显式 pinned suffix tag，则仍保持为不同候选。
 
@@ -155,3 +162,4 @@
 - 2026-03-23: 修复版本发现时间线 `currentRunning.version` 与列表当前版本不一致的问题；时间线当前运行版本改为复用列表的当前 digest snapshot 解析语义，并在 snapshot 缺失时继续回退到持久化 `current_resolved_tag`。
 - 2026-03-24: 修复 discovery 基线匹配把更早 unresolved `latest` 历史误并入当前稳定基线的问题；当前已稳定的 `currentDisplayTag/currentDigest` 不再接受浮动 alias 作为跨基线 fallback，但当前自身仍 unresolved 时继续保留 alias 历史。
 - 2026-03-24: 修复列表候选、时间线 `currentCandidate` 与历史候选归一的事实源分叉；候选显示与 discovery 历史统一改为 `snapshot-first, notification-fallback`，并允许浮动 alias 场景按同一 semver core 折叠 vendor/package suffix 版本。
+- 2026-03-25: 继续收紧 discovery 基线匹配；当当前服务已拥有非空 `currentDigest` 但显示层仍停留在 `latest` 这类浮动 alias 时，更早的 `currentDigest=''` unresolved alias 历史也不再允许桥接进当前 count / timeline；同时保留 digest-pinned 当前基线的 exact fallback，避免把合法的旧 digest 历史误删。
