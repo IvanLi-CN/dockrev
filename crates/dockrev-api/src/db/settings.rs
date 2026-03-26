@@ -1,10 +1,10 @@
 use super::*;
 
 impl Db {
-    pub async fn get_service_settings(
+    pub async fn get_stored_service_settings(
         &self,
         service_id: &str,
-    ) -> anyhow::Result<Option<ServiceSettings>> {
+    ) -> anyhow::Result<Option<StoredServiceSettings>> {
         let service_id = service_id.to_string();
         self.call(move |conn| {
             Ok(conn
@@ -14,7 +14,8 @@ SELECT
   auto_rollback,
   backup_targets_bind_paths_json,
   backup_targets_volume_names_json,
-  repo_url
+  repo_url,
+  repo_url_auto_disabled
 FROM services
 WHERE id = ?1
 "#,
@@ -37,20 +38,33 @@ WHERE id = ?1
                                     Box::new(e),
                                 )
                             })?;
-                        Ok(ServiceSettings {
-                            auto_rollback: row.get::<_, i64>(0)? != 0,
-                            backup_targets: crate::api::types::BackupTargetOverrides {
-                                bind_paths,
-                                volume_names,
+                        Ok(StoredServiceSettings {
+                            settings: ServiceSettings {
+                                auto_rollback: row.get::<_, i64>(0)? != 0,
+                                backup_targets: crate::api::types::BackupTargetOverrides {
+                                    bind_paths,
+                                    volume_names,
+                                },
+                                repo_url: row.get(3)?,
                             },
-                            repo_url: row.get(3)?,
+                            repo_url_auto_disabled: row.get::<_, i64>(4)? != 0,
                         })
                     },
                 )
                 .optional()?)
         })
         .await
-        .context("get service settings")
+        .context("get stored service settings")
+    }
+
+    pub async fn get_service_settings(
+        &self,
+        service_id: &str,
+    ) -> anyhow::Result<Option<ServiceSettings>> {
+        Ok(self
+            .get_stored_service_settings(service_id)
+            .await?
+            .map(|stored| stored.settings))
     }
 
     pub async fn put_service_settings(
@@ -59,8 +73,20 @@ WHERE id = ?1
         settings: &ServiceSettings,
         now: &str,
     ) -> anyhow::Result<bool> {
+        self.put_service_settings_with_repo_auto_disabled(service_id, settings, false, now)
+            .await
+    }
+
+    pub async fn put_service_settings_with_repo_auto_disabled(
+        &self,
+        service_id: &str,
+        settings: &ServiceSettings,
+        repo_url_auto_disabled: bool,
+        now: &str,
+    ) -> anyhow::Result<bool> {
         let service_id = service_id.to_string();
         let settings = settings.clone();
+        let repo_url_auto_disabled = repo_url_auto_disabled as i64;
         let now = now.to_string();
         self.call(move |conn| {
             let changed = conn.execute(
@@ -71,7 +97,8 @@ SET
   backup_targets_bind_paths_json = ?3,
   backup_targets_volume_names_json = ?4,
   repo_url = ?5,
-  updated_at = ?6
+  repo_url_auto_disabled = ?6,
+  updated_at = ?7
 WHERE id = ?1
 "#,
                 params![
@@ -80,13 +107,14 @@ WHERE id = ?1
                     serde_json::to_string(&settings.backup_targets.bind_paths)?,
                     serde_json::to_string(&settings.backup_targets.volume_names)?,
                     settings.repo_url,
+                    repo_url_auto_disabled,
                     now
                 ],
             )?;
             Ok(changed > 0)
         })
         .await
-        .context("put service settings")
+        .context("put service settings with repo auto disabled")
     }
 
     pub async fn list_ignore_rules(&self) -> anyhow::Result<Vec<IgnoreRule>> {

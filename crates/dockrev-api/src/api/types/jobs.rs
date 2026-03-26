@@ -192,6 +192,7 @@ pub enum JobType {
     GitHubPackagesWebhook,
     GitHubPackagesWebhookSyncAll,
     GitHubPackagesWebhookSyncRepo,
+    RepoLinkBackfill,
     Update,
     Rollback,
 }
@@ -205,6 +206,7 @@ impl JobType {
             Self::GitHubPackagesWebhook => "github_packages_webhook",
             Self::GitHubPackagesWebhookSyncAll => "github_packages_webhook_sync_all",
             Self::GitHubPackagesWebhookSyncRepo => "github_packages_webhook_sync_repo",
+            Self::RepoLinkBackfill => "repo_link_backfill",
             Self::Update => "update",
             Self::Rollback => "rollback",
         }
@@ -218,6 +220,7 @@ impl JobType {
             "github_packages_webhook" => Self::GitHubPackagesWebhook,
             "github_packages_webhook_sync_all" => Self::GitHubPackagesWebhookSyncAll,
             "github_packages_webhook_sync_repo" => Self::GitHubPackagesWebhookSyncRepo,
+            "repo_link_backfill" => Self::RepoLinkBackfill,
             "rollback" => Self::Rollback,
             _ => Self::Update,
         }

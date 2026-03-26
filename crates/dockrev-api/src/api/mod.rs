@@ -52,7 +52,7 @@ mod ignore_rules;
 mod jobs;
 mod notifications;
 mod operations;
-mod services;
+pub(crate) mod services;
 mod stacks;
 mod webhooks;
 

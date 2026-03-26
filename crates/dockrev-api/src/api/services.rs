@@ -229,6 +229,171 @@ fn image_ref_pinned_digest(image_ref: &str) -> Option<String> {
     snapshot_worker::normalize_digest(digest)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RepoLinkInferenceOutcomeKind {
+    Match,
+    NoMatch,
+    Error,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RepoLinkInferenceContext {
+    pub host_platform: String,
+    pub tracked_ghcr_repo_keys: std::collections::BTreeSet<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RepoLinkInferenceResult {
+    pub repo_url: Option<String>,
+    pub strategy: ServiceRepoLinkInferenceStrategy,
+    pub reason: Option<String>,
+    pub outcome: RepoLinkInferenceOutcomeKind,
+}
+
+impl RepoLinkInferenceResult {
+    fn into_response(self) -> ServiceRepoLinkInferenceResponse {
+        ServiceRepoLinkInferenceResponse {
+            repo_url: self.repo_url,
+            strategy: self.strategy,
+            reason: self.reason,
+        }
+    }
+}
+
+pub(crate) async fn build_repo_link_inference_context(
+    state: &Arc<AppState>,
+) -> anyhow::Result<RepoLinkInferenceContext> {
+    let tracked_ghcr_repo_keys = state
+        .db
+        .list_github_packages_repos()
+        .await?
+        .into_iter()
+        .filter(|repo| repo.selected)
+        .map(|repo| normalize_repo_full_name(&format!("{}/{}", repo.owner, repo.repo)))
+        .collect::<std::collections::BTreeSet<_>>();
+    let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
+        .unwrap_or_else(|| "linux/amd64".to_string());
+    Ok(RepoLinkInferenceContext {
+        host_platform,
+        tracked_ghcr_repo_keys,
+    })
+}
+
+fn service_repo_link_inspection_reference(
+    snapshot_target: &crate::db::ServiceSnapshotTarget,
+    image: &registry::ImageRef,
+) -> String {
+    let parsed_reference = image.reference.trim().to_string();
+    let parsed_reference_is_digest = parsed_reference.starts_with("sha256:");
+    snapshot_target
+        .current_digest
+        .as_deref()
+        .and_then(snapshot_worker::normalize_digest)
+        .or_else(|| image_ref_pinned_digest(&snapshot_target.image_ref))
+        .or_else(|| {
+            if parsed_reference_is_digest {
+                Some(parsed_reference.clone())
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            let current_tag = snapshot_target.current_tag.trim();
+            if current_tag.is_empty() {
+                None
+            } else {
+                Some(current_tag.to_string())
+            }
+        })
+        .unwrap_or(parsed_reference)
+}
+
+pub(crate) async fn infer_service_repo_link_for_snapshot_target(
+    state: &Arc<AppState>,
+    snapshot_target: &crate::db::ServiceSnapshotTarget,
+    context: &RepoLinkInferenceContext,
+) -> RepoLinkInferenceResult {
+    let image = match registry::ImageRef::parse(&snapshot_target.image_ref) {
+        Ok(image) => image,
+        Err(err) => {
+            return RepoLinkInferenceResult {
+                repo_url: None,
+                strategy: ServiceRepoLinkInferenceStrategy::None,
+                reason: Some(format!("invalid service image ref: {err}")),
+                outcome: RepoLinkInferenceOutcomeKind::Error,
+            };
+        }
+    };
+    let inspection_reference = service_repo_link_inspection_reference(snapshot_target, &image);
+
+    let mut miss_reasons = Vec::new();
+    let mut had_error = false;
+
+    match state
+        .registry
+        .get_oci_source(&image, &inspection_reference, &context.host_platform)
+        .await
+    {
+        Ok(source) => {
+            if let Some(repo_key) = source.as_deref().and_then(normalize_github_source_repo_key) {
+                return RepoLinkInferenceResult {
+                    repo_url: Some(github_repo_url_from_key(&repo_key)),
+                    strategy: ServiceRepoLinkInferenceStrategy::OciSource,
+                    reason: None,
+                    outcome: RepoLinkInferenceOutcomeKind::Match,
+                };
+            }
+            if let Some(repo_url) = source.as_deref().and_then(normalize_external_repo_url) {
+                return RepoLinkInferenceResult {
+                    repo_url: Some(repo_url),
+                    strategy: ServiceRepoLinkInferenceStrategy::OciSource,
+                    reason: None,
+                    outcome: RepoLinkInferenceOutcomeKind::Match,
+                };
+            }
+            if source.as_deref().is_some() {
+                miss_reasons
+                    .push("oci source not recognized as a valid repository URL".to_string());
+            } else {
+                miss_reasons.push("oci source missing".to_string());
+            }
+        }
+        Err(err) => {
+            had_error = true;
+            miss_reasons.push(format!("read oci source failed: {err}"));
+        }
+    }
+
+    if let Some(repo_key) = ghcr_exact_repo_key(&image) {
+        if context.tracked_ghcr_repo_keys.contains(&repo_key) {
+            return RepoLinkInferenceResult {
+                repo_url: Some(github_repo_url_from_key(&repo_key)),
+                strategy: ServiceRepoLinkInferenceStrategy::GhcrExact,
+                reason: None,
+                outcome: RepoLinkInferenceOutcomeKind::Match,
+            };
+        }
+        miss_reasons.push("ghcr exact fallback skipped because repo is not tracked".to_string());
+    } else {
+        miss_reasons.push("ghcr exact fallback not applicable".to_string());
+    }
+
+    RepoLinkInferenceResult {
+        repo_url: None,
+        strategy: ServiceRepoLinkInferenceStrategy::None,
+        reason: if miss_reasons.is_empty() {
+            None
+        } else {
+            Some(miss_reasons.join("; "))
+        },
+        outcome: if had_error {
+            RepoLinkInferenceOutcomeKind::Error
+        } else {
+            RepoLinkInferenceOutcomeKind::NoMatch
+        },
+    }
+}
+
 fn timeline_candidate_identity(
     context: &crate::db::ServiceNewVersionTimelineContext,
     candidate_display_tag_hint: Option<&str>,
@@ -477,108 +642,14 @@ pub(super) async fn infer_service_repo_link(
     let Some(snapshot_target) = snapshot_target else {
         return Err(ApiError::not_found("service not found"));
     };
-
-    let image = match registry::ImageRef::parse(&snapshot_target.image_ref) {
-        Ok(image) => image,
-        Err(err) => {
-            return Ok(Json(ServiceRepoLinkInferenceResponse {
-                repo_url: None,
-                strategy: ServiceRepoLinkInferenceStrategy::None,
-                reason: Some(format!("invalid service image ref: {err}")),
-            }));
-        }
-    };
-    let host_platform = registry::host_platform_override(state.config.host_platform.as_deref())
-        .unwrap_or_else(|| "linux/amd64".to_string());
-    let parsed_reference = image.reference.trim().to_string();
-    let parsed_reference_is_digest = parsed_reference.starts_with("sha256:");
-    let inspection_reference = snapshot_target
-        .current_digest
-        .as_deref()
-        .and_then(snapshot_worker::normalize_digest)
-        .or_else(|| image_ref_pinned_digest(&snapshot_target.image_ref))
-        .or_else(|| {
-            if parsed_reference_is_digest {
-                Some(parsed_reference.clone())
-            } else {
-                None
-            }
-        })
-        .or_else(|| {
-            let current_tag = snapshot_target.current_tag.trim();
-            if current_tag.is_empty() {
-                None
-            } else {
-                Some(current_tag.to_string())
-            }
-        })
-        .unwrap_or(parsed_reference);
-
-    let mut miss_reasons = Vec::new();
-
-    match state
-        .registry
-        .get_oci_source(&image, &inspection_reference, &host_platform)
+    let context = build_repo_link_inference_context(&state)
         .await
-    {
-        Ok(source) => {
-            if let Some(repo_key) = source.as_deref().and_then(normalize_github_source_repo_key) {
-                return Ok(Json(ServiceRepoLinkInferenceResponse {
-                    repo_url: Some(github_repo_url_from_key(&repo_key)),
-                    strategy: ServiceRepoLinkInferenceStrategy::OciSource,
-                    reason: None,
-                }));
-            }
-            if let Some(repo_url) = source.as_deref().and_then(normalize_external_repo_url) {
-                return Ok(Json(ServiceRepoLinkInferenceResponse {
-                    repo_url: Some(repo_url),
-                    strategy: ServiceRepoLinkInferenceStrategy::OciSource,
-                    reason: None,
-                }));
-            }
-            if source.as_deref().is_some() {
-                miss_reasons
-                    .push("oci source not recognized as a valid repository URL".to_string());
-            } else {
-                miss_reasons.push("oci source missing".to_string());
-            }
-        }
-        Err(err) => {
-            miss_reasons.push(format!("read oci source failed: {err}"));
-        }
-    }
-
-    if let Some(repo_key) = ghcr_exact_repo_key(&image) {
-        let tracked_repo_keys = state
-            .db
-            .list_github_packages_repos()
+        .map_err(map_internal)?;
+    Ok(Json(
+        infer_service_repo_link_for_snapshot_target(&state, &snapshot_target, &context)
             .await
-            .map_err(map_internal)?
-            .into_iter()
-            .filter(|repo| repo.selected)
-            .map(|repo| normalize_repo_full_name(&format!("{}/{}", repo.owner, repo.repo)))
-            .collect::<std::collections::BTreeSet<_>>();
-        if tracked_repo_keys.contains(&repo_key) {
-            return Ok(Json(ServiceRepoLinkInferenceResponse {
-                repo_url: Some(github_repo_url_from_key(&repo_key)),
-                strategy: ServiceRepoLinkInferenceStrategy::GhcrExact,
-                reason: None,
-            }));
-        }
-        miss_reasons.push("ghcr exact fallback skipped because repo is not tracked".to_string());
-    } else {
-        miss_reasons.push("ghcr exact fallback not applicable".to_string());
-    }
-
-    Ok(Json(ServiceRepoLinkInferenceResponse {
-        repo_url: None,
-        strategy: ServiceRepoLinkInferenceStrategy::None,
-        reason: if miss_reasons.is_empty() {
-            None
-        } else {
-            Some(miss_reasons.join("; "))
-        },
-    }))
+            .into_response(),
+    ))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1623,13 +1694,20 @@ pub(super) async fn put_service_settings(
     let now = now_rfc3339().map_err(map_internal)?;
     let current_settings = state
         .db
-        .get_service_settings(&service_id)
+        .get_stored_service_settings(&service_id)
         .await
         .map_err(map_internal)?
         .ok_or_else(|| ApiError::not_found("service not found"))?;
-    let repo_url = match req.repo_url {
-        Some(repo_url) => normalize_repo_url_input(repo_url.as_deref())?,
-        None => current_settings.repo_url,
+    let (repo_url, repo_url_auto_disabled) = match req.repo_url {
+        Some(repo_url) => {
+            let repo_url = normalize_repo_url_input(repo_url.as_deref())?;
+            let repo_url_auto_disabled = repo_url.is_none();
+            (repo_url, repo_url_auto_disabled)
+        }
+        None => (
+            current_settings.settings.repo_url.clone(),
+            current_settings.repo_url_auto_disabled,
+        ),
     };
 
     let settings = ServiceSettings {
@@ -1640,7 +1718,12 @@ pub(super) async fn put_service_settings(
 
     let updated = state
         .db
-        .put_service_settings(&service_id, &settings, &now)
+        .put_service_settings_with_repo_auto_disabled(
+            &service_id,
+            &settings,
+            repo_url_auto_disabled,
+            &now,
+        )
         .await
         .map_err(map_internal)?;
 
