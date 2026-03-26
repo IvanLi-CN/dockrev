@@ -67,6 +67,7 @@ WHERE id = ?1
             .map(|stored| stored.settings))
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub async fn put_service_settings(
         &self,
         service_id: &str,
