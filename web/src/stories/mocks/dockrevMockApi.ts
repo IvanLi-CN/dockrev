@@ -55,6 +55,7 @@ export type DockrevApiScenario =
   | 'version-tags-popover-snapshot-pending'
   | 'version-tags-popover-snapshot-missing'
   | 'multi-stack-mixed'
+  | 'overview-discovery-readable'
   | 'aggregate-dockrev-guard'
   | 'aggregate-dockrev-only'
   | 'overview-jobs-card-heavy-inflight'
@@ -2609,6 +2610,67 @@ function buildMultiStackMixed(): Fixture {
   return f
 }
 
+function buildOverviewDiscoveryReadable(): Fixture {
+  const f = buildDashboardDemo()
+
+  f.discoveredProjects = [
+    {
+      project: 'forward-auth',
+      status: 'active',
+      stackId: 'stack-prod',
+      configFiles: ['/srv/prod/docker-compose.yml', '/srv/prod/docker-compose.ops.yml', '/tmp/dockrev-override-forward-auth.yml'],
+      lastSeenAt: nowIso(-45_000),
+      lastScanAt: nowIso(-25_000),
+      lastError:
+        'warning:warning:config_files_conflict_fallback_common: no canonical superset found; all extra files unreadable; using common compose files. Hint: mount the override path into dockrev (same absolute path, read-only), and set DOCKREV_SUPERVISOR_STATE_PATH to the same mounted absolute path in both dockrev and supervisor.',
+      archived: false,
+    },
+    {
+      project: 'missing-compose',
+      status: 'missing',
+      stackId: null,
+      configFiles: ['/srv/missing/docker-compose.yml', '/srv/missing/docker-compose.ops.yml'],
+      lastSeenAt: nowIso(-160_000),
+      lastScanAt: nowIso(-120_000),
+      lastError: 'bind mount missing for /srv/missing/docker-compose.ops.yml',
+      archived: false,
+    },
+    {
+      project: 'invalid-compose',
+      status: 'invalid',
+      stackId: null,
+      configFiles: ['/srv/invalid/docker-compose.yml'],
+      lastSeenAt: nowIso(-120_000),
+      lastScanAt: nowIso(-95_000),
+      lastError: 'yaml parse error: unexpected indent near services.api.environment (line 18)',
+      archived: false,
+    },
+    {
+      project: 'detached-lab',
+      status: 'invalid',
+      stackId: null,
+      configFiles: ['/srv/lab/docker-compose.yml', '/srv/lab/compose.ops.yml'],
+      lastSeenAt: nowIso(-180_000),
+      lastScanAt: nowIso(-90_000),
+      lastError:
+        'config_files_extra_unreadable: /srv/lab/compose.ops.yml permission denied; compose project kept invalid until the unreadable override is fixed',
+      archived: false,
+    },
+    {
+      project: 'core-services',
+      status: 'active',
+      stackId: 'stack-infra',
+      configFiles: ['/srv/infra/docker-compose.yml'],
+      lastSeenAt: nowIso(-15_000),
+      lastScanAt: nowIso(-15_000),
+      lastError: null,
+      archived: false,
+    },
+  ]
+
+  return f
+}
+
 function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'empty') return baseEmpty()
   if (scenario === 'no-candidates') return buildNoCandidates()
@@ -2676,6 +2738,7 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'settings-configured' || scenario === 'settings-configured-resolve-slow') return buildSettingsConfigured()
   if (scenario === 'settings-notification-channel-errors') return buildSettingsNotificationChannelErrors()
   if (scenario === 'multi-stack-mixed') return buildMultiStackMixed()
+  if (scenario === 'overview-discovery-readable') return buildOverviewDiscoveryReadable()
   if (scenario === 'aggregate-dockrev-guard') return buildAggregateDockrevGuard()
   if (scenario === 'aggregate-dockrev-only') return buildAggregateDockrevOnly()
   return buildDashboardDemo()

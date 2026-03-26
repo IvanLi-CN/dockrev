@@ -46,10 +46,49 @@ const jobsCardOnlyScopeCss = `
 }
 `
 
+const discoveryCardOnlyScopeCss = `
+.appShell {
+  display: block !important;
+  min-height: 0 !important;
+  height: auto !important;
+}
+
+.topbar,
+.sidebar,
+.mobileDockrevPanel,
+.pageHead {
+  display: none !important;
+}
+
+.content {
+  padding: 0 !important;
+  overflow: visible !important;
+}
+
+.page {
+  gap: 0 !important;
+}
+
+.discoveryCardStoryFocusFrame {
+  width: min(100%, 780px);
+  margin: 18px;
+}
+
+.twoCol {
+  display: block !important;
+}
+
+.twoCol > .card:first-of-type,
+.overviewIndent {
+  display: none !important;
+}
+`
+
 const meta: Meta<typeof OverviewPage> = {
   title: 'Pages/OverviewPage',
   component: OverviewPage,
   decorators: [withDockrevMockApi],
+  tags: ['autodocs'],
 }
 
 export default meta
@@ -251,6 +290,50 @@ export const JobsCardRunningProgressOnlyActualWidth: Story = {
       <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="单卡聚焦：运行态与结果（接近真实宽度）">
         {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
       </PageHarness>
+    )
+  },
+}
+
+export const DiscoveryCardReadable: Story = {
+  parameters: { dockrevApiScenario: 'overview-discovery-readable', layout: 'fullscreen' },
+  decorators: [
+    (Story) => (
+      <div className="discoveryCardStoryFocus">
+        <style>{discoveryCardOnlyScopeCss}</style>
+        <div className="discoveryCardStoryFocusFrame">
+          <Story />
+        </div>
+      </div>
+    ),
+  ],
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="聚焦：结构化发现异常列表与长错误次级暴露">
+        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await sleep(180)
+    const doc = canvasElement.ownerDocument
+    const statChips = Array.from(canvasElement.querySelectorAll<HTMLElement>('.discoveryStatChip')).map((chip) => chip.textContent ?? '')
+    expectStory(statChips.some((text) => text.includes('异常项目') && text.includes('4')), 'discovery summary should surface total issue count first')
+
+    const rows = Array.from(canvasElement.querySelectorAll<HTMLElement>('.discoveryIssueRow'))
+    expectStory(rows.length === 4, `expected 4 discovery issue rows, got ${rows.length}`)
+    expectStory(rows[0]?.textContent?.includes('forward-auth'), 'newest project should lead the discovery issue list')
+
+    const warningRow = rows.find((row) => row.textContent?.includes('forward-auth'))
+    expectStory(warningRow, 'warning row missing in discovery readable story')
+    const detailsButton = warningRow?.querySelector<HTMLButtonElement>('.discoveryIssueDetailsBtn')
+    expectStory(detailsButton, 'warning row should expose a secondary details button for long errors')
+    detailsButton.focus()
+    await sleep(TOOLTIP_WAIT_MS)
+
+    const tooltip = doc.querySelector<HTMLElement>('[role="tooltip"]')
+    expectStory(
+      tooltip?.textContent?.includes('DOCKREV_SUPERVISOR_STATE_PATH'),
+      'tooltip should preserve the full discovery warning details',
     )
   },
 }

@@ -22,7 +22,7 @@ import {
 } from '../api'
 import { navigate } from '../routes'
 import { buildUpdateServiceTarget, buildUpdateServiceTargets } from '../updateTargets'
-import { ArrowRightIcon, Button, Mono, StatusRemark } from '../ui'
+import { ArrowRightIcon, Button, Mono, Pill, StatusRemark } from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import {
@@ -51,6 +51,7 @@ import {
   DIGEST_SNAPSHOT_UPDATED_EVENT,
   type DigestSnapshotUpdatedDetail,
 } from '../digestInferenceTracker'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { imageRepoFromImageRef } from '../imageRepo'
 import {
   resolveUpdateActionTargetKey,
@@ -148,6 +149,87 @@ function withAggregateDisplayName(
 
 function GroupGuide() {
   return <div className="groupGuide" aria-hidden="true" />
+}
+
+type DiscoveryIssueTone = 'warning' | 'missing' | 'invalid'
+
+type DiscoveryIssueItem = {
+  project: string
+  tone: DiscoveryIssueTone
+  label: string
+  summary: string
+  fullError: string | null
+  lastSeenAt: string | null
+  lastScanAt: string | null
+  configSummary: string | null
+  stackId: string | null
+}
+
+const DISCOVERY_ISSUE_ORDER: Record<DiscoveryIssueTone, number> = {
+  invalid: 0,
+  missing: 1,
+  warning: 2,
+}
+
+function truncateText(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text
+}
+
+function compactPathLabel(path: string): string {
+  const trimmed = path.trim()
+  if (!trimmed) return '-'
+  const parts = trimmed.split(/[\\/]/).filter(Boolean)
+  return parts[parts.length - 1] ?? trimmed
+}
+
+function formatDiscoveryConfigSummary(configFiles?: string[] | null): string | null {
+  const items = (configFiles ?? []).map((item) => item.trim()).filter(Boolean)
+  if (items.length === 0) return null
+  const first = compactPathLabel(items[0])
+  if (items.length === 1) return `配置 ${first}`
+  return `配置 ${first} +${items.length - 1}`
+}
+
+function normalizeDiscoveryIssueError(message?: string | null): string | null {
+  const raw = (message ?? '').trim()
+  if (!raw) return null
+  let normalized = raw.replace(/\s+/g, ' ').trim()
+  while (/^(warning|invalid|missing)\s*:\s*/i.test(normalized)) {
+    normalized = normalized.replace(/^(warning|invalid|missing)\s*:\s*/i, '')
+  }
+  normalized = normalized.replace(/^[a-z0-9_]+:\s*/i, '').trim()
+  return normalized || raw
+}
+
+function summarizeDiscoveryIssueError(message?: string | null): { summary: string | null; fullError: string | null } {
+  const full = normalizeDiscoveryIssueError(message)
+  if (!full) return { summary: null, fullError: null }
+
+  const hintIndex = full.search(/\bHint:/i)
+  const withoutHint = hintIndex >= 0 ? full.slice(0, hintIndex).trim().replace(/[;:,.]+$/, '') : full
+  const summary = truncateText(withoutHint || full, 120)
+  return { summary, fullError: full === summary ? null : full }
+}
+
+function buildDiscoveryIssue(project: DiscoveredProject, tone: DiscoveryIssueTone): DiscoveryIssueItem {
+  const { summary, fullError } = summarizeDiscoveryIssueError(project.lastError)
+  return {
+    project: project.project,
+    tone,
+    label: tone === 'warning' ? '告警' : tone === 'missing' ? '缺失' : '无效',
+    summary:
+      summary ??
+      (tone === 'warning'
+        ? '发现扫描已标记告警，请检查 compose 与挂载状态。'
+        : tone === 'missing'
+          ? '发现项目已缺失，请检查 compose 文件或挂载路径。'
+          : '发现项目无效，请修复 compose / override 配置。'),
+    fullError,
+    lastSeenAt: project.lastSeenAt ?? null,
+    lastScanAt: project.lastScanAt ?? null,
+    configSummary: formatDiscoveryConfigSummary(project.configFiles),
+    stackId: project.stackId ?? null,
+  }
 }
 
 const UPDATE_CANDIDATE_FILTER_QUERY_KEY = 'updates'
@@ -950,11 +1032,29 @@ export function OverviewPage(props: {
     const warning = discoveredProjects.filter((p) => p.status === 'active' && !p.archived && !!p.lastError)
     const missing = discoveredProjects.filter((p) => p.status === 'missing' && !p.archived)
     const invalid = discoveredProjects.filter((p) => p.status === 'invalid' && !p.archived)
-    const issues = [...warning, ...missing, ...invalid]
-      .sort((a, b) => String(b.lastSeenAt ?? '').localeCompare(String(a.lastSeenAt ?? '')))
+    const issues = [
+      ...invalid.map((project) => buildDiscoveryIssue(project, 'invalid')),
+      ...missing.map((project) => buildDiscoveryIssue(project, 'missing')),
+      ...warning.map((project) => buildDiscoveryIssue(project, 'warning')),
+    ]
+      .sort((a, b) => {
+        const aStamp = String(a.lastSeenAt ?? a.lastScanAt ?? '')
+        const bStamp = String(b.lastSeenAt ?? b.lastScanAt ?? '')
+        const recencyDelta = bStamp.localeCompare(aStamp)
+        if (recencyDelta !== 0) return recencyDelta
+        return DISCOVERY_ISSUE_ORDER[a.tone] - DISCOVERY_ISSUE_ORDER[b.tone]
+      })
       .slice(0, 4)
-    return { active, warning, missing, invalid, issues }
+    return {
+      active,
+      warning,
+      missing,
+      invalid,
+      issues,
+      issueCount: warning.length + missing.length + invalid.length,
+    }
   }, [discoveredProjects])
+  const effectiveDiscoveryScanAt = lastDiscoveryScanAt ?? lastDiscoveryProjectsScanAt
 
   const runDiscoveryScan = useCallback(async () => {
     const ok = await confirm({
@@ -1327,42 +1427,111 @@ export function OverviewPage(props: {
 
         <div className="card">
           <div className="sectionRow">
-            <div>
+            <div className="discoveryCardHeader">
               <div className="title">扫描与发现异常</div>
-              <div className="muted">discovery projects（warning/missing/invalid）</div>
+              <div className="muted">按最近发现结果聚焦 warning / missing / invalid 项目</div>
             </div>
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
+            <div className="discoveryCardActions">
               <Button variant="ghost" disabled={busy} onClick={runDiscoveryScan}>
-                发现扫描
+                执行发现扫描
               </Button>
               <Button variant="ghost" disabled={busy} onClick={() => navigate({ name: 'services' })}>
                 查看服务
               </Button>
             </div>
           </div>
-          <div className="chipRow" style={{ marginTop: 14 }}>
-            <div className="chipStatic">{`active: ${discoverySummary.active.length}`}</div>
-            <div className="chipStatic">{`warning: ${discoverySummary.warning.length}`}</div>
-            <div className="chipStatic">{`missing: ${discoverySummary.missing.length}`}</div>
-            <div className="chipStatic">{`invalid: ${discoverySummary.invalid.length}`}</div>
-            {lastDiscoveryScanAt ? <div className="chipStatic">{`last scan: ${formatShort(lastDiscoveryScanAt)}`}</div> : null}
-            {!lastDiscoveryScanAt && lastDiscoveryProjectsScanAt ? (
-              <div className="chipStatic">{`last scan: ${formatShort(lastDiscoveryProjectsScanAt)}`}</div>
+          <div className="chipRow discoverySummaryRow">
+            <div className="discoveryStatChip discoveryStatChipTotal">
+              <span className="discoveryStatLabel">异常项目</span>
+              <span className="discoveryStatValue">{discoverySummary.issueCount}</span>
+            </div>
+            <div className="discoveryStatChip discoveryStatChipWarn">
+              <span className="discoveryStatLabel">告警</span>
+              <span className="discoveryStatValue">{discoverySummary.warning.length}</span>
+            </div>
+            <div className="discoveryStatChip discoveryStatChipBad">
+              <span className="discoveryStatLabel">缺失</span>
+              <span className="discoveryStatValue">{discoverySummary.missing.length}</span>
+            </div>
+            <div className="discoveryStatChip discoveryStatChipBad">
+              <span className="discoveryStatLabel">无效</span>
+              <span className="discoveryStatValue">{discoverySummary.invalid.length}</span>
+            </div>
+            <div className="discoveryStatChip discoveryStatChipInfo">
+              <span className="discoveryStatLabel">活跃</span>
+              <span className="discoveryStatValue">{discoverySummary.active.length}</span>
+            </div>
+            {effectiveDiscoveryScanAt ? (
+              <div className="discoveryStatChip discoveryStatChipScan">
+                <span className="discoveryStatLabel">最近扫描</span>
+                <span className="discoveryStatValue">{formatCompactDateTime(effectiveDiscoveryScanAt)}</span>
+              </div>
             ) : null}
           </div>
+          <div className="muted discoverySummaryLead">
+            {discoverySummary.issueCount > 0
+              ? `共 ${discoverySummary.issueCount} 个异常项目，优先展示最近 ${discoverySummary.issues.length} 个需要立即处理的条目。`
+              : '最近一次扫描未发现需要处理的 warning / missing / invalid 项目。'}
+          </div>
           {discoverySummary.issues.length > 0 ? (
-            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {discoverySummary.issues.map((p) => (
-                <div key={p.project} className="muted" title={p.lastError ?? undefined}>
-                  <Mono>{p.project}</Mono>
-                  {p.status === 'missing' ? ' · missing' : p.status === 'invalid' ? ' · invalid' : ' · warning'}
-                  {p.lastError ? ` · ${p.lastError}` : ''}
-                </div>
-              ))}
+            <div className="discoveryIssueList">
+              {discoverySummary.issues.map((issue) => {
+                const metaParts = [
+                  issue.lastSeenAt ? `最近发现 ${formatCompactDateTime(issue.lastSeenAt)}` : null,
+                  issue.lastScanAt ? `最近扫描 ${formatCompactDateTime(issue.lastScanAt)}` : null,
+                  issue.configSummary,
+                  issue.stackId ? `关联 ${issue.stackId}` : null,
+                ].filter((part): part is string => Boolean(part))
+                const pillTone = issue.tone === 'warning' ? 'warn' : 'bad'
+
+                return (
+                  <div key={`${issue.tone}:${issue.project}`} className="discoveryIssueRow">
+                    <div className="discoveryIssueHeadline">
+                      <div className="discoveryIssuePrimary">
+                        <Pill tone={pillTone}>{issue.label}</Pill>
+                        <span className="mono monoPrimary discoveryIssueProject" title={issue.project}>
+                          {issue.project}
+                        </span>
+                      </div>
+                      <div className="discoveryIssueSummaryWrap">
+                        <span className="discoveryIssueSummary" title={issue.fullError ?? issue.summary}>
+                          {issue.summary}
+                        </span>
+                        {issue.fullError ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                type="button"
+                                className="discoveryIssueDetailsBtn"
+                                aria-label={`查看 ${issue.project} 的完整异常详情`}
+                                title={issue.fullError}
+                              >
+                                详情
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent className="discoveryIssueTooltip">{issue.fullError}</TooltipContent>
+                          </Tooltip>
+                        ) : null}
+                      </div>
+                    </div>
+                    {metaParts.length > 0 ? (
+                      <div className="discoveryIssueMeta">
+                        {metaParts.map((part, index) => (
+                          <span key={`${issue.project}:${part}`} className="discoveryIssueMetaPart">
+                            {index > 0 ? <span className="discoveryIssueMetaSep">·</span> : null}
+                            <span>{part}</span>
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })}
             </div>
           ) : (
-            <div className="muted" style={{ marginTop: 12 }}>
-              暂无异常
+            <div className="discoveryIssueEmpty">
+              <div className="discoveryIssueEmptyTitle">当前没有需要处理的发现异常</div>
+              <div className="muted">需要时仍可执行发现扫描，刷新 discovery projects 与 stacks 的最新状态。</div>
             </div>
           )}
         </div>
