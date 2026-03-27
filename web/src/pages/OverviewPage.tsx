@@ -232,6 +232,12 @@ function buildDiscoveryIssue(project: DiscoveredProject, tone: DiscoveryIssueTon
   }
 }
 
+function latestDiscoveryObservationAt(issue: Pick<DiscoveryIssueItem, 'lastSeenAt' | 'lastScanAt'>): string {
+  const seenAt = issue.lastSeenAt ?? ''
+  const scanAt = issue.lastScanAt ?? ''
+  return seenAt.localeCompare(scanAt) >= 0 ? seenAt : scanAt
+}
+
 const UPDATE_CANDIDATE_FILTER_QUERY_KEY = 'updates'
 const UPDATE_CANDIDATE_COLLAPSED_STORAGE_PREFIX = 'dockrev:overview:updateCandidates:collapsed:v1:'
 const OVERVIEW_JOBS_SSE_REFRESH_DEBOUNCE_MS = 180
@@ -1038,8 +1044,8 @@ export function OverviewPage(props: {
       ...warning.map((project) => buildDiscoveryIssue(project, 'warning')),
     ]
       .sort((a, b) => {
-        const aStamp = String(a.lastSeenAt ?? a.lastScanAt ?? '')
-        const bStamp = String(b.lastSeenAt ?? b.lastScanAt ?? '')
+        const aStamp = latestDiscoveryObservationAt(a)
+        const bStamp = latestDiscoveryObservationAt(b)
         const recencyDelta = bStamp.localeCompare(aStamp)
         if (recencyDelta !== 0) return recencyDelta
         return DISCOVERY_ISSUE_ORDER[a.tone] - DISCOVERY_ISSUE_ORDER[b.tone]

@@ -322,6 +322,10 @@ export const DiscoveryCardReadable: Story = {
     const rows = Array.from(canvasElement.querySelectorAll<HTMLElement>('.discoveryIssueRow'))
     expectStory(rows.length === 4, `expected 4 discovery issue rows, got ${rows.length}`)
     expectStory(rows[0]?.textContent?.includes('forward-auth'), 'newest project should lead the discovery issue list')
+    expectStory(
+      rows[1]?.textContent?.includes('missing-compose'),
+      'recently re-confirmed missing project should stay near the top of the discovery issue list',
+    )
 
     const warningRow = rows.find((row) => row.textContent?.includes('forward-auth'))
     expectStory(warningRow, 'warning row missing in discovery readable story')
