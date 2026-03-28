@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（4/5）
+- Status: 已完成
 - Created: 2026-03-28
 - Last: 2026-03-28
 
@@ -125,7 +125,7 @@
 - [x] M2: `Release` workflow 在镜像 push 后写入 publication ledger，并给 publish job 增加 `issues: write`。
 - [x] M3: 新增 PR release-version issue comment upsert 脚本并接入 workflow。
 - [x] M4: 回归测试、README 与 specs index 同步完成。
-- [ ] M5: 快车道收敛到 latest PR merge-ready。
+- [x] M5: 快车道收敛到 latest PR merge-ready。
 
 ## 方案概述（Approach, high-level）
 
@@ -143,6 +143,7 @@
 
 - 2026-03-28: 创建规格，冻结 `latest = newest published stable` 与 PR release-version issue comment upsert 契约，并声明 supersede `#48mh8` 中关于 comment 的旧 non-goal。
 - 2026-03-28: 完成本地实现与验证：`release_snapshot.py` 新增 `refs/notes/release-publications` / `record-publication`，`release.yml` 改为在镜像 push 后写 publication ledger 并于 GitHub Release 成功后 upsert PR issue comment，回归自测覆盖 `0.35.8/0.35.9` 队列与 comment create/update/foreign-marker/rc 场景。
+- 2026-03-28: PR #187 收敛到 merge-ready；GitHub required checks 全部通过，取消态的 `PR Label Gate / Release intent label gate` 已通过 rerun 转正。
 
 ## 参考（References）
 
