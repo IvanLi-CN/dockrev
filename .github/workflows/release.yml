@@ -15,7 +15,7 @@ on:
 permissions:
   contents: write
   packages: write
-  issues: read
+  issues: write
   pull-requests: read
 
 env:
@@ -25,6 +25,7 @@ env:
   PLATFORMS: linux/amd64,linux/arm64
   RUST_TOOLCHAIN: "1.91.0"
   RELEASE_SNAPSHOT_NOTES_REF: refs/notes/release-snapshots
+  RELEASE_PUBLICATION_NOTES_REF: refs/notes/release-publications
 
 concurrency:
   group: release-main
@@ -147,6 +148,7 @@ jobs:
           python3 .github/scripts/release_snapshot.py export \
             --target-sha "${TARGET_SHA}" \
             --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
+            --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
             --main-ref "origin/main" \
             --resolve-publication-tags \
             --github-output "$GITHUB_OUTPUT"
@@ -359,22 +361,30 @@ jobs:
     permissions:
       actions: write
       contents: write
-      issues: read
+      issues: write
       packages: write
       pull-requests: read
     env:
       APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
+      PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
       RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
       RELEASE_CHANNEL: ${{ needs.prepare.outputs.release_channel }}
       TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
       DOCKREV_TAGS_CSV: ${{ needs.prepare.outputs.tags_csv }}
       SUPERVISOR_TAGS_CSV: ${{ needs.prepare.outputs.supervisor_tags_csv }}
+      WORKFLOW_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      - name: Checkout
+      - name: Checkout release target
         uses: actions/checkout@v4
         with:
           ref: ${{ env.TARGET_SHA }}
           fetch-depth: 0
+
+      - name: Checkout workflow helpers
+        uses: actions/checkout@v4
+        with:
+          path: .workflow-src
+          fetch-depth: 1
 
       - name: Download binaries (amd64)
         uses: actions/download-artifact@v4
@@ -703,6 +713,7 @@ jobs:
           echo "[smoke] passed"
 
       - name: Build and push Dockrev Docker image (artifact-first)
+        id: push-dockrev
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -721,6 +732,7 @@ jobs:
             APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
 
       - name: Build and push Supervisor Docker image (artifact-first)
+        id: push-supervisor
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -737,6 +749,20 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
           build-args: |
             APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
+
+      - name: Record release publication ledger
+        shell: bash
+        env:
+          DOCKREV_DIGEST: ${{ steps.push-dockrev.outputs.digest }}
+          DOCKREV_SUPERVISOR_DIGEST: ${{ steps.push-supervisor.outputs.digest }}
+        run: |
+          set -euo pipefail
+          python3 .workflow-src/.github/scripts/release_snapshot.py record-publication \
+            --target-sha "${TARGET_SHA}" \
+            --snapshot-notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
+            --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
+            --dockrev-digest "${DOCKREV_DIGEST}" \
+            --dockrev-supervisor-digest "${DOCKREV_SUPERVISOR_DIGEST}"
 
       - name: Create or update GitHub Release + upload assets
         id: github-release
@@ -764,6 +790,27 @@ jobs:
           echo "::error::Cause: see step 'Create or update GitHub Release + upload assets' logs above."
           echo "::error::Retry: Actions → workflow 'Release' → Re-run jobs (tag=${RELEASE_TAG})."
           exit 1
+
+      - name: Upsert release-version comment on source PR
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_URL: ${{ steps.github-release.outputs.html_url }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${PR_NUMBER}" ]]; then
+            echo "Missing snapshot pr_number for ${TARGET_SHA}" >&2
+            exit 1
+          fi
+
+          python3 .workflow-src/.github/scripts/release_pr_comment.py \
+            --github-repository "${GITHUB_REPOSITORY}" \
+            --github-token "${GITHUB_TOKEN}" \
+            --pr-number "${PR_NUMBER}" \
+            --release-tag "${RELEASE_TAG}" \
+            --release-channel "${RELEASE_CHANNEL}" \
+            --release-url "${RELEASE_URL}" \
+            --workflow-run-url "${WORKFLOW_RUN_URL}"
 
       - name: Resolve next pending release target
         if: github.event_name != 'workflow_dispatch'

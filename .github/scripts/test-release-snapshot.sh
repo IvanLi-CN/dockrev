@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-python3 - <<'PY' "$repo_root/.github/scripts/release_snapshot.py"
+python3 - <<'PY' "$repo_root/.github/scripts/release_snapshot.py" "$repo_root/.github/scripts/release_pr_comment.py"
 from __future__ import annotations
 
 import argparse
@@ -14,12 +14,18 @@ import sys
 import tempfile
 from pathlib import Path
 
-script_path = Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location("release_snapshot", script_path)
-module = importlib.util.module_from_spec(spec)
-assert spec is not None and spec.loader is not None
-sys.modules[spec.name] = module
-spec.loader.exec_module(module)
+
+def load_module(name: str, script_path: Path):
+    spec = importlib.util.spec_from_file_location(name, script_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+module = load_module("release_snapshot", Path(sys.argv[1]))
+comment_module = load_module("release_pr_comment", Path(sys.argv[2]))
 
 
 def run(*args: str, cwd: Path) -> str:
@@ -125,15 +131,32 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-versions-") as tmp:
         assert snapshot3["release_prerelease"] is True
         run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(snapshot3), sha3, cwd=repo)
 
-        assert module.publication_tags(snapshot1, notes_ref=module.DEFAULT_NOTES_REF, main_ref=sha3) == (
-            "ghcr.io/ivanli-cn/dockrev:0.1.1"
+        assert module.publication_tags(
+            snapshot1,
+            publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+            main_ref=sha3,
+        ) == (
+            "ghcr.io/ivanli-cn/dockrev:0.1.1,ghcr.io/ivanli-cn/dockrev:latest"
         )
-        assert module.publication_tags(snapshot2, notes_ref=module.DEFAULT_NOTES_REF, main_ref=sha3) == (
+        assert module.publication_tags(
+            snapshot2,
+            publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+            main_ref=sha3,
+        ) == (
             "ghcr.io/ivanli-cn/dockrev:0.2.0,ghcr.io/ivanli-cn/dockrev:latest"
         )
-        assert module.supervisor_publication_tags(snapshot2, notes_ref=module.DEFAULT_NOTES_REF, main_ref=sha3) == (
+        assert module.supervisor_publication_tags(
+            snapshot2,
+            publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+            main_ref=sha3,
+        ) == (
             "ghcr.io/ivanli-cn/dockrev-supervisor:0.2.0,ghcr.io/ivanli-cn/dockrev-supervisor:latest"
         )
+        assert module.publication_tags(
+            snapshot3,
+            publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+            main_ref=sha3,
+        ) == f"ghcr.io/ivanli-cn/dockrev:{snapshot3['release_tag']}"
 
         docs_snapshot = module.build_snapshot(
             target_sha=sha1,
@@ -483,35 +506,36 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-catch-up-") as tmp:
         os.chdir(original_cwd)
 
 
-with tempfile.TemporaryDirectory(prefix="release-snapshot-backfill-") as tmp:
+with tempfile.TemporaryDirectory(prefix="release-snapshot-publication-regression-") as tmp:
     repo = Path(tmp)
     run("init", cwd=repo)
     run("config", "user.name", "Test User", cwd=repo)
     run("config", "user.email", "test@example.com", cwd=repo)
     run("checkout", "-b", "main", cwd=repo)
-    (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.1.0"\n')
+    (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.35.7"\n')
     (repo / "README.md").write_text("base\n")
     run("add", "Cargo.toml", "README.md", cwd=repo)
     run("commit", "-m", "base", cwd=repo)
-    run("tag", "0.1.0", cwd=repo)
+    run("tag", "0.35.7", cwd=repo)
 
-    (repo / "README.md").write_text("old pending\n")
+    (repo / "README.md").write_text("0.35.8 pending\n")
     run("add", "README.md", cwd=repo)
-    run("commit", "-m", "old pending", cwd=repo)
+    run("commit", "-m", "0.35.8 pending", cwd=repo)
     old_sha = run("rev-parse", "HEAD", cwd=repo)
 
-    (repo / "README.md").write_text("new stable\n")
+    (repo / "README.md").write_text("0.35.9 pending\n")
     run("add", "README.md", cwd=repo)
-    run("commit", "-m", "new stable", cwd=repo)
+    run("commit", "-m", "0.35.9 pending", cwd=repo)
     new_sha = run("rev-parse", "HEAD", cwd=repo)
 
     original_cwd = Path.cwd()
     original_loader = module.load_pr_for_commit
+    original_git = module.git
     try:
         os.chdir(repo)
         module.load_pr_for_commit = lambda api_root, repository, token, target_sha, **kwargs: {
-            old_sha: make_pr(501, "Old patch", old_sha, ["type:patch", "channel:stable"]),
-            new_sha: make_pr(502, "New patch", new_sha, ["type:patch", "channel:stable"]),
+            old_sha: make_pr(501, "Release 0.35.8", old_sha, ["type:patch", "channel:stable"]),
+            new_sha: make_pr(502, "Release 0.35.9", new_sha, ["type:patch", "channel:stable"]),
         }[target_sha]
 
         old_snapshot = module.build_snapshot(
@@ -522,6 +546,7 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-backfill-") as tmp:
             registry="ghcr.io",
             api_root="https://api.github.com",
         )
+        assert old_snapshot["release_tag"] == "0.35.8"
         run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(old_snapshot), old_sha, cwd=repo)
 
         new_snapshot = module.build_snapshot(
@@ -532,20 +557,149 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-backfill-") as tmp:
             registry="ghcr.io",
             api_root="https://api.github.com",
         )
+        assert new_snapshot["release_tag"] == "0.35.9"
         run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(new_snapshot), new_sha, cwd=repo)
 
         exported = dict(old_snapshot)
         exported["publish_latest"] = module.publish_latest_for_snapshot(
             old_snapshot,
-            notes_ref=module.DEFAULT_NOTES_REF,
+            publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
             main_ref=new_sha,
         )
-        exported["tags_csv"] = module.publication_tags(old_snapshot, notes_ref=module.DEFAULT_NOTES_REF, main_ref=new_sha)
-        assert exported["publish_latest"] is False
-        assert exported["tags_csv"] == "ghcr.io/ivanli-cn/dockrev:0.1.1"
+        exported["tags_csv"] = module.publication_tags(
+            old_snapshot,
+            publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+            main_ref=new_sha,
+        )
+        assert exported["publish_latest"] is True
+        assert exported["tags_csv"] == "ghcr.io/ivanli-cn/dockrev:0.35.8,ghcr.io/ivanli-cn/dockrev:latest"
+
+        module.git = fake_push_git(original_git, module.DEFAULT_PUBLICATION_NOTES_REF)
+        exit_code = module.record_publication(
+            argparse.Namespace(
+                target_sha=new_sha,
+                snapshot_notes_ref=module.DEFAULT_NOTES_REF,
+                publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+                dockrev_digest="sha256:" + ("1" * 64),
+                dockrev_supervisor_digest="sha256:" + ("2" * 64),
+                published_at="2026-03-27T10:20:30Z",
+                output=str(repo / "publication.json"),
+                max_attempts=1,
+            )
+        )
+        assert exit_code == 0
+        publication = module.read_publication(module.DEFAULT_PUBLICATION_NOTES_REF, new_sha)
+        assert publication is not None
+        assert publication["release_tag"] == "0.35.9"
+        assert publication["release_channel"] == "stable"
+        assert publication["published_at"] == "2026-03-27T10:20:30Z"
+
+        exported_after = dict(old_snapshot)
+        exported_after["publish_latest"] = module.publish_latest_for_snapshot(
+            old_snapshot,
+            publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+            main_ref=new_sha,
+        )
+        exported_after["tags_csv"] = module.publication_tags(
+            old_snapshot,
+            publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+            main_ref=new_sha,
+        )
+        assert exported_after["publish_latest"] is False
+        assert exported_after["tags_csv"] == "ghcr.io/ivanli-cn/dockrev:0.35.8"
     finally:
         module.load_pr_for_commit = original_loader
+        module.git = original_git
         os.chdir(original_cwd)
 
-print("release_snapshot.py self-test: ok")
+comments: list[dict[str, object]] = []
+requests: list[dict[str, object]] = []
+original_comment_request = comment_module.github_request_json
+
+
+def fake_comment_request(api_root, token, method, path, *, body=None, query=None):
+    requests.append({"method": method, "path": path, "body": body, "query": query})
+    if method == "GET":
+        return [dict(comment) for comment in comments]
+    if method == "POST":
+        created = {
+            "id": 900 + len(comments) + 1,
+            "body": body["body"],
+            "user": {"login": comment_module.BOT_LOGIN},
+        }
+        comments.append(created)
+        return created
+    if method == "PATCH":
+        comment_id = int(path.rsplit("/", 1)[1])
+        for index, comment in enumerate(comments):
+            if comment["id"] == comment_id:
+                updated = dict(comment)
+                updated["body"] = body["body"]
+                comments[index] = updated
+                return updated
+        raise AssertionError(f"missing comment id {comment_id}")
+    raise AssertionError(f"unexpected method {method}")
+
+
+comment_module.github_request_json = fake_comment_request
+try:
+    created = comment_module.upsert_release_comment(
+        api_root="https://api.github.com",
+        repository="IvanLi-CN/dockrev",
+        token="token",
+        pr_number=186,
+        release_tag="0.35.9",
+        release_channel="stable",
+        release_url="https://github.com/IvanLi-CN/dockrev/releases/tag/0.35.9",
+        workflow_run_url="https://github.com/IvanLi-CN/dockrev/actions/runs/179",
+    )
+    assert created["comment_status"] == "create"
+    assert requests[0]["method"] == "GET"
+    assert requests[1]["method"] == "POST"
+    assert comment_module.COMMENT_MARKER in comments[0]["body"]
+    assert "Version: `0.35.9`" in comments[0]["body"]
+    assert "Channel: `stable`" in comments[0]["body"]
+
+    requests.clear()
+    updated = comment_module.upsert_release_comment(
+        api_root="https://api.github.com",
+        repository="IvanLi-CN/dockrev",
+        token="token",
+        pr_number=186,
+        release_tag="0.36.0-rc.abcdef0",
+        release_channel="rc",
+        release_url="https://github.com/IvanLi-CN/dockrev/releases/tag/0.36.0-rc.abcdef0",
+        workflow_run_url="https://github.com/IvanLi-CN/dockrev/actions/runs/180",
+    )
+    assert updated["comment_status"] == "update"
+    assert requests[0]["method"] == "GET"
+    assert requests[1]["method"] == "PATCH"
+    assert "Version: `0.36.0-rc.abcdef0`" in comments[0]["body"]
+    assert "Channel: `rc`" in comments[0]["body"]
+
+    comments[:] = [
+        {
+            "id": 777,
+            "body": f"{comment_module.COMMENT_MARKER}\nforeign marker",
+            "user": {"login": "octocat"},
+        }
+    ]
+    requests.clear()
+    skipped = comment_module.upsert_release_comment(
+        api_root="https://api.github.com",
+        repository="IvanLi-CN/dockrev",
+        token="token",
+        pr_number=186,
+        release_tag="0.35.9",
+        release_channel="stable",
+        release_url="https://github.com/IvanLi-CN/dockrev/releases/tag/0.35.9",
+        workflow_run_url="https://github.com/IvanLi-CN/dockrev/actions/runs/179",
+    )
+    assert skipped["comment_status"] == "skip_foreign_marker"
+    assert len(requests) == 1
+    assert requests[0]["method"] == "GET"
+finally:
+    comment_module.github_request_json = original_comment_request
+
+print("release_snapshot.py + release_pr_comment.py self-test: ok")
 PY
