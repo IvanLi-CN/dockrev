@@ -255,21 +255,57 @@ fn parse_strict_semver_tag(tag: &str) -> Option<Version> {
     Version::parse(normalized).ok()
 }
 
+fn is_comparable_prerelease_token(token: &str) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    if token.bytes().all(|byte| byte.is_ascii_digit()) {
+        return true;
+    }
+
+    let normalized = token.to_ascii_lowercase();
+    if matches!(
+        normalized.as_str(),
+        "alpha" | "beta" | "rc" | "pre" | "preview"
+    ) {
+        return true;
+    }
+
+    ["alpha", "beta", "rc", "pre", "preview"]
+        .into_iter()
+        .any(|prefix| {
+            normalized.strip_prefix(prefix).is_some_and(|suffix| {
+                let digits = suffix.strip_prefix('-').unwrap_or(suffix);
+                !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+            })
+        })
+}
+
+fn parse_comparable_strict_semver_tag(tag: &str) -> Option<Version> {
+    let version = parse_strict_semver_tag(tag)?;
+    let comparable = version.pre.is_empty()
+        || version
+            .pre
+            .as_str()
+            .split('.')
+            .all(is_comparable_prerelease_token);
+    comparable.then_some(version)
+}
+
+fn comparable_semver_baseline(preferred_tag: Option<&str>, fallback_tag: &str) -> Option<Version> {
+    match preferred_tag.map(str::trim).filter(|tag| !tag.is_empty()) {
+        Some(tag) => parse_comparable_strict_semver_tag(tag),
+        None => parse_comparable_strict_semver_tag(fallback_tag),
+    }
+}
+
 fn semver_baseline_for_current(svc: &crate::api::types::Service) -> Option<Version> {
-    svc.image
-        .resolved_tag
-        .as_deref()
-        .and_then(parse_strict_semver_tag)
-        .or_else(|| parse_strict_semver_tag(&svc.image.tag))
+    comparable_semver_baseline(svc.image.resolved_tag.as_deref(), &svc.image.tag)
 }
 
 fn semver_baseline_for_candidate(svc: &crate::api::types::Service) -> Option<Version> {
     let candidate = svc.candidate.as_ref()?;
-    candidate
-        .resolved_tag
-        .as_deref()
-        .and_then(parse_strict_semver_tag)
-        .or_else(|| parse_strict_semver_tag(&candidate.tag))
+    comparable_semver_baseline(candidate.resolved_tag.as_deref(), &candidate.tag)
 }
 
 fn detect_semver_downgrade(svc: &crate::api::types::Service) -> Option<(String, String)> {
@@ -1997,6 +2033,195 @@ mod tests {
 
         assert_eq!(selection.services.len(), 1);
         assert_eq!(selection.services[0].id, "svc-dockrev");
+    }
+
+    #[test]
+    fn detect_semver_downgrade_ignores_opaque_hash_like_prerelease_versions() {
+        let mut service =
+            selection_test_service("svc-hash", "hash-build", "ghcr.io/acme/web:latest");
+        service.image.tag = "latest".to_string();
+        service.image.resolved_tag = Some("2026.3.28-e58516daf".to_string());
+        if let Some(candidate) = service.candidate.as_mut() {
+            candidate.resolved_tag = Some("2026.3.28-6b9856d64".to_string());
+        }
+
+        assert_eq!(detect_semver_downgrade(&service), None);
+    }
+
+    #[test]
+    fn detect_semver_downgrade_does_not_fall_back_to_raw_tag_after_opaque_resolved_tag() {
+        let mut service = selection_test_service(
+            "svc-hash-tagged",
+            "hash-build",
+            "ghcr.io/acme/web:2026.3.28",
+        );
+        service.image.tag = "2026.3.28".to_string();
+        service.image.resolved_tag = Some("2026.3.28-e58516daf".to_string());
+        if let Some(candidate) = service.candidate.as_mut() {
+            candidate.tag = "2026.3.27".to_string();
+            candidate.resolved_tag = Some("2026.3.28-6b9856d64".to_string());
+        }
+
+        assert_eq!(detect_semver_downgrade(&service), None);
+    }
+
+    #[test]
+    fn select_update_services_keeps_hash_like_prerelease_candidates_for_non_ui_runs() {
+        let mut service =
+            selection_test_service("svc-hash", "hash-build", "ghcr.io/acme/web:latest");
+        service.image.tag = "latest".to_string();
+        service.image.resolved_tag = Some("2026.3.28-e58516daf".to_string());
+        if let Some(candidate) = service.candidate.as_mut() {
+            candidate.resolved_tag = Some("2026.3.28-6b9856d64".to_string());
+        }
+        let stack = StackRecord {
+            id: "stk_hash".to_string(),
+            name: "hash-build".to_string(),
+            archived: false,
+            compose: crate::api::types::ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec!["/srv/hash/docker-compose.yml".to_string()],
+                env_file: None,
+            },
+            backup: crate::api::types::StackBackupConfig::default(),
+            services: vec![service],
+        };
+
+        let selection =
+            select_update_services(&stack, &JobScope::Stack, None, false, "schedule", None);
+
+        assert_eq!(selection.services.len(), 1);
+        assert!(selection.skipped_version_anomaly.is_empty());
+    }
+
+    #[test]
+    fn select_update_services_keeps_opaque_resolved_tags_even_when_raw_tags_look_semver_like() {
+        let mut service = selection_test_service(
+            "svc-hash-tagged",
+            "hash-build",
+            "ghcr.io/acme/web:2026.3.28",
+        );
+        service.image.tag = "2026.3.28".to_string();
+        service.image.resolved_tag = Some("2026.3.28-e58516daf".to_string());
+        if let Some(candidate) = service.candidate.as_mut() {
+            candidate.tag = "2026.3.27".to_string();
+            candidate.resolved_tag = Some("2026.3.28-6b9856d64".to_string());
+        }
+        let stack = StackRecord {
+            id: "stk_hash_tagged".to_string(),
+            name: "hash-build".to_string(),
+            archived: false,
+            compose: crate::api::types::ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec!["/srv/hash/docker-compose.yml".to_string()],
+                env_file: None,
+            },
+            backup: crate::api::types::StackBackupConfig::default(),
+            services: vec![service],
+        };
+
+        let selection =
+            select_update_services(&stack, &JobScope::Stack, None, false, "schedule", None);
+
+        assert_eq!(selection.services.len(), 1);
+        assert!(selection.skipped_version_anomaly.is_empty());
+    }
+
+    #[test]
+    fn select_update_services_still_skips_ordered_prerelease_downgrades() {
+        let mut service = selection_test_service("svc-rc", "rc-build", "ghcr.io/acme/web:latest");
+        service.image.tag = "latest".to_string();
+        service.image.resolved_tag = Some("v1.0.0-rc.2".to_string());
+        if let Some(candidate) = service.candidate.as_mut() {
+            candidate.resolved_tag = Some("v1.0.0-rc.1".to_string());
+        }
+        let stack = StackRecord {
+            id: "stk_rc".to_string(),
+            name: "rc-build".to_string(),
+            archived: false,
+            compose: crate::api::types::ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec!["/srv/rc/docker-compose.yml".to_string()],
+                env_file: None,
+            },
+            backup: crate::api::types::StackBackupConfig::default(),
+            services: vec![service],
+        };
+
+        let selection =
+            select_update_services(&stack, &JobScope::Stack, None, false, "schedule", None);
+
+        assert!(selection.services.is_empty());
+        assert_eq!(selection.skipped_version_anomaly.len(), 1);
+        assert_eq!(
+            selection.skipped_version_anomaly[0]["reason"].as_str(),
+            Some("semver_downgrade")
+        );
+    }
+
+    #[test]
+    fn select_update_services_still_skips_single_token_prerelease_downgrades() {
+        let mut service = selection_test_service("svc-rc1", "rc-build", "ghcr.io/acme/web:latest");
+        service.image.tag = "latest".to_string();
+        service.image.resolved_tag = Some("v1.0.0-rc2".to_string());
+        if let Some(candidate) = service.candidate.as_mut() {
+            candidate.resolved_tag = Some("v1.0.0-rc1".to_string());
+        }
+        let stack = StackRecord {
+            id: "stk_rc1".to_string(),
+            name: "rc-build".to_string(),
+            archived: false,
+            compose: crate::api::types::ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec!["/srv/rc/docker-compose.yml".to_string()],
+                env_file: None,
+            },
+            backup: crate::api::types::StackBackupConfig::default(),
+            services: vec![service],
+        };
+
+        let selection =
+            select_update_services(&stack, &JobScope::Stack, None, false, "schedule", None);
+
+        assert!(selection.services.is_empty());
+        assert_eq!(selection.skipped_version_anomaly.len(), 1);
+        assert_eq!(
+            selection.skipped_version_anomaly[0]["reason"].as_str(),
+            Some("semver_downgrade")
+        );
+    }
+
+    #[test]
+    fn select_update_services_still_skips_hyphenated_prerelease_downgrades() {
+        let mut service =
+            selection_test_service("svc-rc-hyphen", "rc-build", "ghcr.io/acme/web:latest");
+        service.image.tag = "latest".to_string();
+        service.image.resolved_tag = Some("v1.0.0-rc-2".to_string());
+        if let Some(candidate) = service.candidate.as_mut() {
+            candidate.resolved_tag = Some("v1.0.0-rc-1".to_string());
+        }
+        let stack = StackRecord {
+            id: "stk_rc_hyphen".to_string(),
+            name: "rc-build".to_string(),
+            archived: false,
+            compose: crate::api::types::ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec!["/srv/rc/docker-compose.yml".to_string()],
+                env_file: None,
+            },
+            backup: crate::api::types::StackBackupConfig::default(),
+            services: vec![service],
+        };
+
+        let selection =
+            select_update_services(&stack, &JobScope::Stack, None, false, "schedule", None);
+
+        assert!(selection.services.is_empty());
+        assert_eq!(selection.skipped_version_anomaly.len(), 1);
+        assert_eq!(
+            selection.skipped_version_anomaly[0]["reason"].as_str(),
+            Some("semver_downgrade")
+        );
     }
 
     #[tokio::test]

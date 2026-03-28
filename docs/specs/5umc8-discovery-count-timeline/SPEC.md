@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-03-21
-- Last: 2026-03-22
+- Last: 2026-03-29
 
 ## 背景 / 问题陈述
 
@@ -16,7 +16,7 @@
 
 ### Goals
 
-- 将 `发现 N 次` 升级为支持 hover-open / click-pin 的共享 popover，覆盖 Services、Overview 与聚合更新预览。
+- 将 `发现 N 次` 升级为支持 hover-open / click-pin 的共享 popover，覆盖 Services、Overview 与聚合更新预览；其中 `StatusRemark` 使用不参与行高排版的紧凑数字 badge，聚合预览维持 inline pill。
 - 气泡内容改为纵向时间线：首项固定为当前候选版本，末项固定为当前运行版本，中间项是同一当前基线下已发现过的历史候选版本。
 - 候选版本时间口径固定为“首次发现时间”；当前运行版本时间取 Docker runtime 的真实 `StartedAt`，无真相源时明确展示 `时间未知`。
 - 新增 service-scoped 懒加载 API 提供时间线数据，不扩充 `GET /api/stacks` 主载荷。
@@ -50,8 +50,10 @@
 - `web/src/App.css`
 - `web/src/stories/components/StatusRemark.stories.tsx`
 - `web/src/stories/components/AggregateUpdatePreviewList.stories.tsx`
+- `web/src/stories/pages/ServicesPage.stories.tsx`
 - `web/src/stories/mocks/dockrevMockApi.ts`
 - `web/tests/statusRemark.test.tsx`
+- `web/scripts/capture-storybook-screenshots.mjs`
 - `docs/specs/README.md`
 
 ### Out of scope
@@ -78,6 +80,7 @@
 ### MUST
 
 - `发现 N 次` 的 trigger 在 hover 时可打开气泡，在 click 后进入 pinned 状态，并支持外部点击 / `Esc` 关闭。
+- `StatusRemark` 的 discovery trigger 必须渲染为贴在状态文案右上角的紧凑数字 badge，不得额外撑高状态列；聚合预览继续保留 inline `发现 N 次` pill。
 - 当前候选项固定排第一，历史候选项按首次发现时间从新到旧，当前运行项固定排最后。
 - 当前候选项与历史候选项都显示版本号 + 首次发现时间。
 - 当前运行项显示当前版本号 + `current_runtime_started_at`；若该字段为空，显示 `时间未知` 而不是伪造时间。
@@ -96,6 +99,7 @@
 ## 验收标准（Acceptance Criteria）
 
 - Given 某服务展示 `发现 2 次`，When hover 或 click 该 trigger，Then 出现同一类 discovery timeline popover，并可在 click 后保持 pinned。
+- Given Services / Overview 列表行里存在 discovery count，When 渲染 `StatusRemark`，Then 右上角显示纯数字紧凑 badge，且下面的状态备注仍完整可见，不因为 badge 再增加一行高度。
 - Given 某服务当前候选为 `v0.28.7`，历史候选包含 `v0.28.6`，当前运行版本为 `v0.28.5`，When 打开 popover，Then 顺序固定为 `v0.28.7 -> v0.28.6 -> v0.28.5`，且每行都带时间或 `时间未知` 文案。
 - Given 同一版本被重复发现多次，When 打开 popover，Then 该版本只出现一次，并展示首次发现时间。
 - Given 当前运行 digest 已通过 runtime inspect 观测到 `StartedAt`，When 服务 current digest 改变并被持久化，Then `current_runtime_started_at` 同步刷新为该 digest 首次被 authoritative runtime 路径确认时的 Docker `StartedAt`。
@@ -117,17 +121,27 @@
 - target_program: mock-only
 - capture_scope: element
 - sensitive_exclusion: N/A
-- submission_gate: approved
+- submission_gate: pending-owner-approval
+- story_id_or_title: Pages/ServicesPage/StatusBadgeLayout
+- state: status row compact badge
+- evidence_note: 验证真实服务列表行中的 discovery trigger 改为右上角紧凑数字 badge，且状态备注没有被挤压到不可见。
+![Services Status Badge Layout](../../screenshots/storybook/services-status-badge-layout.png)
+
+- source_type: storybook_canvas
+- target_program: mock-only
+- capture_scope: element
+- sensitive_exclusion: N/A
+- submission_gate: pending-owner-approval
 - story_id_or_title: Components/StatusRemark/AllStatuses
 - state: discovery timeline popover open
-- evidence_note: 验证状态列中的 `发现 N 次` 可打开时间线气泡，并展示当前候选 / 历史候选 / 当前运行三段信息。
+- evidence_note: 验证状态列中的紧凑 discovery badge 可打开时间线气泡，并展示当前候选 / 历史候选 / 当前运行三段信息。
 ![StatusRemark Discovery Timeline](../../screenshots/storybook/status-remark-discovery-timeline-open.png)
 
 - source_type: storybook_canvas
 - target_program: mock-only
 - capture_scope: element
 - sensitive_exclusion: N/A
-- submission_gate: approved
+- submission_gate: pending-owner-approval
 - story_id_or_title: Components/AggregateUpdatePreviewList/AllStates
 - state: aggregate discovery timeline popover open
 - evidence_note: 验证聚合预览里的 discovery pill 使用同一气泡与时间线顺序。
@@ -152,3 +166,4 @@
 - 2026-03-22: 修正 Storybook mock 时间线数据，补充裁剪后的完工截图，并将视觉证据写回规格。
 - 2026-03-22: 同步 discovery count 的 alias 去重口径；重复暴露同一 unresolved alias 的历史只保留一条时间线候选，恢复时间线与 `发现次数` 的数量一致性。
 - 2026-03-22: 根据 fresh review fix，对齐 live candidate 的 alias identity fallback，避免 unresolved 当前候选与同名历史候选在时间线里重复并列。
+- 2026-03-29: 将 `StatusRemark` 的 discovery trigger 收紧为不参与排版的紧凑数字 badge，聚合预览继续保留 inline pill，并补回真实服务行布局的 Storybook 视觉证据。

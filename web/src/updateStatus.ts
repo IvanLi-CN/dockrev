@@ -24,6 +24,8 @@ type StrictSemver = {
   prerelease: string[]
 }
 
+const ORDERED_PRERELEASE_LABELS = new Set(['alpha', 'beta', 'rc', 'pre', 'preview'])
+
 function parseTagSeries(tag: string): TagSeries | null {
   let t = tag.trim()
   if (!t) return null
@@ -107,14 +109,44 @@ function compareStrictSemver(a: StrictSemver, b: StrictSemver): number {
   return 0
 }
 
+function isComparablePrereleaseToken(token: string): boolean {
+  if (/^\d+$/.test(token)) return true
+  const normalized = token.toLowerCase()
+  if (ORDERED_PRERELEASE_LABELS.has(normalized)) return true
+  return Array.from(ORDERED_PRERELEASE_LABELS).some((label) => {
+    if (!normalized.startsWith(label)) return false
+    const suffix = normalized.slice(label.length)
+    if (!suffix) return false
+    return /^\d+$/.test(suffix) || /^-\d+$/.test(suffix)
+  })
+}
+
+function isComparableStrictSemver(version: StrictSemver): boolean {
+  return version.prerelease.every(isComparablePrereleaseToken)
+}
+
+function parseComparableStrictSemver(tag: string | null | undefined): StrictSemver | null {
+  const parsed = parseStrictSemver(tag)
+  if (!parsed || !isComparableStrictSemver(parsed)) return null
+  return parsed
+}
+
+function comparableSemverBaseline(
+  preferredTag: string | null | undefined,
+  fallbackTag: string | null | undefined,
+): StrictSemver | null {
+  if ((preferredTag ?? '').trim()) return parseComparableStrictSemver(preferredTag)
+  return parseComparableStrictSemver(fallbackTag)
+}
+
 function semverBaselineForCurrent(svc: Service): StrictSemver | null {
-  return parseStrictSemver(svc.image.resolvedTag) ?? parseStrictSemver(svc.image.tag)
+  return comparableSemverBaseline(svc.image.resolvedTag, svc.image.tag)
 }
 
 function semverBaselineForCandidate(svc: Service): StrictSemver | null {
   const c = svc.candidate
   if (!c) return null
-  return parseStrictSemver(c.resolvedTag) ?? parseStrictSemver(c.tag)
+  return comparableSemverBaseline(c.resolvedTag, c.tag)
 }
 
 export function isSemverDowngradeAnomaly(svc: Service): boolean {

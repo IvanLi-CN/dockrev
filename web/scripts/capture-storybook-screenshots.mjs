@@ -1,4 +1,3 @@
-import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import { access, mkdir, readFile } from 'node:fs/promises'
 import http from 'node:http'
@@ -7,6 +6,7 @@ import { chromium } from 'playwright'
 
 const DEFAULT_PORT = 50886
 const DEFAULT_OUTDIR = path.resolve(process.cwd(), 'storybook-static')
+const STORY_TIMEOUT_MS = 20_000
 
 function parseArgs(argv) {
   const out = { url: null, outdir: null }
@@ -43,21 +43,6 @@ function iframeUrl(baseUrl, storyId) {
   url.searchParams.set('id', storyId)
   url.searchParams.set('viewMode', 'story')
   return url.toString()
-}
-
-function readBaseUrlFromDaemonStatus() {
-  const status = spawnSync('bun', ['./scripts/storybook-daemon.mjs', 'status', '--port', String(DEFAULT_PORT)], {
-    cwd: path.resolve(process.cwd()),
-    encoding: 'utf8',
-  })
-  if (status.status !== 0) return null
-  try {
-    const json = JSON.parse(String(status.stdout || '').trim())
-    if (json && typeof json.url === 'string') return json.url
-  } catch {
-    // ignore
-  }
-  return null
 }
 
 async function findAvailablePort(preferredPort) {
@@ -189,7 +174,7 @@ async function main() {
   const explicitBaseUrl =
     args.url ??
     process.env.DOCKREV_STORYBOOK_URL ??
-    readBaseUrlFromDaemonStatus()
+    null
 
   let staticServer = null
   let resolvedBaseUrl =
@@ -198,13 +183,19 @@ async function main() {
       : null
 
   if (!resolvedBaseUrl) {
-    await ensureStaticBuild()
-    const port = await findAvailablePort(DEFAULT_PORT)
-    staticServer = startStaticServer({ port })
-    await staticServer.listen()
-    const localUrl = `http://127.0.0.1:${port}/`
-    await waitForHttpOk(new URL('index.html', localUrl).toString())
-    resolvedBaseUrl = localUrl
+    try {
+      await ensureStaticBuild()
+      const port = await findAvailablePort(DEFAULT_PORT)
+      staticServer = startStaticServer({ port })
+      await staticServer.listen()
+      const localUrl = `http://127.0.0.1:${port}/`
+      await waitForHttpOk(new URL('index.html', localUrl).toString())
+      resolvedBaseUrl = localUrl
+    } catch (error) {
+      throw new Error(
+        `Failed to serve local Storybook static build: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
   }
   if (!resolvedBaseUrl) {
     throw new Error('Failed to resolve Storybook base URL.')
@@ -220,7 +211,15 @@ async function main() {
     const page = await context.newPage()
     page.on('dialog', (d) => d.accept().catch(() => {}))
     await page.goto(iframeUrl(resolvedBaseUrl, id), { waitUntil: 'domcontentloaded' })
-    await page.waitForFunction(() => document.body.classList.contains('sb-show-main'), null, { timeout: 60_000 })
+    await page.waitForFunction(
+      () => {
+        const root = document.querySelector('#storybook-root, #root')
+        return Boolean(root && root.childElementCount > 0)
+      },
+      null,
+      { timeout: 60_000 }
+    )
+    await page.waitForTimeout(250)
     return page
   }
 
@@ -241,7 +240,7 @@ async function main() {
       },
       screenshot: async (page, filePath) => {
         const el = page.locator('.sidebar')
-        await el.waitFor({ timeout: 10_000 })
+        await el.waitFor({ timeout: STORY_TIMEOUT_MS })
         await el.screenshot({ path: filePath })
       },
     },
@@ -253,7 +252,7 @@ async function main() {
       },
       screenshot: async (page, filePath) => {
         const el = page.locator('.sidebarMeta')
-        await el.waitFor({ timeout: 10_000 })
+        await el.waitFor({ timeout: STORY_TIMEOUT_MS })
         await el.screenshot({ path: filePath })
       },
     },
@@ -263,8 +262,22 @@ async function main() {
       setup: async () => {},
       screenshot: async (page, filePath) => {
         const el = page.locator('.card')
-        await el.waitFor({ timeout: 10_000 })
+        await el.waitFor({ timeout: STORY_TIMEOUT_MS })
         await el.screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'components-statusremark--all-statuses',
+      file: 'status-remark-discovery-timeline-open.png',
+      setup: async (page) => {
+        const trigger = page.getByRole('button', { name: /发现 .*次，查看版本时间线/ }).first()
+        await trigger.waitFor({ timeout: STORY_TIMEOUT_MS })
+        await trigger.click()
+        await page.locator('.discoveryHistoryPopover').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.waitForTimeout(160)
+      },
+      screenshot: async (page, filePath) => {
+        await page.screenshot({ path: filePath, fullPage: true })
       },
     },
     {
@@ -282,8 +295,22 @@ async function main() {
       },
       screenshot: async (page, filePath) => {
         const el = page.locator('.card')
-        await el.waitFor({ timeout: 10_000 })
+        await el.waitFor({ timeout: STORY_TIMEOUT_MS })
         await el.screenshot({ path: filePath })
+      },
+    },
+    {
+      id: 'components-aggregateupdatepreviewlist--all-states',
+      file: 'aggregate-update-preview-discovery-timeline-open.png',
+      setup: async (page) => {
+        const trigger = page.getByRole('button', { name: /发现 .*次，查看版本时间线/ }).first()
+        await trigger.waitFor({ timeout: STORY_TIMEOUT_MS })
+        await trigger.click()
+        await page.locator('.discoveryHistoryPopover').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.waitForTimeout(160)
+      },
+      screenshot: async (page, filePath) => {
+        await page.screenshot({ path: filePath, fullPage: true })
       },
     },
     {
@@ -291,9 +318,9 @@ async function main() {
       file: 'confirm-dialog-single-service.png',
       setup: async (page) => {
         const btn = page.getByRole('button', { name: '打开：服务更新' })
-        await btn.waitFor({ timeout: 10_000 })
+        await btn.waitFor({ timeout: STORY_TIMEOUT_MS })
         await btn.click()
-        await page.getByText('确认更新服务').waitFor({ timeout: 10_000 })
+        await page.getByText('确认更新服务').waitFor({ timeout: STORY_TIMEOUT_MS })
       },
     },
     {
@@ -301,23 +328,36 @@ async function main() {
       file: 'overview-default-confirm.png',
       setup: async (page) => {
         const btn = page.getByRole('button', { name: '更新全部' })
-        await btn.waitFor({ timeout: 10_000 })
+        await btn.waitFor({ timeout: STORY_TIMEOUT_MS })
         await page.waitForFunction(
           () => {
             const el = Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.trim() === '更新全部')
             return Boolean(el && !el.disabled)
           },
           null,
-          { timeout: 15_000 }
+          { timeout: STORY_TIMEOUT_MS }
         )
         await btn.click()
-        await page.getByText(/确认更新.*服务/).waitFor({ timeout: 10_000 })
+        await page.getByText(/确认更新.*服务/).waitFor({ timeout: STORY_TIMEOUT_MS })
       },
     },
     {
       id: 'pages-servicespage--dashboard-demo',
       file: 'services-dashboard.png',
       setup: async () => {},
+    },
+    {
+      id: 'pages-servicespage--status-badge-layout',
+      file: 'services-status-badge-layout.png',
+      setup: async () => {},
+      screenshot: async (page, filePath) => {
+        const row = page
+          .locator('.rowLine')
+          .filter({ has: page.locator('.discoveryHistoryTriggerCompact') })
+          .first()
+        await row.waitFor({ timeout: STORY_TIMEOUT_MS })
+        await row.screenshot({ path: filePath })
+      },
     },
   ]
 

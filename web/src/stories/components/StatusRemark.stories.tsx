@@ -57,6 +57,12 @@ const discoveryTimelineByServiceId = {
       { kind: 'currentRunning', version: '2.9.0', occurredAt: '2026-03-21T14:40:00+08:00' },
     ],
   },
+  'svc-hash-build': {
+    items: [
+      { kind: 'currentCandidate', version: '2026.3.28-6b9856d64', occurredAt: '2026-03-28T19:42:00+08:00' },
+      { kind: 'currentRunning', version: '2026.3.28-e58516daf', occurredAt: '2026-03-28T13:06:00+08:00' },
+    ],
+  },
 } satisfies Record<string, NewVersionDiscoveryTimelineResponse>
 
 export const AllStatuses: Story = {
@@ -116,7 +122,28 @@ export const AllStatuses: Story = {
       ignore: { matched: true, ruleId: 'ignore-prod-worker', reason: '备份失败（fail-closed）' },
     } satisfies Service
 
-    const list = [updatable, updatableForceBackup, hint, archMismatch, blocked]
+    const hashBuild = {
+      ...baseService(),
+      id: 'svc-hash-build',
+      name: 'updatable(hash build)',
+      image: {
+        ref: 'ghcr.io/acme/release:latest',
+        tag: 'latest',
+        digest: d('7', '77'),
+        resolvedTag: '2026.3.28-e58516daf',
+        resolvedTags: ['2026.3.28-e58516daf'],
+      },
+      candidate: {
+        tag: 'latest',
+        resolvedTag: '2026.3.28-6b9856d64',
+        digest: d('8', '88'),
+        archMatch: 'match',
+        arch: ['linux/amd64'],
+      },
+      newVersionDiscoveryCount: 1,
+    } satisfies Service
+
+    const list = [updatable, updatableForceBackup, hint, archMismatch, blocked, hashBuild]
 
     return (
       <div className="card" style={{ width: 520 }}>

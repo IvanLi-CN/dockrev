@@ -753,6 +753,10 @@ html[data-theme='light'] .versionTagsPopover {
 }
 
 .discoveryHistoryTrigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   transition:
     border-color 160ms ease,
@@ -766,6 +770,23 @@ html[data-theme='light'] .versionTagsPopover {
   border-color: color-mix(in srgb, var(--color-info) 34%, var(--borderColor) 66%);
   color: var(--text);
   background: color-mix(in srgb, var(--dockrev-surface) 82%, var(--color-info) 18%);
+}
+
+.discoveryHistoryTriggerCompact {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--color-info) 36%, var(--borderColor) 64%);
+  background: color-mix(in srgb, var(--dockrev-surface) 74%, var(--color-info) 26%);
+  color: color-mix(in srgb, var(--text) 76%, var(--color-info) 24%);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--color-info) 12%, transparent);
 }
 
 .discoveryHistoryPopover {
@@ -1370,13 +1391,21 @@ html[data-theme='light'] .discoveryHistoryPopover {
   overflow: hidden;
 }
 
+.statusColHasCompactBadge {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  padding-right: 38px;
+}
+
 .statusLine {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   gap: 8px;
   font-size: 12px;
   color: var(--muted);
+  min-width: 0;
+  max-width: 100%;
   white-space: nowrap;
 }
 
@@ -1409,6 +1438,7 @@ html[data-theme='light'] .discoveryHistoryPopover {
 }
 
 .statusNote {
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -38,15 +38,18 @@ function makeService(overrides?: Partial<Service>): Service {
 }
 
 describe('StatusRemark discovery count', () => {
-  test('renders the discovery count pill when a service has historical discoveries', () => {
+  test('renders the discovery count as a compact badge when a service has historical discoveries', () => {
     const service = makeService({ newVersionDiscoveryCount: 3 })
     const html = renderToStaticMarkup(
       <StatusRemark service={service} status={serviceRowStatus(service)} />,
     )
 
     expect(html).toContain('可更新')
-    expect(html).toContain('发现 3 次')
+    expect(html).toContain('statusColHasCompactBadge')
+    expect(html).toContain('discoveryHistoryTriggerCompact')
     expect(html).toContain('aria-label="发现 3 次，查看版本时间线"')
+    expect(html).toContain('>3</button>')
+    expect(html).not.toContain('>发现 3 次</button>')
     expect(html).toContain('<button')
   })
 
