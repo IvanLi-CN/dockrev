@@ -16,7 +16,7 @@ permissions:
   contents: write
   packages: write
   issues: write
-  pull-requests: read
+  pull-requests: write
 
 env:
   REGISTRY: ghcr.io
@@ -363,7 +363,7 @@ jobs:
       contents: write
       issues: write
       packages: write
-      pull-requests: read
+      pull-requests: write
     env:
       APP_EFFECTIVE_VERSION: ${{ needs.prepare.outputs.app_effective_version }}
       PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
