@@ -72,6 +72,16 @@ needle = "prerelease: ${{ env.RELEASE_CHANNEL == 'rc' }}"
 if needle not in text:
     raise SystemExit('[contract-check] expected prerelease gate in release workflow')
 PY
+ruby -ryaml -e '
+workflow = YAML.load_file(".github/workflows/release.yml")
+top_permissions = workflow.fetch("permissions", {})
+publish_permissions = workflow.fetch("jobs").fetch("publish").fetch("permissions", {})
+
+abort "[contract-check] release workflow top-level permissions must keep issues: write" unless top_permissions["issues"] == "write"
+abort "[contract-check] release workflow top-level permissions must keep pull-requests: write" unless top_permissions["pull-requests"] == "write"
+abort "[contract-check] release publish job permissions must keep issues: write" unless publish_permissions["issues"] == "write"
+abort "[contract-check] release publish job permissions must keep pull-requests: write" unless publish_permissions["pull-requests"] == "write"
+'
 
 echo "[contract-check] quality-gate workflow invariants"
 search_regex "^[[:space:]]*pull_request_target:" .github/workflows/label-gate.yml
