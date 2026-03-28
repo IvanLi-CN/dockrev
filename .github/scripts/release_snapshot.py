@@ -15,7 +15,9 @@ from typing import Any
 from urllib import error, parse, request
 
 SNAPSHOT_SCHEMA_VERSION = 1
+PUBLICATION_SCHEMA_VERSION = 1
 DEFAULT_NOTES_REF = "refs/notes/release-snapshots"
+DEFAULT_PUBLICATION_NOTES_REF = "refs/notes/release-publications"
 ALLOWED_SNAPSHOT_SOURCES = {"ci-main", "manual-backfill", "pr-intent-artifact", "legacy-pr-labels"}
 ALLOWED_TYPE_LABELS = {
     "type:patch",
@@ -29,6 +31,7 @@ STABLE_VERSION_RE = re.compile(r"^(?:v)?(\d+)\.(\d+)\.(\d+)$")
 STABLE_TAG_RE = re.compile(r"^v?\d+\.\d+\.\d+$")
 RELEASE_TAG_RE = re.compile(r"^v?\d+\.\d+\.\d+(?:-rc\.[0-9a-f]{7})?$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class SnapshotError(RuntimeError):
@@ -94,8 +97,9 @@ def parse_args() -> argparse.Namespace:
     export_cmd.add_argument(
         "--resolve-publication-tags",
         action="store_true",
-        help="Re-resolve stable manifest tags so superseded releases stop updating latest.",
+        help="Re-resolve stable manifest tags from the publication ledger so superseded releases stop updating latest.",
     )
+    export_cmd.add_argument("--publication-notes-ref", default=DEFAULT_PUBLICATION_NOTES_REF)
     export_cmd.add_argument("--github-output", default=os.environ.get("GITHUB_OUTPUT", ""))
 
     next_pending = subparsers.add_parser(
@@ -106,6 +110,19 @@ def parse_args() -> argparse.Namespace:
     next_pending.add_argument("--main-ref", required=True)
     next_pending.add_argument("--upper-bound", default="")
     next_pending.add_argument("--github-output", default=os.environ.get("GITHUB_OUTPUT", ""))
+
+    record_publication = subparsers.add_parser(
+        "record-publication",
+        help="Record a mutable publication ledger note after GHCR images have been pushed.",
+    )
+    record_publication.add_argument("--target-sha", required=True)
+    record_publication.add_argument("--snapshot-notes-ref", default=DEFAULT_NOTES_REF)
+    record_publication.add_argument("--publication-notes-ref", default=DEFAULT_PUBLICATION_NOTES_REF)
+    record_publication.add_argument("--dockrev-digest", required=True)
+    record_publication.add_argument("--dockrev-supervisor-digest", required=True)
+    record_publication.add_argument("--published-at", default="")
+    record_publication.add_argument("--output", default="")
+    record_publication.add_argument("--max-attempts", type=int, default=3)
 
     return parser.parse_args()
 
@@ -136,14 +153,20 @@ def normalize_sha(target_sha: str) -> str:
     return target_sha
 
 
-def read_snapshot(notes_ref: str, target_sha: str) -> dict[str, Any] | None:
+def read_json_note(notes_ref: str, target_sha: str) -> Any | None:
     result = git("notes", f"--ref={notes_ref}", "show", target_sha, check=False)
     if result.returncode != 0:
         return None
     try:
-        payload = json.loads(result.stdout)
+        return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise SnapshotError(f"Release snapshot note for {target_sha} is not valid JSON") from exc
+        raise SnapshotError(f"Git note in {notes_ref} for {target_sha} is not valid JSON") from exc
+
+
+def read_snapshot(notes_ref: str, target_sha: str) -> dict[str, Any] | None:
+    payload = read_json_note(notes_ref, target_sha)
+    if payload is None:
+        return None
     return validate_snapshot(payload, expected_sha=target_sha)
 
 
@@ -239,6 +262,52 @@ def validate_snapshot(payload: Any, *, expected_sha: str | None = None) -> dict[
             raise SnapshotError("Disabled release snapshot must not publish latest")
 
     return payload
+
+
+def validate_digest(value: Any, *, field_name: str) -> str:
+    if not isinstance(value, str) or not DIGEST_RE.fullmatch(value):
+        raise SnapshotError(f"Release publication {field_name} must be a sha256 digest")
+    return value
+
+
+def validate_publication(payload: Any, *, expected_sha: str | None = None) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise SnapshotError("Release publication note must decode to an object")
+    if payload.get("schema_version") != PUBLICATION_SCHEMA_VERSION:
+        raise SnapshotError(f"Unsupported release publication schema: {payload.get('schema_version')!r}")
+
+    target_sha = payload.get("target_sha")
+    if not isinstance(target_sha, str) or not SHA_RE.fullmatch(target_sha):
+        raise SnapshotError("Release publication target_sha must be a 40-char commit SHA")
+    if expected_sha and target_sha != expected_sha:
+        raise SnapshotError(f"Release publication target_sha mismatch: expected {expected_sha}, got {target_sha}")
+
+    pr_number = payload.get("pr_number")
+    if not isinstance(pr_number, int) or pr_number <= 0:
+        raise SnapshotError("Release publication pr_number must be a positive integer")
+
+    release_tag = payload.get("release_tag")
+    if not isinstance(release_tag, str) or not RELEASE_TAG_RE.fullmatch(release_tag):
+        raise SnapshotError("Release publication release_tag is malformed")
+
+    release_channel = payload.get("release_channel")
+    if release_channel not in {"stable", "rc"}:
+        raise SnapshotError(f"Unknown release_channel in publication: {release_channel!r}")
+
+    published_at = payload.get("published_at")
+    if not isinstance(published_at, str) or not published_at:
+        raise SnapshotError("Release publication published_at must be a non-empty string")
+
+    validate_digest(payload.get("dockrev_digest"), field_name="dockrev_digest")
+    validate_digest(payload.get("dockrev_supervisor_digest"), field_name="dockrev_supervisor_digest")
+    return payload
+
+
+def read_publication(notes_ref: str, target_sha: str) -> dict[str, Any] | None:
+    payload = read_json_note(notes_ref, target_sha)
+    if payload is None:
+        return None
+    return validate_publication(payload, expected_sha=target_sha)
 
 
 def fetch_notes_ref(notes_ref: str) -> None:
@@ -443,12 +512,12 @@ def commits_after_target(main_ref: str, target_sha: str) -> list[str]:
     return [commit for commit in commits.splitlines() if commit]
 
 
-def has_newer_stable_snapshot(notes_ref: str, main_ref: str, target_sha: str) -> bool:
+def has_newer_stable_publication(publication_notes_ref: str, main_ref: str, target_sha: str) -> bool:
     for commit in commits_after_target(main_ref, target_sha):
-        snapshot = read_snapshot(notes_ref, commit)
-        if not snapshot or not snapshot.get("release_enabled"):
+        publication = read_publication(publication_notes_ref, commit)
+        if not publication:
             continue
-        if snapshot.get("release_channel") != "stable":
+        if publication.get("release_channel") != "stable":
             continue
         return True
     return False
@@ -462,33 +531,41 @@ def render_tags_csv(image_name_lower: str, registry: str, release_tag: str, *, p
     return ",".join(tags)
 
 
-def publish_latest_for_snapshot(snapshot: dict[str, Any], *, notes_ref: str, main_ref: str) -> bool:
+def publish_latest_for_snapshot(snapshot: dict[str, Any], *, publication_notes_ref: str, main_ref: str) -> bool:
     if not snapshot.get("release_enabled"):
         return False
     if snapshot.get("release_channel") != "stable":
         return False
-    return not has_newer_stable_snapshot(notes_ref, main_ref, str(snapshot["target_sha"]))
+    return not has_newer_stable_publication(publication_notes_ref, main_ref, str(snapshot["target_sha"]))
 
 
-def publication_tags(snapshot: dict[str, Any], *, notes_ref: str, main_ref: str) -> str:
+def publication_tags(snapshot: dict[str, Any], *, publication_notes_ref: str, main_ref: str) -> str:
     if not snapshot.get("release_enabled"):
         return ""
     return render_tags_csv(
         str(snapshot["image_name_lower"]),
         str(snapshot["registry"]),
         str(snapshot["release_tag"]),
-        publish_latest=publish_latest_for_snapshot(snapshot, notes_ref=notes_ref, main_ref=main_ref),
+        publish_latest=publish_latest_for_snapshot(
+            snapshot,
+            publication_notes_ref=publication_notes_ref,
+            main_ref=main_ref,
+        ),
     )
 
 
-def supervisor_publication_tags(snapshot: dict[str, Any], *, notes_ref: str, main_ref: str) -> str:
+def supervisor_publication_tags(snapshot: dict[str, Any], *, publication_notes_ref: str, main_ref: str) -> str:
     if not snapshot.get("release_enabled"):
         return ""
     return render_tags_csv(
         str(snapshot["supervisor_image_name_lower"]),
         str(snapshot["registry"]),
         str(snapshot["release_tag"]),
-        publish_latest=publish_latest_for_snapshot(snapshot, notes_ref=notes_ref, main_ref=main_ref),
+        publish_latest=publish_latest_for_snapshot(
+            snapshot,
+            publication_notes_ref=publication_notes_ref,
+            main_ref=main_ref,
+        ),
     )
 
 
@@ -607,6 +684,36 @@ def build_snapshot(
         )
 
     return validate_snapshot(snapshot, expected_sha=target_sha)
+
+
+def build_publication(
+    snapshot: dict[str, Any],
+    *,
+    dockrev_digest: str,
+    dockrev_supervisor_digest: str,
+    published_at: str = "",
+) -> dict[str, Any]:
+    validated_snapshot = validate_snapshot(snapshot)
+    if not validated_snapshot.get("release_enabled"):
+        raise SnapshotError("Cannot record publication for a release-disabled snapshot")
+    pr_number = validated_snapshot.get("pr_number")
+    if not isinstance(pr_number, int) or pr_number <= 0:
+        raise SnapshotError("Release snapshot pr_number must be present to record publication")
+
+    publication = {
+        "schema_version": PUBLICATION_SCHEMA_VERSION,
+        "target_sha": validated_snapshot["target_sha"],
+        "pr_number": pr_number,
+        "release_tag": validated_snapshot["release_tag"],
+        "release_channel": validated_snapshot["release_channel"],
+        "published_at": published_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "dockrev_digest": validate_digest(dockrev_digest, field_name="dockrev_digest"),
+        "dockrev_supervisor_digest": validate_digest(
+            dockrev_supervisor_digest,
+            field_name="dockrev_supervisor_digest",
+        ),
+    }
+    return validate_publication(publication, expected_sha=str(validated_snapshot["target_sha"]))
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -733,17 +840,57 @@ def export_existing_snapshot(args: argparse.Namespace) -> int:
     if args.resolve_publication_tags:
         if not args.main_ref:
             raise SnapshotError("--main-ref is required when --resolve-publication-tags is set")
+        fetch_notes_ref(args.publication_notes_ref)
         snapshot = dict(snapshot)
-        publish_latest = publish_latest_for_snapshot(snapshot, notes_ref=args.notes_ref, main_ref=args.main_ref)
+        publish_latest = publish_latest_for_snapshot(
+            snapshot,
+            publication_notes_ref=args.publication_notes_ref,
+            main_ref=args.main_ref,
+        )
         snapshot["publish_latest"] = publish_latest
-        snapshot["tags_csv"] = publication_tags(snapshot, notes_ref=args.notes_ref, main_ref=args.main_ref)
+        snapshot["tags_csv"] = publication_tags(
+            snapshot,
+            publication_notes_ref=args.publication_notes_ref,
+            main_ref=args.main_ref,
+        )
         snapshot["supervisor_tags_csv"] = supervisor_publication_tags(
             snapshot,
-            notes_ref=args.notes_ref,
+            publication_notes_ref=args.publication_notes_ref,
             main_ref=args.main_ref,
         )
     export_snapshot(snapshot, args.github_output)
     return 0
+
+
+def record_publication(args: argparse.Namespace) -> int:
+    target_sha = normalize_sha(args.target_sha)
+    output_path = Path(args.output) if args.output else None
+    for attempt in range(1, args.max_attempts + 1):
+        fetch_notes_ref(args.snapshot_notes_ref)
+        fetch_notes_ref(args.publication_notes_ref)
+        snapshot = read_snapshot(args.snapshot_notes_ref, target_sha)
+        if snapshot is None:
+            raise SnapshotError(f"Missing immutable release snapshot for {target_sha}")
+        publication = build_publication(
+            snapshot,
+            dockrev_digest=args.dockrev_digest,
+            dockrev_supervisor_digest=args.dockrev_supervisor_digest,
+            published_at=args.published_at,
+        )
+        with tempfile.TemporaryDirectory(prefix="release-publication-notes-") as tmp:
+            temp_note = Path(tmp) / "publication.json"
+            write_json(temp_note, publication)
+            git("notes", f"--ref={args.publication_notes_ref}", "add", "-f", "-F", str(temp_note), target_sha)
+            if output_path is not None:
+                write_json(output_path, publication)
+
+        push = git("push", "origin", args.publication_notes_ref, check=False)
+        if push.returncode == 0:
+            return 0
+        if attempt == args.max_attempts:
+            detail = push.stderr.strip() or push.stdout.strip() or "git push origin publication notes ref failed"
+            raise SnapshotError(f"Failed to publish release publication after {attempt} attempts: {detail}")
+    raise SnapshotError("release publication retry loop exhausted unexpectedly")
 
 
 def export_next_pending(args: argparse.Namespace) -> int:
@@ -766,6 +913,8 @@ def main() -> int:
             return export_existing_snapshot(args)
         if args.command == "next-pending":
             return export_next_pending(args)
+        if args.command == "record-publication":
+            return record_publication(args)
         raise SnapshotError(f"Unsupported command: {args.command}")
     except SnapshotError as exc:
         print(f"release_snapshot.py: {exc}", file=sys.stderr)
