@@ -424,6 +424,86 @@ export type DeployWelcomeResponse = {
   updatedAt?: string | null
 }
 
+export type CleanupPreset = 'conservative' | 'balanced' | 'project_deep_clean' | 'aggressive'
+
+export type CleanupScope = 'all' | 'stack' | 'service'
+
+export type CleanupResourceKind = 'image' | 'container' | 'network' | 'volume' | 'builder_cache'
+
+export type CleanupScanReason = 'page' | 'confirm'
+
+export type CleanupApplyReason = 'ui'
+
+export type CleanupScanRequest = {
+  reason: CleanupScanReason
+  preset: CleanupPreset
+  scope: CleanupScope
+  stackId?: string
+  serviceId?: string
+}
+
+export type CleanupApplyRequest = {
+  reason: CleanupApplyReason
+  preset: CleanupPreset
+  scope: CleanupScope
+  stackId?: string
+  serviceId?: string
+  confirmationFingerprint: string
+}
+
+export type CleanupApplyResponse = {
+  jobId: string
+}
+
+export type CleanupResourceItem = {
+  resourceId: string
+  kind: CleanupResourceKind
+  label: string
+  minPreset: CleanupPreset
+  estimatedReclaimableBytes?: number | null
+  estimateUnknown?: boolean
+}
+
+export type CleanupServiceGroup = {
+  serviceId: string
+  serviceName: string
+  estimatedReclaimableBytes: number
+  hasUnknownSize?: boolean
+  resources: CleanupResourceItem[]
+}
+
+export type CleanupStackGroup = {
+  stackId: string
+  stackName: string
+  estimatedReclaimableBytes: number
+  hasUnknownSize?: boolean
+  stackOrphans: CleanupResourceItem[]
+  services: CleanupServiceGroup[]
+}
+
+export type CleanupUnownedGroup = {
+  title: string
+  estimatedReclaimableBytes: number
+  hasUnknownSize?: boolean
+  resources: CleanupResourceItem[]
+}
+
+export type CleanupScanResponse = {
+  reason: CleanupScanReason
+  preset: CleanupPreset
+  scope: CleanupScope
+  scannedAt: string
+  estimatedReclaimableBytes: number
+  hasUnknownSize?: boolean
+  stackGroups: CleanupStackGroup[]
+  unownedGroup?: CleanupUnownedGroup | null
+  confirmationFingerprint?: string | null
+}
+
+export type CleanupFingerprintMismatchError = {
+  latest: CleanupScanResponse
+}
+
 export type NotificationConfig = {
   email: { enabled: boolean; smtpUrl?: string | null }
   webhook: { enabled: boolean; url?: string | null }
@@ -934,6 +1014,22 @@ export async function triggerRuntimeScan(scope: string, stackId?: string, servic
     body: JSON.stringify({ scope, stackId, serviceId, reason: 'ui' }),
   })
   return (await resp.json()) as { jobId: string }
+}
+
+export async function scanCleanups(input: CleanupScanRequest): Promise<CleanupScanResponse> {
+  const resp = await apiFetch('/api/cleanups/scan', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+  return (await resp.json()) as CleanupScanResponse
+}
+
+export async function applyCleanups(input: CleanupApplyRequest): Promise<CleanupApplyResponse> {
+  const resp = await apiFetch('/api/cleanups/apply', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+  return (await resp.json()) as CleanupApplyResponse
 }
 
 export function jobEventsUrl(jobId: string, opts?: { afterId?: number }): string {

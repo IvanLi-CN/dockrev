@@ -6453,6 +6453,326 @@ html[data-theme='light'] .card {
   animation: dockrevFadeRise 220ms ease both;
 }
 
+.overviewJobTitle-cleanup {
+  color: color-mix(in srgb, var(--color-error) 56%, var(--color-warning) 44%);
+}
+
+.jobTypeTag-cleanup {
+  border-color: color-mix(in srgb, var(--color-error) 28%, var(--color-warning) 30%, var(--borderColor) 42%);
+  background: color-mix(in srgb, var(--color-error) 10%, var(--color-warning) 8%, transparent);
+  color: color-mix(in srgb, var(--color-error) 62%, var(--color-warning) 38%);
+}
+
+.cleanupPage {
+  gap: 18px;
+}
+
+.cleanupOverviewCard {
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--color-primary) 16%, transparent) 0, transparent 34%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--panel) 92%, var(--dockrev-surface) 8%) 0%,
+      color-mix(in srgb, var(--panel) 97%, transparent) 100%
+    );
+}
+
+.cleanupOverviewHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.cleanupOverviewIntro,
+.cleanupStackHeading,
+.cleanupServiceHeading,
+.cleanupConfirmSummaryText {
+  min-width: 0;
+}
+
+.cleanupOverviewTitleRow,
+.cleanupStackTitleRow,
+.cleanupServiceTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cleanupOverviewStats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  gap: 12px;
+  min-width: min(340px, 100%);
+}
+
+.cleanupOverviewStat,
+.cleanupConfirmEstimate {
+  border-radius: 14px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 86%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface) 82%, transparent);
+}
+
+.cleanupOverviewStatValue,
+.cleanupConfirmEstimateValue {
+  margin-top: 8px;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 760;
+  letter-spacing: -0.02em;
+}
+
+.cleanupOverviewStatMeta {
+  margin-top: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cleanupPresetTabs {
+  margin-top: 18px;
+  width: 100%;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0;
+  background: transparent;
+  flex-wrap: wrap;
+}
+
+.cleanupPresetTab {
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 86%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface) 70%, transparent);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 0 14px;
+  min-height: 34px;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    transform 140ms ease;
+}
+
+.cleanupPresetTab:hover {
+  background: color-mix(in srgb, var(--dockrev-surface-strong) 76%, transparent);
+  color: var(--text);
+}
+
+.cleanupPresetTabActive {
+  border-color: color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-primary) 18%, var(--dockrev-surface) 82%) 0%,
+    color-mix(in srgb, var(--dockrev-surface-strong) 88%, transparent) 100%
+  );
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 18%, transparent);
+}
+
+.cleanupAlert {
+  border-radius: 14px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 86%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface) 84%, transparent);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.cleanupAlertWarn {
+  border-color: color-mix(in srgb, var(--color-warning) 26%, var(--borderColor) 74%);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  color: color-mix(in srgb, var(--color-warning) 72%, var(--text) 28%);
+}
+
+.cleanupAlertError {
+  border-color: color-mix(in srgb, var(--color-error) 28%, var(--borderColor) 72%);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  color: color-mix(in srgb, var(--color-error) 76%, var(--text) 24%);
+}
+
+.cleanupLoadingState,
+.cleanupEmptyState {
+  padding: 12px 4px;
+  color: var(--muted2);
+  font-size: 12px;
+}
+
+.cleanupStackGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.cleanupStackGridCompact {
+  gap: 14px;
+}
+
+.cleanupStackCard {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cleanupStackCardCompact {
+  gap: 14px;
+  padding: 16px;
+}
+
+.cleanupStackHeader,
+.cleanupSectionHeader,
+.cleanupServiceHeader,
+.cleanupConfirmSummary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.cleanupSectionBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-radius: 14px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 78%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface) 74%, transparent);
+}
+
+.cleanupServiceGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+}
+
+.cleanupServiceCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-radius: 14px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 78%, transparent);
+  background:
+    linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--dockrev-surface) 90%, transparent) 0%,
+      color-mix(in srgb, var(--panel) 96%, transparent) 100%
+    );
+}
+
+.cleanupServiceName,
+.cleanupResourceLabel {
+  min-width: 0;
+  color: var(--text);
+}
+
+.cleanupServiceName {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.cleanupResourceList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cleanupResourceListCompact {
+  gap: 6px;
+}
+
+.cleanupResourceRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel2) 58%, transparent);
+  border: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
+}
+
+.cleanupResourceMain {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cleanupResourceLabel {
+  font-size: 12px;
+  font-weight: 620;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cleanupResourceEstimate {
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+.cleanupConfirmBody {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+
+.cleanupConfirmDialogCard {
+  width: min(1040px, calc(100vw - 40px));
+  max-height: calc(100vh - 28px);
+}
+
+.cleanupConfirmDialogBody {
+  min-height: 0;
+  max-height: calc(100vh - 220px);
+  overflow: auto;
+  padding-right: 6px;
+}
+
+@media (max-width: 920px) {
+  .cleanupOverviewHead,
+  .cleanupStackHeader,
+  .cleanupServiceHeader,
+  .cleanupConfirmSummary {
+    flex-direction: column;
+  }
+
+  .cleanupOverviewStats {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .cleanupServiceGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .cleanupOverviewStats {
+    grid-template-columns: 1fr;
+  }
+
+  .cleanupResourceRow {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .cleanupResourceEstimate {
+    width: 100%;
+    text-align: left;
+  }
+
+  .cleanupPresetTabs {
+    gap: 8px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .overviewJobProgressBgShimmer {
     animation: none;

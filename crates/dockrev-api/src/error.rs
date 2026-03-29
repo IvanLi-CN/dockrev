@@ -6,6 +6,8 @@ use axum::{
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::api::types::CleanupScanResponse;
+
 #[derive(Debug)]
 pub struct ApiError {
     status: StatusCode,
@@ -33,6 +35,15 @@ impl ApiError {
 
     pub fn conflict(message: impl Into<String>) -> Self {
         Self::new(StatusCode::CONFLICT, "conflict", message)
+    }
+
+    pub fn cleanup_snapshot_stale(latest: CleanupScanResponse) -> Self {
+        Self::new(
+            StatusCode::CONFLICT,
+            "cleanup_snapshot_stale",
+            "Cleanup candidates changed since the last confirmation scan.",
+        )
+        .with_details(serde_json::json!({ "latest": latest }))
     }
 
     pub fn internal(message: impl Into<String>) -> Self {

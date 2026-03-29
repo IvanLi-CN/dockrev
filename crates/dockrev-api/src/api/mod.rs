@@ -46,6 +46,7 @@ use crate::{
 };
 use types::*;
 
+mod cleanup_routes;
 mod discovery_routes;
 mod github_packages;
 mod ignore_rules;
@@ -56,6 +57,7 @@ pub(crate) mod services;
 mod stacks;
 mod webhooks;
 
+use cleanup_routes::*;
 use discovery_routes::*;
 use github_packages::*;
 use ignore_rules::*;
@@ -116,6 +118,8 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(version_inference_events),
         )
         .route("/api/discovery/scan", post(trigger_discovery_scan))
+        .route("/api/cleanups/scan", post(scan_cleanups))
+        .route("/api/cleanups/apply", post(apply_cleanups))
         .route("/api/discovery/projects", get(list_discovery_projects))
         .route(
             "/api/discovery/projects/{project}/archive",

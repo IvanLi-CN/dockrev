@@ -1,4 +1,6 @@
 import type {
+  CleanupApplyRequest,
+  CleanupScanRequest,
   DeployCheckReportResponse,
   DeployWelcomeResponse,
   DiscoveredProject,
@@ -28,8 +30,18 @@ import type {
 import { imageRepoFromImageRef } from '../../imageRepo'
 import { isDockrevImageRef } from '../../runtimeConfig'
 import { serviceRowStatus } from '../../updateStatus'
+import {
+  buildCleanupMockScanResponse,
+  isCleanupMockScenario,
+  resolveCleanupMockApply,
+  type CleanupMockRuntimeState,
+} from './cleanupMockData'
 
 export type DockrevApiScenario =
+  | 'cleanup-console'
+  | 'cleanup-console-empty'
+  | 'cleanup-console-aggressive-unowned'
+  | 'cleanup-console-stale'
   | 'default'
   | 'dashboard-demo'
   | 'dashboard-demo-slow-update'
@@ -2674,6 +2686,7 @@ function buildOverviewDiscoveryReadable(): Fixture {
 
 function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'empty') return baseEmpty()
+  if (isCleanupMockScenario(scenario)) return baseEmpty()
   if (scenario === 'no-candidates') return buildNoCandidates()
   if (scenario === 'dashboard-demo' || scenario === 'dashboard-demo-slow-update') return buildDashboardDemo()
   if (scenario === 'link-icon-catalog') return buildLinkIconCatalog()
@@ -2769,6 +2782,10 @@ export function installDockrevMockApi(
   const queueProgressDemoSteps = [40, 44, 48, 52, 56, 60, 65, 70, 75, 80, 85, 90, 94, 97]
   let queueProgressDemoStep = 0
   let queueProgressDemoDirection = 1
+  const cleanupRuntime: CleanupMockRuntimeState = {
+    nextJobSeq: 0,
+    staleApplyConsumed: false,
+  }
 
   const advanceQueueProgressDemo = (): number | null => {
     if (!state || scenario !== 'queue-progress-smoothing') return null
@@ -3629,6 +3646,69 @@ export function installDockrevMockApi(
           'x-accel-buffering': 'no',
         },
       })
+    }
+
+    if (isCleanupMockScenario(scenario) && method === 'POST' && urlPath === '/api/cleanups/scan') {
+      const parsed = parseJsonBody(init?.body) as CleanupScanRequest | null
+      const request: CleanupScanRequest = {
+        reason: parsed?.reason === 'confirm' ? 'confirm' : 'page',
+        preset:
+          parsed?.preset === 'conservative' ||
+          parsed?.preset === 'balanced' ||
+          parsed?.preset === 'project_deep_clean' ||
+          parsed?.preset === 'aggressive'
+            ? parsed.preset
+            : 'balanced',
+        scope: parsed?.scope === 'stack' || parsed?.scope === 'service' ? parsed.scope : 'all',
+        stackId: typeof parsed?.stackId === 'string' ? parsed.stackId : undefined,
+        serviceId: typeof parsed?.serviceId === 'string' ? parsed.serviceId : undefined,
+      }
+      return json(buildCleanupMockScanResponse(scenario, request))
+    }
+
+    if (isCleanupMockScenario(scenario) && method === 'POST' && urlPath === '/api/cleanups/apply') {
+      const parsed = parseJsonBody(init?.body) as CleanupApplyRequest | null
+      if (!parsed) {
+        return json({ error: { code: 'invalid_argument', message: 'invalid cleanup apply payload', details: null } }, { status: 400 })
+      }
+      const result = resolveCleanupMockApply(scenario, parsed, cleanupRuntime)
+      if (!result.ok) return json(result.body, { status: result.status })
+
+      const createdAt = nowIso(-400)
+      const jobId = result.jobId
+      const job: JobListItem = {
+        id: jobId,
+        type: 'cleanup_apply',
+        scope: parsed.scope,
+        stackId: parsed.stackId ?? null,
+        serviceId: parsed.serviceId ?? null,
+        status: 'running',
+        createdBy: 'ivan',
+        reason: 'ui',
+        createdAt,
+        startedAt: nowIso(-200),
+        finishedAt: null,
+        allowArchMismatch: false,
+        backupMode: 'inherit',
+        summary: {
+          preset: parsed.preset,
+          scope: parsed.scope,
+          reclaimedBytesEstimated: 0,
+          deletedCountsByKind: {},
+          skippedInUse: [],
+          groupedTargets: [],
+        },
+      }
+      f.jobs = [job, ...f.jobs]
+      f.jobById[jobId] = {
+        ...job,
+        logs: [
+          { ts: createdAt, level: 'info', msg: 'cleanup confirm accepted' },
+          { ts: nowIso(-100), level: 'info', msg: 'cleanup job queued by UI mock' },
+        ],
+        logsLastId: 2,
+      }
+      return json({ jobId })
     }
 
     // stacks
