@@ -20,6 +20,7 @@ export function formatJobTypeLabel(type: string): string {
   if (raw === 'github_packages_webhook') return 'GHCR Webhook'
   if (raw === 'github_packages_webhook_sync_all') return 'GHCR 全量同步'
   if (raw === 'github_packages_webhook_sync_repo') return 'GHCR 单仓库同步'
+  if (raw === 'repo_link_backfill') return '仓库链接补齐'
   if (raw === 'update') return '更新任务'
   if (raw === 'rollback') return '回滚任务'
   return raw
@@ -70,6 +71,7 @@ function resolveJobTypeTone(type: string): JobTypeTone {
   if (type === 'github_packages_webhook') return 'ghcrWebhook'
   if (type === 'github_packages_webhook_sync_all') return 'ghcrWebhook'
   if (type === 'github_packages_webhook_sync_repo') return 'ghcrWebhook'
+  if (type === 'repo_link_backfill') return 'discovery'
   if (type === 'update') return 'update'
   if (type === 'rollback') return 'rollback'
   return 'default'

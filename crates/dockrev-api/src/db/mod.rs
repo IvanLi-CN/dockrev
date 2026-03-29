@@ -14,6 +14,7 @@ mod github_packages;
 mod jobs;
 mod new_version_discoveries;
 mod new_version_notifications;
+mod repo_links;
 mod resource_usage;
 mod settings;
 mod snapshots;
@@ -85,6 +86,23 @@ pub struct ServiceSnapshotTarget {
     pub current_tag: String,
     pub current_digest: Option<String>,
     pub candidate_digest: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct StoredServiceSettings {
+    pub settings: ServiceSettings,
+    pub repo_url_auto_disabled: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct RepoLinkBackfillTarget {
+    pub service_id: String,
+    #[allow(dead_code)]
+    pub stack_id: String,
+    pub stack_name: String,
+    pub service_name: String,
+    pub snapshot_target: ServiceSnapshotTarget,
+    pub repo_url_auto_disabled: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -734,6 +752,10 @@ fn ensure_service_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
         Col {
             name: "repo_url",
             ddl: "ALTER TABLE services ADD COLUMN repo_url TEXT",
+        },
+        Col {
+            name: "repo_url_auto_disabled",
+            ddl: "ALTER TABLE services ADD COLUMN repo_url_auto_disabled INTEGER NOT NULL DEFAULT 0",
         },
     ];
 
@@ -1517,6 +1539,7 @@ CREATE TABLE IF NOT EXISTS services (
   backup_targets_bind_paths_json TEXT NOT NULL,
   backup_targets_volume_names_json TEXT NOT NULL,
   repo_url TEXT,
+  repo_url_auto_disabled INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

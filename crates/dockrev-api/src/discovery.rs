@@ -1079,6 +1079,19 @@ async fn run_scan_inner(
             state.db.insert_stack(&stack, &seeds, &now).await?;
             stack_id = Some(new_stack_id.clone());
             summary.stacks_created += 1;
+            if let Err(err) = crate::repo_link_backfill::enqueue_stack_backfill_if_needed(
+                state,
+                &new_stack_id,
+                "discovery_create",
+            )
+            .await
+            {
+                tracing::warn!(
+                    error = %err,
+                    stack_id = %new_stack_id,
+                    "failed to enqueue repo link backfill after discovery create"
+                );
+            }
             state
                 .db
                 .upsert_discovered_compose_project(DiscoveredComposeProjectUpsert {
@@ -1128,6 +1141,19 @@ async fn run_scan_inner(
                 .db
                 .sync_stack_from_compose(&stack_id, &config_files, &svc_specs, &now)
                 .await?;
+            if let Err(err) = crate::repo_link_backfill::enqueue_stack_backfill_if_needed(
+                state,
+                &stack_id,
+                "discovery_sync",
+            )
+            .await
+            {
+                tracing::warn!(
+                    error = %err,
+                    stack_id = %stack_id,
+                    "failed to enqueue repo link backfill after discovery sync"
+                );
+            }
             summary.stacks_updated += 1;
             actions.push(DiscoveryAction {
                 project: project.clone(),

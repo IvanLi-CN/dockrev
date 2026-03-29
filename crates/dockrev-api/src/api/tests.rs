@@ -1534,6 +1534,53 @@ impl RegistryClient for RepoLinkRegistry {
 }
 
 #[derive(Clone, Default)]
+struct MixedRepoLinkRegistry {
+    observed_references: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl MixedRepoLinkRegistry {
+    fn observed_references(&self) -> Vec<String> {
+        self.observed_references.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl RegistryClient for MixedRepoLinkRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        Ok(vec!["latest".to_string()])
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        _reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        Ok(ManifestInfo {
+            digest: Some("sha256:latest".to_string()),
+            platform_digest: None,
+            arch: vec!["linux/amd64".to_string()],
+        })
+    }
+
+    async fn get_oci_source(
+        &self,
+        image: &ImageRef,
+        reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<Option<String>> {
+        self.observed_references
+            .lock()
+            .unwrap()
+            .push(format!("{}/{}@{reference}", image.registry, image.name));
+        if image.name.contains("/error") {
+            anyhow::bail!("simulated oci source failure");
+        }
+        Ok(None)
+    }
+}
+
+#[derive(Clone, Default)]
 struct DualDigestRegistry;
 
 #[async_trait::async_trait]
@@ -19799,6 +19846,17 @@ services:
     assert_eq!(resp.status(), 200);
     let body = response_json(resp).await;
     assert!(body["repoUrl"].is_null(), "cleared settings: {body}");
+
+    let stored = state
+        .db
+        .get_stored_service_settings(&service_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        stored.repo_url_auto_disabled,
+        "explicit repoUrl clear should disable auto backfill: {stored:?}"
+    );
 }
 
 #[tokio::test]
@@ -19974,6 +20032,193 @@ services:
         "unexpected settings after omitted repoUrl field: {settings:?}"
     );
     assert!(settings.auto_rollback);
+
+    let stored = state
+        .db
+        .get_stored_service_settings(&service_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        !stored.repo_url_auto_disabled,
+        "repo auto backfill disable flag should remain false: {stored:?}"
+    );
+}
+
+#[tokio::test]
+async fn new_service_settings_default_repo_auto_disabled_is_false() {
+    let state = test_state(":memory:").await;
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = state.db.list_services_for_check(&stack_id).await.unwrap()[0]
+        .id
+        .clone();
+
+    let stored = state
+        .db
+        .get_stored_service_settings(&service_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(stored.settings.repo_url.is_none());
+    assert!(
+        !stored.repo_url_auto_disabled,
+        "new services should allow repo auto backfill by default: {stored:?}"
+    );
+}
+
+#[tokio::test]
+async fn put_service_settings_omitted_repo_url_preserves_disable_flag() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = state.db.list_services_for_check(&stack_id).await.unwrap()[0]
+        .id
+        .clone();
+
+    state
+        .db
+        .put_service_settings_with_repo_auto_disabled(
+            &service_id,
+            &crate::api::types::ServiceSettings {
+                auto_rollback: false,
+                backup_targets: crate::api::types::BackupTargetOverrides {
+                    bind_paths: BTreeMap::new(),
+                    volume_names: BTreeMap::new(),
+                },
+                repo_url: None,
+            },
+            true,
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/services/{service_id}/settings"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "autoRollback": true,
+                        "backupTargets": { "bindPaths": {}, "volumeNames": {} }
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let stored = state
+        .db
+        .get_stored_service_settings(&service_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        stored.repo_url_auto_disabled,
+        "omitting repoUrl must preserve auto-backfill disable flag: {stored:?}"
+    );
+    assert!(stored.settings.auto_rollback);
+}
+
+#[tokio::test]
+async fn put_service_settings_non_empty_repo_url_reenables_auto_backfill() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = state.db.list_services_for_check(&stack_id).await.unwrap()[0]
+        .id
+        .clone();
+
+    state
+        .db
+        .put_service_settings_with_repo_auto_disabled(
+            &service_id,
+            &crate::api::types::ServiceSettings {
+                auto_rollback: true,
+                backup_targets: crate::api::types::BackupTargetOverrides {
+                    bind_paths: BTreeMap::new(),
+                    volume_names: BTreeMap::new(),
+                },
+                repo_url: None,
+            },
+            true,
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/services/{service_id}/settings"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "autoRollback": true,
+                        "backupTargets": { "bindPaths": {}, "volumeNames": {} },
+                        "repoUrl": "https://github.com/acme/web"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let stored = state
+        .db
+        .get_stored_service_settings(&service_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.settings.repo_url.as_deref(),
+        Some("https://github.com/acme/web")
+    );
+    assert!(
+        !stored.repo_url_auto_disabled,
+        "saving a repoUrl should re-enable auto backfill: {stored:?}"
+    );
 }
 
 #[tokio::test]
@@ -20043,6 +20288,385 @@ services:
     assert!(
         settings.repo_url.is_none(),
         "unexpected settings: {settings:?}"
+    );
+}
+
+#[tokio::test]
+async fn sync_stack_from_compose_preserves_repo_auto_disabled_when_service_image_changes() {
+    let state = test_state(":memory:").await;
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = state.db.list_services_for_check(&stack_id).await.unwrap()[0]
+        .id
+        .clone();
+
+    state
+        .db
+        .put_service_settings_with_repo_auto_disabled(
+            &service_id,
+            &crate::api::types::ServiceSettings {
+                auto_rollback: true,
+                backup_targets: crate::api::types::BackupTargetOverrides {
+                    bind_paths: BTreeMap::new(),
+                    volume_names: BTreeMap::new(),
+                },
+                repo_url: None,
+            },
+            true,
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    state
+        .db
+        .sync_stack_from_compose(
+            &stack_id,
+            std::slice::from_ref(&compose_path),
+            &[crate::db::ComposeServiceSpec {
+                name: "web".to_string(),
+                image_ref: "ghcr.io/acme/worker".to_string(),
+                image_tag: "latest".to_string(),
+            }],
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    let stored = state
+        .db
+        .get_stored_service_settings(&service_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(stored.settings.repo_url.is_none());
+    assert!(
+        stored.repo_url_auto_disabled,
+        "image changes should preserve explicit repo auto-backfill disable flag: {stored:?}"
+    );
+}
+
+#[tokio::test]
+async fn enqueue_startup_repo_link_backfill_only_when_eligible_and_reuses_pending_job() {
+    let state = test_state(":memory:").await;
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = state.db.list_services_for_check(&stack_id).await.unwrap()[0]
+        .id
+        .clone();
+
+    let first = crate::repo_link_backfill::enqueue_startup_backfill_if_needed(state.as_ref())
+        .await
+        .unwrap();
+    let second = crate::repo_link_backfill::enqueue_startup_backfill_if_needed(state.as_ref())
+        .await
+        .unwrap();
+
+    assert!(first.is_some());
+    assert_eq!(first, second, "startup backfill job should be reused");
+    let jobs = state
+        .db
+        .list_jobs_by_type_and_statuses(
+            crate::api::types::JobType::RepoLinkBackfill,
+            &["queued", "running"],
+            10,
+        )
+        .await
+        .unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].scope, crate::api::types::JobScope::All);
+
+    state
+        .db
+        .put_service_settings_with_repo_auto_disabled(
+            &service_id,
+            &crate::api::types::ServiceSettings {
+                auto_rollback: true,
+                backup_targets: crate::api::types::BackupTargetOverrides {
+                    bind_paths: BTreeMap::new(),
+                    volume_names: BTreeMap::new(),
+                },
+                repo_url: None,
+            },
+            true,
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .finish_job(
+            first.as_deref().unwrap(),
+            "success",
+            &test_now_rfc3339(),
+            &json!({}),
+        )
+        .await
+        .unwrap();
+
+    let none = crate::repo_link_backfill::enqueue_startup_backfill_if_needed(state.as_ref())
+        .await
+        .unwrap();
+    assert!(
+        none.is_none(),
+        "explicitly disabled null repoUrl rows should not enqueue startup backfill"
+    );
+}
+
+#[tokio::test]
+async fn enqueue_stack_repo_link_backfill_reuses_stack_scope_and_all_scope_jobs() {
+    let state = test_state(":memory:").await;
+
+    let compose_path_a = format!("/tmp/dockrev-test-a-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path_a,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_a = seed_stack_from_compose(&state, "demo-a", &compose_path_a).await;
+
+    let first = crate::repo_link_backfill::enqueue_stack_backfill_if_needed(
+        state.as_ref(),
+        &stack_a,
+        "discovery_sync",
+    )
+    .await
+    .unwrap();
+    let second = crate::repo_link_backfill::enqueue_stack_backfill_if_needed(
+        state.as_ref(),
+        &stack_a,
+        "discovery_sync",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        first, second,
+        "same stack should reuse pending stack backfill"
+    );
+
+    let compose_path_b = format!("/tmp/dockrev-test-b-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path_b,
+        r#"
+services:
+  worker:
+    image: ghcr.io/acme/worker:latest
+"#,
+    )
+    .unwrap();
+    let stack_b = seed_stack_from_compose(&state, "demo-b", &compose_path_b).await;
+    let global = crate::repo_link_backfill::enqueue_startup_backfill_if_needed(state.as_ref())
+        .await
+        .unwrap();
+    let reused = crate::repo_link_backfill::enqueue_stack_backfill_if_needed(
+        state.as_ref(),
+        &stack_b,
+        "discovery_sync",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        reused, global,
+        "stack-scoped enqueue should yield to pending all-scope repo backfill"
+    );
+}
+
+#[tokio::test]
+async fn repo_link_backfill_job_updates_and_summarizes_mixed_results() {
+    let registry = Arc::new(MixedRepoLinkRegistry::default());
+    let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  updated:
+    image: ghcr.io/acme/updated:latest
+  disabled:
+    image: ghcr.io/acme/disabled:latest
+  nomatch:
+    image: harbor.local/ops/nomatch:1.0
+  error:
+    image: harbor.local/ops/error:1.0
+  existing:
+    image: ghcr.io/acme/existing:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let service_ids = services
+        .iter()
+        .map(|svc| (svc.name.clone(), svc.id.clone()))
+        .collect::<BTreeMap<_, _>>();
+
+    state
+        .db
+        .put_github_packages_repos(
+            &[
+                ("acme".to_string(), "updated".to_string(), true),
+                ("acme".to_string(), "disabled".to_string(), true),
+                ("acme".to_string(), "existing".to_string(), true),
+            ],
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    state
+        .db
+        .put_service_settings_with_repo_auto_disabled(
+            service_ids.get("disabled").unwrap(),
+            &crate::api::types::ServiceSettings {
+                auto_rollback: true,
+                backup_targets: crate::api::types::BackupTargetOverrides {
+                    bind_paths: BTreeMap::new(),
+                    volume_names: BTreeMap::new(),
+                },
+                repo_url: None,
+            },
+            true,
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+    state
+        .db
+        .put_service_settings(
+            service_ids.get("existing").unwrap(),
+            &crate::api::types::ServiceSettings {
+                auto_rollback: true,
+                backup_targets: crate::api::types::BackupTargetOverrides {
+                    bind_paths: BTreeMap::new(),
+                    volume_names: BTreeMap::new(),
+                },
+                repo_url: Some("https://example.com/manual/existing".to_string()),
+            },
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    let job_id = crate::repo_link_backfill::enqueue_startup_backfill_if_needed(state.as_ref())
+        .await
+        .unwrap()
+        .expect("startup backfill job should be queued");
+    let job = state
+        .db
+        .claim_next_queued_job_by_type(
+            crate::api::types::JobType::RepoLinkBackfill,
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap()
+        .expect("queued repo backfill job should be claimable");
+    assert_eq!(job.id, job_id);
+
+    crate::repo_link_backfill::run_claimed_job(state.clone(), job)
+        .await
+        .unwrap();
+
+    let finished = state.db.get_job(&job_id).await.unwrap().unwrap();
+    assert_eq!(finished.status, "success");
+    assert_eq!(
+        finished.summary_json["counters"],
+        json!({
+            "total": 4,
+            "updated": 1,
+            "skippedDisabled": 1,
+            "noMatch": 1,
+            "error": 1
+        })
+    );
+    assert_eq!(
+        finished.summary_json["progress"]["phase"].as_str(),
+        Some("done")
+    );
+
+    let updated = state
+        .db
+        .get_stored_service_settings(service_ids.get("updated").unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        updated.settings.repo_url.as_deref(),
+        Some("https://github.com/acme/updated")
+    );
+    assert!(!updated.repo_url_auto_disabled);
+
+    let disabled = state
+        .db
+        .get_stored_service_settings(service_ids.get("disabled").unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(disabled.settings.repo_url.is_none());
+    assert!(disabled.repo_url_auto_disabled);
+
+    let nomatch = state
+        .db
+        .get_stored_service_settings(service_ids.get("nomatch").unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(nomatch.settings.repo_url.is_none());
+    assert!(!nomatch.repo_url_auto_disabled);
+
+    let error = state
+        .db
+        .get_stored_service_settings(service_ids.get("error").unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(error.settings.repo_url.is_none());
+    assert!(!error.repo_url_auto_disabled);
+
+    let existing = state
+        .db
+        .get_stored_service_settings(service_ids.get("existing").unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        existing.settings.repo_url.as_deref(),
+        Some("https://example.com/manual/existing")
+    );
+    let mut observed = registry.observed_references();
+    observed.sort();
+    assert_eq!(
+        observed,
+        vec![
+            "ghcr.io/acme/updated@latest".to_string(),
+            "harbor.local/ops/error@1.0".to_string(),
+            "harbor.local/ops/nomatch@1.0".to_string(),
+        ]
     );
 }
 

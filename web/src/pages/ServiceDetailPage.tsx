@@ -1185,40 +1185,43 @@ export function ServiceDetailPage(props: {
             </div>
             <div className="kvRow">
               <div className="label">代码仓库</div>
-              <div className="serviceRepoField">
-                <Input
-                  className="input"
-                  disabled={settingsBusy}
-                  onChange={(e) => setSettings({ ...settings, repoUrl: e.target.value })}
-                  placeholder="https://github.com/owner/repo"
-                  value={settings.repoUrl ?? ''}
-                />
-                <RepositoryLinkIcon repoUrl={draftRepoUrl} />
-                <IconButton
-                  disabled={settingsBusy}
-                  hint={repoInferBusy ? '正在重新推断代码仓库…' : '根据镜像 OCI source / GHCR 重新推断'}
-                  onClick={() => {
-                    void (async () => {
-                      setRepoInferBusy(true)
-                      setError(null)
-                      try {
-                        const result = await inferServiceRepoLink(props.serviceId)
-                        if (result.repoUrl) {
-                          setSettings((prev) => (prev ? { ...prev, repoUrl: result.repoUrl } : prev))
-                        } else {
-                          setError(result.reason?.trim() || '未识别到代码仓库入口')
+              <div>
+                <div className="serviceRepoField">
+                  <Input
+                    className="input"
+                    disabled={settingsBusy}
+                    onChange={(e) => setSettings({ ...settings, repoUrl: e.target.value })}
+                    placeholder="https://github.com/owner/repo"
+                    value={settings.repoUrl ?? ''}
+                  />
+                  <RepositoryLinkIcon repoUrl={draftRepoUrl} />
+                  <IconButton
+                    disabled={settingsBusy}
+                    hint={repoInferBusy ? '正在重新推断代码仓库…' : '根据镜像 OCI source / GHCR 重新推断'}
+                    onClick={() => {
+                      void (async () => {
+                        setRepoInferBusy(true)
+                        setError(null)
+                        try {
+                          const result = await inferServiceRepoLink(props.serviceId)
+                          if (result.repoUrl) {
+                            setSettings((prev) => (prev ? { ...prev, repoUrl: result.repoUrl } : prev))
+                          } else {
+                            setError(result.reason?.trim() || '未识别到代码仓库入口')
+                          }
+                        } catch (e: unknown) {
+                          setError(errorMessage(e))
+                        } finally {
+                          setRepoInferBusy(false)
                         }
-                      } catch (e: unknown) {
-                        setError(errorMessage(e))
-                      } finally {
-                        setRepoInferBusy(false)
-                      }
-                    })()
-                  }}
-                  title="重新推断代码仓库"
-                >
-                  <RefreshIcon className={repoInferBusy ? 'inlineIcon inlineIconLoading' : 'inlineIcon'} />
-                </IconButton>
+                      })()
+                    }}
+                    title="重新推断代码仓库"
+                  >
+                    <RefreshIcon className={repoInferBusy ? 'inlineIcon inlineIconLoading' : 'inlineIcon'} />
+                  </IconButton>
+                </div>
+                <div className="muted">清空并保存会禁用后续自动补齐；再次手动推断并保存可恢复。</div>
               </div>
             </div>
           </div>

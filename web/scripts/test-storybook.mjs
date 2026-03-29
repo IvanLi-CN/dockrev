@@ -1565,6 +1565,7 @@ async function runInteractive({ baseUrl, browser }) {
     try {
       const repoInput = page.getByPlaceholder('https://github.com/owner/repo')
       await repoInput.waitFor({ timeout: 10_000 })
+      await page.getByText('清空并保存会禁用后续自动补齐；再次手动推断并保存可恢复。', { exact: true }).waitFor({ timeout: 10_000 })
 
       const detailHeader = page.locator('.svcTitleRow')
       const detailRegistryLink = detailHeader.locator('[data-link-kind="registry"]')

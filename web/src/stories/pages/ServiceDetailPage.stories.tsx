@@ -12,6 +12,10 @@ const meta: Meta<typeof ServiceDetailPage> = {
 export default meta
 type Story = StoryObj<typeof ServiceDetailPage>
 
+function expectStory(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new globalThis.Error(message)
+}
+
 function render(stackId: string, serviceId: string): Story['render'] {
   return () => {
     return (
@@ -90,6 +94,12 @@ export const ResourceMonitorStreamError: Story = {
 export const RepoLinkEditing: Story = {
   parameters: { dockrevApiScenario: 'repo-link-editing' },
   render: render('stack-prod', 'svc-prod-api'),
+  play: async ({ canvasElement }) => {
+    const helper = Array.from(canvasElement.querySelectorAll<HTMLElement>('.muted')).find((node) =>
+      node.textContent?.includes('清空并保存会禁用后续自动补齐'),
+    )
+    expectStory(helper, 'repoUrl auto-backfill helper copy missing in service detail story')
+  },
 }
 
 export const Error: Story = {

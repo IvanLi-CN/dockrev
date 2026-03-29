@@ -19,6 +19,7 @@ mod models;
 mod notify;
 mod preflight;
 mod registry;
+mod repo_link_backfill;
 mod resource_usage;
 mod runner;
 mod runtime_scan;
@@ -126,8 +127,12 @@ async fn main() -> anyhow::Result<()> {
     discovery::spawn_task(state.clone());
     runtime_scan::spawn_task(state.clone());
     ghcr_webhook_jobs::spawn_tasks(state.clone());
+    repo_link_backfill::spawn_tasks(state.clone());
     schedules::spawn_tasks(state.clone());
     resource_usage::spawn_history_sampler(state.db.clone(), state.runner.clone());
+    if let Err(err) = repo_link_backfill::enqueue_startup_backfill_if_needed(state.as_ref()).await {
+        tracing::warn!(error = %err, "failed to enqueue startup repo link backfill");
+    }
     let app = api::router(state.clone());
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;

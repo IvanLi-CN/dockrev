@@ -13,6 +13,7 @@ describe('jobDisplay', () => {
     expect(formatJobTypeLabel('update')).toBe('更新任务')
     expect(formatJobTypeLabel('runtime_scan')).toBe('运行时扫描')
     expect(formatJobTypeLabel('check')).toBe('检查任务')
+    expect(formatJobTypeLabel('repo_link_backfill')).toBe('仓库链接补齐')
     expect(formatJobScopeLabel('all')).toBe('全局')
     expect(formatJobScopeLabel('stack')).toBe('Stack')
     expect(formatJobScopeLabel('service')).toBe('服务')
@@ -33,6 +34,11 @@ describe('jobDisplay', () => {
       primaryLabel: '运行时扫描',
       scopeTag: 'Stack',
       typeTone: 'runtimeScan',
+    })
+    expect(formatJobReadableDisplay('repo_link_backfill', 'all')).toEqual({
+      primaryLabel: '仓库链接补齐',
+      scopeTag: '全局',
+      typeTone: 'discovery',
     })
     expect(formatJobReadableDisplay('update', ' ')).toEqual({ primaryLabel: '更新任务', scopeTag: null, typeTone: 'update' })
     expect(formatJobReadableDisplay('unknown_type', 'all')).toEqual({ primaryLabel: 'unknown_type', scopeTag: '全局', typeTone: 'default' })
