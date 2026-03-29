@@ -106,6 +106,112 @@ describe('updateStatus semver downgrade anomaly', () => {
     expect(isSemverDowngradeAnomaly(svc)).toBe(true)
   })
 
+  test('flags ordered prerelease downgrade when both versions stay in the same rc channel', () => {
+    const svc = makeService({
+      image: {
+        ref: 'ghcr.io/acme/demo:latest',
+        tag: 'latest',
+        digest: 'sha256:current',
+        resolvedTag: 'v1.0.0-rc.2',
+        resolvedTags: ['v1.0.0-rc.2'],
+      },
+      candidate: {
+        tag: 'latest',
+        resolvedTag: 'v1.0.0-rc.1',
+        digest: 'sha256:candidate',
+        archMatch: 'match',
+        arch: ['linux/amd64'],
+      },
+    })
+
+    expect(isSemverDowngradeAnomaly(svc)).toBe(true)
+  })
+
+  test('keeps anomaly detection for single-token rc prerelease markers', () => {
+    const svc = makeService({
+      image: {
+        ref: 'ghcr.io/acme/demo:latest',
+        tag: 'latest',
+        digest: 'sha256:current',
+        resolvedTag: 'v1.0.0-rc2',
+        resolvedTags: ['v1.0.0-rc2'],
+      },
+      candidate: {
+        tag: 'latest',
+        resolvedTag: 'v1.0.0-rc1',
+        digest: 'sha256:candidate',
+        archMatch: 'match',
+        arch: ['linux/amd64'],
+      },
+    })
+
+    expect(isSemverDowngradeAnomaly(svc)).toBe(true)
+  })
+
+  test('keeps anomaly detection for hyphenated rc prerelease markers', () => {
+    const svc = makeService({
+      image: {
+        ref: 'ghcr.io/acme/demo:latest',
+        tag: 'latest',
+        digest: 'sha256:current',
+        resolvedTag: 'v1.0.0-rc-2',
+        resolvedTags: ['v1.0.0-rc-2'],
+      },
+      candidate: {
+        tag: 'latest',
+        resolvedTag: 'v1.0.0-rc-1',
+        digest: 'sha256:candidate',
+        archMatch: 'match',
+        arch: ['linux/amd64'],
+      },
+    })
+
+    expect(isSemverDowngradeAnomaly(svc)).toBe(true)
+  })
+
+  test('does not flag opaque hash-like prerelease tags as downgrade anomalies', () => {
+    const svc = makeService({
+      image: {
+        ref: 'ghcr.io/acme/demo:latest',
+        tag: 'latest',
+        digest: 'sha256:current',
+        resolvedTag: '2026.3.28-e58516daf',
+        resolvedTags: ['2026.3.28-e58516daf'],
+      },
+      candidate: {
+        tag: 'latest',
+        resolvedTag: '2026.3.28-6b9856d64',
+        digest: 'sha256:candidate',
+        archMatch: 'match',
+        arch: ['linux/amd64'],
+      },
+    })
+
+    expect(isSemverDowngradeAnomaly(svc)).toBe(false)
+    expect(noteFor(svc, 'updatable')).not.toContain('版本异常')
+  })
+
+  test('does not fall back to raw semver-like tags after opaque resolved tags are rejected', () => {
+    const svc = makeService({
+      image: {
+        ref: 'ghcr.io/acme/demo:2026.3.28',
+        tag: '2026.3.28',
+        digest: 'sha256:current',
+        resolvedTag: '2026.3.28-e58516daf',
+        resolvedTags: ['2026.3.28-e58516daf'],
+      },
+      candidate: {
+        tag: '2026.3.27',
+        resolvedTag: '2026.3.28-6b9856d64',
+        digest: 'sha256:candidate',
+        archMatch: 'match',
+        arch: ['linux/amd64'],
+      },
+    })
+
+    expect(isSemverDowngradeAnomaly(svc)).toBe(false)
+  })
+
   test('flags downgrade correctly for very large semver numeric segments', () => {
     const svc = makeService({
       image: {

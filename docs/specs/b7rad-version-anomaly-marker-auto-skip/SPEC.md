@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-02-28
-- Last: 2026-03-01
+- Last: 2026-03-29
 
 ## 背景 / 问题陈述
 
@@ -51,7 +51,7 @@
 
 ### MUST
 
-- 版本异常判定口径固定为：当前与候选都能解析为严格 semver，且候选 `<` 当前。
+- 版本异常判定口径固定为：当前与候选都能解析为严格且可比较的 semver，且候选 `<` 当前；`2026.3.28-<hash>` 这类 opaque hash-like prerelease 不参与降级判定。
 - `reason != ui` 的更新任务中，命中版本异常的服务必须从实际更新集合中剔除。
 - Web 列表与详情在“状态/备注”或同级信息位展示 `⚠ 版本异常`。
 
@@ -77,8 +77,8 @@
 
 ### Edge cases / errors
 
-- 任一侧无法得到严格 semver（如 `latest` 且无 resolvedTag）：不标记版本异常。
-- 仅 pre-release/build 变化按 semver 规则比较（例如 `1.0.0-rc.1 < 1.0.0`）。
+- 任一侧无法得到严格且可比较的 semver（如 `latest` 且无 `resolvedTag`，或 `2026.3.28-<hash>` 这类 opaque prerelease）：不标记版本异常。
+- 仅可比较的 pre-release/build 变化按 semver 规则比较（例如 `1.0.0-rc.1 < 1.0.0`、`1.0.0-rc.1 < 1.0.0-rc.2`）。
 
 ## 接口契约（Interfaces & Contracts）
 
@@ -97,9 +97,10 @@
 ## 验收标准（Acceptance Criteria）
 
 - Given 当前 `resolvedTag=v0.3.1`、候选 `resolvedTag=v0.2.53`，When 渲染列表/详情，Then 显示 `⚠ 版本异常`，且手动更新按钮可用。
+- Given 当前 `resolvedTag=2026.3.28-e58516daf`、候选 `resolvedTag=2026.3.28-6b9856d64`，When 判定版本异常，Then 结果为“不异常”，且自动更新路径不会把该服务记入 `skippedVersionAnomaly`。
 - Given stack/all 批量更新弹窗包含异常候选，When 打开弹窗，Then 仅显示轻提示，不增加二次确认。
 - Given webhook 触发更新且服务命中异常，When 任务执行，Then 该服务不进入实际更新集合。
-- Given 候选或当前无法解析严格 semver，When 判定异常，Then 结果为“不异常”。
+- Given 候选或当前无法解析严格且可比较的 semver，When 判定异常，Then 结果为“不异常”。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
@@ -135,3 +136,4 @@
 - 2026-02-28: 新建规格并冻结口径（严格 semver 降级异常 + 自动路径跳过）。
 - 2026-02-28: 完成 M1/M2/M3/M4 并通过测试矩阵。
 - 2026-03-01: 同步 `docs/specs/README.md` 索引条目与状态。
+- 2026-03-29: 收紧“可比较 semver”口径：保留 `rc/beta/pre/preview` 等有序 prerelease 比较，但不再把 opaque hash-like prerelease 误判成版本降级。

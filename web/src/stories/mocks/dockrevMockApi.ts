@@ -76,6 +76,7 @@ export type DockrevApiScenario =
 
 export type DockrevMockApiOptions = {
   discoveryTimelineByServiceId?: Record<string, NewVersionDiscoveryTimelineResponse>
+  serviceOverridesById?: Record<string, Partial<StackDetail['services'][number]>>
 }
 
 const realFetch = globalThis.fetch.bind(globalThis)
@@ -2749,6 +2750,17 @@ export function installDockrevMockApi(
   options: DockrevMockApiOptions = {},
 ) {
   const state = scenario === 'error' ? null : buildFixture(scenario)
+  if (state) {
+    for (const stack of Object.values(state.stackById)) {
+      stack.services = stack.services.map((service) => {
+        const override = options.serviceOverridesById?.[service.id]
+        if (!override) return service
+        const nextService = { ...service, ...override }
+        state.serviceSettingsById[service.id] = nextService.settings
+        return nextService
+      })
+    }
+  }
   let ignoreSeq = 0
   let jobSeq = 0
   const digestSnapshotPendingAttempts = new Map<string, number>()

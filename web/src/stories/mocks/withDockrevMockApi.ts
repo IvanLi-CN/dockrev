@@ -9,6 +9,7 @@ export const withDockrevMockApi: Decorator = (Story, context) => {
   const scenario = (context.parameters?.dockrevApiScenario ?? 'default') as DockrevApiScenario
   const options = {
     discoveryTimelineByServiceId: context.parameters?.dockrevDiscoveryTimelineByServiceId,
+    serviceOverridesById: context.parameters?.dockrevServiceOverridesById,
   } satisfies DockrevMockApiOptions
   installDockrevMockApi(scenario, options)
   return Story()

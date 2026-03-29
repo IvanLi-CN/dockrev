@@ -51,8 +51,10 @@ function loadErrorMessage(error: unknown): string {
 export function DiscoveryHistoryPopover(props: {
   serviceId: string
   count: number | null | undefined
+  triggerVariant?: 'pill' | 'compact-count'
 }) {
   const count = props.count ?? 0
+  const triggerVariant = props.triggerVariant ?? 'pill'
   const {
     contentProps,
     open,
@@ -130,11 +132,16 @@ export function DiscoveryHistoryPopover(props: {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="discoveryHistoryTrigger pill pillMuted"
+          className={
+            triggerVariant === 'compact-count'
+              ? 'discoveryHistoryTrigger discoveryHistoryTriggerCompact'
+              : 'discoveryHistoryTrigger pill pillMuted'
+          }
+          data-trigger-variant={triggerVariant}
           aria-label={`发现 ${count} 次，查看版本时间线`}
           {...triggerProps}
         >
-          {`发现 ${count} 次`}
+          {triggerVariant === 'compact-count' ? String(count) : `发现 ${count} 次`}
         </button>
       </PopoverTrigger>
       <PopoverContent

@@ -130,6 +130,31 @@ export const DashboardDemo: Story = {
   },
 }
 
+export const StatusBadgeLayout: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    dockrevServiceOverridesById: {
+      'svc-prod-api': {
+        newVersionDiscoveryCount: 3,
+      },
+    },
+  },
+  render: () => {
+    return (
+      <PageHarness
+        route={{ name: 'services' }}
+        title="服务"
+        topbarHint="服务"
+        pageSubtitle="状态列：紧凑发现次数 badge 不应挤占备注行高"
+      >
+        {({ onLastScanHint, onTopActions }) => (
+          <ServicesPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
+        )}
+      </PageHarness>
+    )
+  },
+}
+
 export const RegistryAndRepoLinks: Story = {
   parameters: { dockrevApiScenario: 'link-icon-catalog' },
   render: () => {
