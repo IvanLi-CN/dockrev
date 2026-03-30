@@ -33,6 +33,7 @@ export type DockrevApiScenario =
   | 'default'
   | 'dashboard-demo'
   | 'dashboard-demo-slow-update'
+  | 'dashboard-demo-hydrated-update'
   | 'link-icon-catalog'
   | 'digest-pinned-image-display'
   | 'services-inference-pending-candidate-loading'
@@ -875,7 +876,7 @@ function buildDashboardDemo(): Fixture {
     type: 'update',
     scope: 'service',
     stackId: prodStackId,
-    serviceId: serviceProdApi.id,
+    serviceId: 'svc-dashboard-background-update',
     status: 'running',
     createdBy: 'ivan',
     reason: 'ui',
@@ -2676,6 +2677,20 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'empty') return baseEmpty()
   if (scenario === 'no-candidates') return buildNoCandidates()
   if (scenario === 'dashboard-demo' || scenario === 'dashboard-demo-slow-update') return buildDashboardDemo()
+  if (scenario === 'dashboard-demo-hydrated-update') {
+    const fixture = buildDashboardDemo()
+    fixture.jobs = fixture.jobs.map((job) =>
+      job.id === 'job-1' ? { ...job, serviceId: 'svc-prod-api' } : job,
+    )
+    const runningJob = fixture.jobById['job-1']
+    if (runningJob) {
+      fixture.jobById['job-1'] = {
+        ...runningJob,
+        serviceId: 'svc-prod-api',
+      }
+    }
+    return fixture
+  }
   if (scenario === 'link-icon-catalog') return buildLinkIconCatalog()
   if (scenario === 'digest-pinned-image-display') return buildDigestPinnedImageDisplay()
   if (scenario === 'repo-link-editing') {
