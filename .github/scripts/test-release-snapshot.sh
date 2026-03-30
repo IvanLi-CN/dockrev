@@ -198,7 +198,12 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-versions-") as tmp:
             raise AssertionError("expected invalid type labels to fail")
 
         run("tag", "0.1.1", sha1, cwd=repo)
-        pending = module.pending_release_targets(module.DEFAULT_NOTES_REF, sha3)
+        pending = module.pending_release_targets(
+            module.DEFAULT_NOTES_REF,
+            sha3,
+            publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+            override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+        )
         assert pending == [sha2, sha3], (pending, sha2, sha3)
         assert module.release_tag_points_to_target(snapshot1) is True
         assert module.release_tag_points_to_target(snapshot2) is False
@@ -506,6 +511,80 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-catch-up-") as tmp:
         os.chdir(original_cwd)
 
 
+with tempfile.TemporaryDirectory(prefix="release-snapshot-overrides-") as tmp:
+    repo = Path(tmp)
+    run("init", cwd=repo)
+    run("config", "user.name", "Test User", cwd=repo)
+    run("config", "user.email", "test@example.com", cwd=repo)
+    run("checkout", "-b", "main", cwd=repo)
+    (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.1.0"\n')
+    (repo / "README.md").write_text("base\n")
+    run("add", "Cargo.toml", "README.md", cwd=repo)
+    run("commit", "-m", "base", cwd=repo)
+    run("tag", "0.1.0", cwd=repo)
+
+    (repo / "README.md").write_text("frozen target\n")
+    run("add", "README.md", cwd=repo)
+    run("commit", "-m", "frozen target", cwd=repo)
+    target_sha = run("rev-parse", "HEAD", cwd=repo)
+
+    original_cwd = Path.cwd()
+    original_loader = module.load_pr_for_commit
+    original_git = module.git
+    try:
+        os.chdir(repo)
+        module.load_pr_for_commit = lambda api_root, repository, token, commit_sha, **kwargs: {
+            target_sha: make_pr(601, "Frozen target", target_sha, ["type:patch", "channel:stable"]),
+        }[commit_sha]
+        snapshot = module.build_snapshot(
+            target_sha=target_sha,
+            repository="IvanLi-CN/dockrev",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+        )
+        run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(snapshot), target_sha, cwd=repo)
+
+        module.git = fake_push_git(original_git, module.DEFAULT_OVERRIDE_NOTES_REF)
+        exit_code = module.record_override(
+            argparse.Namespace(
+                target_sha=target_sha,
+                snapshot_notes_ref=module.DEFAULT_NOTES_REF,
+                publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+                override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+                status="skip",
+                reason="release-infra mislabel under no-extra-credential model",
+                output=str(repo / "override.json"),
+                max_attempts=1,
+            )
+        )
+        assert exit_code == 0
+        override = module.read_override(module.DEFAULT_OVERRIDE_NOTES_REF, target_sha)
+        assert override is not None
+        assert override["status"] == "skip"
+        assert override["reason"] == "release-infra mislabel under no-extra-credential model"
+        assert (
+            module.release_state_for_target(
+                snapshot,
+                publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+                override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+            )
+            == "skipped"
+        )
+        pending = module.pending_release_targets(
+            module.DEFAULT_NOTES_REF,
+            target_sha,
+            publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+            override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+        )
+        assert pending == []
+    finally:
+        module.load_pr_for_commit = original_loader
+        module.git = original_git
+        os.chdir(original_cwd)
+
+
 with tempfile.TemporaryDirectory(prefix="release-snapshot-publication-regression-") as tmp:
     repo = Path(tmp)
     run("init", cwd=repo)
@@ -580,6 +659,7 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-publication-regression
                 target_sha=new_sha,
                 snapshot_notes_ref=module.DEFAULT_NOTES_REF,
                 publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+                override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
                 dockrev_digest="sha256:" + ("1" * 64),
                 dockrev_supervisor_digest="sha256:" + ("2" * 64),
                 published_at="2026-03-27T10:20:30Z",
@@ -638,6 +718,13 @@ def fake_comment_request(api_root, token, method, path, *, body=None, query=None
                 comments[index] = updated
                 return updated
         raise AssertionError(f"missing comment id {comment_id}")
+    if method == "DELETE":
+        comment_id = int(path.rsplit("/", 1)[1])
+        for index, comment in enumerate(comments):
+            if comment["id"] == comment_id:
+                comments.pop(index)
+                return None
+        raise AssertionError(f"missing comment id {comment_id}")
     raise AssertionError(f"unexpected method {method}")
 
 
@@ -679,23 +766,57 @@ try:
 
     comments[:] = [
         {
+            "id": 771,
+            "body": f"{comment_module.COMMENT_MARKER}\nold duplicate",
+            "user": {"login": comment_module.BOT_LOGIN},
+        },
+        {
+            "id": 772,
+            "body": f"{comment_module.COMMENT_MARKER}\nnewest duplicate",
+            "user": {"login": comment_module.BOT_LOGIN},
+        },
+    ]
+    requests.clear()
+    deduped = comment_module.upsert_release_comment(
+        api_root="https://api.github.com",
+        repository="IvanLi-CN/dockrev",
+        token="token",
+        pr_number=186,
+        release_tag="0.36.1",
+        release_channel="stable",
+        release_url="https://github.com/IvanLi-CN/dockrev/releases/tag/0.36.1",
+        workflow_run_url="https://github.com/IvanLi-CN/dockrev/actions/runs/181",
+    )
+    assert deduped["comment_status"] == "update"
+    assert [request["method"] for request in requests[:3]] == ["GET", "PATCH", "GET"]
+    assert any(request["method"] == "DELETE" and request["path"].endswith("/771") for request in requests)
+    assert len(comments) == 1
+    assert comments[0]["id"] == 772
+    assert "Version: `0.36.1`" in comments[0]["body"]
+
+    comments[:] = [
+        {
             "id": 777,
             "body": f"{comment_module.COMMENT_MARKER}\nforeign marker",
             "user": {"login": "octocat"},
         }
     ]
     requests.clear()
-    skipped = comment_module.upsert_release_comment(
-        api_root="https://api.github.com",
-        repository="IvanLi-CN/dockrev",
-        token="token",
-        pr_number=186,
-        release_tag="0.35.9",
-        release_channel="stable",
-        release_url="https://github.com/IvanLi-CN/dockrev/releases/tag/0.35.9",
-        workflow_run_url="https://github.com/IvanLi-CN/dockrev/actions/runs/179",
-    )
-    assert skipped["comment_status"] == "skip_foreign_marker"
+    try:
+        comment_module.upsert_release_comment(
+            api_root="https://api.github.com",
+            repository="IvanLi-CN/dockrev",
+            token="token",
+            pr_number=186,
+            release_tag="0.35.9",
+            release_channel="stable",
+            release_url="https://github.com/IvanLi-CN/dockrev/releases/tag/0.35.9",
+            workflow_run_url="https://github.com/IvanLi-CN/dockrev/actions/runs/179",
+        )
+    except comment_module.CommentError as exc:
+        assert "cannot satisfy release comment contract" in str(exc)
+    else:
+        raise AssertionError("expected foreign marker contract failure")
     assert len(requests) == 1
     assert requests[0]["method"] == "GET"
 finally:

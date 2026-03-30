@@ -59,12 +59,15 @@ ensure_regex_absent() {
 echo "[contract-check] release workflow rc gating invariants"
 search_regex "group:[[:space:]]*release-main" .github/workflows/release.yml
 search_fixed "head_sha:" .github/workflows/release.yml
+search_fixed "admin_action:" .github/workflows/release.yml
 search_fixed "python3 .github/scripts/release_snapshot.py ensure \\" .github/workflows/release.yml
 search_fixed "python3 .github/scripts/release_snapshot.py export \\" .github/workflows/release.yml
 search_fixed "python3 .github/scripts/release_snapshot.py next-pending \\" .github/workflows/release.yml
+search_fixed "python3 .github/scripts/release_snapshot.py record-override \\" .github/workflows/release.yml
+search_fixed "Skipped release targets cannot be released manually" .github/workflows/release.yml
 search_fixed 'DOCKREV_TAGS_CSV: ${{ needs.prepare.outputs.tags_csv }}' .github/workflows/release.yml
 search_fixed 'SUPERVISOR_TAGS_CSV: ${{ needs.prepare.outputs.supervisor_tags_csv }}' .github/workflows/release.yml
-search_fixed "inputs: { head_sha: nextSha }" .github/workflows/release.yml
+search_fixed "inputs: { head_sha: nextSha, admin_action: 'release', override_reason: '' }" .github/workflows/release.yml
 python3 - <<'PY'
 from pathlib import Path
 text = Path('.github/workflows/release.yml').read_text()
@@ -88,6 +91,9 @@ search_regex "^[[:space:]]*pull_request_target:" .github/workflows/label-gate.ym
 search_regex "^[[:space:]]*merge_group:" .github/workflows/label-gate.yml
 search_regex "pull-requests:[[:space:]]*read" .github/workflows/label-gate.yml
 search_regex "uses:[[:space:]]*actions/github-script@" .github/workflows/label-gate.yml
+search_regex "listFiles" .github/workflows/label-gate.yml
+search_regex "Release-infra-only PRs must use type:skip or type:docs" .github/workflows/label-gate.yml
+search_regex "Release-enabled PRs must not touch \\.github/workflows/\\*\\*" .github/workflows/label-gate.yml
 search_regex "resolveMergeGroupPullNumbers" .github/workflows/label-gate.yml
 search_regex "GET /repos/\{owner\}/\{repo\}/commits/\{commit_sha\}/pulls" .github/workflows/label-gate.yml
 search_regex "context\.eventName === 'merge_group'" .github/workflows/label-gate.yml
@@ -423,16 +429,24 @@ function assert(condition, message) {
   }
 }
 
-function makeLabelGithub({ labelsByPull, commitPullsBySha }) {
+function makeLabelGithub({ labelsByPull, filesByPull, commitPullsBySha }) {
+  const listFiles = async ({ pull_number }) => ({
+    data: (filesByPull[pull_number] || []).map((filename) => ({ filename })),
+  })
+
   return {
     paginate: async (route, params) => {
       if (typeof route === 'string' && route.includes('/commits/{commit_sha}/pulls')) {
         return commitPullsBySha[params.commit_sha] || []
       }
+      if (route === listFiles) {
+        return (filesByPull[params.pull_number] || []).map((filename) => ({ filename }))
+      }
       throw new Error(`unexpected label-gate paginate route: ${String(route)}`)
     },
     rest: {
       pulls: {
+        listFiles,
         get: async ({ pull_number }) => ({
           data: {
             number: pull_number,
@@ -493,8 +507,20 @@ async function main() {
     labelsByPull: {
       101: ['type:patch', 'channel:stable'],
       102: ['type:minor', 'channel:rc'],
+      107: ['type:patch', 'channel:stable'],
+      108: ['type:docs', 'channel:stable'],
+      109: ['type:patch', 'channel:stable'],
       999: ['type:docs', 'channel:stable'],
       998: ['type:minor'],
+    },
+    filesByPull: {
+      101: ['crates/dockrev-api/src/lib.rs'],
+      102: ['web/src/App.tsx'],
+      107: ['.github/scripts/release_snapshot.py', '.github/scripts/test-release-snapshot.sh'],
+      108: ['.github/workflows/release.yml'],
+      109: ['web/src/App.tsx', '.github/workflows/release.yml'],
+      999: ['README.md'],
+      998: ['crates/dockrev-api/src/lib.rs'],
     },
     commitPullsBySha: {
       'sha-label-exact': [
@@ -598,6 +624,42 @@ async function main() {
     github: labelGithub,
   })
   assert(core.failed !== null && core.failed.includes('mismatch'), `label gate merge_group should fail when parsed PRs are not proven by commit metadata, got: ${core.failed}`)
+
+  core = await runGithubScript(labelScript, {
+    context: {
+      eventName: 'pull_request_target',
+      repo,
+      payload: { pull_request: { number: 107 } },
+      ref: 'refs/heads/main',
+      sha: 'sha-pr-infra-only',
+    },
+    github: labelGithub,
+  })
+  assert(core.failed !== null && core.failed.includes('Release-infra-only PRs must use type:skip or type:docs'), `label gate should fail infra-only release-enabled PRs, got: ${core.failed}`)
+
+  core = await runGithubScript(labelScript, {
+    context: {
+      eventName: 'pull_request_target',
+      repo,
+      payload: { pull_request: { number: 108 } },
+      ref: 'refs/heads/main',
+      sha: 'sha-pr-infra-docs',
+    },
+    github: labelGithub,
+  })
+  assert(core.failed === null, `label gate should allow workflow-only docs/skip PRs, got: ${core.failed}`)
+
+  core = await runGithubScript(labelScript, {
+    context: {
+      eventName: 'pull_request_target',
+      repo,
+      payload: { pull_request: { number: 109 } },
+      ref: 'refs/heads/main',
+      sha: 'sha-pr-mixed-workflow',
+    },
+    github: labelGithub,
+  })
+  assert(core.failed !== null && core.failed.includes('must not touch .github/workflows/**'), `label gate should fail release-enabled PRs that touch workflows, got: ${core.failed}`)
 
   const reviewGithub = makeReviewGithub({
     pullsByNumber: {

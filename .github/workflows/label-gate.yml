@@ -34,10 +34,20 @@ jobs:
               'type:minor',
               'type:major',
             ])
+            const releaseEnabledTypes = new Set([
+              'type:patch',
+              'type:minor',
+              'type:major',
+            ])
             const allowedChannels = new Set([
               'channel:stable',
               'channel:rc',
             ])
+            const releaseInfraPatterns = [
+              /^\.github\/workflows\//,
+              /^\.github\/scripts\/release_.*\.py$/,
+              /^\.github\/scripts\/test-release-snapshot\.sh$/,
+            ]
 
             function normalizeHeadRef(ref) {
               if (!ref) {
@@ -119,7 +129,33 @@ jobs:
               return Array.from(new Set(labels)).sort().join(', ')
             }
 
-            function evaluateLabels(labels) {
+            function describeFiles(files) {
+              if (!files.length) {
+                return '(none)'
+              }
+              return Array.from(new Set(files)).sort().join(', ')
+            }
+
+            function isReleaseInfraPath(path) {
+              if (!path) {
+                return false
+              }
+              return releaseInfraPatterns.some((pattern) => pattern.test(String(path)))
+            }
+
+            async function listPullFiles(pullNumber) {
+              const files = await github.paginate(github.rest.pulls.listFiles, {
+                owner,
+                repo,
+                pull_number: pullNumber,
+                per_page: 100,
+              })
+              return files
+                .map((entry) => entry?.filename)
+                .filter((filename) => typeof filename === 'string' && filename.length > 0)
+            }
+
+            function evaluateLabels(labels, changedFiles) {
               const names = labels.filter((label) => typeof label === 'string' && label.length > 0)
               const typeLabels = names.filter((label) => label.startsWith('type:'))
               const channelLabels = names.filter((label) => label.startsWith('channel:'))
@@ -142,16 +178,32 @@ jobs:
                 problems.push(`PR must have exactly one channel:* label; found ${selectedChannel.length}`)
               }
 
+              if (problems.length === 0) {
+                const selectedTypeLabel = selectedType[0]
+                const workflowTouched = changedFiles.some((path) => String(path).startsWith('.github/workflows/'))
+                const releaseInfraOnly = changedFiles.length > 0 && changedFiles.every((path) => isReleaseInfraPath(path))
+                if (releaseEnabledTypes.has(selectedTypeLabel) && workflowTouched) {
+                  problems.push(
+                    'Release-enabled PRs must not touch .github/workflows/**; split workflow/release-infra changes into a non-release PR or relabel to type:skip/type:docs',
+                  )
+                }
+                if (releaseEnabledTypes.has(selectedTypeLabel) && releaseInfraOnly) {
+                  problems.push(
+                    'Release-infra-only PRs must use type:skip or type:docs; release-enabled labels are reserved for product releases',
+                  )
+                }
+              }
+
               if (problems.length > 0) {
                 return {
                   pass: false,
-                  description: `${problems.join('; ')} | labels=${describeLabels(names)}`,
+                  description: `${problems.join('; ')} | labels=${describeLabels(names)} | files=${describeFiles(changedFiles)}`,
                 }
               }
 
               return {
                 pass: true,
-                description: `Labels OK: ${selectedType[0]} + ${selectedChannel[0]}`,
+                description: `Labels OK: ${selectedType[0]} + ${selectedChannel[0]} | files=${describeFiles(changedFiles)}`,
               }
             }
 
@@ -164,12 +216,14 @@ jobs:
               const labels = (pull.labels || [])
                 .map((label) => label?.name)
                 .filter(Boolean)
-              const result = evaluateLabels(labels)
+              const changedFiles = await listPullFiles(pullNumber)
+              const result = evaluateLabels(labels, changedFiles)
               return {
                 pullNumber,
                 pass: result.pass,
                 description: result.description,
                 labels: describeLabels(labels),
+                changedFiles: describeFiles(changedFiles),
               }
             }
 
@@ -205,6 +259,8 @@ jobs:
                 .addRaw(`Result: ${result.pass ? 'pass' : 'fail'}`)
                 .addEOL()
                 .addRaw(`Labels: ${result.labels}`)
+                .addEOL()
+                .addRaw(`Files: ${result.changedFiles}`)
                 .addEOL()
                 .addRaw(result.description)
                 .addEOL()
