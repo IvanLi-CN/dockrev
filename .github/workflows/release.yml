@@ -635,29 +635,6 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Create and push tag
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          tag="${RELEASE_TAG}"
-          sha="${TARGET_SHA}"
-
-          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
-            existing="$(git rev-list -n 1 "${tag}")"
-            if [[ "${existing}" != "${sha}" ]]; then
-              echo "Tag ${tag} already exists but points to ${existing} (expected ${sha})" >&2
-              exit 1
-            fi
-            echo "Tag ${tag} already exists and points to ${sha}."
-          else
-            git tag -a "${tag}" "${sha}" -m "release ${APP_EFFECTIVE_VERSION}"
-          fi
-
-          git push origin "${tag}"
-
       - name: Build linux/amd64 image (smoke test; runtime-prebuilt)
         uses: docker/build-push-action@v6
         with:
@@ -850,28 +827,14 @@ jobs:
           build-args: |
             APP_EFFECTIVE_VERSION=${{ env.APP_EFFECTIVE_VERSION }}
 
-      - name: Record release publication ledger
-        shell: bash
-        env:
-          DOCKREV_DIGEST: ${{ steps.push-dockrev.outputs.digest }}
-          DOCKREV_SUPERVISOR_DIGEST: ${{ steps.push-supervisor.outputs.digest }}
-        run: |
-          set -euo pipefail
-          python3 .workflow-src/.github/scripts/release_snapshot.py record-publication \
-            --target-sha "${TARGET_SHA}" \
-            --snapshot-notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
-            --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
-            --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
-            --dockrev-digest "${DOCKREV_DIGEST}" \
-            --dockrev-supervisor-digest "${DOCKREV_SUPERVISOR_DIGEST}"
-
-      - name: Create or update GitHub Release + upload assets
+      - name: Create or update GitHub Release + ensure release tag exists
         id: github-release
         continue-on-error: true
         uses: ncipollo/release-action@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ env.RELEASE_TAG }}
+          commit: ${{ env.TARGET_SHA }}
           name: ${{ env.RELEASE_TAG }}
           prerelease: ${{ env.RELEASE_CHANNEL == 'rc' }}
           generateReleaseNotes: true
@@ -912,6 +875,21 @@ jobs:
             --release-channel "${RELEASE_CHANNEL}" \
             --release-url "${RELEASE_URL}" \
             --workflow-run-url "${WORKFLOW_RUN_URL}"
+
+      - name: Record release publication ledger
+        shell: bash
+        env:
+          DOCKREV_DIGEST: ${{ steps.push-dockrev.outputs.digest }}
+          DOCKREV_SUPERVISOR_DIGEST: ${{ steps.push-supervisor.outputs.digest }}
+        run: |
+          set -euo pipefail
+          python3 .workflow-src/.github/scripts/release_snapshot.py record-publication \
+            --target-sha "${TARGET_SHA}" \
+            --snapshot-notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
+            --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
+            --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
+            --dockrev-digest "${DOCKREV_DIGEST}" \
+            --dockrev-supervisor-digest "${DOCKREV_SUPERVISOR_DIGEST}"
 
       - name: Resolve next pending release target
         if: github.event_name != 'workflow_dispatch' || inputs.admin_action == 'skip'
