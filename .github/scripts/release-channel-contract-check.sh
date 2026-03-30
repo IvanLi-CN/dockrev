@@ -67,13 +67,26 @@ search_fixed "python3 .github/scripts/release_snapshot.py record-override \\" .g
 search_fixed "Skipped release targets cannot be released manually" .github/workflows/release.yml
 search_fixed 'DOCKREV_TAGS_CSV: ${{ needs.prepare.outputs.tags_csv }}' .github/workflows/release.yml
 search_fixed 'SUPERVISOR_TAGS_CSV: ${{ needs.prepare.outputs.supervisor_tags_csv }}' .github/workflows/release.yml
+search_fixed 'commit: ${{ env.TARGET_SHA }}' .github/workflows/release.yml
 search_fixed "inputs: { head_sha: nextSha, admin_action: 'release', override_reason: '' }" .github/workflows/release.yml
+ensure_regex_absent "Create and push tag" .github/workflows/release.yml
 python3 - <<'PY'
 from pathlib import Path
 text = Path('.github/workflows/release.yml').read_text()
 needle = "prerelease: ${{ env.RELEASE_CHANNEL == 'rc' }}"
 if needle not in text:
     raise SystemExit('[contract-check] expected prerelease gate in release workflow')
+
+release_step = "Create or update GitHub Release + ensure release tag exists"
+comment_step = "Upsert and verify release-version comment on source PR"
+ledger_step = "Record release publication ledger"
+release_idx = text.find(release_step)
+comment_idx = text.find(comment_step)
+ledger_idx = text.find(ledger_step)
+if min(release_idx, comment_idx, ledger_idx) == -1:
+    raise SystemExit('[contract-check] expected release/comment/ledger steps in release workflow')
+if not (release_idx < comment_idx < ledger_idx):
+    raise SystemExit('[contract-check] publication ledger must run after GitHub Release + PR comment contract')
 PY
 ruby -ryaml -e '
 workflow = YAML.load_file(".github/workflows/release.yml")

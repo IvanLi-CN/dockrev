@@ -163,7 +163,8 @@ See `deploy/README.md` for a minimal Docker Compose deployment.
 - `CI (main)` materializes immutable release snapshots into git notes `refs/notes/release-snapshots`; it backfills missing first-parent snapshots so burst merges on `main` do not skip intermediate releases.
 - The `Release` workflow still auto-starts from `workflow_run` after `CI (main)` succeeds on `main`, but it now releases the oldest pending snapshot up to that `head_sha` instead of re-deriving intent/version directly from the triggering commit.
 - `workflow_dispatch(head_sha=<main-commit-sha>)` keeps the same input name and serves as the manual backfill path for a specific `main` commit.
-- After GHCR image push succeeds, the `Release` workflow records a mutable publication ledger in git notes `refs/notes/release-publications`; stable `latest` is derived from the newest published stable note, not merely the newest stable snapshot.
+- The `Release` workflow no longer `git push`es release tags directly; the GitHub Release API path creates/updates the release tag for the selected `TARGET_SHA`, which avoids the workflow-file tag permission dead-end under the default `GITHUB_TOKEN` model.
+- After GHCR image push, GitHub Release creation/update, and source-PR release comment verification all succeed, the `Release` workflow records a mutable publication ledger in git notes `refs/notes/release-publications`; stable `latest` is derived from the newest published stable note, not merely the newest stable snapshot.
 - The `Release` workflow cleans up Actions artifacts after a successful run; on non-success, it keeps key artifacts with `retention-days: 1` and deletes `*.dockerbuild` build records to avoid long-tail storage usage
 - Automatic releases are gated by PR intent labels (exactly one required on PRs targeting `main`):
   - `type:docs` / `type:skip` → skip release
