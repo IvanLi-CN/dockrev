@@ -155,6 +155,19 @@ export const StatusBadgeLayout: Story = {
   },
 }
 
+export const HydratedRunningUpdate: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo-hydrated-update' },
+  render: () => {
+    return (
+      <PageHarness route={{ name: 'services' }} title="服务" topbarHint="服务" pageSubtitle="回归：首屏已存在 service update running job 时恢复按钮 spinner">
+        {({ onLastScanHint, onTopActions }) => (
+          <ServicesPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
+        )}
+      </PageHarness>
+    )
+  },
+}
+
 export const RegistryAndRepoLinks: Story = {
   parameters: { dockrevApiScenario: 'link-icon-catalog' },
   render: () => {

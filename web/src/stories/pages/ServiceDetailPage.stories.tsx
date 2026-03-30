@@ -31,6 +31,11 @@ export const Updatable: Story = {
   render: render('stack-prod', 'svc-prod-api'),
 }
 
+export const HydratedRunningUpdate: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo-hydrated-update' },
+  render: render('stack-prod', 'svc-prod-api'),
+}
+
 export const Hint: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
   render: render('stack-infra', 'svc-infra-loki'),

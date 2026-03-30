@@ -1109,6 +1109,111 @@ async function runInteractive({ baseUrl, browser }) {
     }
   }
 
+  // 5c3) Overview page: a pre-existing running update job should hydrate the row spinner on first load.
+  {
+    const page = await openStory('pages-overviewpage--hydrated-running-update')
+    try {
+      await page.waitForFunction(() => {
+        const rows = Array.from(document.querySelectorAll('.rowLine'))
+        const apiRow = rows.find((item) => item.textContent?.includes('api'))
+        if (!apiRow) return false
+        const btn = Array.from(apiRow.querySelectorAll('button')).find((item) =>
+          ['更新中…', '排队中…'].some((label) => item.textContent?.includes(label))
+        )
+        if (!btn) return false
+        return (
+          Boolean(btn.querySelector('.btnInlineSpinner')) &&
+          btn.getAttribute('data-hint') === '任务进行中，点击查看任务详情' &&
+          !btn.hasAttribute('disabled')
+        )
+      }, null, { timeout: 10_000 })
+
+      const jumped = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('.rowLine'))
+        const apiRow = rows.find((item) => item.textContent?.includes('api'))
+        if (!apiRow) return false
+        const btn = Array.from(apiRow.querySelectorAll('button')).find((item) =>
+          ['更新中…', '排队中…'].some((label) => item.textContent?.includes(label))
+        )
+        if (!btn) return false
+        btn.click()
+        return true
+      })
+      if (!jumped) throw new Error('Expected hydrated overview update button to stay clickable for job detail navigation.')
+      await page.waitForFunction(() => window.location.hash === '#/queue/job-1', null, { timeout: 10_000 })
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
+  // 5c4) Services page: a pre-existing running update job should hydrate the row spinner on first load.
+  {
+    const page = await openStory('pages-servicespage--hydrated-running-update')
+    try {
+      await page.waitForFunction(() => {
+        const rows = Array.from(document.querySelectorAll('.rowLine'))
+        const apiRow = rows.find((item) => item.textContent?.includes('api'))
+        if (!apiRow) return false
+        const btn = Array.from(apiRow.querySelectorAll('button')).find((item) =>
+          ['更新中…', '排队中…'].some((label) => item.textContent?.includes(label))
+        )
+        if (!btn) return false
+        return (
+          Boolean(btn.querySelector('.btnInlineSpinner')) &&
+          btn.getAttribute('data-hint') === '任务进行中，点击查看任务详情' &&
+          !btn.hasAttribute('disabled')
+        )
+      }, null, { timeout: 10_000 })
+
+      const jumped = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('.rowLine'))
+        const apiRow = rows.find((item) => item.textContent?.includes('api'))
+        if (!apiRow) return false
+        const btn = Array.from(apiRow.querySelectorAll('button')).find((item) =>
+          ['更新中…', '排队中…'].some((label) => item.textContent?.includes(label))
+        )
+        if (!btn) return false
+        btn.click()
+        return true
+      })
+      if (!jumped) throw new Error('Expected hydrated services update button to stay clickable for job detail navigation.')
+      await page.waitForFunction(() => window.location.hash === '#/queue/job-1', null, { timeout: 10_000 })
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
+  // 5d2) Service detail page: a pre-existing running update job should hydrate the top-level spinner on first load.
+  {
+    const page = await openStory('pages-servicedetailpage--hydrated-running-update')
+    try {
+      await page.waitForFunction(() => {
+        const btn = Array.from(document.querySelectorAll('button')).find((item) =>
+          ['更新中…', '排队中…'].includes(item.textContent?.trim() ?? '')
+        )
+        if (!btn) return false
+        return (
+          Boolean(btn.querySelector('.btnInlineSpinner')) &&
+          btn.getAttribute('data-hint') === '任务进行中，点击查看任务详情' &&
+          !btn.hasAttribute('disabled')
+        )
+      }, null, { timeout: 10_000 })
+
+      const jumped = await page.evaluate(() => {
+        const btn = Array.from(document.querySelectorAll('button')).find((item) =>
+          ['更新中…', '排队中…'].includes(item.textContent?.trim() ?? '')
+        )
+        if (!btn) return false
+        btn.click()
+        return true
+      })
+      if (!jumped) throw new Error('Expected hydrated service-detail update button to stay clickable for job detail navigation.')
+      await page.waitForFunction(() => window.location.hash === '#/queue/job-1', null, { timeout: 10_000 })
+    } finally {
+      await page.close().catch(() => {})
+    }
+  }
+
   // 5d1) Service detail page: badge should settle after update success without leaving the page.
   {
     const page = await openStory('pages-servicedetailpage--updatable')
