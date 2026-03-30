@@ -123,6 +123,7 @@ pub struct CleanupResourceItem {
     pub resource_id: String,
     pub kind: CleanupResourceKind,
     pub label: String,
+    pub reason: String,
     pub min_preset: CleanupPreset,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub estimated_reclaimable_bytes: Option<u64>,

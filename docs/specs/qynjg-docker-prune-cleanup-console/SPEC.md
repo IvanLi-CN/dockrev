@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-03-29
-- Last: 2026-03-29
+- Last: 2026-03-30
 
 ## 背景 / 问题陈述
 
@@ -159,18 +159,22 @@
 - source_type: `storybook_canvas`
   target_program: `mock-only`
   capture_scope: `browser-viewport`
+  sensitive_exclusion: `N/A`
+  submission_gate: `pending-owner-approval`
   story_id_or_title: `Pages/CleanupPage/Default`
-  state: `balanced default`
-  evidence_note: 验证 `/cleanup` 顶级导航高亮、默认 balanced tab、stack 分组、service 级资源列表与 `全部 / 清理此 stack / 清理此服务` 操作入口。
+  state: `balanced default with cleanup reasons`
+  evidence_note: 验证 `/cleanup` 顶级导航高亮、默认 balanced tab、按 stack 分组、逐资源展示可清理原因，以及行内操作文案已统一收敛为 `清理`。
 
 ![Cleanup page default](./assets/cleanup-page-default.png)
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
   capture_scope: `browser-viewport`
+  sensitive_exclusion: `N/A`
+  submission_gate: `pending-owner-approval`
   story_id_or_title: `Pages/CleanupPage/ConfirmDialogLatestScan`
   state: `confirm dialog latest scan`
-  evidence_note: 验证执行前二次确认弹窗展示最新扫描时间、最新预计释放空间与最新候选分组列表。
+  evidence_note: 验证执行前二次确认弹窗展示最新扫描时间、最新预计释放空间、最新候选分组列表，以及“不会停止正在运行容器”的安全提示。
 
 ![Cleanup confirm dialog](./assets/cleanup-confirm-dialog.png)
 

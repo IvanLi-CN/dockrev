@@ -53,14 +53,6 @@ const KIND_LABEL: Record<CleanupResourceKind, string> = {
   builder_cache: 'Builder Cache',
 }
 
-const KIND_TONE: Record<CleanupResourceKind, 'info' | 'muted' | 'warn'> = {
-  image: 'info',
-  container: 'muted',
-  network: 'muted',
-  volume: 'warn',
-  builder_cache: 'warn',
-}
-
 type CleanupActionTarget =
   | { actionKey: string; scope: 'all'; title: string; targetLabel: string }
   | { actionKey: string; scope: 'stack'; stackId: string; title: string; targetLabel: string }
@@ -229,22 +221,123 @@ function scopeLabel(scope: CleanupScope): string {
   return '服务'
 }
 
-function CleanupResourceList(props: { resources: CleanupResourceItem[]; compact?: boolean }) {
+function actionHint(scope: 'all' | 'stack' | 'service'): string {
+  if (scope === 'all') {
+    return '清理当前规则下的全部候选；不会停止正在运行的容器。'
+  }
+  if (scope === 'stack') {
+    return '清理这个 stack 当前规则下的全部候选，不只当前这一行；不会停止正在运行的容器。'
+  }
+  return '清理这个服务当前规则下的全部候选，不只当前这一行；不会停止正在运行的容器。'
+}
+
+function confirmSafetyNote(scope: CleanupScope): string {
+  if (scope === 'service') {
+    return '会清理该服务当前规则下的全部候选，不只是一行。正在运行的容器不会被停止；执行时若资源已经重新被占用，会自动跳过。'
+  }
+  if (scope === 'stack') {
+    return '会清理该 stack 当前规则下的全部候选，包括 stack orphan。正在运行的容器不会被停止；执行时若资源已经重新被占用，会自动跳过。'
+  }
+  return '会清理当前规则下的全部候选。正在运行的容器不会被停止；执行时若资源已经重新被占用，会自动跳过。'
+}
+
+function StackIcon(props: { variant: 'collapsed' | 'expanded' }) {
   return (
-    <div className={props.compact ? 'cleanupResourceList cleanupResourceListCompact' : 'cleanupResourceList'}>
-      {props.resources.map((resource) => (
-        <div key={resource.resourceId} className="cleanupResourceRow">
-          <div className="cleanupResourceMain">
-            <Pill tone={KIND_TONE[resource.kind]}>{KIND_LABEL[resource.kind]}</Pill>
-            <div className="cleanupResourceLabel">{resource.label}</div>
-          </div>
-          <div className="cleanupResourceEstimate">
-            <Mono>{formatEstimate(resource.estimatedReclaimableBytes ?? 0, itemHasUnknownSize(resource))}</Mono>
-          </div>
-        </div>
-      ))}
+    <svg className="stackIcon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      {props.variant === 'expanded' ? (
+        <path d="m5 19l2.757-7.351A1 1 0 0 1 8.693 11H21a1 1 0 0 1 .986 1.164l-.996 5.211A2 2 0 0 1 19.026 19za2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4l3 3h7a2 2 0 0 1 2 2v2" />
+      ) : (
+        <path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2" />
+      )}
+    </svg>
+  )
+}
+
+function resourceKindClassName(kind: CleanupResourceKind): string {
+  switch (kind) {
+    case 'image':
+      return 'cleanupResourceKind cleanupResourceKindImage'
+    case 'container':
+      return 'cleanupResourceKind cleanupResourceKindContainer'
+    case 'network':
+      return 'cleanupResourceKind cleanupResourceKindNetwork'
+    case 'volume':
+      return 'cleanupResourceKind cleanupResourceKindVolume'
+    case 'builder_cache':
+      return 'cleanupResourceKind cleanupResourceKindBuilderCache'
+  }
+}
+
+function aggregateStackResources(stack: CleanupStackGroup): CleanupResourceItem[] {
+  return [...stack.stackOrphans, ...stack.services.flatMap((service) => service.resources)]
+}
+
+function CleanupSummaryCell(props: { resources: CleanupResourceItem[]; hint?: string }) {
+  return (
+    <div className="cleanupCellSummary">
+      <div className="mono monoPrimary">{kindSummary(props.resources)}</div>
+      {props.hint ? <div className="muted cleanupCellHint">{props.hint}</div> : null}
     </div>
   )
+}
+
+function CleanupEstimateCell(props: { bytes: number; hasUnknown?: boolean; count?: number }) {
+  return (
+    <div className="cleanupCellEstimate">
+      <div className="mono monoPrimary">{formatEstimate(props.bytes, props.hasUnknown)}</div>
+      {props.count != null ? <div className="muted cleanupCellHint">{props.count} 项</div> : null}
+    </div>
+  )
+}
+
+type CleanupFlatRow = {
+  key: string
+  ownerLabel: string
+  ownerDetail?: string
+  ownerTone: 'muted' | 'warn'
+  serviceId?: string
+  serviceName?: string
+  actionScope: 'stack' | 'service' | 'none'
+  resource: CleanupResourceItem
+}
+
+function flattenStackRows(stack: CleanupStackGroup): CleanupFlatRow[] {
+  const rows: CleanupFlatRow[] = []
+  stack.stackOrphans.forEach((resource) => {
+    rows.push({
+      key: `orphan:${stack.stackId}:${resource.resourceId}`,
+      ownerLabel: 'Stack 未归属',
+      ownerDetail: '未归到单个服务',
+      ownerTone: 'warn',
+      actionScope: 'stack',
+      resource,
+    })
+  })
+  stack.services.forEach((service) => {
+    service.resources.forEach((resource) => {
+      rows.push({
+        key: `service:${stack.stackId}:${service.serviceId}:${resource.resourceId}`,
+        ownerLabel: service.serviceName,
+        ownerTone: 'muted',
+        serviceId: service.serviceId,
+        serviceName: service.serviceName,
+        actionScope: 'service',
+        resource,
+      })
+    })
+  })
+  return rows
+}
+
+function flattenUnownedRows(response: CleanupScanResponse): CleanupFlatRow[] {
+  return (response.unownedGroup?.resources ?? []).map((resource) => ({
+    key: `unowned:${resource.resourceId}`,
+    ownerLabel: '未归属资源',
+    ownerDetail: '不属于受管 stack',
+    ownerTone: 'warn',
+    actionScope: 'none',
+    resource,
+  }))
 }
 
 function CleanupResponseView(props: {
@@ -259,96 +352,151 @@ function CleanupResponseView(props: {
   }
 
   return (
-    <div className={props.compact ? 'cleanupStackGrid cleanupStackGridCompact' : 'cleanupStackGrid'}>
+    <div className={props.compact ? 'table cleanupTable cleanupTableCompact' : 'table cleanupTable'}>
+      {!props.compact ? (
+        <div className="tableHeader cleanupTableHeader">
+          <div>可清理内容</div>
+          <div>归属</div>
+          <div>可清理原因</div>
+          <div>预计释放</div>
+          <div>操作</div>
+        </div>
+      ) : null}
+
       {props.response.stackGroups.map((stack) => (
-        <section key={stack.stackId} className={props.compact ? 'card cleanupStackCard cleanupStackCardCompact' : 'card cleanupStackCard'}>
-          <div className="cleanupStackHeader">
-            <div className="cleanupStackHeading">
-              <div className="cleanupStackTitleRow">
-                <div className="title">{stack.stackName}</div>
-                <Pill tone="muted">Stack</Pill>
-              </div>
-              <div className="muted">
-                {formatEstimate(stack.estimatedReclaimableBytes, stack.hasUnknownSize)} ·
-                {' '}
-                {stack.stackOrphans.length > 0 ? `${kindSummary(stack.stackOrphans)} · ` : ''}
-                服务 {stack.services.length}
-              </div>
+        <section key={stack.stackId} className="tableGroup cleanupTableGroup">
+          <div className="groupHead cleanupGroupHead">
+            <div className="cellService cellServiceGroup">
+              <StackIcon variant="expanded" />
+              <div className="groupTitle">{stack.stackName}</div>
+              <Pill tone="muted">Stack</Pill>
             </div>
+            <div className="groupMeta">服务 {stack.services.length} · orphan {stack.stackOrphans.length}</div>
+            <CleanupSummaryCell resources={aggregateStackResources(stack)} />
+            <CleanupEstimateCell
+              bytes={stack.estimatedReclaimableBytes}
+              count={aggregateStackResources(stack).length}
+              hasUnknown={stack.hasUnknownSize}
+            />
             {props.onStackAction ? (
-              <Button
-                disabled={stack.estimatedReclaimableBytes <= 0 && stack.hasUnknownSize !== true}
-                loading={props.busyActionKey === `stack:${stack.stackId}`}
-                onClick={() => props.onStackAction?.(stack)}
-                variant="danger"
+              <div
+                className="actionCell"
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
               >
-                清理此 stack
-              </Button>
-            ) : null}
-          </div>
-
-          {stack.stackOrphans.length > 0 ? (
-            <div className="cleanupSectionBlock">
-              <div className="cleanupSectionHeader">
-                <SectionTitle>Stack Orphans</SectionTitle>
-                <Mono>{formatEstimate(
-                  stack.stackOrphans.reduce((sum, item) => sum + (item.estimatedReclaimableBytes ?? 0), 0),
-                  stack.stackOrphans.some(itemHasUnknownSize),
-                )}</Mono>
+                <Button
+                  disabled={stack.estimatedReclaimableBytes <= 0 && stack.hasUnknownSize !== true}
+                  hint={actionHint('stack')}
+                  loading={props.busyActionKey === `stack:${stack.stackId}`}
+                  onClick={() => props.onStackAction?.(stack)}
+                  variant="ghost"
+                >
+                  清理此 stack
+                </Button>
               </div>
-              <CleanupResourceList compact={props.compact} resources={stack.stackOrphans} />
-            </div>
-          ) : null}
-
-          <div className="cleanupServiceGrid">
-            {stack.services.map((service) => (
-              <article key={service.serviceId} className="cleanupServiceCard">
-                <div className="cleanupServiceHeader">
-                  <div className="cleanupServiceHeading">
-                    <div className="cleanupServiceTitleRow">
-                      <div className="cleanupServiceName">{service.serviceName}</div>
-                      <Pill tone="muted">{service.resources.length} 项</Pill>
-                    </div>
-                    <div className="muted">
-                      {kindSummary(service.resources)} · {formatEstimate(service.estimatedReclaimableBytes, service.hasUnknownSize)}
-                    </div>
-                  </div>
-                  {props.onServiceAction ? (
-                    <Button
-                      disabled={service.estimatedReclaimableBytes <= 0 && service.hasUnknownSize !== true}
-                      loading={props.busyActionKey === `service:${stack.stackId}:${service.serviceId}`}
-                      onClick={() => props.onServiceAction?.(stack, service.serviceId, service.serviceName)}
-                      variant="danger"
-                    >
-                      清理此服务
-                    </Button>
-                  ) : null}
-                </div>
-                <CleanupResourceList compact={props.compact} resources={service.resources} />
-              </article>
-            ))}
+            ) : (
+              <div />
+            )}
           </div>
+
+          {flattenStackRows(stack).map((row) => (
+            <div
+              key={row.key}
+              className={row.ownerTone === 'warn' ? 'rowLine cleanupRowLine cleanupRowLineMuted' : 'rowLine cleanupRowLine'}
+            >
+              <div className="cellService">
+                <span className={row.ownerTone === 'warn' ? 'svcBullet cleanupSvcBulletWarn' : 'svcBullet'} aria-hidden="true" />
+                <span className="svcName">{row.resource.label}</span>
+              </div>
+              <div className="cellTwoLine cleanupOwnerCell">
+                <div className="mono monoPrimary">{row.ownerLabel || ' '}</div>
+                {row.ownerDetail ? <div className="muted cleanupCellHint">{row.ownerDetail}</div> : null}
+              </div>
+              <div className="cellTwoLine cleanupReasonCell">
+                <div>
+                  <span className={resourceKindClassName(row.resource.kind)}>{KIND_LABEL[row.resource.kind]}</span>
+                </div>
+                <div className="cleanupReasonText">{row.resource.reason}</div>
+              </div>
+              <CleanupEstimateCell
+                bytes={row.resource.estimatedReclaimableBytes ?? 0}
+                count={1}
+                hasUnknown={itemHasUnknownSize(row.resource)}
+              />
+              {row.actionScope === 'stack' && props.onStackAction ? (
+                <div className="actionCell">
+                  <Button
+                    disabled={stack.estimatedReclaimableBytes <= 0 && stack.hasUnknownSize !== true}
+                    hint={actionHint('stack')}
+                  loading={props.busyActionKey === `stack:${stack.stackId}`}
+                  onClick={() => props.onStackAction?.(stack)}
+                  variant="ghost"
+                >
+                    清理
+                  </Button>
+                </div>
+              ) : row.actionScope === 'service' && props.onServiceAction && row.serviceId && row.serviceName ? (
+                <div className="actionCell">
+                  <Button
+                    disabled={false}
+                    hint={actionHint('service')}
+                    loading={props.busyActionKey === `service:${stack.stackId}:${row.serviceId}`}
+                    onClick={() => props.onServiceAction?.(stack, row.serviceId!, row.serviceName!)}
+                    variant="ghost"
+                  >
+                    清理
+                  </Button>
+                </div>
+              ) : (
+                <div className="actionCell" />
+              )}
+            </div>
+          ))}
         </section>
       ))}
 
       {props.response.unownedGroup?.resources.length ? (
-        <section className={props.compact ? 'card cleanupStackCard cleanupStackCardCompact' : 'card cleanupStackCard'}>
-          <div className="cleanupStackHeader">
-            <div className="cleanupStackHeading">
-              <div className="cleanupStackTitleRow">
-                <div className="title">{props.response.unownedGroup.title}</div>
-                <Pill tone="warn">仅全部</Pill>
-              </div>
-              <div className="muted">
-                {kindSummary(props.response.unownedGroup.resources)} ·{' '}
-                {formatEstimate(
-                  props.response.unownedGroup.estimatedReclaimableBytes,
-                  props.response.unownedGroup.hasUnknownSize,
-                )}
-              </div>
+        <section className="tableGroup cleanupTableGroup cleanupTableGroupUnowned">
+          <div className="groupHead cleanupGroupHead cleanupGroupHeadWarn">
+            <div className="cellService cellServiceGroup">
+              <StackIcon variant="expanded" />
+              <div className="groupTitle">{props.response.unownedGroup.title}</div>
+              <Pill tone="warn">仅全部</Pill>
             </div>
+            <div className="groupMeta">全局未归属候选</div>
+            <CleanupSummaryCell resources={props.response.unownedGroup.resources} />
+            <CleanupEstimateCell
+              bytes={props.response.unownedGroup.estimatedReclaimableBytes}
+              count={props.response.unownedGroup.resources.length}
+              hasUnknown={props.response.unownedGroup.hasUnknownSize}
+            />
+            <div />
           </div>
-          <CleanupResourceList compact={props.compact} resources={props.response.unownedGroup.resources} />
+
+          {flattenUnownedRows(props.response).map((row) => (
+            <div key={row.key} className="rowLine cleanupRowLine cleanupRowLineMuted">
+              <div className="cellService">
+                <span className="svcBullet cleanupSvcBulletWarn" aria-hidden="true" />
+                <span className="svcName">{row.resource.label}</span>
+              </div>
+              <div className="cellTwoLine cleanupOwnerCell">
+                <div className="mono monoPrimary">{row.ownerLabel || ' '}</div>
+                {row.ownerDetail ? <div className="muted cleanupCellHint">{row.ownerDetail}</div> : null}
+              </div>
+              <div className="cellTwoLine cleanupReasonCell">
+                <div>
+                  <span className={resourceKindClassName(row.resource.kind)}>{KIND_LABEL[row.resource.kind]}</span>
+                </div>
+                <div className="cleanupReasonText">{row.resource.reason}</div>
+              </div>
+              <CleanupEstimateCell
+                bytes={row.resource.estimatedReclaimableBytes ?? 0}
+                count={1}
+                hasUnknown={itemHasUnknownSize(row.resource)}
+              />
+              <div className="actionCell" />
+            </div>
+          ))}
         </section>
       ) : null}
     </div>
@@ -379,6 +527,8 @@ function CleanupConfirmBody(props: { response: CleanupScanResponse; targetLabel:
       {props.stale ? (
         <div className="cleanupAlert cleanupAlertWarn">候选已变化，已替换为最新扫描结果，请再次确认。</div>
       ) : null}
+
+      <div className="cleanupAlert cleanupAlertInfo">{confirmSafetyNote(props.response.scope)}</div>
 
       <CleanupResponseView compact response={props.response} />
     </div>
@@ -536,7 +686,11 @@ export function CleanupPage(props: {
       <>
         <Button
           disabled={!hasTargets || busyActionKey !== null || refreshing}
-          hint={hasTargets ? undefined : '当前规则下没有可清理项'}
+          hint={
+            hasTargets
+              ? actionHint('all')
+              : '当前规则下没有可清理项'
+          }
           loading={busyActionKey === 'all'}
           onClick={() =>
             void runCleanupFlow({
@@ -601,7 +755,6 @@ export function CleanupPage(props: {
                 {response ? `${countVisibleResources(response)} 项候选` : '扫描中'}
               </Pill>
             </div>
-            <div className="muted">{activePresetMeta.description}</div>
           </div>
           <div className="cleanupOverviewStats">
             <div className="cleanupOverviewStat">

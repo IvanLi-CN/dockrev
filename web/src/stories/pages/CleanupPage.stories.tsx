@@ -62,6 +62,8 @@ export const Default: Story = {
       node.textContent?.includes('清理'),
     )
     assertStory(activeNav, 'cleanup nav item should be active')
+    assertStory(canvasElement.textContent?.includes('旧镜像未被任何容器使用'), 'resource reason should be visible')
+    assertStory(!(canvasElement.textContent?.includes('服务直属候选') ?? false), 'generic candidate copy should be removed')
   },
 }
 

@@ -459,6 +459,7 @@ export type CleanupResourceItem = {
   resourceId: string
   kind: CleanupResourceKind
   label: string
+  reason: string
   minPreset: CleanupPreset
   estimatedReclaimableBytes?: number | null
   estimateUnknown?: boolean

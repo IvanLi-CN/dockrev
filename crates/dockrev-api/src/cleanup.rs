@@ -992,6 +992,7 @@ fn build_grouped_response(
             resource_id: candidate.resource_id.clone(),
             kind: candidate.kind.clone(),
             label: candidate.label.clone(),
+            reason: candidate_reason(&candidate.category).to_string(),
             min_preset: minimum_preset_for_category(&candidate.category),
             estimated_reclaimable_bytes: candidate.estimated_reclaimable_bytes,
             estimate_unknown: candidate.estimated_reclaimable_bytes.is_none(),
@@ -1101,6 +1102,19 @@ fn minimum_preset_for_category(category: &CleanupCandidateCategory) -> CleanupPr
         CleanupCandidateCategory::ManagedUnusedVolume => CleanupPreset::ProjectDeepClean,
         CleanupCandidateCategory::GlobalUnusedImage
         | CleanupCandidateCategory::GlobalUnusedVolume => CleanupPreset::Aggressive,
+    }
+}
+
+fn candidate_reason(category: &CleanupCandidateCategory) -> &'static str {
+    match category {
+        CleanupCandidateCategory::StoppedContainer => "容器已退出",
+        CleanupCandidateCategory::DanglingImage => "悬空镜像，未被容器使用",
+        CleanupCandidateCategory::ManagedUnusedImage => "旧镜像未被任何容器使用",
+        CleanupCandidateCategory::ManagedUnusedVolume => "卷未挂载到任何容器",
+        CleanupCandidateCategory::UnusedNetwork => "网络没有活动容器连接",
+        CleanupCandidateCategory::BuilderCache => "Builder cache 可回收",
+        CleanupCandidateCategory::GlobalUnusedImage => "未归属镜像未被任何容器使用",
+        CleanupCandidateCategory::GlobalUnusedVolume => "未归属卷未挂载到任何容器",
     }
 }
 
@@ -1529,6 +1543,11 @@ mod tests {
         assert_eq!(stacks[0].stack_orphans.len(), 1);
         assert_eq!(stacks[0].services.len(), 1);
         assert_eq!(stacks[0].services[0].resources.len(), 1);
+        assert_eq!(stacks[0].stack_orphans[0].reason, "网络没有活动容器连接");
+        assert_eq!(
+            stacks[0].services[0].resources[0].reason,
+            "旧镜像未被任何容器使用"
+        );
         assert_eq!(unowned.expect("unowned").resources.len(), 1);
         assert_eq!(bytes, 10);
         assert!(has_unknown);

@@ -6469,13 +6469,13 @@ html[data-theme='light'] .card {
 
 .cleanupOverviewCard {
   overflow: hidden;
-  background:
-    radial-gradient(circle at top right, color-mix(in srgb, var(--color-primary) 16%, transparent) 0, transparent 34%),
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--panel) 92%, var(--dockrev-surface) 8%) 0%,
-      color-mix(in srgb, var(--panel) 97%, transparent) 100%
-    );
+  border: 1px solid color-mix(in srgb, var(--borderColor) 86%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel) 97%, transparent) 0%,
+    color-mix(in srgb, var(--dockrev-surface) 88%, transparent) 100%
+  );
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-primary) 10%, transparent);
 }
 
 .cleanupOverviewHead {
@@ -6589,6 +6589,12 @@ html[data-theme='light'] .card {
   color: color-mix(in srgb, var(--color-warning) 72%, var(--text) 28%);
 }
 
+.cleanupAlertInfo {
+  border-color: color-mix(in srgb, var(--color-primary) 24%, var(--borderColor) 76%);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  color: color-mix(in srgb, var(--color-primary) 72%, var(--text) 28%);
+}
+
 .cleanupAlertError {
   border-color: color-mix(in srgb, var(--color-error) 28%, var(--borderColor) 72%);
   background: color-mix(in srgb, var(--color-error) 10%, transparent);
@@ -6602,30 +6608,6 @@ html[data-theme='light'] .card {
   font-size: 12px;
 }
 
-.cleanupStackGrid {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.cleanupStackGridCompact {
-  gap: 14px;
-}
-
-.cleanupStackCard {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.cleanupStackCardCompact {
-  gap: 14px;
-  padding: 16px;
-}
-
-.cleanupStackHeader,
-.cleanupSectionHeader,
-.cleanupServiceHeader,
 .cleanupConfirmSummary {
   display: flex;
   align-items: flex-start;
@@ -6633,87 +6615,129 @@ html[data-theme='light'] .card {
   gap: 14px;
 }
 
-.cleanupSectionBlock {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  border-radius: 14px;
-  padding: 14px;
-  border: 1px solid color-mix(in srgb, var(--borderColor) 78%, transparent);
-  background: color-mix(in srgb, var(--dockrev-surface) 74%, transparent);
-}
-
-.cleanupServiceGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 14px;
-}
-
-.cleanupServiceCard {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  border-radius: 14px;
-  padding: 14px;
-  border: 1px solid color-mix(in srgb, var(--borderColor) 78%, transparent);
-  background:
-    linear-gradient(
-      160deg,
-      color-mix(in srgb, var(--dockrev-surface) 90%, transparent) 0%,
-      color-mix(in srgb, var(--panel) 96%, transparent) 100%
-    );
-}
-
-.cleanupServiceName,
-.cleanupResourceLabel {
-  min-width: 0;
-  color: var(--text);
-}
-
-.cleanupServiceName {
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.cleanupResourceList {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.cleanupResourceListCompact {
+.cleanupTable {
   gap: 6px;
 }
 
-.cleanupResourceRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 10px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--panel2) 58%, transparent);
-  border: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
+.cleanupTableHeader,
+.cleanupGroupHead,
+.cleanupRowLine {
+  grid-template-columns:
+    minmax(0, 1.15fr)
+    minmax(0, 1fr)
+    minmax(0, 2.25fr)
+    minmax(0, 0.95fr)
+    minmax(0, 0.85fr);
 }
 
-.cleanupResourceMain {
+.cleanupTableGroup {
+  gap: 6px;
+}
+
+.cleanupGroupHead {
+  min-height: 56px;
+  height: auto;
+  background: color-mix(in srgb, var(--dockrev-surface) 88%, transparent);
+}
+
+.cleanupGroupHeadWarn {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-warning) 22%, var(--borderColor) 78%);
+}
+
+.cleanupRowLine {
+  min-height: 62px;
+  height: auto;
+  align-items: stretch;
+  cursor: default;
+}
+
+.cleanupRowLineMuted {
+  background: color-mix(in srgb, var(--panel2) 42%, transparent);
+}
+
+.cleanupGroupHead > *,
+.cleanupRowLine > * {
   min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
 }
 
-.cleanupResourceLabel {
-  font-size: 12px;
-  font-weight: 620;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.cleanupSvcBulletWarn {
+  background: color-mix(in srgb, var(--color-warning) 82%, var(--dockrev-accent-dot) 18%);
+}
+
+.cleanupCellSummary,
+.cleanupCellEstimate,
+.cleanupOwnerCell,
+.cleanupReasonCell {
+  padding: 10px 0;
+  min-width: 0;
+}
+
+.cleanupCellSummary,
+.cleanupCellEstimate,
+.cleanupOwnerCell,
+.cleanupReasonCell {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
+.cleanupCellEstimate {
+  align-items: flex-start;
+}
+
+.cleanupCellHint {
+  line-height: 1.45;
+}
+
+.cleanupReasonText {
+  color: var(--muted2);
+  line-height: 1.45;
+  white-space: normal;
+  text-overflow: clip;
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
+
+.cleanupResourceKind {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 760;
+  letter-spacing: 0.02em;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
+  background: color-mix(in srgb, var(--panel2) 56%, transparent);
+  color: var(--muted);
   white-space: nowrap;
 }
 
-.cleanupResourceEstimate {
-  flex: 0 0 auto;
-  text-align: right;
+.cleanupResourceKindImage {
+  border-color: color-mix(in srgb, var(--color-primary) 28%, var(--borderColor) 72%);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  color: color-mix(in srgb, var(--color-primary) 72%, var(--text) 28%);
+}
+
+.cleanupResourceKindContainer,
+.cleanupResourceKindNetwork {
+  background: color-mix(in srgb, var(--panel2) 64%, transparent);
+  color: var(--muted2);
+}
+
+.cleanupResourceKindVolume,
+.cleanupResourceKindBuilderCache {
+  border-color: color-mix(in srgb, var(--color-warning) 28%, var(--borderColor) 72%);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  color: color-mix(in srgb, var(--color-warning) 74%, var(--text) 26%);
+}
+
+.cleanupOwnerCell .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cleanupConfirmBody {
@@ -6737,8 +6761,8 @@ html[data-theme='light'] .card {
 
 @media (max-width: 920px) {
   .cleanupOverviewHead,
-  .cleanupStackHeader,
-  .cleanupServiceHeader,
+  .cleanupGroupHead,
+  .cleanupRowLine,
   .cleanupConfirmSummary {
     flex-direction: column;
   }
@@ -6748,24 +6772,29 @@ html[data-theme='light'] .card {
     min-width: 0;
   }
 
-  .cleanupServiceGrid {
+  .cleanupGroupHead,
+  .cleanupRowLine {
     grid-template-columns: 1fr;
+  }
+
+  .cleanupCellSummary,
+  .cleanupCellEstimate,
+  .cleanupOwnerCell,
+  .cleanupReasonCell {
+    padding: 0 12px 8px 16px;
+  }
+
+  .cleanupGroupHead .actionCell,
+  .cleanupRowLine .actionCell {
+    padding: 0 12px 12px 16px;
+    justify-content: flex-start;
+    min-height: 0;
   }
 }
 
 @media (max-width: 640px) {
   .cleanupOverviewStats {
     grid-template-columns: 1fr;
-  }
-
-  .cleanupResourceRow {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .cleanupResourceEstimate {
-    width: 100%;
-    text-align: left;
   }
 
   .cleanupPresetTabs {

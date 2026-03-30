@@ -42,6 +42,7 @@ type CleanupEntry = {
   resourceId: string
   kind: CleanupResourceKind
   label: string
+  reason: string
   minPreset: CleanupPreset
   estimatedReclaimableBytes?: number | null
   estimateUnknown?: boolean
@@ -69,6 +70,7 @@ function toResource(entry: CleanupEntry): CleanupResourceItem {
     resourceId: entry.resourceId,
     kind: entry.kind,
     label: entry.label,
+    reason: entry.reason,
     minPreset: entry.minPreset,
     estimatedReclaimableBytes: entry.estimatedReclaimableBytes ?? null,
     estimateUnknown: entry.estimateUnknown === true || entry.estimatedReclaimableBytes == null,
@@ -96,6 +98,7 @@ function entriesForScenario(
       resourceId: 'prod-network',
       kind: 'network',
       label: 'prod_default',
+      reason: '网络没有活动容器连接',
       minPreset: 'conservative',
       estimatedReclaimableBytes: 12 * 1024 * 1024,
       owner: { kind: 'stack', stackId: 'stack-prod', stackName: 'prod' },
@@ -104,6 +107,7 @@ function entriesForScenario(
       resourceId: 'prod-api-container',
       kind: 'container',
       label: 'prod-api-exited-20260328',
+      reason: '容器已退出',
       minPreset: 'conservative',
       estimatedReclaimableBytes: 480 * 1024 * 1024,
       owner: {
@@ -118,6 +122,7 @@ function entriesForScenario(
       resourceId: 'prod-api-image',
       kind: 'image',
       label: revision === 2 ? 'ghcr.io/acme/api@sha256:cleanup-newer' : 'ghcr.io/acme/api@sha256:cleanup-old',
+      reason: '旧镜像未被任何容器使用',
       minPreset: 'balanced',
       estimatedReclaimableBytes: (revision === 2 ? 1710 : 1430) * 1024 * 1024,
       owner: {
@@ -132,6 +137,7 @@ function entriesForScenario(
       resourceId: 'prod-api-volume',
       kind: 'volume',
       label: 'prod_api_cache',
+      reason: '卷未挂载到任何容器',
       minPreset: 'project_deep_clean',
       estimatedReclaimableBytes: null,
       estimateUnknown: true,
@@ -147,6 +153,7 @@ function entriesForScenario(
       resourceId: 'prod-worker-container',
       kind: 'container',
       label: 'prod-worker-exited-20260327',
+      reason: '容器已退出',
       minPreset: 'conservative',
       estimatedReclaimableBytes: 110 * 1024 * 1024,
       owner: {
@@ -161,6 +168,7 @@ function entriesForScenario(
       resourceId: 'infra-network',
       kind: 'network',
       label: 'infra_metrics',
+      reason: '网络没有活动容器连接',
       minPreset: 'conservative',
       estimatedReclaimableBytes: 4 * 1024 * 1024,
       owner: { kind: 'stack', stackId: 'stack-infra', stackName: 'infra' },
@@ -169,6 +177,7 @@ function entriesForScenario(
       resourceId: 'infra-postgres-volume',
       kind: 'volume',
       label: 'infra_pgdata_tmp',
+      reason: '卷未挂载到任何容器',
       minPreset: 'project_deep_clean',
       estimatedReclaimableBytes: 2200 * 1024 * 1024,
       owner: {
@@ -183,6 +192,7 @@ function entriesForScenario(
       resourceId: 'infra-prometheus-image',
       kind: 'image',
       label: 'quay.io/prometheus/prometheus@sha256:unused',
+      reason: '旧镜像未被任何容器使用',
       minPreset: 'balanced',
       estimatedReclaimableBytes: 620 * 1024 * 1024,
       owner: {
@@ -201,6 +211,7 @@ function entriesForScenario(
         resourceId: 'builder-cache',
         kind: 'builder_cache',
         label: 'buildx local cache',
+        reason: 'Builder cache 可回收',
         minPreset: 'balanced',
         estimatedReclaimableBytes: 640 * 1024 * 1024,
         owner: { kind: 'unowned', title: UNOWNED_TITLE },
@@ -209,6 +220,7 @@ function entriesForScenario(
         resourceId: 'global-unused-image',
         kind: 'image',
         label: 'sha256:global-unused-image',
+        reason: '未归属镜像未被任何容器使用',
         minPreset: 'aggressive',
         estimatedReclaimableBytes: 1830 * 1024 * 1024,
         owner: { kind: 'unowned', title: UNOWNED_TITLE },
@@ -217,6 +229,7 @@ function entriesForScenario(
         resourceId: 'global-unused-volume',
         kind: 'volume',
         label: 'docker_orphan_volume',
+        reason: '未归属卷未挂载到任何容器',
         minPreset: 'aggressive',
         estimatedReclaimableBytes: null,
         estimateUnknown: true,
@@ -230,6 +243,7 @@ function entriesForScenario(
       resourceId: 'prod-worker-image',
       kind: 'image',
       label: 'ghcr.io/acme/worker@sha256:late-candidate',
+      reason: '旧镜像未被任何容器使用',
       minPreset: 'balanced',
       estimatedReclaimableBytes: 540 * 1024 * 1024,
       owner: {
