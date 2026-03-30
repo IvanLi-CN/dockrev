@@ -61,12 +61,6 @@ impl CleanupExecutionPlan {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct CleanupJobResult {
-    pub status: String,
-    pub summary: serde_json::Value,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CleanupPlanRequest {
     preset: CleanupPreset,
@@ -118,7 +112,6 @@ struct CleanupCommandAction {
     kind: CleanupResourceKind,
     resource_id: String,
     label: String,
-    estimated_reclaimable_bytes: Option<u64>,
     ownership: CleanupOwnership,
 }
 
@@ -126,14 +119,12 @@ struct CleanupCommandAction {
 struct ManagedStackRef {
     stack_id: String,
     stack_name: String,
-    compose_project: Option<String>,
 }
 
 #[derive(Clone, Debug)]
 struct ManagedServiceRef {
     stack_id: String,
     stack_name: String,
-    compose_project: Option<String>,
     service_id: String,
     service_name: String,
     image_repo: Option<String>,
@@ -141,8 +132,6 @@ struct ManagedServiceRef {
 
 #[derive(Clone, Debug, Default)]
 struct ManagedContext {
-    stacks: Vec<ManagedStackRef>,
-    services: Vec<ManagedServiceRef>,
     compose_project_to_stack: BTreeMap<String, ManagedStackRef>,
     compose_project_service_to_service: BTreeMap<(String, String), ManagedServiceRef>,
     repo_to_services: BTreeMap<String, Vec<ManagedServiceRef>>,
@@ -175,13 +164,6 @@ struct DockerContainerMount {
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "PascalCase")]
-struct DockerNetworkSettings {
-    #[serde(default)]
-    networks: BTreeMap<String, serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-#[serde(rename_all = "PascalCase")]
 struct DockerContainerInspect {
     #[serde(default)]
     id: String,
@@ -197,8 +179,6 @@ struct DockerContainerInspect {
     state: DockerInspectState,
     #[serde(default)]
     mounts: Vec<DockerContainerMount>,
-    #[serde(default)]
-    network_settings: DockerNetworkSettings,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -297,7 +277,6 @@ pub async fn build_execution_plan(
             kind: candidate.kind,
             resource_id: candidate.resource_id,
             label: candidate.label,
-            estimated_reclaimable_bytes: candidate.estimated_reclaimable_bytes,
             ownership: candidate.ownership,
         })
         .collect::<Vec<_>>();
@@ -318,7 +297,7 @@ pub async fn run_cleanup_job(
     state: std::sync::Arc<AppState>,
     job_id: &str,
     plan: CleanupExecutionPlan,
-) -> anyhow::Result<CleanupJobResult> {
+) -> anyhow::Result<()> {
     let total = plan.commands.len() as u32;
     let mut deleted_counts = BTreeMap::<String, u32>::new();
     let mut skipped_in_use = Vec::<serde_json::Value>::new();
@@ -339,10 +318,7 @@ pub async fn run_cleanup_job(
             .db
             .finish_job(job_id, "success", &finished_at, &summary)
             .await?;
-        return Ok(CleanupJobResult {
-            status: "success".to_string(),
-            summary,
-        });
+        return Ok(());
     }
 
     for (idx, action) in plan.commands.iter().enumerate() {
@@ -469,10 +445,7 @@ pub async fn run_cleanup_job(
         .finish_job(job_id, status, &finished_at, &summary)
         .await?;
 
-    Ok(CleanupJobResult {
-        status: status.to_string(),
-        summary,
-    })
+    Ok(())
 }
 
 async fn load_managed_context(state: &AppState) -> anyhow::Result<ManagedContext> {
@@ -490,9 +463,7 @@ async fn load_managed_context(state: &AppState) -> anyhow::Result<ManagedContext
         let stack_ref = ManagedStackRef {
             stack_id: stack.id.clone(),
             stack_name: stack.name.clone(),
-            compose_project: compose_project.clone(),
         };
-        context.stacks.push(stack_ref.clone());
         if let Some(project) = compose_project.clone() {
             context
                 .compose_project_to_stack
@@ -506,7 +477,6 @@ async fn load_managed_context(state: &AppState) -> anyhow::Result<ManagedContext
             let service_ref = ManagedServiceRef {
                 stack_id: stack.id.clone(),
                 stack_name: stack.name.clone(),
-                compose_project: compose_project.clone(),
                 service_id: service.id.clone(),
                 service_name: service.name.clone(),
                 image_repo: crate::snapshot_worker::image_repo_from_image_ref(
@@ -525,7 +495,6 @@ async fn load_managed_context(state: &AppState) -> anyhow::Result<ManagedContext
                     .or_default()
                     .push(service_ref.clone());
             }
-            context.services.push(service_ref);
         }
     }
 
@@ -1600,21 +1569,18 @@ mod tests {
             kind: CleanupResourceKind::Image,
             resource_id: "sha256:abc".to_string(),
             label: "demo".to_string(),
-            estimated_reclaimable_bytes: Some(1),
             ownership: CleanupOwnership::Unowned,
         };
         let volume = CleanupCommandAction {
             kind: CleanupResourceKind::Volume,
             resource_id: "data".to_string(),
             label: "data".to_string(),
-            estimated_reclaimable_bytes: None,
             ownership: CleanupOwnership::Unowned,
         };
         let builder = CleanupCommandAction {
             kind: CleanupResourceKind::BuilderCache,
             resource_id: "global-builder-cache".to_string(),
             label: "builder".to_string(),
-            estimated_reclaimable_bytes: None,
             ownership: CleanupOwnership::Unowned,
         };
         assert_eq!(

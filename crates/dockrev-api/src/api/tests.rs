@@ -21867,22 +21867,24 @@ services:
     job_db.reason = "ui".to_string();
     state.db.insert_job(job_db).await.unwrap();
 
-    let result = crate::cleanup::run_cleanup_job(state.clone(), &job_id, plan)
+    crate::cleanup::run_cleanup_job(state.clone(), &job_id, plan)
         .await
         .unwrap();
-    assert_eq!(result.status, "success");
-    assert_eq!(result.summary["deletedCountsByKind"], serde_json::json!({}));
-    assert_eq!(
-        result.summary["skippedInUse"][0]["kind"].as_str(),
-        Some("volume")
-    );
-    assert_eq!(
-        result.summary["skippedInUse"][0]["label"].as_str(),
-        Some("demo_named")
-    );
 
     let stored = state.db.get_job(&job_id).await.unwrap().unwrap();
     assert_eq!(stored.status, "success");
+    assert_eq!(
+        stored.summary_json["deletedCountsByKind"],
+        serde_json::json!({})
+    );
+    assert_eq!(
+        stored.summary_json["skippedInUse"][0]["kind"].as_str(),
+        Some("volume")
+    );
+    assert_eq!(
+        stored.summary_json["skippedInUse"][0]["label"].as_str(),
+        Some("demo_named")
+    );
     assert_eq!(
         stored.summary_json["skippedInUse"][0]["reason"].as_str(),
         Some("still_attached")

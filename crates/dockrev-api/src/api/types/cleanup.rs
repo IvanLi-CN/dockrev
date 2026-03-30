@@ -180,9 +180,3 @@ pub struct CleanupScanResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub confirmation_fingerprint: Option<String>,
 }
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CleanupFingerprintMismatchError {
-    pub latest: CleanupScanResponse,
-}
