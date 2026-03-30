@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { getJob, type JobDetail } from './api'
+import { getJob, listJobs, type JobDetail, type JobListItem } from './api'
 
 const UPDATE_JOB_POLL_INTERVAL_MS = 1200
 const UPDATE_JOB_MAX_ERRORS = 3
@@ -22,6 +22,10 @@ export type UpdateActionJobStatus = 'queued' | 'running' | string
 export type ActiveUpdateJob = {
   jobId: string
   status: UpdateActionJobStatus
+}
+
+type HydratedActiveUpdateJob = ActiveUpdateJob & {
+  target: UpdateActionTargetKey
 }
 
 export type UpdateJobSettledDetail = {
@@ -64,6 +68,54 @@ export function resolveUpdateActionTargetKey(
 
 export function isUpdateJobActiveStatus(status: string): boolean {
   return status === 'queued' || status === 'running'
+}
+
+function resolveUpdateJobRecency(job: Pick<JobListItem, 'createdAt' | 'startedAt' | 'progress'>): number {
+  const recencyCandidates = [job.startedAt, job.createdAt, job.progress?.updatedAt]
+  for (const value of recencyCandidates) {
+    if (typeof value !== 'string') continue
+    const parsed = Date.parse(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return Number.NEGATIVE_INFINITY
+}
+
+export function pickLatestActiveUpdateJobs(
+  jobs: Array<
+    Pick<JobListItem, 'id' | 'type' | 'scope' | 'stackId' | 'serviceId' | 'status' | 'createdAt' | 'startedAt' | 'progress'>
+  >,
+): HydratedActiveUpdateJob[] {
+  const latestByTarget = new Map<
+    UpdateActionTargetKey,
+    {
+      job: HydratedActiveUpdateJob
+      recency: number
+    }
+  >()
+
+  for (const job of jobs) {
+    if (job.type !== 'update' || !isUpdateJobActiveStatus(job.status)) continue
+    const target = resolveUpdateActionTargetKey(job.scope, job.stackId, job.serviceId)
+    if (!target) continue
+
+    const candidate = {
+      target,
+      jobId: job.id,
+      status: job.status,
+    } satisfies HydratedActiveUpdateJob
+    const recency = resolveUpdateJobRecency(job)
+    const existing = latestByTarget.get(target)
+    if (!existing) {
+      latestByTarget.set(target, { job: candidate, recency })
+      continue
+    }
+
+    if (recency > existing.recency || (recency === existing.recency && candidate.jobId > existing.job.jobId)) {
+      latestByTarget.set(target, { job: candidate, recency })
+    }
+  }
+
+  return Array.from(latestByTarget.values(), (entry) => entry.job)
 }
 
 function toUpdateJobSettledDetail(target: UpdateActionTargetKey, job: JobDetail): UpdateJobSettledDetail {
@@ -210,6 +262,28 @@ function useProvideUpdateActionTracker(): UpdateActionTracker {
     },
     [clearJobTimer, publishActive],
   )
+
+  useEffect(() => {
+    let cancelled = false
+
+    void (async () => {
+      try {
+        const jobs = await listJobs()
+        if (cancelled || unmountedRef.current) return
+        const hydratedJobs = pickLatestActiveUpdateJobs(jobs)
+        for (const job of hydratedJobs) {
+          if (activeByTargetRef.current.has(job.target)) continue
+          trackJob(job.target, job.jobId, job.status)
+        }
+      } catch {
+        // Hydration is best-effort; normal click tracking still works without it.
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [trackJob])
 
   const isTargetBusy = useCallback(
     (target: UpdateActionTargetKey): boolean => {
