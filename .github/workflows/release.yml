@@ -8,8 +8,21 @@ on:
   workflow_dispatch:
     inputs:
       head_sha:
-        description: Commit SHA on main to backfill release for
+        description: Commit SHA on main to release or administratively skip
         required: true
+        type: string
+      admin_action:
+        description: Release the target SHA, or mark a frozen target as skipped and continue the queue
+        required: true
+        default: release
+        type: choice
+        options:
+          - release
+          - skip
+      override_reason:
+        description: Optional reason when admin_action=skip
+        required: false
+        default: ""
         type: string
 
 permissions:
@@ -26,6 +39,7 @@ env:
   RUST_TOOLCHAIN: "1.91.0"
   RELEASE_SNAPSHOT_NOTES_REF: refs/notes/release-snapshots
   RELEASE_PUBLICATION_NOTES_REF: refs/notes/release-publications
+  RELEASE_OVERRIDE_NOTES_REF: refs/notes/release-overrides
 
 concurrency:
   group: release-main
@@ -49,6 +63,8 @@ jobs:
       app_effective_version: ${{ steps.snapshot.outputs.app_effective_version }}
       release_tag: ${{ steps.snapshot.outputs.release_tag }}
       should_release: ${{ steps.snapshot.outputs.release_enabled }}
+      release_state: ${{ steps.snapshot.outputs.release_state }}
+      override_reason: ${{ steps.snapshot.outputs.override_reason }}
       bump_level: ${{ steps.snapshot.outputs.release_bump }}
       pr_number: ${{ steps.snapshot.outputs.pr_number }}
       pr_title: ${{ steps.snapshot.outputs.pr_title }}
@@ -100,7 +116,7 @@ jobs:
           echo "target_sha=${target_sha}" >> "$GITHUB_OUTPUT"
 
       - name: Ensure immutable release snapshot for manual backfill
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && inputs.admin_action == 'release'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -116,6 +132,28 @@ jobs:
             --target-only \
             --output "$RUNNER_TEMP/release-snapshot.json"
 
+      - name: Record skip override for frozen target
+        if: github.event_name == 'workflow_dispatch' && inputs.admin_action == 'skip'
+        shell: bash
+        env:
+          TARGET_SHA: ${{ steps.requested-target.outputs.target_sha }}
+          OVERRIDE_REASON: ${{ inputs.override_reason }}
+        run: |
+          set -euo pipefail
+          reason="${OVERRIDE_REASON}"
+          if [[ -z "${reason}" ]]; then
+            reason="release-infra mislabel under no-extra-credential model"
+          fi
+
+          python3 .github/scripts/release_snapshot.py record-override \
+            --target-sha "${TARGET_SHA}" \
+            --snapshot-notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
+            --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
+            --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
+            --status skip \
+            --reason "${reason}" \
+            --output "$RUNNER_TEMP/release-override.json"
+
       - name: Select pending release target
         id: pending-target
         shell: bash
@@ -123,17 +161,25 @@ jobs:
           REQUESTED_SHA: ${{ steps.requested-target.outputs.target_sha }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.admin_action }}" = "release" ]; then
             echo "target_sha=${REQUESTED_SHA}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           git fetch --no-tags origin "+${RELEASE_SNAPSHOT_NOTES_REF}:${RELEASE_SNAPSHOT_NOTES_REF}" || true
+          git fetch --no-tags origin "+${RELEASE_PUBLICATION_NOTES_REF}:${RELEASE_PUBLICATION_NOTES_REF}" || true
+          git fetch --no-tags origin "+${RELEASE_OVERRIDE_NOTES_REF}:${RELEASE_OVERRIDE_NOTES_REF}" || true
           git fetch --tags origin
+          upper_bound="${REQUESTED_SHA}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.admin_action }}" = "skip" ]; then
+            upper_bound="$(git rev-parse origin/main)"
+          fi
           python3 .github/scripts/release_snapshot.py next-pending \
             --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
+            --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
+            --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
             --main-ref "origin/main" \
-            --upper-bound "${REQUESTED_SHA}" \
+            --upper-bound "${upper_bound}" \
             --github-output "$GITHUB_OUTPUT"
 
       - name: Load immutable release snapshot
@@ -149,9 +195,63 @@ jobs:
             --target-sha "${TARGET_SHA}" \
             --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
             --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
+            --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
             --main-ref "origin/main" \
             --resolve-publication-tags \
             --github-output "$GITHUB_OUTPUT"
+
+      - name: Reject skipped target for manual release
+        if: github.event_name == 'workflow_dispatch' && inputs.admin_action == 'release' && steps.snapshot.outputs.release_state == 'skipped'
+        shell: bash
+        env:
+          TARGET_SHA: ${{ steps.pending-target.outputs.target_sha }}
+          OVERRIDE_REASON: ${{ steps.snapshot.outputs.override_reason }}
+        run: |
+          set -euo pipefail
+          echo "Skipped release targets cannot be released manually: ${TARGET_SHA}" >&2
+          if [[ -n "${OVERRIDE_REASON}" ]]; then
+            echo "Override reason: ${OVERRIDE_REASON}" >&2
+          fi
+          echo "Choose a different main commit instead of retrying the skipped target." >&2
+          exit 1
+
+      - name: Summarize release target
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ steps.requested-target.outputs.target_sha }}
+          TARGET_SHA: ${{ steps.pending-target.outputs.target_sha }}
+          RELEASE_STATE: ${{ steps.snapshot.outputs.release_state }}
+          ADMIN_ACTION: ${{ github.event_name == 'workflow_dispatch' && inputs.admin_action || 'release' }}
+          OVERRIDE_REASON: ${{ steps.snapshot.outputs.override_reason }}
+          REQUESTED_OVERRIDE_REASON: ${{ inputs.override_reason }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Release target summary"
+            echo ""
+            echo "- Event: \`${{ github.event_name }}\`"
+            echo "- Admin action: \`${ADMIN_ACTION}\`"
+            echo "- Requested SHA: \`${REQUESTED_SHA}\`"
+            if [[ -n "${TARGET_SHA}" ]]; then
+              echo "- Selected target SHA: \`${TARGET_SHA}\`"
+              echo "- Target state: \`${RELEASE_STATE}\`"
+              if [[ -n "${OVERRIDE_REASON}" ]]; then
+                echo "- Override reason: ${OVERRIDE_REASON}"
+              fi
+            else
+              echo "- Selected target SHA: `(none)`"
+              if [[ "${{ github.event_name }}" = "workflow_dispatch" ]] && [[ "${ADMIN_ACTION}" = "skip" ]]; then
+                reason="${REQUESTED_OVERRIDE_REASON}"
+                if [[ -z "${reason}" ]]; then
+                  reason="release-infra mislabel under no-extra-credential model"
+                fi
+                echo "- Override recorded for requested SHA; release queue is now empty up to \`origin/main\`"
+                echo "- Override reason: ${reason}"
+              else
+                echo "- Release queue is empty up to the selected upper bound"
+              fi
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   build-web:
     name: Build web dist
@@ -761,6 +861,7 @@ jobs:
             --target-sha "${TARGET_SHA}" \
             --snapshot-notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
             --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
+            --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
             --dockrev-digest "${DOCKREV_DIGEST}" \
             --dockrev-supervisor-digest "${DOCKREV_SUPERVISOR_DIGEST}"
 
@@ -791,7 +892,7 @@ jobs:
           echo "::error::Retry: Actions → workflow 'Release' → Re-run jobs (tag=${RELEASE_TAG})."
           exit 1
 
-      - name: Upsert release-version comment on source PR
+      - name: Upsert and verify release-version comment on source PR
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -813,7 +914,7 @@ jobs:
             --workflow-run-url "${WORKFLOW_RUN_URL}"
 
       - name: Resolve next pending release target
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name != 'workflow_dispatch' || inputs.admin_action == 'skip'
         id: next-pending
         shell: bash
         run: |
@@ -821,14 +922,18 @@ jobs:
           git fetch --no-tags origin main
           git fetch --tags origin
           git fetch --no-tags origin "+${RELEASE_SNAPSHOT_NOTES_REF}:${RELEASE_SNAPSHOT_NOTES_REF}" || true
+          git fetch --no-tags origin "+${RELEASE_PUBLICATION_NOTES_REF}:${RELEASE_PUBLICATION_NOTES_REF}" || true
+          git fetch --no-tags origin "+${RELEASE_OVERRIDE_NOTES_REF}:${RELEASE_OVERRIDE_NOTES_REF}" || true
           python3 .github/scripts/release_snapshot.py next-pending \
             --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
+            --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
+            --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
             --main-ref "origin/main" \
             --upper-bound "$(git rev-parse origin/main)" \
             --github-output "$GITHUB_OUTPUT"
 
       - name: Continue release queue
-        if: github.event_name != 'workflow_dispatch' && steps.next-pending.outputs.target_sha != ''
+        if: (github.event_name != 'workflow_dispatch' || inputs.admin_action == 'skip') && steps.next-pending.outputs.target_sha != ''
         uses: actions/github-script@v7
         env:
           NEXT_TARGET_SHA: ${{ steps.next-pending.outputs.target_sha }}
@@ -846,7 +951,7 @@ jobs:
               repo,
               workflow_id: 'release.yml',
               ref: 'main',
-              inputs: { head_sha: nextSha },
+              inputs: { head_sha: nextSha, admin_action: 'release', override_reason: '' },
             })
             core.notice(`Queued next release target ${nextSha}`)
 

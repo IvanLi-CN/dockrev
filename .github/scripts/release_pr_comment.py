@@ -139,15 +139,48 @@ def comment_login(comment: dict[str, Any]) -> str:
     return login if isinstance(login, str) else ""
 
 
+def marker_comments(comments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [comment for comment in comments if COMMENT_MARKER in comment_body(comment)]
+
+
+def owned_marker_comments(comments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [comment for comment in marker_comments(comments) if comment_login(comment) == BOT_LOGIN]
+
+
+def delete_comment(api_root: str, repository: str, token: str, comment_id_value: int) -> None:
+    owner, repo = repository.split("/", 1)
+    github_request_json(
+        api_root,
+        token,
+        "DELETE",
+        f"/repos/{owner}/{repo}/issues/comments/{comment_id_value}",
+    )
+
+
+def prune_extra_owned_marker_comments(
+    api_root: str,
+    repository: str,
+    token: str,
+    comments: list[dict[str, Any]],
+    *,
+    keep_comment_id: int,
+) -> None:
+    for comment in owned_marker_comments(comments):
+        current_id = comment_id(comment)
+        if current_id == keep_comment_id:
+            continue
+        delete_comment(api_root, repository, token, current_id)
+
+
 def select_comment_target(comments: list[dict[str, Any]]) -> tuple[str, int | None, str]:
-    marked = [comment for comment in comments if COMMENT_MARKER in comment_body(comment)]
+    marked = marker_comments(comments)
     foreign = [comment for comment in marked if comment_login(comment) != BOT_LOGIN]
     if foreign:
         comment = max(foreign, key=comment_id)
         return (
             "skip_foreign_marker",
             None,
-            f"Marker comment already owned by {comment_login(comment) or 'unknown user'} (comment_id={comment_id(comment)}); skipping update.",
+            f"Marker comment already owned by {comment_login(comment) or 'unknown user'} (comment_id={comment_id(comment)}); cannot satisfy release comment contract.",
         )
 
     owned = [comment for comment in marked if comment_login(comment) == BOT_LOGIN]
@@ -155,6 +188,24 @@ def select_comment_target(comments: list[dict[str, Any]]) -> tuple[str, int | No
         return ("create", None, "")
     comment = max(owned, key=comment_id)
     return ("update", comment_id(comment), "")
+
+
+def verify_release_comment_contract(comments: list[dict[str, Any]], *, expected_body: str) -> int:
+    foreign = [comment for comment in marker_comments(comments) if comment_login(comment) != BOT_LOGIN]
+    if foreign:
+        comment = max(foreign, key=comment_id)
+        raise CommentError(
+            f"Marker comment already owned by {comment_login(comment) or 'unknown user'} (comment_id={comment_id(comment)}); cannot satisfy release comment contract."
+        )
+
+    owned = owned_marker_comments(comments)
+    if len(owned) != 1:
+        raise CommentError(f"Expected exactly 1 bot-owned marker comment after publish, found {len(owned)}")
+
+    verified = owned[0]
+    if comment_body(verified) != expected_body:
+        raise CommentError("Bot-owned marker comment body does not match the published release payload")
+    return comment_id(verified)
 
 
 def upsert_release_comment(
@@ -182,8 +233,7 @@ def upsert_release_comment(
     )
 
     if action == "skip_foreign_marker":
-        print(f"release_pr_comment.py: warning: {warning}", file=sys.stderr)
-        return {"comment_status": action, "comment_id": "", "comment_body": body}
+        raise CommentError(warning)
 
     if action == "update":
         payload = github_request_json(
@@ -204,10 +254,21 @@ def upsert_release_comment(
 
     if not isinstance(payload, dict):
         raise CommentError("GitHub API returned a malformed issue comment response")
-    created_comment_id = comment_id(payload)
+    keep_comment_id = comment_id(payload)
+    prune_extra_owned_marker_comments(
+        api_root,
+        repository,
+        token,
+        issue_comments(api_root, repository, token, pr_number),
+        keep_comment_id=keep_comment_id,
+    )
+    verified_comment_id = verify_release_comment_contract(
+        issue_comments(api_root, repository, token, pr_number),
+        expected_body=body,
+    )
     return {
         "comment_status": action,
-        "comment_id": created_comment_id,
+        "comment_id": verified_comment_id,
         "comment_body": body,
     }
 

@@ -168,12 +168,15 @@ See `deploy/README.md` for a minimal Docker Compose deployment.
 - Automatic releases are gated by PR intent labels (exactly one required on PRs targeting `main`):
   - `type:docs` / `type:skip` → skip release
   - `type:patch` / `type:minor` / `type:major` → publish with the corresponding semver bump
+- Release-enabled PRs (`type:patch` / `type:minor` / `type:major`) must not touch `.github/workflows/**`; release-infra-only PRs must use `type:skip` or `type:docs`
 - Required release channel label (exactly one required on PRs targeting `main`):
   - `channel:stable` → publish a stable release (tag: `<semver>`, updates `latest`)
   - `channel:rc` → publish an RC prerelease (tag: `<semver>-rc.<shortsha>`, GitHub Release marked as prerelease, and does **not** update `latest`)
 - Direct `push` to `main` without an associated PR conservatively skips release
 - `latest` is updated only by the newest published stable release currently visible on `main`
-- After GitHub Release succeeds, the workflow upserts a marker-based issue comment on the source PR with the actual `release_tag`, release URL, workflow run URL, and channel
+- The release admin path can mark a frozen mislabel target as skipped via `workflow_dispatch(head_sha=<main-commit-sha>, admin_action=skip)`; the skip is stored in `refs/notes/release-overrides` without rewriting immutable snapshots
+- A manually requested `workflow_dispatch(..., admin_action=release)` run refuses targets already marked as skipped, so override-ledger decisions cannot be bypassed into a partial artifact publish
+- After GitHub Release succeeds, the workflow must leave exactly one bot-owned marker-based issue comment on the source PR with the actual `release_tag`, release URL, workflow run URL, and channel; the workflow auto-prunes older bot-owned duplicate markers, but still fails if a foreign marker blocks the contract
 - Live quality-gates checks now run explicitly inside `CI (PR)` / `CI (main)` with authenticated `GITHUB_TOKEN`; `release-channel-contract-check.sh` stays offline and only covers contract + mock API self-tests
 - GitHub Releases include Linux binaries for `dockrev` and `dockrev-supervisor` (amd64/arm64 × gnu/musl) as `.tar.gz` + `.sha256`
 - Release assets are validated as executable binaries (the workflow enforces `chmod +x` before packaging to avoid artifacts losing exec bits)

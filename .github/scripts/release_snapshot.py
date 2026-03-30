@@ -16,9 +16,12 @@ from urllib import error, parse, request
 
 SNAPSHOT_SCHEMA_VERSION = 1
 PUBLICATION_SCHEMA_VERSION = 1
+OVERRIDE_SCHEMA_VERSION = 1
 DEFAULT_NOTES_REF = "refs/notes/release-snapshots"
 DEFAULT_PUBLICATION_NOTES_REF = "refs/notes/release-publications"
+DEFAULT_OVERRIDE_NOTES_REF = "refs/notes/release-overrides"
 ALLOWED_SNAPSHOT_SOURCES = {"ci-main", "manual-backfill", "pr-intent-artifact", "legacy-pr-labels"}
+ALLOWED_OVERRIDE_STATUSES = {"skip"}
 ALLOWED_TYPE_LABELS = {
     "type:patch",
     "type:minor",
@@ -100,6 +103,7 @@ def parse_args() -> argparse.Namespace:
         help="Re-resolve stable manifest tags from the publication ledger so superseded releases stop updating latest.",
     )
     export_cmd.add_argument("--publication-notes-ref", default=DEFAULT_PUBLICATION_NOTES_REF)
+    export_cmd.add_argument("--override-notes-ref", default=DEFAULT_OVERRIDE_NOTES_REF)
     export_cmd.add_argument("--github-output", default=os.environ.get("GITHUB_OUTPUT", ""))
 
     next_pending = subparsers.add_parser(
@@ -109,6 +113,8 @@ def parse_args() -> argparse.Namespace:
     next_pending.add_argument("--notes-ref", default=DEFAULT_NOTES_REF)
     next_pending.add_argument("--main-ref", required=True)
     next_pending.add_argument("--upper-bound", default="")
+    next_pending.add_argument("--publication-notes-ref", default=DEFAULT_PUBLICATION_NOTES_REF)
+    next_pending.add_argument("--override-notes-ref", default=DEFAULT_OVERRIDE_NOTES_REF)
     next_pending.add_argument("--github-output", default=os.environ.get("GITHUB_OUTPUT", ""))
 
     record_publication = subparsers.add_parser(
@@ -118,11 +124,25 @@ def parse_args() -> argparse.Namespace:
     record_publication.add_argument("--target-sha", required=True)
     record_publication.add_argument("--snapshot-notes-ref", default=DEFAULT_NOTES_REF)
     record_publication.add_argument("--publication-notes-ref", default=DEFAULT_PUBLICATION_NOTES_REF)
+    record_publication.add_argument("--override-notes-ref", default=DEFAULT_OVERRIDE_NOTES_REF)
     record_publication.add_argument("--dockrev-digest", required=True)
     record_publication.add_argument("--dockrev-supervisor-digest", required=True)
     record_publication.add_argument("--published-at", default="")
     record_publication.add_argument("--output", default="")
     record_publication.add_argument("--max-attempts", type=int, default=3)
+
+    record_override = subparsers.add_parser(
+        "record-override",
+        help="Record a mutable admin override note for a frozen release target.",
+    )
+    record_override.add_argument("--target-sha", required=True)
+    record_override.add_argument("--snapshot-notes-ref", default=DEFAULT_NOTES_REF)
+    record_override.add_argument("--publication-notes-ref", default=DEFAULT_PUBLICATION_NOTES_REF)
+    record_override.add_argument("--override-notes-ref", default=DEFAULT_OVERRIDE_NOTES_REF)
+    record_override.add_argument("--status", required=True, choices=sorted(ALLOWED_OVERRIDE_STATUSES))
+    record_override.add_argument("--reason", default="")
+    record_override.add_argument("--output", default="")
+    record_override.add_argument("--max-attempts", type=int, default=3)
 
     return parser.parse_args()
 
@@ -303,11 +323,45 @@ def validate_publication(payload: Any, *, expected_sha: str | None = None) -> di
     return payload
 
 
+def validate_override(payload: Any, *, expected_sha: str | None = None) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise SnapshotError("Release override note must decode to an object")
+    if payload.get("schema_version") != OVERRIDE_SCHEMA_VERSION:
+        raise SnapshotError(f"Unsupported release override schema: {payload.get('schema_version')!r}")
+
+    target_sha = payload.get("target_sha")
+    if not isinstance(target_sha, str) or not SHA_RE.fullmatch(target_sha):
+        raise SnapshotError("Release override target_sha must be a 40-char commit SHA")
+    if expected_sha and target_sha != expected_sha:
+        raise SnapshotError(f"Release override target_sha mismatch: expected {expected_sha}, got {target_sha}")
+
+    status = payload.get("status")
+    if not isinstance(status, str) or status not in ALLOWED_OVERRIDE_STATUSES:
+        raise SnapshotError(f"Unknown release override status: {status!r}")
+
+    reason = payload.get("reason")
+    if not isinstance(reason, str):
+        raise SnapshotError("Release override reason must be a string")
+
+    created_at = payload.get("created_at")
+    if not isinstance(created_at, str) or not created_at:
+        raise SnapshotError("Release override created_at must be a non-empty string")
+
+    return payload
+
+
 def read_publication(notes_ref: str, target_sha: str) -> dict[str, Any] | None:
     payload = read_json_note(notes_ref, target_sha)
     if payload is None:
         return None
     return validate_publication(payload, expected_sha=target_sha)
+
+
+def read_override(notes_ref: str, target_sha: str) -> dict[str, Any] | None:
+    payload = read_json_note(notes_ref, target_sha)
+    if payload is None:
+        return None
+    return validate_override(payload, expected_sha=target_sha)
 
 
 def fetch_notes_ref(notes_ref: str) -> None:
@@ -585,13 +639,51 @@ def release_tag_points_to_target(snapshot: dict[str, Any]) -> bool:
     return tagged_sha == target_sha
 
 
-def pending_release_targets(notes_ref: str, upper_bound_sha: str) -> list[str]:
+def release_state_for_target(
+    snapshot: dict[str, Any],
+    *,
+    publication_notes_ref: str,
+    override_notes_ref: str,
+) -> str:
+    target_sha = str(snapshot["target_sha"])
+    override = read_override(override_notes_ref, target_sha)
+    if override is not None and str(override["status"]) == "skip":
+        return "skipped"
+    if read_publication(publication_notes_ref, target_sha) is not None:
+        return "published"
+    if release_tag_points_to_target(snapshot):
+        return "published"
+    return "pending" if snapshot.get("release_enabled") else "disabled"
+
+
+def override_reason_for_target(override_notes_ref: str, target_sha: str) -> str:
+    override = read_override(override_notes_ref, target_sha)
+    if override is None:
+        return ""
+    reason = override.get("reason")
+    return reason if isinstance(reason, str) else ""
+
+
+def pending_release_targets(
+    notes_ref: str,
+    upper_bound_sha: str,
+    *,
+    publication_notes_ref: str,
+    override_notes_ref: str,
+) -> list[str]:
     pending: list[str] = []
     for commit in first_parent_commits(upper_bound_sha):
         snapshot = read_snapshot(notes_ref, commit)
         if not snapshot or not snapshot.get("release_enabled"):
             continue
-        if release_tag_points_to_target(snapshot):
+        if (
+            release_state_for_target(
+                snapshot,
+                publication_notes_ref=publication_notes_ref,
+                override_notes_ref=override_notes_ref,
+            )
+            != "pending"
+        ):
             continue
         pending.append(commit)
     return pending
@@ -716,6 +808,24 @@ def build_publication(
     return validate_publication(publication, expected_sha=str(validated_snapshot["target_sha"]))
 
 
+def build_override(snapshot: dict[str, Any], *, status: str, reason: str) -> dict[str, Any]:
+    validated_snapshot = validate_snapshot(snapshot)
+    if not validated_snapshot.get("release_enabled"):
+        raise SnapshotError("Cannot record override for a release-disabled snapshot")
+    if status not in ALLOWED_OVERRIDE_STATUSES:
+        raise SnapshotError(f"Unknown release override status: {status}")
+    return validate_override(
+        {
+            "schema_version": OVERRIDE_SCHEMA_VERSION,
+            "target_sha": validated_snapshot["target_sha"],
+            "status": status,
+            "reason": reason,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        },
+        expected_sha=str(validated_snapshot["target_sha"]),
+    )
+
+
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
@@ -743,7 +853,13 @@ def export_key_values(values: dict[str, Any], github_output: str) -> None:
         sys.stdout.write(payload)
 
 
-def export_snapshot(snapshot: dict[str, Any], github_output: str) -> None:
+def export_snapshot(
+    snapshot: dict[str, Any],
+    github_output: str,
+    *,
+    release_state: str,
+    override_reason: str,
+) -> None:
     export_key_values(
         {
             "target_sha": snapshot.get("target_sha"),
@@ -761,6 +877,8 @@ def export_snapshot(snapshot: dict[str, Any], github_output: str) -> None:
             "tags_csv": snapshot.get("tags_csv"),
             "supervisor_tags_csv": snapshot.get("supervisor_tags_csv"),
             "snapshot_source": snapshot.get("snapshot_source"),
+            "release_state": release_state,
+            "override_reason": override_reason,
         },
         github_output,
     )
@@ -834,6 +952,8 @@ def ensure_snapshot(args: argparse.Namespace) -> int:
 def export_existing_snapshot(args: argparse.Namespace) -> int:
     target_sha = normalize_sha(args.target_sha)
     fetch_notes_ref(args.notes_ref)
+    fetch_notes_ref(args.publication_notes_ref)
+    fetch_notes_ref(args.override_notes_ref)
     snapshot = read_snapshot(args.notes_ref, target_sha)
     if snapshot is None:
         raise SnapshotError(f"Missing immutable release snapshot for {target_sha}")
@@ -858,7 +978,16 @@ def export_existing_snapshot(args: argparse.Namespace) -> int:
             publication_notes_ref=args.publication_notes_ref,
             main_ref=args.main_ref,
         )
-    export_snapshot(snapshot, args.github_output)
+    export_snapshot(
+        snapshot,
+        args.github_output,
+        release_state=release_state_for_target(
+            snapshot,
+            publication_notes_ref=args.publication_notes_ref,
+            override_notes_ref=args.override_notes_ref,
+        ),
+        override_reason=override_reason_for_target(args.override_notes_ref, target_sha),
+    )
     return 0
 
 
@@ -868,9 +997,12 @@ def record_publication(args: argparse.Namespace) -> int:
     for attempt in range(1, args.max_attempts + 1):
         fetch_notes_ref(args.snapshot_notes_ref)
         fetch_notes_ref(args.publication_notes_ref)
+        fetch_notes_ref(args.override_notes_ref)
         snapshot = read_snapshot(args.snapshot_notes_ref, target_sha)
         if snapshot is None:
             raise SnapshotError(f"Missing immutable release snapshot for {target_sha}")
+        if read_override(args.override_notes_ref, target_sha) is not None:
+            raise SnapshotError(f"Cannot record publication for skipped target {target_sha}")
         publication = build_publication(
             snapshot,
             dockrev_digest=args.dockrev_digest,
@@ -893,13 +1025,56 @@ def record_publication(args: argparse.Namespace) -> int:
     raise SnapshotError("release publication retry loop exhausted unexpectedly")
 
 
+def record_override(args: argparse.Namespace) -> int:
+    target_sha = normalize_sha(args.target_sha)
+    output_path = Path(args.output) if args.output else None
+    for attempt in range(1, args.max_attempts + 1):
+        fetch_notes_ref(args.snapshot_notes_ref)
+        fetch_notes_ref(args.publication_notes_ref)
+        fetch_notes_ref(args.override_notes_ref)
+        snapshot = read_snapshot(args.snapshot_notes_ref, target_sha)
+        if snapshot is None:
+            raise SnapshotError(f"Missing immutable release snapshot for {target_sha}")
+        if not snapshot.get("release_enabled"):
+            raise SnapshotError(f"Cannot override release-disabled target {target_sha}")
+        current_state = release_state_for_target(
+            snapshot,
+            publication_notes_ref=args.publication_notes_ref,
+            override_notes_ref=args.override_notes_ref,
+        )
+        if current_state == "published":
+            raise SnapshotError(f"Cannot override already published target {target_sha}")
+        override = build_override(snapshot, status=args.status, reason=args.reason)
+        with tempfile.TemporaryDirectory(prefix="release-override-notes-") as tmp:
+            temp_note = Path(tmp) / "override.json"
+            write_json(temp_note, override)
+            git("notes", f"--ref={args.override_notes_ref}", "add", "-f", "-F", str(temp_note), target_sha)
+            if output_path is not None:
+                write_json(output_path, override)
+
+        push = git("push", "origin", args.override_notes_ref, check=False)
+        if push.returncode == 0:
+            return 0
+        if attempt == args.max_attempts:
+            detail = push.stderr.strip() or push.stdout.strip() or "git push origin override notes ref failed"
+            raise SnapshotError(f"Failed to publish release override after {attempt} attempts: {detail}")
+    raise SnapshotError("release override retry loop exhausted unexpectedly")
+
+
 def export_next_pending(args: argparse.Namespace) -> int:
     upper_bound = args.upper_bound or git_output("rev-parse", args.main_ref)
     upper_bound = normalize_sha(upper_bound)
     git("merge-base", "--is-ancestor", upper_bound, args.main_ref)
     fetch_notes_ref(args.notes_ref)
+    fetch_notes_ref(args.publication_notes_ref)
+    fetch_notes_ref(args.override_notes_ref)
     fetch_tags()
-    pending = pending_release_targets(args.notes_ref, upper_bound)
+    pending = pending_release_targets(
+        args.notes_ref,
+        upper_bound,
+        publication_notes_ref=args.publication_notes_ref,
+        override_notes_ref=args.override_notes_ref,
+    )
     export_key_values({"target_sha": pending[0] if pending else ""}, args.github_output)
     return 0
 
@@ -915,6 +1090,8 @@ def main() -> int:
             return export_next_pending(args)
         if args.command == "record-publication":
             return record_publication(args)
+        if args.command == "record-override":
+            return record_override(args)
         raise SnapshotError(f"Unsupported command: {args.command}")
     except SnapshotError as exc:
         print(f"release_snapshot.py: {exc}", file=sys.stderr)
