@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod cleanup;
 mod core;
 mod deploy;
 mod discovery;
@@ -13,6 +14,7 @@ mod notifications;
 mod services;
 mod settings;
 
+pub use cleanup::*;
 pub use core::*;
 pub use deploy::*;
 pub use discovery::*;

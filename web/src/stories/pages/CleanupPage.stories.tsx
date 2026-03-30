@@ -1,0 +1,131 @@
+import type { Meta, StoryObj } from '@storybook/react'
+import { CleanupPage } from '../../pages/CleanupPage'
+import { PageHarness } from '../mocks/PageHarness'
+import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+
+const meta: Meta<typeof CleanupPage> = {
+  title: 'Pages/CleanupPage',
+  component: CleanupPage,
+  decorators: [withDockrevMockApi],
+}
+
+export default meta
+type Story = StoryObj<typeof CleanupPage>
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function waitForCondition(check: () => boolean, timeoutMs = 3000): Promise<void> {
+  const started = Date.now()
+  while (!check()) {
+    if (Date.now() - started > timeoutMs) throw new globalThis.Error('condition timeout')
+    await sleep(60)
+  }
+}
+
+function assertStory(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new globalThis.Error(message)
+}
+
+function findButton(root: ParentNode, text: string): HTMLButtonElement | null {
+  return (
+    Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.replace(/\s+/g, ' ').trim() === text,
+    ) ?? null
+  )
+}
+
+function renderPage() {
+  return (
+    <PageHarness
+      route={{ name: 'cleanup' }}
+      title="清理"
+      topbarHint="Docker 清理控制台"
+      pageSubtitle="按规则预览 docker prune 候选，支持全局 / Stack / 服务三级清理"
+    >
+      {({ onLastScanHint, onTopActions }) => (
+        <CleanupPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
+      )}
+    </PageHarness>
+  )
+}
+
+export const Default: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console' },
+  render: renderPage,
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => canvasElement.textContent?.includes('均衡') ?? false)
+
+    const activeNav = Array.from(doc.querySelectorAll<HTMLElement>('.navItemActive')).find((node) =>
+      node.textContent?.includes('清理'),
+    )
+    assertStory(activeNav, 'cleanup nav item should be active')
+    assertStory(canvasElement.textContent?.includes('旧镜像未被任何容器使用'), 'resource reason should be visible')
+    assertStory(!(canvasElement.textContent?.includes('服务直属候选') ?? false), 'generic candidate copy should be removed')
+  },
+}
+
+export const Empty: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console-empty' },
+  render: renderPage,
+}
+
+export const AggressiveUnowned: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console-aggressive-unowned' },
+  render: renderPage,
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => canvasElement.textContent?.includes('均衡') ?? false)
+
+    const aggressiveTab = findButton(doc, '激进')
+    assertStory(aggressiveTab, 'aggressive tab missing')
+    aggressiveTab.click()
+
+    await waitForCondition(() => canvasElement.textContent?.includes('未归属资源') ?? false)
+    assertStory(canvasElement.textContent?.includes('仅全部'), 'unowned group badge missing')
+  },
+}
+
+export const ConfirmDialogLatestScan: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console' },
+  render: renderPage,
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => findButton(doc, '全部') != null)
+
+    const trigger = findButton(doc, '全部')
+    assertStory(trigger, 'topbar cleanup action missing')
+    trigger.click()
+
+    await waitForCondition(() => doc.body.textContent?.includes('确认清理全部') ?? false)
+    assertStory(doc.body.textContent?.includes('最新扫描'), 'confirm dialog should show latest scan timestamp')
+    assertStory(doc.body.textContent?.includes('预计释放'), 'confirm dialog should show reclaim estimate')
+  },
+}
+
+export const StaleFingerprintRetry: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console-stale' },
+  render: renderPage,
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => findButton(doc, '全部') != null)
+
+    const trigger = findButton(doc, '全部')
+    assertStory(trigger, 'topbar cleanup action missing')
+    trigger.click()
+
+    await waitForCondition(() => doc.body.textContent?.includes('确认清理全部') ?? false)
+    const firstConfirm = findButton(doc, '确认清理')
+    assertStory(firstConfirm, 'confirm dialog action missing')
+    firstConfirm.click()
+
+    await waitForCondition(() => doc.body.textContent?.includes('候选已变化') ?? false)
+    const secondConfirm = findButton(doc, '确认清理')
+    assertStory(secondConfirm, 'stale confirm action missing')
+    secondConfirm.click()
+
+    await waitForCondition(() => window.location.hash.includes('/queue/job-cleanup-1'))
+  },
+}

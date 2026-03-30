@@ -3,6 +3,7 @@
 mod api;
 mod authz;
 mod backup;
+mod cleanup;
 mod compose;
 mod compose_runner;
 mod config;

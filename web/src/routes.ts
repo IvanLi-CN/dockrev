@@ -5,6 +5,7 @@ export type Route =
   | { name: 'queue' }
   | { name: 'job'; jobId: string }
   | { name: 'services' }
+  | { name: 'cleanup' }
   | { name: 'version-inference' }
   | { name: 'ghcr-webhooks' }
   | { name: 'ghcr-webhook-inbox' }
@@ -35,6 +36,7 @@ export function parseRoute(pathname: string): Route {
   }
   if (parts.length === 2 && parts[0] === 'queue') return { name: 'job', jobId: parts[1] }
   if (parts.length === 1 && parts[0] === 'services') return { name: 'services' }
+  if (parts.length === 1 && parts[0] === 'cleanup') return { name: 'cleanup' }
   // Legacy compatibility: keep old path readable after route migration.
   if (parts.length === 1 && parts[0] === 'version-inference') return { name: 'version-inference' }
   if (parts.length === 1 && parts[0] === 'deploy-check') return { name: 'deploy-check' }
@@ -55,6 +57,8 @@ export function href(route: Route): string {
       return `/queue/${encodeURIComponent(route.jobId)}`
     case 'services':
       return '/services'
+    case 'cleanup':
+      return '/cleanup'
     case 'version-inference':
       return '/queue/version-inference'
     case 'ghcr-webhooks':

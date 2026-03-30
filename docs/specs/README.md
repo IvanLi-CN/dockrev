@@ -27,6 +27,7 @@
 
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
+| qynjg | Dockrev：Docker Prune 清理控制台 | 已完成 | `qynjg-docker-prune-cleanup-console/SPEC.md` | 2026-03-29 | fast-track（cleanup scan/apply + cleanup console + storybook + visual evidence + review-loop） |
 | 48mh8 | Dockrev：Release Snapshot Queue 对齐与 #176 补发 | 部分完成（4/5） | `48mh8-release-snapshot-queue-alignment/SPEC.md` | 2026-03-23 | fast-track |
 | 6uwgs | Dockrev：服务镜像外链与代码仓库字段 | 已完成 | `6uwgs-service-image-links-and-repo-url/SPEC.md` | 2026-03-23 | fast-track（repoUrl 持久化 + inference API + services/detail/overview registry+repo icons + storybook/browser coverage） |
 | 2m9ge | Dockrev：repoUrl 自动回填与历史空值修复 | 已完成 | `2m9ge-repo-url-auto-backfill/SPEC.md` | 2026-03-26 | follow-up（startup/discovery backfill + repo_url_auto_disabled semantics） |

@@ -9,12 +9,13 @@ export type JobReadableDisplay = {
   typeTone: JobTypeTone
 }
 
-export type JobTypeTone = 'check' | 'discovery' | 'runtimeScan' | 'ghcrWebhook' | 'update' | 'rollback' | 'default'
+export type JobTypeTone = 'check' | 'cleanup' | 'discovery' | 'runtimeScan' | 'ghcrWebhook' | 'update' | 'rollback' | 'default'
 
 export function formatJobTypeLabel(type: string): string {
   const raw = normalize(type)
   if (raw === '-') return raw
   if (raw === 'check') return '检查任务'
+  if (raw === 'cleanup_apply') return '清理任务'
   if (raw === 'discovery') return '发现扫描'
   if (raw === 'runtime_scan') return '运行时扫描'
   if (raw === 'github_packages_webhook') return 'GHCR Webhook'
@@ -66,6 +67,7 @@ export function formatJobMachineName(type: string, scope: string): string {
 
 function resolveJobTypeTone(type: string): JobTypeTone {
   if (type === 'check') return 'check'
+  if (type === 'cleanup_apply') return 'cleanup'
   if (type === 'discovery') return 'discovery'
   if (type === 'runtime_scan') return 'runtimeScan'
   if (type === 'github_packages_webhook') return 'ghcrWebhook'

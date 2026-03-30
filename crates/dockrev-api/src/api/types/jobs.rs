@@ -187,6 +187,7 @@ impl JobScope {
 #[derive(Clone, Debug)]
 pub enum JobType {
     Check,
+    CleanupApply,
     Discovery,
     RuntimeScan,
     GitHubPackagesWebhook,
@@ -201,6 +202,7 @@ impl JobType {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Check => "check",
+            Self::CleanupApply => "cleanup_apply",
             Self::Discovery => "discovery",
             Self::RuntimeScan => "runtime_scan",
             Self::GitHubPackagesWebhook => "github_packages_webhook",
@@ -215,6 +217,7 @@ impl JobType {
     pub fn from_str(input: &str) -> Self {
         match input {
             "check" => Self::Check,
+            "cleanup_apply" => Self::CleanupApply,
             "discovery" => Self::Discovery,
             "runtime_scan" => Self::RuntimeScan,
             "github_packages_webhook" => Self::GitHubPackagesWebhook,

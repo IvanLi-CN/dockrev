@@ -7,6 +7,7 @@ import { OverviewPage } from './pages/OverviewPage'
 import { QueuePage } from './pages/QueuePage'
 import { JobDetailPage } from './pages/JobDetailPage'
 import { ServicesPage } from './pages/ServicesPage'
+import { CleanupPage } from './pages/CleanupPage'
 import { ServiceDetailPage } from './pages/ServiceDetailPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { VersionInferencePage } from './pages/VersionInferencePage'
@@ -34,6 +35,12 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
       return { title: '任务详情', topbarHint: '任务队列' }
     case 'services':
       return { title: '服务', topbarHint: '服务' }
+    case 'cleanup':
+      return {
+        title: '清理',
+        pageSubtitle: '按规则预览 docker prune 候选，支持全局 / Stack / 服务三级清理',
+        topbarHint: 'Docker 清理控制台',
+      }
     case 'version-inference':
       return {
         title: '版本推测',
@@ -189,6 +196,7 @@ export default function App() {
       {route.name === 'queue' ? <QueuePage onTopActions={setPageActions} /> : null}
       {route.name === 'job' ? <JobDetailPage jobId={route.jobId} onTopActions={setPageActions} /> : null}
       {route.name === 'services' ? <ServicesPage onLastScanHint={setLastScanHint} onTopActions={setPageActions} /> : null}
+      {route.name === 'cleanup' ? <CleanupPage onLastScanHint={setLastScanHint} onTopActions={setPageActions} /> : null}
       {route.name === 'version-inference' ? (
         <VersionInferencePage onLastScanHint={setLastScanHint} onTopActions={setPageActions} />
       ) : null}
