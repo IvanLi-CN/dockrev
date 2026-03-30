@@ -1,0 +1,7 @@
+{
+  "created_at": "2026-03-30T19:34:10Z",
+  "reason": "release-infra mislabel under no-extra-credential model",
+  "schema_version": 1,
+  "status": "skip",
+  "target_sha": "1913d2dc9e5308c78a301f8174492bbb4f553269"
+}
