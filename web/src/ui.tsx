@@ -594,17 +594,24 @@ export function StatusRemark(props: { service: Service; status: RowStatus }) {
   const note = noteFor(props.service, props.status).trim()
   const warning = splitWarningMarker(note)
   const discoveryCount = props.service.newVersionDiscoveryCount ?? 0
+  const statusText = <span className="label statusLineLabelText">{statusLabel(props.status)}</span>
   return (
     <div className={`statusCol${discoveryCount > 0 ? ' statusColHasCompactBadge' : ''}`}>
       <div className="statusLine">
         <Icon icon={statusIcon(props.status)} className={statusDotClass(props.status)} aria-hidden="true" />
-        <span className="label">{statusLabel(props.status)}</span>
+        {discoveryCount > 0 ? (
+          <span className="statusLineLabelAnchor">
+            {statusText}
+            <DiscoveryHistoryPopover
+              serviceId={props.service.id}
+              count={discoveryCount}
+              triggerVariant="compact-count"
+            />
+          </span>
+        ) : (
+          statusText
+        )}
       </div>
-      <DiscoveryHistoryPopover
-        serviceId={props.service.id}
-        count={discoveryCount}
-        triggerVariant="compact-count"
-      />
       {note ? (
         <div className={`muted statusNote${warning ? ' statusNoteAnomaly' : ''}`}>
           {warning ? (

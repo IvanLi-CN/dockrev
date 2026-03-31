@@ -774,7 +774,7 @@ html[data-theme='light'] .versionTagsPopover {
 
 .discoveryHistoryTriggerCompact {
   position: absolute;
-  top: 2px;
+  top: 50%;
   right: 0;
   min-width: 22px;
   height: 22px;
@@ -787,6 +787,7 @@ html[data-theme='light'] .versionTagsPopover {
   font-weight: 700;
   line-height: 1;
   box-shadow: 0 8px 18px color-mix(in srgb, var(--color-info) 12%, transparent);
+  transform: translateY(-68%);
 }
 
 .discoveryHistoryPopover {
@@ -1392,10 +1393,8 @@ html[data-theme='light'] .discoveryHistoryPopover {
 }
 
 .statusColHasCompactBadge {
-  position: relative;
   width: 100%;
   min-width: 0;
-  padding-right: 38px;
 }
 
 .statusLine {
@@ -1406,6 +1405,22 @@ html[data-theme='light'] .discoveryHistoryPopover {
   color: var(--muted);
   min-width: 0;
   max-width: 100%;
+  white-space: nowrap;
+}
+
+.statusLineLabelAnchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  padding-right: 44px;
+}
+
+.statusLineLabelText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

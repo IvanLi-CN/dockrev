@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-03-21
-- Last: 2026-03-29
+- Last: 2026-03-31
 
 ## 背景 / 问题陈述
 
@@ -115,7 +115,7 @@
 - `bun run --cwd web build`
 - `bun run --cwd web storybook:screenshots`
 
-## Visual Evidence (PR)
+## Visual Evidence
 
 - source_type: storybook_canvas
 - target_program: mock-only
@@ -125,7 +125,7 @@
 - story_id_or_title: Pages/ServicesPage/StatusBadgeLayout
 - state: status row compact badge
 - evidence_note: 验证真实服务列表行中的 discovery trigger 改为右上角紧凑数字 badge，且状态备注没有被挤压到不可见。
-![Services Status Badge Layout](../../screenshots/storybook/services-status-badge-layout.png)
+![Services Status Badge Layout](./assets/services-status-badge-layout.png)
 
 - source_type: storybook_canvas
 - target_program: mock-only
@@ -133,9 +133,19 @@
 - sensitive_exclusion: N/A
 - submission_gate: pending-owner-approval
 - story_id_or_title: Components/StatusRemark/AllStatuses
+- state: compact badge matrix
+- evidence_note: 验证 `StatusRemark` 的紧凑 badge 锚定到状态文案右上角，而不是整列右上角；多状态备注仍保持可读。
+![StatusRemark Badge Matrix](./assets/status-remark-all-statuses.png)
+
+- source_type: storybook_canvas
+- target_program: mock-only
+- capture_scope: browser-viewport
+- sensitive_exclusion: N/A
+- submission_gate: pending-owner-approval
+- story_id_or_title: Components/StatusRemark/AllStatuses
 - state: discovery timeline popover open
 - evidence_note: 验证状态列中的紧凑 discovery badge 可打开时间线气泡，并展示当前候选 / 历史候选 / 当前运行三段信息。
-![StatusRemark Discovery Timeline](../../screenshots/storybook/status-remark-discovery-timeline-open.png)
+![StatusRemark Discovery Timeline](./assets/status-remark-discovery-timeline-open.png)
 
 - source_type: storybook_canvas
 - target_program: mock-only
@@ -167,3 +177,4 @@
 - 2026-03-22: 同步 discovery count 的 alias 去重口径；重复暴露同一 unresolved alias 的历史只保留一条时间线候选，恢复时间线与 `发现次数` 的数量一致性。
 - 2026-03-22: 根据 fresh review fix，对齐 live candidate 的 alias identity fallback，避免 unresolved 当前候选与同名历史候选在时间线里重复并列。
 - 2026-03-29: 将 `StatusRemark` 的 discovery trigger 收紧为不参与排版的紧凑数字 badge，聚合预览继续保留 inline pill，并补回真实服务行布局的 Storybook 视觉证据。
+- 2026-03-31: 修复紧凑 discovery badge 锚点回归；badge 重新贴靠状态文案右上角，补齐组件/页面 Storybook 断言，并刷新 owner-facing 视觉证据。
