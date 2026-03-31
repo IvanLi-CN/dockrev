@@ -135,7 +135,7 @@ export const StatusBadgeLayout: Story = {
     dockrevApiScenario: 'dashboard-demo',
     dockrevServiceOverridesById: {
       'svc-prod-api': {
-        newVersionDiscoveryCount: 3,
+        newVersionDiscoveryCount: 123,
       },
     },
   },
@@ -151,6 +151,35 @@ export const StatusBadgeLayout: Story = {
           <ServicesPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
         )}
       </PageHarness>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await sleep(120)
+
+    const row = Array.from(canvasElement.querySelectorAll<HTMLElement>('.rowLine')).find(
+      (element) =>
+        element.textContent?.includes('api') &&
+        Boolean(element.querySelector('.discoveryHistoryTriggerCompact')),
+    )
+    expectStory(row, 'expected services row with compact discovery badge')
+    expectStory(
+      !row.querySelector(':scope > .statusCol > .discoveryHistoryTriggerCompact'),
+      'compact badge should not be anchored to the entire status column',
+    )
+
+    const labelAnchor = row.querySelector<HTMLElement>('.statusLineLabelAnchor')
+    expectStory(labelAnchor, 'expected discovery badge to anchor to the status label wrapper')
+    expectStory(
+      labelAnchor?.querySelector('.statusLineLabelText')?.textContent?.includes('可更新'),
+      'expected status label text to stay inside the anchor wrapper',
+    )
+    expectStory(
+      Boolean(labelAnchor?.querySelector('.discoveryHistoryTriggerCompact')),
+      'expected compact discovery badge inside the status label wrapper',
+    )
+    expectStory(
+      Boolean(row.querySelector('.statusNote')?.textContent?.trim()),
+      'expected status remark note to remain visible under the badge',
     )
   },
 }

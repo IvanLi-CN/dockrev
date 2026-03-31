@@ -183,6 +183,24 @@ export const AllStatuses: Story = {
       </div>
     )
   },
+  play: async ({ canvasElement }) => {
+    const anchoredRows = Array.from(canvasElement.querySelectorAll<HTMLElement>('.statusColHasCompactBadge'))
+    const firstAnchoredRow = anchoredRows[0] ?? null
+    if (!firstAnchoredRow) throw new Error('expected at least one status row with compact discovery badge')
+
+    if (firstAnchoredRow.querySelector(':scope > .discoveryHistoryTriggerCompact')) {
+      throw new Error('compact discovery badge should not be anchored directly to the status column')
+    }
+
+    const labelAnchor = firstAnchoredRow.querySelector<HTMLElement>('.statusLineLabelAnchor')
+    if (!labelAnchor) throw new Error('expected compact discovery badge anchor wrapper')
+    if (!labelAnchor.querySelector('.statusLineLabelText')) {
+      throw new Error('expected status label text inside compact badge anchor wrapper')
+    }
+    if (!labelAnchor.querySelector('.discoveryHistoryTriggerCompact')) {
+      throw new Error('expected compact discovery badge inside label anchor wrapper')
+    }
+  },
 }
 
 export const AllStatusesLight: Story = {
