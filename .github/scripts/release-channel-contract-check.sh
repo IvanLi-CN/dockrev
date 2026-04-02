@@ -73,6 +73,8 @@ search_fixed "python3 .github/scripts/release_snapshot.py ensure \\" .github/wor
 search_fixed "python3 .github/scripts/release_snapshot.py export \\" .github/workflows/release.yml
 search_fixed "python3 .github/scripts/release_snapshot.py next-pending \\" .github/workflows/release.yml
 search_fixed "python3 .github/scripts/release_snapshot.py record-override \\" .github/workflows/release.yml
+search_fixed "if [ \"\${{ github.event_name }}\" = \"workflow_dispatch\" ] && [ \"\${{ inputs.admin_action }}\" = \"release\" ]; then" .github/workflows/release.yml
+search_fixed "echo \"target_sha=\${REQUESTED_SHA}\" >> \"\$GITHUB_OUTPUT\"" .github/workflows/release.yml
 search_fixed "Skipped release targets cannot be released manually" .github/workflows/release.yml
 search_fixed 'DOCKREV_TAGS_CSV: ${{ needs.prepare.outputs.tags_csv }}' .github/workflows/release.yml
 search_fixed 'SUPERVISOR_TAGS_CSV: ${{ needs.prepare.outputs.supervisor_tags_csv }}' .github/workflows/release.yml

@@ -204,9 +204,17 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-versions-") as tmp:
             publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
             override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
         )
-        assert pending == [sha2, sha3], (pending, sha2, sha3)
+        assert pending == [sha1, sha2, sha3], (pending, sha1, sha2, sha3)
         assert module.release_tag_points_to_target(snapshot1) is True
         assert module.release_tag_points_to_target(snapshot2) is False
+        assert (
+            module.release_state_for_target(
+                snapshot1,
+                publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+                override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+            )
+            == "pending"
+        )
     finally:
         module.load_pr_for_commit = original_loader
         os.chdir(original_cwd)
@@ -687,6 +695,146 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-publication-regression
         )
         assert exported_after["publish_latest"] is False
         assert exported_after["tags_csv"] == "ghcr.io/ivanli-cn/dockrev:0.35.8"
+    finally:
+        module.load_pr_for_commit = original_loader
+        module.git = original_git
+        os.chdir(original_cwd)
+
+
+with tempfile.TemporaryDirectory(prefix="release-snapshot-tag-only-state-regression-") as tmp:
+    repo = Path(tmp)
+    run("init", cwd=repo)
+    run("config", "user.name", "Test User", cwd=repo)
+    run("config", "user.email", "test@example.com", cwd=repo)
+    run("checkout", "-b", "main", cwd=repo)
+    (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.38.0"\n')
+    (repo / "README.md").write_text("base\n")
+    run("add", "Cargo.toml", "README.md", cwd=repo)
+    run("commit", "-m", "base", cwd=repo)
+    run("tag", "0.38.0", cwd=repo)
+
+    (repo / "README.md").write_text("published release\n")
+    run("add", "README.md", cwd=repo)
+    run("commit", "-m", "published release", cwd=repo)
+    published_sha = run("rev-parse", "HEAD", cwd=repo)
+
+    (repo / "README.md").write_text("tag-only pending release\n")
+    run("add", "README.md", cwd=repo)
+    run("commit", "-m", "tag-only pending release", cwd=repo)
+    tagged_pending_sha = run("rev-parse", "HEAD", cwd=repo)
+
+    original_cwd = Path.cwd()
+    original_loader = module.load_pr_for_commit
+    original_git = module.git
+    try:
+        os.chdir(repo)
+        module.load_pr_for_commit = lambda api_root, repository, token, target_sha, **kwargs: {
+            published_sha: make_pr(601, "Release 0.38.1", published_sha, ["type:patch", "channel:stable"]),
+            tagged_pending_sha: make_pr(602, "Release 0.38.2", tagged_pending_sha, ["type:patch", "channel:stable"]),
+        }[target_sha]
+
+        published_snapshot = module.build_snapshot(
+            target_sha=published_sha,
+            repository="IvanLi-CN/dockrev",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+        )
+        assert published_snapshot["release_tag"] == "0.38.1"
+        run("notes", f"--ref={module.DEFAULT_NOTES_REF}", "add", "-f", "-m", json.dumps(published_snapshot), published_sha, cwd=repo)
+
+        module.git = fake_push_git(original_git, module.DEFAULT_PUBLICATION_NOTES_REF)
+        exit_code = module.record_publication(
+            argparse.Namespace(
+                target_sha=published_sha,
+                snapshot_notes_ref=module.DEFAULT_NOTES_REF,
+                publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+                override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+                dockrev_digest="sha256:" + ("3" * 64),
+                dockrev_supervisor_digest="sha256:" + ("4" * 64),
+                published_at="2026-04-03T08:00:00Z",
+                output=str(repo / "published-publication.json"),
+                max_attempts=1,
+            )
+        )
+        assert exit_code == 0
+        assert (
+            module.release_state_for_target(
+                published_snapshot,
+                publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+                override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+            )
+            == "published"
+        )
+
+        tagged_pending_snapshot = module.build_snapshot(
+            target_sha=tagged_pending_sha,
+            repository="IvanLi-CN/dockrev",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+        )
+        assert tagged_pending_snapshot["release_tag"] == "0.38.2"
+        run(
+            "notes",
+            f"--ref={module.DEFAULT_NOTES_REF}",
+            "add",
+            "-f",
+            "-m",
+            json.dumps(tagged_pending_snapshot),
+            tagged_pending_sha,
+            cwd=repo,
+        )
+        run("tag", "-a", tagged_pending_snapshot["release_tag"], "-m", "Release 0.38.2", tagged_pending_sha, cwd=repo)
+
+        assert module.release_tag_points_to_target(tagged_pending_snapshot) is True
+        assert (
+            module.release_state_for_target(
+                tagged_pending_snapshot,
+                publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+                override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+            )
+            == "pending"
+        )
+        pending = module.pending_release_targets(
+            module.DEFAULT_NOTES_REF,
+            tagged_pending_sha,
+            publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+            override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+        )
+        assert pending == [tagged_pending_sha], pending
+
+        module.git = fake_push_git(original_git, module.DEFAULT_OVERRIDE_NOTES_REF)
+        exit_code = module.record_override(
+            argparse.Namespace(
+                target_sha=tagged_pending_sha,
+                snapshot_notes_ref=module.DEFAULT_NOTES_REF,
+                publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+                override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+                status="skip",
+                reason="manual backfill skipped after verification",
+                output=str(repo / "tagged-pending-override.json"),
+                max_attempts=1,
+            )
+        )
+        assert exit_code == 0
+        assert (
+            module.release_state_for_target(
+                tagged_pending_snapshot,
+                publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+                override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+            )
+            == "skipped"
+        )
+        pending_after_override = module.pending_release_targets(
+            module.DEFAULT_NOTES_REF,
+            tagged_pending_sha,
+            publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+            override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+        )
+        assert pending_after_override == []
     finally:
         module.load_pr_for_commit = original_loader
         module.git = original_git
