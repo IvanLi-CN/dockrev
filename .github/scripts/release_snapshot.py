@@ -651,8 +651,6 @@ def release_state_for_target(
         return "skipped"
     if read_publication(publication_notes_ref, target_sha) is not None:
         return "published"
-    if release_tag_points_to_target(snapshot):
-        return "published"
     return "pending" if snapshot.get("release_enabled") else "disabled"
 
 
