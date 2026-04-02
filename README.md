@@ -164,7 +164,7 @@ See `deploy/README.md` for a minimal Docker Compose deployment.
 - The `Release` workflow still auto-starts from `workflow_run` after `CI (main)` succeeds on `main`, but it now releases the oldest pending snapshot up to that `head_sha` instead of re-deriving intent/version directly from the triggering commit.
 - `workflow_dispatch(head_sha=<main-commit-sha>)` keeps the same input name and serves as the manual backfill path for a specific `main` commit.
 - The `Release` workflow now creates/verifies the release tag before calling the GitHub Release API; release-enabled PRs are forbidden from touching `.github/workflows/**`, so `git push`ing the selected `TARGET_SHA` tag stays within the default `GITHUB_TOKEN` permission model.
-- After GHCR image push, GitHub Release creation/update, and source-PR release comment verification all succeed, the `Release` workflow records a mutable publication ledger in git notes `refs/notes/release-publications`; stable `latest` is derived from the newest published stable note, not merely the newest stable snapshot.
+- After GHCR image push, GitHub Release creation/update, and source-PR release comment verification all succeed, the `Release` workflow records a mutable publication ledger in git notes `refs/notes/release-publications`; stable `latest` is derived from the newest published stable note, not merely the newest stable snapshot, and the workflow passes that decision into `ncipollo/release-action` via `makeLatest`.
 - The `Release` workflow cleans up Actions artifacts after a successful run; on non-success, it keeps key artifacts with `retention-days: 1` and deletes `*.dockerbuild` build records to avoid long-tail storage usage
 - Automatic releases are gated by PR intent labels (exactly one required on PRs targeting `main`):
   - `type:docs` / `type:skip` → skip release
@@ -174,7 +174,7 @@ See `deploy/README.md` for a minimal Docker Compose deployment.
   - `channel:stable` → publish a stable release (tag: `<semver>`, updates `latest`)
   - `channel:rc` → publish an RC prerelease (tag: `<semver>-rc.<shortsha>`, GitHub Release marked as prerelease, and does **not** update `latest`)
 - Direct `push` to `main` without an associated PR conservatively skips release
-- `latest` is updated only by the newest published stable release currently visible on `main`
+- `latest` is updated only by the newest published stable release currently visible on `main`, both for GHCR tags and GitHub's Release-page latest pointer
 - The release admin path can mark a frozen mislabel target as skipped via `workflow_dispatch(head_sha=<main-commit-sha>, admin_action=skip)`; the skip is stored in `refs/notes/release-overrides` without rewriting immutable snapshots
 - A manually requested `workflow_dispatch(..., admin_action=release)` run refuses targets already marked as skipped, so override-ledger decisions cannot be bypassed into a partial artifact publish
 - After GitHub Release succeeds, the workflow must leave exactly one bot-owned marker-based issue comment on the source PR with the actual `release_tag`, release URL, workflow run URL, and channel; the workflow auto-prunes older bot-owned duplicate markers, but still fails if a foreign marker blocks the contract

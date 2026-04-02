@@ -79,6 +79,7 @@ search_fixed 'SUPERVISOR_TAGS_CSV: ${{ needs.prepare.outputs.supervisor_tags_csv
 search_fixed "inputs: { head_sha: nextSha, admin_action: 'release', override_reason: '' }" .github/workflows/release.yml
 search_fixed "Create and push tag" .github/workflows/release.yml
 search_fixed 'git push origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"' .github/workflows/release.yml
+search_fixed "makeLatest: \${{ needs.prepare.outputs.publish_latest }}" .github/workflows/release.yml
 ensure_fixed_absent 'commit: ${{ env.TARGET_SHA }}' .github/workflows/release.yml
 python3 - <<'PY'
 from pathlib import Path
@@ -86,6 +87,9 @@ text = Path('.github/workflows/release.yml').read_text()
 needle = "prerelease: ${{ env.RELEASE_CHANNEL == 'rc' }}"
 if needle not in text:
     raise SystemExit('[contract-check] expected prerelease gate in release workflow')
+latest_needle = "makeLatest: ${{ needs.prepare.outputs.publish_latest }}"
+if latest_needle not in text:
+    raise SystemExit('[contract-check] expected explicit makeLatest wiring in release workflow')
 
 tag_step = "Create and push tag"
 release_step = "Create or update GitHub Release + upload assets"

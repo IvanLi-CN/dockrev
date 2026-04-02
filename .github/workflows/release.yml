@@ -867,6 +867,7 @@ jobs:
           tag: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TAG }}
           prerelease: ${{ env.RELEASE_CHANNEL == 'rc' }}
+          makeLatest: ${{ needs.prepare.outputs.publish_latest }}
           generateReleaseNotes: true
           allowUpdates: true
           replacesArtifacts: true
