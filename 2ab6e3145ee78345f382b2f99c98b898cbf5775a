@@ -1,8 +1,8 @@
 {
-  "dockrev_digest": "sha256:c3de08f324b0b6dcbab00d191e2bbf04f74f195622c735ec0487c0891c2d35c3",
-  "dockrev_supervisor_digest": "sha256:53cbbd40687a54597ec10f57a2ac51939b76b37a98ca1a143c94774bf1e4cee2",
+  "dockrev_digest": "sha256:58437da8bac7bed149b4547f6c3fc4b0abd4ef0cb32e63db2f626f66df34997f",
+  "dockrev_supervisor_digest": "sha256:7d9711614a8180142074c92096c92b55ed2834304e56dfcfb85f816e2622f7c5",
   "pr_number": 190,
-  "published_at": "2026-04-01T05:11:15Z",
+  "published_at": "2026-04-02T19:21:00Z",
   "release_channel": "stable",
   "release_tag": "0.38.0",
   "schema_version": 1,
