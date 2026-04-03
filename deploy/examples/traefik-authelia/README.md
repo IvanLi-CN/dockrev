@@ -24,7 +24,7 @@ Replace these placeholders in both `docker-compose.yml` and `authelia/configurat
 - `auth.example.com`
 - `example.com`
 - `admin@example.com`
-- `ghcr.io/ivanli-cn/dockrev:<semver>`
+- `ghcr.io/ivanli-cn/dockrev:latest`
 - every `change-me-*` secret
 
 Also replace the password hash in `authelia/users.yml`.
@@ -53,6 +53,8 @@ chmod 600 data/traefik/acme.json
 
 docker compose up -d
 ```
+
+If you prefer immutable/manual upgrades, replace `ghcr.io/ivanli-cn/dockrev:latest` with a concrete semver tag and do not enable the GitHub Actions production auto-deploy job for that stack.
 
 ## Transparent ingress contract
 
