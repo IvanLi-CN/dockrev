@@ -40,7 +40,7 @@ services:
       - proxy
 
   dockrev:
-    image: ghcr.io/ivanli-cn/dockrev:<semver>
+    image: ghcr.io/ivanli-cn/dockrev:latest
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
