@@ -70,39 +70,3 @@ This example keeps all Dockrev and Supervisor traffic on normal service/path rou
 ## Using a released image
 
 The root README documents the currently published images and runtime variables.
-
-For a production stack that should automatically consume the newest stable release, point both services at moving tags:
-
-```yaml
-services:
-  dockrev:
-    image: ghcr.io/ivanli-cn/dockrev:latest
-  supervisor:
-    image: ghcr.io/ivanli-cn/dockrev-supervisor:latest
-```
-
-If you prefer immutable/manual upgrades, pin `dockrev` to a concrete semver tag instead and leave the GitHub Actions production auto-deploy job disabled for that stack.
-
-## Optional GitHub Actions production auto-deploy
-
-If you want `Release` to automatically consume the newest stable `latest` image on production after GHCR + GitHub Release succeed, configure these repository-level variables and secrets:
-
-- Variables:
-  - `PRODUCTION_DEPLOY_HOST`
-  - `PRODUCTION_DEPLOY_SSH_PORT` (optional, defaults to `22`)
-  - `PRODUCTION_DEPLOY_USER`
-  - `PRODUCTION_DEPLOY_STACK_DIR`
-  - `PRODUCTION_DEPLOY_COMPOSE_FILE`
-  - `PRODUCTION_DEPLOY_SERVICES` (optional, defaults to `dockrev supervisor`)
-  - `PRODUCTION_DEPLOY_VERSION_URL`
-- Secrets:
-  - `PRODUCTION_DEPLOY_SSH_KEY`
-  - `PRODUCTION_DEPLOY_SSH_KNOWN_HOSTS`
-
-Behavior:
-
-- The deploy job only runs for stable releases where `publish_latest=true`.
-- If any required variable/secret is missing, the release still succeeds and the deploy job is skipped with an explicit summary entry.
-- If your production Compose service names differ from the minimal example (`dockrev` + `supervisor`), set `PRODUCTION_DEPLOY_SERVICES` explicitly.
-- The target stack must already consume moving tags for the upgraded services (for example `ghcr.io/ivanli-cn/dockrev:latest` and `ghcr.io/ivanli-cn/dockrev-supervisor:latest`). If you pin `dockrev` to a semver tag for manual upgrades, do not enable this auto-deploy path.
-- When enabled, the job runs `docker compose pull` + `docker compose up -d` for the configured services on the target host, verifies each container image label version, then verifies the public version endpoint matches the released tag.
