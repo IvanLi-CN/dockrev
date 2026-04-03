@@ -101,7 +101,7 @@ Operationally this means:
 ```yaml
 services:
   dockrev:
-    image: ghcr.io/ivanli-cn/dockrev:latest
+    image: ghcr.io/ivanli-cn/dockrev:<semver>
   supervisor:
     image: ghcr.io/ivanli-cn/dockrev-supervisor:latest
 ```
@@ -110,30 +110,6 @@ Notes:
 
 - `latest` is updated by the stable release workflow only.
 - Prefer `0.3.5+` to avoid historical executable-bit issues.
-- If you want manual/immutable upgrades, switch `dockrev` back to a concrete semver tag; that pinned stack should not enable the stable-latest auto-deploy path below.
-
-## Optional GitHub Actions stable latest auto-deploy
-
-If you want the repository `Release` workflow to automatically apply the newest stable `latest` image to production after publishing succeeds, configure these repository-level variables and secrets:
-
-- Variables:
-  - `PRODUCTION_DEPLOY_HOST`
-  - `PRODUCTION_DEPLOY_SSH_PORT` (optional, defaults to `22`)
-  - `PRODUCTION_DEPLOY_USER`
-  - `PRODUCTION_DEPLOY_STACK_DIR`
-  - `PRODUCTION_DEPLOY_COMPOSE_FILE`
-  - `PRODUCTION_DEPLOY_SERVICES` (optional, defaults to `dockrev supervisor`)
-  - `PRODUCTION_DEPLOY_VERSION_URL`
-- Secrets:
-  - `PRODUCTION_DEPLOY_SSH_KEY`
-  - `PRODUCTION_DEPLOY_SSH_KNOWN_HOSTS`
-
-Notes:
-
-- The job only runs for stable releases where `publish_latest=true`.
-- If any required variable or secret is missing, the release still succeeds and the deploy job is marked as skipped in the workflow summary.
-- If your production Compose service names differ from the minimal example (`dockrev` / `supervisor`), set `PRODUCTION_DEPLOY_SERVICES` explicitly.
-- The target stack must already consume moving tags for the upgraded services (for example `ghcr.io/ivanli-cn/dockrev:latest` and `ghcr.io/ivanli-cn/dockrev-supervisor:latest`). If you pin `dockrev` to a semver tag for manual upgrades, do not enable this auto-deploy path.
 
 ## Paths and proxy routing
 

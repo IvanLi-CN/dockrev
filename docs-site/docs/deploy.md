@@ -105,7 +105,7 @@ DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV=false
 ```yaml
 services:
   dockrev:
-    image: ghcr.io/ivanli-cn/dockrev:latest
+    image: ghcr.io/ivanli-cn/dockrev:<semver>
   supervisor:
     image: ghcr.io/ivanli-cn/dockrev-supervisor:latest
 ```
@@ -114,30 +114,6 @@ services:
 
 - `latest` 仅在稳定 Release 更新。
 - 建议使用 `0.3.5+`，避免历史 exec bit 问题。
-- 若你希望手动控制升级节奏，可把 `dockrev` 改回具体 semver；但这种 pinned stack 不应启用下方的自动部署 stable latest。
-
-## 可选：GitHub Actions 自动部署 stable latest
-
-若你希望仓库 `Release` workflow 在稳定版 `latest` 发布成功后自动把生产环境拉到新版本，可配置这些仓库级变量与 Secrets：
-
-- Variables：
-  - `PRODUCTION_DEPLOY_HOST`
-  - `PRODUCTION_DEPLOY_SSH_PORT`（可选，默认 `22`）
-  - `PRODUCTION_DEPLOY_USER`
-  - `PRODUCTION_DEPLOY_STACK_DIR`
-  - `PRODUCTION_DEPLOY_COMPOSE_FILE`
-  - `PRODUCTION_DEPLOY_SERVICES`（可选，默认 `dockrev supervisor`）
-  - `PRODUCTION_DEPLOY_VERSION_URL`
-- Secrets：
-  - `PRODUCTION_DEPLOY_SSH_KEY`
-  - `PRODUCTION_DEPLOY_SSH_KNOWN_HOSTS`
-
-说明：
-
-- 只有 stable 且 `publish_latest=true` 的 release 会触发该 job。
-- 若缺少任一必需变量/Secret，release 仍会成功，deploy job 仅在 summary 中显式标记为 skipped。
-- 若你的生产 Compose 服务名不是示例默认的 `dockrev` / `supervisor`，请显式设置 `PRODUCTION_DEPLOY_SERVICES`。
-- 目标 stack 必须已经使用 moving tags（例如 `ghcr.io/ivanli-cn/dockrev:latest` 与 `ghcr.io/ivanli-cn/dockrev-supervisor:latest`）；若你把 `dockrev` 固定在某个 semver 以便手动升级，就不要启用这个自动部署路径。
 
 ## 反向代理与路径
 
