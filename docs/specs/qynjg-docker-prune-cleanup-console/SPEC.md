@@ -171,6 +171,17 @@
   target_program: `mock-only`
   capture_scope: `browser-viewport`
   sensitive_exclusion: `N/A`
+  submission_gate: `approved`
+  story_id_or_title: `Pages/CleanupPage/UsageOverviewFocus`
+  state: `server status summary above cleanup rules`
+  evidence_note: 验证清理页把“服务器状态 / 当前占用”提升为独立上层摘要区，使用 `7.15 GB+` 这类更友好的主值表达，并将容器、镜像、卷、其他占用卡片放在清理规则之上，避免与 preset 语义混淆。
+
+![Cleanup page storage status](./assets/cleanup-page-storage-status.png)
+
+- source_type: `storybook_canvas`
+  target_program: `mock-only`
+  capture_scope: `browser-viewport`
+  sensitive_exclusion: `N/A`
   submission_gate: `pending-owner-approval`
   story_id_or_title: `Pages/CleanupPage/ConfirmDialogLatestScan`
   state: `confirm dialog latest scan`
