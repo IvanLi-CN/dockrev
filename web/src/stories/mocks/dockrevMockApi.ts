@@ -21,6 +21,7 @@ import type {
   ResolveGitHubPackagesTargetResponse,
   ServiceRepoLinkInferenceResponse,
   ServiceResourceSample,
+  ServiceRollbackTargetResponse,
   ServiceSettings,
   SettingsResponse,
   StackDetail,
@@ -46,6 +47,10 @@ export type DockrevApiScenario =
   | 'dashboard-demo'
   | 'dashboard-demo-slow-update'
   | 'dashboard-demo-hydrated-update'
+  | 'service-detail-rollback-available'
+  | 'service-detail-rollback-unavailable'
+  | 'service-detail-rollback-active'
+  | 'service-detail-rollback-confirm-open'
   | 'link-icon-catalog'
   | 'digest-pinned-image-display'
   | 'services-inference-pending-candidate-loading'
@@ -327,6 +332,7 @@ type Fixture = {
   githubPackagesSettings: GitHubPackagesSettingsResponse
   githubPackagesRepos: GitHubPackagesRepo[]
   serviceSettingsById: Record<string, ServiceSettings>
+  rollbackTargetByServiceId: Record<string, ServiceRollbackTargetResponse>
   repoLinkInferenceByServiceId: Record<string, ServiceRepoLinkInferenceResponse>
   deployCheckReport: DeployCheckReportResponse
   deployWelcome: DeployWelcomeResponse
@@ -737,6 +743,7 @@ function baseEmpty(): Fixture {
     githubPackagesSettings: makeDefaultGitHubPackagesSettings(),
     githubPackagesRepos: [],
     serviceSettingsById: {},
+    rollbackTargetByServiceId: {},
     repoLinkInferenceByServiceId: {},
     deployCheckReport: makeDefaultDeployCheckReport(),
     deployWelcome: makeDefaultDeployWelcome(),
@@ -2704,6 +2711,60 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
     }
     return fixture
   }
+  if (
+    scenario === 'service-detail-rollback-available' ||
+    scenario === 'service-detail-rollback-confirm-open'
+  ) {
+    const fixture = buildDashboardDemo()
+    const currentDigest = fixture.stackById['stack-prod']?.services.find((service) => service.id === 'svc-prod-api')?.image.digest ?? ''
+    fixture.rollbackTargetByServiceId['svc-prod-api'] = {
+      available: true,
+      currentDigest,
+      currentDisplayTag: '5.2.1',
+      targetDigest: 'sha256:0000000000000000000000000000000000000000000000000000000000000010',
+      targetDisplayTag: '5.2.0',
+      sourceUpdateJobId: 'job-update-rollback-source',
+      sourceFinishedAt: '2026-04-05T08:12:00.000Z',
+      unavailableReason: null,
+      activeJobId: null,
+      activeJobStatus: null,
+    }
+    return fixture
+  }
+  if (scenario === 'service-detail-rollback-unavailable') {
+    const fixture = buildDashboardDemo()
+    const currentDigest = fixture.stackById['stack-prod']?.services.find((service) => service.id === 'svc-prod-api')?.image.digest ?? ''
+    fixture.rollbackTargetByServiceId['svc-prod-api'] = {
+      available: false,
+      currentDigest,
+      currentDisplayTag: '5.2.1',
+      targetDigest: null,
+      targetDisplayTag: null,
+      sourceUpdateJobId: null,
+      sourceFinishedAt: null,
+      unavailableReason: 'no_matching_update_history',
+      activeJobId: null,
+      activeJobStatus: null,
+    }
+    return fixture
+  }
+  if (scenario === 'service-detail-rollback-active') {
+    const fixture = buildDashboardDemo()
+    const currentDigest = fixture.stackById['stack-prod']?.services.find((service) => service.id === 'svc-prod-api')?.image.digest ?? ''
+    fixture.rollbackTargetByServiceId['svc-prod-api'] = {
+      available: false,
+      currentDigest,
+      currentDisplayTag: '5.2.1',
+      targetDigest: 'sha256:0000000000000000000000000000000000000000000000000000000000000010',
+      targetDisplayTag: '5.2.0',
+      sourceUpdateJobId: 'job-update-rollback-source',
+      sourceFinishedAt: '2026-04-05T08:12:00.000Z',
+      unavailableReason: 'rollback_in_progress',
+      activeJobId: 'job-rollback-service',
+      activeJobStatus: 'running',
+    }
+    return fixture
+  }
   if (scenario === 'link-icon-catalog') return buildLinkIconCatalog()
   if (scenario === 'digest-pinned-image-display') return buildDigestPinnedImageDisplay()
   if (scenario === 'repo-link-editing') {
@@ -3917,6 +3978,156 @@ export function installDockrevMockApi(
           }
         }, settleDelayMs)
       }, updateFinishDelayMs)
+      return json({ jobId })
+    }
+    if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/rollback-target')) {
+      const serviceId = decodeURIComponent(urlPath.split('/').slice(3, -1).join('/'))
+      const found = findService(serviceId)
+      if (!found) return json({ error: { code: 'not_found', message: 'service not found' } }, { status: 404 })
+
+      const currentDigest = found.svc.image.digest ?? ''
+      const currentDisplayTag = found.svc.image.resolvedTag ?? found.svc.image.tag ?? null
+      const target = f.rollbackTargetByServiceId[serviceId]
+      if (!target) {
+        return json({
+          available: false,
+          currentDigest,
+          currentDisplayTag,
+          targetDigest: null,
+          targetDisplayTag: null,
+          sourceUpdateJobId: null,
+          sourceFinishedAt: null,
+          unavailableReason: 'no_matching_update_history',
+          activeJobId: null,
+          activeJobStatus: null,
+        } satisfies ServiceRollbackTargetResponse)
+      }
+
+      return json({
+        ...target,
+        currentDigest: target.currentDigest || currentDigest,
+        currentDisplayTag: target.currentDisplayTag ?? currentDisplayTag,
+      } satisfies ServiceRollbackTargetResponse)
+    }
+    if (method === 'POST' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/rollback')) {
+      const serviceId = decodeURIComponent(urlPath.split('/').slice(3, -1).join('/'))
+      const found = findService(serviceId)
+      if (!found) return json({ error: { code: 'not_found', message: 'service not found' } }, { status: 404 })
+
+      const target = f.rollbackTargetByServiceId[serviceId] ?? {
+        available: false,
+        currentDigest: found.svc.image.digest ?? '',
+        currentDisplayTag: found.svc.image.resolvedTag ?? found.svc.image.tag ?? null,
+        targetDigest: null,
+        targetDisplayTag: null,
+        sourceUpdateJobId: null,
+        sourceFinishedAt: null,
+        unavailableReason: 'no_matching_update_history',
+        activeJobId: null,
+        activeJobStatus: null,
+      } satisfies ServiceRollbackTargetResponse
+
+      if (!target.available || !target.targetDigest) {
+        return json(
+          {
+            error: {
+              code: 'conflict',
+              message: 'service rollback is unavailable',
+              details: {
+                reason: target.unavailableReason ?? 'no_matching_update_history',
+                existingJobId: target.activeJobId ?? null,
+              },
+            },
+          },
+          { status: 409 },
+        )
+      }
+
+      jobSeq += 1
+      const jobId = `job-rollback-ui-${jobSeq}`
+      const createdAt = nowIso(-1_500)
+      const startedAt = nowIso(-1_000)
+      const job: JobListItem = {
+        id: jobId,
+        type: 'rollback',
+        scope: 'service',
+        stackId: found.stack.id,
+        serviceId,
+        status: 'running',
+        createdBy: 'ivan',
+        reason: 'ui',
+        createdAt,
+        startedAt,
+        finishedAt: null,
+        allowArchMismatch: false,
+        backupMode: 'inherit',
+        summary: {
+          mode: 'rollback',
+          currentDigest: target.currentDigest,
+          currentDisplayTag: target.currentDisplayTag ?? null,
+          targetDigest: target.targetDigest,
+          targetDisplayTag: target.targetDisplayTag ?? null,
+          sourceUpdateJobId: target.sourceUpdateJobId ?? null,
+          sourceFinishedAt: target.sourceFinishedAt ?? null,
+        },
+      }
+      f.jobs = [job, ...f.jobs]
+      f.jobById[jobId] = {
+        ...job,
+        logs: [
+          { ts: createdAt, level: 'info', msg: 'Rollback queued by UI.' },
+          { ts: startedAt, level: 'info', msg: 'Rollback started...' },
+        ],
+        logsLastId: 2,
+      }
+      f.rollbackTargetByServiceId[serviceId] = {
+        ...target,
+        available: false,
+        activeJobId: jobId,
+        activeJobStatus: 'running',
+        unavailableReason: 'rollback_in_progress',
+      }
+
+      window.setTimeout(() => {
+        const live = f.jobById[jobId]
+        if (!live || (live.status !== 'queued' && live.status !== 'running')) return
+
+        const finishedAt = nowIso()
+        found.svc.image = {
+          ...found.svc.image,
+          digest: target.targetDigest!,
+          resolvedTag: target.targetDisplayTag ?? found.svc.image.resolvedTag ?? found.svc.image.tag,
+          tag: target.targetDisplayTag ?? found.svc.image.tag,
+          resolvedTags: target.targetDisplayTag
+            ? Array.from(new Set([target.targetDisplayTag, ...(found.svc.image.resolvedTags ?? [])].filter(Boolean)))
+            : found.svc.image.resolvedTags ?? null,
+        }
+        found.svc.candidate = null
+        syncStackListItem(found.stack.id)
+
+        const nextLogs = [...live.logs, { ts: finishedAt, level: 'info', msg: 'Rollback finished.' }]
+        f.jobById[jobId] = {
+          ...live,
+          status: 'rolled_back',
+          finishedAt,
+          logs: nextLogs,
+          logsLastId: nextLogs.length,
+        }
+        f.jobs = f.jobs.map((row) => (row.id === jobId ? { ...row, status: 'rolled_back', finishedAt } : row))
+        f.rollbackTargetByServiceId[serviceId] = {
+          available: false,
+          currentDigest: target.targetDigest!,
+          currentDisplayTag: target.targetDisplayTag ?? found.svc.image.resolvedTag ?? found.svc.image.tag ?? null,
+          targetDigest: null,
+          targetDisplayTag: null,
+          sourceUpdateJobId: target.sourceUpdateJobId ?? null,
+          sourceFinishedAt: target.sourceFinishedAt ?? finishedAt,
+          unavailableReason: 'no_matching_update_history',
+          activeJobId: null,
+          activeJobStatus: null,
+        }
+      }, 1_200)
+
       return json({ jobId })
     }
 
