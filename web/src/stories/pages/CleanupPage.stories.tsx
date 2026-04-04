@@ -7,6 +7,7 @@ const meta: Meta<typeof CleanupPage> = {
   title: 'Pages/CleanupPage',
   component: CleanupPage,
   decorators: [withDockrevMockApi],
+  tags: ['autodocs'],
 }
 
 export default meta
@@ -64,6 +65,10 @@ export const Default: Story = {
     assertStory(activeNav, 'cleanup nav item should be active')
     assertStory(canvasElement.textContent?.includes('旧镜像未被任何容器使用'), 'resource reason should be visible')
     assertStory(!(canvasElement.textContent?.includes('服务直属候选') ?? false), 'generic candidate copy should be removed')
+    assertStory(canvasElement.textContent?.includes('空间概览'), 'cleanup summary section should be visible')
+    assertStory(canvasElement.textContent?.includes('容器'), 'cleanup container card should be visible')
+    assertStory(canvasElement.textContent?.includes('镜像'), 'cleanup image card should be visible')
+    assertStory(canvasElement.textContent?.includes('卷'), 'cleanup volume card should be visible')
   },
 }
 
@@ -127,5 +132,15 @@ export const StaleFingerprintRetry: Story = {
     secondConfirm.click()
 
     await waitForCondition(() => window.location.hash.includes('/queue/job-cleanup-1'))
+  },
+}
+
+export const UsageOverviewFocus: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console-aggressive-unowned' },
+  render: renderPage,
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => canvasElement.textContent?.includes('空间概览') ?? false)
+    assertStory(canvasElement.textContent?.includes('其他'), 'cleanup other card should be visible in focus story')
+    assertStory(canvasElement.textContent?.includes('Docker 清理候选'), 'cleanup summary pill should be visible')
   },
 }
