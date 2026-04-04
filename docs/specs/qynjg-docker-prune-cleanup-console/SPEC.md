@@ -173,8 +173,8 @@
   sensitive_exclusion: `N/A`
   submission_gate: `approved`
   story_id_or_title: `Pages/CleanupPage/UsageOverviewFocus`
-  state: `server status summary above cleanup rules`
-  evidence_note: 验证清理页把“服务器状态 / 当前占用”提升为独立上层摘要区，使用 `7.15 GB+` 这类更友好的主值表达，并将清理规则 tabs 内联到标题区、压缩占用卡片高度，减少首屏空间浪费。
+  state: `reclaimable candidate summary above cleanup rules`
+  evidence_note: 验证清理页把“可回收候选”提升为独立上层摘要区，使用 `7.15 GB+` 这类更友好的主值表达，并将清理规则 tabs 内联到标题区、压缩占用卡片高度，减少首屏空间浪费，同时避免把候选回收量误写成服务器总占用。
 
 ![Cleanup page storage status](./assets/cleanup-page-storage-status.png)
 

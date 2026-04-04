@@ -76,28 +76,28 @@ const CLEANUP_USAGE_CARD_META: Array<{
   {
     key: 'container',
     label: '容器',
-    description: '已退出容器与残留运行时空间',
+    description: '可回收容器层与残留运行时空间',
     icon: Box,
     toneClassName: 'cleanupUsageCardContainer',
   },
   {
     key: 'image',
     label: '镜像',
-    description: '旧 tag 与未被引用的镜像层',
+    description: '可回收旧 tag 与未被引用的镜像层',
     icon: Package,
     toneClassName: 'cleanupUsageCardImage',
   },
   {
     key: 'volume',
     label: '卷',
-    description: '缓存、数据卷与未挂载持久化内容',
+    description: '可回收缓存、数据卷与未挂载持久化内容',
     icon: HardDrive,
     toneClassName: 'cleanupUsageCardVolume',
   },
   {
     key: 'other',
     label: '其他',
-    description: '网络与 builder cache 等辅助资源',
+    description: '可回收网络与 builder cache 等辅助资源',
     icon: Layers3,
     toneClassName: 'cleanupUsageCardOther',
   },
@@ -894,21 +894,21 @@ export function CleanupPage(props: {
       <section className="card cleanupStatusCard">
         <div className="cleanupStatusHead">
           <div className="cleanupOverviewIntro">
-            <SectionTitle>服务器状态</SectionTitle>
+            <SectionTitle>空间概览</SectionTitle>
             <div className="cleanupOverviewTitleRow">
-              <div className="title">当前占用</div>
-              <Pill tone="info">Docker 候选聚合</Pill>
+              <div className="title">可回收候选</div>
+              <Pill tone="info">Docker 清理候选</Pill>
             </div>
-            <div className="cleanupUsageSectionHint">这是最近一次全量扫描识别到的当前占用分布，用来看清空间主要压在哪类资源。</div>
+            <div className="cleanupUsageSectionHint">这是最近一次全量扫描识别到的可回收候选分布，用来看清回收空间主要集中在哪类资源。</div>
           </div>
           <div className="cleanupOverviewStats cleanupStatusStats">
             <div className="cleanupOverviewStat">
-              <div className="sectionTitle">当前识别占用</div>
+              <div className="sectionTitle">当前可回收候选</div>
               <div className="cleanupOverviewStatValue">
                 {pageScan ? formatEstimate(pageScan.estimatedReclaimableBytes, pageScan.hasUnknownSize) : '-'}
               </div>
               <div className="cleanupOverviewStatHint">
-                {pageUnknownCount > 0 ? `${pageUnknownCount} 项待估，已知部分按下限展示` : '基于最近一次全量扫描'}
+                {pageUnknownCount > 0 ? `${pageUnknownCount} 项待估，已知部分按下限展示` : '基于最近一次全量扫描候选'}
               </div>
             </div>
             <div className="cleanupOverviewStat">
