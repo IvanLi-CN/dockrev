@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-03-29
-- Last: 2026-03-30
+- Last: 2026-04-04
 
 ## 背景 / 问题陈述
 
@@ -174,7 +174,7 @@
   submission_gate: `approved`
   story_id_or_title: `Pages/CleanupPage/UsageOverviewFocus`
   state: `server status summary above cleanup rules`
-  evidence_note: 验证清理页把“服务器状态 / 当前占用”提升为独立上层摘要区，使用 `7.15 GB+` 这类更友好的主值表达，并将容器、镜像、卷、其他占用卡片放在清理规则之上，避免与 preset 语义混淆。
+  evidence_note: 验证清理页把“服务器状态 / 当前占用”提升为独立上层摘要区，使用 `7.15 GB+` 这类更友好的主值表达，并将清理规则 tabs 内联到标题区、压缩占用卡片高度，减少首屏空间浪费。
 
 ![Cleanup page storage status](./assets/cleanup-page-storage-status.png)
 
@@ -218,6 +218,7 @@ None
 
 - 2026-03-29：创建规格，冻结 cleanup preset、scope、confirm 与 stale fingerprint 契约。
 - 2026-03-29：完成 cleanup console 实装、Storybook 场景、视觉证据与 contract 同步。
+- 2026-04-04：将清理页“服务器状态”摘要区压缩为更紧凑的信息密度，并把 preset tabs 内联进清理规则标题区，减少首屏纵向空白。
 
 ## 参考（References）
 
