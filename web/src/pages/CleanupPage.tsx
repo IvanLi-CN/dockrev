@@ -931,7 +931,7 @@ export function CleanupPage(props: {
 
       <section className="card cleanupOverviewCard">
         <div className="cleanupOverviewHead">
-          <div className="cleanupOverviewIntro">
+          <div className="cleanupOverviewIntro cleanupRuleIntro">
             <SectionTitle>清理规则</SectionTitle>
             <div className="cleanupOverviewTitleRow">
               <div className="title">{activePresetMeta.label}</div>
@@ -939,6 +939,20 @@ export function CleanupPage(props: {
                 {response ? `${countVisibleResources(response)} 项候选` : '扫描中'}
               </Pill>
             </div>
+
+            <Tabs onValueChange={(value) => setActivePreset(value as CleanupPreset)} value={activePreset}>
+              <TabsList className="cleanupPresetTabs cleanupPresetTabsInline" aria-label="清理规则">
+                {PRESET_META.map((preset) => (
+                  <TabsTrigger
+                    key={preset.key}
+                    className={activePreset === preset.key ? 'cleanupPresetTab cleanupPresetTabActive' : 'cleanupPresetTab'}
+                    value={preset.key}
+                  >
+                    {preset.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
           </div>
           <div className="cleanupOverviewStats cleanupRuleStats">
             <div className="cleanupOverviewStat">
@@ -958,20 +972,6 @@ export function CleanupPage(props: {
             </div>
           </div>
         </div>
-
-        <Tabs onValueChange={(value) => setActivePreset(value as CleanupPreset)} value={activePreset}>
-          <TabsList className="cleanupPresetTabs" aria-label="清理规则">
-            {PRESET_META.map((preset) => (
-              <TabsTrigger
-                key={preset.key}
-                className={activePreset === preset.key ? 'cleanupPresetTab cleanupPresetTabActive' : 'cleanupPresetTab'}
-                value={preset.key}
-              >
-                {preset.label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
       </section>
 
       {pageError ? <div className="cleanupAlert cleanupAlertError">{pageError}</div> : null}

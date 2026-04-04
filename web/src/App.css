@@ -6759,6 +6759,12 @@ html[data-theme='light'] .card {
   line-height: 1.35;
 }
 
+.cleanupRuleIntro {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .cleanupPresetTabs {
   margin-top: 18px;
   width: 100%;
@@ -6767,6 +6773,13 @@ html[data-theme='light'] .card {
   padding: 0;
   background: transparent;
   flex-wrap: wrap;
+}
+
+.cleanupPresetTabsInline {
+  margin-top: 2px;
+  width: auto;
+  max-width: min(100%, 760px);
+  gap: 8px;
 }
 
 .cleanupPresetTab {
@@ -7035,6 +7048,10 @@ html[data-theme='light'] .card {
 
   .cleanupPresetTabs {
     gap: 8px;
+  }
+
+  .cleanupPresetTabsInline {
+    width: 100%;
   }
 }
 
