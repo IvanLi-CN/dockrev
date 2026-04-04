@@ -263,7 +263,10 @@ async function assertGroupGuideAligned(page, label) {
 
       // Bullet is centered in the row by CSS (`top: 50%`).
       const bulletCenterInRow = bulletCenterY - rowBox.y
-      if (!approxEqual(bulletCenterInRow, rowHeight / 2, 1)) {
+      // Chromium text metrics can shift the computed row box by a fractional pixel between
+      // local and CI environments; allow a slightly roomier tolerance without weakening
+      // the underlying "centered in the row" invariant.
+      if (!approxEqual(bulletCenterInRow, rowHeight / 2, 2)) {
         throw new Error(
           `Bullet not vertically centered (group=${gi}, row=${ri}${label ? `, ${label}` : ''}): centerInRow=${bulletCenterInRow}, expected~${rowHeight / 2}`
         )

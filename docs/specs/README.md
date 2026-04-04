@@ -109,3 +109,4 @@
 | 6mqve | Dockrev：概览页发现异常卡片可读性重构 | 已完成 | `6mqve-overview-discovery-card-readability/SPEC.md` | 2026-03-27 | fast-track（lint/build/test-storybook + storybook evidence） |
 | qnq3w | Dockrev：Release Publication 对齐 latest 与 PR 发版评论 | 已完成 | `qnq3w-release-publication-latest-pr-comment/SPEC.md` | 2026-03-28 | fast-track（PR #187 merge-ready；publication ledger + PR release-version issue comment + self-test/README sync；supersedes #48mh8 comment non-goal） |
 | 89ctg | Dockrev：更新按钮整页刷新后恢复运行态 | 已完成 | `89ctg-update-button-refresh-spinner-recovery/SPEC.md` | 2026-03-30 | fast-track（provider hydration + hydration regression tests + storybook visual evidence） |
+| uzn7t | Dockrev：顶部用户信息入口弹层 | 已完成 | `uzn7t-topbar-user-identity-popover/SPEC.md` | 2026-04-05 | fast-track（implementation + storybook + visual evidence + review-loop completed；awaiting screenshot push approval） |

@@ -1,5 +1,5 @@
 import './App.css'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AppShell } from './Shell'
 import type { Route } from './routes'
 import { navigate } from './routes'
@@ -19,7 +19,20 @@ import { brandMarkUrl } from './publicAssetUrls'
 import { DeployWelcomePage } from './pages/DeployWelcomePage'
 import { UnauthorizedPage } from './pages/UnauthorizedPage'
 import { useRoute } from './useRoute'
-import { AUTH_RECOVERED_EVENT, AUTH_REQUIRED_EVENT, getDeployWelcome, type AuthRequiredDetails } from './api'
+import {
+  AUTH_RECOVERED_EVENT,
+  AUTH_REQUIRED_EVENT,
+  getDeployWelcome,
+  getSettings,
+  type AuthRequiredDetails,
+} from './api'
+import { TopbarUserIdentity } from './components/TopbarUserIdentity'
+import {
+  buildFallbackTopbarAuthIdentity,
+  buildTopbarAuthIdentityFromAuthRequired,
+  buildTopbarAuthIdentityFromSettings,
+  type TopbarAuthIdentity,
+} from './topbarAuthIdentity'
 
 function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbarHint?: string } {
   switch (route.name) {
@@ -93,11 +106,32 @@ export default function App() {
     neverAutoOpen: true,
   })
   const [authFailure, setAuthFailure] = useState<AuthRequiredDetails | null>(null)
+  const [authIdentity, setAuthIdentity] = useState<TopbarAuthIdentity>(() => buildFallbackTopbarAuthIdentity())
+  const authFailureActiveRef = useRef(false)
+  const authFailureVersionRef = useRef(0)
+  const authIdentityRefreshInFlightRef = useRef(false)
+  const suppressNextAuthRecoveredRef = useRef(false)
 
   const head = useMemo(() => pageTitle(route), [route])
   const topActions = useMemo(() => {
     return <>{pageActions}</>
   }, [pageActions])
+  const refreshAuthIdentity = useCallback(async () => {
+    if (authIdentityRefreshInFlightRef.current) return null
+    authIdentityRefreshInFlightRef.current = true
+    suppressNextAuthRecoveredRef.current = true
+    const authFailureVersionAtStart = authFailureVersionRef.current
+    try {
+      const settings = await getSettings()
+      if (authFailureActiveRef.current || authFailureVersionAtStart !== authFailureVersionRef.current) {
+        return null
+      }
+      return buildTopbarAuthIdentityFromSettings(settings.auth)
+    } finally {
+      authIdentityRefreshInFlightRef.current = false
+      suppressNextAuthRecoveredRef.current = false
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -131,10 +165,29 @@ export default function App() {
 
     const onAuthRequired = (event: Event) => {
       const detail = (event as CustomEvent<{ details?: AuthRequiredDetails | null }>).detail
-      setAuthFailure(detail?.details ?? null)
+      const nextAuthFailure = detail?.details ?? null
+      authFailureActiveRef.current = true
+      authFailureVersionRef.current += 1
+      setAuthFailure(nextAuthFailure)
+      if (nextAuthFailure) {
+        setAuthIdentity(buildTopbarAuthIdentityFromAuthRequired(nextAuthFailure))
+      } else {
+        setAuthIdentity(buildFallbackTopbarAuthIdentity())
+      }
     }
     const onAuthRecovered = () => {
+      authFailureActiveRef.current = false
       setAuthFailure(null)
+      if (suppressNextAuthRecoveredRef.current) {
+        suppressNextAuthRecoveredRef.current = false
+        return
+      }
+      void refreshAuthIdentity()
+        .then((nextAuthIdentity) => {
+          if (!nextAuthIdentity) return
+          setAuthIdentity(nextAuthIdentity)
+        })
+        .catch(() => {})
     }
 
     window.addEventListener(AUTH_REQUIRED_EVENT, onAuthRequired)
@@ -143,7 +196,20 @@ export default function App() {
       window.removeEventListener(AUTH_REQUIRED_EVENT, onAuthRequired)
       window.removeEventListener(AUTH_RECOVERED_EVENT, onAuthRecovered)
     }
-  }, [])
+  }, [refreshAuthIdentity])
+
+  useEffect(() => {
+    let cancelled = false
+    void refreshAuthIdentity()
+      .then((nextAuthIdentity) => {
+        if (cancelled || !nextAuthIdentity) return
+        setAuthIdentity(nextAuthIdentity)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [refreshAuthIdentity])
 
   if (route.name === 'supervisor-misroute') {
     return (
@@ -156,7 +222,9 @@ export default function App() {
                 Dockrev
               </div>
             </div>
-            <div className="chipStatic chipStaticUser">鉴权：Forward Auth</div>
+            <div className="standaloneHeadRight">
+              <TopbarUserIdentity authIdentity={authIdentity} />
+            </div>
           </div>
           <SupervisorMisroutePage basePath={route.basePath} pathname={route.pathname} />
         </div>
@@ -172,6 +240,7 @@ export default function App() {
         pageSubtitle={head.pageSubtitle}
         topbarHint={head.topbarHint}
         topActions={null}
+        authIdentity={authIdentity}
         lastScanHint={lastScanHint}
       >
         <UnauthorizedPage authDetails={authFailure} />
@@ -190,6 +259,7 @@ export default function App() {
       pageSubtitle={head.pageSubtitle}
       topbarHint={head.topbarHint}
       topActions={topActions}
+      authIdentity={authIdentity}
       lastScanHint={lastScanHint}
     >
       {route.name === 'overview' ? <OverviewPage onLastScanHint={setLastScanHint} onTopActions={setPageActions} /> : null}
