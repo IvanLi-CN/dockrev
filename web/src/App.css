@@ -6510,9 +6510,9 @@ html[data-theme='light'] .card {
 
 .cleanupStatusHead {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 18px;
+  gap: 16px;
 }
 
 .cleanupOverviewHead {
@@ -6546,7 +6546,7 @@ html[data-theme='light'] .card {
 }
 
 .cleanupStatusStats {
-  min-width: min(420px, 100%);
+  min-width: min(460px, 100%);
 }
 
 .cleanupRuleStats {
@@ -6588,23 +6588,24 @@ html[data-theme='light'] .card {
 }
 
 .cleanupUsageSection {
-  margin-top: 18px;
+  margin-top: 14px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
 
 .cleanupUsageSectionHint {
-  margin-top: 6px;
+  margin-top: 4px;
   color: var(--muted2);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 11px;
+  line-height: 1.4;
+  max-width: 780px;
 }
 
 .cleanupUsageGrid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 
 .cleanupUsageCard {
@@ -6612,10 +6613,10 @@ html[data-theme='light'] .card {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  min-height: 168px;
-  padding: 16px;
-  border-radius: 18px;
+  gap: 10px;
+  min-height: 132px;
+  padding: 14px;
+  border-radius: 16px;
   border: 1px solid color-mix(in srgb, var(--borderColor) 84%, transparent);
   background:
     radial-gradient(circle at top right, color-mix(in srgb, currentColor 9%, transparent) 0%, transparent 38%),
@@ -6641,8 +6642,8 @@ html[data-theme='light'] .card {
 
 .cleanupUsageCardHead {
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  align-items: center;
+  gap: 10px;
 }
 
 .cleanupUsageCardHeading {
@@ -6654,9 +6655,9 @@ html[data-theme='light'] .card {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 12px;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
   border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
   background: color-mix(in srgb, currentColor 10%, transparent);
   color: inherit;
@@ -6669,41 +6670,47 @@ html[data-theme='light'] .card {
 
 .cleanupUsageCardLabel {
   color: var(--text);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 760;
   letter-spacing: -0.01em;
 }
 
 .cleanupUsageCardDescription {
-  margin-top: 4px;
+  margin-top: 2px;
   color: var(--muted2);
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: 11px;
+  line-height: 1.35;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .cleanupUsageCardValue {
   color: var(--text);
-  font-size: clamp(22px, 2.2vw, 30px);
+  font-size: clamp(18px, 1.9vw, 24px);
   font-weight: 820;
   letter-spacing: -0.035em;
+  line-height: 1.05;
 }
 
 .cleanupUsageCardMeta {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   color: var(--muted2);
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: 11px;
+  line-height: 1.35;
   flex-wrap: wrap;
 }
 
 .cleanupUsageCardBar {
   overflow: hidden;
-  height: 7px;
+  height: 6px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--panel2) 76%, transparent);
+  margin-top: auto;
 }
 
 .cleanupUsageCardBar > span {
@@ -6729,6 +6736,27 @@ html[data-theme='light'] .card {
 
 .cleanupUsageCardOther {
   color: color-mix(in srgb, #c084fc 72%, #cbd5e1 28%);
+}
+
+.cleanupStatusCard .cleanupOverviewStat,
+.cleanupOverviewCard .cleanupOverviewStat {
+  padding: 12px 14px;
+  border-radius: 13px;
+}
+
+.cleanupStatusCard .cleanupOverviewStatValue,
+.cleanupOverviewCard .cleanupOverviewStatValue {
+  margin-top: 6px;
+  font-size: clamp(18px, 1.7vw, 22px);
+}
+
+.cleanupStatusCard .cleanupOverviewStatHint,
+.cleanupStatusCard .cleanupOverviewStatMeta,
+.cleanupOverviewCard .cleanupOverviewStatHint,
+.cleanupOverviewCard .cleanupOverviewStatMeta {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .cleanupPresetTabs {
