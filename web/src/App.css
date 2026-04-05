@@ -2783,10 +2783,87 @@ html[data-theme='light'] .modalOverlay {
   margin-bottom: 6px;
 }
 
-.discoveryIssueTooltip {
-  max-width: 420px;
-  white-space: normal;
-  line-height: 1.45;
+.discoveryIssueDialogCard {
+  width: min(720px, calc(100vw - 24px));
+}
+
+.discoveryIssueDialogTitleRow {
+  align-items: flex-start;
+}
+
+.discoveryIssueDialogTitleWrap {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.discoveryIssueDialogBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 0;
+}
+
+.discoveryIssueDialogSummary {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 620;
+  line-height: 1.5;
+}
+
+.discoveryIssueDialogMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.discoveryIssueDialogMetaItem {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 78%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface) 88%, transparent);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.discoveryIssueDialogSectionLabel {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.discoveryIssueDialogError {
+  margin: 0;
+  max-height: min(44vh, 420px);
+  overflow: auto;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 76%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface) 90%, transparent);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+@media (max-width: 640px) {
+  .discoveryIssueDialogCard {
+    width: min(100vw - 16px, 720px);
+  }
+
+  .discoveryIssueDialogError {
+    max-height: min(48vh, 360px);
+  }
 }
 
 .overviewJobLine {

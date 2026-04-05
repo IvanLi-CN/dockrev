@@ -22,7 +22,20 @@ import {
 } from '../api'
 import { navigate } from '../routes'
 import { buildUpdateServiceTarget, buildUpdateServiceTargets } from '../updateTargets'
-import { ArrowRightIcon, Button, Mono, Pill, StatusRemark } from '../ui'
+import {
+  ArrowRightIcon,
+  Button,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Mono,
+  Pill,
+  StatusRemark,
+} from '../ui'
 import { isDockrevImageRef, selfUpgradeBaseUrl } from '../runtimeConfig'
 import { useSupervisorHealth } from '../useSupervisorHealth'
 import {
@@ -51,7 +64,6 @@ import {
   DIGEST_SNAPSHOT_UPDATED_EVENT,
   type DigestSnapshotUpdatedDetail,
 } from '../digestInferenceTracker'
-import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { imageRepoFromImageRef } from '../imageRepo'
 import {
   resolveUpdateActionTargetKey,
@@ -238,6 +250,122 @@ function latestDiscoveryObservationAt(issue: Pick<DiscoveryIssueItem, 'lastSeenA
   return seenAt.localeCompare(scanAt) >= 0 ? seenAt : scanAt
 }
 
+function buildDiscoveryIssueMetaParts(issue: Pick<DiscoveryIssueItem, 'lastSeenAt' | 'lastScanAt' | 'configSummary' | 'stackId'>): string[] {
+  return [
+    issue.lastSeenAt ? `最近发现 ${formatCompactDateTime(issue.lastSeenAt)}` : null,
+    issue.lastScanAt ? `最近扫描 ${formatCompactDateTime(issue.lastScanAt)}` : null,
+    issue.configSummary,
+    issue.stackId ? `关联 ${issue.stackId}` : null,
+  ].filter((part): part is string => Boolean(part))
+}
+
+function DiscoveryIssueDetailDialog(props: {
+  issue: DiscoveryIssueItem | null
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const [copyState, setCopyState] = useState<'idle' | 'success' | 'error'>('idle')
+  const copyResetTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (copyResetTimerRef.current != null) {
+        window.clearTimeout(copyResetTimerRef.current)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (props.open) return
+    if (copyResetTimerRef.current != null) {
+      window.clearTimeout(copyResetTimerRef.current)
+      copyResetTimerRef.current = null
+    }
+    setCopyState('idle')
+  }, [props.open])
+
+  const scheduleCopyReset = useCallback(() => {
+    if (copyResetTimerRef.current != null) {
+      window.clearTimeout(copyResetTimerRef.current)
+    }
+    copyResetTimerRef.current = window.setTimeout(() => {
+      copyResetTimerRef.current = null
+      setCopyState('idle')
+    }, 1600)
+  }, [])
+
+  const handleCopy = useCallback(async () => {
+    const text = props.issue?.fullError?.trim()
+    if (!text) return
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('Clipboard API unavailable')
+      }
+      await navigator.clipboard.writeText(text)
+      setCopyState('success')
+    } catch {
+      setCopyState('error')
+    } finally {
+      scheduleCopyReset()
+    }
+  }, [props.issue?.fullError, scheduleCopyReset])
+
+  const issue = props.issue
+  if (!issue) return null
+
+  const metaParts = buildDiscoveryIssueMetaParts(issue)
+  const pillTone = issue.tone === 'warning' ? 'warn' : 'bad'
+  const fullError = issue.fullError ?? issue.summary
+  const copyButtonClassName =
+    copyState === 'success' ? 'btn btnPrimary' : copyState === 'error' ? 'btn btnDanger' : 'btn btnGhost'
+  const copyLabel = copyState === 'success' ? '已复制' : copyState === 'error' ? '复制失败' : '复制完整详情'
+
+  return (
+    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+      <DialogContent className="modalCard discoveryIssueDialogCard">
+        <DialogHeader className="modalHeader">
+          <div className="modalTitleRow discoveryIssueDialogTitleRow">
+            <div className="discoveryIssueDialogTitleWrap">
+              <Pill tone={pillTone}>{issue.label}</Pill>
+              <DialogTitle asChild>
+                <div className="modalTitle">
+                  <span className="mono monoPrimary">{issue.project}</span>
+                </div>
+              </DialogTitle>
+            </div>
+          </div>
+          <DialogDescription asChild>
+            <div className="modalBody discoveryIssueDialogBody">
+              <div className="discoveryIssueDialogSummary">{issue.summary}</div>
+              {metaParts.length > 0 ? (
+                <div className="discoveryIssueDialogMeta">
+                  {metaParts.map((part) => (
+                    <span key={`${issue.project}:${part}`} className="discoveryIssueDialogMetaItem">
+                      {part}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <div className="discoveryIssueDialogSectionLabel">完整异常详情</div>
+              <pre className="discoveryIssueDialogError">{fullError}</pre>
+            </div>
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="modalActions">
+          <DialogClose asChild>
+            <button type="button" className="btn btnGhost">
+              关闭
+            </button>
+          </DialogClose>
+          <button type="button" className={copyButtonClassName} onClick={() => void handleCopy()}>
+            {copyLabel}
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 const UPDATE_CANDIDATE_FILTER_QUERY_KEY = 'updates'
 const UPDATE_CANDIDATE_COLLAPSED_STORAGE_PREFIX = 'dockrev:overview:updateCandidates:collapsed:v1:'
 const OVERVIEW_JOBS_SSE_REFRESH_DEBOUNCE_MS = 180
@@ -338,6 +466,7 @@ export function OverviewPage(props: {
   })
   const [jobs, setJobs] = useState<JobListItem[]>([])
   const [discoveredProjects, setDiscoveredProjects] = useState<DiscoveredProject[]>([])
+  const [activeDiscoveryIssue, setActiveDiscoveryIssue] = useState<DiscoveryIssueItem | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
   const [noticeDiscoveryJobId, setNoticeDiscoveryJobId] = useState<string | null>(null)
@@ -1482,12 +1611,7 @@ export function OverviewPage(props: {
           {discoverySummary.issues.length > 0 ? (
             <div className="discoveryIssueList">
               {discoverySummary.issues.map((issue) => {
-                const metaParts = [
-                  issue.lastSeenAt ? `最近发现 ${formatCompactDateTime(issue.lastSeenAt)}` : null,
-                  issue.lastScanAt ? `最近扫描 ${formatCompactDateTime(issue.lastScanAt)}` : null,
-                  issue.configSummary,
-                  issue.stackId ? `关联 ${issue.stackId}` : null,
-                ].filter((part): part is string => Boolean(part))
+                const metaParts = buildDiscoveryIssueMetaParts(issue)
                 const pillTone = issue.tone === 'warning' ? 'warn' : 'bad'
 
                 return (
@@ -1500,23 +1624,18 @@ export function OverviewPage(props: {
                         </span>
                       </div>
                       <div className="discoveryIssueSummaryWrap">
-                        <span className="discoveryIssueSummary" title={issue.fullError ?? issue.summary}>
+                        <span className="discoveryIssueSummary" title={issue.fullError ? undefined : issue.summary}>
                           {issue.summary}
                         </span>
                         {issue.fullError ? (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <button
-                                type="button"
-                                className="discoveryIssueDetailsBtn"
-                                aria-label={`查看 ${issue.project} 的完整异常详情`}
-                                title={issue.fullError}
-                              >
-                                详情
-                              </button>
-                            </TooltipTrigger>
-                            <TooltipContent className="discoveryIssueTooltip">{issue.fullError}</TooltipContent>
-                          </Tooltip>
+                          <button
+                            type="button"
+                            className="discoveryIssueDetailsBtn"
+                            aria-label={`查看 ${issue.project} 的完整异常详情`}
+                            onClick={() => setActiveDiscoveryIssue(issue)}
+                          >
+                            详情
+                          </button>
                         ) : null}
                       </div>
                     </div>
@@ -1543,7 +1662,15 @@ export function OverviewPage(props: {
         </div>
       </div>
 
-        <div className="overviewIndent">
+      <DiscoveryIssueDetailDialog
+        issue={activeDiscoveryIssue}
+        open={Boolean(activeDiscoveryIssue)}
+        onOpenChange={(open) => {
+          if (!open) setActiveDiscoveryIssue(null)
+        }}
+      />
+
+      <div className="overviewIndent">
         <div className="title">更新候选</div>
 
         <div style={{ marginTop: 14 }}>
