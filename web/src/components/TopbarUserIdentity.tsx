@@ -123,9 +123,6 @@ export function TopbarUserIdentity(props: { authIdentity?: TopbarAuthIdentity | 
             </div>
           </div>
 
-          <div className="topbarUserPopoverHint muted">
-            {hoverCapable ? '悬浮预览，点击固定；Esc 或点外部关闭。' : '点击查看详情；Esc 或点外部关闭。'}
-          </div>
         </div>
       ) : null}
     </div>

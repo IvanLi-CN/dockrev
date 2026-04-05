@@ -108,3 +108,4 @@
 - 2026-04-04: 完成前端实现、Storybook 覆盖与 owner-facing 视觉证据；等待截图提交授权后进入 push/PR 收口。
 - 2026-04-05: 根据 review 收敛 `AUTH_REQUIRED_EVENT` 与首轮身份拉取的竞态，避免认证失败后被旧身份结果覆盖。
 - 2026-04-05: 根据第二轮 review 收敛中途切换已认证身份时的 stale header 问题，并完成 review-loop 清空。
+- 2026-04-05: 移除顶部身份弹层底部操作提示文案，保留原有 hover / click / Esc / 点外部关闭行为。
