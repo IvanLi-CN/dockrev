@@ -72,7 +72,7 @@ const discoveryCardOnlyScopeCss = `
 
 .discoveryCardStoryFocusFrame {
   width: min(100%, 780px);
-  margin: 18px;
+  margin: 18px auto;
 }
 
 .twoCol {
