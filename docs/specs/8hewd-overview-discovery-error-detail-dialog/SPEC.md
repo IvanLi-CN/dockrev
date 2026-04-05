@@ -54,6 +54,7 @@
 - Given discovery 行存在长 `fullError`，When hover 摘要或 `详情` 按钮，Then 不再出现该错误详情的浏览器原生 tooltip，也不再出现第二层 Radix tooltip。
 - Given 点击 `详情`，When dialog 打开，Then `role="dialog"` 的弹窗展示项目名、摘要、元信息与完整异常详情，且长文本可滚动、不挤坏视口。
 - Given 点击“复制完整详情”，When 复制成功或失败，Then 按钮文案给出当前打开周期内的反馈，并在关闭后重置。
+- Given 某条 discovery 异常没有 `fullError` 仅显示摘要，When 摘要在窄布局被两行截断，Then 该摘要仍保留 title fallback，避免没有 `详情` 时丢失完整文本可读性。
 - Given Storybook 聚焦场景渲染，When 执行 play，Then 能验证“打开 dialog / 完整详情可见 / 复制按钮存在且可调用 / 关闭恢复”主路径。
 
 ## 实现里程碑（Milestones / Delivery checklist）
@@ -79,3 +80,4 @@
 
 - 2026-04-05: 创建规格，冻结“概览 discovery 长错误详情改为点击 dialog + 支持复制”的范围与验收口径。
 - 2026-04-05: 完成 shared `Dialog` primitive、概览页 discovery 详情弹窗、复制反馈、Storybook play 回归与视觉证据。
+- 2026-04-05: 补充摘要截断但无 `fullError` 场景的 title fallback 契约，并在 Storybook play 中加回归断言。
