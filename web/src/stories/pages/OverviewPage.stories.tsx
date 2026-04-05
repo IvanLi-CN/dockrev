@@ -426,6 +426,18 @@ export const DiscoveryCardReadable: Story = {
     await sleep(120)
     expectStory(!doc.querySelector<HTMLElement>('[role="dialog"]'), 'dialog should close after clicking the close button')
 
+    const missingRow = rows.find((row) => row.textContent?.includes('missing-compose'))
+    expectStory(missingRow, 'missing row missing in discovery readable story')
+    expectStory(
+      !missingRow?.querySelector('.discoveryIssueDetailsBtn'),
+      'rows without full detail payload should not render a details button',
+    )
+    const missingSummary = missingRow?.querySelector<HTMLElement>('.discoveryIssueSummary')
+    expectStory(
+      missingSummary?.title === missingSummary?.textContent?.trim(),
+      'rows without a detail dialog should preserve a title fallback for truncated summaries',
+    )
+
     Object.defineProperty(nav, 'clipboard', {
       configurable: true,
       value: originalClipboard,

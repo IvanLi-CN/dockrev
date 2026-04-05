@@ -1624,7 +1624,7 @@ export function OverviewPage(props: {
                         </span>
                       </div>
                       <div className="discoveryIssueSummaryWrap">
-                        <span className="discoveryIssueSummary">
+                        <span className="discoveryIssueSummary" title={issue.fullError ? undefined : issue.summary}>
                           {issue.summary}
                         </span>
                         {issue.fullError ? (
