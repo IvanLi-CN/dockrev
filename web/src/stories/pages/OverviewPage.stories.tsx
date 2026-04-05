@@ -72,7 +72,7 @@ const discoveryCardOnlyScopeCss = `
 
 .discoveryCardStoryFocusFrame {
   width: min(100%, 780px);
-  margin: 18px;
+  margin: 18px auto;
 }
 
 .twoCol {
@@ -370,6 +370,19 @@ export const DiscoveryCardReadable: Story = {
   play: async ({ canvasElement }) => {
     await sleep(180)
     const doc = canvasElement.ownerDocument
+    const nav = window.navigator as Navigator & {
+      clipboard?: { writeText?: (text: string) => Promise<void> }
+    }
+    const originalClipboard = nav.clipboard
+    let copiedText: string | null = null
+    Object.defineProperty(nav, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          copiedText = text
+        },
+      },
+    })
     const statChips = Array.from(canvasElement.querySelectorAll<HTMLElement>('.discoveryStatChip')).map((chip) => chip.textContent ?? '')
     expectStory(statChips.some((text) => text.includes('异常项目') && text.includes('4')), 'discovery summary should surface total issue count first')
 
@@ -385,14 +398,50 @@ export const DiscoveryCardReadable: Story = {
     expectStory(warningRow, 'warning row missing in discovery readable story')
     const detailsButton = warningRow?.querySelector<HTMLButtonElement>('.discoveryIssueDetailsBtn')
     expectStory(detailsButton, 'warning row should expose a secondary details button for long errors')
-    detailsButton.focus()
-    await sleep(TOOLTIP_WAIT_MS)
+    detailsButton.click()
+    await sleep(180)
 
-    const tooltip = doc.querySelector<HTMLElement>('[role="tooltip"]')
-    expectStory(
-      tooltip?.textContent?.includes('DOCKREV_SUPERVISOR_STATE_PATH'),
-      'tooltip should preserve the full discovery warning details',
+    const dialog = doc.querySelector<HTMLElement>('[role="dialog"]')
+    expectStory(dialog?.textContent?.includes('DOCKREV_SUPERVISOR_STATE_PATH'), 'dialog should preserve the full discovery warning details')
+
+    const copyButton = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find((button) =>
+      button.textContent?.includes('复制完整详情'),
     )
+    expectStory(copyButton, 'dialog should expose a copy button for the full discovery warning details')
+    copyButton?.click()
+    await sleep(120)
+    const copiedDetail = String(copiedText ?? '')
+    expectStory(
+      copiedDetail.includes('DOCKREV_SUPERVISOR_STATE_PATH'),
+      'copy button should write the full discovery warning details',
+    )
+    const copyButtonText = copyButton?.textContent ?? ''
+    expectStory(copyButtonText.includes('已复制'), 'copy button should surface copied feedback')
+
+    const closeButton = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find((button) =>
+      button.textContent?.includes('关闭'),
+    )
+    expectStory(closeButton, 'dialog should expose an explicit close button')
+    closeButton?.click()
+    await sleep(120)
+    expectStory(!doc.querySelector<HTMLElement>('[role="dialog"]'), 'dialog should close after clicking the close button')
+
+    const missingRow = rows.find((row) => row.textContent?.includes('missing-compose'))
+    expectStory(missingRow, 'missing row missing in discovery readable story')
+    expectStory(
+      !missingRow?.querySelector('.discoveryIssueDetailsBtn'),
+      'rows without full detail payload should not render a details button',
+    )
+    const missingSummary = missingRow?.querySelector<HTMLElement>('.discoveryIssueSummary')
+    expectStory(
+      missingSummary?.title === missingSummary?.textContent?.trim(),
+      'rows without a detail dialog should preserve a title fallback for truncated summaries',
+    )
+
+    Object.defineProperty(nav, 'clipboard', {
+      configurable: true,
+      value: originalClipboard,
+    })
   },
 }
 
