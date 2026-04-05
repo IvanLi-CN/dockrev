@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -35,6 +36,14 @@ STABLE_TAG_RE = re.compile(r"^v?\d+\.\d+\.\d+$")
 RELEASE_TAG_RE = re.compile(r"^v?\d+\.\d+\.\d+(?:-rc\.[0-9a-f]{7})?$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+REGISTRY_MANIFEST_ACCEPT = ",".join(
+    [
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+    ]
+)
 
 
 class SnapshotError(RuntimeError):
@@ -116,6 +125,22 @@ def parse_args() -> argparse.Namespace:
     next_pending.add_argument("--publication-notes-ref", default=DEFAULT_PUBLICATION_NOTES_REF)
     next_pending.add_argument("--override-notes-ref", default=DEFAULT_OVERRIDE_NOTES_REF)
     next_pending.add_argument("--github-output", default=os.environ.get("GITHUB_OUTPUT", ""))
+
+    reconcile_publications = subparsers.add_parser(
+        "reconcile-publications",
+        help="Backfill publication ledger for historical targets that already have complete release evidence.",
+    )
+    reconcile_publications.add_argument("--notes-ref", default=DEFAULT_NOTES_REF)
+    reconcile_publications.add_argument("--main-ref", required=True)
+    reconcile_publications.add_argument("--upper-bound", default="")
+    reconcile_publications.add_argument("--publication-notes-ref", default=DEFAULT_PUBLICATION_NOTES_REF)
+    reconcile_publications.add_argument("--override-notes-ref", default=DEFAULT_OVERRIDE_NOTES_REF)
+    reconcile_publications.add_argument("--github-repository", required=True)
+    reconcile_publications.add_argument("--github-token", required=True)
+    reconcile_publications.add_argument("--github-actor", default=os.environ.get("GITHUB_ACTOR", ""))
+    reconcile_publications.add_argument("--api-root", default=os.environ.get("GITHUB_API_URL", "https://api.github.com"))
+    reconcile_publications.add_argument("--github-output", default=os.environ.get("GITHUB_OUTPUT", ""))
+    reconcile_publications.add_argument("--max-attempts", type=int, default=3)
 
     record_publication = subparsers.add_parser(
         "record-publication",
@@ -364,7 +389,13 @@ def read_override(notes_ref: str, target_sha: str) -> dict[str, Any] | None:
     return validate_override(payload, expected_sha=target_sha)
 
 
+def has_origin_remote() -> bool:
+    return git("remote", "get-url", "origin", check=False).returncode == 0
+
+
 def fetch_notes_ref(notes_ref: str) -> None:
+    if not has_origin_remote():
+        return
     probe = git("ls-remote", "--exit-code", "origin", notes_ref, check=False)
     if probe.returncode != 0:
         return
@@ -372,10 +403,19 @@ def fetch_notes_ref(notes_ref: str) -> None:
 
 
 def fetch_tags() -> None:
+    if not has_origin_remote():
+        return
     git("fetch", "--tags", "origin")
 
 
-def github_request_json(api_root: str, token: str, path: str, query: dict[str, Any] | None = None) -> Any:
+def github_request_json(
+    api_root: str,
+    token: str,
+    path: str,
+    query: dict[str, Any] | None = None,
+    *,
+    allow_404: bool = False,
+) -> Any | None:
     url = f"{api_root.rstrip('/')}{path}"
     if query:
         url += "?" + parse.urlencode(query)
@@ -390,6 +430,9 @@ def github_request_json(api_root: str, token: str, path: str, query: dict[str, A
         with request.urlopen(req) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except error.HTTPError as exc:
+        if allow_404 and exc.code == 404:
+            exc.read()
+            return None
         body = exc.read().decode("utf-8", errors="replace")
         raise SnapshotError(f"GitHub API error on {path}: {exc.code} {body}") from exc
     except error.URLError as exc:
@@ -520,6 +563,24 @@ def first_parent_commits(target_sha: str) -> list[str]:
     return [commit for commit in commits.splitlines() if commit]
 
 
+def release_tag_resolution(snapshot: dict[str, Any]) -> tuple[str, str]:
+    if not snapshot.get("release_enabled"):
+        return "disabled", ""
+    release_tag = snapshot.get("release_tag")
+    target_sha = snapshot.get("target_sha")
+    if not isinstance(release_tag, str) or not release_tag:
+        return "missing", ""
+    if not isinstance(target_sha, str) or not target_sha:
+        return "missing", ""
+    result = git("rev-parse", "-q", "--verify", f"refs/tags/{release_tag}", check=False)
+    if result.returncode != 0:
+        return "missing", ""
+    tagged_sha = git_output("rev-list", "-n", "1", release_tag).strip()
+    if tagged_sha != target_sha:
+        return "mismatch", tagged_sha
+    return "ok", tagged_sha
+
+
 def released_commits_from_tags(target_sha: str) -> set[str]:
     commits: set[str] = set()
     for tag in git_output("tag", "--merged", target_sha, "-l").splitlines():
@@ -624,19 +685,8 @@ def supervisor_publication_tags(snapshot: dict[str, Any], *, publication_notes_r
 
 
 def release_tag_points_to_target(snapshot: dict[str, Any]) -> bool:
-    if not snapshot.get("release_enabled"):
-        return False
-    release_tag = snapshot.get("release_tag")
-    target_sha = snapshot.get("target_sha")
-    if not isinstance(release_tag, str) or not release_tag:
-        return False
-    if not isinstance(target_sha, str) or not target_sha:
-        return False
-    result = git("rev-parse", "-q", "--verify", f"refs/tags/{release_tag}", check=False)
-    if result.returncode != 0:
-        return False
-    tagged_sha = git_output("rev-list", "-n", "1", release_tag)
-    return tagged_sha == target_sha
+    status, _tagged_sha = release_tag_resolution(snapshot)
+    return status == "ok"
 
 
 def release_state_for_target(
@@ -685,6 +735,151 @@ def pending_release_targets(
             continue
         pending.append(commit)
     return pending
+
+
+def load_release_by_tag(api_root: str, repository: str, token: str, release_tag: str) -> dict[str, Any] | None:
+    owner, repo = repository.split("/", 1)
+    payload = github_request_json(
+        api_root,
+        token,
+        f"/repos/{owner}/{repo}/releases/tags/{release_tag}",
+        allow_404=True,
+    )
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise SnapshotError(f"GitHub API returned a malformed release payload for tag {release_tag}")
+    return payload
+
+
+def http_request_raw(
+    url: str,
+    *,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
+) -> tuple[int, bytes, Any]:
+    req = request.Request(url, headers=headers or {}, method=method)
+    try:
+        with request.urlopen(req) as resp:
+            return resp.status, resp.read(), resp.headers
+    except error.HTTPError as exc:
+        return exc.code, exc.read(), exc.headers
+    except error.URLError as exc:
+        raise SnapshotError(f"HTTP request failed for {url}: {exc}") from exc
+
+
+def parse_bearer_challenge(value: str) -> dict[str, str]:
+    if not value.startswith("Bearer "):
+        raise SnapshotError(f"Unsupported registry auth challenge: {value}")
+    params = dict(re.findall(r'([A-Za-z][A-Za-z0-9_-]*)="([^"]*)"', value))
+    if "realm" not in params:
+        raise SnapshotError(f"Registry auth challenge is missing realm: {value}")
+    return params
+
+
+def basic_auth_header(username: str, password: str) -> str:
+    token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+    return f"Basic {token}"
+
+
+def registry_manifest_url(registry: str, image_name: str, tag: str) -> str:
+    return f"https://{registry}/v2/{image_name}/manifests/{parse.quote(tag, safe='')}"
+
+
+def request_registry_bearer_token(
+    *,
+    registry: str,
+    image_name: str,
+    challenge: dict[str, str],
+    github_actor: str,
+    github_token: str,
+) -> str:
+    token_url = challenge["realm"]
+    query = {}
+    for key in ("service", "scope"):
+        value = challenge.get(key)
+        if value:
+            query[key] = value
+    if query:
+        token_url += ("&" if parse.urlsplit(token_url).query else "?") + parse.urlencode(query)
+
+    headers = {}
+    if github_actor and github_token:
+        headers["Authorization"] = basic_auth_header(github_actor, github_token)
+
+    status, body, _resp_headers = http_request_raw(token_url, headers=headers)
+    if status != 200:
+        raise SnapshotError(
+            f"Failed to acquire {registry} bearer token for {image_name}: token endpoint returned HTTP {status}"
+        )
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SnapshotError(f"{registry} token endpoint returned malformed JSON for {image_name}") from exc
+
+    token = payload.get("token") or payload.get("access_token")
+    if not isinstance(token, str) or not token:
+        raise SnapshotError(f"{registry} token endpoint did not return a bearer token for {image_name}")
+    return token
+
+
+def extract_manifest_digest(status: int, response_headers: Any, *, image_ref: str) -> str:
+    if status != 200:
+        raise SnapshotError(f"Failed to resolve manifest digest for {image_ref}: registry returned HTTP {status}")
+    digest = response_headers.get("Docker-Content-Digest")
+    if not isinstance(digest, str) or not DIGEST_RE.fullmatch(digest):
+        raise SnapshotError(f"Registry response for {image_ref} is missing a valid Docker-Content-Digest header")
+    return digest
+
+
+def resolve_registry_manifest_digest(
+    registry: str,
+    image_name: str,
+    tag: str,
+    *,
+    github_actor: str,
+    github_token: str,
+) -> str:
+    image_ref = f"{registry}/{image_name}:{tag}"
+    manifest_url = registry_manifest_url(registry, image_name, tag)
+    headers = {"Accept": REGISTRY_MANIFEST_ACCEPT}
+    status, _body, response_headers = http_request_raw(manifest_url, method="HEAD", headers=headers)
+    if status == 200:
+        return extract_manifest_digest(status, response_headers, image_ref=image_ref)
+    if status != 401:
+        raise SnapshotError(f"Failed to resolve manifest digest for {image_ref}: registry returned HTTP {status}")
+
+    challenge_header = response_headers.get("WWW-Authenticate")
+    if not isinstance(challenge_header, str) or not challenge_header:
+        raise SnapshotError(f"Registry auth challenge for {image_ref} is missing WWW-Authenticate")
+    challenge = parse_bearer_challenge(challenge_header)
+    bearer_token = request_registry_bearer_token(
+        registry=registry,
+        image_name=image_name,
+        challenge=challenge,
+        github_actor=github_actor,
+        github_token=github_token,
+    )
+    authed_headers = {
+        "Accept": REGISTRY_MANIFEST_ACCEPT,
+        "Authorization": f"Bearer {bearer_token}",
+    }
+    authed_status, _authed_body, authed_response_headers = http_request_raw(
+        manifest_url,
+        method="HEAD",
+        headers=authed_headers,
+    )
+    return extract_manifest_digest(authed_status, authed_response_headers, image_ref=image_ref)
+
+
+def release_published_at(release: dict[str, Any], release_tag: str) -> str:
+    if release.get("draft") is True:
+        raise SnapshotError(f"GitHub Release {release_tag} is still a draft; refusing to backfill publication ledger")
+    for key in ("published_at", "created_at"):
+        value = release.get(key)
+        if isinstance(value, str) and value:
+            return value
+    raise SnapshotError(f"GitHub Release {release_tag} is missing published_at/created_at")
 
 
 def build_snapshot(
@@ -1077,6 +1272,106 @@ def export_next_pending(args: argparse.Namespace) -> int:
     return 0
 
 
+def reconcile_publications(args: argparse.Namespace) -> int:
+    upper_bound = args.upper_bound or git_output("rev-parse", args.main_ref)
+    upper_bound = normalize_sha(upper_bound)
+    git("merge-base", "--is-ancestor", upper_bound, args.main_ref)
+
+    for attempt in range(1, args.max_attempts + 1):
+        fetch_notes_ref(args.notes_ref)
+        fetch_notes_ref(args.publication_notes_ref)
+        fetch_notes_ref(args.override_notes_ref)
+        fetch_tags()
+
+        reconciled_tags: list[str] = []
+        stopped_target_sha = ""
+        stopped_reason = "queue_empty"
+        with tempfile.TemporaryDirectory(prefix="release-publication-reconcile-") as tmp:
+            temp_note = Path(tmp) / "publication.json"
+            for target_sha in pending_release_targets(
+                args.notes_ref,
+                upper_bound,
+                publication_notes_ref=args.publication_notes_ref,
+                override_notes_ref=args.override_notes_ref,
+            ):
+                snapshot = read_snapshot(args.notes_ref, target_sha)
+                if snapshot is None:
+                    raise SnapshotError(f"Missing immutable release snapshot for {target_sha}")
+
+                tag_state, tagged_sha = release_tag_resolution(snapshot)
+                release_tag = str(snapshot.get("release_tag") or "")
+                if tag_state == "missing":
+                    stopped_target_sha = target_sha
+                    stopped_reason = "needs_publish"
+                    break
+                if tag_state == "mismatch":
+                    raise SnapshotError(
+                        f"Release tag {release_tag} already points to {tagged_sha}, expected {target_sha}; refusing to reconcile"
+                    )
+                if tag_state != "ok":
+                    raise SnapshotError(f"Unsupported release tag state {tag_state!r} for {target_sha}")
+
+                release = load_release_by_tag(args.api_root, args.github_repository, args.github_token, release_tag)
+                if release is None:
+                    raise SnapshotError(
+                        f"Release tag {release_tag} points to {target_sha} but GitHub Release is missing; refusing to auto-mark published"
+                    )
+
+                published_at = release_published_at(release, release_tag)
+                dockrev_digest = resolve_registry_manifest_digest(
+                    str(snapshot["registry"]),
+                    str(snapshot["image_name_lower"]),
+                    release_tag,
+                    github_actor=args.github_actor,
+                    github_token=args.github_token,
+                )
+                dockrev_supervisor_digest = resolve_registry_manifest_digest(
+                    str(snapshot["registry"]),
+                    str(snapshot["supervisor_image_name_lower"]),
+                    release_tag,
+                    github_actor=args.github_actor,
+                    github_token=args.github_token,
+                )
+                publication = build_publication(
+                    snapshot,
+                    dockrev_digest=dockrev_digest,
+                    dockrev_supervisor_digest=dockrev_supervisor_digest,
+                    published_at=published_at,
+                )
+                write_json(temp_note, publication)
+                git("notes", f"--ref={args.publication_notes_ref}", "add", "-f", "-F", str(temp_note), target_sha)
+                reconciled_tags.append(release_tag)
+
+        if not reconciled_tags:
+            export_key_values(
+                {
+                    "reconciled_count": 0,
+                    "reconciled_tags": "",
+                    "stopped_target_sha": stopped_target_sha,
+                    "stopped_reason": stopped_reason,
+                },
+                args.github_output,
+            )
+            return 0
+
+        push = git("push", "origin", args.publication_notes_ref, check=False)
+        if push.returncode == 0:
+            export_key_values(
+                {
+                    "reconciled_count": len(reconciled_tags),
+                    "reconciled_tags": ",".join(reconciled_tags),
+                    "stopped_target_sha": stopped_target_sha,
+                    "stopped_reason": stopped_reason,
+                },
+                args.github_output,
+            )
+            return 0
+        if attempt == args.max_attempts:
+            detail = push.stderr.strip() or push.stdout.strip() or "git push origin publication notes ref failed"
+            raise SnapshotError(f"Failed to publish reconciled release publications after {attempt} attempts: {detail}")
+    raise SnapshotError("release publication reconciliation retry loop exhausted unexpectedly")
+
+
 def main() -> int:
     args = parse_args()
     try:
@@ -1086,6 +1381,8 @@ def main() -> int:
             return export_existing_snapshot(args)
         if args.command == "next-pending":
             return export_next_pending(args)
+        if args.command == "reconcile-publications":
+            return reconcile_publications(args)
         if args.command == "record-publication":
             return record_publication(args)
         if args.command == "record-override":
