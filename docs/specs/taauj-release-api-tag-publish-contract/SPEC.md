@@ -2,9 +2,9 @@
 
 ## 状态
 
-- Status: 部分完成（3/4）
+- Status: 已完成
 - Created: 2026-03-31
-- Last: 2026-04-01
+- Last: 2026-04-05
 
 ## 背景 / 问题陈述
 
@@ -27,6 +27,7 @@
 - 不修改 release intent labels / snapshot / override ledger 模型。
 - 不修改 GHCR 镜像命名、用户可见 HTTP API、数据库 schema。
 - 不新增前端功能。
+- 不包含 main 上历史 backlog 的实际恢复执行与结果留痕；该合并后运维收尾由 `#q3nyf` 跟踪。
 
 ## 范围（Scope）
 
@@ -90,7 +91,7 @@
 - Given 一个正常的 release-enabled target，When `Release` workflow 执行 publish，Then workflow 会先显式创建/校验 `RELEASE_TAG -> TARGET_SHA`，再调用 GitHub Release API create/update release。
 - Given GitHub Release 成功但 PR comment 合同失败，When workflow 收尾，Then publication ledger 仍未记录该 target，queue 不会把它视为已发布。
 - Given publish 全部成功，When workflow 完成，Then source PR 上存在唯一 bot-owned marker comment，且 publication ledger 已记录。
-- Given 当前卡住的 release queue，When 修复上线并重新恢复 queue，Then 包含 `repoUrl auto-backfill` 的版本可以真正发布并进入 101。
+- Given 当前卡住的 release queue，When 本修复合并到 `main`，Then workflow 已具备在不新增权限前提下自动 reconcile 历史已发布 backlog 并继续选择真实 pending target 的合同能力；main 上的实际恢复执行与结果留痕由 `#q3nyf` 跟踪。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
@@ -110,9 +111,10 @@
 - [x] M1: 恢复显式 tag 预创建/校验，并移除 release-action 的 `commit/TARGET_SHA` 代建 tag 依赖
 - [x] M2: 将 publication ledger 后移到 GitHub Release + PR comment 之后
 - [x] M3: 补 contract check 防回归
-- [ ] M4: 恢复 release queue 并确认产出真实新版本
+- [x] M4: historical backlog reconcile/manual backfill bypass/workflow-source queue continuation 合同、回归测试与 README/spec 同步完成；main 上实际恢复执行转交 `#q3nyf`
 
 ## 参考（References）
 
 - `docs/specs/yt22e-release-queue-override-comment-hardening/SPEC.md`
 - `docs/specs/qnq3w-release-publication-latest-pr-comment/SPEC.md`
+- `docs/specs/q3nyf-release-queue-live-recovery/SPEC.md`
