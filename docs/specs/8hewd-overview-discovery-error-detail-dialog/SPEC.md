@@ -70,6 +70,8 @@
   story_id_or_title: Pages/OverviewPage/DiscoveryCardReadable
   state: discovery-detail-dialog-open
   evidence_note: 验证概览 discovery 卡片改为点击 `详情` 打开可复制 dialog，且不再依赖 hover tooltip 暴露完整异常详情。
+  PR: include
+  PR caption: 概览页 discovery 异常详情改为点击弹窗展示完整信息，并支持复制完整错误文本。
   image:
   ![概览 discovery 详情弹窗](./assets/overview-discovery-detail-dialog.png)
 
