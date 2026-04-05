@@ -3,6 +3,7 @@ import {
   archiveService,
   ApiError,
   createIgnore,
+  getServiceRollbackTarget,
   deleteIgnore,
   getServiceSettings,
   inferServiceRepoLink,
@@ -11,11 +12,13 @@ import {
   newJobEventsSource,
   putServiceSettings,
   restoreService,
+  triggerServiceRollback,
   triggerRuntimeScan,
   triggerUpdate,
   type IgnoreRule,
   type Service,
   type ServiceDigestTagsScanSummary,
+  type ServiceRollbackTargetResponse,
   type ServiceSettings,
   type StackDetail,
 } from '../api'
@@ -105,6 +108,42 @@ function isDockrevService(svc: Service): boolean {
   return isDockrevImageRef(svc.image.ref)
 }
 
+function rollbackUnavailableReasonLabel(reason: string | null | undefined): string | undefined {
+  switch ((reason ?? '').trim()) {
+    case '':
+      return undefined
+    case 'rollback_in_progress':
+      return '回滚任务进行中，点击可查看任务详情'
+    case 'service_update_in_progress':
+      return '该服务已有更新任务进行中'
+    case 'stack_update_in_progress':
+      return '该堆栈已有更新任务进行中'
+    case 'global_update_in_progress':
+      return '当前存在全局更新任务进行中'
+    case 'dockrev_service_managed_via_supervisor':
+      return 'Dockrev 自身回滚请使用 Supervisor 页面'
+    case 'current_digest_missing':
+      return '当前运行摘要未知，暂时无法回滚'
+    case 'target_digest_matches_current':
+      return '升级前版本与当前运行摘要一致，无需回滚'
+    case 'no_matching_update_history':
+      return '未找到可回滚到升级前版本的成功升级记录'
+    default:
+      return '当前不可回滚'
+  }
+}
+
+function rollbackVersionLabel(
+  displayTag: string | null | undefined,
+  digest: string | null | undefined,
+): string {
+  const tag = (displayTag ?? '').trim()
+  if (tag) return tag
+  const normalizedDigest = (digest ?? '').trim()
+  if (!normalizedDigest) return '-'
+  return shortDigest(normalizedDigest)
+}
+
 function shouldPrefetchFloatingCandidate(
   candidateTag: string | null | undefined,
   candidateResolvedTag: string | null | undefined,
@@ -132,7 +171,8 @@ export function ServiceDetailPage(props: {
   const [busy, setBusy] = useState(false)
   const [repoInferBusy, setRepoInferBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [noticeJobId, setNoticeJobId] = useState<string | null>(null)
+  const [notice, setNotice] = useState<{ jobId: string; kind: 'update' | 'rollback' } | null>(null)
+  const [rollbackTarget, setRollbackTarget] = useState<ServiceRollbackTargetResponse | null>(null)
   const { beginSubmitting, endSubmitting, trackJob, isTargetBusy, getActiveJobByTarget, isTargetSubmitting } =
     useUpdateActionTracker()
   const { state: supervisorState, check: checkSupervisor } = useSupervisorHealth()
@@ -146,6 +186,17 @@ export function ServiceDetailPage(props: {
   const applyActionBusy = applyActionKey ? isTargetBusy(applyActionKey) : false
   const applyActiveJob = applyActionKey ? getActiveJobByTarget(applyActionKey) : null
   const applySubmitting = applyActionKey ? isTargetSubmitting(applyActionKey) : false
+  const rollbackServiceId = service && !isDockrevService(service) ? service.id : null
+  const rollbackActiveJobId = (rollbackTarget?.activeJobId ?? '').trim() || null
+  const rollbackActiveJobStatus = (rollbackTarget?.activeJobStatus ?? '').trim() || null
+  const rollbackReason = rollbackTarget?.unavailableReason ?? null
+  const rollbackReasonLabel = rollbackUnavailableReasonLabel(rollbackReason)
+  const rollbackActionBusy = Boolean(rollbackActiveJobId)
+  const rollbackHint = rollbackActiveJobId
+    ? '任务进行中，点击查看任务详情'
+    : !rollbackTarget?.available
+      ? rollbackReasonLabel
+      : undefined
   const fullRefreshRequestIdRef = useRef(0)
   const latestAppliedFullRefreshRequestIdRef = useRef(0)
   const stackRefreshRequestIdRef = useRef(0)
@@ -163,20 +214,25 @@ export function ServiceDetailPage(props: {
     onLastScanHint?.(undefined)
     try {
       const st = await getStack(stackId)
+      const svc = st.services.find((s) => s.id === serviceId) ?? null
       if (stackRequestId >= latestAppliedStackRefreshRequestIdRef.current) {
         latestAppliedStackRefreshRequestIdRef.current = stackRequestId
         latestAppliedFullRefreshRequestIdRef.current = fullRefreshRequestId
         appliedFullRefreshRoot = true
         setStack(st)
-        const svc = st.services.find((s) => s.id === serviceId) ?? null
         setService(svc)
       }
 
-      const [settingsRes, rulesRes] = await Promise.allSettled([getServiceSettings(serviceId), listIgnores()])
+      const [settingsRes, rulesRes, rollbackRes] = await Promise.allSettled([
+        getServiceSettings(serviceId),
+        listIgnores(),
+        svc && !isDockrevService(svc) ? getServiceRollbackTarget(serviceId) : Promise.resolve(null),
+      ])
       const errors: string[] = []
 
       if (settingsRes.status === 'rejected') errors.push(errorMessage(settingsRes.reason))
       if (rulesRes.status === 'rejected') errors.push(errorMessage(rulesRes.reason))
+      if (rollbackRes.status === 'rejected') errors.push(errorMessage(rollbackRes.reason))
 
       if (fullRefreshRequestId < latestAppliedFullRefreshRequestIdRef.current) return
 
@@ -184,6 +240,8 @@ export function ServiceDetailPage(props: {
       if (rulesRes.status === 'fulfilled') {
         setRules(rulesRes.value.filter((r) => r.scope.serviceId === serviceId))
       }
+      if (rollbackRes.status === 'fulfilled') setRollbackTarget(rollbackRes.value)
+      else setRollbackTarget(null)
       if (errors.length > 0) throw new Error(errors.join(' · '))
     } catch (error: unknown) {
       if (!appliedFullRefreshRoot && stackRequestId < latestAppliedStackRefreshRequestIdRef.current) return
@@ -198,9 +256,16 @@ export function ServiceDetailPage(props: {
       const st = await getStack(stackId)
       if (requestId < latestAppliedStackRefreshRequestIdRef.current) return
       latestAppliedStackRefreshRequestIdRef.current = requestId
-      setStack(st)
       const svc = st.services.find((s) => s.id === serviceId) ?? null
+      setStack(st)
       setService(svc)
+      if (svc && !isDockrevService(svc)) {
+        const target = await getServiceRollbackTarget(serviceId)
+        if (requestId < latestAppliedStackRefreshRequestIdRef.current) return
+        setRollbackTarget(target)
+      } else {
+        setRollbackTarget(null)
+      }
     } catch (error: unknown) {
       if (requestId < latestAppliedStackRefreshRequestIdRef.current) return
       throw error
@@ -236,6 +301,26 @@ export function ServiceDetailPage(props: {
   useEffect(() => {
     void requestRefresh().catch((e: unknown) => setError(errorMessage(e)))
   }, [requestRefresh, serviceId, stackId])
+
+  useEffect(() => {
+    if (!rollbackServiceId) {
+      setRollbackTarget(null)
+      return
+    }
+
+    let cancelled = false
+    void getServiceRollbackTarget(rollbackServiceId)
+      .then((target) => {
+        if (!cancelled) setRollbackTarget(target)
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(errorMessage(e))
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [rollbackServiceId])
 
   useEffect(() => {
     let closed = false
@@ -280,6 +365,37 @@ export function ServiceDetailPage(props: {
       window.removeEventListener(UPDATE_JOB_SETTLED_EVENT, onUpdateJobSettled)
     }
   }, [refreshStackOnly, serviceId, stackId])
+
+  useEffect(() => {
+    const activeJobId = rollbackTarget?.activeJobId?.trim()
+    if (!activeJobId) return
+
+    let cancelled = false
+    let timer: number | null = null
+
+    const tick = async () => {
+      try {
+        await refreshStackOnly()
+      } catch {
+        // best-effort polling while rollback-related job is active
+      } finally {
+        if (!cancelled) {
+          timer = window.setTimeout(() => {
+            void tick()
+          }, 1200)
+        }
+      }
+    }
+
+    timer = window.setTimeout(() => {
+      void tick()
+    }, 1200)
+
+    return () => {
+      cancelled = true
+      if (timer != null) window.clearTimeout(timer)
+    }
+  }, [refreshStackOnly, rollbackTarget?.activeJobId])
 
   const applyDigestSnapshotUpdate = useCallback(
     (detail: DigestSnapshotUpdatedDetail) => {
@@ -498,7 +614,7 @@ export function ServiceDetailPage(props: {
                   if (!service || !service.candidate) return
                   setBusy(true)
                   setError(null)
-                  setNoticeJobId(null)
+                  setNotice(null)
                   try {
                     const resp = await triggerUpdate({
                       scope: 'service',
@@ -508,7 +624,7 @@ export function ServiceDetailPage(props: {
                       allowArchMismatch: false,
                       backupMode: 'inherit',
                     })
-                    setNoticeJobId(resp.jobId)
+                    setNotice({ jobId: resp.jobId, kind: 'update' })
                   } catch (e: unknown) {
                     if (e instanceof ApiError) {
                       if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
@@ -669,7 +785,7 @@ export function ServiceDetailPage(props: {
                   })
                   if (!ok) return
                   setError(null)
-                  setNoticeJobId(null)
+                  setNotice(null)
                   if (applyActionKey) beginSubmitting(applyActionKey)
                   try {
                     const resp = await triggerUpdate({
@@ -680,7 +796,7 @@ export function ServiceDetailPage(props: {
                       allowArchMismatch: false,
                       backupMode: 'inherit',
                     })
-                    setNoticeJobId(resp.jobId)
+                    setNotice({ jobId: resp.jobId, kind: 'update' })
                     if (applyActionKey) trackJob(applyActionKey, resp.jobId, 'queued')
                   } catch (e: unknown) {
                     if (e instanceof ApiError) {
@@ -705,6 +821,110 @@ export function ServiceDetailPage(props: {
                   : applySubmitting
                     ? '提交中…'
                     : '执行更新'}
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={rollbackActiveJobId ? false : busy || !rollbackTarget?.available}
+              loading={rollbackActionBusy}
+              loadingClickable={Boolean(rollbackActiveJobId)}
+              hint={rollbackHint}
+              title={rollbackActiveJobId ? '任务进行中，点击查看任务详情' : undefined}
+              onClick={() => {
+                void (async () => {
+                  if (rollbackActiveJobId) {
+                    navigate({ name: 'job', jobId: rollbackActiveJobId })
+                    return
+                  }
+                  if (!service || !rollbackTarget?.available || !rollbackTarget.targetDigest) return
+                  const ok = await confirm({
+                    title: `确认回滚服务 ${service.name}？`,
+                    body: (
+                      <>
+                        <div className="modalLead">将把该服务回滚到上次升级前的版本。</div>
+                        <div className="modalKvGrid">
+                          <div className="modalKvLabel">范围</div>
+                          <div className="modalKvValue">
+                            <Mono>service</Mono>
+                          </div>
+                          <div className="modalKvLabel">目标</div>
+                          <div className="modalKvValue">
+                            <Mono>{`${stack?.name ?? stackId}/${service.name}`}</Mono>
+                          </div>
+                          <div className="modalKvLabel">当前版本</div>
+                          <div className="modalKvValue">
+                            <span>{rollbackVersionLabel(rollbackTarget.currentDisplayTag, rollbackTarget.currentDigest)}</span>
+                            <span className="muted">{` · ${shortDigest(rollbackTarget.currentDigest)}`}</span>
+                          </div>
+                          <div className="modalKvLabel">回滚目标</div>
+                          <div className="modalKvValue">
+                            <span>{rollbackVersionLabel(rollbackTarget.targetDisplayTag, rollbackTarget.targetDigest)}</span>
+                            <span className="muted">{` · ${shortDigest(rollbackTarget.targetDigest)}`}</span>
+                          </div>
+                          <div className="modalKvLabel">来源任务</div>
+                          <div className="modalKvValue">
+                            <Mono>{rollbackTarget.sourceUpdateJobId ?? '-'}</Mono>
+                          </div>
+                          <div className="modalKvLabel">完成时间</div>
+                          <div className="modalKvValue">
+                            <Mono>{rollbackTarget.sourceFinishedAt ?? '-'}</Mono>
+                          </div>
+                        </div>
+                        <div className="modalDivider" />
+                      </>
+                    ),
+                    confirmText: '执行回滚',
+                    cancelText: '取消',
+                    confirmVariant: 'danger',
+                    badgeText: null,
+                  })
+                  if (!ok) return
+                  setBusy(true)
+                  setError(null)
+                  setNotice(null)
+                  try {
+                    const resp = await triggerServiceRollback(service.id)
+                    setNotice({ jobId: resp.jobId, kind: 'rollback' })
+                    await refreshStackOnly()
+                  } catch (e: unknown) {
+                    if (e instanceof ApiError) {
+                      if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
+                      else if (e.status === 409) {
+                        const details = e.details
+                        const existingJobId =
+                          details && typeof details === 'object' && details !== null && 'existingJobId' in details
+                            ? (details as Record<string, unknown>).existingJobId
+                            : null
+                        const reason =
+                          details && typeof details === 'object' && details !== null && 'reason' in details
+                            ? (details as Record<string, unknown>).reason
+                            : null
+                        if (typeof existingJobId === 'string' && existingJobId.trim()) {
+                          navigate({ name: 'job', jobId: existingJobId })
+                        } else if (typeof reason === 'string' && reason.trim()) {
+                          setError(rollbackUnavailableReasonLabel(reason) ?? e.message)
+                        } else {
+                          setError(e.message)
+                        }
+                        await refreshStackOnly()
+                      } else setError(e.message)
+                    } else {
+                      setError(errorMessage(e))
+                    }
+                  } finally {
+                    setBusy(false)
+                  }
+                })()
+              }}
+            >
+              {rollbackActiveJobId
+                ? rollbackReason === 'rollback_in_progress'
+                  ? rollbackActiveJobStatus === 'queued'
+                    ? '排队中…'
+                    : '回滚中…'
+                  : rollbackActiveJobStatus === 'queued'
+                    ? '排队中…'
+                    : '任务进行中…'
+                : '回滚'}
             </Button>
           </>
         )}
@@ -774,6 +994,14 @@ export function ServiceDetailPage(props: {
     onTopActions,
     patchServiceInStack,
     requestRefresh,
+    refreshStackOnly,
+    rollbackActionBusy,
+    rollbackActiveJobId,
+    rollbackActiveJobStatus,
+    rollbackHint,
+    rollbackReason,
+    rollbackReasonLabel,
+    rollbackTarget,
     selfUpgradeUrl,
     service,
     serviceId,
@@ -1342,9 +1570,9 @@ export function ServiceDetailPage(props: {
       </div>
 
       {error ? <div className="error">{error}</div> : null}
-      {noticeJobId ? (
+      {notice ? (
         <div className="success">
-          已创建更新任务 <Mono>{noticeJobId}</Mono> ·{' '}
+          已创建{notice.kind === 'rollback' ? '回滚' : '更新'}任务 <Mono>{notice.jobId}</Mono> ·{' '}
           <Button variant="ghost" disabled={busy} onClick={() => navigate({ name: 'queue' })}>
             查看队列
           </Button>

@@ -2123,6 +2123,128 @@ async fn set_single_service_check_result(
     service.id.clone()
 }
 
+async fn seed_manual_rollback_service(state: &Arc<AppState>) -> (String, String, String) {
+    let compose_path = format!("/tmp/dockrev-manual-rollback-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(state, "demo", &compose_path).await;
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    let now = "2026-04-05T00:00:00Z";
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            Some("sha256:new".to_string()),
+            Some("5.3.0".to_string()),
+            Some(serde_json::to_string(&vec!["5.3.0"]).unwrap()),
+            Some("5.2".to_string()),
+            None,
+            None,
+            Some("match".to_string()),
+            Some(r#"["linux/amd64"]"#.to_string()),
+            None,
+            None,
+            now,
+            now,
+        )
+        .await
+        .unwrap();
+    upsert_image_digest_snapshot_for_test(
+        state,
+        "ghcr.io/acme/web",
+        "sha256:new",
+        "linux/amd64",
+        now,
+        vec!["5.3.0".to_string(), "latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+    upsert_image_digest_snapshot_for_test(
+        state,
+        "ghcr.io/acme/web",
+        "sha256:old",
+        "linux/amd64",
+        now,
+        vec!["5.2.0".to_string(), "5.2".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+    (stack_id, service.id, compose_path)
+}
+
+fn make_update_history_summary_for_test(
+    stack_id: &str,
+    service_id: &str,
+    old_digest: &str,
+    final_digest: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "mode": "apply",
+        "stacks": [{
+            "stackId": stack_id,
+            "update": {
+                "oldDigests": { service_id: old_digest },
+                "newDigests": { service_id: final_digest },
+                "finalDigests": { service_id: final_digest },
+                "changedServices": 1,
+                "targetTagsPulled": [],
+                "pullTagsPulled": [],
+                "pullTagWarnings": [],
+                "skippedVersionAnomaly": [],
+            }
+        }]
+    })
+}
+
+async fn insert_successful_update_history_job(
+    state: &Arc<AppState>,
+    scope: crate::api::types::JobScope,
+    stack_id: Option<&str>,
+    service_id: Option<&str>,
+    created_at: &str,
+    finished_at: &str,
+    summary: serde_json::Value,
+) -> String {
+    let job_id = ids::new_job_id();
+    let mut job = crate::api::types::JobRecord::new_running(
+        job_id.clone(),
+        crate::api::types::JobType::Update,
+        scope,
+        stack_id.map(ToString::to_string),
+        service_id.map(ToString::to_string),
+        created_at,
+    )
+    .to_db();
+    job.created_by = "ui".to_string();
+    job.reason = "ui".to_string();
+    state.db.insert_job(job).await.unwrap();
+    state
+        .db
+        .finish_job(&job_id, "success", finished_at, &summary)
+        .await
+        .unwrap();
+    job_id
+}
+
 async fn seed_discovered_project(state: &Arc<AppState>, stack_id: &str, project: &str) {
     let now = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
@@ -12409,6 +12531,248 @@ services:
         update["rollback"]["toDigests"][service.id.as_str()].as_str(),
         Some("sha256:old")
     );
+}
+
+#[tokio::test]
+async fn service_rollback_target_matches_successful_service_update_history() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+    let source_job_id = insert_successful_update_history_job(
+        &state,
+        crate::api::types::JobScope::Service,
+        Some(&stack_id),
+        Some(&service_id),
+        "2026-04-05T00:01:00Z",
+        "2026-04-05T00:02:00Z",
+        make_update_history_summary_for_test(&stack_id, &service_id, "sha256:old", "sha256:new"),
+    )
+    .await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/rollback-target"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let payload = response_json(resp).await;
+
+    assert_eq!(payload["available"].as_bool(), Some(true));
+    assert_eq!(payload["currentDigest"].as_str(), Some("sha256:new"));
+    assert_eq!(payload["currentDisplayTag"].as_str(), Some("5.3.0"));
+    assert_eq!(payload["targetDigest"].as_str(), Some("sha256:old"));
+    assert_eq!(payload["targetDisplayTag"].as_str(), Some("5.2.0"));
+    assert_eq!(
+        payload["sourceUpdateJobId"].as_str(),
+        Some(source_job_id.as_str())
+    );
+    assert_eq!(
+        payload["sourceFinishedAt"].as_str(),
+        Some("2026-04-05T00:02:00Z")
+    );
+    assert!(payload["unavailableReason"].is_null());
+}
+
+#[tokio::test]
+async fn service_rollback_target_matches_successful_stack_and_all_update_history() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+
+    let stack_job_id = insert_successful_update_history_job(
+        &state,
+        crate::api::types::JobScope::Stack,
+        Some(&stack_id),
+        None,
+        "2026-04-05T00:03:00Z",
+        "2026-04-05T00:04:00Z",
+        make_update_history_summary_for_test(&stack_id, &service_id, "sha256:old", "sha256:new"),
+    )
+    .await;
+    let stack_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/rollback-target"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stack_resp.status(), 200);
+    let stack_payload = response_json(stack_resp).await;
+    assert_eq!(stack_payload["available"].as_bool(), Some(true));
+    assert_eq!(
+        stack_payload["sourceUpdateJobId"].as_str(),
+        Some(stack_job_id.as_str())
+    );
+
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+    let all_job_id = insert_successful_update_history_job(
+        &state,
+        crate::api::types::JobScope::All,
+        None,
+        None,
+        "2026-04-05T00:05:00Z",
+        "2026-04-05T00:06:00Z",
+        make_update_history_summary_for_test(&stack_id, &service_id, "sha256:old", "sha256:new"),
+    )
+    .await;
+    let all_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/rollback-target"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(all_resp.status(), 200);
+    let all_payload = response_json(all_resp).await;
+    assert_eq!(all_payload["available"].as_bool(), Some(true));
+    assert_eq!(
+        all_payload["sourceUpdateJobId"].as_str(),
+        Some(all_job_id.as_str())
+    );
+    assert_eq!(all_payload["targetDigest"].as_str(), Some("sha256:old"));
+}
+
+#[tokio::test]
+async fn service_rollback_target_reports_pending_conflict() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+    let conflict_id = ids::new_job_id();
+    let mut conflict = crate::api::types::JobRecord::new_running(
+        conflict_id.clone(),
+        crate::api::types::JobType::Update,
+        crate::api::types::JobScope::Stack,
+        Some(stack_id.clone()),
+        None,
+        "2026-04-05T00:07:00Z",
+    )
+    .to_db();
+    conflict.created_by = "ui".to_string();
+    conflict.reason = "ui".to_string();
+    state.db.insert_job(conflict).await.unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/rollback-target"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let payload = response_json(resp).await;
+
+    assert_eq!(payload["available"].as_bool(), Some(false));
+    assert_eq!(
+        payload["unavailableReason"].as_str(),
+        Some("stack_update_in_progress")
+    );
+    assert_eq!(payload["activeJobId"].as_str(), Some(conflict_id.as_str()));
+    assert_eq!(payload["activeJobStatus"].as_str(), Some("running"));
+}
+
+#[tokio::test]
+async fn trigger_service_rollback_returns_conflict_without_matching_history() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let (_stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/rollback"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    let payload = response_json(resp).await;
+    assert_eq!(payload["error"]["code"].as_str(), Some("conflict"));
+    assert_eq!(
+        payload["error"]["details"]["reason"].as_str(),
+        Some("no_matching_update_history")
+    );
+    assert!(payload["error"]["details"]["existingJobId"].is_null());
+}
+
+#[tokio::test]
+async fn trigger_service_rollback_creates_rolled_back_job() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+    let app = api::router(state.clone());
+
+    let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
+    let source_job_id = insert_successful_update_history_job(
+        &state,
+        crate::api::types::JobScope::Service,
+        Some(&stack_id),
+        Some(&service_id),
+        "2026-04-05T00:08:00Z",
+        "2026-04-05T00:09:00Z",
+        make_update_history_summary_for_test(&stack_id, &service_id, "sha256:old", "sha256:new"),
+    )
+    .await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/services/{service_id}/rollback"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let job_id = triggered["jobId"].as_str().unwrap().to_string();
+
+    let job = wait_for_job_terminal(&state, &job_id).await;
+    assert_eq!(job.r#type.as_str(), "rollback");
+    assert_eq!(job.scope.as_str(), "service");
+    assert_eq!(job.status, "rolled_back");
+    assert_eq!(job.service_id.as_deref(), Some(service_id.as_str()));
+    assert_eq!(job.stack_id.as_deref(), Some(stack_id.as_str()));
+    assert_eq!(job.summary_json["mode"].as_str(), Some("rollback"));
+    assert_eq!(
+        job.summary_json["progress"]["message"].as_str(),
+        Some("rollback finished")
+    );
+    assert_eq!(
+        job.summary_json["sourceUpdateJobId"].as_str(),
+        Some(source_job_id.as_str())
+    );
+    assert_eq!(
+        job.summary_json["targetDigest"].as_str(),
+        Some("sha256:old")
+    );
+    let rollback = &job.summary_json["stacks"][0]["rollback"];
+    assert!(rollback["changedServices"].is_number());
+    assert!(rollback["oldDigests"].is_object());
+    assert!(rollback["newDigests"].is_object());
+    assert!(rollback["finalDigests"].is_object());
 }
 
 #[tokio::test]

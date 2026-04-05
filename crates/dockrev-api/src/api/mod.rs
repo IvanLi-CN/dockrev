@@ -110,6 +110,14 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_service_new_version_discovery_timeline),
         )
         .route(
+            "/api/services/{service_id}/rollback-target",
+            get(get_service_rollback_target),
+        )
+        .route(
+            "/api/services/{service_id}/rollback",
+            post(trigger_service_rollback),
+        )
+        .route(
             "/api/version-inference/overview",
             get(get_version_inference_overview),
         )

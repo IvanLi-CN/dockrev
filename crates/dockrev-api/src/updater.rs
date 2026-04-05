@@ -927,7 +927,10 @@ pub async fn run_update_job(
             }
         }
 
-        if !rolled_back && let Some(target) = target {
+        if !rolled_back
+            && let Some(target) = target
+            && !target.skip_tag_followups
+        {
             let repo = strip_tag_and_digest(&svc.image.reference)
                 .unwrap_or_else(|| svc.image.reference.clone());
             let target_tag_ref = format!("{repo}:{}", target.target_tag.trim());
@@ -1011,7 +1014,8 @@ pub async fn run_update_job(
             }
         }
 
-        if !rolled_back && sync_local_tag {
+        if !rolled_back && sync_local_tag && !target.is_some_and(|target| target.skip_tag_followups)
+        {
             emit_update_progress(
                 progress_events.as_ref(),
                 UpdateProgressEvent {
@@ -1086,7 +1090,10 @@ pub async fn run_update_job(
             }
         }
 
-        if !rolled_back && let Some(target) = target {
+        if !rolled_back
+            && let Some(target) = target
+            && !target.skip_tag_followups
+        {
             let repo = strip_tag_and_digest(&svc.image.reference)
                 .unwrap_or_else(|| svc.image.reference.clone());
             let pull_tag_refs = target
@@ -1773,6 +1780,7 @@ mod tests {
             target_tag: target_tag.to_string(),
             target_digest: target_digest.to_string(),
             pull_tags: Some(pull_tags.iter().map(|tag| (*tag).to_string()).collect()),
+            skip_tag_followups: false,
         }]
     }
 

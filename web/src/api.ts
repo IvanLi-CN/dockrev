@@ -1155,6 +1155,31 @@ export async function triggerUpdate(input: TriggerUpdateInput) {
   return (await resp.json()) as { jobId: string }
 }
 
+export type ServiceRollbackTargetResponse = {
+  available: boolean
+  currentDigest: string
+  currentDisplayTag?: string | null
+  targetDigest?: string | null
+  targetDisplayTag?: string | null
+  sourceUpdateJobId?: string | null
+  sourceFinishedAt?: string | null
+  unavailableReason?: string | null
+  activeJobId?: string | null
+  activeJobStatus?: string | null
+}
+
+export async function getServiceRollbackTarget(serviceId: string): Promise<ServiceRollbackTargetResponse> {
+  const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/rollback-target`)
+  return (await resp.json()) as ServiceRollbackTargetResponse
+}
+
+export async function triggerServiceRollback(serviceId: string): Promise<{ jobId: string }> {
+  const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/rollback`, {
+    method: 'POST',
+  })
+  return (await resp.json()) as { jobId: string }
+}
+
 export async function listJobs(): Promise<JobListItem[]> {
   const resp = await apiFetch('/api/jobs')
   const data = await resp.json()
