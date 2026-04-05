@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（4/5）
+- Status: 已完成
 - Created: 2026-04-05
 - Last: 2026-04-05
 
@@ -146,7 +146,7 @@
 - source_type: `storybook_canvas`
 - target_program: `mock-only`
 - capture_scope: `browser-viewport`
-- submission_gate: `pending-owner-approval`
+- submission_gate: `owner-approved`
 - story_id_or_title: `Pages/ServiceDetailPage/RollbackAvailable`
 - state: `available`
 - evidence_note: `存在匹配升级历史时，服务详情页顶部动作区显示可执行的“回滚”按钮。`
@@ -156,7 +156,7 @@
 - source_type: `storybook_canvas`
 - target_program: `mock-only`
 - capture_scope: `browser-viewport`
-- submission_gate: `pending-owner-approval`
+- submission_gate: `owner-approved`
 - story_id_or_title: `Pages/ServiceDetailPage/RollbackUnavailable`
 - state: `unavailable`
 - evidence_note: `无匹配升级历史时，“回滚”按钮保持可见但禁用。`
@@ -166,7 +166,7 @@
 - source_type: `storybook_canvas`
 - target_program: `mock-only`
 - capture_scope: `browser-viewport`
-- submission_gate: `pending-owner-approval`
+- submission_gate: `owner-approved`
 - story_id_or_title: `Pages/ServiceDetailPage/RollbackActive`
 - state: `active-job`
 - evidence_note: `存在活跃 rollback 任务时，顶部动作区显示“回滚中…”运行态按钮并可直达任务详情。`
@@ -176,7 +176,7 @@
 - source_type: `storybook_canvas`
 - target_program: `mock-only`
 - capture_scope: `browser-viewport`
-- submission_gate: `pending-owner-approval`
+- submission_gate: `owner-approved`
 - story_id_or_title: `Pages/ServiceDetailPage/RollbackConfirmOpen`
 - state: `confirm-dialog`
 - evidence_note: `二次确认弹窗展示当前版本、回滚目标、来源任务与完成时间，确认前不会直接创建任务。`
@@ -189,7 +189,7 @@
 - [x] M2: 新增 rollback job 真实生产路径、冲突保护与后端回归测试。
 - [x] M3: 服务详情页接入回滚按钮、确认对话框、禁用提示与任务直达行为。
 - [x] M4: 补齐 Storybook mock/stories、视觉证据与 spec 落盘。
-- [ ] M5: 快车道推进到 latest PR `merge-ready`。
+- [x] M5: 快车道推进到 latest PR `merge-ready`。
 
 ## 风险 / 假设（Risks / Assumptions）
 
@@ -201,3 +201,4 @@
 
 - 2026-04-05: 创建规格，冻结服务详情页手动 rollback 的范围、契约、Storybook 覆盖与视觉证据要求。
 - 2026-04-05: 完成 rollback target API、服务详情页回滚按钮/确认弹窗、Storybook 场景、视觉证据与后端/前端验证；等待主人批准后推进 push/PR。
+- 2026-04-05: 主人已批准视觉证据，PR #201 已创建并收敛到 merge-ready；latest head = `dde830d7405d7cacc8158b274779e90521b79d0b`。
