@@ -2314,10 +2314,10 @@ fn extract_changed_service_ids(update: &serde_json::Value) -> Option<Vec<String>
     if ids.is_empty() { None } else { Some(ids) }
 }
 
-fn extract_stack_transition_summary<'a>(
-    stack: &'a serde_json::Value,
+fn extract_stack_transition_summary(
+    stack: &serde_json::Value,
     kind: TransitionJobKind,
-) -> Option<&'a serde_json::Value> {
+) -> Option<&serde_json::Value> {
     stack.get(kind.summary_key())
 }
 

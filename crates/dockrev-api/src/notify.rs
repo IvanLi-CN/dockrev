@@ -1406,6 +1406,7 @@ fn summarize_ghcr_anomaly_repos(
     format!("巡检发现 {total_anomalies} 个异常仓库：{preview}。")
 }
 
+#[cfg(test)]
 fn summarize_updated_services(
     visible_services: &[JobNotificationServiceUrlV2],
     omitted: u32,
