@@ -6493,6 +6493,28 @@ html[data-theme='light'] .card {
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-primary) 10%, transparent);
 }
 
+.cleanupStatusCard {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 84%, transparent);
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--color-primary) 8%, transparent) 0%, transparent 32%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--panel) 98%, transparent) 0%,
+      color-mix(in srgb, var(--dockrev-surface) 90%, transparent) 100%
+    );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--color-primary) 10%, transparent),
+    0 16px 36px rgba(2, 6, 23, 0.12);
+}
+
+.cleanupStatusHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
 .cleanupOverviewHead {
   display: flex;
   align-items: flex-start;
@@ -6520,7 +6542,15 @@ html[data-theme='light'] .card {
   display: grid;
   grid-template-columns: repeat(2, minmax(160px, 1fr));
   gap: 12px;
-  min-width: min(340px, 100%);
+  min-width: min(360px, 100%);
+}
+
+.cleanupStatusStats {
+  min-width: min(460px, 100%);
+}
+
+.cleanupRuleStats {
+  min-width: min(360px, 100%);
 }
 
 .cleanupOverviewStat,
@@ -6540,11 +6570,199 @@ html[data-theme='light'] .card {
   letter-spacing: -0.02em;
 }
 
+.cleanupOverviewStatHint,
 .cleanupOverviewStatMeta {
   margin-top: 8px;
+}
+
+.cleanupOverviewStatHint {
+  color: var(--muted2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.cleanupOverviewStatMeta {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.cleanupUsageSection {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cleanupUsageSectionHint {
+  margin-top: 4px;
+  color: var(--muted2);
+  font-size: 11px;
+  line-height: 1.4;
+  max-width: 780px;
+}
+
+.cleanupUsageGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.cleanupUsageCard {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 132px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 84%, transparent);
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, currentColor 9%, transparent) 0%, transparent 38%),
+    linear-gradient(180deg, color-mix(in srgb, var(--dockrev-surface) 92%, transparent) 0%, color-mix(in srgb, var(--panel) 86%, transparent) 100%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, currentColor 10%, transparent),
+    0 14px 32px rgba(2, 6, 23, 0.16);
+}
+
+.cleanupUsageCard::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, color-mix(in srgb, currentColor 8%, transparent) 0%, transparent 56%);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.cleanupUsageCard > * {
+  position: relative;
+  z-index: 1;
+}
+
+.cleanupUsageCardHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cleanupUsageCardHeading {
+  min-width: 0;
+  flex: 1;
+}
+
+.cleanupUsageCardIconWrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  color: inherit;
+  flex: 0 0 auto;
+}
+
+.cleanupUsageCardIcon {
+  opacity: 0.94;
+}
+
+.cleanupUsageCardLabel {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 760;
+  letter-spacing: -0.01em;
+}
+
+.cleanupUsageCardDescription {
+  margin-top: 2px;
+  color: var(--muted2);
+  font-size: 11px;
+  line-height: 1.35;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.cleanupUsageCardValue {
+  color: var(--text);
+  font-size: clamp(18px, 1.9vw, 24px);
+  font-weight: 820;
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+}
+
+.cleanupUsageCardMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted2);
+  font-size: 11px;
+  line-height: 1.35;
+  flex-wrap: wrap;
+}
+
+.cleanupUsageCardBar {
+  overflow: hidden;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel2) 76%, transparent);
+  margin-top: auto;
+}
+
+.cleanupUsageCardBar > span {
+  display: block;
+  height: 100%;
+  min-width: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in srgb, currentColor 68%, transparent) 0%, color-mix(in srgb, var(--text) 18%, currentColor 82%) 100%);
+  box-shadow: 0 0 16px color-mix(in srgb, currentColor 24%, transparent);
+}
+
+.cleanupUsageCardContainer {
+  color: color-mix(in srgb, #7dd3fc 78%, #cbd5e1 22%);
+}
+
+.cleanupUsageCardImage {
+  color: color-mix(in srgb, var(--color-primary) 78%, #bfdbfe 22%);
+}
+
+.cleanupUsageCardVolume {
+  color: color-mix(in srgb, #f59e0b 76%, #fde68a 24%);
+}
+
+.cleanupUsageCardOther {
+  color: color-mix(in srgb, #c084fc 72%, #cbd5e1 28%);
+}
+
+.cleanupStatusCard .cleanupOverviewStat,
+.cleanupOverviewCard .cleanupOverviewStat {
+  padding: 12px 14px;
+  border-radius: 13px;
+}
+
+.cleanupStatusCard .cleanupOverviewStatValue,
+.cleanupOverviewCard .cleanupOverviewStatValue {
+  margin-top: 6px;
+  font-size: clamp(18px, 1.7vw, 22px);
+}
+
+.cleanupStatusCard .cleanupOverviewStatHint,
+.cleanupStatusCard .cleanupOverviewStatMeta,
+.cleanupOverviewCard .cleanupOverviewStatHint,
+.cleanupOverviewCard .cleanupOverviewStatMeta {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.cleanupRuleIntro {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .cleanupPresetTabs {
@@ -6555,6 +6773,13 @@ html[data-theme='light'] .card {
   padding: 0;
   background: transparent;
   flex-wrap: wrap;
+}
+
+.cleanupPresetTabsInline {
+  margin-top: 2px;
+  width: auto;
+  max-width: min(100%, 760px);
+  gap: 8px;
 }
 
 .cleanupPresetTab {
@@ -6775,6 +7000,7 @@ html[data-theme='light'] .card {
 }
 
 @media (max-width: 920px) {
+  .cleanupStatusHead,
   .cleanupOverviewHead,
   .cleanupGroupHead,
   .cleanupRowLine,
@@ -6785,6 +7011,10 @@ html[data-theme='light'] .card {
   .cleanupOverviewStats {
     width: 100%;
     min-width: 0;
+  }
+
+  .cleanupUsageGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .cleanupGroupHead,
@@ -6812,8 +7042,16 @@ html[data-theme='light'] .card {
     grid-template-columns: 1fr;
   }
 
+  .cleanupUsageGrid {
+    grid-template-columns: 1fr;
+  }
+
   .cleanupPresetTabs {
     gap: 8px;
+  }
+
+  .cleanupPresetTabsInline {
+    width: 100%;
   }
 }
 
