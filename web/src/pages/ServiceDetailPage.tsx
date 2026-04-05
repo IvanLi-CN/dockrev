@@ -840,7 +840,7 @@ export function ServiceDetailPage(props: {
                     title: `确认回滚服务 ${service.name}？`,
                     body: (
                       <>
-                        <div className="modalLead">将把该服务回滚到最近一次成功升级之前的版本。</div>
+                        <div className="modalLead">将把该服务回滚到上次升级前的版本。</div>
                         <div className="modalKvGrid">
                           <div className="modalKvLabel">范围</div>
                           <div className="modalKvValue">
