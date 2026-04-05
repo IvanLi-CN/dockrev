@@ -901,7 +901,7 @@ export function ServiceDetailPage(props: {
                         if (typeof existingJobId === 'string' && existingJobId.trim()) {
                           navigate({ name: 'job', jobId: existingJobId })
                         } else if (typeof reason === 'string' && reason.trim()) {
-                          setError(rollbackUnavailableReasonLabel(reason))
+                          setError(rollbackUnavailableReasonLabel(reason) ?? e.message)
                         } else {
                           setError(e.message)
                         }
