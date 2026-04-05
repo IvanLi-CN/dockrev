@@ -76,6 +76,8 @@ pub struct UpdateServiceTarget {
     pub target_digest: String,
     #[serde(default)]
     pub pull_tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub skip_tag_followups: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -155,6 +157,35 @@ impl UpdateReason {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TriggerUpdateResponse {
+    pub job_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceRollbackTargetResponse {
+    pub available: bool,
+    pub current_digest: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_display_tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_display_tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_update_job_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_finished_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_job_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_job_status: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerRollbackResponse {
     pub job_id: String,
 }
 

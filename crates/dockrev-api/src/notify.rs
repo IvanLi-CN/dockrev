@@ -1406,6 +1406,7 @@ fn summarize_ghcr_anomaly_repos(
     format!("巡检发现 {total_anomalies} 个异常仓库：{preview}。")
 }
 
+#[cfg(test)]
 fn summarize_updated_services(
     visible_services: &[JobNotificationServiceUrlV2],
     omitted: u32,
@@ -1445,6 +1446,46 @@ fn summarize_updated_services(
     format!("变更 {total_changed} 个服务：{preview}。")
 }
 
+fn summarize_transition_services(
+    verb: &str,
+    visible_services: &[JobNotificationServiceUrlV2],
+    omitted: u32,
+) -> String {
+    let total_changed = visible_services.len() + omitted as usize;
+    if total_changed == 0 {
+        return format!("{verb} 0 个服务。");
+    }
+
+    if total_changed == 1 {
+        if let Some(svc) = visible_services.first() {
+            return format!(
+                "{verb} 1 个服务（{} / {}）。",
+                svc.stack_name, svc.service_name
+            );
+        }
+        return format!("{verb} 1 个服务。");
+    }
+
+    let preview = visible_services
+        .iter()
+        .map(|svc| format!("{} / {}", svc.stack_name, svc.service_name))
+        .collect::<Vec<_>>()
+        .join("、");
+
+    if preview.is_empty() {
+        return format!("{verb} {total_changed} 个服务。");
+    }
+
+    if omitted > 0 {
+        return format!(
+            "{verb} {total_changed} 个服务：{preview}（通知正文仅展示前 {} 条）。",
+            visible_services.len()
+        );
+    }
+
+    format!("{verb} {total_changed} 个服务：{preview}。")
+}
+
 fn extract_changed_service_ids(update: &Value) -> Vec<String> {
     let obj = update
         .get("newDigests")
@@ -1466,7 +1507,7 @@ fn extract_changed_services_by_stack(summary: &Value) -> Vec<(String, String)> {
         let Some(stack_id) = s.get("stackId").and_then(|v| v.as_str()) else {
             continue;
         };
-        let Some(update) = s.get("update") else {
+        let Some(update) = s.get("update").or_else(|| s.get("rollback")) else {
             continue;
         };
         for service_id in extract_changed_service_ids(update) {
@@ -1486,7 +1527,7 @@ fn extract_error_excerpt(summary: &Value) -> Option<String> {
 
     let stacks = summary.get("stacks").and_then(|v| v.as_array())?;
     for s in stacks {
-        let Some(update) = s.get("update") else {
+        let Some(update) = s.get("update").or_else(|| s.get("rollback")) else {
             continue;
         };
         if let Some(err) = update.get("lastError").and_then(|v| v.as_str()) {
@@ -2578,16 +2619,30 @@ async fn build_job_payload_v2(
     );
 
     let status_zh = update_job_status_label_zh(status);
-    let title = if status == "failed" {
-        "Dockrev：更新失败".to_string()
+    let action_noun = if job.r#type == "rollback" {
+        "回滚"
     } else {
-        format!("Dockrev：更新完成（{status_zh}）")
+        "更新"
+    };
+    let action_verb = if job.r#type == "rollback" {
+        "回滚"
+    } else {
+        "变更"
+    };
+    let title = if status == "failed" {
+        format!("Dockrev：{action_noun}失败")
+    } else {
+        format!("Dockrev：{action_noun}完成（{status_zh}）")
     };
 
     let summary = if links.service_urls.is_empty() {
         format!("状态：{status_zh}。")
     } else {
-        summarize_updated_services(&links.service_urls, links.truncated.service_urls_omitted)
+        summarize_transition_services(
+            action_verb,
+            &links.service_urls,
+            links.truncated.service_urls_omitted,
+        )
     };
 
     let mut detail_lines = Vec::new();
