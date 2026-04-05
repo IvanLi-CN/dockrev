@@ -6,10 +6,12 @@ const DEFAULT_HOVER_CLOSE_DELAY_MS = 300
 
 type HoverPinnedPopoverOptions = {
   closeDelayMs?: number
+  hoverEnabled?: boolean
 }
 
 export function useHoverPinnedPopover(options: HoverPinnedPopoverOptions = {}) {
   const closeDelayMs = options.closeDelayMs ?? DEFAULT_HOVER_CLOSE_DELAY_MS
+  const hoverEnabled = options.hoverEnabled ?? true
   const hoverCloseTimerRef = useRef<number | null>(null)
   const pinnedRef = useRef(false)
   const [pinned, setPinned] = useState(false)
@@ -52,9 +54,9 @@ export function useHoverPinnedPopover(options: HoverPinnedPopoverOptions = {}) {
     clearHoverCloseTimer()
     const next = !pinnedRef.current
     setPinnedState(next)
-    setHoverOpen(true)
+    setHoverOpen(hoverEnabled ? true : next)
     return next
-  }, [clearHoverCloseTimer, setPinnedState])
+  }, [clearHoverCloseTimer, hoverEnabled, setPinnedState])
 
   const popoverProps = {
     open,
@@ -66,10 +68,12 @@ export function useHoverPinnedPopover(options: HoverPinnedPopoverOptions = {}) {
 
   const triggerProps = {
     onPointerEnter: () => {
+      if (!hoverEnabled) return
       clearHoverCloseTimer()
       setHoverOpen(true)
     },
     onPointerLeave: () => {
+      if (!hoverEnabled) return
       scheduleHoverClose()
     },
     onClick: () => togglePinned(),
@@ -88,10 +92,12 @@ export function useHoverPinnedPopover(options: HoverPinnedPopoverOptions = {}) {
     | 'onFocusOutside'
   > = {
     onPointerEnter: () => {
+      if (!hoverEnabled) return
       clearHoverCloseTimer()
       setHoverOpen(true)
     },
     onPointerLeave: () => {
+      if (!hoverEnabled) return
       scheduleHoverClose()
     },
     onPointerDownOutside: () => close(),

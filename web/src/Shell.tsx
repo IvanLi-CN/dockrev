@@ -6,6 +6,8 @@ import { brandMarkUrl } from './publicAssetUrls'
 import { UpdateActionTrackerProvider } from './updateActionTracking'
 import type { Route } from './routes'
 import { currentHref, navigate } from './routes'
+import { TopbarUserIdentity } from './components/TopbarUserIdentity'
+import type { TopbarAuthIdentity } from './topbarAuthIdentity'
 
 function formatShort(ts: string) {
   const d = new Date(ts)
@@ -41,6 +43,7 @@ export function AppShell(props: {
   pageSubtitle?: string
   topbarHint?: string
   topActions?: ReactNode
+  authIdentity?: TopbarAuthIdentity | null
   lastScanHint?: string
   children: ReactNode
 }) {
@@ -110,7 +113,9 @@ export function AppShell(props: {
           </div>
           <div className="topbarRight">
             {props.topActions ? <div className="topActions">{props.topActions}</div> : null}
-            <div className="chipStatic chipStaticUser">鉴权：Forward Auth</div>
+            <div className="topbarUserSlot">
+              <TopbarUserIdentity authIdentity={props.authIdentity} />
+            </div>
           </div>
         </header>
 

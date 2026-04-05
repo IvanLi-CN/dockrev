@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { OverviewPage } from '../../pages/OverviewPage'
 import { DOCKREV_AGGREGATE_GUARD_HINT } from '../../aggregateUpdateGuard'
+import { buildTopbarAuthIdentityFromSettings } from '../../topbarAuthIdentity'
 import { PageHarness } from '../mocks/PageHarness'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 
@@ -96,6 +97,18 @@ type Story = StoryObj<typeof OverviewPage>
 
 const TOOLTIP_WAIT_MS = 240
 
+const demoAuthIdentity = buildTopbarAuthIdentityFromSettings({
+  allowAnonymousInDev: true,
+  allowedGroupMasked: 'o**s',
+  allowedUserMasked: 'al***ce',
+  authorizationMode: 'user_or_group',
+  currentGroups: ['o**s'],
+  currentUser: 'alice',
+  forwardHeaderName: 'X-Forwarded-User',
+  groupHeaderName: 'Remote-Groups',
+  matchedBy: 'user',
+})
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -131,6 +144,36 @@ export const Default: Story = {
         {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
       </PageHarness>
     )
+  },
+}
+
+export const DefaultWithIdentityPopover: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: () => {
+    return (
+      <PageHarness
+        route={{ name: 'overview' }}
+        title="概览"
+        pageSubtitle="聚焦：运行态/结果 + 发现异常 + 更新候选筛选"
+        authIdentity={demoAuthIdentity}
+      >
+        {({ onLastScanHint, onTopActions }) => (
+          <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
+        )}
+      </PageHarness>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await sleep(180)
+
+    const trigger = canvasElement.ownerDocument.querySelector<HTMLButtonElement>('.topbarUserTrigger')
+    expectStory(trigger?.textContent?.includes('alice'), 'overview layout should show the current user trigger in the topbar')
+    trigger?.click()
+    await sleep(180)
+
+    const popover = canvasElement.ownerDocument.querySelector<HTMLElement>('.topbarUserPopover')
+    expectStory(popover?.textContent?.includes('用户信息与认证方式'), 'overview layout should expose the identity popover title')
+    expectStory(popover?.textContent?.includes('Forward Auth'), 'overview layout should expose auth source details')
   },
 }
 
