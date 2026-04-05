@@ -57,6 +57,7 @@ jobs:
       github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
+      packages: read
       pull-requests: read
     outputs:
       target_sha: ${{ steps.pending-target.outputs.target_sha }}
@@ -153,6 +154,32 @@ jobs:
             --status skip \
             --reason "${reason}" \
             --output "$RUNNER_TEMP/release-override.json"
+
+      - name: Reconcile historical published backlog
+        if: github.event_name != 'workflow_dispatch' || inputs.admin_action != 'release'
+        id: reconcile-publications
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ steps.requested-target.outputs.target_sha }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          upper_bound="${REQUESTED_SHA}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.admin_action }}" = "skip" ]; then
+            upper_bound="$(git rev-parse origin/main)"
+          fi
+
+          python3 .github/scripts/release_snapshot.py reconcile-publications \
+            --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
+            --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
+            --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \
+            --main-ref "origin/main" \
+            --upper-bound "${upper_bound}" \
+            --github-repository "${GITHUB_REPOSITORY}" \
+            --github-token "${GITHUB_TOKEN}" \
+            --github-actor "${GITHUB_ACTOR}" \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Select pending release target
         id: pending-target
@@ -933,7 +960,7 @@ jobs:
           git fetch --no-tags origin "+${RELEASE_SNAPSHOT_NOTES_REF}:${RELEASE_SNAPSHOT_NOTES_REF}" || true
           git fetch --no-tags origin "+${RELEASE_PUBLICATION_NOTES_REF}:${RELEASE_PUBLICATION_NOTES_REF}" || true
           git fetch --no-tags origin "+${RELEASE_OVERRIDE_NOTES_REF}:${RELEASE_OVERRIDE_NOTES_REF}" || true
-          python3 .github/scripts/release_snapshot.py next-pending \
+          python3 .workflow-src/.github/scripts/release_snapshot.py next-pending \
             --notes-ref "${RELEASE_SNAPSHOT_NOTES_REF}" \
             --publication-notes-ref "${RELEASE_PUBLICATION_NOTES_REF}" \
             --override-notes-ref "${RELEASE_OVERRIDE_NOTES_REF}" \

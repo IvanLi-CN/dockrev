@@ -701,6 +701,228 @@ with tempfile.TemporaryDirectory(prefix="release-snapshot-publication-regression
         os.chdir(original_cwd)
 
 
+with tempfile.TemporaryDirectory(prefix="release-snapshot-reconcile-publication-backlog-") as tmp:
+    repo = Path(tmp)
+    run("init", cwd=repo)
+    run("config", "user.name", "Test User", cwd=repo)
+    run("config", "user.email", "test@example.com", cwd=repo)
+    run("checkout", "-b", "main", cwd=repo)
+    (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.35.7"\n')
+    (repo / "README.md").write_text("base\n")
+    run("add", "Cargo.toml", "README.md", cwd=repo)
+    run("commit", "-m", "base", cwd=repo)
+    run("tag", "0.35.7", cwd=repo)
+
+    (repo / "README.md").write_text("historical published missing ledger\n")
+    run("add", "README.md", cwd=repo)
+    run("commit", "-m", "historical published missing ledger", cwd=repo)
+    historical_sha = run("rev-parse", "HEAD", cwd=repo)
+
+    (repo / "README.md").write_text("real pending target\n")
+    run("add", "README.md", cwd=repo)
+    run("commit", "-m", "real pending target", cwd=repo)
+    pending_sha = run("rev-parse", "HEAD", cwd=repo)
+
+    original_cwd = Path.cwd()
+    original_loader = module.load_pr_for_commit
+    original_load_release = module.load_release_by_tag
+    original_resolve_digest = module.resolve_registry_manifest_digest
+    original_git = module.git
+    digest_requests: list[tuple[str, str]] = []
+    try:
+        os.chdir(repo)
+        module.load_pr_for_commit = lambda api_root, repository, token, target_sha, **kwargs: {
+            historical_sha: make_pr(701, "Release 0.35.8", historical_sha, ["type:patch", "channel:stable"]),
+            pending_sha: make_pr(702, "Release 0.35.9", pending_sha, ["type:patch", "channel:stable"]),
+        }[target_sha]
+
+        historical_snapshot = module.build_snapshot(
+            target_sha=historical_sha,
+            repository="IvanLi-CN/dockrev",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+        )
+        run(
+            "notes",
+            f"--ref={module.DEFAULT_NOTES_REF}",
+            "add",
+            "-f",
+            "-m",
+            json.dumps(historical_snapshot),
+            historical_sha,
+            cwd=repo,
+        )
+        pending_snapshot = module.build_snapshot(
+            target_sha=pending_sha,
+            repository="IvanLi-CN/dockrev",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+        )
+        run(
+            "notes",
+            f"--ref={module.DEFAULT_NOTES_REF}",
+            "add",
+            "-f",
+            "-m",
+            json.dumps(pending_snapshot),
+            pending_sha,
+            cwd=repo,
+        )
+        run(
+            "tag",
+            "-a",
+            historical_snapshot["release_tag"],
+            "-m",
+            "Release 0.35.8",
+            historical_sha,
+            cwd=repo,
+        )
+
+        module.load_release_by_tag = lambda api_root, repository, token, release_tag: {
+            historical_snapshot["release_tag"]: {
+                "tag_name": historical_snapshot["release_tag"],
+                "draft": False,
+                "published_at": "2026-04-05T01:02:03Z",
+            }
+        }.get(release_tag)
+
+        def fake_resolve_digest(registry, image_name, tag, **kwargs):
+            digest_requests.append((image_name, tag))
+            if image_name.endswith("/dockrev-supervisor"):
+                return "sha256:" + ("b" * 64)
+            return "sha256:" + ("a" * 64)
+
+        module.resolve_registry_manifest_digest = fake_resolve_digest
+        module.git = fake_push_git(original_git, module.DEFAULT_PUBLICATION_NOTES_REF)
+
+        exit_code = module.reconcile_publications(
+            argparse.Namespace(
+                notes_ref=module.DEFAULT_NOTES_REF,
+                main_ref=pending_sha,
+                upper_bound=pending_sha,
+                publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+                override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+                github_repository="IvanLi-CN/dockrev",
+                github_token="token",
+                github_actor="github-actions[bot]",
+                api_root="https://api.github.com",
+                github_output="",
+                max_attempts=1,
+            )
+        )
+        assert exit_code == 0
+        historical_publication = module.read_publication(module.DEFAULT_PUBLICATION_NOTES_REF, historical_sha)
+        assert historical_publication is not None
+        assert historical_publication["release_tag"] == "0.35.8"
+        assert historical_publication["published_at"] == "2026-04-05T01:02:03Z"
+        assert historical_publication["dockrev_digest"] == "sha256:" + ("a" * 64)
+        assert historical_publication["dockrev_supervisor_digest"] == "sha256:" + ("b" * 64)
+        assert module.read_publication(module.DEFAULT_PUBLICATION_NOTES_REF, pending_sha) is None
+        pending_after = module.pending_release_targets(
+            module.DEFAULT_NOTES_REF,
+            pending_sha,
+            publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+            override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+        )
+        assert pending_after == [pending_sha], pending_after
+        assert digest_requests == [
+            ("ivanli-cn/dockrev", "0.35.8"),
+            ("ivanli-cn/dockrev-supervisor", "0.35.8"),
+        ]
+    finally:
+        module.load_pr_for_commit = original_loader
+        module.load_release_by_tag = original_load_release
+        module.resolve_registry_manifest_digest = original_resolve_digest
+        module.git = original_git
+        os.chdir(original_cwd)
+
+
+with tempfile.TemporaryDirectory(prefix="release-snapshot-reconcile-tag-only-blocker-") as tmp:
+    repo = Path(tmp)
+    run("init", cwd=repo)
+    run("config", "user.name", "Test User", cwd=repo)
+    run("config", "user.email", "test@example.com", cwd=repo)
+    run("checkout", "-b", "main", cwd=repo)
+    (repo / "Cargo.toml").write_text('[package]\nname = "dockrev"\nversion = "0.38.0"\n')
+    (repo / "README.md").write_text("base\n")
+    run("add", "Cargo.toml", "README.md", cwd=repo)
+    run("commit", "-m", "base", cwd=repo)
+    run("tag", "0.38.0", cwd=repo)
+
+    (repo / "README.md").write_text("tag-only blocked release\n")
+    run("add", "README.md", cwd=repo)
+    run("commit", "-m", "tag-only blocked release", cwd=repo)
+    blocked_sha = run("rev-parse", "HEAD", cwd=repo)
+
+    original_cwd = Path.cwd()
+    original_loader = module.load_pr_for_commit
+    original_load_release = module.load_release_by_tag
+    try:
+        os.chdir(repo)
+        module.load_pr_for_commit = lambda api_root, repository, token, target_sha, **kwargs: {
+            blocked_sha: make_pr(703, "Release 0.38.1", blocked_sha, ["type:patch", "channel:stable"]),
+        }[target_sha]
+
+        blocked_snapshot = module.build_snapshot(
+            target_sha=blocked_sha,
+            repository="IvanLi-CN/dockrev",
+            token="token",
+            notes_ref=module.DEFAULT_NOTES_REF,
+            registry="ghcr.io",
+            api_root="https://api.github.com",
+        )
+        run(
+            "notes",
+            f"--ref={module.DEFAULT_NOTES_REF}",
+            "add",
+            "-f",
+            "-m",
+            json.dumps(blocked_snapshot),
+            blocked_sha,
+            cwd=repo,
+        )
+        run(
+            "tag",
+            "-a",
+            blocked_snapshot["release_tag"],
+            "-m",
+            "Release 0.38.1",
+            blocked_sha,
+            cwd=repo,
+        )
+        module.load_release_by_tag = lambda api_root, repository, token, release_tag: None
+
+        try:
+            module.reconcile_publications(
+                argparse.Namespace(
+                    notes_ref=module.DEFAULT_NOTES_REF,
+                    main_ref=blocked_sha,
+                    upper_bound=blocked_sha,
+                    publication_notes_ref=module.DEFAULT_PUBLICATION_NOTES_REF,
+                    override_notes_ref=module.DEFAULT_OVERRIDE_NOTES_REF,
+                    github_repository="IvanLi-CN/dockrev",
+                    github_token="token",
+                    github_actor="github-actions[bot]",
+                    api_root="https://api.github.com",
+                    github_output="",
+                    max_attempts=1,
+                )
+            )
+        except module.SnapshotError as exc:
+            assert "GitHub Release is missing" in str(exc)
+        else:
+            raise AssertionError("expected reconcile_publications to fail for tag-only backlog")
+        assert module.read_publication(module.DEFAULT_PUBLICATION_NOTES_REF, blocked_sha) is None
+    finally:
+        module.load_pr_for_commit = original_loader
+        module.load_release_by_tag = original_load_release
+        os.chdir(original_cwd)
+
+
 with tempfile.TemporaryDirectory(prefix="release-snapshot-tag-only-state-regression-") as tmp:
     repo = Path(tmp)
     run("init", cwd=repo)

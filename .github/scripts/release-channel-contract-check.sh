@@ -69,10 +69,14 @@ echo "[contract-check] release workflow rc gating invariants"
 search_regex "group:[[:space:]]*release-main" .github/workflows/release.yml
 search_fixed "head_sha:" .github/workflows/release.yml
 search_fixed "admin_action:" .github/workflows/release.yml
+search_fixed "packages: read" .github/workflows/release.yml
 search_fixed "python3 .github/scripts/release_snapshot.py ensure \\" .github/workflows/release.yml
 search_fixed "python3 .github/scripts/release_snapshot.py export \\" .github/workflows/release.yml
+search_fixed "python3 .github/scripts/release_snapshot.py reconcile-publications \\" .github/workflows/release.yml
 search_fixed "python3 .github/scripts/release_snapshot.py next-pending \\" .github/workflows/release.yml
+search_fixed "python3 .workflow-src/.github/scripts/release_snapshot.py next-pending \\" .github/workflows/release.yml
 search_fixed "python3 .github/scripts/release_snapshot.py record-override \\" .github/workflows/release.yml
+search_fixed "if: github.event_name != 'workflow_dispatch' || inputs.admin_action != 'release'" .github/workflows/release.yml
 search_fixed "if [ \"\${{ github.event_name }}\" = \"workflow_dispatch\" ] && [ \"\${{ inputs.admin_action }}\" = \"release\" ]; then" .github/workflows/release.yml
 search_fixed "echo \"target_sha=\${REQUESTED_SHA}\" >> \"\$GITHUB_OUTPUT\"" .github/workflows/release.yml
 search_fixed "Skipped release targets cannot be released manually" .github/workflows/release.yml
@@ -92,17 +96,35 @@ if needle not in text:
 latest_needle = "makeLatest: ${{ needs.prepare.outputs.publish_latest }}"
 if latest_needle not in text:
     raise SystemExit('[contract-check] expected explicit makeLatest wiring in release workflow')
+workflow_source_next_pending = "python3 .workflow-src/.github/scripts/release_snapshot.py next-pending \\"
+if workflow_source_next_pending not in text:
+    raise SystemExit('[contract-check] expected queue continuation to use workflow-source release_snapshot helper')
+prepare_permissions = """    permissions:
+      contents: write
+      packages: read
+      pull-requests: read"""
+if prepare_permissions not in text:
+    raise SystemExit('[contract-check] prepare job must retain packages: read for GHCR-backed reconciliation')
 
+reconcile_step = "Reconcile historical published backlog"
+select_pending_step = "Select pending release target"
+manual_release_bypass = "if: github.event_name != 'workflow_dispatch' || inputs.admin_action != 'release'"
 tag_step = "Create and push tag"
 release_step = "Create or update GitHub Release + upload assets"
 comment_step = "Upsert and verify release-version comment on source PR"
 ledger_step = "Record release publication ledger"
+reconcile_idx = text.find(reconcile_step)
+select_pending_idx = text.find(select_pending_step)
 tag_idx = text.find(tag_step)
 release_idx = text.find(release_step)
 comment_idx = text.find(comment_step)
 ledger_idx = text.find(ledger_step)
-if min(tag_idx, release_idx, comment_idx, ledger_idx) == -1:
-    raise SystemExit('[contract-check] expected tag/release/comment/ledger steps in release workflow')
+if min(reconcile_idx, select_pending_idx, tag_idx, release_idx, comment_idx, ledger_idx) == -1:
+    raise SystemExit('[contract-check] expected reconcile/select-pending/tag/release/comment/ledger steps in release workflow')
+if not (reconcile_idx < select_pending_idx):
+    raise SystemExit('[contract-check] release workflow must reconcile historical publications before selecting next pending target')
+if manual_release_bypass not in text:
+    raise SystemExit('[contract-check] manual admin_action=release must bypass backlog reconciliation')
 if not (tag_idx < release_idx < comment_idx < ledger_idx):
     raise SystemExit('[contract-check] release workflow must run tag -> release -> PR comment -> publication ledger in order')
 PY
