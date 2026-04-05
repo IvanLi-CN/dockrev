@@ -19,6 +19,7 @@ import { brandMarkUrl } from './publicAssetUrls'
 import { DeployWelcomePage } from './pages/DeployWelcomePage'
 import { UnauthorizedPage } from './pages/UnauthorizedPage'
 import { useRoute } from './useRoute'
+import { usePageResumeRefresh } from './usePageResumeRefresh'
 import {
   AUTH_RECOVERED_EVENT,
   AUTH_REQUIRED_EVENT,
@@ -132,6 +133,11 @@ export default function App() {
       suppressNextAuthRecoveredRef.current = false
     }
   }, [])
+  const requestAuthIdentityRefresh = usePageResumeRefresh(async () => {
+    const nextAuthIdentity = await refreshAuthIdentity()
+    if (!nextAuthIdentity) return
+    setAuthIdentity(nextAuthIdentity)
+  }, { onError: () => {} })
 
   useEffect(() => {
     let cancelled = false
@@ -176,18 +182,15 @@ export default function App() {
       }
     }
     const onAuthRecovered = () => {
+      const hadAuthFailure = authFailureActiveRef.current
       authFailureActiveRef.current = false
       setAuthFailure(null)
       if (suppressNextAuthRecoveredRef.current) {
         suppressNextAuthRecoveredRef.current = false
         return
       }
-      void refreshAuthIdentity()
-        .then((nextAuthIdentity) => {
-          if (!nextAuthIdentity) return
-          setAuthIdentity(nextAuthIdentity)
-        })
-        .catch(() => {})
+      if (!hadAuthFailure) return
+      void requestAuthIdentityRefresh().catch(() => {})
     }
 
     window.addEventListener(AUTH_REQUIRED_EVENT, onAuthRequired)
@@ -196,7 +199,7 @@ export default function App() {
       window.removeEventListener(AUTH_REQUIRED_EVENT, onAuthRequired)
       window.removeEventListener(AUTH_RECOVERED_EVENT, onAuthRecovered)
     }
-  }, [refreshAuthIdentity])
+  }, [requestAuthIdentityRefresh])
 
   useEffect(() => {
     let cancelled = false

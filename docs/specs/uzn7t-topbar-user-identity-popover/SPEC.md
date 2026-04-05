@@ -110,3 +110,5 @@
 - 2026-04-05: 根据第二轮 review 收敛中途切换已认证身份时的 stale header 问题，并完成 review-loop 清空。
 - 2026-04-05: 移除顶部身份弹层底部操作提示文案，保留原有 hover / click / Esc / 点外部关闭行为。
 - 2026-04-05: 主人批准后完成 push/PR 收口，创建 PR #202、补齐 `type:patch` / `channel:stable`，并将分支更新到最新 `origin/main`。
+- 2026-04-05: 根据合并前最终 review，收窄顶部身份刷新触发条件为“401 恢复”与“页面恢复可见后的按需同步”，避免每次成功 API 都补拉 `/api/settings`。
+- 2026-04-05: 根据最终 merge-proof 修复 click-only 设备二次点击 trigger 无法关闭弹层的问题，保持移动端触发器可开可关。
