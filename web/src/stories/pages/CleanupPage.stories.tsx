@@ -8,6 +8,13 @@ const meta: Meta<typeof CleanupPage> = {
   component: CleanupPage,
   decorators: [withDockrevMockApi],
   tags: ['autodocs'],
+  parameters: {
+    docs: {
+      description: {
+        component: 'Cleanup 页默认走 autodocs；这里补充顶部动作图标、未知大小文案与确认弹窗行为的稳定回归覆盖。',
+      },
+    },
+  },
 }
 
 export default meta
@@ -35,6 +42,12 @@ function findButton(root: ParentNode, text: string): HTMLButtonElement | null {
       (button) => button.textContent?.replace(/\s+/g, ' ').trim() === text,
     ) ?? null
   )
+}
+
+function assertButtonHasIcon(root: ParentNode, text: string) {
+  const button = findButton(root, text)
+  assertStory(button, `${text} button missing`)
+  assertStory(button.querySelector('svg'), `${text} button should render a leading icon`)
 }
 
 function renderPage() {
@@ -69,6 +82,9 @@ export const Default: Story = {
     assertStory(canvasElement.textContent?.includes('容器'), 'cleanup container card should be visible')
     assertStory(canvasElement.textContent?.includes('镜像'), 'cleanup image card should be visible')
     assertStory(canvasElement.textContent?.includes('卷'), 'cleanup volume card should be visible')
+    assertStory(!(canvasElement.textContent?.includes('待估') ?? false), 'cleanup copy should avoid the old pending-estimate wording')
+    assertButtonHasIcon(doc, '全部')
+    assertButtonHasIcon(doc, '重扫')
   },
 }
 
@@ -142,5 +158,6 @@ export const UsageOverviewFocus: Story = {
     await waitForCondition(() => canvasElement.textContent?.includes('空间概览') ?? false)
     assertStory(canvasElement.textContent?.includes('其他'), 'cleanup other card should be visible in focus story')
     assertStory(canvasElement.textContent?.includes('Docker 清理候选'), 'cleanup summary pill should be visible')
+    assertStory(canvasElement.textContent?.includes('大小未知'), 'cleanup focus story should expose the refined unknown-size copy')
   },
 }

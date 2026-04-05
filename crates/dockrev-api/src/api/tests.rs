@@ -21872,6 +21872,8 @@ async fn infer_service_repo_link_returns_none_for_invalid_service_image_ref() {
 enum CleanupRunnerMode {
     StaleOnSecondScan,
     VolumeInUse,
+    VolumeEstimateFallback,
+    BuilderCacheTextFallback,
 }
 
 #[derive(Clone)]
@@ -21891,6 +21893,20 @@ impl CleanupRunner {
     fn volume_in_use() -> Self {
         Self {
             mode: CleanupRunnerMode::VolumeInUse,
+            scan_generation: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn volume_estimate_fallback() -> Self {
+        Self {
+            mode: CleanupRunnerMode::VolumeEstimateFallback,
+            scan_generation: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn builder_cache_text_fallback() -> Self {
+        Self {
+            mode: CleanupRunnerMode::BuilderCacheTextFallback,
             scan_generation: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -21997,6 +22013,13 @@ impl CommandRunner for CleanupRunner {
                         stdout: String::new(),
                         stderr: String::new(),
                     }
+                } else if args == vec!["buildx", "du", "--format=json"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: r#"{"Reclaimable":true,"Shared":false,"Size":"2147483648"}"#
+                            .to_string(),
+                        stderr: String::new(),
+                    }
                 } else if args == vec!["buildx", "du"] {
                     CommandOutput {
                         status: 0,
@@ -22043,6 +22066,25 @@ impl CommandRunner for CleanupRunner {
                         .to_string(),
                         stderr: String::new(),
                     }
+                } else if args == vec!["buildx", "du", "--format=json"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: r#"{"Reclaimable":true,"Shared":false,"Size":"268435456"}"#
+                            .to_string(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["system", "df", "-v"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: r#"Images space usage:
+REPOSITORY          TAG                 IMAGE ID            CREATED             SIZE                SHARED SIZE         UNIQUE SIZE         CONTAINERS
+Local Volumes space usage:
+NAME                LINKS               SIZE
+demo_named          1                   8 KB
+"#
+                        .to_string(),
+                        stderr: String::new(),
+                    }
                 } else if args == vec!["buildx", "du"] {
                     CommandOutput {
                         status: 0,
@@ -22061,6 +22103,93 @@ impl CommandRunner for CleanupRunner {
                         status: 1,
                         stdout: String::new(),
                         stderr: format!("unexpected cleanup volume args: {:?}", args),
+                    }
+                }
+            }
+            CleanupRunnerMode::VolumeEstimateFallback => {
+                if args == vec!["container", "ls", "-aq"]
+                    || args == vec!["image", "ls", "-aq", "--no-trunc"]
+                    || args == vec!["network", "ls", "-q"]
+                {
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["volume", "ls", "-q"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: "demo_named\n".to_string(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["volume", "inspect", "--format", "{{json .}}", "demo_named"]
+                {
+                    CommandOutput {
+                        status: 0,
+                        stdout: serde_json::json!({
+                            "Name": "demo_named",
+                            "Labels": {
+                                "com.docker.compose.project": "demo",
+                                "com.docker.compose.service": "web"
+                            }
+                        })
+                        .to_string(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["system", "df", "-v"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: r#"Images space usage:
+REPOSITORY          TAG                 IMAGE ID            CREATED             SIZE                SHARED SIZE         UNIQUE SIZE         CONTAINERS
+Local Volumes space usage:
+NAME                LINKS               SIZE
+demo_named          0                   128 MB
+"#
+                        .to_string(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["buildx", "du", "--format=json"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                } else {
+                    CommandOutput {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: format!("unexpected cleanup volume fallback args: {:?}", args),
+                    }
+                }
+            }
+            CleanupRunnerMode::BuilderCacheTextFallback => {
+                if args == vec!["container", "ls", "-aq"]
+                    || args == vec!["image", "ls", "-aq", "--no-trunc"]
+                    || args == vec!["network", "ls", "-q"]
+                    || args == vec!["volume", "ls", "-q"]
+                {
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["buildx", "du", "--format=json"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: "{not-json}\n".to_string(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["buildx", "du"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: "Reclaimable:  384MB\nTotal:  512MB\n".to_string(),
+                        stderr: String::new(),
+                    }
+                } else {
+                    CommandOutput {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: format!("unexpected cleanup builder fallback args: {:?}", args),
                     }
                 }
             }
@@ -22252,5 +22381,105 @@ services:
     assert_eq!(
         stored.summary_json["skippedInUse"][0]["reason"].as_str(),
         Some("still_attached")
+    );
+}
+
+#[tokio::test]
+async fn cleanup_scan_uses_system_df_volume_size_when_usage_data_is_missing() {
+    let db_path = format!(
+        "/tmp/dockrev-cleanup-volume-fallback-{}.sqlite3",
+        ulid::Ulid::new()
+    );
+    let runner = Arc::new(CleanupRunner::volume_estimate_fallback());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    let (stack_id, _service_id, _compose_path) = seed_cleanup_stack(
+        &state,
+        "demo",
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "confirm",
+                        "preset": "project_deep_clean",
+                        "scope": "stack",
+                        "stackId": stack_id,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(
+        body["stackGroups"][0]["services"][0]["estimatedReclaimableBytes"].as_u64(),
+        Some(128 * 1024 * 1024)
+    );
+    assert_eq!(
+        body["stackGroups"][0]["services"][0]["hasUnknownSize"].as_bool(),
+        Some(false)
+    );
+}
+
+#[tokio::test]
+async fn cleanup_scan_keeps_builder_cache_estimate_when_json_falls_back_to_text_summary() {
+    let db_path = format!(
+        "/tmp/dockrev-cleanup-builder-fallback-{}.sqlite3",
+        ulid::Ulid::new()
+    );
+    let runner = Arc::new(CleanupRunner::builder_cache_text_fallback());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "page",
+                        "preset": "balanced",
+                        "scope": "all"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(
+        body["estimatedReclaimableBytes"].as_u64(),
+        Some(384 * 1024 * 1024)
+    );
+    assert_eq!(body["hasUnknownSize"].as_bool(), Some(false));
+    assert_eq!(
+        body["unownedGroup"]["resources"][0]["kind"].as_str(),
+        Some("builder_cache")
+    );
+    assert_eq!(
+        body["unownedGroup"]["resources"][0]["estimatedReclaimableBytes"].as_u64(),
+        Some(384 * 1024 * 1024)
     );
 }

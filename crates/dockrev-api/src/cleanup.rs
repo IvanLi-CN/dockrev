@@ -234,6 +234,14 @@ struct BuilderCacheEstimate {
     reclaimable_bytes: Option<u64>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct BuildxDuRecord {
+    #[serde(default, rename = "Reclaimable")]
+    reclaimable: bool,
+    #[serde(default, rename = "Size")]
+    size: serde_json::Value,
+}
+
 pub async fn build_execution_plan(
     state: &AppState,
     req: &CleanupScanRequest,
@@ -602,6 +610,11 @@ async fn scan_candidates(
     }
 
     let volume_names = docker_list_ids(state, vec!["volume", "ls", "-q"]).await?;
+    let system_df_volume_sizes = if volume_names.is_empty() {
+        BTreeMap::new()
+    } else {
+        scan_volume_sizes_from_system_df(state).await
+    };
     let mut dedup_volume_names = BTreeSet::new();
     for volume_name in volume_names {
         if !dedup_volume_names.insert(volume_name.clone())
@@ -631,7 +644,11 @@ async fn scan_candidates(
             resource_id: inspect.name.clone(),
             kind: CleanupResourceKind::Volume,
             label: inspect.name.clone(),
-            estimated_reclaimable_bytes: inspect.usage_data.as_ref().and_then(|usage| usage.size),
+            estimated_reclaimable_bytes: inspect
+                .usage_data
+                .as_ref()
+                .and_then(|usage| usage.size)
+                .or_else(|| system_df_volume_sizes.get(&inspect.name).copied()),
             ownership,
             category,
         });
@@ -689,6 +706,31 @@ async fn scan_builder_cache_candidate(state: &AppState) -> CleanupCandidate {
 }
 
 async fn scan_builder_cache_estimate(state: &AppState) -> Option<BuilderCacheEstimate> {
+    let json_out = state
+        .runner
+        .run(
+            CommandSpec {
+                program: "docker".to_string(),
+                args: vec![
+                    "buildx".to_string(),
+                    "du".to_string(),
+                    "--format=json".to_string(),
+                ],
+                env: Vec::new(),
+            },
+            DOCKER_TIMEOUT,
+        )
+        .await
+        .ok();
+    if let Some(out) = json_out
+        && out.status == 0
+        && let Some(reclaimable) = parse_buildx_du_json_lines(&out.stdout)
+    {
+        return Some(BuilderCacheEstimate {
+            reclaimable_bytes: Some(reclaimable),
+        });
+    }
+
     let out = state
         .runner
         .run(
@@ -712,6 +754,25 @@ async fn scan_builder_cache_estimate(state: &AppState) -> Option<BuilderCacheEst
     Some(BuilderCacheEstimate {
         reclaimable_bytes: reclaimable,
     })
+}
+
+async fn scan_volume_sizes_from_system_df(state: &AppState) -> BTreeMap<String, u64> {
+    let out = match state
+        .runner
+        .run(
+            CommandSpec {
+                program: "docker".to_string(),
+                args: vec!["system".to_string(), "df".to_string(), "-v".to_string()],
+                env: Vec::new(),
+            },
+            DOCKER_TIMEOUT,
+        )
+        .await
+    {
+        Ok(out) if out.status == 0 => out,
+        _ => return BTreeMap::new(),
+    };
+    parse_volume_sizes_from_system_df_verbose(&out.stdout)
 }
 
 fn resolve_container_ownership(
@@ -1388,6 +1449,103 @@ fn parse_human_size(input: &str) -> Option<u64> {
     Some((value * multiplier).round() as u64)
 }
 
+fn parse_buildx_du_json_lines(input: &str) -> Option<u64> {
+    let mut parsed_any = false;
+    let mut reclaimable = 0_u64;
+
+    for line in input.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let record = serde_json::from_str::<BuildxDuRecord>(line).ok()?;
+        parsed_any = true;
+        if !record.reclaimable {
+            continue;
+        }
+        let size = parse_size_value(&record.size)?;
+        reclaimable = reclaimable.saturating_add(size);
+    }
+
+    parsed_any.then_some(reclaimable)
+}
+
+fn parse_size_value(value: &serde_json::Value) -> Option<u64> {
+    match value {
+        serde_json::Value::Number(number) => number.as_u64(),
+        serde_json::Value::String(text) => {
+            text.parse::<u64>().ok().or_else(|| parse_human_size(text))
+        }
+        _ => None,
+    }
+}
+
+fn parse_volume_sizes_from_system_df_verbose(input: &str) -> BTreeMap<String, u64> {
+    let mut in_volume_section = false;
+    let mut volume_sizes = BTreeMap::new();
+
+    for line in input.lines() {
+        let trimmed = line.trim();
+        if !in_volume_section {
+            if trimmed == "Local Volumes space usage:" {
+                in_volume_section = true;
+            }
+            continue;
+        }
+
+        if trimmed.is_empty() || trimmed.starts_with("NAME") {
+            continue;
+        }
+        if trimmed.ends_with("space usage:") {
+            break;
+        }
+
+        let columns = split_table_columns(line);
+        if columns.len() < 3 {
+            continue;
+        }
+        let Some(size) = parse_human_size(columns[2]) else {
+            continue;
+        };
+        volume_sizes.insert(columns[0].to_string(), size);
+    }
+
+    volume_sizes
+}
+
+fn split_table_columns(line: &str) -> Vec<&str> {
+    let bytes = line.as_bytes();
+    let mut columns = Vec::new();
+    let mut start = 0usize;
+    let mut idx = 0usize;
+
+    while idx < bytes.len() {
+        if !bytes[idx].is_ascii_whitespace() {
+            idx += 1;
+            continue;
+        }
+
+        let mut end = idx;
+        while end < bytes.len() && bytes[end].is_ascii_whitespace() {
+            end += 1;
+        }
+        if end.saturating_sub(idx) < 2 {
+            idx = end;
+            continue;
+        }
+
+        let column = line[start..idx].trim();
+        if !column.is_empty() {
+            columns.push(column);
+        }
+        start = end;
+        idx = end;
+    }
+
+    let tail = line[start..].trim();
+    if !tail.is_empty() {
+        columns.push(tail);
+    }
+
+    columns
+}
+
 fn now_rfc3339() -> anyhow::Result<String> {
     Ok(time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?)
 }
@@ -1618,5 +1776,38 @@ mod tests {
         assert_eq!(parse_human_size("2.0GB"), Some(2147483648));
         assert_eq!(parse_human_size("512B"), Some(512));
         assert_eq!(parse_human_size("20.7kB"), Some(21197));
+    }
+
+    #[test]
+    fn parse_buildx_du_json_lines_sums_reclaimable_rows() {
+        let input = r#"{"Reclaimable":true,"Shared":false,"Size":"829889526"}
+{"Reclaimable":true,"Shared":true,"Size":"829898832"}
+{"Reclaimable":false,"Shared":false,"Size":"12"}"#;
+        assert_eq!(
+            parse_buildx_du_json_lines(input),
+            Some(829_889_526 + 829_898_832)
+        );
+    }
+
+    #[test]
+    fn parse_volume_sizes_from_system_df_verbose_reads_local_volume_section() {
+        let input = r#"Images space usage:
+REPOSITORY          TAG                 IMAGE ID            CREATED             SIZE                SHARED SIZE         UNIQUE SIZE         CONTAINERS
+alpine              latest              4e38e38c8ce0        9 weeks ago         4.799 MB            0 B                 4.799 MB            1
+Containers space usage:
+CONTAINER ID        IMAGE               COMMAND             LOCAL VOLUMES       SIZE                CREATED             STATUS                      NAMES
+4a7f7eebae0f        alpine:latest       "sh"                1                   0 B                 16 minutes ago      Exited (0) 5 minutes ago    hopeful_yalow
+Local Volumes space usage:
+
+NAME                                                               LINKS               SIZE
+07c7bdf3e34ab76d921894c2b834f073721fccfbbcba792aa7648e3a7a664c2e   2                   36 B
+my-named-vol                                                       0                   1.5 GB
+"#;
+        let parsed = parse_volume_sizes_from_system_df_verbose(input);
+        assert_eq!(
+            parsed.get("07c7bdf3e34ab76d921894c2b834f073721fccfbbcba792aa7648e3a7a664c2e"),
+            Some(&36)
+        );
+        assert_eq!(parsed.get("my-named-vol"), Some(&(1610612736_u64)));
     }
 }
