@@ -5,7 +5,7 @@
 - Status: 已完成
 - Created: 2026-04-04
 - Last: 2026-04-05
-- Notes: fast-track（implementation + storybook + visual evidence + review-loop completed；awaiting owner approval before screenshot-bearing push/PR）
+- Notes: fast-track（PR #202；implementation + storybook + visual evidence + review-loop completed）
 
 ## 背景 / 问题陈述
 
@@ -105,7 +105,8 @@
 ## 变更记录（Change log）
 
 - 2026-04-04: 创建 follow-up spec，冻结顶部用户身份入口、交互与视觉证据范围。
-- 2026-04-04: 完成前端实现、Storybook 覆盖与 owner-facing 视觉证据；等待截图提交授权后进入 push/PR 收口。
+- 2026-04-04: 完成前端实现、Storybook 覆盖与 owner-facing 视觉证据。
 - 2026-04-05: 根据 review 收敛 `AUTH_REQUIRED_EVENT` 与首轮身份拉取的竞态，避免认证失败后被旧身份结果覆盖。
 - 2026-04-05: 根据第二轮 review 收敛中途切换已认证身份时的 stale header 问题，并完成 review-loop 清空。
 - 2026-04-05: 移除顶部身份弹层底部操作提示文案，保留原有 hover / click / Esc / 点外部关闭行为。
+- 2026-04-05: 主人批准后完成 push/PR 收口，创建 PR #202、补齐 `type:patch` / `channel:stable`，并将分支更新到最新 `origin/main`。
