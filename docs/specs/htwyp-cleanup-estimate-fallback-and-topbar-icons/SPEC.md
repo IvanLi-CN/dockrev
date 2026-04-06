@@ -2,9 +2,10 @@
 
 ## 状态
 
-- Status: 部分完成（2/3）
+- Status: 已完成
 - Created: 2026-04-06
 - Last: 2026-04-06
+- Notes: fast-track（PR #205；implementation + storybook evidence + review-loop completed）
 
 ## 背景 / 问题陈述
 
@@ -138,7 +139,7 @@ None
   target_program: `mock-only`
   capture_scope: `browser-viewport`
   sensitive_exclusion: `N/A`
-  submission_gate: `pending-owner-approval`
+  submission_gate: `approved`
   story_id_or_title: `Pages/CleanupPage/Default`
   state: `default page with top action icons`
   evidence_note: 验证 Cleanup 页顶部 `全部 / 重扫` 已补齐前导 icon，且默认页继续展示清理摘要与表格主路径。
@@ -149,7 +150,7 @@ None
   target_program: `mock-only`
   capture_scope: `browser-viewport`
   sensitive_exclusion: `N/A`
-  submission_gate: `pending-owner-approval`
+  submission_gate: `approved`
   story_id_or_title: `Pages/CleanupPage/UsageOverviewFocus`
   state: `usage overview with unknown-size wording`
   evidence_note: 验证未知估算文案已从 `待估` 收口为 `大小未知 / 已知部分按下限展示`，同时保留已识别字节值与 `+` 下限表达。
@@ -164,7 +165,7 @@ None
 
 - [x] M1: Cleanup 后端补齐 volume / builder cache 估算兜底，并覆盖 parser + fallback 回归测试
 - [x] M2: Cleanup 页顶部按钮 icon 与 unknown copy 收口完成，Storybook stories/autodocs/play 同步更新
-- [ ] M3: 视觉证据、spec sync、验证与 PR 收敛完成
+- [x] M3: 视觉证据、spec sync、验证与 PR 收敛完成
 
 ## 方案概述（Approach, high-level）
 
@@ -183,6 +184,7 @@ None
 
 - 2026-04-06：创建 follow-up spec，冻结 Cleanup 顶部按钮 icon、unknown copy 与 volume / builder cache 估算兜底方向。
 - 2026-04-06：完成本地实现与验证：unused volume 新增 `system df -v` 兜底，builder cache 改为 JSON 主路径 + 文本 fallback，Cleanup 顶部按钮补 icon，unknown copy 收口并生成 Storybook 视觉证据。
+- 2026-04-06：主人批准截图后完成 push/PR 收口，创建 PR #205、补齐 `type:patch` / `channel:stable`，并完成 latest head 的 review-loop 清空。
 
 ## 参考（References）
 
