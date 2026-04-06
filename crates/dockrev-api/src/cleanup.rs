@@ -1721,7 +1721,7 @@ mod tests {
         assert_eq!(unowned.estimated_reclaimable_bytes, 256);
         assert!(unowned.has_unknown_size);
         assert_eq!(unowned.resources[0].estimated_reclaimable_bytes, Some(256));
-        assert_eq!(unowned.resources[0].estimate_unknown, true);
+        assert!(unowned.resources[0].estimate_unknown);
     }
 
     #[test]
