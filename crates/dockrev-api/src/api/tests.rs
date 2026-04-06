@@ -21874,6 +21874,7 @@ enum CleanupRunnerMode {
     VolumeInUse,
     VolumeEstimateFallback,
     BuilderCacheTextFallback,
+    BuilderCacheSharedLowerBound,
 }
 
 #[derive(Clone)]
@@ -21900,6 +21901,13 @@ impl CleanupRunner {
     fn volume_estimate_fallback() -> Self {
         Self {
             mode: CleanupRunnerMode::VolumeEstimateFallback,
+            scan_generation: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn builder_cache_shared_lower_bound() -> Self {
+        Self {
+            mode: CleanupRunnerMode::BuilderCacheSharedLowerBound,
             scan_generation: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -22163,6 +22171,40 @@ demo_named          0                   128 MB
                 }
             }
             CleanupRunnerMode::BuilderCacheTextFallback => {
+                if args == vec!["container", "ls", "-aq"]
+                    || args == vec!["image", "ls", "-aq", "--no-trunc"]
+                    || args == vec!["network", "ls", "-q"]
+                    || args == vec!["volume", "ls", "-q"]
+                {
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["buildx", "du", "--format=json"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: "{not-json}\n".to_string(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["buildx", "du"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: "Reclaimable:  384MB\nTotal:  512MB\n".to_string(),
+                        stderr: String::new(),
+                    }
+                } else {
+                    CommandOutput {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: format!(
+                            "unexpected cleanup builder text fallback args: {:?}",
+                            args
+                        ),
+                    }
+                }
+            }
+            CleanupRunnerMode::BuilderCacheSharedLowerBound => {
                 if args == vec!["container", "ls", "-aq"]
                     || args == vec!["image", "ls", "-aq", "--no-trunc"]
                     || args == vec!["network", "ls", "-q"]
@@ -22440,9 +22482,60 @@ services:
 }
 
 #[tokio::test]
-async fn cleanup_scan_keeps_builder_cache_estimate_when_json_falls_back_to_text_summary() {
+async fn cleanup_scan_preserves_builder_cache_lower_bound_when_json_includes_shared_rows() {
     let db_path = format!(
         "/tmp/dockrev-cleanup-builder-fallback-{}.sqlite3",
+        ulid::Ulid::new()
+    );
+    let runner = Arc::new(CleanupRunner::builder_cache_shared_lower_bound());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "page",
+                        "preset": "balanced",
+                        "scope": "all"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(
+        body["estimatedReclaimableBytes"].as_u64(),
+        Some(256 * 1024 * 1024)
+    );
+    assert_eq!(body["hasUnknownSize"].as_bool(), Some(true));
+    assert_eq!(
+        body["unownedGroup"]["resources"][0]["kind"].as_str(),
+        Some("builder_cache")
+    );
+    assert_eq!(
+        body["unownedGroup"]["resources"][0]["estimatedReclaimableBytes"].as_u64(),
+        Some(256 * 1024 * 1024)
+    );
+    assert_eq!(
+        body["unownedGroup"]["resources"][0]["estimateUnknown"].as_bool(),
+        Some(true)
+    );
+}
+
+#[tokio::test]
+async fn cleanup_scan_keeps_builder_cache_estimate_when_json_falls_back_to_text_summary() {
+    let db_path = format!(
+        "/tmp/dockrev-cleanup-builder-text-fallback-{}.sqlite3",
         ulid::Ulid::new()
     );
     let runner = Arc::new(CleanupRunner::builder_cache_text_fallback());
@@ -22483,5 +22576,9 @@ async fn cleanup_scan_keeps_builder_cache_estimate_when_json_falls_back_to_text_
     assert_eq!(
         body["unownedGroup"]["resources"][0]["estimatedReclaimableBytes"].as_u64(),
         Some(384 * 1024 * 1024)
+    );
+    assert_eq!(
+        body["unownedGroup"]["resources"][0]["estimateUnknown"].as_bool(),
+        Some(false)
     );
 }

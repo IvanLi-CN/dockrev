@@ -103,6 +103,7 @@ struct CleanupCandidate {
     kind: CleanupResourceKind,
     label: String,
     estimated_reclaimable_bytes: Option<u64>,
+    estimate_unknown: bool,
     ownership: CleanupOwnership,
     category: CleanupCandidateCategory,
 }
@@ -229,9 +230,10 @@ struct DockerNetworkInspect {
     containers: BTreeMap<String, serde_json::Value>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct BuilderCacheEstimate {
     reclaimable_bytes: Option<u64>,
+    estimate_unknown: bool,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -567,6 +569,10 @@ async fn scan_candidates(
             estimated_reclaimable_bytes: container
                 .size_rw
                 .and_then(|size| u64::try_from(size).ok()),
+            estimate_unknown: container
+                .size_rw
+                .and_then(|size| u64::try_from(size).ok())
+                .is_none(),
             ownership: owner,
             category: CleanupCandidateCategory::StoppedContainer,
         });
@@ -606,17 +612,14 @@ async fn scan_candidates(
             kind: CleanupResourceKind::Image,
             label,
             estimated_reclaimable_bytes: inspect.size,
+            estimate_unknown: inspect.size.is_none(),
             ownership,
             category,
         });
     }
 
     let volume_names = docker_list_ids(state, vec!["volume", "ls", "-q"]).await?;
-    let system_df_volume_sizes = if volume_names.is_empty() {
-        BTreeMap::new()
-    } else {
-        scan_volume_sizes_from_system_df(state).await
-    };
+    let mut system_df_volume_sizes: Option<BTreeMap<String, u64>> = None;
     let mut dedup_volume_names = BTreeSet::new();
     for volume_name in volume_names {
         if !dedup_volume_names.insert(volume_name.clone())
@@ -641,16 +644,23 @@ async fn scan_candidates(
         } else {
             CleanupCandidateCategory::ManagedUnusedVolume
         };
+        let mut estimated_reclaimable_bytes =
+            inspect.usage_data.as_ref().and_then(|usage| usage.size);
+        if estimated_reclaimable_bytes.is_none() {
+            if system_df_volume_sizes.is_none() {
+                system_df_volume_sizes = Some(scan_volume_sizes_from_system_df(state).await);
+            }
+            estimated_reclaimable_bytes = system_df_volume_sizes
+                .as_ref()
+                .and_then(|sizes| sizes.get(&inspect.name).copied());
+        }
         candidates.push(CleanupCandidate {
             key: format!("volume:{}", inspect.name),
             resource_id: inspect.name.clone(),
             kind: CleanupResourceKind::Volume,
             label: inspect.name.clone(),
-            estimated_reclaimable_bytes: inspect
-                .usage_data
-                .as_ref()
-                .and_then(|usage| usage.size)
-                .or_else(|| system_df_volume_sizes.get(&inspect.name).copied()),
+            estimated_reclaimable_bytes,
+            estimate_unknown: estimated_reclaimable_bytes.is_none(),
             ownership,
             category,
         });
@@ -682,6 +692,7 @@ async fn scan_candidates(
             kind: CleanupResourceKind::Network,
             label: inspect.name.clone(),
             estimated_reclaimable_bytes: Some(0),
+            estimate_unknown: false,
             ownership: resolve_network_ownership(&inspect, managed),
             category: CleanupCandidateCategory::UnusedNetwork,
         });
@@ -695,6 +706,7 @@ async fn scan_builder_cache_candidate(state: &AppState) -> CleanupCandidate {
         .await
         .unwrap_or(BuilderCacheEstimate {
             reclaimable_bytes: None,
+            estimate_unknown: true,
         });
     CleanupCandidate {
         key: "builder_cache:global".to_string(),
@@ -702,6 +714,7 @@ async fn scan_builder_cache_candidate(state: &AppState) -> CleanupCandidate {
         kind: CleanupResourceKind::BuilderCache,
         label: "global builder cache".to_string(),
         estimated_reclaimable_bytes: estimate.reclaimable_bytes,
+        estimate_unknown: estimate.estimate_unknown,
         ownership: CleanupOwnership::Unowned,
         category: CleanupCandidateCategory::BuilderCache,
     }
@@ -726,11 +739,9 @@ async fn scan_builder_cache_estimate(state: &AppState) -> Option<BuilderCacheEst
         .ok();
     if let Some(out) = json_out
         && out.status == 0
-        && let Some(reclaimable) = parse_buildx_du_json_lines(&out.stdout)
+        && let Some(estimate) = parse_buildx_du_json_lines(&out.stdout)
     {
-        return Some(BuilderCacheEstimate {
-            reclaimable_bytes: Some(reclaimable),
-        });
+        return Some(estimate);
     }
 
     let out = state
@@ -755,6 +766,7 @@ async fn scan_builder_cache_estimate(state: &AppState) -> Option<BuilderCacheEst
         .and_then(|raw| parse_human_size(raw.trim()));
     Some(BuilderCacheEstimate {
         reclaimable_bytes: reclaimable,
+        estimate_unknown: reclaimable.is_none(),
     })
 }
 
@@ -1027,10 +1039,10 @@ fn build_grouped_response(
             reason: candidate_reason(&candidate.category).to_string(),
             min_preset: minimum_preset_for_category(&candidate.category),
             estimated_reclaimable_bytes: candidate.estimated_reclaimable_bytes,
-            estimate_unknown: candidate.estimated_reclaimable_bytes.is_none(),
+            estimate_unknown: candidate.estimate_unknown,
         };
         let known = candidate.estimated_reclaimable_bytes.unwrap_or_default();
-        let unknown = candidate.estimated_reclaimable_bytes.is_none();
+        let unknown = candidate.estimate_unknown;
         total_bytes = total_bytes.saturating_add(known);
         total_unknown |= unknown;
 
@@ -1451,9 +1463,10 @@ fn parse_human_size(input: &str) -> Option<u64> {
     Some((value * multiplier).round() as u64)
 }
 
-fn parse_buildx_du_json_lines(input: &str) -> Option<u64> {
+fn parse_buildx_du_json_lines(input: &str) -> Option<BuilderCacheEstimate> {
     let mut parsed_any = false;
     let mut reclaimable = 0_u64;
+    let mut has_shared_reclaimable = false;
 
     for line in input.lines().map(str::trim).filter(|line| !line.is_empty()) {
         let record = serde_json::from_str::<BuildxDuRecord>(line).ok()?;
@@ -1462,13 +1475,17 @@ fn parse_buildx_du_json_lines(input: &str) -> Option<u64> {
             continue;
         }
         if record.shared {
-            return None;
+            has_shared_reclaimable = true;
+            continue;
         }
         let size = parse_size_value(&record.size)?;
         reclaimable = reclaimable.saturating_add(size);
     }
 
-    parsed_any.then_some(reclaimable)
+    parsed_any.then_some(BuilderCacheEstimate {
+        reclaimable_bytes: Some(reclaimable),
+        estimate_unknown: has_shared_reclaimable,
+    })
 }
 
 fn parse_size_value(value: &serde_json::Value) -> Option<u64> {
@@ -1572,6 +1589,7 @@ mod tests {
             kind,
             label: key.to_string(),
             estimated_reclaimable_bytes,
+            estimate_unknown: estimated_reclaimable_bytes.is_none(),
             ownership,
             category,
         }
@@ -1686,6 +1704,27 @@ mod tests {
     }
 
     #[test]
+    fn build_grouped_response_preserves_known_lower_bound_for_unknown_estimates() {
+        let mut candidate = sample_candidate(
+            "builder-cache",
+            CleanupResourceKind::BuilderCache,
+            CleanupOwnership::Unowned,
+            CleanupCandidateCategory::BuilderCache,
+            Some(256),
+        );
+        candidate.estimate_unknown = true;
+
+        let (_stacks, unowned, bytes, has_unknown) = build_grouped_response(&[candidate]);
+        let unowned = unowned.expect("unowned");
+        assert_eq!(bytes, 256);
+        assert!(has_unknown);
+        assert_eq!(unowned.estimated_reclaimable_bytes, 256);
+        assert!(unowned.has_unknown_size);
+        assert_eq!(unowned.resources[0].estimated_reclaimable_bytes, Some(256));
+        assert_eq!(unowned.resources[0].estimate_unknown, true);
+    }
+
+    #[test]
     fn fingerprint_changes_when_selected_resources_change() {
         let request = CleanupPlanRequest {
             preset: CleanupPreset::Balanced,
@@ -1790,15 +1829,24 @@ mod tests {
 {"Reclaimable":false,"Shared":false,"Size":"12"}"#;
         assert_eq!(
             parse_buildx_du_json_lines(input),
-            Some(829_889_526 + 829_898_832)
+            Some(BuilderCacheEstimate {
+                reclaimable_bytes: Some(829_889_526 + 829_898_832),
+                estimate_unknown: false,
+            })
         );
     }
 
     #[test]
-    fn parse_buildx_du_json_lines_returns_none_when_shared_rows_are_present() {
+    fn parse_buildx_du_json_lines_marks_lower_bound_unknown_when_shared_rows_are_present() {
         let input = r#"{"Reclaimable":true,"Shared":false,"Size":"829889526"}
 {"Reclaimable":true,"Shared":true,"Size":"829898832"}"#;
-        assert_eq!(parse_buildx_du_json_lines(input), None);
+        assert_eq!(
+            parse_buildx_du_json_lines(input),
+            Some(BuilderCacheEstimate {
+                reclaimable_bytes: Some(829_889_526),
+                estimate_unknown: true,
+            })
+        );
     }
 
     #[test]
