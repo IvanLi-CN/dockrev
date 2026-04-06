@@ -1454,10 +1454,14 @@ fn parse_human_size(input: &str) -> Option<u64> {
     let value = num.trim().parse::<f64>().ok()?;
     let multiplier = match unit.trim().to_ascii_lowercase().as_str() {
         "" | "b" => 1_f64,
-        "kb" | "kib" | "k" => 1024_f64,
-        "mb" | "mib" | "m" => 1024_f64.powi(2),
-        "gb" | "gib" | "g" => 1024_f64.powi(3),
-        "tb" | "tib" | "t" => 1024_f64.powi(4),
+        "kb" | "k" => 1000_f64,
+        "mb" | "m" => 1000_f64.powi(2),
+        "gb" | "g" => 1000_f64.powi(3),
+        "tb" | "t" => 1000_f64.powi(4),
+        "kib" => 1024_f64,
+        "mib" => 1024_f64.powi(2),
+        "gib" => 1024_f64.powi(3),
+        "tib" => 1024_f64.powi(4),
         _ => return None,
     };
     Some((value * multiplier).round() as u64)
@@ -1817,9 +1821,10 @@ mod tests {
 
     #[test]
     fn parse_human_size_accepts_common_units() {
-        assert_eq!(parse_human_size("2.0GB"), Some(2147483648));
+        assert_eq!(parse_human_size("2.0GB"), Some(2_000_000_000));
         assert_eq!(parse_human_size("512B"), Some(512));
-        assert_eq!(parse_human_size("20.7kB"), Some(21197));
+        assert_eq!(parse_human_size("20.7kB"), Some(20_700));
+        assert_eq!(parse_human_size("2.0GiB"), Some(2_147_483_648));
     }
 
     #[test]
@@ -1831,6 +1836,19 @@ mod tests {
             parse_buildx_du_json_lines(input),
             Some(BuilderCacheEstimate {
                 reclaimable_bytes: Some(829_889_526 + 829_898_832),
+                estimate_unknown: false,
+            })
+        );
+    }
+
+    #[test]
+    fn parse_buildx_du_json_lines_accepts_decimal_human_sizes() {
+        let input = r#"{"Reclaimable":true,"Shared":false,"Size":"256MB"}
+{"Reclaimable":true,"Shared":false,"Size":"1.5GB"}"#;
+        assert_eq!(
+            parse_buildx_du_json_lines(input),
+            Some(BuilderCacheEstimate {
+                reclaimable_bytes: Some(256_000_000 + 1_500_000_000),
                 estimate_unknown: false,
             })
         );
@@ -1868,6 +1886,6 @@ my-named-vol                                                       0            
             parsed.get("07c7bdf3e34ab76d921894c2b834f073721fccfbbcba792aa7648e3a7a664c2e"),
             Some(&36)
         );
-        assert_eq!(parsed.get("my-named-vol"), Some(&(1610612736_u64)));
+        assert_eq!(parsed.get("my-named-vol"), Some(&(1_500_000_000_u64)));
     }
 }

@@ -22218,8 +22218,8 @@ demo_named          0                   128 MB
                 } else if args == vec!["buildx", "du", "--format=json"] {
                     CommandOutput {
                         status: 0,
-                        stdout: r#"{"Reclaimable":true,"Shared":false,"Size":"268435456"}
-{"Reclaimable":true,"Shared":true,"Size":"134217728"}"#
+                        stdout: r#"{"Reclaimable":true,"Shared":false,"Size":"256MB"}
+{"Reclaimable":true,"Shared":true,"Size":"128MB"}"#
                             .to_string(),
                         stderr: String::new(),
                     }
@@ -22473,7 +22473,7 @@ services:
     let body = response_json(resp).await;
     assert_eq!(
         body["stackGroups"][0]["services"][0]["estimatedReclaimableBytes"].as_u64(),
-        Some(128 * 1024 * 1024)
+        Some(128_000_000)
     );
     assert_eq!(
         body["stackGroups"][0]["services"][0]["hasUnknownSize"].as_bool(),
@@ -22515,7 +22515,7 @@ async fn cleanup_scan_preserves_builder_cache_lower_bound_when_json_includes_sha
     let body = response_json(resp).await;
     assert_eq!(
         body["estimatedReclaimableBytes"].as_u64(),
-        Some(256 * 1024 * 1024)
+        Some(256_000_000)
     );
     assert_eq!(body["hasUnknownSize"].as_bool(), Some(true));
     assert_eq!(
@@ -22524,7 +22524,7 @@ async fn cleanup_scan_preserves_builder_cache_lower_bound_when_json_includes_sha
     );
     assert_eq!(
         body["unownedGroup"]["resources"][0]["estimatedReclaimableBytes"].as_u64(),
-        Some(256 * 1024 * 1024)
+        Some(256_000_000)
     );
     assert_eq!(
         body["unownedGroup"]["resources"][0]["estimateUnknown"].as_bool(),
@@ -22566,7 +22566,7 @@ async fn cleanup_scan_keeps_builder_cache_estimate_when_json_falls_back_to_text_
     let body = response_json(resp).await;
     assert_eq!(
         body["estimatedReclaimableBytes"].as_u64(),
-        Some(384 * 1024 * 1024)
+        Some(384_000_000)
     );
     assert_eq!(body["hasUnknownSize"].as_bool(), Some(false));
     assert_eq!(
@@ -22575,7 +22575,7 @@ async fn cleanup_scan_keeps_builder_cache_estimate_when_json_falls_back_to_text_
     );
     assert_eq!(
         body["unownedGroup"]["resources"][0]["estimatedReclaimableBytes"].as_u64(),
-        Some(384 * 1024 * 1024)
+        Some(384_000_000)
     );
     assert_eq!(
         body["unownedGroup"]["resources"][0]["estimateUnknown"].as_bool(),
