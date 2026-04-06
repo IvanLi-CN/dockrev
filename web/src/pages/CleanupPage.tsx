@@ -15,7 +15,7 @@ import {
 } from '../api'
 import { useConfirm } from '../confirm'
 import { navigate } from '../routes'
-import { Button, Mono, Pill, SectionTitle, Tabs, TabsList, TabsTrigger } from '../ui'
+import { Button, Mono, Pill, RefreshIcon, SectionTitle, Tabs, TabsList, TabsTrigger, TrashIcon } from '../ui'
 
 const PRESET_ORDER: CleanupPreset[] = ['conservative', 'balanced', 'project_deep_clean', 'aggressive']
 
@@ -142,9 +142,13 @@ function formatBytes(bytes: number): string {
 function formatEstimate(bytes: number, hasUnknown?: boolean): string {
   if (hasUnknown) {
     if (bytes > 0) return `${formatBytes(bytes)}+`
-    return '待估'
+    return '未知大小'
   }
   return formatBytes(bytes)
+}
+
+function formatUnknownCount(count: number): string {
+  return `${count} 项大小未知`
 }
 
 function formatPercent(value: number): string {
@@ -420,7 +424,7 @@ function CleanupUsageCardView(props: { card: CleanupUsageCard }) {
 
       <div className="cleanupUsageCardMeta">
         <span>已识别 {knownOnly}</span>
-        <span>{props.card.unknownCount > 0 ? `${props.card.unknownCount} 项待估` : `占比 ${formatPercent(props.card.share)}`}</span>
+        <span>{props.card.unknownCount > 0 ? formatUnknownCount(props.card.unknownCount) : `占比 ${formatPercent(props.card.share)}`}</span>
       </div>
 
       <div aria-hidden="true" className="cleanupUsageCardBar">
@@ -848,10 +852,16 @@ export function CleanupPage(props: {
           }
           variant="danger"
         >
-          全部
+          <span className="btnInlineContent">
+            <TrashIcon className="inlineIcon" />
+            <span>全部</span>
+          </span>
         </Button>
         <Button disabled={busyActionKey !== null} loading={refreshing} onClick={() => void refreshPageScan()} variant="ghost">
-          重扫
+          <span className="btnInlineContent">
+            <RefreshIcon className="inlineIcon" />
+            <span>重扫</span>
+          </span>
         </Button>
       </>
     )
@@ -908,7 +918,7 @@ export function CleanupPage(props: {
                 {pageScan ? formatEstimate(pageScan.estimatedReclaimableBytes, pageScan.hasUnknownSize) : '-'}
               </div>
               <div className="cleanupOverviewStatHint">
-                {pageUnknownCount > 0 ? `${pageUnknownCount} 项待估，已知部分按下限展示` : '基于最近一次全量扫描候选'}
+                {pageUnknownCount > 0 ? `${formatUnknownCount(pageUnknownCount)}，已知部分按下限展示` : '基于最近一次全量扫描候选'}
               </div>
             </div>
             <div className="cleanupOverviewStat">
@@ -961,7 +971,7 @@ export function CleanupPage(props: {
                 {response ? formatEstimate(response.estimatedReclaimableBytes, response.hasUnknownSize) : '-'}
               </div>
               <div className="cleanupOverviewStatHint">
-                {projectedUnknownCount > 0 ? `${projectedUnknownCount} 项待估，释放量按下限展示` : '会随规则切换重新投影'}
+                {projectedUnknownCount > 0 ? `${formatUnknownCount(projectedUnknownCount)}，释放量按下限展示` : '会随规则切换重新投影'}
               </div>
             </div>
             <div className="cleanupOverviewStat">

@@ -1009,6 +1009,14 @@ html[data-theme='light'] .discoveryHistoryPopover {
   white-space: nowrap;
 }
 
+.btnInlineContent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
 .btnInlineSpinner {
   width: 12px;
   height: 12px;
