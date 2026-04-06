@@ -1178,6 +1178,7 @@ fn compute_confirmation_fingerprint(
                 "resourceId": candidate.resource_id,
                 "label": candidate.label,
                 "estimatedReclaimableBytes": candidate.estimated_reclaimable_bytes,
+                "estimateUnknown": candidate.estimate_unknown,
                 "ownership": ownership_json(&candidate.ownership),
                 "category": format!("{:?}", candidate.category),
             })
@@ -1767,6 +1768,38 @@ mod tests {
             compute_confirmation_fingerprint(&request, &second, "2026-03-29T00:00:00Z", 3, false)
                 .unwrap();
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn fingerprint_changes_when_estimate_unknown_changes() {
+        let request = CleanupPlanRequest {
+            preset: CleanupPreset::Balanced,
+            scope: CleanupScope::All,
+            stack_id: None,
+            service_id: None,
+        };
+        let exact = vec![sample_candidate(
+            "builder-cache",
+            CleanupResourceKind::BuilderCache,
+            CleanupOwnership::Unowned,
+            CleanupCandidateCategory::BuilderCache,
+            Some(256),
+        )];
+        let mut lower_bound = exact.clone();
+        lower_bound[0].estimate_unknown = true;
+
+        let exact_fp =
+            compute_confirmation_fingerprint(&request, &exact, "2026-03-29T00:00:00Z", 256, true)
+                .unwrap();
+        let lower_bound_fp = compute_confirmation_fingerprint(
+            &request,
+            &lower_bound,
+            "2026-03-29T00:00:00Z",
+            256,
+            true,
+        )
+        .unwrap();
+        assert_ne!(exact_fp, lower_bound_fp);
     }
 
     #[test]

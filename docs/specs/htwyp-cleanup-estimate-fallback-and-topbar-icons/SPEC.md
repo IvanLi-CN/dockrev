@@ -186,6 +186,7 @@ None
 - 2026-04-06：完成本地实现与验证：unused volume 新增 `system df -v` 兜底，builder cache 改为 JSON 主路径 + 文本 fallback，Cleanup 顶部按钮补 icon，unknown copy 收口并生成 Storybook 视觉证据。
 - 2026-04-06：主人批准截图后完成 push/PR 收口，创建 PR #205、补齐 `type:patch` / `channel:stable`，并完成 latest head 的 review-loop 清空。
 - 2026-04-06：根据 final merge-proof review，将 Docker CLI 的 `MB/GB` 文本人类可读 size 改按十进制 SI 解析，避免把 cleanup 估算值按 1024 进制放大。
+- 2026-04-06：根据后续 merge-proof review，将 `estimateUnknown` 纳入 cleanup confirmation fingerprint，避免 lower-bound 状态变化绕过 stale confirm 失效。
 
 ## 参考（References）
 
