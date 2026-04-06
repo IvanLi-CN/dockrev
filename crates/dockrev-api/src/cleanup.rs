@@ -238,6 +238,8 @@ struct BuilderCacheEstimate {
 struct BuildxDuRecord {
     #[serde(default, rename = "Reclaimable")]
     reclaimable: bool,
+    #[serde(default, rename = "Shared")]
+    shared: bool,
     #[serde(default, rename = "Size")]
     size: serde_json::Value,
 }
@@ -1459,6 +1461,9 @@ fn parse_buildx_du_json_lines(input: &str) -> Option<u64> {
         if !record.reclaimable {
             continue;
         }
+        if record.shared {
+            return None;
+        }
         let size = parse_size_value(&record.size)?;
         reclaimable = reclaimable.saturating_add(size);
     }
@@ -1781,12 +1786,19 @@ mod tests {
     #[test]
     fn parse_buildx_du_json_lines_sums_reclaimable_rows() {
         let input = r#"{"Reclaimable":true,"Shared":false,"Size":"829889526"}
-{"Reclaimable":true,"Shared":true,"Size":"829898832"}
+{"Reclaimable":true,"Shared":false,"Size":"829898832"}
 {"Reclaimable":false,"Shared":false,"Size":"12"}"#;
         assert_eq!(
             parse_buildx_du_json_lines(input),
             Some(829_889_526 + 829_898_832)
         );
+    }
+
+    #[test]
+    fn parse_buildx_du_json_lines_returns_none_when_shared_rows_are_present() {
+        let input = r#"{"Reclaimable":true,"Shared":false,"Size":"829889526"}
+{"Reclaimable":true,"Shared":true,"Size":"829898832"}"#;
+        assert_eq!(parse_buildx_du_json_lines(input), None);
     }
 
     #[test]

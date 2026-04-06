@@ -22176,7 +22176,9 @@ demo_named          0                   128 MB
                 } else if args == vec!["buildx", "du", "--format=json"] {
                     CommandOutput {
                         status: 0,
-                        stdout: "{not-json}\n".to_string(),
+                        stdout: r#"{"Reclaimable":true,"Shared":false,"Size":"268435456"}
+{"Reclaimable":true,"Shared":true,"Size":"134217728"}"#
+                            .to_string(),
                         stderr: String::new(),
                     }
                 } else if args == vec!["buildx", "du"] {
