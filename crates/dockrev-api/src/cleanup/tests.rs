@@ -313,6 +313,22 @@ fn parse_buildx_du_json_lines_marks_lower_bound_unknown_when_shared_rows_are_pre
 }
 
 #[test]
+fn parse_buildx_du_text_summary_reads_reclaimable_total() {
+    let input = "ID: example
+Reclaimable:  26.6GB
+Total:  30.1GB
+";
+    assert_eq!(parse_buildx_du_text_summary(input), Some(26_600_000_000));
+}
+
+#[test]
+fn parse_du_kilobytes_output_reads_first_column() {
+    let input = "1536	/var/lib/docker/volumes/demo_named/_data
+";
+    assert_eq!(parse_du_kilobytes_output(input), Some(1_572_864));
+}
+
+#[test]
 fn parse_volume_sizes_from_system_df_verbose_reads_local_volume_section() {
     let input = r#"Images space usage:
 REPOSITORY          TAG                 IMAGE ID            CREATED             SIZE                SHARED SIZE         UNIQUE SIZE         CONTAINERS
