@@ -114,3 +114,4 @@
 | 89ctg | Dockrev：更新按钮整页刷新后恢复运行态 | 已完成 | `89ctg-update-button-refresh-spinner-recovery/SPEC.md` | 2026-03-30 | fast-track（provider hydration + hydration regression tests + storybook visual evidence） |
 | uzn7t | Dockrev：顶部用户信息入口弹层 | 已完成 | `uzn7t-topbar-user-identity-popover/SPEC.md` | 2026-04-05 | fast-track（PR #202；implementation + storybook + visual evidence + review-loop completed） |
 | htwyp | Dockrev：Cleanup 顶部按钮图标与估算兜底收口 | 已完成 | `htwyp-cleanup-estimate-fallback-and-topbar-icons/SPEC.md` | 2026-04-06 | fast-track（PR #205；implementation + storybook evidence + review-loop completed） |
+| 4fhgd | Dockrev：版本发现时间线联动 GitHub Releases 抽屉 | 已完成 | `4fhgd-github-release-drawer/SPEC.md` | 2026-04-09 | fast-track（service-scoped GitHub releases API + URL-driven drawer + locate window=50 + shadcn drawer/scroll-area + review-loop fixes） |

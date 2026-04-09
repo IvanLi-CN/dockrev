@@ -21695,6 +21695,98 @@ services:
 }
 
 #[tokio::test]
+async fn resolve_service_github_repo_ref_falls_back_to_inferred_github_repo_when_repo_url_missing()
+{
+    let registry = Arc::new(RepoLinkRegistry::with_oci_source(Some(
+        "https://github.com/Acme/Web",
+    )));
+    let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id =
+        set_single_service_check_result(&state, &stack_id, Some("sha256:current"), None, None)
+            .await;
+
+    let repo = crate::api::services::resolve_service_github_repo_ref(&state, &service_id, None)
+        .await
+        .unwrap();
+
+    let repo = repo.expect("expected inferred github repo");
+    assert_eq!(repo.full_name, "acme/web");
+    assert_eq!(repo.html_url, "https://github.com/acme/web");
+    assert_eq!(registry.observed_references(), vec!["sha256:current"]);
+}
+
+#[tokio::test]
+async fn resolve_service_github_repo_ref_keeps_explicit_non_github_repo_url_unsupported() {
+    let registry = Arc::new(RepoLinkRegistry::with_oci_source(Some(
+        "https://github.com/Acme/Web",
+    )));
+    let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = state
+        .db
+        .list_services_for_check(&stack_id)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id
+        .clone();
+    state
+        .db
+        .put_service_settings(
+            &service_id,
+            &crate::api::ServiceSettings {
+                auto_rollback: true,
+                backup_targets: crate::api::BackupTargetOverrides {
+                    bind_paths: BTreeMap::new(),
+                    volume_names: BTreeMap::new(),
+                },
+                repo_url: Some("https://gitlab.com/acme/web".to_string()),
+            },
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    let repo = crate::api::services::resolve_service_github_repo_ref(
+        &state,
+        &service_id,
+        Some("https://gitlab.com/acme/web"),
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        repo.is_none(),
+        "explicit non-github repoUrl should stay unsupported"
+    );
+    assert_eq!(registry.observed_references(), Vec::<String>::new());
+}
+
+#[tokio::test]
 async fn infer_service_repo_link_skips_deselected_ghcr_repo() {
     let registry = Arc::new(RepoLinkRegistry::with_oci_source(None));
     let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;

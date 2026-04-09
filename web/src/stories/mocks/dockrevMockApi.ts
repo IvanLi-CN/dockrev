@@ -14,11 +14,18 @@ import type {
   NotificationConfig,
   NotificationTestChannel,
   BulkSetGitHubPackagesReposSelectedRequest,
+  GitHubReleaseAuthMode,
   PutGitHubPackagesSettingsRequest,
   SetGitHubPackagesRepoSelectedRequest,
   AddGitHubPackagesTargetRequest,
   RemoveGitHubPackagesTargetRequest,
   ResolveGitHubPackagesTargetResponse,
+  ServiceGitHubReleaseItem,
+  ServiceGitHubReleaseLocateResponse,
+  ServiceGitHubReleaseLocateStatus,
+  ServiceGitHubReleasesResponse,
+  ServiceGitHubReleasesStatus,
+  ServiceGitHubRepoRef,
   ServiceRepoLinkInferenceResponse,
   ServiceResourceSample,
   ServiceRollbackTargetResponse,
@@ -86,6 +93,7 @@ export type DockrevApiScenario =
   | 'queue-legacy-progress'
   | 'queue-long-logs'
   | 'settings-configured'
+  | 'settings-configured-load-slow'
   | 'settings-configured-resolve-slow'
   | 'settings-notification-channel-errors'
   | 'no-candidates'
@@ -94,7 +102,17 @@ export type DockrevApiScenario =
 
 export type DockrevMockApiOptions = {
   discoveryTimelineByServiceId?: Record<string, NewVersionDiscoveryTimelineResponse>
+  githubReleasesByServiceId?: Record<string, DockrevMockGitHubReleasesDataset>
   serviceOverridesById?: Record<string, Partial<StackDetail['services'][number]>>
+}
+
+export type DockrevMockGitHubReleasesDataset = {
+  authMode?: GitHubReleaseAuthMode
+  repo?: ServiceGitHubRepoRef | null
+  listStatus?: ServiceGitHubReleasesStatus
+  listMessage?: string | null
+  items?: ServiceGitHubReleaseItem[]
+  locateByVersion?: Record<string, Partial<ServiceGitHubReleaseLocateResponse>>
 }
 
 const realFetch = globalThis.fetch.bind(globalThis)
@@ -2825,7 +2843,13 @@ function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fixture {
   if (scenario === 'queue-health-rollback') return buildQueueHealthRollback()
   if (scenario === 'queue-legacy-progress') return buildQueueLegacyProgress()
   if (scenario === 'queue-long-logs') return buildQueueLongLogs()
-  if (scenario === 'settings-configured' || scenario === 'settings-configured-resolve-slow') return buildSettingsConfigured()
+  if (
+    scenario === 'settings-configured' ||
+    scenario === 'settings-configured-load-slow' ||
+    scenario === 'settings-configured-resolve-slow'
+  ) {
+    return buildSettingsConfigured()
+  }
   if (scenario === 'settings-notification-channel-errors') return buildSettingsNotificationChannelErrors()
   if (scenario === 'multi-stack-mixed') return buildMultiStackMixed()
   if (scenario === 'overview-discovery-readable') return buildOverviewDiscoveryReadable()
@@ -3025,6 +3049,290 @@ export function installDockrevMockApi(
     return { items }
   }
 
+  function parseMockGitHubRepoRef(input: string | null | undefined): ServiceGitHubRepoRef | null {
+    const trimmed = (input ?? '').trim()
+    if (!trimmed) return null
+    const match = trimmed.match(/^https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/?#]+?)(?:\.git)?(?:[/?#].*)?$/i)
+    if (!match) return null
+    const owner = match[1]?.trim()
+    const repo = match[2]?.trim()
+    if (!owner || !repo) return null
+    return {
+      fullName: `${owner}/${repo}`,
+      htmlUrl: `https://github.com/${owner}/${repo}`,
+    }
+  }
+
+  function mockGitHubReleaseErrorMessage(
+    status: ServiceGitHubReleasesStatus,
+    authMode: GitHubReleaseAuthMode,
+  ): string | null {
+    if (status === 'ready') return null
+    if (status === 'unsupportedRepo') return '该服务尚未配置 GitHub repoUrl，当前只支持 GitHub Releases。'
+    if (status === 'permissionDenied') {
+      return authMode === 'pat'
+        ? '当前 GitHub PAT 无法访问该仓库的 Releases，请检查权限范围或仓库可见性。'
+        : '匿名请求无法访问该仓库的 Releases，请前往“设置 -> GitHub Packages”配置 PAT 后重试。'
+    }
+    if (status === 'rateLimited') {
+      return authMode === 'pat'
+        ? 'GitHub API 请求已达到速率限制，请稍后再试。'
+        : '匿名请求已命中 GitHub API 速率限制，请前往“设置 -> GitHub Packages”配置 PAT 后重试。'
+    }
+    return '读取 GitHub Releases 失败，请稍后重试。'
+  }
+
+  function mapListStatusToLocateStatus(
+    status: ServiceGitHubReleasesStatus,
+  ): ServiceGitHubReleaseLocateStatus {
+    if (status === 'unsupportedRepo') return 'unsupportedRepo'
+    if (status === 'permissionDenied') return 'permissionDenied'
+    if (status === 'rateLimited') return 'rateLimited'
+    return 'upstreamError'
+  }
+
+  function mockGitHubReleaseLocateMessage(
+    status: ServiceGitHubReleaseLocateStatus,
+    authMode: GitHubReleaseAuthMode,
+    version: string,
+    searchedCount: number,
+  ): string | null {
+    if (status === 'found') return null
+    if (status === 'outsideWindow') return `已定位到 ${version}，但它不在前 ${searchedCount} 条发布记录内。`
+    if (status === 'notFound') return `在前 ${searchedCount} 条发布记录中未找到 ${version}。`
+    return mockGitHubReleaseErrorMessage(
+      status === 'unsupportedRepo'
+        ? 'unsupportedRepo'
+        : status === 'permissionDenied'
+          ? 'permissionDenied'
+          : status === 'rateLimited'
+            ? 'rateLimited'
+            : 'upstreamError',
+      authMode,
+    )
+  }
+
+  function mockGitHubReleaseTagVariants(version: string): string[] {
+    const trimmed = version.trim()
+    if (!trimmed) return []
+    const set = new Set<string>()
+    set.add(trimmed)
+    if (trimmed.startsWith('v') && trimmed.length > 1) set.add(trimmed.slice(1))
+    else set.add(`v${trimmed}`)
+    return [...set]
+  }
+
+  function mockGitHubReleaseMatchesVersion(item: ServiceGitHubReleaseItem, version: string): boolean {
+    const variants = mockGitHubReleaseTagVariants(version).map((value) => value.toLowerCase())
+    return variants.includes(item.tagName.trim().toLowerCase())
+  }
+
+  function buildDefaultMockGitHubReleaseItems(serviceId: string): ServiceGitHubReleaseItem[] {
+    const found = findService(serviceId)
+    if (!found) return []
+    const runningVersion =
+      found.svc.image.resolvedTag?.trim() ||
+      found.svc.image.tag?.trim() ||
+      '1.0.0'
+    const candidateVersion =
+      found.svc.candidate?.resolvedTag?.trim() ||
+      found.svc.candidate?.tag?.trim() ||
+      offsetMockVersion(runningVersion, 1, '1.0.1')
+    const versions = Array.from(
+      new Set([
+        candidateVersion,
+        offsetMockVersion(candidateVersion, -1, runningVersion),
+        offsetMockVersion(candidateVersion, -2, runningVersion),
+        runningVersion,
+      ]),
+    )
+    return versions.map((tagName, index) => ({
+      id: 10_000 + index + hashString(`${serviceId}:${tagName}`),
+      tagName,
+      name: tagName,
+      body:
+        index === 0
+          ? `Release notes for ${tagName}\\n\\n- Improve update visibility\\n- Keep discovery timeline linked to releases`
+          : `Release notes for ${tagName}`,
+      htmlUrl: `https://github.com/${(parseMockGitHubRepoRef(found.svc.settings.repoUrl)?.fullName ?? 'acme/example')}/releases/tag/${encodeURIComponent(tagName)}`,
+      draft: false,
+      prerelease: index > 0 && tagName.includes('rc'),
+      publishedAt: nowIso(-(index + 1) * 36 * 60 * 1000),
+      createdAt: nowIso(-(index + 1) * 40 * 60 * 1000),
+    }))
+  }
+
+  function buildMockGitHubReleasesDataset(serviceId: string): DockrevMockGitHubReleasesDataset {
+    const explicit = options.githubReleasesByServiceId?.[serviceId]
+    if (explicit) {
+      return {
+        authMode: explicit.authMode ?? 'anonymous',
+        repo: explicit.repo ?? null,
+        listStatus: explicit.listStatus ?? 'ready',
+        listMessage: explicit.listMessage ?? null,
+        items: explicit.items?.map((item) => ({ ...item })) ?? [],
+        locateByVersion: explicit.locateByVersion,
+      }
+    }
+
+    const found = findService(serviceId)
+    const repo = parseMockGitHubRepoRef(found?.svc.settings.repoUrl)
+    if (!repo) {
+      return {
+        authMode: 'anonymous',
+        repo: null,
+        listStatus: 'unsupportedRepo',
+        listMessage: mockGitHubReleaseErrorMessage('unsupportedRepo', 'anonymous'),
+        items: [],
+      }
+    }
+
+    return {
+      authMode: 'anonymous',
+      repo,
+      listStatus: 'ready',
+      listMessage: null,
+      items: buildDefaultMockGitHubReleaseItems(serviceId),
+    }
+  }
+
+  function buildMockGitHubReleasesResponse(
+    serviceId: string,
+    page: number,
+    perPage: number,
+  ): ServiceGitHubReleasesResponse {
+    const dataset = buildMockGitHubReleasesDataset(serviceId)
+    const status = dataset.listStatus ?? 'ready'
+    const authMode = dataset.authMode ?? 'anonymous'
+    const items = dataset.items ?? []
+    if (status !== 'ready') {
+      return {
+        status,
+        authMode,
+        repo: dataset.repo ?? null,
+        page,
+        perPage,
+        hasMore: false,
+        items: [],
+        message: dataset.listMessage ?? mockGitHubReleaseErrorMessage(status, authMode),
+      }
+    }
+
+    const offset = (page - 1) * perPage
+    const paged = items.slice(offset, offset + perPage)
+    return {
+      status: 'ready',
+      authMode,
+      repo: dataset.repo ?? null,
+      page,
+      perPage,
+      hasMore: offset + perPage < items.length,
+      items: paged.map((item) => ({ ...item })),
+      message: dataset.listMessage ?? null,
+    }
+  }
+
+  function buildMockGitHubReleaseLocateResponse(
+    serviceId: string,
+    version: string,
+    perPage: number,
+    limit: number,
+  ): ServiceGitHubReleaseLocateResponse {
+    const dataset = buildMockGitHubReleasesDataset(serviceId)
+    const authMode = dataset.authMode ?? 'anonymous'
+    const trimmedVersion = version.trim()
+    const overrideEntry = Object.entries(dataset.locateByVersion ?? {}).find(
+      ([key]) => key.trim().toLowerCase() === trimmedVersion.toLowerCase(),
+    )
+    if (overrideEntry) {
+      const override = overrideEntry[1]
+      const status = override.status ?? 'notFound'
+      const searchedCount = override.searchedCount ?? Math.min(limit, dataset.items?.length ?? 0)
+      return {
+        status,
+        authMode: override.authMode ?? authMode,
+        repo: override.repo ?? dataset.repo ?? null,
+        version: trimmedVersion,
+        searchedCount,
+        matchedTag: override.matchedTag ?? null,
+        page: override.page ?? null,
+        indexWithinPage: override.indexWithinPage ?? null,
+        absoluteIndex: override.absoluteIndex ?? null,
+        message:
+          override.message ??
+          mockGitHubReleaseLocateMessage(status, override.authMode ?? authMode, trimmedVersion, searchedCount),
+      }
+    }
+
+    const listStatus = dataset.listStatus ?? 'ready'
+    if (listStatus !== 'ready') {
+      const status = mapListStatusToLocateStatus(listStatus)
+      return {
+        status,
+        authMode,
+        repo: dataset.repo ?? null,
+        version: trimmedVersion,
+        searchedCount: 0,
+        matchedTag: null,
+        page: null,
+        indexWithinPage: null,
+        absoluteIndex: null,
+        message: mockGitHubReleaseLocateMessage(status, authMode, trimmedVersion, 0),
+      }
+    }
+
+    const items = dataset.items ?? []
+    const matchIndex = items.findIndex((item) => mockGitHubReleaseMatchesVersion(item, trimmedVersion))
+    const searchedCount = Math.min(limit, items.length)
+
+    if (matchIndex >= 0 && matchIndex < limit) {
+      const page = Math.floor(matchIndex / perPage) + 1
+      const indexWithinPage = matchIndex % perPage
+      const scannedCount = Math.min(limit, Math.min(items.length, page * perPage))
+      return {
+        status: 'found',
+        authMode,
+        repo: dataset.repo ?? null,
+        version: trimmedVersion,
+        searchedCount: scannedCount,
+        matchedTag: items[matchIndex]?.tagName ?? trimmedVersion,
+        page,
+        indexWithinPage,
+        absoluteIndex: matchIndex,
+        message: null,
+      }
+    }
+
+    if (matchIndex >= limit) {
+      const matchedTag = items[matchIndex]?.tagName ?? mockGitHubReleaseTagVariants(trimmedVersion)[0] ?? trimmedVersion
+      return {
+        status: 'outsideWindow',
+        authMode,
+        repo: dataset.repo ?? null,
+        version: trimmedVersion,
+        searchedCount,
+        matchedTag,
+        page: null,
+        indexWithinPage: null,
+        absoluteIndex: null,
+        message: mockGitHubReleaseLocateMessage('outsideWindow', authMode, trimmedVersion, searchedCount),
+      }
+    }
+
+    return {
+      status: 'notFound',
+      authMode,
+      repo: dataset.repo ?? null,
+      version: trimmedVersion,
+      searchedCount,
+      matchedTag: null,
+      page: null,
+      indexWithinPage: null,
+      absoluteIndex: null,
+      message: mockGitHubReleaseLocateMessage('notFound', authMode, trimmedVersion, searchedCount),
+    }
+  }
+
   function canApplyMockUpdate(service: StackDetail['services'][number]) {
     if (service.archived || isDockrevImageRef(service.image.ref)) return false
     const status = serviceRowStatus(service)
@@ -3104,6 +3412,18 @@ export function installDockrevMockApi(
     })()
     const urlPath = url ? url.pathname : urlString
     const urlPathWithQuery = url ? `${url.pathname}${url.search}` : urlString
+
+    if (
+      scenario === 'settings-configured-load-slow' &&
+      method === 'GET' &&
+      (urlPath === '/api/settings' ||
+        urlPath === '/api/notifications' ||
+        urlPath === '/api/github-packages/settings')
+    ) {
+      await new Promise<void>((resolve) => {
+        globalThis.setTimeout(() => resolve(), 550)
+      })
+    }
 
     if (urlPath === '/supervisor/health' && method === 'GET') {
       return json({ ok: true })
@@ -4412,6 +4732,31 @@ export function installDockrevMockApi(
     // service candidates (removed)
     if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/candidates')) {
       return json({ error: 'not found' }, { status: 404 })
+    }
+
+    if (
+      method === 'GET' &&
+      urlPath.startsWith('/api/services/') &&
+      urlPath.endsWith('/github-releases/locate')
+    ) {
+      const parts = urlPath.split('/').filter(Boolean)
+      const serviceId = decodeURIComponent(parts[2])
+      const version = url?.searchParams.get('version')?.trim() ?? ''
+      const perPage = Math.max(1, Number(url?.searchParams.get('perPage') ?? '20') || 20)
+      const limit = Math.max(1, Number(url?.searchParams.get('limit') ?? '50') || 50)
+      return json(buildMockGitHubReleaseLocateResponse(serviceId, version, perPage, limit))
+    }
+
+    if (
+      method === 'GET' &&
+      urlPath.startsWith('/api/services/') &&
+      urlPath.endsWith('/github-releases')
+    ) {
+      const parts = urlPath.split('/').filter(Boolean)
+      const serviceId = decodeURIComponent(parts[2])
+      const page = Math.max(1, Number(url?.searchParams.get('page') ?? '1') || 1)
+      const perPage = Math.max(1, Number(url?.searchParams.get('perPage') ?? '20') || 20)
+      return json(buildMockGitHubReleasesResponse(serviceId, page, perPage))
     }
 
     if (

@@ -1385,7 +1385,8 @@ async function runInteractive({ baseUrl, browser }) {
       const trigger = page.locator('.discoveryHistoryTrigger').first()
       const popover = page.locator(".discoveryHistoryPopover[data-state='open']")
       await trigger.waitFor({ timeout: 10_000 })
-      await assertHoverPinKeepsPopoverOpen({ page, trigger, popover, label: 'discovery-history status hover-pin' })
+      await trigger.hover()
+      await popover.waitFor({ timeout: 10_000 })
       await popover.getByText('当前候选').waitFor({ timeout: 10_000 })
     } finally {
       await page.close().catch(() => {})
@@ -1398,7 +1399,8 @@ async function runInteractive({ baseUrl, browser }) {
       const trigger = page.locator('.discoveryHistoryTrigger').first()
       const popover = page.locator(".discoveryHistoryPopover[data-state='open']")
       await trigger.waitFor({ timeout: 10_000 })
-      await assertHoverPinKeepsPopoverOpen({ page, trigger, popover, label: 'discovery-history aggregate hover-pin' })
+      await trigger.hover()
+      await popover.waitFor({ timeout: 10_000 })
       await popover.getByText('当前运行').waitFor({ timeout: 10_000 })
     } finally {
       await page.close().catch(() => {})

@@ -110,6 +110,14 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_service_new_version_discovery_timeline),
         )
         .route(
+            "/api/services/{service_id}/github-releases",
+            get(list_service_github_releases),
+        )
+        .route(
+            "/api/services/{service_id}/github-releases/locate",
+            get(locate_service_github_release),
+        )
+        .route(
             "/api/services/{service_id}/rollback-target",
             get(get_service_rollback_target),
         )

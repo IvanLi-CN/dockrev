@@ -184,6 +184,210 @@ export const StatusBadgeLayout: Story = {
   },
 }
 
+export const GitHubReleaseDrawerOpenFromBadge: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    dockrevServiceOverridesById: {
+      'svc-prod-api': {
+        settings: {
+          autoRollback: true,
+          backupTargets: { bindPaths: { '/var/lib/api/data': 'inherit' }, volumeNames: {} },
+          repoUrl: 'https://github.com/ivanli-cn/codex-vibe-monitor',
+        },
+        newVersionDiscoveryCount: 3,
+      },
+    },
+    dockrevGitHubReleasesByServiceId: {
+      'svc-prod-api': {
+        authMode: 'anonymous',
+        repo: {
+          fullName: 'ivanli-cn/codex-vibe-monitor',
+          htmlUrl: 'https://github.com/ivanli-cn/codex-vibe-monitor',
+        },
+        items: [
+          {
+            id: 4100,
+            tagName: '1.41.0',
+            name: '1.41.0',
+            body: 'Latest release notes',
+            htmlUrl: 'https://github.com/ivanli-cn/codex-vibe-monitor/releases/tag/1.41.0',
+            draft: false,
+            prerelease: false,
+            publishedAt: '2026-04-07T00:22:00Z',
+            createdAt: '2026-04-07T00:20:00Z',
+          },
+          {
+            id: 4101,
+            tagName: '1.40.0',
+            name: '1.40.0',
+            body: 'Current candidate release notes',
+            htmlUrl: 'https://github.com/ivanli-cn/codex-vibe-monitor/releases/tag/1.40.0',
+            draft: false,
+            prerelease: false,
+            publishedAt: '2026-04-06T16:22:00Z',
+            createdAt: '2026-04-06T16:10:00Z',
+          },
+        ],
+      },
+    },
+  },
+  render: () => {
+    return (
+      <PageHarness
+        route={{ name: 'services' }}
+        title="服务"
+        topbarHint="服务"
+        pageSubtitle="验证点击 compact discovery badge 直接打开 GitHub Releases 抽屉"
+      >
+        {({ onLastScanHint, onTopActions }) => (
+          <ServicesPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
+        )}
+      </PageHarness>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await sleep(180)
+    const row = Array.from(canvasElement.querySelectorAll<HTMLElement>('.rowLine')).find(
+      (element) =>
+        element.textContent?.includes('api') &&
+        Boolean(element.querySelector('.discoveryHistoryTriggerCompact')),
+    )
+    expectStory(row, 'expected services row with compact discovery badge for release drawer')
+
+    const badge = row.querySelector<HTMLButtonElement>('.discoveryHistoryTriggerCompact')
+    expectStory(badge, 'expected compact discovery badge trigger')
+    badge.click()
+
+    await sleep(260)
+
+    expectStory(
+      window.location.search.includes('releaseDrawer=github') &&
+        window.location.search.includes('releaseServiceId=svc-prod-api'),
+      'expected URL to reflect release drawer state after clicking the badge',
+    )
+    expectStory(
+      Boolean(document.querySelector('[data-release-drawer="true"]')),
+      'expected GitHub release drawer to open after clicking the badge',
+    )
+  },
+}
+
+export const GitHubReleaseDrawerTargetVersionFromTimeline: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    dockrevDiscoveryTimelineByServiceId: {
+      'svc-prod-api': {
+        items: [
+          { kind: 'currentCandidate', version: '1.40.0', occurredAt: '2026-04-07T00:22:00+08:00' },
+          { kind: 'historicalCandidate', version: '1.39.5', occurredAt: '2026-04-07T00:37:00+08:00' },
+          { kind: 'currentRunning', version: '1.39.4', occurredAt: '2026-04-06T18:20:00+08:00' },
+        ],
+      },
+    },
+    dockrevServiceOverridesById: {
+      'svc-prod-api': {
+        settings: {
+          autoRollback: true,
+          backupTargets: { bindPaths: { '/var/lib/api/data': 'inherit' }, volumeNames: {} },
+          repoUrl: 'https://github.com/ivanli-cn/codex-vibe-monitor',
+        },
+        newVersionDiscoveryCount: 3,
+      },
+    },
+    dockrevGitHubReleasesByServiceId: {
+      'svc-prod-api': {
+        authMode: 'anonymous',
+        repo: {
+          fullName: 'ivanli-cn/codex-vibe-monitor',
+          htmlUrl: 'https://github.com/ivanli-cn/codex-vibe-monitor',
+        },
+        items: [
+          {
+            id: 4200,
+            tagName: '1.41.0',
+            name: '1.41.0',
+            body: 'Latest release notes',
+            htmlUrl: 'https://github.com/ivanli-cn/codex-vibe-monitor/releases/tag/1.41.0',
+            draft: false,
+            prerelease: false,
+            publishedAt: '2026-04-07T00:22:00Z',
+            createdAt: '2026-04-07T00:20:00Z',
+          },
+          {
+            id: 4201,
+            tagName: '1.40.0',
+            name: '1.40.0',
+            body: 'Current candidate release notes',
+            htmlUrl: 'https://github.com/ivanli-cn/codex-vibe-monitor/releases/tag/1.40.0',
+            draft: false,
+            prerelease: false,
+            publishedAt: '2026-04-07T00:02:00Z',
+            createdAt: '2026-04-06T23:48:00Z',
+          },
+          {
+            id: 4202,
+            tagName: '1.39.5',
+            name: '1.39.5',
+            body: 'Previous release notes',
+            htmlUrl: 'https://github.com/ivanli-cn/codex-vibe-monitor/releases/tag/1.39.5',
+            draft: false,
+            prerelease: false,
+            publishedAt: '2026-04-06T16:37:00Z',
+            createdAt: '2026-04-06T16:30:00Z',
+          },
+        ],
+        locateByVersion: {
+          '1.39.5': {
+            status: 'found',
+            searchedCount: 20,
+            matchedTag: '1.39.5',
+            page: 1,
+            indexWithinPage: 2,
+            absoluteIndex: 2,
+          },
+        },
+      },
+    },
+  },
+  render: () => {
+    return (
+      <PageHarness
+        route={{ name: 'services' }}
+        title="服务"
+        topbarHint="服务"
+        pageSubtitle="验证点击时间线中的具体版本会打开抽屉并带上 target version"
+      >
+        {({ onLastScanHint, onTopActions }) => (
+          <ServicesPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
+        )}
+      </PageHarness>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await sleep(180)
+
+    const timelineTrigger = canvasElement.querySelector<HTMLButtonElement>('.discoveryHistoryTimelineTrigger')
+    expectStory(timelineTrigger, 'expected explicit timeline trigger for timeline story')
+    timelineTrigger.click()
+    await sleep(220)
+
+    const versionButton = document.querySelector<HTMLButtonElement>('.discoveryTimelineVersionBtn')
+    expectStory(versionButton, 'expected timeline version button in popover')
+    versionButton.click()
+
+    await sleep(320)
+
+    expectStory(
+      window.location.search.includes('releaseVersion=1.39.5'),
+      'expected URL to include the selected target release version',
+    )
+    expectStory(
+      Boolean(document.querySelector('[data-release-tag="1.39.5"]')),
+      'expected release drawer to include the targeted GitHub release entry',
+    )
+  },
+}
+
 export const HydratedRunningUpdate: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo-hydrated-update' },
   render: () => {

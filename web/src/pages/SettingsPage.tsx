@@ -41,6 +41,11 @@ import { webhookStateDotClass, webhookStateIcon } from '../webhookStatus'
 import { currentRoutePathname, navigate } from '../routes'
 import { serviceWorkerUrl } from '../publicAssetUrls'
 import { derivePublicBaseUrlSuggestion } from '../publicBaseUrlSuggestion'
+import {
+  clearRequestedSettingsFocus,
+  peekRequestedSettingsFocus,
+  SETTINGS_GHCR_WEBHOOK_ID,
+} from '../settingsFocus'
 
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
@@ -1570,6 +1575,21 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
     },
     [instancePublicBaseUrlSuggestRefs],
   )
+
+  useEffect(() => {
+    if (!settings || !notifications || !githubPackages) return
+    if (peekRequestedSettingsFocus() !== 'ghcr-webhook') return
+
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.getElementById(SETTINGS_GHCR_WEBHOOK_ID)
+      if (!target) return
+      clearRequestedSettingsFocus()
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [settings, notifications, githubPackages])
+
   if (!settings || !notifications || !githubPackages) {
     return <div className="muted">加载中…</div>
   }
@@ -2356,7 +2376,7 @@ export function SettingsPage(props: { onTopActions: (node: React.ReactNode) => v
         </div>
 
         <div className="settingsCol">
-          <div className="card">
+          <div className="card" id={SETTINGS_GHCR_WEBHOOK_ID}>
           <div className="title">GitHub Packages（GHCR）Webhook</div>
           <div className="muted">在 GHCR 发布新版本时自动触发 Dockrev 扫描（事件：package.published）</div>
           <div className="muted">添加后会自动创建后台任务注册 webhook；可在 GHCR 维护页查看状态并执行删除/重试。</div>

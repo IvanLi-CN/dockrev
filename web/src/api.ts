@@ -180,6 +180,65 @@ export type NewVersionDiscoveryTimelineResponse = {
   items: NewVersionDiscoveryTimelineItem[]
 }
 
+export type GitHubReleaseAuthMode = 'pat' | 'anonymous'
+
+export type ServiceGitHubReleasesStatus =
+  | 'ready'
+  | 'unsupportedRepo'
+  | 'permissionDenied'
+  | 'rateLimited'
+  | 'upstreamError'
+
+export type ServiceGitHubRepoRef = {
+  fullName: string
+  htmlUrl: string
+}
+
+export type ServiceGitHubReleaseItem = {
+  id: number
+  tagName: string
+  name?: string | null
+  body?: string | null
+  htmlUrl: string
+  draft: boolean
+  prerelease: boolean
+  publishedAt?: string | null
+  createdAt?: string | null
+}
+
+export type ServiceGitHubReleasesResponse = {
+  status: ServiceGitHubReleasesStatus
+  authMode: GitHubReleaseAuthMode
+  repo?: ServiceGitHubRepoRef | null
+  page: number
+  perPage: number
+  hasMore: boolean
+  items: ServiceGitHubReleaseItem[]
+  message?: string | null
+}
+
+export type ServiceGitHubReleaseLocateStatus =
+  | 'found'
+  | 'outsideWindow'
+  | 'notFound'
+  | 'unsupportedRepo'
+  | 'permissionDenied'
+  | 'rateLimited'
+  | 'upstreamError'
+
+export type ServiceGitHubReleaseLocateResponse = {
+  status: ServiceGitHubReleaseLocateStatus
+  authMode: GitHubReleaseAuthMode
+  repo?: ServiceGitHubRepoRef | null
+  version: string
+  searchedCount: number
+  matchedTag?: string | null
+  page?: number | null
+  indexWithinPage?: number | null
+  absoluteIndex?: number | null
+  message?: string | null
+}
+
 export type VersionInferenceOverviewStatus =
   | 'queued'
   | 'running'
@@ -978,6 +1037,42 @@ export async function getServiceNewVersionDiscoveryTimeline(
     `/api/services/${encodeURIComponent(serviceId)}/new-version-discovery-timeline`,
   )
   return (await resp.json()) as NewVersionDiscoveryTimelineResponse
+}
+
+export async function getServiceGitHubReleases(
+  serviceId: string,
+  input: { page?: number; perPage?: number } = {},
+): Promise<ServiceGitHubReleasesResponse> {
+  const sp = new URLSearchParams()
+  if (typeof input.page === 'number' && Number.isFinite(input.page)) {
+    sp.set('page', String(Math.max(1, Math.round(input.page))))
+  }
+  if (typeof input.perPage === 'number' && Number.isFinite(input.perPage)) {
+    sp.set('perPage', String(Math.max(1, Math.round(input.perPage))))
+  }
+  const query = sp.toString()
+  const resp = await apiFetch(
+    `/api/services/${encodeURIComponent(serviceId)}/github-releases${query ? `?${query}` : ''}`,
+  )
+  return (await resp.json()) as ServiceGitHubReleasesResponse
+}
+
+export async function locateServiceGitHubRelease(
+  serviceId: string,
+  input: { version: string; perPage?: number; limit?: number },
+): Promise<ServiceGitHubReleaseLocateResponse> {
+  const sp = new URLSearchParams()
+  sp.set('version', input.version)
+  if (typeof input.perPage === 'number' && Number.isFinite(input.perPage)) {
+    sp.set('perPage', String(Math.max(1, Math.round(input.perPage))))
+  }
+  if (typeof input.limit === 'number' && Number.isFinite(input.limit)) {
+    sp.set('limit', String(Math.max(1, Math.round(input.limit))))
+  }
+  const resp = await apiFetch(
+    `/api/services/${encodeURIComponent(serviceId)}/github-releases/locate?${sp.toString()}`,
+  )
+  return (await resp.json()) as ServiceGitHubReleaseLocateResponse
 }
 
 export async function getVersionInferenceOverview(

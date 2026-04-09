@@ -86,6 +86,96 @@ pub struct NewVersionDiscoveryTimelineResponse {
     pub items: Vec<NewVersionDiscoveryTimelineItem>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GitHubReleaseAuthMode {
+    Pat,
+    Anonymous,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ServiceGitHubReleasesStatus {
+    Ready,
+    UnsupportedRepo,
+    PermissionDenied,
+    RateLimited,
+    UpstreamError,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceGitHubRepoRef {
+    pub full_name: String,
+    pub html_url: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceGitHubReleaseItem {
+    pub id: i64,
+    pub tag_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    pub html_url: String,
+    pub draft: bool,
+    pub prerelease: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceGitHubReleasesResponse {
+    pub status: ServiceGitHubReleasesStatus,
+    pub auth_mode: GitHubReleaseAuthMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo: Option<ServiceGitHubRepoRef>,
+    pub page: u32,
+    pub per_page: u32,
+    pub has_more: bool,
+    pub items: Vec<ServiceGitHubReleaseItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ServiceGitHubReleaseLocateStatus {
+    Found,
+    OutsideWindow,
+    NotFound,
+    UnsupportedRepo,
+    PermissionDenied,
+    RateLimited,
+    UpstreamError,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceGitHubReleaseLocateResponse {
+    pub status: ServiceGitHubReleaseLocateStatus,
+    pub auth_mode: GitHubReleaseAuthMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo: Option<ServiceGitHubRepoRef>,
+    pub version: String,
+    pub searched_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matched_tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index_within_page: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub absolute_index: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionInferenceOverviewResponse {

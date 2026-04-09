@@ -776,10 +776,20 @@ html[data-theme='light'] .versionTagsPopover {
   background: color-mix(in srgb, var(--dockrev-surface) 82%, var(--color-info) 18%);
 }
 
-.discoveryHistoryTriggerCompact {
+.discoveryHistoryTriggerGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.discoveryHistoryTriggerGroupCompact {
   position: absolute;
   top: 50%;
   right: 0;
+  transform: translateY(-68%);
+}
+
+.discoveryHistoryTriggerCompact {
   min-width: 22px;
   height: 22px;
   padding: 0 6px;
@@ -791,7 +801,31 @@ html[data-theme='light'] .versionTagsPopover {
   font-weight: 700;
   line-height: 1;
   box-shadow: 0 8px 18px color-mix(in srgb, var(--color-info) 12%, transparent);
-  transform: translateY(-68%);
+}
+
+.discoveryHistoryTimelineTrigger {
+  min-width: 22px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface) 80%, var(--panel2) 20%);
+  color: color-mix(in srgb, var(--text) 70%, var(--color-info) 30%);
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--color-info) 10%, transparent);
+}
+
+.discoveryHistoryTimelineTriggerDots {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.discoveryHistoryTimelineTriggerDots > span {
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: currentColor;
 }
 
 .discoveryHistoryPopover {
@@ -920,6 +954,27 @@ html[data-theme='light'] .versionTagsPopover {
   gap: 3px;
 }
 
+.discoveryTimelineVersionBtn {
+  display: inline-flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.discoveryTimelineVersionBtn:hover .discoveryTimelineVersion,
+.discoveryTimelineVersionBtn:focus-visible .discoveryTimelineVersion {
+  color: color-mix(in srgb, var(--color-primary) 72%, white 28%);
+}
+
+.discoveryTimelineVersionBtn:focus-visible {
+  outline: none;
+}
+
 .discoveryTimelineHeading {
   display: flex;
   align-items: center;
@@ -950,14 +1005,548 @@ html[data-theme='light'] .versionTagsPopover {
   font-size: 12px;
 }
 
+.iconSm {
+  width: 14px;
+  height: 14px;
+}
+
+.releaseDrawerContent {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100vw);
+  max-width: min(760px, 100vw);
+  height: 100dvh;
+  max-height: 100dvh;
+  padding: 0;
+  overflow: hidden;
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+  border-left: 1px solid var(--surface-border-strong);
+  border-radius: 0;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel) 98%, var(--color-primary) 2%) 0%,
+    color-mix(in srgb, var(--panel) 94%, black 6%) 100%
+  );
+  box-shadow: -24px 0 56px rgba(0, 0, 0, 0.4);
+}
+
+.releaseDrawerHeader {
+  gap: 0;
+  padding: 18px 20px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--panel2) 74%, transparent) 0%, transparent 100%);
+}
+
+.releaseDrawerHeaderTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.releaseDrawerHeaderText {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.releaseDrawerTitleRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.releaseDrawerTitleRow .modalTitle {
+  min-width: 0;
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+}
+
+.releaseDrawerInfoInline {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.releaseDrawerDescription {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.releaseDrawerHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.releaseDrawerHeaderMeta {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.releaseDrawerChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface) 92%, transparent);
+  color: color-mix(in srgb, var(--text) 74%, var(--muted) 26%);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.releaseDrawerChipTarget {
+  border-color: color-mix(in srgb, var(--color-info) 34%, var(--borderColor) 66%);
+  color: color-mix(in srgb, var(--text) 78%, var(--color-info) 22%);
+}
+
+.releaseDrawerInfoTrigger,
+.releaseDrawerCloseButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface) 92%, var(--panel2) 8%);
+  color: var(--muted);
+  transition:
+    color 160ms ease,
+    border-color 160ms ease,
+    background-color 160ms ease,
+    transform 160ms ease;
+}
+
+.releaseDrawerInfoTrigger:hover,
+.releaseDrawerCloseButton:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  background: color-mix(in srgb, var(--dockrev-surface) 76%, var(--color-primary) 24%);
+  transform: translateY(-1px);
+}
+
+.releaseDrawerInfoTrigger:focus-visible,
+.releaseDrawerCloseButton:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-primary) 46%, transparent);
+  outline-offset: 2px;
+}
+
+.releaseDrawerInfoTrigger svg,
+.releaseDrawerCloseButton svg {
+  width: 14px;
+  height: 14px;
+}
+
+.releaseDrawerInfoTrigger svg circle,
+.releaseDrawerInfoTrigger svg path,
+.releaseDrawerCloseButton svg path {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.releaseDrawerInfoTooltip {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: calc(100% + 12px);
+  z-index: 8;
+  display: flex;
+  min-width: 188px;
+  max-width: min(220px, calc(100vw - 96px));
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 78%, transparent);
+  background: color-mix(in srgb, var(--panel) 94%, var(--dockrev-surface) 6%);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+}
+
+.releaseDrawerInfoTooltipTitle {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.releaseDrawerInfoTooltipRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.releaseDrawerInfoTooltipLabel {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.releaseDrawerInfoTooltipValue {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+@media (max-width: 720px) {
+  .releaseDrawerInfoTooltip {
+    top: calc(100% + 8px);
+    left: 0;
+  }
+}
+
+.releaseDrawerIconLink,
+.releaseDrawerItemLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface) 92%, var(--panel2) 8%);
+  color: var(--muted);
+  transition:
+    color 160ms ease,
+    border-color 160ms ease,
+    background-color 160ms ease,
+    transform 160ms ease;
+}
+
+.releaseDrawerIconLink:hover,
+.releaseDrawerItemLink:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--color-primary) 34%, var(--borderColor) 66%);
+  background: color-mix(in srgb, var(--dockrev-surface) 76%, var(--color-primary) 24%);
+  transform: translateY(-1px);
+}
+
+.releaseDrawerBanner {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--borderColor);
+  background: color-mix(in srgb, var(--dockrev-surface) 84%, var(--panel2) 16%);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.releaseDrawerBanner-success {
+  border-color: color-mix(in srgb, var(--color-success) 32%, var(--borderColor) 68%);
+  background: color-mix(in srgb, var(--color-success) 12%, var(--dockrev-surface) 88%);
+}
+
+.releaseDrawerBanner-warning {
+  border-color: color-mix(in srgb, var(--color-warning) 38%, var(--borderColor) 62%);
+  background: color-mix(in srgb, var(--color-warning) 12%, var(--dockrev-surface) 88%);
+}
+
+.releaseDrawerBanner-danger {
+  border-color: color-mix(in srgb, var(--color-error) 34%, var(--borderColor) 66%);
+  background: color-mix(in srgb, var(--color-error) 11%, var(--dockrev-surface) 89%);
+}
+
+.releaseDrawerBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.releaseDrawerScrollShell {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.releaseDrawerScrollArea {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.releaseDrawerScrollViewport {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 16px 20px 20px;
+  overflow: hidden;
+}
+
+.releaseDrawerScrollArea [data-slot='scroll-area-scrollbar'],
+.releaseDrawerScrollArea [data-radix-scroll-area-scrollbar] {
+  padding-top: 16px;
+  padding-bottom: 20px;
+  padding-right: 5px;
+  padding-left: 3px;
+}
+
+.releaseDrawerScrollArea [data-slot='scroll-area-thumb'],
+.releaseDrawerScrollArea [data-radix-scroll-area-thumb] {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-info) 84%, white 16%) 0%,
+    color-mix(in srgb, var(--color-primary) 74%, white 26%) 100%
+  );
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, white 28%, transparent),
+    0 8px 20px color-mix(in srgb, var(--color-primary) 32%, transparent);
+}
+
+.releaseDrawerScrollArea [data-slot='scroll-area-scrollbar'][data-orientation='vertical'],
+.releaseDrawerScrollArea [data-radix-scroll-area-scrollbar][data-orientation='vertical'] {
+  width: 16px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, rgba(8, 18, 34, 0.92) 80%, transparent) 0%,
+    color-mix(in srgb, rgba(8, 18, 34, 0.72) 100%, transparent) 100%
+  );
+  border-left: 1px solid color-mix(in srgb, var(--borderColor) 28%, transparent);
+}
+
+.releaseDrawerList {
+  position: relative;
+  width: 100%;
+}
+
+.releaseDrawerListInner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.releaseDrawerVirtualRow {
+  width: 100%;
+}
+
+.releaseDrawerItem {
+  padding: 14px 15px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 86%, transparent);
+  background:
+    linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--dockrev-surface) 92%, var(--panel2) 8%) 0%,
+      color-mix(in srgb, var(--panel) 96%, var(--panel2) 4%) 100%
+    );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, white 2%, transparent);
+}
+
+.releaseDrawerItemHighlighted {
+  border-color: color-mix(in srgb, var(--color-info) 48%, var(--borderColor) 52%);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-info) 24%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--color-info) 16%, transparent),
+    0 12px 28px color-mix(in srgb, var(--color-info) 18%, transparent);
+  animation: releaseDrawerHighlightPulse 1.8s ease-out 1;
+}
+
+.releaseDrawerItemHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.releaseDrawerItemTitleWrap {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.releaseDrawerItemTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.releaseDrawerItemName {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.releaseDrawerItemMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.releaseDrawerBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+  background: color-mix(in srgb, var(--dockrev-chip) 84%, transparent);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.releaseDrawerBadgeTarget {
+  border-color: color-mix(in srgb, var(--color-info) 34%, var(--borderColor) 66%);
+  color: color-mix(in srgb, var(--text) 76%, var(--color-info) 24%);
+}
+
+.releaseDrawerItemBodyWrap {
+  margin-top: 12px;
+}
+
+.releaseDrawerItemBody {
+  margin: 0;
+  color: var(--muted2);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+}
+
+.releaseDrawerItemBodyCollapsed {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+}
+
+.releaseDrawerExpandBtn {
+  margin-top: 10px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.releaseDrawerExpandBtn:hover {
+  text-decoration: underline;
+}
+
+.releaseDrawerItemEmptyBody {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.releaseDrawerLoaderRow,
+.releaseDrawerState {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 96px;
+  border-radius: 14px;
+  border: 1px dashed color-mix(in srgb, var(--borderColor) 82%, transparent);
+  background: color-mix(in srgb, var(--dockrev-surface) 88%, var(--panel2) 12%);
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  padding: 14px 16px;
+}
+
+.releaseDrawerLoaderRow {
+  min-height: 72px;
+  margin-bottom: 12px;
+}
+
+.releaseDrawerState {
+  flex-direction: column;
+  margin: 18px;
+}
+
+.releaseDrawerStateError {
+  border-style: solid;
+}
+
+.releaseDrawerStateTitle {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.releaseDrawerStateMessage {
+  max-width: 42ch;
+  line-height: 1.6;
+}
+
+.releaseDrawerStateActions {
+  margin-top: 4px;
+}
+
+@keyframes releaseDrawerHighlightPulse {
+  0% {
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--color-info) 42%, transparent),
+      0 0 0 0 color-mix(in srgb, var(--color-info) 24%, transparent);
+  }
+  100% {
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--color-info) 12%, transparent),
+      0 0 0 14px color-mix(in srgb, var(--color-info) 0%, transparent);
+  }
+}
+
 html[data-theme='light'] .discoveryHistoryPopover {
   box-shadow: 0 18px 64px rgba(2, 6, 23, 0.18);
 }
 
+html[data-theme='light'] .releaseDrawerContent {
+  box-shadow: -18px 0 56px rgba(15, 23, 42, 0.18);
+}
+
+@media (max-width: 720px) {
+  .releaseDrawerContent {
+    width: 100vw;
+    max-width: 100vw;
+    border-radius: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .discoveryHistoryTrigger,
-  .discoveryHistoryPopover {
+  .discoveryHistoryPopover,
+  .releaseDrawerIconLink,
+  .releaseDrawerItemLink {
     transition: none;
+  }
+
+  .releaseDrawerItemHighlighted {
+    animation: none;
   }
 }
 
