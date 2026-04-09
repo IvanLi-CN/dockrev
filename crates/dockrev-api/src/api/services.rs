@@ -917,18 +917,15 @@ async fn list_service_github_releases_with_client(
             ServiceGitHubReleasesStatus::PermissionDenied
                 | ServiceGitHubReleasesStatus::UpstreamError
         )
+        && let Some(message) = response.message.as_deref()
+        && (response.status == ServiceGitHubReleasesStatus::PermissionDenied
+            || message.contains("GitHub 返回 404"))
+        && let Ok(anonymous) = client.clone_as_anonymous()
     {
-        if let Some(message) = response.message.as_deref()
-            && (response.status == ServiceGitHubReleasesStatus::PermissionDenied
-                || message.contains("GitHub 返回 404"))
-            && let Ok(anonymous) = client.clone_as_anonymous()
-        {
-            let fallback =
-                list_service_github_releases_with_client_once(&anonymous, repo, page, per_page)
-                    .await;
-            if fallback.status == ServiceGitHubReleasesStatus::Ready {
-                return fallback;
-            }
+        let fallback =
+            list_service_github_releases_with_client_once(&anonymous, repo, page, per_page).await;
+        if fallback.status == ServiceGitHubReleasesStatus::Ready {
+            return fallback;
         }
     }
     response
@@ -1012,23 +1009,21 @@ async fn locate_service_github_release_with_client(
             ServiceGitHubReleaseLocateStatus::PermissionDenied
                 | ServiceGitHubReleaseLocateStatus::UpstreamError
         )
+        && let Some(message) = response.message.as_deref()
+        && (response.status == ServiceGitHubReleaseLocateStatus::PermissionDenied
+            || message.contains("GitHub 返回 404"))
+        && let Ok(anonymous) = client.clone_as_anonymous()
     {
-        if let Some(message) = response.message.as_deref()
-            && (response.status == ServiceGitHubReleaseLocateStatus::PermissionDenied
-                || message.contains("GitHub 返回 404"))
-            && let Ok(anonymous) = client.clone_as_anonymous()
-        {
-            let fallback = locate_service_github_release_with_client_once(
-                &anonymous, repo, version, per_page, limit,
-            )
-            .await;
-            if !matches!(
-                fallback.status,
-                ServiceGitHubReleaseLocateStatus::PermissionDenied
-                    | ServiceGitHubReleaseLocateStatus::UpstreamError
-            ) {
-                return fallback;
-            }
+        let fallback = locate_service_github_release_with_client_once(
+            &anonymous, repo, version, per_page, limit,
+        )
+        .await;
+        if !matches!(
+            fallback.status,
+            ServiceGitHubReleaseLocateStatus::PermissionDenied
+                | ServiceGitHubReleaseLocateStatus::UpstreamError
+        ) {
+            return fallback;
         }
     }
     response
