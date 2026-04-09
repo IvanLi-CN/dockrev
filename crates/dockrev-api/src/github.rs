@@ -79,14 +79,31 @@ pub struct GitHubClient {
     client: reqwest::Client,
     base_url: Url,
     headers: HeaderMap,
+    auth_mode: GitHubAuthMode,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GitHubAuthMode {
+    Pat,
+    Anonymous,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitHubPage<T> {
+    pub items: Vec<T>,
+    pub has_next: bool,
 }
 
 impl GitHubClient {
     pub fn new(pat: &str) -> anyhow::Result<Self> {
-        Self::new_with_base_url(pat, Url::parse("https://api.github.com/")?)
+        Self::new_with_optional_pat(Some(pat), Url::parse("https://api.github.com/")?)
     }
 
-    fn new_with_base_url(pat: &str, base_url: Url) -> anyhow::Result<Self> {
+    pub fn new_anonymous() -> anyhow::Result<Self> {
+        Self::new_with_optional_pat(None, Url::parse("https://api.github.com/")?)
+    }
+
+    fn new_with_optional_pat(pat: Option<&str>, base_url: Url) -> anyhow::Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(
             USER_AGENT,
@@ -100,8 +117,13 @@ impl GitHubClient {
             "X-GitHub-Api-Version",
             HeaderValue::from_static("2022-11-28"),
         );
-        let auth = format!("Bearer {}", pat.trim());
-        headers.insert(AUTHORIZATION, HeaderValue::from_str(&auth)?);
+        let auth_mode = if let Some(token) = pat.map(str::trim).filter(|value| !value.is_empty()) {
+            let auth = format!("Bearer {token}");
+            headers.insert(AUTHORIZATION, HeaderValue::from_str(&auth)?);
+            GitHubAuthMode::Pat
+        } else {
+            GitHubAuthMode::Anonymous
+        };
 
         Ok(Self {
             client: reqwest::Client::builder()
@@ -111,7 +133,21 @@ impl GitHubClient {
                 .context("build reqwest client")?,
             base_url,
             headers,
+            auth_mode,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_base_url(pat: Option<&str>, base_url: Url) -> anyhow::Result<Self> {
+        Self::new_with_optional_pat(pat, base_url)
+    }
+
+    pub fn auth_mode(&self) -> GitHubAuthMode {
+        self.auth_mode
+    }
+
+    pub fn clone_as_anonymous(&self) -> anyhow::Result<Self> {
+        Self::new_with_optional_pat(None, self.base_url.clone())
     }
 
     async fn request_json<T: DeserializeOwned>(
@@ -121,18 +157,7 @@ impl GitHubClient {
         body: Option<serde_json::Value>,
     ) -> anyhow::Result<T> {
         let url = self.base_url.join(path)?;
-        let mut req = self.client.request(method, url);
-        req = req.headers(self.headers.clone());
-        if let Some(body) = body {
-            req = req.json(&body);
-        }
-        let resp = req.send().await?;
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        if !status.is_success() {
-            return Err(anyhow::anyhow!("github http {}: {}", status, text));
-        }
-        serde_json::from_str(&text).context("decode github json")
+        self.request_json_url(method, url, body).await
     }
 
     async fn request_empty(
@@ -142,6 +167,29 @@ impl GitHubClient {
         body: Option<serde_json::Value>,
     ) -> anyhow::Result<()> {
         let url = self.base_url.join(path)?;
+        let text = self.request_text_url(method, url, body).await?;
+        if !text.is_empty() {
+            return Ok(());
+        }
+        Ok(())
+    }
+
+    async fn request_json_url<T: DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        url: Url,
+        body: Option<serde_json::Value>,
+    ) -> anyhow::Result<T> {
+        let text = self.request_text_url(method, url, body).await?;
+        serde_json::from_str(&text).context("decode github json")
+    }
+
+    async fn request_text_url(
+        &self,
+        method: reqwest::Method,
+        url: Url,
+        body: Option<serde_json::Value>,
+    ) -> anyhow::Result<String> {
         let mut req = self.client.request(method, url);
         req = req.headers(self.headers.clone());
         if let Some(body) = body {
@@ -153,7 +201,7 @@ impl GitHubClient {
         if !status.is_success() {
             return Err(anyhow::anyhow!("github http {}: {}", status, text));
         }
-        Ok(())
+        Ok(text)
     }
 
     pub async fn list_owner_repos(&self, owner: &str) -> anyhow::Result<Vec<GitHubRepo>> {
@@ -330,6 +378,69 @@ impl GitHubClient {
         Ok(())
     }
 
+    pub async fn list_releases_page(
+        &self,
+        owner: &str,
+        repo: &str,
+        page: u32,
+        per_page: u32,
+    ) -> anyhow::Result<GitHubPage<GitHubRelease>> {
+        let owner = owner.trim();
+        let repo = repo.trim();
+        if owner.is_empty() || repo.is_empty() {
+            return Err(anyhow::anyhow!("owner/repo is empty"));
+        }
+        let page = page.max(1);
+        let per_page = per_page.clamp(1, 100);
+        let url = self.base_url.join(&format!(
+            "repos/{owner}/{repo}/releases?per_page={per_page}&page={page}"
+        ))?;
+        let resp = self
+            .client
+            .request(reqwest::Method::GET, url)
+            .headers(self.headers.clone())
+            .send()
+            .await?;
+        let status = resp.status();
+        let has_next = resp
+            .headers()
+            .get("link")
+            .and_then(|v| v.to_str().ok())
+            .and_then(parse_next_link)
+            .is_some();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(anyhow::anyhow!("github http {}: {}", status, text));
+        }
+        Ok(GitHubPage {
+            items: serde_json::from_str(&text).context("decode github json")?,
+            has_next,
+        })
+    }
+
+    pub async fn get_release_by_tag(
+        &self,
+        owner: &str,
+        repo: &str,
+        tag: &str,
+    ) -> anyhow::Result<GitHubRelease> {
+        let owner = owner.trim();
+        let repo = repo.trim();
+        let tag = tag.trim();
+        if owner.is_empty() || repo.is_empty() || tag.is_empty() {
+            return Err(anyhow::anyhow!("owner/repo/tag is empty"));
+        }
+        let mut url = self.base_url.clone();
+        {
+            let mut segments = url
+                .path_segments_mut()
+                .map_err(|_| anyhow::anyhow!("invalid github base url"))?;
+            segments.pop_if_empty();
+            segments.extend(["repos", owner, repo, "releases", "tags", tag]);
+        }
+        self.request_json_url(reqwest::Method::GET, url, None).await
+    }
+
     async fn paginated_get<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<Vec<T>> {
         let mut out = Vec::new();
         let mut next: Option<Url> = Some({
@@ -389,8 +500,9 @@ fn parse_next_link(link_header: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{Json, Router, routing::get};
+    use axum::{Json, Router, extract::OriginalUri, response::IntoResponse, routing::get};
     use serde_json::json;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn parse_next_link_extracts_next() {
@@ -455,7 +567,7 @@ mod tests {
         });
 
         let client = GitHubClient::new_with_base_url(
-            "test-token",
+            Some("test-token"),
             Url::parse(&format!("http://{addr}/")).unwrap(),
         )
         .unwrap();
@@ -468,6 +580,140 @@ mod tests {
         assert_eq!(
             packages,
             vec!["dockrev".to_string(), "dockrev-supervisor".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn list_releases_page_reports_has_next() {
+        async fn releases() -> impl IntoResponse {
+            (
+                [(
+                    "link",
+                    "<http://127.0.0.1/releases?page=2&per_page=2>; rel=\"next\"",
+                )],
+                Json(json!([
+                    {
+                        "id": 101,
+                        "tag_name": "v1.2.0",
+                        "name": "v1.2.0",
+                        "body": "release notes",
+                        "html_url": "https://github.com/acme/repo/releases/tag/v1.2.0",
+                        "draft": false,
+                        "prerelease": false,
+                        "published_at": "2026-04-07T00:22:00Z",
+                        "created_at": "2026-04-07T00:20:00Z"
+                    }
+                ])),
+            )
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/repos/acme/repo/releases", get(releases)),
+            )
+            .await
+            .unwrap();
+        });
+
+        let client =
+            GitHubClient::new_with_base_url(None, Url::parse(&format!("http://{addr}/")).unwrap())
+                .unwrap();
+        let page = client
+            .list_releases_page("acme", "repo", 1, 2)
+            .await
+            .unwrap();
+        assert!(page.has_next);
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].tag_name, "v1.2.0");
+        assert_eq!(client.auth_mode(), GitHubAuthMode::Anonymous);
+    }
+
+    #[tokio::test]
+    async fn get_release_by_tag_fetches_exact_tag() {
+        async fn release() -> Json<serde_json::Value> {
+            Json(json!({
+                "id": 102,
+                "tag_name": "1.39.5",
+                "name": "1.39.5",
+                "body": null,
+                "html_url": "https://github.com/acme/repo/releases/tag/1.39.5",
+                "draft": false,
+                "prerelease": false,
+                "published_at": "2026-04-07T00:37:00Z",
+                "created_at": "2026-04-07T00:30:00Z"
+            }))
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/repos/acme/repo/releases/tags/1.39.5", get(release)),
+            )
+            .await
+            .unwrap();
+        });
+
+        let client = GitHubClient::new_with_base_url(
+            Some("test-token"),
+            Url::parse(&format!("http://{addr}/")).unwrap(),
+        )
+        .unwrap();
+        let release = client
+            .get_release_by_tag("acme", "repo", "1.39.5")
+            .await
+            .unwrap();
+        assert_eq!(release.id, 102);
+        assert_eq!(client.auth_mode(), GitHubAuthMode::Pat);
+    }
+
+    #[tokio::test]
+    async fn get_release_by_tag_encodes_slash_in_tag() {
+        let seen_paths = Arc::new(Mutex::new(Vec::<String>::new()));
+
+        async fn release(
+            OriginalUri(uri): OriginalUri,
+            axum::extract::State(seen_paths): axum::extract::State<Arc<Mutex<Vec<String>>>>,
+        ) -> Json<serde_json::Value> {
+            seen_paths.lock().unwrap().push(uri.path().to_string());
+            Json(json!({
+                "id": 103,
+                "tag_name": "release/2026.04",
+                "name": "release/2026.04",
+                "body": null,
+                "html_url": "https://github.com/acme/repo/releases/tag/release/2026.04",
+                "draft": false,
+                "prerelease": false,
+                "published_at": "2026-04-07T00:37:00Z",
+                "created_at": "2026-04-07T00:30:00Z"
+            }))
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = Router::new()
+            .route("/repos/acme/repo/releases/tags/{*tag}", get(release))
+            .with_state(seen_paths.clone());
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client =
+            GitHubClient::new_with_base_url(None, Url::parse(&format!("http://{addr}/")).unwrap())
+                .unwrap();
+        let release = client
+            .get_release_by_tag("acme", "repo", "release/2026.04")
+            .await
+            .unwrap();
+
+        assert_eq!(release.id, 103);
+        assert_eq!(
+            seen_paths.lock().unwrap().as_slice(),
+            ["/repos/acme/repo/releases/tags/release%2F2026.04"]
         );
     }
 }
@@ -522,6 +768,25 @@ pub struct GitHubWebhook {
 #[derive(Clone, Debug, Deserialize)]
 pub struct GitHubWebhookConfig {
     pub url: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct GitHubRelease {
+    pub id: i64,
+    pub tag_name: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub body: Option<String>,
+    pub html_url: String,
+    #[serde(default)]
+    pub draft: bool,
+    #[serde(default)]
+    pub prerelease: bool,
+    #[serde(default)]
+    pub published_at: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]

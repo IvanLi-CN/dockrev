@@ -2,7 +2,7 @@ import './App.css'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AppShell } from './Shell'
 import type { Route } from './routes'
-import { navigate } from './routes'
+import { currentRoutePathname, navigate } from './routes'
 import { OverviewPage } from './pages/OverviewPage'
 import { QueuePage } from './pages/QueuePage'
 import { JobDetailPage } from './pages/JobDetailPage'
@@ -28,6 +28,14 @@ import {
   type AuthRequiredDetails,
 } from './api'
 import { TopbarUserIdentity } from './components/TopbarUserIdentity'
+import { GitHubReleaseDrawer } from './components/GitHubReleaseDrawer'
+import {
+  CLOSED_GITHUB_RELEASE_DRAWER_STATE,
+  RELEASE_DRAWER_LOCATION_EVENT,
+  closeGitHubReleaseDrawer,
+  readGitHubReleaseDrawerState,
+  shouldResetReleaseDrawerOnRouteChange,
+} from './releaseDrawer'
 import {
   buildFallbackTopbarAuthIdentity,
   buildTopbarAuthIdentityFromAuthRequired,
@@ -100,6 +108,7 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
 
 export default function App() {
   const route = useRoute()
+  const [releaseDrawerState, setReleaseDrawerState] = useState(() => readGitHubReleaseDrawerState())
   const [pageActions, setPageActions] = useState<ReactNode>(null)
   const [lastScanHint, setLastScanHint] = useState<string | undefined>(undefined)
   const [deployWelcomeState, setDeployWelcomeState] = useState<{ loaded: boolean; neverAutoOpen: boolean }>({
@@ -112,6 +121,7 @@ export default function App() {
   const authFailureVersionRef = useRef(0)
   const authIdentityRefreshInFlightRef = useRef(false)
   const suppressNextAuthRecoveredRef = useRef(false)
+  const previousRoutePathRef = useRef<string | null>(null)
 
   const head = useMemo(() => pageTitle(route), [route])
   const topActions = useMemo(() => {
@@ -214,6 +224,46 @@ export default function App() {
     }
   }, [refreshAuthIdentity])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const sync = () => setReleaseDrawerState(readGitHubReleaseDrawerState())
+    const handleLocation = () => sync()
+    sync()
+    window.addEventListener('popstate', handleLocation)
+    window.addEventListener('hashchange', handleLocation)
+    window.addEventListener(RELEASE_DRAWER_LOCATION_EVENT, handleLocation as EventListener)
+    return () => {
+      window.removeEventListener('popstate', handleLocation)
+      window.removeEventListener('hashchange', handleLocation)
+      window.removeEventListener(RELEASE_DRAWER_LOCATION_EVENT, handleLocation as EventListener)
+    }
+  }, [])
+
+  useEffect(() => {
+    const nextPathname = currentRoutePathname()
+    const previousPathname = previousRoutePathRef.current
+    previousRoutePathRef.current = nextPathname
+
+    const hashRouting =
+      typeof window !== 'undefined' &&
+      (window.location.hash.startsWith('#/') || window.location.pathname.endsWith('/iframe.html'))
+
+    if (
+      shouldResetReleaseDrawerOnRouteChange({
+        drawerOpen: releaseDrawerState.open,
+        hashRouting,
+        previousPathname,
+        nextPathname,
+      })
+    ) {
+      closeGitHubReleaseDrawer('replace')
+      setReleaseDrawerState(CLOSED_GITHUB_RELEASE_DRAWER_STATE)
+      return
+    }
+
+    setReleaseDrawerState(readGitHubReleaseDrawerState())
+  }, [releaseDrawerState.open, route])
+
   if (route.name === 'supervisor-misroute') {
     return (
       <div className="standaloneShell">
@@ -256,35 +306,46 @@ export default function App() {
   }
 
   return (
-    <AppShell
-      route={route}
-      title={head.title}
-      pageSubtitle={head.pageSubtitle}
-      topbarHint={head.topbarHint}
-      topActions={topActions}
-      authIdentity={authIdentity}
-      lastScanHint={lastScanHint}
-    >
-      {route.name === 'overview' ? <OverviewPage onLastScanHint={setLastScanHint} onTopActions={setPageActions} /> : null}
-      {route.name === 'queue' ? <QueuePage onTopActions={setPageActions} /> : null}
-      {route.name === 'job' ? <JobDetailPage jobId={route.jobId} onTopActions={setPageActions} /> : null}
-      {route.name === 'services' ? <ServicesPage onLastScanHint={setLastScanHint} onTopActions={setPageActions} /> : null}
-      {route.name === 'cleanup' ? <CleanupPage onLastScanHint={setLastScanHint} onTopActions={setPageActions} /> : null}
-      {route.name === 'version-inference' ? (
-        <VersionInferencePage onLastScanHint={setLastScanHint} onTopActions={setPageActions} />
-      ) : null}
-      {route.name === 'ghcr-webhooks' ? <GhcrWebhookQueuePage onTopActions={setPageActions} /> : null}
-      {route.name === 'ghcr-webhook-inbox' ? <GhcrWebhookInboxPage onTopActions={setPageActions} /> : null}
-      {route.name === 'ghcr-webhook-registry' ? <GhcrWebhookRegistryPage onTopActions={setPageActions} /> : null}
-      {route.name === 'settings' ? <SettingsPage onTopActions={setPageActions} /> : null}
-      {route.name === 'service' ? (
-        <ServiceDetailPage
-          stackId={route.stackId}
-          serviceId={route.serviceId}
-          onLastScanHint={setLastScanHint}
-          onTopActions={setPageActions}
-        />
-      ) : null}
-    </AppShell>
+    <>
+      <AppShell
+        route={route}
+        title={head.title}
+        pageSubtitle={head.pageSubtitle}
+        topbarHint={head.topbarHint}
+        topActions={topActions}
+        authIdentity={authIdentity}
+        lastScanHint={lastScanHint}
+      >
+        {route.name === 'overview' ? <OverviewPage onLastScanHint={setLastScanHint} onTopActions={setPageActions} /> : null}
+        {route.name === 'queue' ? <QueuePage onTopActions={setPageActions} /> : null}
+        {route.name === 'job' ? <JobDetailPage jobId={route.jobId} onTopActions={setPageActions} /> : null}
+        {route.name === 'services' ? <ServicesPage onLastScanHint={setLastScanHint} onTopActions={setPageActions} /> : null}
+        {route.name === 'cleanup' ? <CleanupPage onLastScanHint={setLastScanHint} onTopActions={setPageActions} /> : null}
+        {route.name === 'version-inference' ? (
+          <VersionInferencePage onLastScanHint={setLastScanHint} onTopActions={setPageActions} />
+        ) : null}
+        {route.name === 'ghcr-webhooks' ? <GhcrWebhookQueuePage onTopActions={setPageActions} /> : null}
+        {route.name === 'ghcr-webhook-inbox' ? <GhcrWebhookInboxPage onTopActions={setPageActions} /> : null}
+        {route.name === 'ghcr-webhook-registry' ? <GhcrWebhookRegistryPage onTopActions={setPageActions} /> : null}
+        {route.name === 'settings' ? <SettingsPage onTopActions={setPageActions} /> : null}
+        {route.name === 'service' ? (
+          <ServiceDetailPage
+            stackId={route.stackId}
+            serviceId={route.serviceId}
+            onLastScanHint={setLastScanHint}
+            onTopActions={setPageActions}
+          />
+        ) : null}
+      </AppShell>
+      <GitHubReleaseDrawer
+        open={releaseDrawerState.open}
+        serviceId={releaseDrawerState.serviceId}
+        version={releaseDrawerState.version}
+        onOpenChange={(open) => {
+          if (open) return
+          closeGitHubReleaseDrawer('replace')
+        }}
+      />
+    </>
   )
 }

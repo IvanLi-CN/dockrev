@@ -34,6 +34,19 @@ export {
   DialogTrigger,
 } from '@/components/ui/dialog'
 export {
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerOverlay,
+  DrawerPortal,
+  DrawerTitle,
+  DrawerTrigger,
+} from '@/components/ui/drawer'
+export { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
+export {
   Select,
   SelectContent,
   SelectGroup,

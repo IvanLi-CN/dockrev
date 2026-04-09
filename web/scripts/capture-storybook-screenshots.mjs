@@ -272,8 +272,8 @@ async function main() {
       setup: async (page) => {
         const trigger = page.getByRole('button', { name: /发现 .*次，查看版本时间线/ }).first()
         await trigger.waitFor({ timeout: STORY_TIMEOUT_MS })
-        await trigger.click()
-        await page.locator('.discoveryHistoryPopover').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await trigger.hover()
+        await page.locator('.discoveryHistoryPopover[data-state="open"]').waitFor({ timeout: STORY_TIMEOUT_MS })
         await page.waitForTimeout(160)
       },
       screenshot: async (page, filePath) => {
@@ -305,8 +305,8 @@ async function main() {
       setup: async (page) => {
         const trigger = page.getByRole('button', { name: /发现 .*次，查看版本时间线/ }).first()
         await trigger.waitFor({ timeout: STORY_TIMEOUT_MS })
-        await trigger.click()
-        await page.locator('.discoveryHistoryPopover').waitFor({ timeout: STORY_TIMEOUT_MS })
+        await trigger.hover()
+        await page.locator('.discoveryHistoryPopover[data-state="open"]').waitFor({ timeout: STORY_TIMEOUT_MS })
         await page.waitForTimeout(160)
       },
       screenshot: async (page, filePath) => {
