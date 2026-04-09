@@ -650,6 +650,12 @@ pub(crate) async fn resolve_service_github_repo_ref(
     if saved_repo_url.is_some() {
         return Ok(normalize_service_github_repo_ref(saved_repo_url));
     }
+    let Some(stored_settings) = state.db.get_stored_service_settings(service_id).await? else {
+        return Ok(None);
+    };
+    if stored_settings.repo_url_auto_disabled {
+        return Ok(None);
+    }
 
     let snapshot_target = match state.db.get_service_snapshot_target(service_id).await? {
         Some(snapshot_target) => snapshot_target,

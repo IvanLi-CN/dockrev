@@ -21787,6 +21787,56 @@ services:
 }
 
 #[tokio::test]
+async fn resolve_service_github_repo_ref_respects_manual_repo_url_opt_out() {
+    let registry = Arc::new(RepoLinkRegistry::with_oci_source(Some(
+        "https://github.com/Acme/Web",
+    )));
+    let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id =
+        set_single_service_check_result(&state, &stack_id, Some("sha256:current"), None, None)
+            .await;
+    state
+        .db
+        .put_service_settings_with_repo_auto_disabled(
+            &service_id,
+            &crate::api::ServiceSettings {
+                auto_rollback: true,
+                backup_targets: crate::api::BackupTargetOverrides {
+                    bind_paths: BTreeMap::new(),
+                    volume_names: BTreeMap::new(),
+                },
+                repo_url: None,
+            },
+            true,
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    let repo = crate::api::services::resolve_service_github_repo_ref(&state, &service_id, None)
+        .await
+        .unwrap();
+
+    assert!(
+        repo.is_none(),
+        "manual repoUrl opt-out should stay unsupported"
+    );
+    assert_eq!(registry.observed_references(), Vec::<String>::new());
+}
+
+#[tokio::test]
 async fn infer_service_repo_link_skips_deselected_ghcr_repo() {
     let registry = Arc::new(RepoLinkRegistry::with_oci_source(None));
     let state = test_state_with(":memory:", registry.clone(), Arc::new(FakeRunner)).await;
