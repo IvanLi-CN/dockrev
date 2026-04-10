@@ -82,6 +82,9 @@ jobs:
       - name: Cargo fmt check
         run: cargo fmt --all -- --check
 
+      - name: File budget check
+        run: python3 ./.github/scripts/check-file-budgets.py
+
       - name: Cargo clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 

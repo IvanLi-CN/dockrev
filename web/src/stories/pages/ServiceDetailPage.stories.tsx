@@ -40,7 +40,14 @@ function render(stackId: string, serviceId: string): Story['render'] {
   return () => {
     return (
       <PageHarness route={{ name: 'service', stackId, serviceId }} title="服务详情" topbarHint="服务详情">
-        {({ onTopActions }) => <ServiceDetailPage stackId={stackId} serviceId={serviceId} onTopActions={onTopActions} />}
+        {({ onTopActions, onLastScanHint }) => (
+          <ServiceDetailPage
+            stackId={stackId}
+            serviceId={serviceId}
+            onLastScanHint={onLastScanHint}
+            onTopActions={onTopActions}
+          />
+        )}
       </PageHarness>
     )
   }
