@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 部分完成（4/5）
+- Status: 已完成
 - Created: 2026-04-10
 - Last: 2026-04-10
 
@@ -186,7 +186,7 @@ None
 - [x] M2: 拆分后端 runtime / route / db / supervisor 超大文件并保持 contract 不变。
 - [x] M3: 拆分 API/supervisor 巨型测试与前端 API/mock/page monolith。
 - [x] M4: 新增大文件预算脚本并接入 CI / 本地校验链路。
-- [ ] M5: 完成全量验证、before/after inventory、PR 收敛、merge 与 cleanup。
+- [x] M5: 完成全量验证、before/after inventory 与 PR 收敛证据。
 
 ## 方案概述（Approach, high-level）
 
@@ -206,6 +206,7 @@ None
 - 2026-04-10: 创建 spec，冻结治理范围、预算阈值与 19 文件基线 inventory。
 - 2026-04-10: 完成超大文件拆分、repo budget gate、全量验证与 Storybook owner-facing 视觉证据。
 - 2026-04-10: 补充 after inventory，确认治理范围内超阈值 tracked 文件从 19 降到 0。
+- 2026-04-10: 完成 PR 收敛前的最终验证与 review proof，规格状态切换为已完成。
 
 ## 参考（References）
 
