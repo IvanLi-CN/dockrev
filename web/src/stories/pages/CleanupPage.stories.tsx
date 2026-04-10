@@ -11,7 +11,7 @@ const meta: Meta<typeof CleanupPage> = {
   parameters: {
     docs: {
       description: {
-        component: 'Cleanup 页默认走 autodocs；这里补充顶部动作图标、未知大小文案与确认弹窗行为的稳定回归覆盖。',
+        component: 'Cleanup 页默认走 autodocs；这里补充顶部动作图标、扫描态、未知大小文案与确认弹窗行为的稳定回归覆盖。',
       },
     },
   },
@@ -91,6 +91,40 @@ export const Default: Story = {
 export const Empty: Story = {
   parameters: { dockrevApiScenario: 'cleanup-console-empty' },
   render: renderPage,
+}
+
+export const ScanningState: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console-scan-pending' },
+  render: renderPage,
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => canvasElement.textContent?.includes('正在扫描可清理资源…') ?? false)
+
+    const allButton = findButton(doc, '全部')
+    const refreshButton = findButton(doc, '重扫')
+    assertStory(allButton, 'topbar cleanup action should stay visible while scanning')
+    assertStory(refreshButton, 'topbar rescan action should stay visible while scanning')
+    assertStory(allButton.disabled, 'cleanup action should be disabled during initial scan')
+    assertStory(refreshButton.disabled, 'rescan action should be disabled during initial scan')
+    assertStory(refreshButton.getAttribute('aria-busy') === 'true', 'rescan action should expose busy state during initial scan')
+  },
+}
+
+export const RescanningState: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console-scan-slow' },
+  render: renderPage,
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => canvasElement.textContent?.includes('空间概览') ?? false)
+
+    const refreshButton = findButton(doc, '重扫')
+    assertStory(refreshButton, 'rescan action missing')
+    refreshButton.click()
+
+    await waitForCondition(() => findButton(doc, '重扫')?.getAttribute('aria-busy') === 'true')
+    assertStory(findButton(doc, '全部')?.disabled === true, 'cleanup action should be disabled while rescanning')
+    assertStory(findButton(doc, '重扫')?.disabled === true, 'rescan action should be disabled while rescanning')
+  },
 }
 
 export const AggressiveUnowned: Story = {
