@@ -184,7 +184,7 @@ export const StatusBadgeLayout: Story = {
   },
 }
 
-export const GitHubReleaseDrawerOpenFromBadge: Story = {
+export const DiscoveryTimelineOpenFromBadge: Story = {
   parameters: {
     dockrevApiScenario: 'dashboard-demo',
     dockrevServiceOverridesById: {
@@ -237,7 +237,7 @@ export const GitHubReleaseDrawerOpenFromBadge: Story = {
         route={{ name: 'services' }}
         title="服务"
         topbarHint="服务"
-        pageSubtitle="验证点击 compact discovery badge 直接打开 GitHub Releases 抽屉"
+        pageSubtitle="验证点击 compact discovery badge 只打开版本时间线，不直接打开 GitHub Releases 抽屉"
       >
         {({ onLastScanHint, onTopActions }) => (
           <ServicesPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
@@ -252,7 +252,7 @@ export const GitHubReleaseDrawerOpenFromBadge: Story = {
         element.textContent?.includes('api') &&
         Boolean(element.querySelector('.discoveryHistoryTriggerCompact')),
     )
-    expectStory(row, 'expected services row with compact discovery badge for release drawer')
+    expectStory(row, 'expected services row with compact discovery badge for timeline popover')
 
     const badge = row.querySelector<HTMLButtonElement>('.discoveryHistoryTriggerCompact')
     expectStory(badge, 'expected compact discovery badge trigger')
@@ -261,13 +261,16 @@ export const GitHubReleaseDrawerOpenFromBadge: Story = {
     await sleep(260)
 
     expectStory(
-      window.location.search.includes('releaseDrawer=github') &&
-        window.location.search.includes('releaseServiceId=svc-prod-api'),
-      'expected URL to reflect release drawer state after clicking the badge',
+      !window.location.search.includes('releaseDrawer=github'),
+      'expected compact discovery badge click to avoid opening the GitHub release drawer directly',
     )
     expectStory(
-      Boolean(document.querySelector('[data-release-drawer="true"]')),
-      'expected GitHub release drawer to open after clicking the badge',
+      !document.querySelector('[data-release-drawer="true"]'),
+      'expected GitHub release drawer to stay closed after clicking the badge',
+    )
+    expectStory(
+      Boolean(document.querySelector('.discoveryHistoryPopover')),
+      'expected discovery history popover to open after clicking the badge',
     )
   },
 }
@@ -366,9 +369,16 @@ export const GitHubReleaseDrawerTargetVersionFromTimeline: Story = {
   play: async ({ canvasElement }) => {
     await sleep(180)
 
-    const timelineTrigger = canvasElement.querySelector<HTMLButtonElement>('.discoveryHistoryTimelineTrigger')
-    expectStory(timelineTrigger, 'expected explicit timeline trigger for timeline story')
-    timelineTrigger.click()
+    const row = Array.from(canvasElement.querySelectorAll<HTMLElement>('.rowLine')).find(
+      (element) =>
+        element.textContent?.includes('api') &&
+        Boolean(element.querySelector('.discoveryHistoryTriggerCompact')),
+    )
+    expectStory(row, 'expected services row with compact discovery badge for timeline story')
+
+    const badge = row.querySelector<HTMLButtonElement>('.discoveryHistoryTriggerCompact')
+    expectStory(badge, 'expected compact discovery badge trigger for timeline story')
+    badge.click()
     await sleep(220)
 
     const versionButton = document.querySelector<HTMLButtonElement>('.discoveryTimelineVersionBtn')
