@@ -21,7 +21,7 @@ mod parse;
 
 use parse::{
     ensure_success, parse_buildx_du_json_lines, parse_buildx_du_text_summary,
-    parse_du_kilobytes_output, parse_human_size, parse_volume_sizes_from_system_df_verbose,
+    parse_du_kilobytes_output, parse_volume_sizes_from_system_df_verbose,
 };
 
 #[derive(Clone, Debug)]
