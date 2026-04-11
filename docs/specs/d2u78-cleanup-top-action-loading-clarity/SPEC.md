@@ -82,7 +82,7 @@
   target_program: `mock-only`
   capture_scope: `element`
   sensitive_exclusion: `N/A`
-  submission_gate: `pending-owner-approval`
+  submission_gate: `approved`
   story_id_or_title: `Pages/CleanupPage/ScanningState`
   state: `initial scan pending top actions`
   evidence_note: 验证初始扫描时顶部动作不再保留垃圾桶 / 刷新原动作 icon；`全部` 切到 `等待扫描`，`重扫` 切到单一 loading affordance 的 `扫描中…`。
@@ -93,7 +93,7 @@
   target_program: `mock-only`
   capture_scope: `element`
   sensitive_exclusion: `N/A`
-  submission_gate: `pending-owner-approval`
+  submission_gate: `approved`
   story_id_or_title: `Pages/CleanupPage/RescanningState`
   state: `manual rescan top actions`
   evidence_note: 验证重新扫描时顶部动作切到 `等待扫描 / 重扫中…`，`重扫` 只保留一个 loading affordance，不再出现 spinner + refresh icon 双图标。
@@ -104,7 +104,7 @@
   target_program: `mock-only`
   capture_scope: `element`
   sensitive_exclusion: `N/A`
-  submission_gate: `pending-owner-approval`
+  submission_gate: `approved`
   story_id_or_title: `Pages/CleanupPage/ApplyingAllState`
   state: `cleanup apply request in flight`
   evidence_note: 验证 `全部` 提交 cleanup apply 后切到 `清理中…`，并隐藏垃圾桶原动作 icon，避免与通用 spinner 叠成双图标。
