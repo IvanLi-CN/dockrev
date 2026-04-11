@@ -200,6 +200,9 @@ export const AllStatuses: Story = {
     if (!labelAnchor.querySelector('.discoveryHistoryTriggerCompact')) {
       throw new Error('expected compact discovery badge inside label anchor wrapper')
     }
+    if (labelAnchor.querySelector('.discoveryHistoryTimelineTrigger')) {
+      throw new Error('expected compact discovery badge to be the only visible trigger')
+    }
   },
 }
 

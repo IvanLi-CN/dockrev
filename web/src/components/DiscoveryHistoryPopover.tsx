@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type MouseEvent } from 'react'
-import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { useEffect, useRef, useState } from 'react'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   ApiError,
   getServiceNewVersionDiscoveryTimeline,
@@ -61,7 +61,6 @@ export function DiscoveryHistoryPopover(props: {
     contentProps,
     open,
     popoverProps,
-    togglePinned,
     triggerProps,
   } = useHoverPinnedPopover()
   const fetchTimer = useRef<number | null>(null)
@@ -130,16 +129,6 @@ export function DiscoveryHistoryPopover(props: {
     setReloadToken((value) => value + 1)
   }
 
-  const hoverTriggerProps = { ...triggerProps, onClick: undefined }
-  const timelineTriggerProps = {
-    ...hoverTriggerProps,
-    onClick: (event: MouseEvent<HTMLButtonElement>) => {
-      event.preventDefault()
-      event.stopPropagation()
-      togglePinned()
-    },
-  }
-
   const openDrawerForVersion = (version: string | null | undefined) => {
     openGitHubReleaseDrawer({
       serviceId: props.serviceId,
@@ -150,53 +139,21 @@ export function DiscoveryHistoryPopover(props: {
 
   return (
     <Popover {...popoverProps}>
-      <PopoverAnchor asChild>
-        <span
+      <PopoverTrigger asChild>
+        <button
+          type="button"
           className={
             triggerVariant === 'compact-count'
-              ? 'discoveryHistoryTriggerGroup discoveryHistoryTriggerGroupCompact'
-              : 'discoveryHistoryTriggerGroup'
+              ? 'discoveryHistoryTrigger discoveryHistoryTriggerCompact'
+              : 'discoveryHistoryTrigger pill pillMuted'
           }
+          data-trigger-variant={triggerVariant}
+          aria-label={`发现 ${count} 次，查看版本时间线`}
+          {...triggerProps}
         >
-          <button
-            type="button"
-            className={
-              triggerVariant === 'compact-count'
-                ? 'discoveryHistoryTrigger discoveryHistoryTriggerCompact'
-                : 'discoveryHistoryTrigger pill pillMuted'
-            }
-            data-trigger-variant={triggerVariant}
-            aria-label={`发现 ${count} 次，打开 GitHub Releases 抽屉`}
-            {...hoverTriggerProps}
-            onClick={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              openDrawerForVersion(null)
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
-              event.preventDefault()
-              event.stopPropagation()
-              if (!open) togglePinned()
-            }}
-          >
-            {triggerVariant === 'compact-count' ? String(count) : `发现 ${count} 次`}
-          </button>
-          <button
-            type="button"
-            className="discoveryHistoryTrigger discoveryHistoryTimelineTrigger"
-            aria-label={`发现 ${count} 次，查看版本时间线`}
-            title="查看版本时间线"
-            {...timelineTriggerProps}
-          >
-            <span className="discoveryHistoryTimelineTriggerDots" aria-hidden="true">
-              <span />
-              <span />
-              <span />
-            </span>
-          </button>
-        </span>
-      </PopoverAnchor>
+          {triggerVariant === 'compact-count' ? String(count) : `发现 ${count} 次`}
+        </button>
+      </PopoverTrigger>
       <PopoverContent
         className="discoveryHistoryPopover"
         align="start"

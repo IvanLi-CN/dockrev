@@ -4,19 +4,19 @@
 
 - Status: 已完成（5/5）
 - Created: 2026-04-07
-- Last: 2026-04-09
+- Last: 2026-04-10
 
 ## 背景 / 问题陈述
 
 - 现有 `DiscoveryHistoryPopover` 已能展示“发现次数 -> 版本时间线”，但用户在确认某个候选版本时，仍然无法顺着该版本继续查看真实的 GitHub 发布说明。
 - 当前时间线只回答“什么时候发现过这个版本”，不能回答“这个版本到底发布了什么、它在近期 release 序列中的位置在哪里、为什么匿名/私有仓库拿不到数据”。
-- 用户明确要求把“发现次数 badge / 时间线里的具体版本”升级为 GitHub Releases 抽屉入口，并且要能通过 URL 恢复与分享当前抽屉状态。
+- 用户需要从 discovery timeline 里的具体版本继续查看 GitHub Releases，但最新 UI 回归把发现次数入口拆成了双标记，破坏了原先单一时间线入口的紧凑性。
 
 ## 目标 / 非目标
 
 ### Goals
 
-- 将 `DiscoveryHistoryPopover` 升级为两级交互：点击 badge 直接打开 GitHub Releases 抽屉；点击时间线里的某个版本则打开抽屉并尝试定位到对应 GitHub Release。
+- 保持 `DiscoveryHistoryPopover` 的 badge/pill 继续作为单一时间线入口；点击时间线里的某个版本时打开 GitHub Releases 抽屉并尝试定位到对应 GitHub Release。
 - 新增 service-scoped GitHub Releases 代理，优先使用系统设置里已保存的 GitHub PAT；缺失 PAT 时匿名访问；权限不足、私有仓库不可见、匿名限流等失败都要在抽屉内明确提示。
 - 抽屉使用 URL query 驱动：`releaseDrawer=github`、`releaseServiceId`、`releaseVersion?`，并且不得覆盖现有页面 query（例如 Overview 的筛选状态）。
 - 抽屉列表按 GitHub Releases 从新到旧分页加载，支持无限滚动与虚拟滚动；当带有目标版本时，先做 locate，最多扫描前 50 条记录，并给出“找到 / 存在但不在前 50 条 / 前 50 条未找到”的明确反馈。
@@ -81,9 +81,8 @@
 ### 打开入口
 
 - 点击 `发现 N 次` badge：
-  - 立即打开抽屉。
-  - URL 写入 `releaseDrawer=github&releaseServiceId=<id>`。
-  - 同时保留 hover 打开的时间线能力。
+  - 只打开 / 固定版本时间线 popover。
+  - 不直接打开抽屉，也不写入 `releaseDrawer=github` URL 状态。
 - 在时间线气泡里点击具体版本：
   - 关闭气泡。
   - 打开抽屉。
@@ -121,7 +120,7 @@
 
 ## 验收标准（Acceptance Criteria）
 
-- Given 服务行展示 `发现 N 次`，When 点击 badge，Then URL 追加 `releaseDrawer=github&releaseServiceId=...`，并打开该服务的 GitHub Releases 抽屉。
+- Given 服务行展示 `发现 N 次`，When 点击 badge，Then 打开该服务的版本时间线 popover，且不会直接写入 `releaseDrawer=github` URL 状态。
 - Given 时间线气泡里的某个版本项可见，When 点击该版本，Then URL 额外带上 `releaseVersion=...`，抽屉打开并尝试定位该版本。
 - Given locate 结果为 `found`，When 抽屉完成预加载，Then 目标 release 出现在可视区附近，滚动带平滑动画，且目标项有可见高亮反馈。
 - Given locate direct tag 命中但扫描前 50 条未出现，When 抽屉渲染完成，Then 顶部显示“存在但不在前 50 条内”的 banner。
@@ -139,20 +138,20 @@
 
 ## Visual Evidence
 
-- source_type=storybook_canvas · story_id_or_title=`Pages/ServicesPage/Git Hub Release Drawer Target Version From Timeline` · state=`timeline -> drawer` · evidence_note=`验证时间线中的版本可直接联动打开抽屉，并在 URL 中保留 releaseDrawer/releaseServiceId/releaseVersion 状态。`
-  ![Services 时间线联动 GitHub Releases 抽屉](/Users/ivan/.codex/worktrees/0c96/dockrev/docs/specs/4fhgd-github-release-drawer/assets/release-drawer-services-timeline-link.png)
+- source_type=storybook_canvas · story_id_or_title=`Pages/ServicesPage/Git Hub Release Drawer Target Version From Timeline` · state=`timeline version -> drawer` · evidence_note=`验证 badge 仍先进入版本时间线，而点击时间线里的具体版本后仍会联动打开 GitHub Releases 抽屉，并保留 releaseDrawer/releaseServiceId/releaseVersion 状态。`
+  ![Services 时间线联动 GitHub Releases 抽屉](./assets/release-drawer-services-timeline-link.png)
 
 - source_type=storybook_canvas · story_id_or_title=`Components/GitHubReleaseDrawer/Anonymous Located` · state=`anonymous locate hit · scrollable` · evidence_note=`验证匿名模式下带目标版本时，抽屉将访问身份与定位版本收进信息 icon 的悬浮气泡，同时保留右侧外边距与可见滚动条。`
-  ![匿名模式下的滚动版 GitHub Releases 抽屉](/Users/ivan/.codex/worktrees/0c96/dockrev/docs/specs/4fhgd-github-release-drawer/assets/release-drawer-scrollable.png)
+  ![匿名模式下的滚动版 GitHub Releases 抽屉](./assets/release-drawer-scrollable.png)
 
 - source_type=storybook_canvas · story_id_or_title=`Components/GitHubReleaseDrawer/Pat Authenticated Short List` · state=`pat authenticated · short list` · evidence_note=`验证已保存 GitHub PAT 时，抽屉在较少 release 数据下仍保持正确的右侧 Drawer 形态；若内容略超出高度，则只允许抽屉内容区自身滚动，并通过信息 icon 的悬浮气泡承载 PAT 身份。`
-  ![PAT 身份下的短列表 GitHub Releases 抽屉](/Users/ivan/.codex/worktrees/0c96/dockrev/docs/specs/4fhgd-github-release-drawer/assets/release-drawer-short-list.png)
+  ![PAT 身份下的短列表 GitHub Releases 抽屉](./assets/release-drawer-short-list.png)
 
 - source_type=storybook_canvas · story_id_or_title=`Components/GitHubReleaseDrawer/Permission Denied` · state=`permission denied` · evidence_note=`验证匿名访问私有仓库失败时，抽屉内给出权限提示并提供跳转到设置页的入口。`
-  ![权限不足时的 GitHub Releases 抽屉提示](/Users/ivan/.codex/worktrees/0c96/dockrev/docs/specs/4fhgd-github-release-drawer/assets/release-drawer-permission-denied.png)
+  ![权限不足时的 GitHub Releases 抽屉提示](./assets/release-drawer-permission-denied.png)
 
 - source_type=storybook_canvas · story_id_or_title=`Components/GitHubReleaseDrawer/Outside Window` · state=`outside window` · evidence_note=`验证目标版本存在但不在前 50 条记录内时，抽屉顶部显示 outside-window banner。`
-  ![目标版本位于前 50 条窗口之外时的提示](/Users/ivan/.codex/worktrees/0c96/dockrev/docs/specs/4fhgd-github-release-drawer/assets/release-drawer-outside-window.png)
+  ![目标版本位于前 50 条窗口之外时的提示](./assets/release-drawer-outside-window.png)
 
 ## 里程碑（Milestones / checklist）
 
@@ -173,3 +172,5 @@
 - 2026-04-07: 创建规格，冻结 discovery timeline -> GitHub Releases drawer 的范围、接口契约、URL 状态与 locate window 规则。
 - 2026-04-07: 将前端承载容器切换为 shadcn/ui `Drawer`（Vaul, `direction=\"right\"`），保持 URL 状态、定位逻辑与错误态契约不变。
 - 2026-04-09: 补齐 locate 目标页预加载失败时的错误降级，完成全量回归与本地 review-loop 收敛。
+- 2026-04-10: 根据 owner 回归反馈，撤销“badge 直接打开 Releases 抽屉”的前端交互；恢复单一时间线入口，并把 GitHub Releases 打开职责收窄为时间线版本项跳转。
+- 2026-04-10: 刷新 Services 时间线联动抽屉的视觉证据，并将资产引用统一收口到 repo 内相对路径。

@@ -776,20 +776,10 @@ html[data-theme='light'] .versionTagsPopover {
   background: color-mix(in srgb, var(--dockrev-surface) 82%, var(--color-info) 18%);
 }
 
-.discoveryHistoryTriggerGroup {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.discoveryHistoryTriggerGroupCompact {
+.discoveryHistoryTriggerCompact {
   position: absolute;
   top: 50%;
   right: 0;
-  transform: translateY(-68%);
-}
-
-.discoveryHistoryTriggerCompact {
   min-width: 22px;
   height: 22px;
   padding: 0 6px;
@@ -801,31 +791,7 @@ html[data-theme='light'] .versionTagsPopover {
   font-weight: 700;
   line-height: 1;
   box-shadow: 0 8px 18px color-mix(in srgb, var(--color-info) 12%, transparent);
-}
-
-.discoveryHistoryTimelineTrigger {
-  min-width: 22px;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
-  background: color-mix(in srgb, var(--dockrev-surface) 80%, var(--panel2) 20%);
-  color: color-mix(in srgb, var(--text) 70%, var(--color-info) 30%);
-  box-shadow: 0 6px 14px color-mix(in srgb, var(--color-info) 10%, transparent);
-}
-
-.discoveryHistoryTimelineTriggerDots {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.discoveryHistoryTimelineTriggerDots > span {
-  width: 3px;
-  height: 3px;
-  border-radius: 999px;
-  background: currentColor;
+  transform: translateY(-68%);
 }
 
 .discoveryHistoryPopover {

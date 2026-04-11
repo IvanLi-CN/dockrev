@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-03-21
-- Last: 2026-03-31
+- Last: 2026-04-10
 
 ## 背景 / 问题陈述
 
@@ -80,6 +80,7 @@
 ### MUST
 
 - `发现 N 次` 的 trigger 在 hover 时可打开气泡，在 click 后进入 pinned 状态，并支持外部点击 / `Esc` 关闭。
+- `发现 N 次` 在任一入口（`StatusRemark` 紧凑 badge、聚合预览 inline pill）都只能渲染为单一可见 trigger，不得再拆成“主 badge + 次级更多按钮”双标记。
 - `StatusRemark` 的 discovery trigger 必须渲染为贴在状态文案右上角的紧凑数字 badge，不得额外撑高状态列；聚合预览继续保留 inline `发现 N 次` pill。
 - 当前候选项固定排第一，历史候选项按首次发现时间从新到旧，当前运行项固定排最后。
 - 当前候选项与历史候选项都显示版本号 + 首次发现时间。
@@ -99,6 +100,7 @@
 ## 验收标准（Acceptance Criteria）
 
 - Given 某服务展示 `发现 2 次`，When hover 或 click 该 trigger，Then 出现同一类 discovery timeline popover，并可在 click 后保持 pinned。
+- Given 服务行或聚合预览里存在 `发现 N 次`，When 渲染 trigger，Then DOM 中只保留单一可见 trigger，不再额外出现独立的时间线按钮或第二个 marker。
 - Given Services / Overview 列表行里存在 discovery count，When 渲染 `StatusRemark`，Then 右上角显示纯数字紧凑 badge，且下面的状态备注仍完整可见，不因为 badge 再增加一行高度。
 - Given 某服务当前候选为 `v0.28.7`，历史候选包含 `v0.28.6`，当前运行版本为 `v0.28.5`，When 打开 popover，Then 顺序固定为 `v0.28.7 -> v0.28.6 -> v0.28.5`，且每行都带时间或 `时间未知` 文案。
 - Given 同一版本被重复发现多次，When 打开 popover，Then 该版本只出现一次，并展示首次发现时间。
@@ -110,6 +112,7 @@
 ## 质量门槛（Quality Gates）
 
 - `cargo test -p dockrev-api`
+- `bun test --cwd web tests/discoveryHistoryPopover.test.tsx`
 - `bun test --cwd web tests/statusRemark.test.tsx`
 - `bun run --cwd web lint`
 - `bun run --cwd web build`
@@ -124,7 +127,7 @@
 - submission_gate: pending-owner-approval
 - story_id_or_title: Pages/ServicesPage/StatusBadgeLayout
 - state: status row compact badge
-- evidence_note: 验证真实服务列表行中的 discovery trigger 改为右上角紧凑数字 badge，且状态备注没有被挤压到不可见。
+- evidence_note: 验证真实服务列表行中的 discovery trigger 保持为右上角单一紧凑数字 badge，且状态备注没有被挤压到不可见。
 ![Services Status Badge Layout](./assets/services-status-badge-layout.png)
 
 - source_type: storybook_canvas
@@ -134,7 +137,7 @@
 - submission_gate: pending-owner-approval
 - story_id_or_title: Components/StatusRemark/AllStatuses
 - state: compact badge matrix
-- evidence_note: 验证 `StatusRemark` 的紧凑 badge 锚定到状态文案右上角，而不是整列右上角；多状态备注仍保持可读。
+- evidence_note: 验证 `StatusRemark` 的紧凑 badge 锚定到状态文案右上角，并保持为单一可见 trigger；多状态备注仍保持可读。
 ![StatusRemark Badge Matrix](./assets/status-remark-all-statuses.png)
 
 - source_type: storybook_canvas
@@ -144,7 +147,7 @@
 - submission_gate: pending-owner-approval
 - story_id_or_title: Components/StatusRemark/AllStatuses
 - state: discovery timeline popover open
-- evidence_note: 验证状态列中的紧凑 discovery badge 可打开时间线气泡，并展示当前候选 / 历史候选 / 当前运行三段信息。
+- evidence_note: 验证状态列中的紧凑 discovery badge 可直接打开时间线气泡，且不再出现额外的第二个时间线按钮；气泡仍展示当前候选 / 历史候选 / 当前运行三段信息。
 ![StatusRemark Discovery Timeline](./assets/status-remark-discovery-timeline-open.png)
 
 - source_type: storybook_canvas
@@ -154,8 +157,8 @@
 - submission_gate: pending-owner-approval
 - story_id_or_title: Components/AggregateUpdatePreviewList/AllStates
 - state: aggregate discovery timeline popover open
-- evidence_note: 验证聚合预览里的 discovery pill 使用同一气泡与时间线顺序。
-![Aggregate Update Preview Discovery Timeline](../../screenshots/storybook/aggregate-update-preview-discovery-timeline-open.png)
+- evidence_note: 验证聚合预览里的 inline `发现 N 次` pill 仍是单一时间线入口，并使用同一气泡与时间线顺序。
+![Aggregate Update Preview Discovery Timeline](./assets/aggregate-update-preview-discovery-timeline-open.png)
 
 ## 里程碑（Milestones / checklist）
 
@@ -178,3 +181,5 @@
 - 2026-03-22: 根据 fresh review fix，对齐 live candidate 的 alias identity fallback，避免 unresolved 当前候选与同名历史候选在时间线里重复并列。
 - 2026-03-29: 将 `StatusRemark` 的 discovery trigger 收紧为不参与排版的紧凑数字 badge，聚合预览继续保留 inline pill，并补回真实服务行布局的 Storybook 视觉证据。
 - 2026-03-31: 修复紧凑 discovery badge 锚点回归；badge 重新贴靠状态文案右上角，补齐组件/页面 Storybook 断言，并刷新 owner-facing 视觉证据。
+- 2026-04-10: 回滚 GitHub Releases 抽屉引入的双 trigger 回归；恢复 discovery count 单一可见标记，并明确时间线仍是 badge/pill 的唯一直接入口。
+- 2026-04-10: 刷新 `StatusRemark` / `ServicesPage` / 聚合预览的 Storybook 视觉证据，确认单 trigger 回归后的布局与时间线交互已收口。
