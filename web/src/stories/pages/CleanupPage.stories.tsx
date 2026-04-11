@@ -11,7 +11,7 @@ const meta: Meta<typeof CleanupPage> = {
   parameters: {
     docs: {
       description: {
-        component: 'Cleanup 页默认走 autodocs；这里补充顶部动作图标、未知大小文案与确认弹窗行为的稳定回归覆盖。',
+        component: 'Cleanup 页默认走 autodocs；这里补充顶部动作图标、扫描/清理中的明确 loading 态、未知大小文案与确认弹窗行为的稳定回归覆盖。',
       },
     },
   },
@@ -48,6 +48,12 @@ function assertButtonHasIcon(root: ParentNode, text: string) {
   const button = findButton(root, text)
   assertStory(button, `${text} button missing`)
   assertStory(button.querySelector('svg'), `${text} button should render a leading icon`)
+}
+
+function assertButtonHasNoIcon(root: ParentNode, text: string) {
+  const button = findButton(root, text)
+  assertStory(button, `${text} button missing`)
+  assertStory(!button.querySelector('svg'), `${text} button should hide the action icon while busy`)
 }
 
 function renderPage() {
@@ -91,6 +97,61 @@ export const Default: Story = {
 export const Empty: Story = {
   parameters: { dockrevApiScenario: 'cleanup-console-empty' },
   render: renderPage,
+}
+
+export const ScanningState: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console-scan-pending' },
+  render: renderPage,
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => canvasElement.textContent?.includes('正在扫描可清理资源…') ?? false)
+
+    const allButton = findButton(doc, '等待扫描')
+    const refreshButton = findButton(doc, '扫描中…')
+    assertStory(allButton, 'topbar cleanup action should show waiting copy while scanning')
+    assertStory(refreshButton, 'topbar rescan action should show scanning copy while scanning')
+    assertStory(allButton.disabled, 'cleanup action should be disabled during initial scan')
+    assertStory(refreshButton.disabled, 'rescan action should be disabled during initial scan')
+    assertStory(refreshButton.getAttribute('aria-busy') === 'true', 'rescan action should expose busy state during initial scan')
+    assertButtonHasNoIcon(doc, '等待扫描')
+    assertButtonHasNoIcon(doc, '扫描中…')
+  },
+}
+
+export const RescanningState: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console-scan-slow' },
+  render: renderPage,
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => canvasElement.textContent?.includes('空间概览') ?? false)
+
+    const refreshButton = findButton(doc, '重扫')
+    assertStory(refreshButton, 'rescan action missing')
+    refreshButton.click()
+
+    await waitForCondition(() => findButton(doc, '重扫中…')?.getAttribute('aria-busy') === 'true')
+    assertStory(findButton(doc, '等待扫描')?.disabled === true, 'cleanup action should switch to waiting copy while rescanning')
+    assertStory(findButton(doc, '重扫中…')?.disabled === true, 'rescan action should be disabled while rescanning')
+    assertButtonHasNoIcon(doc, '等待扫描')
+    assertButtonHasNoIcon(doc, '重扫中…')
+  },
+}
+
+export const ApplyingAllState: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console-apply-slow' },
+  render: renderPage,
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => findButton(doc, '全部') != null)
+
+    findButton(doc, '全部')?.click()
+    await waitForCondition(() => doc.body.textContent?.includes('确认清理全部') ?? false)
+    findButton(doc, '确认清理')?.click()
+
+    await waitForCondition(() => findButton(doc, '清理中…')?.getAttribute('aria-busy') === 'true')
+    assertStory(findButton(doc, '清理中…')?.disabled === true, 'cleanup all action should stay disabled while apply request is in flight')
+    assertButtonHasNoIcon(doc, '清理中…')
+  },
 }
 
 export const AggressiveUnowned: Story = {

@@ -210,7 +210,61 @@ services:
 }
 
 #[tokio::test]
-async fn cleanup_scan_preserves_builder_cache_lower_bound_when_json_includes_shared_rows() {
+async fn cleanup_scan_uses_mountpoint_du_when_volume_metadata_has_no_size() {
+    let db_path = format!(
+        "/tmp/dockrev-cleanup-volume-mountpoint-fallback-{}.sqlite3",
+        ulid::Ulid::new()
+    );
+    let runner = Arc::new(CleanupRunner::volume_mountpoint_fallback());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    let (stack_id, _service_id, _compose_path) = seed_cleanup_stack(
+        &state,
+        "demo",
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "confirm",
+                        "preset": "project_deep_clean",
+                        "scope": "stack",
+                        "stackId": stack_id,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(
+        body["stackGroups"][0]["services"][0]["estimatedReclaimableBytes"].as_u64(),
+        Some(1_572_864)
+    );
+    assert_eq!(
+        body["stackGroups"][0]["services"][0]["hasUnknownSize"].as_bool(),
+        Some(false)
+    );
+}
+
+#[tokio::test]
+async fn cleanup_scan_uses_builder_cache_summary_when_json_includes_shared_rows() {
+
     let db_path = format!(
         "/tmp/dockrev-cleanup-builder-fallback-{}.sqlite3",
         ulid::Ulid::new()
@@ -243,20 +297,20 @@ async fn cleanup_scan_preserves_builder_cache_lower_bound_when_json_includes_sha
     let body = response_json(resp).await;
     assert_eq!(
         body["estimatedReclaimableBytes"].as_u64(),
-        Some(256_000_000)
+        Some(384_000_000)
     );
-    assert_eq!(body["hasUnknownSize"].as_bool(), Some(true));
+    assert_eq!(body["hasUnknownSize"].as_bool(), Some(false));
     assert_eq!(
         body["unownedGroup"]["resources"][0]["kind"].as_str(),
         Some("builder_cache")
     );
     assert_eq!(
         body["unownedGroup"]["resources"][0]["estimatedReclaimableBytes"].as_u64(),
-        Some(256_000_000)
+        Some(384_000_000)
     );
     assert_eq!(
         body["unownedGroup"]["resources"][0]["estimateUnknown"].as_bool(),
-        Some(true)
+        Some(false)
     );
 }
 

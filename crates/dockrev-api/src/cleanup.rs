@@ -20,8 +20,8 @@ const DOCKER_TIMEOUT: Duration = Duration::from_secs(15);
 mod parse;
 
 use parse::{
-    ensure_success, parse_buildx_du_json_lines, parse_human_size,
-    parse_volume_sizes_from_system_df_verbose,
+    ensure_success, parse_buildx_du_json_lines, parse_buildx_du_text_summary,
+    parse_du_kilobytes_output, parse_volume_sizes_from_system_df_verbose,
 };
 
 #[derive(Clone, Debug)]
@@ -216,6 +216,8 @@ struct DockerVolumeUsageData {
 struct DockerVolumeInspect {
     #[serde(default)]
     name: String,
+    #[serde(default)]
+    mountpoint: Option<String>,
     #[serde(default)]
     labels: Option<BTreeMap<String, String>>,
     #[serde(default)]
@@ -661,6 +663,11 @@ async fn scan_candidates(
                 .as_ref()
                 .and_then(|sizes| sizes.get(&inspect.name).copied());
         }
+        if estimated_reclaimable_bytes.is_none()
+            && let Some(mountpoint) = inspect.mountpoint.as_deref()
+        {
+            estimated_reclaimable_bytes = scan_volume_size_from_mountpoint(state, mountpoint).await;
+        }
         candidates.push(CleanupCandidate {
             key: format!("volume:{}", inspect.name),
             resource_id: inspect.name.clone(),
@@ -748,9 +755,28 @@ async fn scan_builder_cache_estimate(state: &AppState) -> Option<BuilderCacheEst
         && out.status == 0
         && let Some(estimate) = parse_buildx_du_json_lines(&out.stdout)
     {
+        if !estimate.estimate_unknown {
+            return Some(estimate);
+        }
+        if let Some(summary_reclaimable) = scan_builder_cache_text_summary(state).await
+            && summary_reclaimable >= estimate.reclaimable_bytes.unwrap_or_default()
+        {
+            return Some(BuilderCacheEstimate {
+                reclaimable_bytes: Some(summary_reclaimable),
+                estimate_unknown: false,
+            });
+        }
         return Some(estimate);
     }
 
+    let reclaimable = scan_builder_cache_text_summary(state).await;
+    Some(BuilderCacheEstimate {
+        reclaimable_bytes: reclaimable,
+        estimate_unknown: reclaimable.is_none(),
+    })
+}
+
+async fn scan_builder_cache_text_summary(state: &AppState) -> Option<u64> {
     let out = state
         .runner
         .run(
@@ -766,15 +792,7 @@ async fn scan_builder_cache_estimate(state: &AppState) -> Option<BuilderCacheEst
     if out.status != 0 {
         return None;
     }
-    let reclaimable = out
-        .stdout
-        .lines()
-        .find_map(|line| line.strip_prefix("Reclaimable:"))
-        .and_then(|raw| parse_human_size(raw.trim()));
-    Some(BuilderCacheEstimate {
-        reclaimable_bytes: reclaimable,
-        estimate_unknown: reclaimable.is_none(),
-    })
+    parse_buildx_du_text_summary(&out.stdout)
 }
 
 async fn scan_volume_sizes_from_system_df(state: &AppState) -> BTreeMap<String, u64> {
@@ -794,6 +812,29 @@ async fn scan_volume_sizes_from_system_df(state: &AppState) -> BTreeMap<String, 
         _ => return BTreeMap::new(),
     };
     parse_volume_sizes_from_system_df_verbose(&out.stdout)
+}
+
+async fn scan_volume_size_from_mountpoint(state: &AppState, mountpoint: &str) -> Option<u64> {
+    let mountpoint = mountpoint.trim();
+    if mountpoint.is_empty() {
+        return None;
+    }
+    let out = state
+        .runner
+        .run(
+            CommandSpec {
+                program: "du".to_string(),
+                args: vec!["-sk".to_string(), mountpoint.to_string()],
+                env: Vec::new(),
+            },
+            DOCKER_TIMEOUT,
+        )
+        .await
+        .ok()?;
+    if out.status != 0 {
+        return None;
+    }
+    parse_du_kilobytes_output(&out.stdout)
 }
 
 fn resolve_container_ownership(

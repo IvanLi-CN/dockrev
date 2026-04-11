@@ -707,6 +707,7 @@ export function CleanupPage(props: {
     () => PRESET_META.find((item) => item.key === activePreset) ?? PRESET_META[1],
     [activePreset],
   )
+  const initialScanPending = loading && !pageScan
 
   const refreshPageScan = useCallback(async () => {
     setRefreshing(true)
@@ -832,16 +833,24 @@ export function CleanupPage(props: {
 
   const topActions = useMemo(() => {
     const hasTargets = projected ? countVisibleResources(projected) > 0 : false
+    const scanBusy = initialScanPending || refreshing
+    const allActionBusy = busyActionKey === 'all'
+    const allButtonLabel = allActionBusy ? '清理中…' : scanBusy ? '等待扫描' : '全部'
+    const rescanButtonLabel = initialScanPending ? '扫描中…' : refreshing ? '重扫中…' : '重扫'
     return (
       <>
         <Button
-          disabled={!hasTargets || busyActionKey !== null || refreshing}
+          disabled={!hasTargets || busyActionKey !== null || scanBusy}
           hint={
-            hasTargets
-              ? actionHint('all')
-              : '当前规则下没有可清理项'
+            allActionBusy
+              ? '正在创建 cleanup 任务…'
+              : scanBusy
+                ? '等待扫描完成后才可执行全部清理'
+                : hasTargets
+                  ? actionHint('all')
+                  : '当前规则下没有可清理项'
           }
-          loading={busyActionKey === 'all'}
+          loading={allActionBusy}
           onClick={() =>
             void runCleanupFlow({
               actionKey: 'all',
@@ -850,22 +859,36 @@ export function CleanupPage(props: {
               targetLabel: '当前规则下的全部候选',
             })
           }
-          variant="danger"
+          variant={allActionBusy || (!scanBusy && hasTargets) ? 'danger' : 'ghost'}
         >
-          <span className="btnInlineContent">
-            <TrashIcon className="inlineIcon" />
-            <span>全部</span>
-          </span>
+          {allActionBusy || scanBusy ? (
+            <span>{allButtonLabel}</span>
+          ) : (
+            <span className="btnInlineContent">
+              <TrashIcon className="inlineIcon" />
+              <span>{allButtonLabel}</span>
+            </span>
+          )}
         </Button>
-        <Button disabled={busyActionKey !== null} loading={refreshing} onClick={() => void refreshPageScan()} variant="ghost">
-          <span className="btnInlineContent">
-            <RefreshIcon className="inlineIcon" />
-            <span>重扫</span>
-          </span>
+        <Button
+          disabled={busyActionKey !== null || scanBusy}
+          hint={scanBusy ? '正在重新扫描可清理资源…' : '重新扫描 cleanup 候选'}
+          loading={scanBusy}
+          onClick={() => void refreshPageScan()}
+          variant="ghost"
+        >
+          {scanBusy ? (
+            <span>{rescanButtonLabel}</span>
+          ) : (
+            <span className="btnInlineContent">
+              <RefreshIcon className="inlineIcon" />
+              <span>{rescanButtonLabel}</span>
+            </span>
+          )}
         </Button>
       </>
     )
-  }, [busyActionKey, projected, refreshPageScan, refreshing, runCleanupFlow])
+  }, [busyActionKey, initialScanPending, projected, refreshPageScan, refreshing, runCleanupFlow])
 
   useEffect(() => {
     onTopActions(topActions)

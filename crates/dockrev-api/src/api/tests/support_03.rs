@@ -743,6 +743,7 @@ enum CleanupRunnerMode {
     StaleOnSecondScan,
     VolumeInUse,
     VolumeEstimateFallback,
+    VolumeMountpointFallback,
     BuilderCacheTextFallback,
     BuilderCacheSharedLowerBound,
 }
@@ -771,6 +772,13 @@ impl CleanupRunner {
     fn volume_estimate_fallback() -> Self {
         Self {
             mode: CleanupRunnerMode::VolumeEstimateFallback,
+            scan_generation: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn volume_mountpoint_fallback() -> Self {
+        Self {
+            mode: CleanupRunnerMode::VolumeMountpointFallback,
             scan_generation: Arc::new(AtomicUsize::new(0)),
         }
     }

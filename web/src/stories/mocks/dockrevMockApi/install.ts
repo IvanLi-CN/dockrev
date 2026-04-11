@@ -763,6 +763,14 @@ export function installDockrevMockApi(
     }
 
     if (isCleanupMockScenario(scenario) && method === 'POST' && urlPath === '/api/cleanups/scan') {
+      if (scenario === 'cleanup-console-scan-pending') {
+        return new Promise<Response>(() => {})
+      }
+      if (scenario === 'cleanup-console-scan-slow') {
+        await new Promise<void>((resolve) => {
+          globalThis.setTimeout(() => resolve(), 1600)
+        })
+      }
       const parsed = parseJsonBody(init?.body) as CleanupScanRequest | null
       const request: CleanupScanRequest = {
         reason: parsed?.reason === 'confirm' ? 'confirm' : 'page',
@@ -781,6 +789,9 @@ export function installDockrevMockApi(
     }
 
     if (isCleanupMockScenario(scenario) && method === 'POST' && urlPath === '/api/cleanups/apply') {
+      if (scenario === 'cleanup-console-apply-slow') {
+        return new Promise<Response>(() => {})
+      }
       const parsed = parseJsonBody(init?.body) as CleanupApplyRequest | null
       if (!parsed) {
         return json({ error: { code: 'invalid_argument', message: 'invalid cleanup apply payload', details: null } }, { status: 400 })
