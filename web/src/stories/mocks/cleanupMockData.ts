@@ -16,6 +16,7 @@ export type CleanupMockScenario =
   | 'cleanup-console-stale'
   | 'cleanup-console-scan-pending'
   | 'cleanup-console-scan-slow'
+  | 'cleanup-console-apply-slow'
 
 export type CleanupMockRuntimeState = {
   nextJobSeq: number
@@ -61,7 +62,8 @@ export function isCleanupMockScenario(value: string): value is CleanupMockScenar
     value === 'cleanup-console-aggressive-unowned' ||
     value === 'cleanup-console-stale' ||
     value === 'cleanup-console-scan-pending' ||
-    value === 'cleanup-console-scan-slow'
+    value === 'cleanup-console-scan-slow' ||
+    value === 'cleanup-console-apply-slow'
   )
 }
 

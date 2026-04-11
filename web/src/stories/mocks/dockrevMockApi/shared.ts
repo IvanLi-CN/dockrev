@@ -31,6 +31,7 @@ export type DockrevApiScenario =
   | 'cleanup-console-stale'
   | 'cleanup-console-scan-pending'
   | 'cleanup-console-scan-slow'
+  | 'cleanup-console-apply-slow'
   | 'default'
   | 'dashboard-demo'
   | 'dashboard-demo-slow-update'

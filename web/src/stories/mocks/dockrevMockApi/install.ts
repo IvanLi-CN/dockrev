@@ -789,6 +789,9 @@ export function installDockrevMockApi(
     }
 
     if (isCleanupMockScenario(scenario) && method === 'POST' && urlPath === '/api/cleanups/apply') {
+      if (scenario === 'cleanup-console-apply-slow') {
+        return new Promise<Response>(() => {})
+      }
       const parsed = parseJsonBody(init?.body) as CleanupApplyRequest | null
       if (!parsed) {
         return json({ error: { code: 'invalid_argument', message: 'invalid cleanup apply payload', details: null } }, { status: 400 })
