@@ -69,6 +69,7 @@ pub(super) fn parse_buildx_du_json_lines(input: &str) -> Option<BuilderCacheEsti
     parsed_any.then_some(BuilderCacheEstimate {
         reclaimable_bytes: Some(reclaimable),
         estimate_unknown: has_shared_reclaimable,
+        fingerprint_hint: None,
     })
 }
 

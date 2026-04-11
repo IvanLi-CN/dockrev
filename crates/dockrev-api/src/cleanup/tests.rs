@@ -14,6 +14,7 @@ fn sample_candidate(
         label: key.to_string(),
         estimated_reclaimable_bytes,
         estimate_unknown: estimated_reclaimable_bytes.is_none(),
+        requires_ephemeral_confirmation: false,
         ownership,
         category,
     }
@@ -213,6 +214,32 @@ fn fingerprint_ignores_scanned_at_timestamp_changes() {
 }
 
 #[test]
+fn fingerprint_uses_scanned_at_timestamp_for_ephemeral_confirmation_candidates() {
+    let request = CleanupPlanRequest {
+        preset: CleanupPreset::ProjectDeepClean,
+        scope: CleanupScope::All,
+        stack_id: None,
+        service_id: None,
+    };
+    let mut selected = vec![sample_candidate(
+        "volume:data",
+        CleanupResourceKind::Volume,
+        CleanupOwnership::Unowned,
+        CleanupCandidateCategory::GlobalUnusedVolume,
+        Some(256),
+    )];
+    selected[0].requires_ephemeral_confirmation = true;
+
+    let first =
+        compute_confirmation_fingerprint(&request, &selected, "2026-03-29T00:00:00Z", 256, false)
+            .unwrap();
+    let second =
+        compute_confirmation_fingerprint(&request, &selected, "2026-03-29T00:00:30Z", 256, false)
+            .unwrap();
+    assert_ne!(first, second);
+}
+
+#[test]
 fn fingerprint_changes_when_estimate_unknown_changes() {
     let request = CleanupPlanRequest {
         preset: CleanupPreset::Balanced,
@@ -307,6 +334,7 @@ fn parse_buildx_du_json_lines_sums_reclaimable_rows() {
         Some(BuilderCacheEstimate {
             reclaimable_bytes: Some(829_889_526 + 829_898_832),
             estimate_unknown: false,
+            fingerprint_hint: None,
         })
     );
 }
@@ -320,6 +348,7 @@ fn parse_buildx_du_json_lines_accepts_decimal_human_sizes() {
         Some(BuilderCacheEstimate {
             reclaimable_bytes: Some(256_000_000 + 1_500_000_000),
             estimate_unknown: false,
+            fingerprint_hint: None,
         })
     );
 }
@@ -333,8 +362,66 @@ fn parse_buildx_du_json_lines_marks_lower_bound_unknown_when_shared_rows_are_pre
         Some(BuilderCacheEstimate {
             reclaimable_bytes: Some(829_889_526),
             estimate_unknown: true,
+            fingerprint_hint: None,
         })
     );
+}
+
+#[test]
+fn fingerprint_changes_when_reusable_volume_instance_changes() {
+    let request = CleanupPlanRequest {
+        preset: CleanupPreset::ProjectDeepClean,
+        scope: CleanupScope::Stack,
+        stack_id: Some("stack-1".to_string()),
+        service_id: None,
+    };
+    let ownership = CleanupOwnership::StackOrphan {
+        stack_id: "stack-1".to_string(),
+        stack_name: "alpha".to_string(),
+    };
+    let first = vec![CleanupCandidate {
+        key: "volume:data:2026-03-29T00:00:00Z".to_string(),
+        resource_id: "data".to_string(),
+        kind: CleanupResourceKind::Volume,
+        label: "data".to_string(),
+        estimated_reclaimable_bytes: Some(8192),
+        estimate_unknown: false,
+        requires_ephemeral_confirmation: false,
+        ownership: ownership.clone(),
+        category: CleanupCandidateCategory::ManagedUnusedVolume,
+    }];
+    let second = vec![CleanupCandidate {
+        key: "volume:data:2026-03-29T00:10:00Z".to_string(),
+        resource_id: "data".to_string(),
+        kind: CleanupResourceKind::Volume,
+        label: "data".to_string(),
+        estimated_reclaimable_bytes: Some(8192),
+        estimate_unknown: false,
+        requires_ephemeral_confirmation: false,
+        ownership,
+        category: CleanupCandidateCategory::ManagedUnusedVolume,
+    }];
+
+    let first_fp =
+        compute_confirmation_fingerprint(&request, &first, "2026-03-29T00:00:00Z", 8192, false)
+            .unwrap();
+    let second_fp =
+        compute_confirmation_fingerprint(&request, &second, "2026-03-29T00:00:30Z", 8192, false)
+            .unwrap();
+    assert_ne!(first_fp, second_fp);
+}
+
+#[test]
+fn fingerprint_hint_from_output_changes_with_builder_cache_inventory() {
+    let first = fingerprint_hint_from_output(
+        r#"{"ID":"sha256:a","Reclaimable":true,"Shared":false,"Size":"128"}"#,
+    );
+    let second = fingerprint_hint_from_output(
+        r#"{"ID":"sha256:b","Reclaimable":true,"Shared":false,"Size":"128"}"#,
+    );
+    assert!(first.is_some());
+    assert!(second.is_some());
+    assert_ne!(first, second);
 }
 
 #[test]

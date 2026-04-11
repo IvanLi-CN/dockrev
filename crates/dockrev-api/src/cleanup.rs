@@ -123,6 +123,7 @@ struct CleanupCandidate {
     label: String,
     estimated_reclaimable_bytes: Option<u64>,
     estimate_unknown: bool,
+    requires_ephemeral_confirmation: bool,
     ownership: CleanupOwnership,
     category: CleanupCandidateCategory,
 }
@@ -231,6 +232,8 @@ struct DockerVolumeInspect {
     #[serde(default)]
     labels: Option<BTreeMap<String, String>>,
     #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
     usage_data: Option<DockerVolumeUsageData>,
 }
 
@@ -253,6 +256,7 @@ struct DockerNetworkInspect {
 struct BuilderCacheEstimate {
     reclaimable_bytes: Option<u64>,
     estimate_unknown: bool,
+    fingerprint_hint: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -592,6 +596,7 @@ async fn scan_candidates(
                 .size_rw
                 .and_then(|size| u64::try_from(size).ok())
                 .is_none(),
+            requires_ephemeral_confirmation: false,
             ownership: owner,
             category: CleanupCandidateCategory::StoppedContainer,
         });
@@ -632,6 +637,7 @@ async fn scan_candidates(
             label,
             estimated_reclaimable_bytes: inspect.size,
             estimate_unknown: inspect.size.is_none(),
+            requires_ephemeral_confirmation: false,
             ownership,
             category,
         });
@@ -673,13 +679,17 @@ async fn scan_candidates(
                 .as_ref()
                 .and_then(|sizes| sizes.get(&inspect.name).copied());
         }
+        let volume_fingerprint = volume_fingerprint_key(&inspect);
         candidates.push(CleanupCandidate {
-            key: format!("volume:{}", inspect.name),
+            key: volume_fingerprint
+                .clone()
+                .unwrap_or_else(|| format!("volume:{}", inspect.name)),
             resource_id: inspect.name.clone(),
             kind: CleanupResourceKind::Volume,
             label: inspect.name.clone(),
             estimated_reclaimable_bytes,
             estimate_unknown: estimated_reclaimable_bytes.is_none(),
+            requires_ephemeral_confirmation: volume_fingerprint.is_none(),
             ownership,
             category,
         });
@@ -712,6 +722,7 @@ async fn scan_candidates(
             label: inspect.name.clone(),
             estimated_reclaimable_bytes: Some(0),
             estimate_unknown: false,
+            requires_ephemeral_confirmation: false,
             ownership: resolve_network_ownership(&inspect, managed),
             category: CleanupCandidateCategory::UnusedNetwork,
         });
@@ -726,14 +737,20 @@ async fn scan_builder_cache_candidate(state: &AppState) -> CleanupCandidate {
         .unwrap_or(BuilderCacheEstimate {
             reclaimable_bytes: None,
             estimate_unknown: true,
+            fingerprint_hint: None,
         });
     CleanupCandidate {
-        key: "builder_cache:global".to_string(),
+        key: estimate
+            .fingerprint_hint
+            .as_deref()
+            .map(|hint| format!("builder_cache:global:{hint}"))
+            .unwrap_or_else(|| "builder_cache:global".to_string()),
         resource_id: "global-builder-cache".to_string(),
         kind: CleanupResourceKind::BuilderCache,
         label: "global builder cache".to_string(),
         estimated_reclaimable_bytes: estimate.reclaimable_bytes,
         estimate_unknown: estimate.estimate_unknown,
+        requires_ephemeral_confirmation: false,
         ownership: CleanupOwnership::Unowned,
         category: CleanupCandidateCategory::BuilderCache,
     }
@@ -760,7 +777,10 @@ async fn scan_builder_cache_estimate(state: &AppState) -> Option<BuilderCacheEst
         && out.status == 0
         && let Some(estimate) = parse_buildx_du_json_lines(&out.stdout)
     {
-        return Some(estimate);
+        return Some(BuilderCacheEstimate {
+            fingerprint_hint: fingerprint_hint_from_output(&out.stdout),
+            ..estimate
+        });
     }
 
     let out = state
@@ -786,7 +806,32 @@ async fn scan_builder_cache_estimate(state: &AppState) -> Option<BuilderCacheEst
     Some(BuilderCacheEstimate {
         reclaimable_bytes: reclaimable,
         estimate_unknown: reclaimable.is_none(),
+        fingerprint_hint: fingerprint_hint_from_output(&out.stdout),
     })
+}
+
+fn fingerprint_hint_from_output(raw: &str) -> Option<String> {
+    let mut lines = raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    lines.sort_unstable();
+    let normalized = lines.join("\n");
+    if normalized.is_empty() {
+        return None;
+    }
+    let hashed = digest(&SHA256, normalized.as_bytes());
+    Some(hex::encode(hashed.as_ref()))
+}
+
+fn volume_fingerprint_key(volume: &DockerVolumeInspect) -> Option<String> {
+    volume
+        .created_at
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|created_at| format!("volume:{}:{created_at}", volume.name))
 }
 
 async fn scan_volume_sizes_from_system_df(state: &AppState) -> BTreeMap<String, u64> {
@@ -1188,6 +1233,9 @@ fn compute_confirmation_fingerprint(
     estimated_reclaimable_bytes: u64,
     has_unknown_size: bool,
 ) -> anyhow::Result<String> {
+    let requires_ephemeral_confirmation = candidates
+        .iter()
+        .any(|candidate| candidate.requires_ephemeral_confirmation);
     let selected = candidates
         .iter()
         .map(|candidate| {
@@ -1198,6 +1246,7 @@ fn compute_confirmation_fingerprint(
                 "label": candidate.label,
                 "estimatedReclaimableBytes": candidate.estimated_reclaimable_bytes,
                 "estimateUnknown": candidate.estimate_unknown,
+                "requiresEphemeralConfirmation": candidate.requires_ephemeral_confirmation,
                 "ownership": ownership_json(&candidate.ownership),
                 "category": format!("{:?}", candidate.category),
             })
@@ -1210,6 +1259,7 @@ fn compute_confirmation_fingerprint(
         "serviceId": request.service_id,
         "estimatedReclaimableBytes": estimated_reclaimable_bytes,
         "hasUnknownSize": has_unknown_size,
+        "ephemeralConfirmationKey": requires_ephemeral_confirmation.then_some(_scanned_at),
         "selected": selected,
     });
     let encoded = serde_json::to_vec(&payload)?;

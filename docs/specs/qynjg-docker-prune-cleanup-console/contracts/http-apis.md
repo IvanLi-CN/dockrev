@@ -129,6 +129,7 @@ Response: `200 OK`
 
 - fingerprint 代表“当前 confirm-scan 同意执行的 cleanup 语义快照”，必须在 confirm/apply 之间保持稳定。
 - 仅当以下语义变化时才允许 fingerprint 变化：`preset`、`scope`、`stackId/serviceId`、候选 identity/ownership/category、候选估算值、候选 `estimateUnknown`、聚合 `estimatedReclaimableBytes`、聚合 `hasUnknownSize`。
+- 对名字可复用的资源（例如 named volume、builder cache），服务端必须把底层实例 freshness identity 一并纳入 fingerprint（例如 volume `CreatedAt` / mountpoint、builder cache inventory hash），避免旧确认误删后续重建的同名目标。
 - `scannedAt` 只用于 UI 展示“最新扫描时间”，不得单独导致 fingerprint 变化。
 
 页面首次加载时的推荐调用：

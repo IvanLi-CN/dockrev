@@ -164,6 +164,7 @@ impl CommandRunner for CleanupRunner {
                         status: 0,
                         stdout: serde_json::json!({
                             "Name": "demo_named",
+                            "CreatedAt": "2026-03-29T00:00:00Z",
                             "Labels": {
                                 "com.docker.compose.project": "demo"
                             },
@@ -236,6 +237,7 @@ demo_named          1                   8 KB
                         status: 0,
                         stdout: serde_json::json!({
                             "Name": "demo_named",
+                            "CreatedAt": "2026-03-29T00:00:00Z",
                             "Labels": {
                                 "com.docker.compose.project": "demo",
                                 "com.docker.compose.service": "web"

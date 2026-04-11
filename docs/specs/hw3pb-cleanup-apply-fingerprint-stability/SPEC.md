@@ -5,7 +5,7 @@
 - Status: 已完成
 - Created: 2026-04-11
 - Last: 2026-04-11
-- Notes: fast-track（implementation + cleanup tests + local browser proof + stale diagnostics）
+- Notes: fast-track（implementation + cleanup tests + local browser proof + stale diagnostics + shared-testbox cleanup proof script）
 
 ## 背景 / 问题陈述
 
@@ -49,6 +49,7 @@
 
 - `confirmationFingerprint` 必须忽略 `scannedAt` 这类与清理候选无关的易变扫描元数据。
 - fingerprint 仍必须覆盖：`preset`、`scope`、`stackId/serviceId`、候选 identity/ownership/category、候选估算值、`estimateUnknown`、聚合 `estimatedReclaimableBytes` 与 `hasUnknownSize`。
+- 对名字可复用的删除目标（例如 named volume、builder cache），fingerprint 还必须覆盖底层实例 freshness identity，避免旧确认误删后续重建的同名资源。
 - stale 返回前，服务端日志必须输出本次 apply 的关键诊断字段，但不得泄露额外敏感环境信息。
 - cleanup 定向 Rust 测试必须覆盖“未变化 -> 成功建 job”和“真实变化 -> 409 stale”。
 
@@ -56,6 +57,7 @@
 
 - 本地浏览器 proof 直接证明 `/cleanup` 顶部 `全部 -> 确认清理` 会跳到 job 详情，而不是停留在 stale 循环弹窗。
 - stale 诊断日志与 `cleanup_snapshot_stale` 响应里的最新 fingerprint 能在同一环境中对上。
+- 提供一条可重复执行的共享测试机验证脚本，能够自动部署 Dockrev、造出 stack-owned cleanup targets、执行 cleanup 并验证目标确实被删除。
 
 ## 功能与行为规格（Functional/Behavior Spec）
 
@@ -111,12 +113,20 @@
   submission_gate: `chat-only`
   state: `cleanup confirm navigates to cleanup_apply job detail`
   evidence_note: 在隔离 proof 环境中，`/cleanup` 顶部 `全部` 进入确认弹窗后点击 `确认清理`，页面直接跳转到 `cleanup_apply` job 详情页，日志可见 `cleanup started` 与删除记录；随后用伪造 fingerprint 再次请求 apply，后端 tracing 输出 principal/preset/scope/submitted_fingerprint/latest_fingerprint/target_count/estimated_reclaimable_bytes/has_unknown_size 诊断字段。
+- source_type: `shared_testbox_scripted_proof`
+  target_program: `Dockrev deploy on codex-testbox`
+  capture_scope: `remote deploy + forwarded browser job detail`
+  sensitive_exclusion: `shared host only validates run-scoped compose projects and owned cleanup targets`
+  submission_gate: `chat-only`
+  state: `stack-scoped cleanup deletes run-owned stopped container and old image on codex-testbox`
+  evidence_note: `scripts/verify_shared_testbox_cleanup.sh` 会把当前 worktree 同步到 `codex-testbox` 的 `/srv/codex/workspaces/ivan/dockrev__1f41701c/runs/<RUN_ID>`，部署 Dockrev 与一个唯一 fixture stack，额外造出一个带 compose labels 的 stopped ghost container 和同 repo 的 old image，随后触发 discovery、执行 `preset=balanced scope=stack` cleanup，并校验 `deletedCountsByKind.container=1`、`deletedCountsByKind.image=1`，且目标容器/镜像已从共享 Docker daemon 消失。最近一次保留供复查的 run 为 `20260411_163616_e230f4f`（脚本 proof job `job_01KNYPMSAMHNQMHWPQ150HCFQP`，remote gateway `127.0.0.1:33733`）；同一保留环境里再次重建 ghost container + old image 后，真实浏览器从 `/cleanup` 点击 `清理此 stack -> 确认清理`，成功跳转到 job `job_01KNYR2FDS5BANWSHPWQVHNA6Y` 详情页，并显示 `deleted container` / `deleted image` 日志；同日也验证了默认 auto-cleanup 模式会在成功后移除 run 目录与本次 compose 资源。
 
 ## 实现里程碑（Milestones / Delivery checklist）
 
 - [x] M1: 稳定化 cleanup fingerprint 语义，移除 `scannedAt` 对 stale 判定的误伤
 - [x] M2: 增加 cleanup stale tracing 诊断字段
 - [x] M3: 补齐 cleanup 定向测试与本地浏览器 proof
+- [x] M4: 共享测试机真实部署 proof：run-scoped Dockrev + fixture stack + 实际 cleanup 删除验证
 
 ## 方案概述（Approach, high-level）
 
@@ -136,6 +146,7 @@
 - 2026-04-11：创建 follow-up spec，冻结 cleanup apply 指纹稳定化与 stale 诊断补强范围。
 - 2026-04-11：完成后端修复与回归测试，确认 `scannedAt` 不再触发伪 stale，真实候选变化仍返回 `409 cleanup_snapshot_stale`。
 - 2026-04-11：完成本地浏览器 proof 与 stale 诊断日志验证。
+- 2026-04-11：新增 `scripts/verify_shared_testbox_cleanup.sh`，并在 `codex-testbox` 真实部署 Dockrev + fixture stack，验证 stack-scoped cleanup 成功删除 run-owned stopped container 与 old image；随后在保留环境中重建清理目标，并通过真实 `/cleanup` 页面完成 `清理此 stack -> 确认清理 -> job detail success` 链路复验；同日也跑通默认 auto-cleanup 与 `--keep-run` 复查模式。
 
 ## 参考（References）
 
@@ -143,3 +154,4 @@
 - `/Users/ivan/.codex/worktrees/ceaf/dockrev/crates/dockrev-api/src/cleanup.rs`
 - `/Users/ivan/.codex/worktrees/ceaf/dockrev/crates/dockrev-api/src/api/cleanup_routes.rs`
 - `/Users/ivan/.codex/worktrees/ceaf/dockrev/crates/dockrev-api/src/api/tests/suite_18.rs`
+- `/Users/ivan/.codex/worktrees/ceaf/dockrev/scripts/verify_shared_testbox_cleanup.sh`
