@@ -98,6 +98,8 @@ jobs:
             target_sha="${{ github.event.workflow_run.head_sha }}"
           fi
 
+          echo "RELEASE_REQUESTED_SHA=${target_sha}"
+
           if [[ ! "${target_sha}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "Invalid head_sha: ${target_sha}" >&2
             exit 1
@@ -208,6 +210,14 @@ jobs:
             --main-ref "origin/main" \
             --upper-bound "${upper_bound}" \
             --github-output "$GITHUB_OUTPUT"
+
+      - name: Log resolved release target
+        if: always()
+        shell: bash
+        env:
+          RELEASE_TARGET_SHA: ${{ steps.pending-target.outputs.target_sha }}
+        run: |
+          echo "RELEASE_TARGET_SHA=${RELEASE_TARGET_SHA}"
 
       - name: Load immutable release snapshot
         if: steps.pending-target.outputs.target_sha != ''
