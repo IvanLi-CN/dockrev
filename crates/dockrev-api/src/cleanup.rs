@@ -55,6 +55,18 @@ impl CleanupExecutionPlan {
         &self.confirmation_fingerprint
     }
 
+    pub fn estimated_reclaimable_bytes(&self) -> u64 {
+        self.estimated_reclaimable_bytes
+    }
+
+    pub fn has_unknown_size(&self) -> bool {
+        self.has_unknown_size
+    }
+
+    pub fn target_count(&self) -> usize {
+        self.commands.len()
+    }
+
     pub fn initial_job_summary(&self) -> serde_json::Value {
         json!({
             "preset": self.request.preset.as_str(),
@@ -1172,7 +1184,7 @@ fn candidate_reason(category: &CleanupCandidateCategory) -> &'static str {
 fn compute_confirmation_fingerprint(
     request: &CleanupPlanRequest,
     candidates: &[CleanupCandidate],
-    scanned_at: &str,
+    _scanned_at: &str,
     estimated_reclaimable_bytes: u64,
     has_unknown_size: bool,
 ) -> anyhow::Result<String> {
@@ -1196,7 +1208,6 @@ fn compute_confirmation_fingerprint(
         "scope": request.scope.as_str(),
         "stackId": request.stack_id,
         "serviceId": request.service_id,
-        "scannedAt": scanned_at,
         "estimatedReclaimableBytes": estimated_reclaimable_bytes,
         "hasUnknownSize": has_unknown_size,
         "selected": selected,

@@ -188,6 +188,31 @@ fn fingerprint_changes_when_selected_resources_change() {
 }
 
 #[test]
+fn fingerprint_ignores_scanned_at_timestamp_changes() {
+    let request = CleanupPlanRequest {
+        preset: CleanupPreset::Balanced,
+        scope: CleanupScope::All,
+        stack_id: None,
+        service_id: None,
+    };
+    let selected = vec![sample_candidate(
+        "builder-cache",
+        CleanupResourceKind::BuilderCache,
+        CleanupOwnership::Unowned,
+        CleanupCandidateCategory::BuilderCache,
+        Some(256),
+    )];
+
+    let first =
+        compute_confirmation_fingerprint(&request, &selected, "2026-03-29T00:00:00Z", 256, false)
+            .unwrap();
+    let second =
+        compute_confirmation_fingerprint(&request, &selected, "2026-03-29T00:00:30Z", 256, false)
+            .unwrap();
+    assert_eq!(first, second);
+}
+
+#[test]
 fn fingerprint_changes_when_estimate_unknown_changes() {
     let request = CleanupPlanRequest {
         preset: CleanupPreset::Balanced,

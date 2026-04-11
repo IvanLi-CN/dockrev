@@ -34,7 +34,22 @@ pub(super) async fn apply_cleanups(
     let plan = cleanup::build_execution_plan(state.as_ref(), &scan_req, &scanned_at)
         .await
         .map_err(map_internal)?;
-    if plan.confirmation_fingerprint() != req.confirmation_fingerprint.trim() {
+    let submitted_fingerprint = req.confirmation_fingerprint.trim();
+    if plan.confirmation_fingerprint() != submitted_fingerprint {
+        tracing::warn!(
+            principal = %user.principal,
+            request_reason = %req.reason.as_str(),
+            preset = %req.preset.as_str(),
+            scope = %req.scope.as_str(),
+            stack_id = req.stack_id.as_deref().unwrap_or(""),
+            service_id = req.service_id.as_deref().unwrap_or(""),
+            submitted_fingerprint = %submitted_fingerprint,
+            latest_fingerprint = %plan.confirmation_fingerprint(),
+            target_count = plan.target_count(),
+            estimated_reclaimable_bytes = plan.estimated_reclaimable_bytes(),
+            has_unknown_size = plan.has_unknown_size(),
+            "cleanup apply rejected because confirmation snapshot is stale"
+        );
         return Err(ApiError::cleanup_snapshot_stale(
             plan.to_response(CleanupScanReason::Confirm),
         ));

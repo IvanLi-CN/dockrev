@@ -116,3 +116,4 @@
 | htwyp | Dockrev：Cleanup 顶部按钮图标与估算兜底收口 | 已完成 | `htwyp-cleanup-estimate-fallback-and-topbar-icons/SPEC.md` | 2026-04-06 | fast-track（PR #205；implementation + storybook evidence + review-loop completed） |
 | 4fhgd | Dockrev：版本发现时间线联动 GitHub Releases 抽屉 | 已完成 | `4fhgd-github-release-drawer/SPEC.md` | 2026-04-10 | fast-track（service-scoped GitHub releases API + URL-driven drawer + locate window=50 + shadcn drawer/scroll-area + review-loop fixes；2026-04-10 收窄前端入口：badge 保持时间线入口，Releases 抽屉仅由时间线版本项打开） |
 | 57jzh | Dockrev：全仓大文件治理与预算守门 | 已完成 | `57jzh-large-file-governance/SPEC.md` | 2026-04-10 | fast-track（implementation + budget gate + full validation + storybook visual evidence + review proof；PR #208） |
+| hw3pb | Dockrev：Cleanup apply 指纹稳定化与 stale 诊断补强 | 已完成 | `hw3pb-cleanup-apply-fingerprint-stability/SPEC.md` | 2026-04-11 | fast-track（implementation + cleanup tests + local browser proof + stale diagnostics） |

@@ -62,9 +62,14 @@ impl CommandRunner for CleanupRunner {
                         stderr: String::new(),
                     }
                 } else if args == vec!["image", "ls", "-aq", "--no-trunc"] {
+                    let generation = self.scan_generation.load(Ordering::SeqCst);
                     CommandOutput {
                         status: 0,
-                        stdout: "sha256:img-web-unused\n".to_string(),
+                        stdout: if generation <= 1 {
+                            "sha256:img-web-unused\n".to_string()
+                        } else {
+                            "sha256:img-web-unused\nsha256:img-web-older\n".to_string()
+                        },
                         stderr: String::new(),
                     }
                 } else if args
@@ -83,6 +88,27 @@ impl CommandRunner for CleanupRunner {
                             "RepoTags": ["ghcr.io/acme/web:5.1"],
                             "RepoDigests": [],
                             "Size": 2048,
+                            "Config": { "Labels": {} }
+                        })
+                        .to_string(),
+                        stderr: String::new(),
+                    }
+                } else if args
+                    == vec![
+                        "image",
+                        "inspect",
+                        "--format",
+                        "{{json .}}",
+                        "sha256:img-web-older",
+                    ]
+                {
+                    CommandOutput {
+                        status: 0,
+                        stdout: serde_json::json!({
+                            "Id": "sha256:img-web-older",
+                            "RepoTags": ["ghcr.io/acme/web:5.0"],
+                            "RepoDigests": [],
+                            "Size": 1024,
                             "Config": { "Labels": {} }
                         })
                         .to_string(),
@@ -343,4 +369,3 @@ async fn seed_cleanup_stack(
         .unwrap();
     (stack_id, service_id, compose_path)
 }
-

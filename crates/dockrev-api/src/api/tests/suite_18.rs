@@ -1,4 +1,85 @@
 #[tokio::test]
+async fn cleanup_apply_creates_job_when_confirm_snapshot_only_changes_timestamp() {
+    let db_path = format!("/tmp/dockrev-cleanup-apply-{}.sqlite3", ulid::Ulid::new());
+    let runner = Arc::new(CleanupRunner::volume_in_use());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    let (stack_id, _service_id, _compose_path) = seed_cleanup_stack(
+        &state,
+        "demo",
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let scan_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "confirm",
+                        "preset": "project_deep_clean",
+                        "scope": "stack",
+                        "stackId": stack_id,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(scan_resp.status(), 200);
+    let scan_body = response_json(scan_resp).await;
+    let fingerprint = scan_body["confirmationFingerprint"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let apply_resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/apply")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "ui",
+                        "preset": "project_deep_clean",
+                        "scope": "stack",
+                        "stackId": stack_id,
+                        "confirmationFingerprint": fingerprint,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(apply_resp.status(), 200);
+    let apply_body = response_json(apply_resp).await;
+    let job_id = apply_body["jobId"].as_str().unwrap().to_string();
+    assert!(!job_id.is_empty());
+
+    let queued = state.db.get_job(&job_id).await.unwrap().unwrap();
+    assert_eq!(queued.r#type.as_str(), "cleanup_apply");
+    assert_eq!(queued.status, "running");
+    assert_eq!(queued.created_by, "ops");
+    assert_eq!(queued.reason, "ui");
+
+    let finished = wait_for_job_terminal(&state, &job_id).await;
+    assert_eq!(finished.status, "success");
+}
+
+#[tokio::test]
 async fn cleanup_apply_returns_stale_snapshot_with_latest_confirm_payload() {
     let db_path = format!("/tmp/dockrev-cleanup-stale-{}.sqlite3", ulid::Ulid::new());
     let runner = Arc::new(CleanupRunner::stale_on_second_scan());
