@@ -457,6 +457,17 @@ fn fingerprint_hint_from_output_is_order_insensitive_for_same_inventory() {
 }
 
 #[test]
+fn fingerprint_hint_from_output_ignores_time_varying_builder_cache_fields() {
+    let first = fingerprint_hint_from_output(
+        r#"{"ID":"sha256:a","Reclaimable":true,"Shared":false,"Size":"128","Description":"layer-a","LastAccessed":"2 minutes ago","CreatedAt":"2026-03-29T00:00:00Z"}"#,
+    );
+    let second = fingerprint_hint_from_output(
+        r#"{"ID":"sha256:a","Reclaimable":true,"Shared":false,"Size":"128","Description":"layer-a","LastAccessed":"9 minutes ago","CreatedAt":"2026-03-29T01:00:00Z"}"#,
+    );
+    assert_eq!(first, second);
+}
+
+#[test]
 fn parse_volume_sizes_from_system_df_verbose_reads_local_volume_section() {
     let input = r#"Images space usage:
 REPOSITORY          TAG                 IMAGE ID            CREATED             SIZE                SHARED SIZE         UNIQUE SIZE         CONTAINERS

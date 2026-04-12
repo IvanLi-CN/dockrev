@@ -832,7 +832,7 @@ async fn scan_builder_cache_text_summary(state: &AppState) -> Option<BuilderCach
     Some(BuilderCacheEstimate {
         reclaimable_bytes: reclaimable,
         estimate_unknown: reclaimable.is_none(),
-        fingerprint_hint: fingerprint_hint_from_output(&out.stdout),
+        fingerprint_hint: None,
     })
 }
 
@@ -1212,7 +1212,7 @@ fn candidate_reason(category: &CleanupCandidateCategory) -> &'static str {
 fn compute_confirmation_fingerprint(
     request: &CleanupPlanRequest,
     candidates: &[CleanupCandidate],
-    _scanned_at: &str,
+    scanned_at: &str,
     estimated_reclaimable_bytes: u64,
     has_unknown_size: bool,
 ) -> anyhow::Result<String> {
@@ -1242,7 +1242,7 @@ fn compute_confirmation_fingerprint(
         "serviceId": request.service_id,
         "estimatedReclaimableBytes": estimated_reclaimable_bytes,
         "hasUnknownSize": has_unknown_size,
-        "ephemeralConfirmationKey": requires_ephemeral_confirmation.then_some(_scanned_at),
+        "ephemeralConfirmationKey": requires_ephemeral_confirmation.then_some(scanned_at),
         "selected": selected,
     });
     let encoded = serde_json::to_vec(&payload)?;

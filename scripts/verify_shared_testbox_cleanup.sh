@@ -105,14 +105,7 @@ FIXTURE_IMAGE_REPO="ghcr.io/dockrev-fixtures/${FIXTURE_PROJECT}/app"
 DOCKREV_IMAGE="dockrev:testbox-${RUN_ID}"
 SUPERVISOR_IMAGE="dockrev-supervisor:testbox-${RUN_ID}"
 CREATED_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-REMOTE_GATEWAY_PORT="$(ssh -o BatchMode=yes "$TESTBOX" "python3 - <<'PY'
-import socket
-sock = socket.socket()
-sock.bind(('127.0.0.1', 0))
-print(sock.getsockname()[1])
-sock.close()
-PY")"
+REMOTE_GATEWAY_BIND="127.0.0.1::80"
 
 SUMMARY_TMP="$(mktemp -t dockrev-testbox-cleanup-summary.XXXXXX.json)"
 SYNC_EXCLUDES=(
@@ -147,13 +140,15 @@ ssh -o BatchMode=yes "$TESTBOX" \
     FIXTURE_IMAGE_REPO="$FIXTURE_IMAGE_REPO" \
     DOCKREV_IMAGE="$DOCKREV_IMAGE" \
     SUPERVISOR_IMAGE="$SUPERVISOR_IMAGE" \
-    REMOTE_GATEWAY_PORT="$REMOTE_GATEWAY_PORT" \
+    REMOTE_GATEWAY_BIND="$REMOTE_GATEWAY_BIND" \
     KEEP_RUN="$KEEP_RUN" \
   'bash -s' > "$SUMMARY_TMP" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
 cd "$REMOTE_RUN"
 mkdir -p fixture deploy/data deploy/data/supervisor artifacts
+REMOTE_GATEWAY_BIND="${REMOTE_GATEWAY_BIND:-127.0.0.1::80}"
+REMOTE_GATEWAY_PORT=""
 
 log() {
   printf ':: %s\n' "$*" >&2
@@ -201,7 +196,7 @@ pick_compose_services() {
   local compose_file="$1"
   local override_file="${2:-}"
   if [[ -n "$override_file" ]]; then
-    DOCKREV_GATEWAY_BIND="127.0.0.1:${REMOTE_GATEWAY_PORT}:80" docker compose -f "$compose_file" -f "$override_file" config --services
+    DOCKREV_GATEWAY_BIND="$REMOTE_GATEWAY_BIND" docker compose -f "$compose_file" -f "$override_file" config --services
   else
     docker compose -f "$compose_file" config --services
   fi
@@ -253,6 +248,30 @@ wait_http_ok() {
   return 1
 }
 
+resolve_gateway_port() {
+  local published
+  published="$(
+    DOCKREV_GATEWAY_BIND="$REMOTE_GATEWAY_BIND" \
+      docker compose -p "$DEPLOY_PROJECT" \
+      -f "$REMOTE_RUN/deploy/docker-compose.yml" \
+      -f "$REMOTE_RUN/deploy/.codex.override.yaml" \
+      -f "$REMOTE_RUN/deploy/.codex.caps-compat.yaml" \
+      port gateway 80
+  )"
+  python3 - "$published" <<'PY'
+import sys
+for line in reversed(sys.argv[1].splitlines()):
+    value = line.strip()
+    if not value:
+        continue
+    _, _, port = value.rpartition(':')
+    if port.isdigit():
+        print(port)
+        raise SystemExit(0)
+raise SystemExit("unable to resolve dockrev gateway port")
+PY
+}
+
 poll_job_terminal() {
   local job_id="$1"
   local status=""
@@ -276,7 +295,7 @@ cleanup_remote() {
     docker compose -p "$FIXTURE_PROJECT" -f "$REMOTE_RUN/fixture/compose.yaml" -f "$REMOTE_RUN/fixture/.codex.caps-compat.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
   fi
   if [[ -f "$REMOTE_RUN/deploy/docker-compose.yml" && -f "$REMOTE_RUN/deploy/.codex.override.yaml" && -f "$REMOTE_RUN/deploy/.codex.caps-compat.yaml" ]]; then
-    DOCKREV_GATEWAY_BIND="127.0.0.1:${REMOTE_GATEWAY_PORT}:80" \
+    DOCKREV_GATEWAY_BIND="$REMOTE_GATEWAY_BIND" \
       docker compose -p "$DEPLOY_PROJECT" \
       -f "$REMOTE_RUN/deploy/docker-compose.yml" \
       -f "$REMOTE_RUN/deploy/.codex.override.yaml" \
@@ -344,14 +363,16 @@ docker create \
   "${FIXTURE_IMAGE_REPO}:live" \
   sh -lc 'exit 0' >/dev/null
 
-log "starting dockrev deploy project ${DEPLOY_PROJECT} on 127.0.0.1:${REMOTE_GATEWAY_PORT}"
-DOCKREV_GATEWAY_BIND="127.0.0.1:${REMOTE_GATEWAY_PORT}:80" \
+log "starting dockrev deploy project ${DEPLOY_PROJECT} with bind ${REMOTE_GATEWAY_BIND}"
+DOCKREV_GATEWAY_BIND="$REMOTE_GATEWAY_BIND" \
   docker compose -p "$DEPLOY_PROJECT" \
   -f "$REMOTE_RUN/deploy/docker-compose.yml" \
   -f "$REMOTE_RUN/deploy/.codex.override.yaml" \
   -f "$REMOTE_RUN/deploy/.codex.caps-compat.yaml" \
   up -d --build >&2
 
+REMOTE_GATEWAY_PORT="$(resolve_gateway_port)"
+log "dockrev reachable on 127.0.0.1:${REMOTE_GATEWAY_PORT}"
 wait_http_ok "http://127.0.0.1:${REMOTE_GATEWAY_PORT}/api/health"
 
 log "triggering discovery scan"
@@ -505,6 +526,11 @@ printf '==> Validation summary\n'
 python3 -m json.tool "$SUMMARY_TMP"
 
 if [[ "$KEEP_RUN" == "1" ]]; then
+  REMOTE_GATEWAY_PORT="$(python3 - "$SUMMARY_TMP" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["remoteGatewayPort"])
+PY
+)"
   printf '\nRemote review URL: http://127.0.0.1:%s/\n' "$REMOTE_GATEWAY_PORT"
   printf 'Remote run path: %s\n' "$REMOTE_RUN"
 else

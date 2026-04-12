@@ -137,7 +137,8 @@ pub(super) fn fingerprint_hint_from_output(raw: &str) -> Option<String> {
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>();
+        .map(normalize_buildx_fingerprint_record)
+        .collect::<Option<Vec<_>>>()?;
     lines.sort_unstable();
     let normalized = lines.join("\n");
     if normalized.is_empty() {
@@ -145,6 +146,60 @@ pub(super) fn fingerprint_hint_from_output(raw: &str) -> Option<String> {
     }
     let hashed = digest(&SHA256, normalized.as_bytes());
     Some(hex::encode(hashed.as_ref()))
+}
+
+fn normalize_buildx_fingerprint_record(line: &str) -> Option<String> {
+    let value = serde_json::from_str::<serde_json::Value>(line).ok()?;
+    let object = value.as_object()?;
+    let mut normalized = serde_json::Map::new();
+
+    for key in [
+        "ID",
+        "Parents",
+        "Description",
+        "Mutable",
+        "Reclaimable",
+        "Shared",
+        "Size",
+        "InUse",
+        "Type",
+    ] {
+        let Some(value) = object.get(key).filter(|value| !value.is_null()) else {
+            continue;
+        };
+        let canonical = if key == "Parents" {
+            normalize_parent_list(value)
+        } else {
+            value.clone()
+        };
+        normalized.insert(key.to_string(), canonical);
+    }
+
+    if normalized.is_empty() {
+        return None;
+    }
+
+    serde_json::to_string(&serde_json::Value::Object(normalized)).ok()
+}
+
+fn normalize_parent_list(value: &serde_json::Value) -> serde_json::Value {
+    let Some(items) = value.as_array() else {
+        return value.clone();
+    };
+    let mut parents = items
+        .iter()
+        .filter_map(|item| item.as_str().map(str::to_string))
+        .collect::<Vec<_>>();
+    if parents.len() != items.len() {
+        return value.clone();
+    }
+    parents.sort_unstable();
+    serde_json::Value::Array(
+        parents
+            .into_iter()
+            .map(serde_json::Value::String)
+            .collect::<Vec<_>>(),
+    )
 }
 
 pub(super) fn volume_fingerprint_key(volume: &DockerVolumeInspect) -> Option<String> {
