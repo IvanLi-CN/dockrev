@@ -25,6 +25,7 @@ import type { MockRouteContext } from './context'
 import { buildFixture } from './fixturesMisc'
 import { handleGhcrRoutes } from './handlers/ghcr'
 import { handleServiceStateRoutes } from './handlers/serviceState'
+import { applyRollbackTargetRaceAfterUpdate, maybeServeRollbackTargetRaceResponse, type RollbackTargetRaceState } from './rollbackRace'
 import type {
   DockrevApiScenario,
   DockrevMockApiOptions,
@@ -74,13 +75,7 @@ export function installDockrevMockApi(
     nextJobSeq: 0,
     staleApplyConsumed: false,
   }
-  const rollbackTargetRaceByServiceId = new Map<
-    string,
-    {
-      staleResponse: ServiceRollbackTargetResponse
-      staleServed: boolean
-    }
-  >()
+  const rollbackTargetRaceByServiceId = new Map<string, RollbackTargetRaceState>()
 
   const advanceQueueProgressDemo = (): number | null => {
     if (!state || scenario !== 'queue-progress-smoothing') return null
@@ -595,36 +590,7 @@ export function installDockrevMockApi(
     }
     syncStackListItem(found.stack.id)
 
-    if (scenario === 'service-detail-rollback-stale-after-update') {
-      const updatedCurrentDisplayTag = nextResolvedTag || nextTag || null
-      f.rollbackTargetByServiceId[serviceId] = {
-        available: true,
-        currentDigest: nextDigest,
-        currentDisplayTag: updatedCurrentDisplayTag,
-        targetDigest: previousDigest || null,
-        targetDisplayTag: previousDisplayTag,
-        sourceUpdateJobId: 'job-update-rollback-race',
-        sourceFinishedAt: nowIso(),
-        unavailableReason: null,
-        activeJobId: null,
-        activeJobStatus: null,
-      }
-      rollbackTargetRaceByServiceId.set(serviceId, {
-        staleResponse: {
-          available: false,
-          currentDigest: previousDigest,
-          currentDisplayTag: previousDisplayTag,
-          targetDigest: null,
-          targetDisplayTag: null,
-          sourceUpdateJobId: null,
-          sourceFinishedAt: null,
-          unavailableReason: 'no_matching_update_history',
-          activeJobId: null,
-          activeJobStatus: null,
-        },
-        staleServed: false,
-      })
-    }
+    applyRollbackTargetRaceAfterUpdate({ rollbackTargets: state!.rollbackTargetByServiceId, raceByServiceId: rollbackTargetRaceByServiceId, scenario, serviceId, nextTag, nextDigest, nextResolvedTag, previousDigest, previousDisplayTag })
   }
 
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1076,15 +1042,9 @@ export function installDockrevMockApi(
 
       const currentDigest = found.svc.image.digest ?? ''
       const currentDisplayTag = found.svc.image.resolvedTag ?? found.svc.image.tag ?? null
-      const rollbackRace = rollbackTargetRaceByServiceId.get(serviceId)
-      if (scenario === 'service-detail-rollback-stale-after-update' && rollbackRace && !rollbackRace.staleServed) {
-        rollbackRace.staleServed = true
-        await new Promise<void>((resolve) => {
-          window.setTimeout(() => resolve(), 700)
-        })
-        return json(rollbackRace.staleResponse satisfies ServiceRollbackTargetResponse)
-      }
-      const target = f.rollbackTargetByServiceId[serviceId]
+      const rollbackRaceResponse = await maybeServeRollbackTargetRaceResponse(scenario, serviceId, rollbackTargetRaceByServiceId)
+      if (rollbackRaceResponse) return json(rollbackRaceResponse satisfies ServiceRollbackTargetResponse)
+      const target = state.rollbackTargetByServiceId[serviceId]
       if (!target) {
         return json({
           available: false,
@@ -1098,12 +1058,6 @@ export function installDockrevMockApi(
           activeJobId: null,
           activeJobStatus: null,
         } satisfies ServiceRollbackTargetResponse)
-      }
-
-      if (scenario === 'service-detail-rollback-stale-after-update' && rollbackRace?.staleServed) {
-        await new Promise<void>((resolve) => {
-          window.setTimeout(() => resolve(), 40)
-        })
       }
 
       return json({

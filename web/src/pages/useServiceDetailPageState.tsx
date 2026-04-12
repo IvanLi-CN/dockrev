@@ -1,7 +1,7 @@
 import { useCallback,useEffect,useMemo,useRef,useState,type ReactNode } from 'react'
 import {
-ApiError,
-archiveService,
+  ApiError,
+  archiveService,
 createIgnore,
 getServiceRollbackTarget,
 getServiceSettings,
@@ -9,15 +9,14 @@ getStack,
 listIgnores,
 newJobEventsSource,
 restoreService,
-triggerRuntimeScan,
-triggerServiceRollback,
-triggerUpdate,
-type IgnoreRule,
-type Service,
-type ServiceDigestTagsScanSummary,
-type ServiceRollbackTargetResponse,
-type ServiceSettings,
-type StackDetail
+  triggerRuntimeScan,
+  triggerServiceRollback,
+  triggerUpdate,
+  type IgnoreRule,
+  type Service,
+  type ServiceRollbackTargetResponse,
+  type ServiceSettings,
+  type StackDetail
 } from '../api'
 import { ConfirmServiceVersionCell } from '../components/ConfirmServiceVersionCell'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
@@ -29,13 +28,29 @@ DIGEST_SNAPSHOT_UPDATED_EVENT,
 type DigestSnapshotUpdatedDetail,
 } from '../digestInferenceTracker'
 import {
-normalizeExternalHttpUrl,
-splitImageNameForDisplay,
-splitImageRef
+  normalizeExternalHttpUrl,
+  splitImageNameForDisplay,
+  splitImageRef
 } from '../imageLinks'
 import { imageRepoFromImageRef } from '../imageRepo'
+import {
+  errorMessage,
+  formatMap,
+  isDockrevService,
+  normalizeMaybeDigest,
+  rollbackTargetMatchesServiceDigest,
+  rollbackUnavailableReasonLabel,
+  rollbackVersionLabel,
+  ROLLBACK_TARGET_REFRESH_HINT,
+  scanHasFailures,
+  scanIsComplete,
+  shortDigest,
+  shouldPrefetchFloatingCandidate,
+  svcTone,
+  useRollbackTargetInvariantWarning,
+} from './serviceDetailUtils'
 import { navigate } from '../routes'
-import { isDockrevImageRef,selfUpgradeBaseUrl } from '../runtimeConfig'
+import { selfUpgradeBaseUrl } from '../runtimeConfig'
 import { Button,Mono } from '../ui'
 import {
 UPDATE_JOB_SETTLED_EVENT,
@@ -54,81 +69,6 @@ formatCurrentTagDisplay as formatTagDisplay,
 inferResolvedTagsFromSnapshot,
 isStrictSemverTag,
 } from '../versionDisplay'
-
-function errorMessage(e: unknown): string { return e instanceof Error ? e.message : String(e) }
-function scanHasFailures(scan: ServiceDigestTagsScanSummary | null | undefined): boolean {
-  if (!scan) return false
-  return scan.manifestsTimeout > 0 || scan.manifestsError > 0
-}
-function scanIsComplete(scan: ServiceDigestTagsScanSummary | null | undefined): boolean {
-  if (!scan) return false
-  return scan.repoTagsConsidered >= scan.repoTagsTotal
-}
-function shortDigest(digest: string) { return digest.length <= 24 ? digest : `${digest.slice(0, 12)}…${digest.slice(-8)}` }
-function isDockrevService(svc: Service): boolean { return isDockrevImageRef(svc.image.ref) }
-function svcTone(svc: Service): 'ok' | 'warn' | 'bad' | 'muted' {
-  const st = serviceRowStatus(svc)
-  if (st === 'updatable') return 'ok'
-  if (st === 'hint') return 'warn'
-  if (st === 'archMismatch' || st === 'blocked') return 'bad'
-  return 'muted'
-}
-function formatMap(map: Record<string, string>) {
-  const keys = Object.keys(map)
-  if (keys.length === 0) return []
-  return keys.map((key) => ({ key, value: map[key] }))
-}
-
-function rollbackUnavailableReasonLabel(reason: string | null | undefined): string | undefined {
-  switch ((reason ?? '').trim()) {
-    case '':
-      return undefined
-    case 'rollback_in_progress':
-      return '回滚任务进行中，点击可查看任务详情'
-    case 'service_update_in_progress':
-      return '该服务已有更新任务进行中'
-    case 'stack_update_in_progress':
-      return '该堆栈已有更新任务进行中'
-    case 'global_update_in_progress':
-      return '当前存在全局更新任务进行中'
-    case 'dockrev_service_managed_via_supervisor':
-      return 'Dockrev 自身回滚请使用 Supervisor 页面'
-    case 'current_digest_missing':
-      return '当前运行摘要未知，暂时无法回滚'
-    case 'target_digest_matches_current':
-      return '升级前版本与当前运行摘要一致，无需回滚'
-    case 'no_matching_update_history':
-      return '未找到可回滚到升级前版本的成功升级记录'
-    default:
-      return '当前不可回滚'
-  }
-}
-
-function rollbackVersionLabel(displayTag: string | null | undefined, digest: string | null | undefined): string {
-  const tag = (displayTag ?? '').trim()
-  return tag || ((digest ?? '').trim() ? shortDigest((digest ?? '').trim()) : '-')
-}
-const ROLLBACK_TARGET_REFRESH_HINT = '回滚信息刷新中…'
-
-function normalizeMaybeDigest(value: string | null | undefined): string | null {
-  return normalizeDigest(value)?.toLowerCase() ?? null
-}
-
-function rollbackTargetMatchesServiceDigest(
-  svc: Service | null,
-  target: ServiceRollbackTargetResponse | null,
-): boolean {
-  if (!svc) return target == null
-  if (isDockrevService(svc)) return target == null
-  const serviceDigest = normalizeMaybeDigest(svc.image.digest)
-  const rollbackCurrentDigest = normalizeMaybeDigest(target?.currentDigest)
-  return (serviceDigest ?? '') === (rollbackCurrentDigest ?? '')
-}
-
-function shouldPrefetchFloatingCandidate(candidateTag: string | null | undefined, candidateResolvedTag: string | null | undefined, candidateDigest: string | null | undefined): boolean {
-  const raw = (candidateTag ?? '').trim()
-  return raw !== '-' && Boolean(raw) && !isStrictSemverTag(raw) && !isStrictSemverTag(candidateResolvedTag) && (candidateDigest ?? '').trim().length > 0
-}
 export function useServiceDetailPageState(props: {
   stackId: string
   serviceId: string
@@ -165,6 +105,7 @@ export function useServiceDetailPageState(props: {
   const rollbackActiveJobStatus = (rollbackTarget?.activeJobStatus ?? '').trim() || null
   const rollbackReason = rollbackTarget?.unavailableReason ?? null
   const rollbackReasonLabel = rollbackUnavailableReasonLabel(rollbackReason)
+  const rollbackTargetDigestRetryMs = 250
   const rollbackActionBusy = Boolean(rollbackActiveJobId)
   const rollbackHint = rollbackActiveJobId
     ? '任务进行中，点击查看任务详情'
@@ -177,7 +118,6 @@ export function useServiceDetailPageState(props: {
   const latestAppliedFullRefreshRequestIdRef = useRef(0)
   const stackRefreshRequestIdRef = useRef(0)
   const latestAppliedStackRefreshRequestIdRef = useRef(0)
-  const rollbackInvariantWarnKeyRef = useRef<string | null>(null)
 
   const [newRuleKind, setNewRuleKind] = useState<'exact' | 'prefix' | 'regex' | 'semver'>('regex')
   const [newRuleValue, setNewRuleValue] = useState('.*')
@@ -198,29 +138,29 @@ export function useServiceDetailPageState(props: {
     [serviceId],
   )
 
-  const applyRollbackTargetSnapshot = useCallback(
-    (
-      requestId: number,
-      svc: Service | null,
-      target: ServiceRollbackTargetResponse | null,
-      source: string,
-    ): boolean => {
-      if (requestId < latestAppliedStackRefreshRequestIdRef.current) {
-        warnRollbackTargetDiscard('outdated_request', requestId, svc, target, source)
-        return false
-      }
-      if (svc && !isDockrevService(svc) && target && !rollbackTargetMatchesServiceDigest(svc, target)) {
-        warnRollbackTargetDiscard('current_digest_mismatch', requestId, svc, target, source)
-        setRollbackTargetRefreshing(true)
-        setRollbackTarget(null)
-        return false
-      }
-      setRollbackTarget(target)
-      setRollbackTargetRefreshing(false)
-      return true
-    },
-    [warnRollbackTargetDiscard],
-  )
+  const applyRollbackTargetSnapshot = useCallback((requestId: number, svc: Service | null, target: ServiceRollbackTargetResponse | null, source: string): 'applied' | 'outdated' | 'digest_mismatch' => {
+    if (requestId < latestAppliedStackRefreshRequestIdRef.current) {
+      warnRollbackTargetDiscard('outdated_request', requestId, svc, target, source)
+      return 'outdated'
+    }
+    if (svc && !isDockrevService(svc) && target && !rollbackTargetMatchesServiceDigest(svc, target)) {
+      warnRollbackTargetDiscard('current_digest_mismatch', requestId, svc, target, source)
+      setRollbackTargetRefreshing(true)
+      return 'digest_mismatch'
+    }
+    setRollbackTarget(target)
+    setRollbackTargetRefreshing(false)
+    return 'applied'
+  }, [warnRollbackTargetDiscard])
+
+  const settleRollbackTargetSnapshot = useCallback(async (requestId: number, svc: Service, target: ServiceRollbackTargetResponse | null, source: string) => {
+    const result = applyRollbackTargetSnapshot(requestId, svc, target, source)
+    if (result !== 'digest_mismatch') return result
+    await new Promise<void>((resolve) => window.setTimeout(resolve, rollbackTargetDigestRetryMs))
+    if (requestId < latestAppliedStackRefreshRequestIdRef.current) return 'outdated'
+    const retriedTarget = await getServiceRollbackTarget(serviceId)
+    return applyRollbackTargetSnapshot(requestId, svc, retriedTarget, `${source}-digest-retry`)
+  }, [applyRollbackTargetSnapshot, rollbackTargetDigestRetryMs, serviceId])
 
   const refresh = useCallback(async () => {
     const fullRefreshRequestId = ++fullRefreshRequestIdRef.current
@@ -262,9 +202,8 @@ export function useServiceDetailPageState(props: {
         setRollbackTarget(null)
         setRollbackTargetRefreshing(false)
       } else if (rollbackRes.status === 'fulfilled') {
-        applyRollbackTargetSnapshot(stackRequestId, svc, rollbackRes.value, 'full-refresh')
+        await settleRollbackTargetSnapshot(stackRequestId, svc, rollbackRes.value, 'full-refresh')
       } else {
-        setRollbackTarget(null)
         setRollbackTargetRefreshing(false)
       }
       if (errors.length > 0) throw new Error(errors.join(' · '))
@@ -274,7 +213,7 @@ export function useServiceDetailPageState(props: {
       setRollbackTargetRefreshing(false)
       throw error
     }
-  }, [applyRollbackTargetSnapshot, onLastScanHint, serviceId, stackId])
+  }, [onLastScanHint, serviceId, settleRollbackTargetSnapshot, stackId])
 
   const refreshStackOnly = useCallback(async (source = 'stack-refresh') => {
     const requestId = ++stackRefreshRequestIdRef.current
@@ -291,15 +230,14 @@ export function useServiceDetailPageState(props: {
         setRollbackTargetRefreshing(false)
         return
       }
-      setRollbackTarget(null)
       const target = await getServiceRollbackTarget(serviceId)
-      applyRollbackTargetSnapshot(requestId, svc, target, source)
+      await settleRollbackTargetSnapshot(requestId, svc, target, source)
     } catch (error: unknown) {
       if (requestId < latestAppliedStackRefreshRequestIdRef.current) return
       setRollbackTargetRefreshing(false)
       throw error
     }
-  }, [applyRollbackTargetSnapshot, serviceId, stackId])
+  }, [serviceId, settleRollbackTargetSnapshot, stackId])
 
   const patchServiceInStack = useCallback(
     (patch: (svc: Service) => Service) => {
@@ -406,29 +344,7 @@ export function useServiceDetailPageState(props: {
     }
   }, [refreshStackOnly, rollbackTarget?.activeJobId])
 
-  useEffect(() => {
-    if (!service || !rollbackTarget || isDockrevService(service)) {
-      rollbackInvariantWarnKeyRef.current = null
-      return
-    }
-    if (rollbackTargetMatchesServiceDigest(service, rollbackTarget)) {
-      rollbackInvariantWarnKeyRef.current = null
-      return
-    }
-    const key = [
-      service.id,
-      normalizeMaybeDigest(service.image.digest) ?? '',
-      normalizeMaybeDigest(rollbackTarget.currentDigest) ?? '',
-    ].join(':')
-    if (rollbackInvariantWarnKeyRef.current === key) return
-    rollbackInvariantWarnKeyRef.current = key
-    console.warn('[dockrev] rollback target digest invariant violated', {
-      serviceId: service.id,
-      serviceDigest: normalizeMaybeDigest(service.image.digest),
-      rollbackCurrentDigest: normalizeMaybeDigest(rollbackTarget.currentDigest),
-      reason: 'state_invariant_mismatch',
-    })
-  }, [rollbackTarget, service])
+  useRollbackTargetInvariantWarning(service, rollbackTarget)
 
   const applyDigestSnapshotUpdate = useCallback(
     (detail: DigestSnapshotUpdatedDetail) => {
