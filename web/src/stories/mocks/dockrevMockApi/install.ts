@@ -25,6 +25,7 @@ import type { MockRouteContext } from './context'
 import { buildFixture } from './fixturesMisc'
 import { handleGhcrRoutes } from './handlers/ghcr'
 import { handleServiceStateRoutes } from './handlers/serviceState'
+import { applyRollbackTargetRaceAfterUpdate, maybeServeRollbackTargetRaceResponse, type RollbackTargetRaceState } from './rollbackRace'
 import type {
   DockrevApiScenario,
   DockrevMockApiOptions,
@@ -74,6 +75,7 @@ export function installDockrevMockApi(
     nextJobSeq: 0,
     staleApplyConsumed: false,
   }
+  const rollbackTargetRaceByServiceId = new Map<string, RollbackTargetRaceState>()
 
   const advanceQueueProgressDemo = (): number | null => {
     if (!state || scenario !== 'queue-progress-smoothing') return null
@@ -562,6 +564,8 @@ export function installDockrevMockApi(
     if (!found || !found.svc.candidate) return
 
     const candidate = found.svc.candidate
+    const previousDigest = found.svc.image.digest ?? ''
+    const previousDisplayTag = found.svc.image.resolvedTag?.trim() || found.svc.image.tag?.trim() || null
     const nextTag = targetTag.trim()
     const nextDigest = targetDigest.trim()
     const nextResolvedTag = candidate.resolvedTag?.trim() || nextTag
@@ -585,6 +589,8 @@ export function installDockrevMockApi(
       }
     }
     syncStackListItem(found.stack.id)
+
+    applyRollbackTargetRaceAfterUpdate({ rollbackTargets: state!.rollbackTargetByServiceId, raceByServiceId: rollbackTargetRaceByServiceId, scenario, serviceId, nextTag, nextDigest, nextResolvedTag, previousDigest, previousDisplayTag })
   }
 
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1036,7 +1042,9 @@ export function installDockrevMockApi(
 
       const currentDigest = found.svc.image.digest ?? ''
       const currentDisplayTag = found.svc.image.resolvedTag ?? found.svc.image.tag ?? null
-      const target = f.rollbackTargetByServiceId[serviceId]
+      const rollbackRaceResponse = await maybeServeRollbackTargetRaceResponse(scenario, serviceId, rollbackTargetRaceByServiceId)
+      if (rollbackRaceResponse) return json(rollbackRaceResponse satisfies ServiceRollbackTargetResponse)
+      const target = state.rollbackTargetByServiceId[serviceId]
       if (!target) {
         return json({
           available: false,

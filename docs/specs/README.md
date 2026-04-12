@@ -28,7 +28,7 @@
 | ID   | Title | Status | Spec | Last | Notes |
 |-----:|-------|--------|------|------|-------|
 | 8hewd | Dockrev：概览发现异常详情改为点击弹窗并消除双 tooltip | 已完成 | `8hewd-overview-discovery-error-detail-dialog/SPEC.md` | 2026-04-05 | fast-track（shared dialog primitive + overview discovery dialog + storybook evidence） |
-| hb4cp | Dockrev：服务详情页手动回滚到升级前版本 | 已完成 | `hb4cp-service-manual-rollback/SPEC.md` | 2026-04-05 | fast-track（PR #201 merge-ready；service rollback target API + rollback job + service detail button + storybook evidence） |
+| hb4cp | Dockrev：服务详情页手动回滚到升级前版本 | 已完成 | `hb4cp-service-manual-rollback/SPEC.md` | 2026-04-12 | fast-track（PR #201 merge-ready；2026-04-12 follow-up fixes rollback target stale disable race, adds diagnostics logs, and refresh-race Storybook evidence） |
 | qynjg | Dockrev：Docker Prune 清理控制台 | 已完成 | `qynjg-docker-prune-cleanup-console/SPEC.md` | 2026-03-29 | fast-track（cleanup scan/apply + cleanup console + storybook + visual evidence + review-loop） |
 | 48mh8 | Dockrev：Release Snapshot Queue 对齐与 #176 补发 | 部分完成（4/5） | `48mh8-release-snapshot-queue-alignment/SPEC.md` | 2026-03-23 | fast-track |
 | 6uwgs | Dockrev：服务镜像外链与代码仓库字段 | 已完成 | `6uwgs-service-image-links-and-repo-url/SPEC.md` | 2026-03-23 | fast-track（repoUrl 持久化 + inference API + services/detail/overview registry+repo icons + storybook/browser coverage） |

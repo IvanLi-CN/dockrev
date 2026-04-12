@@ -373,6 +373,25 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
     }
     return fixture
   }
+  if (scenario === 'service-detail-rollback-stale-after-update') {
+    const fixture = buildDashboardDemo()
+    const service = fixture.stackById['stack-prod']?.services.find((item) => item.id === 'svc-prod-api')
+    const currentDigest = service?.image.digest ?? ''
+    const currentDisplayTag = service?.image.resolvedTag ?? service?.image.tag ?? null
+    fixture.rollbackTargetByServiceId['svc-prod-api'] = {
+      available: false,
+      currentDigest,
+      currentDisplayTag,
+      targetDigest: null,
+      targetDisplayTag: null,
+      sourceUpdateJobId: null,
+      sourceFinishedAt: null,
+      unavailableReason: 'no_matching_update_history',
+      activeJobId: null,
+      activeJobStatus: null,
+    }
+    return fixture
+  }
   if (scenario === 'service-detail-rollback-active') {
     const fixture = buildDashboardDemo()
     const currentDigest = fixture.stackById['stack-prod']?.services.find((service) => service.id === 'svc-prod-api')?.image.digest ?? ''
@@ -464,4 +483,3 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
   if (scenario === 'aggregate-dockrev-only') return buildAggregateDockrevOnly()
   return buildDashboardDemo()
 }
-

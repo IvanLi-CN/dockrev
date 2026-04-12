@@ -1139,6 +1139,7 @@ services:
     );
 }
 
+
 #[tokio::test]
 async fn service_rollback_target_clears_stale_persisted_alias_after_complete_snapshot() {
     let state = test_state(":memory:").await;
@@ -1351,6 +1352,8 @@ async fn service_rollback_target_reports_pending_conflict() {
     assert_eq!(payload["activeJobId"].as_str(), Some(conflict_id.as_str()));
     assert_eq!(payload["activeJobStatus"].as_str(), Some("running"));
 }
+
+
 
 #[tokio::test]
 async fn trigger_service_rollback_returns_conflict_without_matching_history() {
