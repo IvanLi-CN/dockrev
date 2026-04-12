@@ -20,8 +20,8 @@ const DOCKER_TIMEOUT: Duration = Duration::from_secs(15);
 mod parse;
 
 use parse::{
-    ensure_success, fingerprint_hint_from_output, parse_buildx_du_json_lines,
-    parse_buildx_du_text_summary, scan_volume_size_from_mountpoint,
+    ensure_success, fingerprint_hint_from_buildx_text_output, fingerprint_hint_from_output,
+    parse_buildx_du_json_lines, parse_buildx_du_text_summary, scan_volume_size_from_mountpoint,
     scan_volume_sizes_from_system_df, volume_fingerprint_key,
 };
 
@@ -282,8 +282,8 @@ pub async fn build_execution_plan(
     if matches!(
         req.preset,
         CleanupPreset::Balanced | CleanupPreset::ProjectDeepClean | CleanupPreset::Aggressive
-    ) {
-        let builder_cache = scan_builder_cache_candidate(state).await;
+    ) && let Some(builder_cache) = scan_builder_cache_candidate(state).await
+    {
         candidates.push(builder_cache);
     }
 
@@ -739,7 +739,7 @@ async fn scan_candidates(
     Ok(candidates)
 }
 
-async fn scan_builder_cache_candidate(state: &AppState) -> CleanupCandidate {
+async fn scan_builder_cache_candidate(state: &AppState) -> Option<CleanupCandidate> {
     let estimate = scan_builder_cache_estimate(state)
         .await
         .unwrap_or(BuilderCacheEstimate {
@@ -747,22 +747,18 @@ async fn scan_builder_cache_candidate(state: &AppState) -> CleanupCandidate {
             estimate_unknown: true,
             fingerprint_hint: None,
         });
-    let requires_ephemeral_confirmation = estimate.fingerprint_hint.is_none();
-    CleanupCandidate {
-        key: estimate
-            .fingerprint_hint
-            .as_deref()
-            .map(|hint| format!("builder_cache:global:{hint}"))
-            .unwrap_or_else(|| "builder_cache:global".to_string()),
+    let fingerprint_hint = estimate.fingerprint_hint?;
+    Some(CleanupCandidate {
+        key: format!("builder_cache:global:{fingerprint_hint}"),
         resource_id: "global-builder-cache".to_string(),
         kind: CleanupResourceKind::BuilderCache,
         label: "global builder cache".to_string(),
         estimated_reclaimable_bytes: estimate.reclaimable_bytes,
         estimate_unknown: estimate.estimate_unknown,
-        requires_ephemeral_confirmation,
+        requires_ephemeral_confirmation: false,
         ownership: CleanupOwnership::Unowned,
         category: CleanupCandidateCategory::BuilderCache,
-    }
+    })
 }
 
 async fn scan_builder_cache_estimate(state: &AppState) -> Option<BuilderCacheEstimate> {
@@ -832,7 +828,7 @@ async fn scan_builder_cache_text_summary(state: &AppState) -> Option<BuilderCach
     Some(BuilderCacheEstimate {
         reclaimable_bytes: reclaimable,
         estimate_unknown: reclaimable.is_none(),
-        fingerprint_hint: None,
+        fingerprint_hint: fingerprint_hint_from_buildx_text_output(&out.stdout),
     })
 }
 

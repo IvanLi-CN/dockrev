@@ -393,7 +393,7 @@ NAME                LINKS               SIZE
                 } else if args == vec!["buildx", "du"] {
                     CommandOutput {
                         status: 0,
-                        stdout: "Reclaimable:  384MB\nTotal:  512MB\n".to_string(),
+                        stdout: "ID\tRECLAIMABLE\tSIZE\tLAST ACCESSED\nsha256:cache-a\ttrue\t128MB\t2 minutes ago\nsha256:cache-b*\ttrue\t256MB\t9 minutes ago\nReclaimable:  384MB\nTotal:  512MB\n".to_string(),
                         stderr: String::new(),
                     }
                 } else {

@@ -468,6 +468,32 @@ fn fingerprint_hint_from_output_ignores_time_varying_builder_cache_fields() {
 }
 
 #[test]
+fn fingerprint_hint_from_buildx_text_output_ignores_last_accessed_noise() {
+    let first = fingerprint_hint_from_buildx_text_output(
+        "ID\tRECLAIMABLE\tSIZE\tLAST ACCESSED\nsha256:a\ttrue\t128MB\t2 minutes ago\nsha256:b*\ttrue\t256MB\t5 minutes ago\nReclaimable:  384MB\nTotal:  512MB\n",
+    );
+    let second = fingerprint_hint_from_buildx_text_output(
+        "ID\tRECLAIMABLE\tSIZE\tLAST ACCESSED\nsha256:b*\ttrue\t256MB\t12 minutes ago\nsha256:a\ttrue\t128MB\t1 hour ago\nReclaimable:  384MB\nTotal:  512MB\n",
+    );
+    assert_eq!(first, second);
+}
+
+#[test]
+fn volume_fingerprint_key_uses_mountpoint_when_created_at_missing() {
+    let volume = DockerVolumeInspect {
+        name: "data".to_string(),
+        created_at: None,
+        labels: None,
+        mountpoint: Some("/var/lib/docker/volumes/data/_data".to_string()),
+        usage_data: None,
+    };
+    assert_eq!(
+        volume_fingerprint_key(&volume).as_deref(),
+        Some("volume:data:mount:/var/lib/docker/volumes/data/_data")
+    );
+}
+
+#[test]
 fn parse_volume_sizes_from_system_df_verbose_reads_local_volume_section() {
     let input = r#"Images space usage:
 REPOSITORY          TAG                 IMAGE ID            CREATED             SIZE                SHARED SIZE         UNIQUE SIZE         CONTAINERS

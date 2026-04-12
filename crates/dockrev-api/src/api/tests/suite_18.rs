@@ -80,7 +80,7 @@ services:
 }
 
 #[tokio::test]
-async fn cleanup_scan_keeps_stable_fingerprint_when_builder_cache_has_no_inventory_hint() {
+async fn cleanup_scan_omits_builder_cache_when_no_inventory_hint_exists() {
     let db_path = format!("/tmp/dockrev-cleanup-builder-ephemeral-{}.sqlite3", ulid::Ulid::new());
     let runner = Arc::new(CleanupRunner::builder_cache_no_inventory_hint());
     let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
@@ -130,6 +130,9 @@ async fn cleanup_scan_keeps_stable_fingerprint_when_builder_cache_has_no_invento
         first_body["confirmationFingerprint"].as_str(),
         second_body["confirmationFingerprint"].as_str()
     );
+    assert!(first_body["unownedGroup"].is_null());
+    assert_eq!(first_body["estimatedReclaimableBytes"].as_u64(), Some(0));
+    assert_eq!(first_body["hasUnknownSize"].as_bool(), Some(false));
 }
 
 #[tokio::test]
@@ -185,6 +188,10 @@ async fn cleanup_scan_keeps_stable_fingerprint_when_builder_cache_falls_back_to_
     assert_eq!(
         first_body["confirmationFingerprint"].as_str(),
         second_body["confirmationFingerprint"].as_str()
+    );
+    assert_eq!(
+        first_body["unownedGroup"]["resources"][0]["kind"].as_str(),
+        Some("builder_cache")
     );
 }
 

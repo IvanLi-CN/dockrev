@@ -89,6 +89,23 @@ pub(super) fn parse_du_kilobytes_output(input: &str) -> Option<u64> {
     kib.checked_mul(1024)
 }
 
+pub(super) fn fingerprint_hint_from_buildx_text_output(raw: &str) -> Option<String> {
+    let mut ids = raw
+        .lines()
+        .map(str::trim)
+        .take_while(|line| !line.starts_with("Reclaimable:"))
+        .filter(|line| !line.is_empty())
+        .filter_map(parse_buildx_text_inventory_id)
+        .collect::<Vec<_>>();
+    if ids.is_empty() {
+        return None;
+    }
+    ids.sort_unstable();
+    let normalized = ids.join("\n");
+    let hashed = digest(&SHA256, normalized.as_bytes());
+    Some(hex::encode(hashed.as_ref()))
+}
+
 fn parse_size_value(value: &serde_json::Value) -> Option<u64> {
     match value {
         serde_json::Value::Number(number) => number.as_u64(),
@@ -202,13 +219,33 @@ fn normalize_parent_list(value: &serde_json::Value) -> serde_json::Value {
     )
 }
 
+fn parse_buildx_text_inventory_id(line: &str) -> Option<String> {
+    let id = line.split_whitespace().next()?;
+    if matches!(
+        id,
+        "ID" | "TYPE" | "NAME" | "Description" | "TOTAL" | "Total" | "SIZE"
+    ) {
+        return None;
+    }
+    Some(id.to_string())
+}
+
 pub(super) fn volume_fingerprint_key(volume: &DockerVolumeInspect) -> Option<String> {
-    volume
+    let key = volume
         .created_at
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(|created_at| format!("volume:{}:{created_at}", volume.name))
+        .map(|created_at| format!("created:{created_at}"))
+        .or_else(|| {
+            volume
+                .mountpoint
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|mountpoint| format!("mount:{mountpoint}"))
+        })?;
+    Some(format!("volume:{}:{key}", volume.name))
 }
 
 pub(super) async fn scan_volume_sizes_from_system_df(state: &AppState) -> BTreeMap<String, u64> {
