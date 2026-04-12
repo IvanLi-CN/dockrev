@@ -747,6 +747,7 @@ async fn scan_builder_cache_candidate(state: &AppState) -> CleanupCandidate {
             estimate_unknown: true,
             fingerprint_hint: None,
         });
+    let requires_ephemeral_confirmation = estimate.fingerprint_hint.is_none();
     CleanupCandidate {
         key: estimate
             .fingerprint_hint
@@ -758,7 +759,7 @@ async fn scan_builder_cache_candidate(state: &AppState) -> CleanupCandidate {
         label: "global builder cache".to_string(),
         estimated_reclaimable_bytes: estimate.reclaimable_bytes,
         estimate_unknown: estimate.estimate_unknown,
-        requires_ephemeral_confirmation: false,
+        requires_ephemeral_confirmation,
         ownership: CleanupOwnership::Unowned,
         category: CleanupCandidateCategory::BuilderCache,
     }

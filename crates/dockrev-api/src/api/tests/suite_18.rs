@@ -80,6 +80,59 @@ services:
 }
 
 #[tokio::test]
+async fn cleanup_scan_uses_ephemeral_fingerprint_when_builder_cache_has_no_inventory_hint() {
+    let db_path = format!("/tmp/dockrev-cleanup-builder-ephemeral-{}.sqlite3", ulid::Ulid::new());
+    let runner = Arc::new(CleanupRunner::builder_cache_no_inventory_hint());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    let app = api::router(state);
+
+    let body = serde_json::json!({
+        "reason": "confirm",
+        "preset": "balanced",
+        "scope": "all",
+    })
+    .to_string();
+
+    let first = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status(), 200);
+    let first_body = response_json(first).await;
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    let second = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.status(), 200);
+    let second_body = response_json(second).await;
+
+    assert_ne!(
+        first_body["confirmationFingerprint"].as_str(),
+        second_body["confirmationFingerprint"].as_str()
+    );
+}
+
+#[tokio::test]
 async fn cleanup_apply_returns_stale_snapshot_with_latest_confirm_payload() {
     let db_path = format!("/tmp/dockrev-cleanup-stale-{}.sqlite3", ulid::Ulid::new());
     let runner = Arc::new(CleanupRunner::stale_on_second_scan());

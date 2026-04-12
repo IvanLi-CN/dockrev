@@ -171,6 +171,9 @@ async fn infer_service_display_tag_from_snapshot(
     service: &crate::api::types::Service,
     digest: Option<&str>,
 ) -> Result<Option<String>, ApiError> {
+    if crate::ignore::is_strict_semver(&service.image.tag) {
+        return Ok(None);
+    }
     let Some(image_repo) =
         crate::snapshot_worker::image_repo_from_image_ref(&service.image.reference)
     else {
@@ -195,6 +198,12 @@ async fn infer_service_display_tag_from_snapshot(
     else {
         return Ok(None);
     };
+    let scan = &snapshot_entry.snapshot.scan;
+    let scan_has_failures = scan.manifests_timeout > 0 || scan.manifests_error > 0;
+    let scan_is_complete = scan.repo_tags_considered >= scan.repo_tags_total;
+    if scan_has_failures || !scan_is_complete {
+        return Ok(None);
+    }
     Ok(
         super::stacks::infer_semver_tags_from_snapshot(
             &snapshot_entry.snapshot,

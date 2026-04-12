@@ -339,6 +339,40 @@ NAME                LINKS               SIZE
                     }
                 }
             }
+            CleanupRunnerMode::BuilderCacheNoInventoryHint => {
+                if args == vec!["container", "ls", "-aq"]
+                    || args == vec!["image", "ls", "-aq", "--no-trunc"]
+                    || args == vec!["network", "ls", "-q"]
+                    || args == vec!["volume", "ls", "-q"]
+                {
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["buildx", "du", "--format=json"] {
+                    CommandOutput {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: "buildx du json unsupported".to_string(),
+                    }
+                } else if args == vec!["buildx", "du"] {
+                    CommandOutput {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: "buildx du unsupported".to_string(),
+                    }
+                } else {
+                    CommandOutput {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: format!(
+                            "unexpected cleanup builder missing inventory args: {:?}",
+                            args
+                        ),
+                    }
+                }
+            }
             CleanupRunnerMode::BuilderCacheTextFallback => {
                 if args == vec!["container", "ls", "-aq"]
                     || args == vec!["image", "ls", "-aq", "--no-trunc"]

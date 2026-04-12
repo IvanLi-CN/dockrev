@@ -896,6 +896,179 @@ async fn service_rollback_target_matches_successful_service_update_history() {
 }
 
 #[tokio::test]
+async fn service_rollback_target_keeps_strict_semver_raw_tag_when_snapshot_has_newer_alias() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-strict-rollback-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2.0
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    let now = "2026-04-05T00:00:00Z";
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            Some("sha256:new".to_string()),
+            None,
+            None,
+            Some("5.2.0".to_string()),
+            None,
+            None,
+            Some("match".to_string()),
+            Some(r#"["linux/amd64"]"#.to_string()),
+            None,
+            None,
+            now,
+            now,
+        )
+        .await
+        .unwrap();
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:new",
+        "linux/amd64",
+        now,
+        vec!["5.3.0".to_string(), "latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{}/rollback-target", service.id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let payload = response_json(resp).await;
+
+    assert_eq!(payload["currentDisplayTag"].as_str(), Some("5.2.0"));
+}
+
+#[tokio::test]
+async fn service_rollback_target_skips_incomplete_snapshot_fallback_for_target_display_tag() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-incomplete-rollback-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
+    let now = "2026-04-05T00:00:00Z";
+    state
+        .db
+        .update_service_check_result(
+            &service.id,
+            Some("sha256:new".to_string()),
+            Some("5.3.0".to_string()),
+            Some(serde_json::to_string(&vec!["5.3.0"]).unwrap()),
+            Some("5.2".to_string()),
+            None,
+            None,
+            Some("match".to_string()),
+            Some(r#"["linux/amd64"]"#.to_string()),
+            None,
+            None,
+            now,
+            now,
+        )
+        .await
+        .unwrap();
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:new",
+        "linux/amd64",
+        now,
+        vec!["5.3.0".to_string(), "latest".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 2,
+            manifests_ok: 2,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    )
+    .await;
+    upsert_image_digest_snapshot_for_test(
+        &state,
+        "ghcr.io/acme/web",
+        "sha256:old",
+        "linux/amd64",
+        now,
+        vec!["5.2.0".to_string(), "5.2".to_string()],
+        crate::api::types::ServiceDigestTagsScanSummary {
+            repo_tags_total: 2,
+            repo_tags_considered: 1,
+            manifests_ok: 1,
+            manifests_timeout: 1,
+            manifests_error: 0,
+        },
+    )
+    .await;
+    let source_job_id = insert_successful_update_history_job(
+        &state,
+        crate::api::types::JobScope::Service,
+        Some(&stack_id),
+        Some(&service.id),
+        "2026-04-05T00:01:00Z",
+        "2026-04-05T00:02:00Z",
+        make_update_history_summary_for_test(&stack_id, &service.id, "sha256:old", "sha256:new"),
+    )
+    .await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{}/rollback-target", service.id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let payload = response_json(resp).await;
+
+    assert_eq!(payload["available"].as_bool(), Some(true));
+    assert_eq!(payload["currentDisplayTag"].as_str(), Some("5.3.0"));
+    assert_eq!(payload["targetDigest"].as_str(), Some("sha256:old"));
+    assert!(payload["targetDisplayTag"].is_null());
+    assert_eq!(
+        payload["sourceUpdateJobId"].as_str(),
+        Some(source_job_id.as_str())
+    );
+}
+
+#[tokio::test]
 async fn service_rollback_target_matches_successful_stack_and_all_update_history() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
@@ -1090,4 +1263,3 @@ async fn trigger_service_rollback_creates_rolled_back_job() {
     assert!(rollback["newDigests"].is_object());
     assert!(rollback["finalDigests"].is_object());
 }
-

@@ -744,6 +744,7 @@ enum CleanupRunnerMode {
     VolumeInUse,
     VolumeEstimateFallback,
     VolumeMountpointFallback,
+    BuilderCacheNoInventoryHint,
     BuilderCacheTextFallback,
     BuilderCacheSharedLowerBound,
 }
@@ -783,6 +784,13 @@ impl CleanupRunner {
         }
     }
 
+    fn builder_cache_no_inventory_hint() -> Self {
+        Self {
+            mode: CleanupRunnerMode::BuilderCacheNoInventoryHint,
+            scan_generation: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
     fn builder_cache_shared_lower_bound() -> Self {
         Self {
             mode: CleanupRunnerMode::BuilderCacheSharedLowerBound,
@@ -801,4 +809,3 @@ impl CleanupRunner {
         self.scan_generation.load(Ordering::SeqCst)
     }
 }
-
