@@ -15,7 +15,7 @@ fn log_get_service_rollback_target_resolution(resolved: &ResolvedServiceRollback
             "service rollback target resolved"
         );
     } else {
-        tracing::info!(
+        tracing::debug!(
             request_kind = %diagnostics.request_kind.as_str(),
             service_id = %diagnostics.service_id,
             stack_id = %diagnostics.stack_id,
@@ -65,32 +65,36 @@ pub(crate) async fn trigger_update(
 
     match req.scope {
         JobScope::Service => {
-            if req.targets.is_some() {
-                return Err(ApiError::invalid_argument(
-                    "targets is not supported for scope=service; use targetTag/targetDigest/pullTags",
-                ));
-            }
-            if req
-                .target_tag
-                .as_deref()
-                .is_none_or(|t| t.trim().is_empty())
+            if req.targets.is_none() {
+                if req
+                    .target_tag
+                    .as_deref()
+                    .is_none_or(|t| t.trim().is_empty())
+                {
+                    return Err(ApiError::invalid_argument(
+                        "targetTag is required for scope=service",
+                    ));
+                }
+                if req
+                    .target_digest
+                    .as_deref()
+                    .is_none_or(|d| d.trim().is_empty())
+                {
+                    return Err(ApiError::invalid_argument(
+                        "targetDigest is required for scope=service",
+                    ));
+                }
+                if req.pull_tags.is_none() {
+                    return Err(ApiError::invalid_argument(
+                        "pullTags is required for scope=service",
+                    ));
+                }
+            } else if req.target_tag.is_some()
+                || req.target_digest.is_some()
+                || req.pull_tags.is_some()
             {
                 return Err(ApiError::invalid_argument(
-                    "targetTag is required for scope=service",
-                ));
-            }
-            if req
-                .target_digest
-                .as_deref()
-                .is_none_or(|d| d.trim().is_empty())
-            {
-                return Err(ApiError::invalid_argument(
-                    "targetDigest is required for scope=service",
-                ));
-            }
-            if req.pull_tags.is_none() {
-                return Err(ApiError::invalid_argument(
-                    "pullTags is required for scope=service",
+                    "targetTag/targetDigest/pullTags must be omitted when scope=service uses targets",
                 ));
             }
         }

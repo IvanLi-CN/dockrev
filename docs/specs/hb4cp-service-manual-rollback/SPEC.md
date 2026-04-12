@@ -126,7 +126,7 @@
 - Given 最近成功升级来自 `scope=service`、`scope=stack` 或 `scope=all`，When 当前 digest 与那次升级的 `finalDigests[service]` 对齐，Then rollback target 解析规则一致生效。
 - Given 当前 digest 无法与任何成功 update 的 `finalDigests[service]` 对齐，When 打开详情页，Then 按钮禁用，且 `GET rollback-target` 与 `POST rollback` 都返回一致的 unavailable reason。
 - Given update settled 事件先把服务当前 digest 刷成新值、而 rollback target 仍在重新获取，When 服务详情页进入该重刷窗口，Then “回滚”按钮只允许显示中性的“刷新中…”加载态与 `回滚信息刷新中…` hint，不得复用上一代 `no_matching_update_history` 或其他旧 unavailable reason。
-- Given rollback target 请求先返回旧 digest、或刷新过程中出现一次瞬时失败，When 页面已知该服务存在上一份 rollback snapshot（尤其是活跃 job 信息），Then 前端必须至少重试一次 digest-mismatch 响应，并在新 snapshot 成功落地前保留上一份 rollback snapshot，避免丢失“任务进行中”的直达入口。
+- Given rollback target 请求先返回旧 digest、或刷新过程中出现瞬时不一致，When 页面已知该服务存在上一份 rollback snapshot（尤其是活跃 job 信息），Then 前端必须在同代请求内做有界 digest-mismatch 重试，并在新 snapshot 成功落地前保留上一份 rollback snapshot；若重试耗尽或 full refresh 的 rollback-target 拉取失败，则必须清空陈旧 rollback target、停止“刷新中…”挂起态、避免继续暴露错误的回滚动作，且后续成功刷新后必须自动清除该瞬时错误提示。
 - Given 用户第一次点击“回滚”，When 未确认或直接关闭弹窗，Then 不发送 rollback 请求、不创建 job。
 - Given 用户确认回滚，When 请求成功，Then 创建 `type=rollback`、`scope=service` 的 job，并在 Queue / JobDetail 中按 rollback 语义展示，成功终态为 `rolled_back`。
 - Given 同服务已有进行中的 rollback，或有会影响该服务的进行中 update，When 尝试再次发起回滚，Then 后端返回冲突，前端回跳已有 job 或展示阻止原因。
@@ -216,3 +216,5 @@
 - 2026-04-05: 主人已批准视觉证据，PR #201 已创建并收敛到 merge-ready；latest head = `dde830d7405d7cacc8158b274779e90521b79d0b`。
 - 2026-04-12: 修复服务详情页 rollback target 重刷竞态，补充后端回滚诊断日志、Storybook 竞态回归与新的视觉证据，要求重刷窗口只显示中性加载态而不回显旧 unavailable reason。
 - 2026-04-12: 根据 review 与 CI 反馈补充 rollback target digest-mismatch 重试与旧 snapshot 保留策略，避免瞬时失败时丢失活跃 rollback 任务入口，并继续满足文件行数预算门禁。
+- 2026-04-12: 收紧 rollback target 重试契约为“同代请求内有界重试 + 超限清空陈旧 target”，并把 GET rollback-target 的常态 miss 诊断降到 debug 以避免信息噪音。
+- 2026-04-12: 补充瞬时 rollback refresh 错误在后续成功刷新后必须自动清除，避免页面长期残留过期错误文案。

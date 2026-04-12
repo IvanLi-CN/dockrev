@@ -217,6 +217,36 @@ services:
     assert_eq!(resp.status(), 200);
     let triggered = response_json(resp).await;
     assert!(triggered["jobId"].as_str().unwrap().starts_with("job_"));
+
+    let legacy_targets = serde_json::json!({
+        "scope": "service",
+        "serviceId": svc.id,
+        "targets": [{
+            "serviceId": svc.id,
+            "targetTag": svc.image_tag,
+            "targetDigest": expected_digest,
+            "pullTags": []
+        }],
+        "mode": "dry-run",
+        "allowArchMismatch": false,
+        "backupMode": "inherit",
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/updates")
+                .header("content-type", "application/json")
+                .body(Body::from(legacy_targets.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    assert!(triggered["jobId"].as_str().unwrap().starts_with("job_"));
 }
 
 #[tokio::test]
@@ -1142,4 +1172,3 @@ services:
     assert_eq!(items[2]["kind"].as_str(), Some("currentRunning"));
     assert_eq!(items[2]["version"].as_str(), Some("1.20.6"));
 }
-

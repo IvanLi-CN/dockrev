@@ -4,7 +4,7 @@ import { nowIso } from './shared'
 
 export type RollbackTargetRaceState = {
   staleResponse: ServiceRollbackTargetResponse
-  staleServed: boolean
+  staleResponsesRemaining: number
 }
 
 type ApplyRollbackTargetRaceAfterUpdateArgs = {
@@ -64,7 +64,7 @@ export function applyRollbackTargetRaceAfterUpdate(args: ApplyRollbackTargetRace
       activeJobId: null,
       activeJobStatus: null,
     },
-    staleServed: false,
+    staleResponsesRemaining: 2,
   })
 }
 
@@ -74,12 +74,12 @@ export async function maybeServeRollbackTargetRaceResponse(
   raceByServiceId: Map<string, RollbackTargetRaceState>,
 ): Promise<ServiceRollbackTargetResponse | null> {
   const rollbackRace = raceByServiceId.get(serviceId)
-  if (scenario === 'service-detail-rollback-stale-after-update' && rollbackRace && !rollbackRace.staleServed) {
-    rollbackRace.staleServed = true
+  if (scenario === 'service-detail-rollback-stale-after-update' && rollbackRace?.staleResponsesRemaining) {
+    rollbackRace.staleResponsesRemaining -= 1
     await delay(700)
     return rollbackRace.staleResponse
   }
-  if (scenario === 'service-detail-rollback-stale-after-update' && rollbackRace?.staleServed) {
+  if (scenario === 'service-detail-rollback-stale-after-update' && rollbackRace && rollbackRace.staleResponsesRemaining <= 0) {
     await delay(40)
   }
   return null

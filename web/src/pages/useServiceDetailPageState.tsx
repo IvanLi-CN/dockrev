@@ -75,7 +75,6 @@ export function useServiceDetailPageState(props: {
   onLastScanHint: (lastScan?: string) => void
   onTopActions: (node: ReactNode) => void
 }) {
-
   const { stackId, serviceId, onLastScanHint, onTopActions } = props
   const confirm = useConfirm()
   const [stack, setStack] = useState<StackDetail | null>(null)
@@ -87,6 +86,7 @@ export function useServiceDetailPageState(props: {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ jobId: string; kind: 'update' | 'rollback' } | null>(null)
   const [rollbackTarget, setRollbackTarget] = useState<ServiceRollbackTargetResponse | null>(null)
+  const [rollbackActiveTarget, setRollbackActiveTarget] = useState<ServiceRollbackTargetResponse | null>(null)
   const { beginSubmitting, endSubmitting, trackJob, isTargetBusy, getActiveJobByTarget, isTargetSubmitting } =
     useUpdateActionTracker()
   const { state: supervisorState, check: checkSupervisor } = useSupervisorHealth()
@@ -101,19 +101,14 @@ export function useServiceDetailPageState(props: {
   const applyActiveJob = applyActionKey ? getActiveJobByTarget(applyActionKey) : null
   const applySubmitting = applyActionKey ? isTargetSubmitting(applyActionKey) : false
   const [rollbackTargetRefreshing, setRollbackTargetRefreshing] = useState(false)
-  const rollbackActiveJobId = (rollbackTarget?.activeJobId ?? '').trim() || null
-  const rollbackActiveJobStatus = (rollbackTarget?.activeJobStatus ?? '').trim() || null
-  const rollbackReason = rollbackTarget?.unavailableReason ?? null
+  const rollbackStatusSource = rollbackTarget ?? rollbackActiveTarget
+  const rollbackActiveJobId = (rollbackStatusSource?.activeJobId ?? '').trim() || null
+  const rollbackActiveJobStatus = (rollbackStatusSource?.activeJobStatus ?? '').trim() || null
+  const rollbackReason = rollbackTarget?.unavailableReason ?? rollbackActiveTarget?.unavailableReason ?? null
   const rollbackReasonLabel = rollbackUnavailableReasonLabel(rollbackReason)
   const rollbackTargetDigestRetryMs = 250
   const rollbackActionBusy = Boolean(rollbackActiveJobId)
-  const rollbackHint = rollbackActiveJobId
-    ? '任务进行中，点击查看任务详情'
-    : rollbackTargetRefreshing
-      ? ROLLBACK_TARGET_REFRESH_HINT
-      : !rollbackTarget?.available
-      ? rollbackReasonLabel
-      : undefined
+  const rollbackHint = rollbackActiveJobId ? '任务进行中，点击查看任务详情' : rollbackTargetRefreshing ? ROLLBACK_TARGET_REFRESH_HINT : !rollbackTarget?.available ? rollbackReasonLabel : undefined
   const fullRefreshRequestIdRef = useRef(0)
   const latestAppliedFullRefreshRequestIdRef = useRef(0)
   const stackRefreshRequestIdRef = useRef(0)
@@ -145,21 +140,30 @@ export function useServiceDetailPageState(props: {
     }
     if (svc && !isDockrevService(svc) && target && !rollbackTargetMatchesServiceDigest(svc, target)) {
       warnRollbackTargetDiscard('current_digest_mismatch', requestId, svc, target, source)
-      setRollbackTargetRefreshing(true)
+      setRollbackActiveTarget((prev) => (target?.activeJobId ? target : prev)); setRollbackTarget(null); setRollbackTargetRefreshing(true)
       return 'digest_mismatch'
     }
-    setRollbackTarget(target)
+    setRollbackTarget(target); setRollbackActiveTarget(target?.activeJobId ? target : null); setError((prev) => prev === '回滚信息刷新失败，请稍后重试' ? null : prev)
     setRollbackTargetRefreshing(false)
     return 'applied'
   }, [warnRollbackTargetDiscard])
 
   const settleRollbackTargetSnapshot = useCallback(async (requestId: number, svc: Service, target: ServiceRollbackTargetResponse | null, source: string) => {
-    const result = applyRollbackTargetSnapshot(requestId, svc, target, source)
-    if (result !== 'digest_mismatch') return result
-    await new Promise<void>((resolve) => window.setTimeout(resolve, rollbackTargetDigestRetryMs))
-    if (requestId < latestAppliedStackRefreshRequestIdRef.current) return 'outdated'
-    const retriedTarget = await getServiceRollbackTarget(serviceId)
-    return applyRollbackTargetSnapshot(requestId, svc, retriedTarget, `${source}-digest-retry`)
+    let nextTarget = target, nextSource = source, retries = 0
+    for (;;) {
+      const result = applyRollbackTargetSnapshot(requestId, svc, nextTarget, nextSource)
+      if (result !== 'digest_mismatch') return result
+      if (retries++ >= 5) {
+        setRollbackTarget(null)
+        setRollbackTargetRefreshing(false)
+        setError('回滚信息刷新失败，请稍后重试')
+        return 'digest_mismatch'
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, rollbackTargetDigestRetryMs))
+      if (requestId < latestAppliedStackRefreshRequestIdRef.current) return 'outdated'
+      nextTarget = await getServiceRollbackTarget(serviceId)
+      nextSource = `${source}-digest-retry`
+    }
   }, [applyRollbackTargetSnapshot, rollbackTargetDigestRetryMs, serviceId])
 
   const refresh = useCallback(async () => {
@@ -178,7 +182,7 @@ export function useServiceDetailPageState(props: {
         setStack(st)
         setService(svc)
         setRollbackTargetRefreshing(Boolean(svc && !isDockrevService(svc)))
-        if (!svc || isDockrevService(svc)) setRollbackTarget(null)
+        if (!svc || isDockrevService(svc)) { setRollbackTarget(null); setRollbackActiveTarget(null) }
       }
 
       const [settingsRes, rulesRes, rollbackRes] = await Promise.allSettled([
@@ -199,12 +203,12 @@ export function useServiceDetailPageState(props: {
         setRules(rulesRes.value.filter((r) => r.scope.serviceId === serviceId))
       }
       if (!svc || isDockrevService(svc)) {
-        setRollbackTarget(null)
+        setRollbackTarget(null); setRollbackActiveTarget(null)
         setRollbackTargetRefreshing(false)
       } else if (rollbackRes.status === 'fulfilled') {
         await settleRollbackTargetSnapshot(stackRequestId, svc, rollbackRes.value, 'full-refresh')
       } else {
-        setRollbackTargetRefreshing(false)
+        setRollbackTarget(null); setRollbackTargetRefreshing(false)
       }
       if (errors.length > 0) throw new Error(errors.join(' · '))
     } catch (error: unknown) {
@@ -216,7 +220,7 @@ export function useServiceDetailPageState(props: {
   }, [onLastScanHint, serviceId, settleRollbackTargetSnapshot, stackId])
 
   const refreshStackOnly = useCallback(async (source = 'stack-refresh') => {
-    const requestId = ++stackRefreshRequestIdRef.current
+    const requestId = ++stackRefreshRequestIdRef.current; let rollbackSnapshotMayBeStale = false
     try {
       const st = await getStack(stackId)
       if (requestId < latestAppliedStackRefreshRequestIdRef.current) return
@@ -226,14 +230,16 @@ export function useServiceDetailPageState(props: {
       setService(svc)
       setRollbackTargetRefreshing(Boolean(svc && !isDockrevService(svc)))
       if (!svc || isDockrevService(svc)) {
-        setRollbackTarget(null)
+        setRollbackTarget(null); setRollbackActiveTarget(null)
         setRollbackTargetRefreshing(false)
         return
       }
+      rollbackSnapshotMayBeStale = true
       const target = await getServiceRollbackTarget(serviceId)
       await settleRollbackTargetSnapshot(requestId, svc, target, source)
     } catch (error: unknown) {
       if (requestId < latestAppliedStackRefreshRequestIdRef.current) return
+      if (rollbackSnapshotMayBeStale) setRollbackTarget(null)
       setRollbackTargetRefreshing(false)
       throw error
     }
@@ -314,7 +320,7 @@ export function useServiceDetailPageState(props: {
   }, [refreshStackOnly, serviceId, stackId])
 
   useEffect(() => {
-    const activeJobId = rollbackTarget?.activeJobId?.trim()
+    const activeJobId = rollbackActiveJobId
     if (!activeJobId) return
 
     let cancelled = false
@@ -342,7 +348,7 @@ export function useServiceDetailPageState(props: {
       cancelled = true
       if (timer != null) window.clearTimeout(timer)
     }
-  }, [refreshStackOnly, rollbackTarget?.activeJobId])
+  }, [refreshStackOnly, rollbackActiveJobId])
 
   useRollbackTargetInvariantWarning(service, rollbackTarget)
 
