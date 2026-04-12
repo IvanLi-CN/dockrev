@@ -218,3 +218,4 @@
 - 2026-04-12: 根据 review 与 CI 反馈补充 rollback target digest-mismatch 重试与旧 snapshot 保留策略，避免瞬时失败时丢失活跃 rollback 任务入口，并继续满足文件行数预算门禁。
 - 2026-04-12: 收紧 rollback target 重试契约为“同代请求内有界重试 + 超限清空陈旧 target”，并把 GET rollback-target 的常态 miss 诊断降到 debug 以避免信息噪音。
 - 2026-04-12: 补充瞬时 rollback refresh 错误在后续成功刷新后必须自动清除，避免页面长期残留过期错误文案。
+- 2026-04-12: 与主干同步后，将 rollback 诊断相关回归测试在 `suite_09` / `suite_18` 之间重新分配，保持行为契约不变并继续满足文件行数预算门禁。

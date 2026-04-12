@@ -881,9 +881,9 @@ async fn service_rollback_target_matches_successful_service_update_history() {
 
     assert_eq!(payload["available"].as_bool(), Some(true));
     assert_eq!(payload["currentDigest"].as_str(), Some("sha256:new"));
-    assert_eq!(payload["currentDisplayTag"].as_str(), Some("5.2"));
+    assert_eq!(payload["currentDisplayTag"].as_str(), Some("5.3.0"));
     assert_eq!(payload["targetDigest"].as_str(), Some("sha256:old"));
-    assert!(payload["targetDisplayTag"].is_null());
+    assert_eq!(payload["targetDisplayTag"].as_str(), Some("5.2.0"));
     assert_eq!(
         payload["sourceUpdateJobId"].as_str(),
         Some(source_job_id.as_str())
@@ -1139,45 +1139,6 @@ services:
     );
 }
 
-#[tokio::test]
-async fn service_rollback_target_diagnostics_capture_available_resolution() {
-    let state = test_state(":memory:").await;
-
-    let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
-    let source_job_id = insert_successful_update_history_job(
-        &state,
-        crate::api::types::JobScope::Service,
-        Some(&stack_id),
-        Some(&service_id),
-        "2026-04-05T00:01:00Z",
-        "2026-04-05T00:02:00Z",
-        make_update_history_summary_for_test(&stack_id, &service_id, "sha256:old", "sha256:new"),
-    )
-    .await;
-
-    let resolved = crate::api::resolve_service_rollback_target(&state, &service_id)
-        .await
-        .unwrap();
-    let diagnostics = crate::api::build_rollback_resolution_diagnostics(
-        crate::api::RollbackResolutionRequestKind::GetTarget,
-        &resolved,
-    );
-
-    assert_eq!(diagnostics.request_kind.as_str(), "get_target");
-    assert_eq!(diagnostics.service_id, service_id);
-    assert_eq!(diagnostics.stack_id, stack_id);
-    assert_eq!(diagnostics.current_digest, "sha256:new");
-    assert!(diagnostics.available);
-    assert_eq!(diagnostics.unavailable_reason, None);
-    assert_eq!(diagnostics.target_digest.as_deref(), Some("sha256:old"));
-    assert_eq!(
-        diagnostics.source_update_job_id.as_deref(),
-        Some(source_job_id.as_str())
-    );
-    assert_eq!(diagnostics.active_job_id, None);
-    assert_eq!(diagnostics.active_job_status, None);
-    assert_eq!(diagnostics.scanned_successful_updates, 1);
-}
 
 #[tokio::test]
 async fn service_rollback_target_clears_stale_persisted_alias_after_complete_snapshot() {
@@ -1392,112 +1353,7 @@ async fn service_rollback_target_reports_pending_conflict() {
     assert_eq!(payload["activeJobStatus"].as_str(), Some("running"));
 }
 
-#[tokio::test]
-async fn service_rollback_target_diagnostics_capture_unavailable_resolution() {
-    let state = test_state(":memory:").await;
 
-    let (_stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
-    let resolved = crate::api::resolve_service_rollback_target(&state, &service_id)
-        .await
-        .unwrap();
-    let diagnostics = crate::api::build_rollback_resolution_diagnostics(
-        crate::api::RollbackResolutionRequestKind::TriggerRollback,
-        &resolved,
-    );
-
-    assert_eq!(diagnostics.request_kind.as_str(), "trigger_rollback");
-    assert_eq!(diagnostics.service_id, service_id);
-    assert_eq!(diagnostics.current_digest, "sha256:new");
-    assert!(!diagnostics.available);
-    assert_eq!(
-        diagnostics.unavailable_reason.as_deref(),
-        Some("no_matching_update_history")
-    );
-    assert_eq!(diagnostics.target_digest, None);
-    assert_eq!(diagnostics.source_update_job_id, None);
-    assert_eq!(diagnostics.active_job_id, None);
-    assert_eq!(diagnostics.active_job_status, None);
-    assert_eq!(diagnostics.scanned_successful_updates, 0);
-}
-
-#[tokio::test]
-async fn service_rollback_target_reports_current_digest_missing_consistently() {
-    let state = test_state(":memory:").await;
-    let app = api::router(state.clone());
-
-    let (stack_id, service_id, _compose_path) = seed_manual_rollback_service(&state).await;
-    let now = "2026-04-05T00:10:00Z";
-    state
-        .db
-        .update_service_check_result(
-            &service_id,
-            None,
-            None,
-            None,
-            Some("5.2".to_string()),
-            None,
-            None,
-            Some("match".to_string()),
-            Some(r#"["linux/amd64"]"#.to_string()),
-            None,
-            None,
-            now,
-            now,
-        )
-        .await
-        .unwrap();
-
-    let resolved = crate::api::resolve_service_rollback_target(&state, &service_id)
-        .await
-        .unwrap();
-    let diagnostics = crate::api::build_rollback_resolution_diagnostics(
-        crate::api::RollbackResolutionRequestKind::GetTarget,
-        &resolved,
-    );
-    assert_eq!(diagnostics.stack_id, stack_id);
-    assert_eq!(diagnostics.current_digest, "");
-    assert!(!diagnostics.available);
-    assert_eq!(
-        diagnostics.unavailable_reason.as_deref(),
-        Some("current_digest_missing")
-    );
-    assert_eq!(diagnostics.scanned_successful_updates, 0);
-
-    let get_resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/services/{service_id}/rollback-target"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(get_resp.status(), 200);
-    let get_payload = response_json(get_resp).await;
-    assert_eq!(
-        get_payload["unavailableReason"].as_str(),
-        Some("current_digest_missing")
-    );
-
-    let post_resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/api/services/{service_id}/rollback"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(post_resp.status(), 409);
-    let post_payload = response_json(post_resp).await;
-    assert_eq!(
-        post_payload["error"]["details"]["reason"].as_str(),
-        Some("current_digest_missing")
-    );
-}
 
 #[tokio::test]
 async fn trigger_service_rollback_returns_conflict_without_matching_history() {
