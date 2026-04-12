@@ -1,5 +1,6 @@
 use super::parse::{
     parse_du_kilobytes_output, parse_human_size, parse_volume_sizes_from_system_df_verbose,
+    volume_fingerprint_key,
 };
 use super::*;
 
@@ -189,6 +190,55 @@ fn fingerprint_changes_when_selected_resources_change() {
     let b = compute_confirmation_fingerprint(&request, &second, "2026-03-29T00:00:00Z", 3, false)
         .unwrap();
     assert_ne!(a, b);
+}
+
+#[test]
+fn fingerprint_ignores_candidate_iteration_order() {
+    let request = CleanupPlanRequest {
+        preset: CleanupPreset::ProjectDeepClean,
+        scope: CleanupScope::Stack,
+        stack_id: Some("stack-1".to_string()),
+        service_id: None,
+    };
+    let service = CleanupOwnership::Service {
+        stack_id: "stack-1".to_string(),
+        stack_name: "alpha".to_string(),
+        service_id: "svc-1".to_string(),
+        service_name: "web".to_string(),
+    };
+    let first = vec![
+        CleanupCandidate {
+            key: "volume:data:created:2026-03-29T00:00:00Z".to_string(),
+            resource_id: "data".to_string(),
+            kind: CleanupResourceKind::Volume,
+            label: "data".to_string(),
+            estimated_reclaimable_bytes: Some(2048),
+            estimate_unknown: false,
+            requires_ephemeral_confirmation: false,
+            ownership: CleanupOwnership::Unowned,
+            category: CleanupCandidateCategory::GlobalUnusedVolume,
+        },
+        CleanupCandidate {
+            key: "image:sha256:abc".to_string(),
+            resource_id: "sha256:abc".to_string(),
+            kind: CleanupResourceKind::Image,
+            label: "web".to_string(),
+            estimated_reclaimable_bytes: Some(1024),
+            estimate_unknown: false,
+            requires_ephemeral_confirmation: false,
+            ownership: service.clone(),
+            category: CleanupCandidateCategory::ManagedUnusedImage,
+        },
+    ];
+    let second = vec![first[1].clone(), first[0].clone()];
+
+    let left =
+        compute_confirmation_fingerprint(&request, &first, "2026-03-29T00:00:00Z", 3072, false)
+            .unwrap();
+    let right =
+        compute_confirmation_fingerprint(&request, &second, "2026-03-29T00:00:30Z", 3072, false)
+            .unwrap();
+    assert_eq!(left, right);
 }
 
 #[test]
@@ -479,7 +529,7 @@ fn fingerprint_hint_from_buildx_text_output_ignores_last_accessed_noise() {
 }
 
 #[test]
-fn volume_fingerprint_key_uses_mountpoint_when_created_at_missing() {
+fn volume_fingerprint_key_returns_none_when_created_at_missing() {
     let volume = DockerVolumeInspect {
         name: "data".to_string(),
         created_at: None,
@@ -487,10 +537,45 @@ fn volume_fingerprint_key_uses_mountpoint_when_created_at_missing() {
         mountpoint: Some("/var/lib/docker/volumes/data/_data".to_string()),
         usage_data: None,
     };
+    assert_eq!(volume_fingerprint_key(&volume), None);
+}
+
+#[test]
+fn volume_fingerprint_key_uses_created_at_when_available() {
+    let volume = DockerVolumeInspect {
+        name: "data".to_string(),
+        created_at: Some("2026-03-29T00:00:00Z".to_string()),
+        labels: None,
+        mountpoint: Some("/var/lib/docker/volumes/data/_data".to_string()),
+        usage_data: None,
+    };
     assert_eq!(
         volume_fingerprint_key(&volume).as_deref(),
-        Some("volume:data:mount:/var/lib/docker/volumes/data/_data")
+        Some("volume:data:created:2026-03-29T00:00:00Z")
     );
+}
+
+#[test]
+fn volume_fingerprint_key_returns_none_when_no_identity_exists() {
+    let volume = DockerVolumeInspect {
+        name: "data".to_string(),
+        created_at: None,
+        labels: None,
+        mountpoint: None,
+        usage_data: None,
+    };
+    assert_eq!(volume_fingerprint_key(&volume), None);
+}
+
+#[test]
+fn fingerprint_hint_from_buildx_text_output_changes_when_size_changes() {
+    let first = fingerprint_hint_from_buildx_text_output(
+        "ID\tRECLAIMABLE\tSIZE\tLAST ACCESSED\nsha256:a\ttrue\t128MB\t2 minutes ago\nReclaimable:  128MB\nTotal:  256MB\n",
+    );
+    let second = fingerprint_hint_from_buildx_text_output(
+        "ID\tRECLAIMABLE\tSIZE\tLAST ACCESSED\nsha256:a\ttrue\t256MB\t2 minutes ago\nReclaimable:  256MB\nTotal:  256MB\n",
+    );
+    assert_ne!(first, second);
 }
 
 #[test]

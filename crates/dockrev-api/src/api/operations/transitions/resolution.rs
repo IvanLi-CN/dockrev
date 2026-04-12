@@ -137,19 +137,18 @@ pub(crate) async fn resolve_service_display_tag_for_digest(
     persisted_resolved_tag: Option<&str>,
     fallback_to_raw_tag: bool,
 ) -> Result<Option<String>, ApiError> {
-    if let Some(resolved) = super::stacks::resolve_resolved_tag_for_digest(
-        state,
-        &service.image.reference,
-        Some(service.image.tag.as_str()),
-        digest,
-        persisted_resolved_tag,
-    )
-    .await?
-    {
-        return Ok(Some(resolved));
-    }
-    if let Some(inferred) = infer_service_display_tag_from_snapshot(state, service, digest).await? {
-        return Ok(Some(inferred));
+    match resolve_authoritative_service_display_tag_from_snapshot(state, service, digest).await? {
+        Some(Some(resolved)) => return Ok(Some(resolved)),
+        Some(None) => {}
+        None => {
+            if let Some(resolved) = persisted_resolved_tag
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+            {
+                return Ok(Some(resolved));
+            }
+        }
     }
     if fallback_to_raw_tag {
         let raw = service.image.tag.trim();
@@ -160,11 +159,11 @@ pub(crate) async fn resolve_service_display_tag_for_digest(
     Ok(None)
 }
 
-async fn infer_service_display_tag_from_snapshot(
+async fn resolve_authoritative_service_display_tag_from_snapshot(
     state: &Arc<AppState>,
     service: &crate::api::types::Service,
     digest: Option<&str>,
-) -> Result<Option<String>, ApiError> {
+) -> Result<Option<Option<String>>, ApiError> {
     if crate::ignore::is_strict_semver(&service.image.tag) {
         return Ok(None);
     }
@@ -192,20 +191,26 @@ async fn infer_service_display_tag_from_snapshot(
     else {
         return Ok(None);
     };
+    if !crate::notify::notification_snapshot_is_ready(
+        &snapshot_entry.snapshot,
+        snapshot_entry.snapshot.checked_at.as_str(),
+    ) {
+        return Ok(Some(None));
+    }
     let scan = &snapshot_entry.snapshot.scan;
     let scan_has_failures = scan.manifests_timeout > 0 || scan.manifests_error > 0;
     let scan_is_complete = scan.repo_tags_considered >= scan.repo_tags_total;
     if scan_has_failures || !scan_is_complete {
         return Ok(None);
     }
-    Ok(
+    Ok(Some(
         super::stacks::infer_semver_tags_from_snapshot(
             &snapshot_entry.snapshot,
             &service.image.tag,
         )
         .into_iter()
         .next(),
-    )
+    ))
 }
 
 pub(crate) async fn find_pending_rollback_conflict(

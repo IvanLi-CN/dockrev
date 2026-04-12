@@ -322,6 +322,18 @@ NAME                LINKS               SIZE
 ".to_string(),
                         stderr: String::new(),
                     }
+                } else if args
+                    == vec![
+                        "-c",
+                        "%d:%i:%W:%Y:%Z",
+                        "/var/lib/docker/volumes/demo_named/_data",
+                    ]
+                {
+                    CommandOutput {
+                        status: 0,
+                        stdout: "2049:987654:1711670400:1711670400:1711670400\n".to_string(),
+                        stderr: String::new(),
+                    }
                 } else if args == vec!["buildx", "du", "--format=json"] {
                     CommandOutput {
                         status: 0,
@@ -334,6 +346,64 @@ NAME                LINKS               SIZE
                         stdout: String::new(),
                         stderr: format!(
                             "unexpected cleanup volume mountpoint fallback args: {:?}",
+                            args
+                        ),
+                    }
+                }
+            }
+            CleanupRunnerMode::VolumeMissingIdentity => {
+                if args == vec!["container", "ls", "-aq"]
+                    || args == vec!["image", "ls", "-aq", "--no-trunc"]
+                    || args == vec!["network", "ls", "-q"]
+                {
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["volume", "ls", "-q"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: "demo_named\n".to_string(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["volume", "inspect", "--format", "{{json .}}", "demo_named"]
+                {
+                    CommandOutput {
+                        status: 0,
+                        stdout: serde_json::json!({
+                            "Name": "demo_named",
+                            "Labels": {
+                                "com.docker.compose.project": "demo",
+                                "com.docker.compose.service": "web"
+                            }
+                        })
+                        .to_string(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["system", "df", "-v"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: r#"Images space usage:
+REPOSITORY          TAG                 IMAGE ID            CREATED             SIZE                SHARED SIZE         UNIQUE SIZE         CONTAINERS
+Local Volumes space usage:
+NAME                LINKS               SIZE
+"#
+                        .to_string(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["buildx", "du", "--format=json"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                } else {
+                    CommandOutput {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: format!(
+                            "unexpected cleanup volume missing identity args: {:?}",
                             args
                         ),
                     }

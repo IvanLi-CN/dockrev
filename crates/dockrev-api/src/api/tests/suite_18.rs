@@ -460,6 +460,55 @@ services:
 }
 
 #[tokio::test]
+async fn cleanup_scan_omits_volumes_without_stable_identity() {
+    let db_path = format!(
+        "/tmp/dockrev-cleanup-volume-missing-identity-{}.sqlite3",
+        ulid::Ulid::new()
+    );
+    let runner = Arc::new(CleanupRunner::volume_missing_identity());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    let (stack_id, _service_id, _compose_path) = seed_cleanup_stack(
+        &state,
+        "demo",
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "confirm",
+                        "preset": "project_deep_clean",
+                        "scope": "stack",
+                        "stackId": stack_id,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["stackGroups"], serde_json::json!([]));
+    assert!(body["unownedGroup"].is_null());
+    assert_eq!(body["estimatedReclaimableBytes"].as_u64(), Some(0));
+    assert_eq!(body["hasUnknownSize"].as_bool(), Some(false));
+}
+
+#[tokio::test]
 async fn cleanup_scan_uses_builder_cache_summary_when_json_includes_shared_rows() {
 
     let db_path = format!(

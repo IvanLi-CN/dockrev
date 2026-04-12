@@ -372,7 +372,7 @@ services:
     .unwrap();
     let stack_id = seed_stack_from_compose(state, "demo", &compose_path).await;
     let service = state.db.list_services_for_check(&stack_id).await.unwrap()[0].clone();
-    let now = "2026-04-05T00:00:00Z";
+    let now = test_now_rfc3339();
     state
         .db
         .update_service_check_result(
@@ -387,8 +387,8 @@ services:
             Some(r#"["linux/amd64"]"#.to_string()),
             None,
             None,
-            now,
-            now,
+            &now,
+            &now,
         )
         .await
         .unwrap();
@@ -397,7 +397,7 @@ services:
         "ghcr.io/acme/web",
         "sha256:new",
         "linux/amd64",
-        now,
+        &now,
         vec!["5.3.0".to_string(), "latest".to_string()],
         crate::api::types::ServiceDigestTagsScanSummary {
             repo_tags_total: 2,
@@ -413,7 +413,7 @@ services:
         "ghcr.io/acme/web",
         "sha256:old",
         "linux/amd64",
-        now,
+        &now,
         vec!["5.2.0".to_string(), "5.2".to_string()],
         crate::api::types::ServiceDigestTagsScanSummary {
             repo_tags_total: 2,
@@ -744,6 +744,7 @@ enum CleanupRunnerMode {
     VolumeInUse,
     VolumeEstimateFallback,
     VolumeMountpointFallback,
+    VolumeMissingIdentity,
     BuilderCacheNoInventoryHint,
     BuilderCacheTextFallback,
     BuilderCacheSharedLowerBound,
@@ -780,6 +781,13 @@ impl CleanupRunner {
     fn volume_mountpoint_fallback() -> Self {
         Self {
             mode: CleanupRunnerMode::VolumeMountpointFallback,
+            scan_generation: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn volume_missing_identity() -> Self {
+        Self {
+            mode: CleanupRunnerMode::VolumeMissingIdentity,
             scan_generation: Arc::new(AtomicUsize::new(0)),
         }
     }

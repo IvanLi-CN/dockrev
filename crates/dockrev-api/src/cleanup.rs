@@ -21,8 +21,8 @@ mod parse;
 
 use parse::{
     ensure_success, fingerprint_hint_from_buildx_text_output, fingerprint_hint_from_output,
-    parse_buildx_du_json_lines, parse_buildx_du_text_summary, scan_volume_size_from_mountpoint,
-    scan_volume_sizes_from_system_df, volume_fingerprint_key,
+    parse_buildx_du_json_lines, parse_buildx_du_text_summary, resolve_volume_fingerprint,
+    scan_volume_size_from_mountpoint, scan_volume_sizes_from_system_df,
 };
 
 #[derive(Clone, Debug)]
@@ -672,6 +672,10 @@ async fn scan_candidates(
         } else {
             CleanupCandidateCategory::ManagedUnusedVolume
         };
+        let volume_fingerprint = resolve_volume_fingerprint(state, &inspect).await;
+        if volume_fingerprint.is_none() {
+            continue;
+        }
         let mut estimated_reclaimable_bytes =
             inspect.usage_data.as_ref().and_then(|usage| usage.size);
         if estimated_reclaimable_bytes.is_none() {
@@ -682,22 +686,19 @@ async fn scan_candidates(
                 .as_ref()
                 .and_then(|sizes| sizes.get(&inspect.name).copied());
         }
-        let volume_fingerprint = volume_fingerprint_key(&inspect);
         if estimated_reclaimable_bytes.is_none()
             && let Some(mountpoint) = inspect.mountpoint.as_deref()
         {
             estimated_reclaimable_bytes = scan_volume_size_from_mountpoint(state, mountpoint).await;
         }
         candidates.push(CleanupCandidate {
-            key: volume_fingerprint
-                .clone()
-                .unwrap_or_else(|| format!("volume:{}", inspect.name)),
+            key: volume_fingerprint.unwrap_or_else(|| format!("volume:{}", inspect.name)),
             resource_id: inspect.name.clone(),
             kind: CleanupResourceKind::Volume,
             label: inspect.name.clone(),
             estimated_reclaimable_bytes,
             estimate_unknown: estimated_reclaimable_bytes.is_none(),
-            requires_ephemeral_confirmation: volume_fingerprint.is_none(),
+            requires_ephemeral_confirmation: false,
             ownership,
             category,
         });
@@ -1212,10 +1213,13 @@ fn compute_confirmation_fingerprint(
     estimated_reclaimable_bytes: u64,
     has_unknown_size: bool,
 ) -> anyhow::Result<String> {
-    let selected = candidates
+    let mut selected = candidates
         .iter()
-        .map(|candidate| {
-            json!({
+        .map(|candidate| -> anyhow::Result<_> {
+            let ownership = ownership_json(&candidate.ownership);
+            let ownership_key = serde_json::to_string(&ownership)?;
+            let category = format!("{:?}", candidate.category);
+            let entry = json!({
                 "key": candidate.key,
                 "kind": candidate.kind.as_str(),
                 "resourceId": candidate.resource_id,
@@ -1223,10 +1227,29 @@ fn compute_confirmation_fingerprint(
                 "estimatedReclaimableBytes": candidate.estimated_reclaimable_bytes,
                 "estimateUnknown": candidate.estimate_unknown,
                 "requiresEphemeralConfirmation": candidate.requires_ephemeral_confirmation,
-                "ownership": ownership_json(&candidate.ownership),
-                "category": format!("{:?}", candidate.category),
-            })
+                "ownership": ownership,
+                "category": category,
+            });
+            Ok((
+                (
+                    candidate.key.as_str().to_string(),
+                    candidate.kind.as_str().to_string(),
+                    candidate.resource_id.as_str().to_string(),
+                    candidate.label.as_str().to_string(),
+                    candidate.estimated_reclaimable_bytes,
+                    candidate.estimate_unknown,
+                    candidate.requires_ephemeral_confirmation,
+                    ownership_key,
+                    category,
+                ),
+                entry,
+            ))
         })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    selected.sort_by(|a, b| a.0.cmp(&b.0));
+    let selected = selected
+        .into_iter()
+        .map(|(_, entry)| entry)
         .collect::<Vec<_>>();
     let payload = json!({
         "preset": request.preset.as_str(),

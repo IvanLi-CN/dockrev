@@ -63,7 +63,6 @@ require_cmd git
 require_cmd ssh
 require_cmd rsync
 require_cmd python3
-require_cmd curl
 
 if REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
   :
@@ -99,8 +98,40 @@ print(s[:63] if len(s) > 63 else s)
 PY
 }
 
-FIXTURE_PROJECT="$(sanitize_slug "fx_${REPO_NAME}_${RUN_ID}")"
-DEPLOY_PROJECT="$(sanitize_slug "dockrev_${REPO_NAME}_${RUN_ID}")"
+compose_project_slug() {
+  python3 - "$1" "$2" "$3" <<'PY'
+import hashlib, re, sys
+
+prefix, repo_name, run_id = sys.argv[1:4]
+
+def slug(value: str) -> str:
+    value = re.sub(r'[^a-z0-9_-]+', '_', value.lower()).strip('_')
+    return value or "x"
+
+prefix_slug = slug(prefix)
+repo_slug = slug(repo_name)
+run_slug = slug(run_id)
+entropy = hashlib.sha256(f"{prefix_slug}:{repo_name}:{run_id}".encode()).hexdigest()[:8]
+suffix = f"{run_slug}_{entropy}"
+max_repo_len = max(1, 63 - len(prefix_slug) - len(suffix) - 2)
+repo_part = repo_slug[:max_repo_len]
+print(f"{prefix_slug}_{repo_part}_{suffix}")
+PY
+}
+
+choose_local_review_port() {
+  python3 - <<'PY'
+import socket
+
+sock = socket.socket()
+sock.bind(("127.0.0.1", 0))
+print(sock.getsockname()[1])
+sock.close()
+PY
+}
+
+FIXTURE_PROJECT="$(compose_project_slug "fx" "$REPO_NAME" "$RUN_ID")"
+DEPLOY_PROJECT="$(compose_project_slug "dockrev" "$REPO_NAME" "$RUN_ID")"
 FIXTURE_IMAGE_REPO="ghcr.io/dockrev-fixtures/${FIXTURE_PROJECT}/app"
 DOCKREV_IMAGE="dockrev:testbox-${RUN_ID}"
 SUPERVISOR_IMAGE="dockrev-supervisor:testbox-${RUN_ID}"
@@ -141,6 +172,8 @@ ssh -o BatchMode=yes "$TESTBOX" \
     DOCKREV_IMAGE="$DOCKREV_IMAGE" \
     SUPERVISOR_IMAGE="$SUPERVISOR_IMAGE" \
     REMOTE_GATEWAY_BIND="$REMOTE_GATEWAY_BIND" \
+    FIXTURE_IMAGE_MODE="${FIXTURE_IMAGE_MODE:-}" \
+    DOCKREV_DEPLOY_MODE="${DOCKREV_DEPLOY_MODE:-}" \
     KEEP_RUN="$KEEP_RUN" \
   'bash -s' > "$SUMMARY_TMP" <<'REMOTE_SCRIPT'
 set -euo pipefail
@@ -149,10 +182,24 @@ cd "$REMOTE_RUN"
 mkdir -p fixture deploy/data deploy/data/supervisor artifacts
 REMOTE_GATEWAY_BIND="${REMOTE_GATEWAY_BIND:-127.0.0.1::80}"
 REMOTE_GATEWAY_PORT=""
+DEPLOY_MODE="compose"
+FIXTURE_IMAGE_MODE="${FIXTURE_IMAGE_MODE:-auto}"
+DOCKREV_DEPLOY_MODE="${DOCKREV_DEPLOY_MODE:-auto}"
 
 log() {
   printf ':: %s\n' "$*" >&2
 }
+
+require_remote_cmd() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "missing required remote command: $1" >&2
+    exit 2
+  }
+}
+
+require_remote_cmd curl
+require_remote_cmd docker
+require_remote_cmd python3
 
 json_field() {
   local path="$1"
@@ -248,6 +295,16 @@ wait_http_ok() {
   return 1
 }
 
+reserve_local_port() {
+  python3 - <<'PY'
+import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+}
+
 resolve_gateway_port() {
   local published
   published="$(
@@ -289,8 +346,136 @@ poll_job_terminal() {
   return 1
 }
 
+start_dockrev_host_fallback() {
+  local fallback_port
+  fallback_port="$(reserve_local_port)"
+  DEPLOY_MODE="host_binary"
+  REMOTE_GATEWAY_PORT="$fallback_port"
+  log "using host cargo build fallback on 127.0.0.1:${REMOTE_GATEWAY_PORT}"
+  cargo build -p dockrev-api --bin dockrev --release --locked >&2
+  env \
+    DOCKREV_HTTP_ADDR="127.0.0.1:${REMOTE_GATEWAY_PORT}" \
+    DOCKREV_DB_PATH="$REMOTE_RUN/deploy/data/dockrev.sqlite3" \
+    DOCKREV_COMPOSE_BIN="docker" \
+    DOCKREV_AUTH_ALLOW_ANONYMOUS_IN_DEV="true" \
+    "$REMOTE_RUN/target/release/dockrev" \
+    >"$REMOTE_RUN/artifacts/dockrev-host.log" 2>&1 &
+  echo $! > "$REMOTE_RUN/artifacts/dockrev-host.pid"
+}
+
+docker_registry_failure_logged() {
+  local log_file="$1"
+  grep -Eqi \
+    'toomanyrequests|429 Too Many Requests|failed to authorize|failed to fetch anonymous token|error pulling image configuration|resolve image config for docker-image://docker.io|failed to resolve source metadata' \
+    "$log_file"
+}
+
+start_dockrev_deploy() {
+  local deploy_log="$REMOTE_RUN/artifacts/deploy-up.log"
+  if [[ "$DOCKREV_DEPLOY_MODE" == "host_binary" ]]; then
+    start_dockrev_host_fallback
+    return 0
+  fi
+  : > "$deploy_log"
+  if DOCKREV_GATEWAY_BIND="$REMOTE_GATEWAY_BIND" \
+    docker compose -p "$DEPLOY_PROJECT" \
+      -f "$REMOTE_RUN/deploy/docker-compose.yml" \
+      -f "$REMOTE_RUN/deploy/.codex.override.yaml" \
+      -f "$REMOTE_RUN/deploy/.codex.caps-compat.yaml" \
+      up -d --build >"$deploy_log" 2>&1; then
+    cat "$deploy_log" >&2
+    REMOTE_GATEWAY_PORT="$(resolve_gateway_port)"
+    return 0
+  fi
+
+  cat "$deploy_log" >&2
+  if docker_registry_failure_logged "$deploy_log"; then
+    log "deploy build hit docker registry failure; falling back to host cargo build"
+    start_dockrev_host_fallback
+    return 0
+  fi
+  return 1
+}
+
+copy_binary_with_runtime() {
+  local binary="$1"
+  local rootfs_dir="$2"
+  copy_rootfs_entry() {
+    local source="$1"
+    local dest="$rootfs_dir$source"
+    [[ -e "$source" || -L "$source" ]] || return 0
+    mkdir -p "$(dirname "$dest")"
+    if [[ -L "$source" ]]; then
+      local target
+      target="$(readlink "$source")"
+      ln -sfn "$target" "$dest"
+      local resolved
+      resolved="$(readlink -f "$source")"
+      if [[ -n "$resolved" && "$resolved" != "$source" ]]; then
+        copy_rootfs_entry "$resolved"
+      fi
+      return 0
+    fi
+    cp -L "$source" "$dest"
+  }
+
+  mkdir -p "$rootfs_dir$(dirname "$binary")"
+  cp -L "$binary" "$rootfs_dir$binary"
+  while IFS= read -r lib; do
+    [[ -n "$lib" ]] || continue
+    copy_rootfs_entry "$lib"
+  done < <(ldd "$binary" | awk '/=> \// {print $(NF-1)} /^[[:space:]]*\/[^[:space:]]+/ {gsub(/^[[:space:]]+/, "", $1); print $1}')
+}
+
+import_fixture_image_from_rootfs() {
+  local marker="$1"
+  local image_ref="$2"
+  local rootfs_dir
+  rootfs_dir="$(mktemp -d "$REMOTE_RUN/artifacts/fixture-rootfs.${marker}.XXXXXX")"
+  copy_binary_with_runtime /bin/sh "$rootfs_dir"
+  copy_binary_with_runtime /bin/sleep "$rootfs_dir"
+  printf '%s\n' "$marker" > "$rootfs_dir/marker.txt"
+  tar -C "$rootfs_dir" -cf - . | docker import \
+    --change 'ENTRYPOINT ["/bin/sh"]' \
+    --change 'CMD ["-lc","/bin/sleep infinity"]' \
+    - "$image_ref" >/dev/null
+  rm -rf "$rootfs_dir"
+}
+
+build_fixture_images_without_registry() {
+  import_fixture_image_from_rootfs old "${FIXTURE_IMAGE_REPO}:old"
+  import_fixture_image_from_rootfs live "${FIXTURE_IMAGE_REPO}:live"
+}
+
+prepare_fixture_images() {
+  local build_log="$REMOTE_RUN/artifacts/fixture-build.log"
+  if [[ "$FIXTURE_IMAGE_MODE" == "local_rootfs" ]]; then
+    log "forcing fixture image fallback via local rootfs import"
+    build_fixture_images_without_registry
+    return 0
+  fi
+  : > "$build_log"
+  if docker build -t "${FIXTURE_IMAGE_REPO}:old" --build-arg MARKER=old "$REMOTE_RUN/fixture" >"$build_log" 2>&1 \
+    && docker build -t "${FIXTURE_IMAGE_REPO}:live" --build-arg MARKER=live "$REMOTE_RUN/fixture" >>"$build_log" 2>&1; then
+    cat "$build_log" >&2
+    return 0
+  fi
+
+  cat "$build_log" >&2
+  if docker_registry_failure_logged "$build_log"; then
+    log "fixture image build hit docker registry failure; falling back to local rootfs import"
+    build_fixture_images_without_registry
+    return 0
+  fi
+  return 1
+}
+
 cleanup_remote() {
   set +e
+  if [[ -f "$REMOTE_RUN/artifacts/dockrev-host.pid" ]]; then
+    kill "$(cat "$REMOTE_RUN/artifacts/dockrev-host.pid")" >/dev/null 2>&1 || true
+    rm -f "$REMOTE_RUN/artifacts/dockrev-host.pid"
+  fi
   if [[ -f "$REMOTE_RUN/fixture/compose.yaml" && -f "$REMOTE_RUN/fixture/.codex.caps-compat.yaml" ]]; then
     docker compose -p "$FIXTURE_PROJECT" -f "$REMOTE_RUN/fixture/compose.yaml" -f "$REMOTE_RUN/fixture/.codex.caps-compat.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
   fi
@@ -322,12 +507,6 @@ cat > "$REMOTE_RUN/fixture/compose.yaml" <<EOF_FIXTURE
 services:
   app:
     image: ${FIXTURE_IMAGE_REPO}:live
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        MARKER: live
-    command: ["sh", "-lc", "sleep infinity"]
     restart: unless-stopped
 EOF_FIXTURE
 
@@ -351,27 +530,20 @@ generate_caps_override "$REMOTE_RUN/fixture/compose.yaml" "" "$REMOTE_RUN/fixtur
 generate_caps_override "$REMOTE_RUN/deploy/docker-compose.yml" "$REMOTE_RUN/deploy/.codex.override.yaml" "$REMOTE_RUN/deploy/.codex.caps-compat.yaml"
 
 log "building fixture images"
-docker build -t "${FIXTURE_IMAGE_REPO}:old" --build-arg MARKER=old "$REMOTE_RUN/fixture" >&2
+prepare_fixture_images
 
 log "starting fixture compose project ${FIXTURE_PROJECT}"
-docker compose -p "$FIXTURE_PROJECT" -f "$REMOTE_RUN/fixture/compose.yaml" -f "$REMOTE_RUN/fixture/.codex.caps-compat.yaml" up -d --build >&2
+docker compose -p "$FIXTURE_PROJECT" -f "$REMOTE_RUN/fixture/compose.yaml" -f "$REMOTE_RUN/fixture/.codex.caps-compat.yaml" up -d >&2
 
 docker create \
   --name "${FIXTURE_PROJECT}-ghost" \
   --label "com.docker.compose.project=${FIXTURE_PROJECT}" \
   --label "com.docker.compose.service=app" \
   "${FIXTURE_IMAGE_REPO}:live" \
-  sh -lc 'exit 0' >/dev/null
+  --exit-success >/dev/null
 
 log "starting dockrev deploy project ${DEPLOY_PROJECT} with bind ${REMOTE_GATEWAY_BIND}"
-DOCKREV_GATEWAY_BIND="$REMOTE_GATEWAY_BIND" \
-  docker compose -p "$DEPLOY_PROJECT" \
-  -f "$REMOTE_RUN/deploy/docker-compose.yml" \
-  -f "$REMOTE_RUN/deploy/.codex.override.yaml" \
-  -f "$REMOTE_RUN/deploy/.codex.caps-compat.yaml" \
-  up -d --build >&2
-
-REMOTE_GATEWAY_PORT="$(resolve_gateway_port)"
+start_dockrev_deploy
 log "dockrev reachable on 127.0.0.1:${REMOTE_GATEWAY_PORT}"
 wait_http_ok "http://127.0.0.1:${REMOTE_GATEWAY_PORT}/api/health"
 
@@ -481,9 +653,9 @@ if remaining:
     raise SystemExit(f"cleanup targets still present after apply: {remaining}")
 PY
 
-summary_json="$(python3 - "$RUN_ID" "$REMOTE_RUN" "$FIXTURE_PROJECT" "$DEPLOY_PROJECT" "$stack_id" "$cleanup_job_id" "$REMOTE_GATEWAY_PORT" "$cleanup_job" <<'PY'
+summary_json="$(python3 - "$RUN_ID" "$REMOTE_RUN" "$FIXTURE_PROJECT" "$DEPLOY_PROJECT" "$stack_id" "$cleanup_job_id" "$REMOTE_GATEWAY_PORT" "$DEPLOY_MODE" "$cleanup_job" <<'PY'
 import json, sys
-job = json.loads(sys.argv[8])["job"]
+job = json.loads(sys.argv[9])["job"]
 summary = job.get("summary", {})
 out = {
     "runId": sys.argv[1],
@@ -493,6 +665,7 @@ out = {
     "stackId": sys.argv[5],
     "cleanupJobId": sys.argv[6],
     "remoteGatewayPort": int(sys.argv[7]),
+    "deployMode": sys.argv[8],
     "cleanupStatus": job.get("status"),
     "deletedCountsByKind": summary.get("deletedCountsByKind", {}),
     "groupedTargets": summary.get("groupedTargets", []),
@@ -531,7 +704,9 @@ import json, sys
 print(json.load(open(sys.argv[1], encoding="utf-8"))["remoteGatewayPort"])
 PY
 )"
-  printf '\nRemote review URL: http://127.0.0.1:%s/\n' "$REMOTE_GATEWAY_PORT"
+  LOCAL_REVIEW_PORT="$(choose_local_review_port)"
+  printf '\nRemote review tunnel: ssh -L %s:127.0.0.1:%s %s\n' "$LOCAL_REVIEW_PORT" "$REMOTE_GATEWAY_PORT" "$TESTBOX"
+  printf 'Open after tunnel: http://127.0.0.1:%s/\n' "$LOCAL_REVIEW_PORT"
   printf 'Remote run path: %s\n' "$REMOTE_RUN"
 else
   printf '\nRemote run cleaned after validation: %s\n' "$REMOTE_RUN"
