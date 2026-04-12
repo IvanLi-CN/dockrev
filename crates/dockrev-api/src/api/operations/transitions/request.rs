@@ -1,5 +1,54 @@
 use super::*;
 
+fn log_get_service_rollback_target_resolution(resolved: &ResolvedServiceRollbackTarget) {
+    let diagnostics =
+        build_rollback_resolution_diagnostics(RollbackResolutionRequestKind::GetTarget, resolved);
+    if diagnostics.available {
+        tracing::debug!(
+            request_kind = %diagnostics.request_kind.as_str(),
+            service_id = %diagnostics.service_id,
+            stack_id = %diagnostics.stack_id,
+            current_digest = %diagnostics.current_digest,
+            target_digest = ?diagnostics.target_digest,
+            source_update_job_id = ?diagnostics.source_update_job_id,
+            scanned_successful_updates = diagnostics.scanned_successful_updates,
+            "service rollback target resolved"
+        );
+    } else {
+        tracing::info!(
+            request_kind = %diagnostics.request_kind.as_str(),
+            service_id = %diagnostics.service_id,
+            stack_id = %diagnostics.stack_id,
+            current_digest = %diagnostics.current_digest,
+            unavailable_reason = ?diagnostics.unavailable_reason,
+            active_job_id = ?diagnostics.active_job_id,
+            active_job_status = ?diagnostics.active_job_status,
+            scanned_successful_updates = diagnostics.scanned_successful_updates,
+            "service rollback target unavailable"
+        );
+    }
+}
+
+fn log_trigger_service_rollback_conflict(resolved: &ResolvedServiceRollbackTarget) {
+    let diagnostics = build_rollback_resolution_diagnostics(
+        RollbackResolutionRequestKind::TriggerRollback,
+        resolved,
+    );
+    tracing::info!(
+        request_kind = %diagnostics.request_kind.as_str(),
+        service_id = %diagnostics.service_id,
+        stack_id = %diagnostics.stack_id,
+        current_digest = %diagnostics.current_digest,
+        unavailable_reason = ?diagnostics.unavailable_reason,
+        target_digest = ?diagnostics.target_digest,
+        source_update_job_id = ?diagnostics.source_update_job_id,
+        active_job_id = ?diagnostics.active_job_id,
+        active_job_status = ?diagnostics.active_job_status,
+        scanned_successful_updates = diagnostics.scanned_successful_updates,
+        "service rollback request rejected"
+    );
+}
+
 pub(crate) async fn trigger_update(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -78,6 +127,7 @@ pub(crate) async fn get_service_rollback_target(
 ) -> Result<Json<ServiceRollbackTargetResponse>, ApiError> {
     let _user = require_user(&state, &headers).await?;
     let resolved = resolve_service_rollback_target(&state, &service_id).await?;
+    log_get_service_rollback_target_resolution(&resolved);
     Ok(Json(resolved.response))
 }
 
@@ -90,12 +140,19 @@ pub(crate) async fn trigger_service_rollback(
     let now = now_rfc3339().map_err(map_internal)?;
     let resolved = resolve_service_rollback_target(&state, &service_id).await?;
     if !resolved.response.available {
+        log_trigger_service_rollback_conflict(&resolved);
         return Err(rollback_unavailable_error(&resolved.response));
     }
 
     let job_id =
         enqueue_service_rollback_job(state, user.principal, "ui".to_string(), resolved, now)
             .await?;
+    tracing::info!(
+        request_kind = %RollbackResolutionRequestKind::TriggerRollback.as_str(),
+        service_id = %service_id,
+        job_id = %job_id,
+        "service rollback request accepted"
+    );
 
     Ok(Json(TriggerRollbackResponse { job_id }))
 }

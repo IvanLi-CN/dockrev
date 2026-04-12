@@ -93,8 +93,40 @@ pub(crate) struct PendingRollbackConflict {
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedServiceRollbackTarget {
     pub(crate) stack_id: String,
+    pub(crate) service_id: String,
+    pub(crate) scanned_successful_updates: usize,
     pub(crate) response: ServiceRollbackTargetResponse,
     pub(crate) target: Option<UpdateServiceTarget>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RollbackResolutionRequestKind {
+    GetTarget,
+    TriggerRollback,
+}
+
+impl RollbackResolutionRequestKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::GetTarget => "get_target",
+            Self::TriggerRollback => "trigger_rollback",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RollbackResolutionDiagnostics {
+    pub(crate) service_id: String,
+    pub(crate) stack_id: String,
+    pub(crate) request_kind: RollbackResolutionRequestKind,
+    pub(crate) current_digest: String,
+    pub(crate) available: bool,
+    pub(crate) unavailable_reason: Option<String>,
+    pub(crate) target_digest: Option<String>,
+    pub(crate) source_update_job_id: Option<String>,
+    pub(crate) active_job_id: Option<String>,
+    pub(crate) active_job_status: Option<String>,
+    pub(crate) scanned_successful_updates: usize,
 }
 
 pub(crate) fn better_pending_job(candidate: &JobListItem, current: Option<&JobListItem>) -> bool {
@@ -287,6 +319,25 @@ pub(crate) fn find_matching_update_history_target(
     None
 }
 
+pub(crate) fn build_rollback_resolution_diagnostics(
+    request_kind: RollbackResolutionRequestKind,
+    resolved: &ResolvedServiceRollbackTarget,
+) -> RollbackResolutionDiagnostics {
+    RollbackResolutionDiagnostics {
+        service_id: resolved.service_id.clone(),
+        stack_id: resolved.stack_id.clone(),
+        request_kind,
+        current_digest: resolved.response.current_digest.clone(),
+        available: resolved.response.available,
+        unavailable_reason: resolved.response.unavailable_reason.clone(),
+        target_digest: resolved.response.target_digest.clone(),
+        source_update_job_id: resolved.response.source_update_job_id.clone(),
+        active_job_id: resolved.response.active_job_id.clone(),
+        active_job_status: resolved.response.active_job_status.clone(),
+        scanned_successful_updates: resolved.scanned_successful_updates,
+    }
+}
+
 pub(crate) async fn resolve_service_rollback_target(
     state: &Arc<AppState>,
     service_id: &str,
@@ -314,6 +365,7 @@ pub(crate) async fn resolve_service_rollback_target(
     let mut source_update_job_id: Option<String> = None;
     let mut source_finished_at: Option<String> = None;
     let mut target: Option<UpdateServiceTarget> = None;
+    let mut scanned_successful_updates = 0usize;
 
     if updater::is_dockrev_image_ref(
         &service.image.reference,
@@ -329,6 +381,7 @@ pub(crate) async fn resolve_service_rollback_target(
             .list_jobs_by_type_and_statuses(JobType::Update, &["success"], 500)
             .await
             .map_err(map_internal)?;
+        scanned_successful_updates = successful_updates.len();
         for job in successful_updates {
             if job
                 .summary_json
@@ -376,6 +429,8 @@ pub(crate) async fn resolve_service_rollback_target(
     let available = unavailable_reason.is_none() && target.is_some();
     Ok(ResolvedServiceRollbackTarget {
         stack_id,
+        service_id: service_id.to_string(),
+        scanned_successful_updates,
         response: ServiceRollbackTargetResponse {
             available,
             current_digest,

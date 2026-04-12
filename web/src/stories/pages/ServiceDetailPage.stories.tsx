@@ -36,6 +36,12 @@ function findButton(root: ParentNode, text: string): HTMLButtonElement | null {
   )
 }
 
+function findButtons(root: ParentNode, text: string): HTMLButtonElement[] {
+  return Array.from(root.querySelectorAll<HTMLButtonElement>('button')).filter(
+    (button) => button.textContent?.replace(/\s+/g, ' ').trim() === text,
+  )
+}
+
 function render(stackId: string, serviceId: string): Story['render'] {
   return () => {
     return (
@@ -157,6 +163,52 @@ export const RollbackActive: Story = {
     trigger.click()
 
     await waitForCondition(() => window.location.hash.includes('/queue/job-rollback-service'))
+  },
+}
+
+export const RollbackRefreshRaceAfterUpdate: Story = {
+  parameters: { dockrevApiScenario: 'service-detail-rollback-stale-after-update' },
+  render: render('stack-prod', 'svc-prod-api'),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => findButton(doc, '执行更新') != null)
+
+    const updateTrigger = findButton(doc, '执行更新')
+    expectStory(updateTrigger, 'service update action missing')
+    updateTrigger.click()
+
+    await waitForCondition(() => doc.body.textContent?.includes('确认更新服务 api？') ?? false)
+    const confirmButtons = findButtons(doc.body, '执行更新').filter((button) => !button.disabled)
+    const confirmTrigger = confirmButtons.at(-1) ?? null
+    expectStory(confirmTrigger, 'service update confirm action missing')
+    confirmTrigger.click()
+
+    await waitForCondition(() => findButton(doc, '刷新中…') != null, 8_000)
+    const refreshingRollback = findButton(doc, '刷新中…')
+    expectStory(refreshingRollback, 'rollback refresh state missing during update settlement')
+    expectStory(refreshingRollback.disabled, 'rollback refresh state should stay disabled')
+    expectStory(
+      refreshingRollback.getAttribute('data-hint') === '回滚信息刷新中…',
+      'rollback refresh hint should hide stale unavailable reason',
+    )
+
+    await waitForCondition(() => {
+      const rollback = findButton(doc, '回滚')
+      return Boolean(
+        rollback &&
+          !rollback.disabled &&
+          !rollback.getAttribute('data-hint') &&
+          rollback.getAttribute('aria-busy') !== 'true',
+      )
+    }, 8_000)
+
+    const rollback = findButton(doc, '回滚')
+    expectStory(rollback, 'rollback action missing after update settlement')
+    expectStory(!rollback.disabled, 'rollback action should recover to enabled state after refresh settles')
+    expectStory(
+      !rollback.getAttribute('data-hint')?.includes('未找到可回滚到升级前版本的成功升级记录'),
+      'rollback action should never restore stale unavailable history hint',
+    )
   },
 }
 

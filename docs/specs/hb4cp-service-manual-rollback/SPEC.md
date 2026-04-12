@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-04-05
-- Last: 2026-04-05
+- Last: 2026-04-12
 
 ## 背景 / 问题陈述
 
@@ -125,6 +125,7 @@
 - Given 某服务最近一次成功升级把它从 `oldDigest=A` 升到 `finalDigest=B`，且当前运行 digest 仍是 `B`，When 打开服务详情页，Then “回滚”按钮可用，并展示目标为 `A` 的确认信息。
 - Given 最近成功升级来自 `scope=service`、`scope=stack` 或 `scope=all`，When 当前 digest 与那次升级的 `finalDigests[service]` 对齐，Then rollback target 解析规则一致生效。
 - Given 当前 digest 无法与任何成功 update 的 `finalDigests[service]` 对齐，When 打开详情页，Then 按钮禁用，且 `GET rollback-target` 与 `POST rollback` 都返回一致的 unavailable reason。
+- Given update settled 事件先把服务当前 digest 刷成新值、而 rollback target 仍在重新获取，When 服务详情页进入该重刷窗口，Then “回滚”按钮只允许显示中性的“刷新中…”加载态与 `回滚信息刷新中…` hint，不得复用上一代 `no_matching_update_history` 或其他旧 unavailable reason。
 - Given 用户第一次点击“回滚”，When 未确认或直接关闭弹窗，Then 不发送 rollback 请求、不创建 job。
 - Given 用户确认回滚，When 请求成功，Then 创建 `type=rollback`、`scope=service` 的 job，并在 Queue / JobDetail 中按 rollback 语义展示，成功终态为 `rolled_back`。
 - Given 同服务已有进行中的 rollback，或有会影响该服务的进行中 update，When 尝试再次发起回滚，Then 后端返回冲突，前端回跳已有 job 或展示阻止原因。
@@ -183,6 +184,16 @@
 
 ![Service rollback confirm dialog](./assets/service-rollback-confirm.png)
 
+- source_type: `storybook_canvas`
+- target_program: `mock-only`
+- capture_scope: `browser-viewport`
+- submission_gate: `owner-approved`
+- story_id_or_title: `Pages/ServiceDetailPage/RollbackRefreshRaceAfterUpdate`
+- state: `update-settled refresh neutral`
+- evidence_note: `更新结算后服务摘要先刷新、rollback target 后到时，按钮显示中性的“刷新中…”加载态与回滚信息刷新提示，不再回显旧的 no_matching_update_history。`
+
+![Service rollback refresh race neutral](./assets/service-rollback-refresh-race-neutral.png)
+
 ## 实现里程碑（Milestones / Delivery checklist）
 
 - [x] M1: 新增 rollback target 解析与服务级手动 rollback API。
@@ -202,3 +213,4 @@
 - 2026-04-05: 创建规格，冻结服务详情页手动 rollback 的范围、契约、Storybook 覆盖与视觉证据要求。
 - 2026-04-05: 完成 rollback target API、服务详情页回滚按钮/确认弹窗、Storybook 场景、视觉证据与后端/前端验证；等待主人批准后推进 push/PR。
 - 2026-04-05: 主人已批准视觉证据，PR #201 已创建并收敛到 merge-ready；latest head = `dde830d7405d7cacc8158b274779e90521b79d0b`。
+- 2026-04-12: 修复服务详情页 rollback target 重刷竞态，补充后端回滚诊断日志、Storybook 竞态回归与新的视觉证据，要求重刷窗口只显示中性加载态而不回显旧 unavailable reason。
