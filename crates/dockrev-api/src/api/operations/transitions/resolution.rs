@@ -137,16 +137,18 @@ pub(crate) async fn resolve_service_display_tag_for_digest(
     persisted_resolved_tag: Option<&str>,
     fallback_to_raw_tag: bool,
 ) -> Result<Option<String>, ApiError> {
-    let resolved = super::stacks::resolve_resolved_tag_for_digest(
-        state,
-        &service.image.reference,
-        Some(service.image.tag.as_str()),
-        digest,
-        persisted_resolved_tag,
-    )
-    .await?;
-    if resolved.is_some() {
-        return Ok(resolved);
+    match resolve_authoritative_service_display_tag_from_snapshot(state, service, digest).await? {
+        Some(Some(resolved)) => return Ok(Some(resolved)),
+        Some(None) => {}
+        None => {
+            if let Some(resolved) = persisted_resolved_tag
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+            {
+                return Ok(Some(resolved));
+            }
+        }
     }
     if fallback_to_raw_tag {
         let raw = service.image.tag.trim();
@@ -155,6 +157,60 @@ pub(crate) async fn resolve_service_display_tag_for_digest(
         }
     }
     Ok(None)
+}
+
+async fn resolve_authoritative_service_display_tag_from_snapshot(
+    state: &Arc<AppState>,
+    service: &crate::api::types::Service,
+    digest: Option<&str>,
+) -> Result<Option<Option<String>>, ApiError> {
+    if crate::ignore::is_strict_semver(&service.image.tag) {
+        return Ok(None);
+    }
+    let Some(image_repo) =
+        crate::snapshot_worker::image_repo_from_image_ref(&service.image.reference)
+    else {
+        return Ok(None);
+    };
+    let Some(digest) = digest.and_then(crate::snapshot_worker::normalize_digest) else {
+        return Ok(None);
+    };
+    let host_platform =
+        crate::registry::host_platform_override(state.config.host_platform.as_deref())
+            .unwrap_or_else(|| "linux/amd64".to_string());
+    let snapshot = state
+        .db
+        .get_image_digest_tags_snapshot(&image_repo, &digest, &host_platform)
+        .await
+        .map_err(map_internal)?;
+    let Some((snapshot_json, checked_at, _updated_at)) = snapshot else {
+        return Ok(None);
+    };
+    let Some(snapshot_entry) =
+        super::stacks::parse_digest_snapshot_row(&snapshot_json, &checked_at)
+    else {
+        return Ok(None);
+    };
+    if !crate::notify::notification_snapshot_is_ready(
+        &snapshot_entry.snapshot,
+        snapshot_entry.snapshot.checked_at.as_str(),
+    ) {
+        return Ok(Some(None));
+    }
+    let scan = &snapshot_entry.snapshot.scan;
+    let scan_has_failures = scan.manifests_timeout > 0 || scan.manifests_error > 0;
+    let scan_is_complete = scan.repo_tags_considered >= scan.repo_tags_total;
+    if scan_has_failures || !scan_is_complete {
+        return Ok(None);
+    }
+    Ok(Some(
+        super::stacks::infer_semver_tags_from_snapshot(
+            &snapshot_entry.snapshot,
+            &service.image.tag,
+        )
+        .into_iter()
+        .next(),
+    ))
 }
 
 pub(crate) async fn find_pending_rollback_conflict(

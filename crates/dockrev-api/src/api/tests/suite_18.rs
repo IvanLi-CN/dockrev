@@ -1,4 +1,201 @@
 #[tokio::test]
+async fn cleanup_apply_creates_job_when_confirm_snapshot_only_changes_timestamp() {
+    let db_path = format!("/tmp/dockrev-cleanup-apply-{}.sqlite3", ulid::Ulid::new());
+    let runner = Arc::new(CleanupRunner::volume_in_use());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    let (stack_id, _service_id, _compose_path) = seed_cleanup_stack(
+        &state,
+        "demo",
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let scan_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "confirm",
+                        "preset": "project_deep_clean",
+                        "scope": "stack",
+                        "stackId": stack_id,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(scan_resp.status(), 200);
+    let scan_body = response_json(scan_resp).await;
+    let fingerprint = scan_body["confirmationFingerprint"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let apply_resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/apply")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "ui",
+                        "preset": "project_deep_clean",
+                        "scope": "stack",
+                        "stackId": stack_id,
+                        "confirmationFingerprint": fingerprint,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(apply_resp.status(), 200);
+    let apply_body = response_json(apply_resp).await;
+    let job_id = apply_body["jobId"].as_str().unwrap().to_string();
+    assert!(!job_id.is_empty());
+
+    let queued = state.db.get_job(&job_id).await.unwrap().unwrap();
+    assert_eq!(queued.r#type.as_str(), "cleanup_apply");
+    assert_eq!(queued.status, "running");
+    assert_eq!(queued.created_by, "ops");
+    assert_eq!(queued.reason, "ui");
+
+    let finished = wait_for_job_terminal(&state, &job_id).await;
+    assert_eq!(finished.status, "success");
+}
+
+#[tokio::test]
+async fn cleanup_scan_omits_builder_cache_when_no_inventory_hint_exists() {
+    let db_path = format!("/tmp/dockrev-cleanup-builder-ephemeral-{}.sqlite3", ulid::Ulid::new());
+    let runner = Arc::new(CleanupRunner::builder_cache_no_inventory_hint());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    let app = api::router(state);
+
+    let body = serde_json::json!({
+        "reason": "confirm",
+        "preset": "balanced",
+        "scope": "all",
+    })
+    .to_string();
+
+    let first = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status(), 200);
+    let first_body = response_json(first).await;
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    let second = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.status(), 200);
+    let second_body = response_json(second).await;
+
+    assert_eq!(
+        first_body["confirmationFingerprint"].as_str(),
+        second_body["confirmationFingerprint"].as_str()
+    );
+    assert!(first_body["unownedGroup"].is_null());
+    assert_eq!(first_body["estimatedReclaimableBytes"].as_u64(), Some(0));
+    assert_eq!(first_body["hasUnknownSize"].as_bool(), Some(false));
+}
+
+#[tokio::test]
+async fn cleanup_scan_keeps_stable_fingerprint_when_builder_cache_falls_back_to_text_summary() {
+    let db_path = format!(
+        "/tmp/dockrev-cleanup-builder-text-ephemeral-{}.sqlite3",
+        ulid::Ulid::new()
+    );
+    let runner = Arc::new(CleanupRunner::builder_cache_text_fallback());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    let app = api::router(state);
+
+    let body = serde_json::json!({
+        "reason": "confirm",
+        "preset": "balanced",
+        "scope": "all",
+    })
+    .to_string();
+
+    let first = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status(), 200);
+    let first_body = response_json(first).await;
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    let second = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.status(), 200);
+    let second_body = response_json(second).await;
+
+    assert_eq!(
+        first_body["confirmationFingerprint"].as_str(),
+        second_body["confirmationFingerprint"].as_str()
+    );
+    assert_eq!(
+        first_body["unownedGroup"]["resources"][0]["kind"].as_str(),
+        Some("builder_cache")
+    );
+}
+
+#[tokio::test]
 async fn cleanup_apply_returns_stale_snapshot_with_latest_confirm_payload() {
     let db_path = format!("/tmp/dockrev-cleanup-stale-{}.sqlite3", ulid::Ulid::new());
     let runner = Arc::new(CleanupRunner::stale_on_second_scan());
@@ -260,6 +457,55 @@ services:
         body["stackGroups"][0]["services"][0]["hasUnknownSize"].as_bool(),
         Some(false)
     );
+}
+
+#[tokio::test]
+async fn cleanup_scan_omits_volumes_without_stable_identity() {
+    let db_path = format!(
+        "/tmp/dockrev-cleanup-volume-missing-identity-{}.sqlite3",
+        ulid::Ulid::new()
+    );
+    let runner = Arc::new(CleanupRunner::volume_missing_identity());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    let (stack_id, _service_id, _compose_path) = seed_cleanup_stack(
+        &state,
+        "demo",
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .await;
+    let app = api::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "confirm",
+                        "preset": "project_deep_clean",
+                        "scope": "stack",
+                        "stackId": stack_id,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["stackGroups"], serde_json::json!([]));
+    assert!(body["unownedGroup"].is_null());
+    assert_eq!(body["estimatedReclaimableBytes"].as_u64(), Some(0));
+    assert_eq!(body["hasUnknownSize"].as_bool(), Some(false));
 }
 
 #[tokio::test]

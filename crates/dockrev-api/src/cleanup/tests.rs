@@ -1,4 +1,7 @@
-use super::parse::parse_human_size;
+use super::parse::{
+    parse_du_kilobytes_output, parse_human_size, parse_volume_sizes_from_system_df_verbose,
+    volume_fingerprint_key,
+};
 use super::*;
 
 fn sample_candidate(
@@ -15,6 +18,7 @@ fn sample_candidate(
         label: key.to_string(),
         estimated_reclaimable_bytes,
         estimate_unknown: estimated_reclaimable_bytes.is_none(),
+        requires_ephemeral_confirmation: false,
         ownership,
         category,
     }
@@ -189,6 +193,106 @@ fn fingerprint_changes_when_selected_resources_change() {
 }
 
 #[test]
+fn fingerprint_ignores_candidate_iteration_order() {
+    let request = CleanupPlanRequest {
+        preset: CleanupPreset::ProjectDeepClean,
+        scope: CleanupScope::Stack,
+        stack_id: Some("stack-1".to_string()),
+        service_id: None,
+    };
+    let service = CleanupOwnership::Service {
+        stack_id: "stack-1".to_string(),
+        stack_name: "alpha".to_string(),
+        service_id: "svc-1".to_string(),
+        service_name: "web".to_string(),
+    };
+    let first = vec![
+        CleanupCandidate {
+            key: "volume:data:created:2026-03-29T00:00:00Z".to_string(),
+            resource_id: "data".to_string(),
+            kind: CleanupResourceKind::Volume,
+            label: "data".to_string(),
+            estimated_reclaimable_bytes: Some(2048),
+            estimate_unknown: false,
+            requires_ephemeral_confirmation: false,
+            ownership: CleanupOwnership::Unowned,
+            category: CleanupCandidateCategory::GlobalUnusedVolume,
+        },
+        CleanupCandidate {
+            key: "image:sha256:abc".to_string(),
+            resource_id: "sha256:abc".to_string(),
+            kind: CleanupResourceKind::Image,
+            label: "web".to_string(),
+            estimated_reclaimable_bytes: Some(1024),
+            estimate_unknown: false,
+            requires_ephemeral_confirmation: false,
+            ownership: service.clone(),
+            category: CleanupCandidateCategory::ManagedUnusedImage,
+        },
+    ];
+    let second = vec![first[1].clone(), first[0].clone()];
+
+    let left =
+        compute_confirmation_fingerprint(&request, &first, "2026-03-29T00:00:00Z", 3072, false)
+            .unwrap();
+    let right =
+        compute_confirmation_fingerprint(&request, &second, "2026-03-29T00:00:30Z", 3072, false)
+            .unwrap();
+    assert_eq!(left, right);
+}
+
+#[test]
+fn fingerprint_ignores_scanned_at_timestamp_changes() {
+    let request = CleanupPlanRequest {
+        preset: CleanupPreset::Balanced,
+        scope: CleanupScope::All,
+        stack_id: None,
+        service_id: None,
+    };
+    let selected = vec![sample_candidate(
+        "builder-cache",
+        CleanupResourceKind::BuilderCache,
+        CleanupOwnership::Unowned,
+        CleanupCandidateCategory::BuilderCache,
+        Some(256),
+    )];
+
+    let first =
+        compute_confirmation_fingerprint(&request, &selected, "2026-03-29T00:00:00Z", 256, false)
+            .unwrap();
+    let second =
+        compute_confirmation_fingerprint(&request, &selected, "2026-03-29T00:00:30Z", 256, false)
+            .unwrap();
+    assert_eq!(first, second);
+}
+
+#[test]
+fn fingerprint_ignores_scanned_at_for_ephemeral_confirmation_candidates() {
+    let request = CleanupPlanRequest {
+        preset: CleanupPreset::ProjectDeepClean,
+        scope: CleanupScope::All,
+        stack_id: None,
+        service_id: None,
+    };
+    let mut selected = vec![sample_candidate(
+        "volume:data",
+        CleanupResourceKind::Volume,
+        CleanupOwnership::Unowned,
+        CleanupCandidateCategory::GlobalUnusedVolume,
+        Some(256),
+    )];
+    selected[0].requires_ephemeral_confirmation = true;
+
+    let first =
+        compute_confirmation_fingerprint(&request, &selected, "2026-03-29T00:00:00Z", 256, false)
+            .unwrap();
+    let second =
+        compute_confirmation_fingerprint(&request, &selected, "2026-03-29T00:00:30Z", 256, false)
+            .unwrap();
+    assert_eq!(first, second);
+}
+
+#[test]
 fn fingerprint_changes_when_estimate_unknown_changes() {
     let request = CleanupPlanRequest {
         preset: CleanupPreset::Balanced,
@@ -283,6 +387,7 @@ fn parse_buildx_du_json_lines_sums_reclaimable_rows() {
         Some(BuilderCacheEstimate {
             reclaimable_bytes: Some(829_889_526 + 829_898_832),
             estimate_unknown: false,
+            fingerprint_hint: None,
         })
     );
 }
@@ -296,6 +401,7 @@ fn parse_buildx_du_json_lines_accepts_decimal_human_sizes() {
         Some(BuilderCacheEstimate {
             reclaimable_bytes: Some(256_000_000 + 1_500_000_000),
             estimate_unknown: false,
+            fingerprint_hint: None,
         })
     );
 }
@@ -309,6 +415,7 @@ fn parse_buildx_du_json_lines_marks_lower_bound_unknown_when_shared_rows_are_pre
         Some(BuilderCacheEstimate {
             reclaimable_bytes: Some(829_889_526),
             estimate_unknown: true,
+            fingerprint_hint: None,
         })
     );
 }
@@ -324,9 +431,151 @@ Total:  30.1GB
 
 #[test]
 fn parse_du_kilobytes_output_reads_first_column() {
-    let input = "1536	/var/lib/docker/volumes/demo_named/_data
+    let input = "1536\t/var/lib/docker/volumes/demo_named/_data
 ";
     assert_eq!(parse_du_kilobytes_output(input), Some(1_572_864));
+}
+
+#[test]
+fn fingerprint_changes_when_reusable_volume_instance_changes() {
+    let request = CleanupPlanRequest {
+        preset: CleanupPreset::ProjectDeepClean,
+        scope: CleanupScope::Stack,
+        stack_id: Some("stack-1".to_string()),
+        service_id: None,
+    };
+    let ownership = CleanupOwnership::StackOrphan {
+        stack_id: "stack-1".to_string(),
+        stack_name: "alpha".to_string(),
+    };
+    let first = vec![CleanupCandidate {
+        key: "volume:data:2026-03-29T00:00:00Z".to_string(),
+        resource_id: "data".to_string(),
+        kind: CleanupResourceKind::Volume,
+        label: "data".to_string(),
+        estimated_reclaimable_bytes: Some(8192),
+        estimate_unknown: false,
+        requires_ephemeral_confirmation: false,
+        ownership: ownership.clone(),
+        category: CleanupCandidateCategory::ManagedUnusedVolume,
+    }];
+    let second = vec![CleanupCandidate {
+        key: "volume:data:2026-03-29T00:10:00Z".to_string(),
+        resource_id: "data".to_string(),
+        kind: CleanupResourceKind::Volume,
+        label: "data".to_string(),
+        estimated_reclaimable_bytes: Some(8192),
+        estimate_unknown: false,
+        requires_ephemeral_confirmation: false,
+        ownership,
+        category: CleanupCandidateCategory::ManagedUnusedVolume,
+    }];
+
+    let first_fp =
+        compute_confirmation_fingerprint(&request, &first, "2026-03-29T00:00:00Z", 8192, false)
+            .unwrap();
+    let second_fp =
+        compute_confirmation_fingerprint(&request, &second, "2026-03-29T00:00:30Z", 8192, false)
+            .unwrap();
+    assert_ne!(first_fp, second_fp);
+}
+
+#[test]
+fn fingerprint_hint_from_output_changes_with_builder_cache_inventory() {
+    let first = fingerprint_hint_from_output(
+        r#"{"ID":"sha256:a","Reclaimable":true,"Shared":false,"Size":"128"}"#,
+    );
+    let second = fingerprint_hint_from_output(
+        r#"{"ID":"sha256:b","Reclaimable":true,"Shared":false,"Size":"128"}"#,
+    );
+    assert!(first.is_some());
+    assert!(second.is_some());
+    assert_ne!(first, second);
+}
+
+#[test]
+fn fingerprint_hint_from_output_is_order_insensitive_for_same_inventory() {
+    let first = fingerprint_hint_from_output(
+        r#"{"ID":"sha256:a","Reclaimable":true,"Shared":false,"Size":"128"}
+{"ID":"sha256:b","Reclaimable":true,"Shared":false,"Size":"64"}"#,
+    );
+    let second = fingerprint_hint_from_output(
+        r#"{"ID":"sha256:b","Reclaimable":true,"Shared":false,"Size":"64"}
+{"ID":"sha256:a","Reclaimable":true,"Shared":false,"Size":"128"}"#,
+    );
+    assert_eq!(first, second);
+}
+
+#[test]
+fn fingerprint_hint_from_output_ignores_time_varying_builder_cache_fields() {
+    let first = fingerprint_hint_from_output(
+        r#"{"ID":"sha256:a","Reclaimable":true,"Shared":false,"Size":"128","Description":"layer-a","LastAccessed":"2 minutes ago","CreatedAt":"2026-03-29T00:00:00Z"}"#,
+    );
+    let second = fingerprint_hint_from_output(
+        r#"{"ID":"sha256:a","Reclaimable":true,"Shared":false,"Size":"128","Description":"layer-a","LastAccessed":"9 minutes ago","CreatedAt":"2026-03-29T01:00:00Z"}"#,
+    );
+    assert_eq!(first, second);
+}
+
+#[test]
+fn fingerprint_hint_from_buildx_text_output_ignores_last_accessed_noise() {
+    let first = fingerprint_hint_from_buildx_text_output(
+        "ID\tRECLAIMABLE\tSIZE\tLAST ACCESSED\nsha256:a\ttrue\t128MB\t2 minutes ago\nsha256:b*\ttrue\t256MB\t5 minutes ago\nReclaimable:  384MB\nTotal:  512MB\n",
+    );
+    let second = fingerprint_hint_from_buildx_text_output(
+        "ID\tRECLAIMABLE\tSIZE\tLAST ACCESSED\nsha256:b*\ttrue\t256MB\t12 minutes ago\nsha256:a\ttrue\t128MB\t1 hour ago\nReclaimable:  384MB\nTotal:  512MB\n",
+    );
+    assert_eq!(first, second);
+}
+
+#[test]
+fn volume_fingerprint_key_returns_none_when_created_at_missing() {
+    let volume = DockerVolumeInspect {
+        name: "data".to_string(),
+        created_at: None,
+        labels: None,
+        mountpoint: Some("/var/lib/docker/volumes/data/_data".to_string()),
+        usage_data: None,
+    };
+    assert_eq!(volume_fingerprint_key(&volume), None);
+}
+
+#[test]
+fn volume_fingerprint_key_uses_created_at_when_available() {
+    let volume = DockerVolumeInspect {
+        name: "data".to_string(),
+        created_at: Some("2026-03-29T00:00:00Z".to_string()),
+        labels: None,
+        mountpoint: Some("/var/lib/docker/volumes/data/_data".to_string()),
+        usage_data: None,
+    };
+    assert_eq!(
+        volume_fingerprint_key(&volume).as_deref(),
+        Some("volume:data:created:2026-03-29T00:00:00Z")
+    );
+}
+
+#[test]
+fn volume_fingerprint_key_returns_none_when_no_identity_exists() {
+    let volume = DockerVolumeInspect {
+        name: "data".to_string(),
+        created_at: None,
+        labels: None,
+        mountpoint: None,
+        usage_data: None,
+    };
+    assert_eq!(volume_fingerprint_key(&volume), None);
+}
+
+#[test]
+fn fingerprint_hint_from_buildx_text_output_changes_when_size_changes() {
+    let first = fingerprint_hint_from_buildx_text_output(
+        "ID\tRECLAIMABLE\tSIZE\tLAST ACCESSED\nsha256:a\ttrue\t128MB\t2 minutes ago\nReclaimable:  128MB\nTotal:  256MB\n",
+    );
+    let second = fingerprint_hint_from_buildx_text_output(
+        "ID\tRECLAIMABLE\tSIZE\tLAST ACCESSED\nsha256:a\ttrue\t256MB\t2 minutes ago\nReclaimable:  256MB\nTotal:  256MB\n",
+    );
+    assert_ne!(first, second);
 }
 
 #[test]

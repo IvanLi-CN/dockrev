@@ -62,9 +62,14 @@ impl CommandRunner for CleanupRunner {
                         stderr: String::new(),
                     }
                 } else if args == vec!["image", "ls", "-aq", "--no-trunc"] {
+                    let generation = self.scan_generation.load(Ordering::SeqCst);
                     CommandOutput {
                         status: 0,
-                        stdout: "sha256:img-web-unused\n".to_string(),
+                        stdout: if generation <= 1 {
+                            "sha256:img-web-unused\n".to_string()
+                        } else {
+                            "sha256:img-web-unused\nsha256:img-web-older\n".to_string()
+                        },
                         stderr: String::new(),
                     }
                 } else if args
@@ -83,6 +88,27 @@ impl CommandRunner for CleanupRunner {
                             "RepoTags": ["ghcr.io/acme/web:5.1"],
                             "RepoDigests": [],
                             "Size": 2048,
+                            "Config": { "Labels": {} }
+                        })
+                        .to_string(),
+                        stderr: String::new(),
+                    }
+                } else if args
+                    == vec![
+                        "image",
+                        "inspect",
+                        "--format",
+                        "{{json .}}",
+                        "sha256:img-web-older",
+                    ]
+                {
+                    CommandOutput {
+                        status: 0,
+                        stdout: serde_json::json!({
+                            "Id": "sha256:img-web-older",
+                            "RepoTags": ["ghcr.io/acme/web:5.0"],
+                            "RepoDigests": [],
+                            "Size": 1024,
                             "Config": { "Labels": {} }
                         })
                         .to_string(),
@@ -138,6 +164,7 @@ impl CommandRunner for CleanupRunner {
                         status: 0,
                         stdout: serde_json::json!({
                             "Name": "demo_named",
+                            "CreatedAt": "2026-03-29T00:00:00Z",
                             "Labels": {
                                 "com.docker.compose.project": "demo"
                             },
@@ -210,6 +237,7 @@ demo_named          1                   8 KB
                         status: 0,
                         stdout: serde_json::json!({
                             "Name": "demo_named",
+                            "CreatedAt": "2026-03-29T00:00:00Z",
                             "Labels": {
                                 "com.docker.compose.project": "demo",
                                 "com.docker.compose.service": "web"
@@ -294,6 +322,18 @@ NAME                LINKS               SIZE
 ".to_string(),
                         stderr: String::new(),
                     }
+                } else if args
+                    == vec![
+                        "-c",
+                        "%d:%i:%W:%Y:%Z",
+                        "/var/lib/docker/volumes/demo_named/_data",
+                    ]
+                {
+                    CommandOutput {
+                        status: 0,
+                        stdout: "2049:987654:1711670400:1711670400:1711670400\n".to_string(),
+                        stderr: String::new(),
+                    }
                 } else if args == vec!["buildx", "du", "--format=json"] {
                     CommandOutput {
                         status: 0,
@@ -306,6 +346,98 @@ NAME                LINKS               SIZE
                         stdout: String::new(),
                         stderr: format!(
                             "unexpected cleanup volume mountpoint fallback args: {:?}",
+                            args
+                        ),
+                    }
+                }
+            }
+            CleanupRunnerMode::VolumeMissingIdentity => {
+                if args == vec!["container", "ls", "-aq"]
+                    || args == vec!["image", "ls", "-aq", "--no-trunc"]
+                    || args == vec!["network", "ls", "-q"]
+                {
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["volume", "ls", "-q"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: "demo_named\n".to_string(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["volume", "inspect", "--format", "{{json .}}", "demo_named"]
+                {
+                    CommandOutput {
+                        status: 0,
+                        stdout: serde_json::json!({
+                            "Name": "demo_named",
+                            "Labels": {
+                                "com.docker.compose.project": "demo",
+                                "com.docker.compose.service": "web"
+                            }
+                        })
+                        .to_string(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["system", "df", "-v"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: r#"Images space usage:
+REPOSITORY          TAG                 IMAGE ID            CREATED             SIZE                SHARED SIZE         UNIQUE SIZE         CONTAINERS
+Local Volumes space usage:
+NAME                LINKS               SIZE
+"#
+                        .to_string(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["buildx", "du", "--format=json"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                } else {
+                    CommandOutput {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: format!(
+                            "unexpected cleanup volume missing identity args: {:?}",
+                            args
+                        ),
+                    }
+                }
+            }
+            CleanupRunnerMode::BuilderCacheNoInventoryHint => {
+                if args == vec!["container", "ls", "-aq"]
+                    || args == vec!["image", "ls", "-aq", "--no-trunc"]
+                    || args == vec!["network", "ls", "-q"]
+                    || args == vec!["volume", "ls", "-q"]
+                {
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["buildx", "du", "--format=json"] {
+                    CommandOutput {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: "buildx du json unsupported".to_string(),
+                    }
+                } else if args == vec!["buildx", "du"] {
+                    CommandOutput {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: "buildx du unsupported".to_string(),
+                    }
+                } else {
+                    CommandOutput {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: format!(
+                            "unexpected cleanup builder missing inventory args: {:?}",
                             args
                         ),
                     }
@@ -331,7 +463,7 @@ NAME                LINKS               SIZE
                 } else if args == vec!["buildx", "du"] {
                     CommandOutput {
                         status: 0,
-                        stdout: "Reclaimable:  384MB\nTotal:  512MB\n".to_string(),
+                        stdout: "ID\tRECLAIMABLE\tSIZE\tLAST ACCESSED\nsha256:cache-a\ttrue\t128MB\t2 minutes ago\nsha256:cache-b*\ttrue\t256MB\t9 minutes ago\nReclaimable:  384MB\nTotal:  512MB\n".to_string(),
                         stderr: String::new(),
                     }
                 } else {
@@ -410,4 +542,3 @@ async fn seed_cleanup_stack(
         .unwrap();
     (stack_id, service_id, compose_path)
 }
-

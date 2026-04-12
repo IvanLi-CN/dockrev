@@ -125,6 +125,13 @@ Response: `200 OK`
 }
 ```
 
+`confirmationFingerprint` 语义说明：
+
+- fingerprint 代表“当前 confirm-scan 同意执行的 cleanup 语义快照”，必须在 confirm/apply 之间保持稳定。
+- 仅当以下语义变化时才允许 fingerprint 变化：`preset`、`scope`、`stackId/serviceId`、候选 identity/ownership/category、候选估算值、候选 `estimateUnknown`、聚合 `estimatedReclaimableBytes`、聚合 `hasUnknownSize`。
+- 对名字可复用的资源（例如 named volume、builder cache），服务端必须把底层实例 freshness identity 一并纳入 fingerprint（例如 volume `CreatedAt` / mountpoint、builder cache inventory hash），避免旧确认误删后续重建的同名目标。
+- `scannedAt` 只用于 UI 展示“最新扫描时间”，不得单独导致 fingerprint 变化。
+
 页面首次加载时的推荐调用：
 
 ```json
@@ -189,6 +196,8 @@ Response: `200 OK`
 ```
 
 前端必须使用 `latest` 刷新当前确认弹窗，并要求用户再次确认；不得自动重试 apply。
+
+当命中 stale 分支时，服务端还应记录最小诊断日志（principal、preset、scope、stack/service 维度、submitted/latest fingerprint、target_count、estimate 摘要），用于线上排查。
 
 ## Job summary / log contract
 

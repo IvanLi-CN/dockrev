@@ -69,6 +69,7 @@ pub(super) fn parse_buildx_du_json_lines(input: &str) -> Option<BuilderCacheEsti
     parsed_any.then_some(BuilderCacheEstimate {
         reclaimable_bytes: Some(reclaimable),
         estimate_unknown: has_shared_reclaimable,
+        fingerprint_hint: None,
     })
 }
 
@@ -86,6 +87,23 @@ pub(super) fn parse_du_kilobytes_output(input: &str) -> Option<u64> {
         .next()
         .and_then(|raw| raw.parse::<u64>().ok())?;
     kib.checked_mul(1024)
+}
+
+pub(super) fn fingerprint_hint_from_buildx_text_output(raw: &str) -> Option<String> {
+    let mut records = raw
+        .lines()
+        .map(str::trim)
+        .take_while(|line| !line.starts_with("Reclaimable:"))
+        .filter(|line| !line.is_empty())
+        .filter_map(parse_buildx_text_inventory_record)
+        .collect::<Vec<_>>();
+    if records.is_empty() {
+        return None;
+    }
+    records.sort_unstable();
+    let normalized = records.join("\n");
+    let hashed = digest(&SHA256, normalized.as_bytes());
+    Some(hex::encode(hashed.as_ref()))
 }
 
 fn parse_size_value(value: &serde_json::Value) -> Option<u64> {
@@ -129,6 +147,193 @@ pub(super) fn parse_volume_sizes_from_system_df_verbose(input: &str) -> BTreeMap
     }
 
     volume_sizes
+}
+
+pub(super) fn fingerprint_hint_from_output(raw: &str) -> Option<String> {
+    let mut lines = raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(normalize_buildx_fingerprint_record)
+        .collect::<Option<Vec<_>>>()?;
+    lines.sort_unstable();
+    let normalized = lines.join("\n");
+    if normalized.is_empty() {
+        return None;
+    }
+    let hashed = digest(&SHA256, normalized.as_bytes());
+    Some(hex::encode(hashed.as_ref()))
+}
+
+fn normalize_buildx_fingerprint_record(line: &str) -> Option<String> {
+    let value = serde_json::from_str::<serde_json::Value>(line).ok()?;
+    let object = value.as_object()?;
+    let mut normalized = serde_json::Map::new();
+
+    for key in [
+        "ID",
+        "Parents",
+        "Description",
+        "Mutable",
+        "Reclaimable",
+        "Shared",
+        "Size",
+        "InUse",
+        "Type",
+    ] {
+        let Some(value) = object.get(key).filter(|value| !value.is_null()) else {
+            continue;
+        };
+        let canonical = if key == "Parents" {
+            normalize_parent_list(value)
+        } else {
+            value.clone()
+        };
+        normalized.insert(key.to_string(), canonical);
+    }
+
+    if normalized.is_empty() {
+        return None;
+    }
+
+    serde_json::to_string(&serde_json::Value::Object(normalized)).ok()
+}
+
+fn normalize_parent_list(value: &serde_json::Value) -> serde_json::Value {
+    let Some(items) = value.as_array() else {
+        return value.clone();
+    };
+    let mut parents = items
+        .iter()
+        .filter_map(|item| item.as_str().map(str::to_string))
+        .collect::<Vec<_>>();
+    if parents.len() != items.len() {
+        return value.clone();
+    }
+    parents.sort_unstable();
+    serde_json::Value::Array(
+        parents
+            .into_iter()
+            .map(serde_json::Value::String)
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn parse_buildx_text_inventory_record(line: &str) -> Option<String> {
+    let mut columns = line.split_whitespace();
+    let id = columns.next()?;
+    if matches!(
+        id,
+        "ID" | "TYPE" | "NAME" | "Description" | "TOTAL" | "Total" | "SIZE"
+    ) {
+        return None;
+    }
+    let reclaimable = columns.next()?;
+    let size = columns.next()?;
+    Some(format!("{id}\t{reclaimable}\t{size}"))
+}
+
+pub(super) fn volume_fingerprint_key(volume: &DockerVolumeInspect) -> Option<String> {
+    volume
+        .created_at
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|created_at| format!("volume:{}:created:{created_at}", volume.name))
+}
+
+fn parse_mountpoint_stat_fingerprint(input: &str) -> Option<String> {
+    let signature = input.lines().find(|line| !line.trim().is_empty())?.trim();
+    (!signature.is_empty()).then(|| signature.to_string())
+}
+
+pub(super) async fn scan_volume_fingerprint_from_mountpoint(
+    state: &AppState,
+    mountpoint: &str,
+) -> Option<String> {
+    let mountpoint = mountpoint.trim();
+    if mountpoint.is_empty() {
+        return None;
+    }
+    let out = state
+        .runner
+        .run(
+            CommandSpec {
+                program: "stat".to_string(),
+                args: vec![
+                    "-c".to_string(),
+                    "%d:%i:%W:%Y:%Z".to_string(),
+                    mountpoint.to_string(),
+                ],
+                env: Vec::new(),
+            },
+            DOCKER_TIMEOUT,
+        )
+        .await
+        .ok()?;
+    if out.status != 0 {
+        return None;
+    }
+    let signature = parse_mountpoint_stat_fingerprint(&out.stdout)?;
+    Some(format!("mount:{mountpoint}:{signature}"))
+}
+
+pub(super) async fn resolve_volume_fingerprint(
+    state: &AppState,
+    volume: &DockerVolumeInspect,
+) -> Option<String> {
+    if let Some(key) = volume_fingerprint_key(volume) {
+        return Some(key);
+    }
+    let mountpoint = volume.mountpoint.as_deref()?;
+    scan_volume_fingerprint_from_mountpoint(state, mountpoint)
+        .await
+        .map(|fingerprint| format!("volume:{}:{fingerprint}", volume.name))
+}
+
+pub(super) async fn scan_volume_sizes_from_system_df(state: &AppState) -> BTreeMap<String, u64> {
+    let out = match state
+        .runner
+        .run(
+            CommandSpec {
+                program: "docker".to_string(),
+                args: vec!["system".to_string(), "df".to_string(), "-v".to_string()],
+                env: Vec::new(),
+            },
+            DOCKER_TIMEOUT,
+        )
+        .await
+    {
+        Ok(out) if out.status == 0 => out,
+        _ => return BTreeMap::new(),
+    };
+    parse_volume_sizes_from_system_df_verbose(&out.stdout)
+}
+
+pub(super) async fn scan_volume_size_from_mountpoint(
+    state: &AppState,
+    mountpoint: &str,
+) -> Option<u64> {
+    let mountpoint = mountpoint.trim();
+    if mountpoint.is_empty() {
+        return None;
+    }
+    let out = state
+        .runner
+        .run(
+            CommandSpec {
+                program: "du".to_string(),
+                args: vec!["-sk".to_string(), mountpoint.to_string()],
+                env: Vec::new(),
+            },
+            DOCKER_TIMEOUT,
+        )
+        .await
+        .ok()?;
+    if out.status != 0 {
+        return None;
+    }
+    parse_du_kilobytes_output(&out.stdout)
 }
 
 fn split_table_columns(line: &str) -> Vec<&str> {

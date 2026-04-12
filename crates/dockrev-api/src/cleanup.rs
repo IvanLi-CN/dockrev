@@ -20,8 +20,9 @@ const DOCKER_TIMEOUT: Duration = Duration::from_secs(15);
 mod parse;
 
 use parse::{
-    ensure_success, parse_buildx_du_json_lines, parse_buildx_du_text_summary,
-    parse_du_kilobytes_output, parse_volume_sizes_from_system_df_verbose,
+    ensure_success, fingerprint_hint_from_buildx_text_output, fingerprint_hint_from_output,
+    parse_buildx_du_json_lines, parse_buildx_du_text_summary, resolve_volume_fingerprint,
+    scan_volume_size_from_mountpoint, scan_volume_sizes_from_system_df,
 };
 
 #[derive(Clone, Debug)]
@@ -53,6 +54,18 @@ impl CleanupExecutionPlan {
 
     pub fn confirmation_fingerprint(&self) -> &str {
         &self.confirmation_fingerprint
+    }
+
+    pub fn estimated_reclaimable_bytes(&self) -> u64 {
+        self.estimated_reclaimable_bytes
+    }
+
+    pub fn has_unknown_size(&self) -> bool {
+        self.has_unknown_size
+    }
+
+    pub fn target_count(&self) -> usize {
+        self.commands.len()
     }
 
     pub fn initial_job_summary(&self) -> serde_json::Value {
@@ -111,6 +124,7 @@ struct CleanupCandidate {
     label: String,
     estimated_reclaimable_bytes: Option<u64>,
     estimate_unknown: bool,
+    requires_ephemeral_confirmation: bool,
     ownership: CleanupOwnership,
     category: CleanupCandidateCategory,
 }
@@ -221,6 +235,8 @@ struct DockerVolumeInspect {
     #[serde(default)]
     labels: Option<BTreeMap<String, String>>,
     #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
     usage_data: Option<DockerVolumeUsageData>,
 }
 
@@ -243,6 +259,7 @@ struct DockerNetworkInspect {
 struct BuilderCacheEstimate {
     reclaimable_bytes: Option<u64>,
     estimate_unknown: bool,
+    fingerprint_hint: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -265,8 +282,8 @@ pub async fn build_execution_plan(
     if matches!(
         req.preset,
         CleanupPreset::Balanced | CleanupPreset::ProjectDeepClean | CleanupPreset::Aggressive
-    ) {
-        let builder_cache = scan_builder_cache_candidate(state).await;
+    ) && let Some(builder_cache) = scan_builder_cache_candidate(state).await
+    {
         candidates.push(builder_cache);
     }
 
@@ -582,6 +599,7 @@ async fn scan_candidates(
                 .size_rw
                 .and_then(|size| u64::try_from(size).ok())
                 .is_none(),
+            requires_ephemeral_confirmation: false,
             ownership: owner,
             category: CleanupCandidateCategory::StoppedContainer,
         });
@@ -622,6 +640,7 @@ async fn scan_candidates(
             label,
             estimated_reclaimable_bytes: inspect.size,
             estimate_unknown: inspect.size.is_none(),
+            requires_ephemeral_confirmation: false,
             ownership,
             category,
         });
@@ -653,6 +672,10 @@ async fn scan_candidates(
         } else {
             CleanupCandidateCategory::ManagedUnusedVolume
         };
+        let volume_fingerprint = resolve_volume_fingerprint(state, &inspect).await;
+        if volume_fingerprint.is_none() {
+            continue;
+        }
         let mut estimated_reclaimable_bytes =
             inspect.usage_data.as_ref().and_then(|usage| usage.size);
         if estimated_reclaimable_bytes.is_none() {
@@ -669,12 +692,13 @@ async fn scan_candidates(
             estimated_reclaimable_bytes = scan_volume_size_from_mountpoint(state, mountpoint).await;
         }
         candidates.push(CleanupCandidate {
-            key: format!("volume:{}", inspect.name),
+            key: volume_fingerprint.unwrap_or_else(|| format!("volume:{}", inspect.name)),
             resource_id: inspect.name.clone(),
             kind: CleanupResourceKind::Volume,
             label: inspect.name.clone(),
             estimated_reclaimable_bytes,
             estimate_unknown: estimated_reclaimable_bytes.is_none(),
+            requires_ephemeral_confirmation: false,
             ownership,
             category,
         });
@@ -707,6 +731,7 @@ async fn scan_candidates(
             label: inspect.name.clone(),
             estimated_reclaimable_bytes: Some(0),
             estimate_unknown: false,
+            requires_ephemeral_confirmation: false,
             ownership: resolve_network_ownership(&inspect, managed),
             category: CleanupCandidateCategory::UnusedNetwork,
         });
@@ -715,23 +740,26 @@ async fn scan_candidates(
     Ok(candidates)
 }
 
-async fn scan_builder_cache_candidate(state: &AppState) -> CleanupCandidate {
+async fn scan_builder_cache_candidate(state: &AppState) -> Option<CleanupCandidate> {
     let estimate = scan_builder_cache_estimate(state)
         .await
         .unwrap_or(BuilderCacheEstimate {
             reclaimable_bytes: None,
             estimate_unknown: true,
+            fingerprint_hint: None,
         });
-    CleanupCandidate {
-        key: "builder_cache:global".to_string(),
+    let fingerprint_hint = estimate.fingerprint_hint?;
+    Some(CleanupCandidate {
+        key: format!("builder_cache:global:{fingerprint_hint}"),
         resource_id: "global-builder-cache".to_string(),
         kind: CleanupResourceKind::BuilderCache,
         label: "global builder cache".to_string(),
         estimated_reclaimable_bytes: estimate.reclaimable_bytes,
         estimate_unknown: estimate.estimate_unknown,
+        requires_ephemeral_confirmation: false,
         ownership: CleanupOwnership::Unowned,
         category: CleanupCandidateCategory::BuilderCache,
-    }
+    })
 }
 
 async fn scan_builder_cache_estimate(state: &AppState) -> Option<BuilderCacheEstimate> {
@@ -755,28 +783,33 @@ async fn scan_builder_cache_estimate(state: &AppState) -> Option<BuilderCacheEst
         && out.status == 0
         && let Some(estimate) = parse_buildx_du_json_lines(&out.stdout)
     {
+        let fingerprint_hint = fingerprint_hint_from_output(&out.stdout);
         if !estimate.estimate_unknown {
-            return Some(estimate);
-        }
-        if let Some(summary_reclaimable) = scan_builder_cache_text_summary(state).await
-            && summary_reclaimable >= estimate.reclaimable_bytes.unwrap_or_default()
-        {
             return Some(BuilderCacheEstimate {
-                reclaimable_bytes: Some(summary_reclaimable),
-                estimate_unknown: false,
+                fingerprint_hint,
+                ..estimate
             });
         }
-        return Some(estimate);
+        if let Some(summary_estimate) = scan_builder_cache_text_summary(state).await
+            && summary_estimate.reclaimable_bytes.unwrap_or_default()
+                >= estimate.reclaimable_bytes.unwrap_or_default()
+        {
+            return Some(BuilderCacheEstimate {
+                reclaimable_bytes: summary_estimate.reclaimable_bytes,
+                estimate_unknown: false,
+                fingerprint_hint,
+            });
+        }
+        return Some(BuilderCacheEstimate {
+            fingerprint_hint,
+            ..estimate
+        });
     }
 
-    let reclaimable = scan_builder_cache_text_summary(state).await;
-    Some(BuilderCacheEstimate {
-        reclaimable_bytes: reclaimable,
-        estimate_unknown: reclaimable.is_none(),
-    })
+    scan_builder_cache_text_summary(state).await
 }
 
-async fn scan_builder_cache_text_summary(state: &AppState) -> Option<u64> {
+async fn scan_builder_cache_text_summary(state: &AppState) -> Option<BuilderCacheEstimate> {
     let out = state
         .runner
         .run(
@@ -792,49 +825,12 @@ async fn scan_builder_cache_text_summary(state: &AppState) -> Option<u64> {
     if out.status != 0 {
         return None;
     }
-    parse_buildx_du_text_summary(&out.stdout)
-}
-
-async fn scan_volume_sizes_from_system_df(state: &AppState) -> BTreeMap<String, u64> {
-    let out = match state
-        .runner
-        .run(
-            CommandSpec {
-                program: "docker".to_string(),
-                args: vec!["system".to_string(), "df".to_string(), "-v".to_string()],
-                env: Vec::new(),
-            },
-            DOCKER_TIMEOUT,
-        )
-        .await
-    {
-        Ok(out) if out.status == 0 => out,
-        _ => return BTreeMap::new(),
-    };
-    parse_volume_sizes_from_system_df_verbose(&out.stdout)
-}
-
-async fn scan_volume_size_from_mountpoint(state: &AppState, mountpoint: &str) -> Option<u64> {
-    let mountpoint = mountpoint.trim();
-    if mountpoint.is_empty() {
-        return None;
-    }
-    let out = state
-        .runner
-        .run(
-            CommandSpec {
-                program: "du".to_string(),
-                args: vec!["-sk".to_string(), mountpoint.to_string()],
-                env: Vec::new(),
-            },
-            DOCKER_TIMEOUT,
-        )
-        .await
-        .ok()?;
-    if out.status != 0 {
-        return None;
-    }
-    parse_du_kilobytes_output(&out.stdout)
+    let reclaimable = parse_buildx_du_text_summary(&out.stdout);
+    Some(BuilderCacheEstimate {
+        reclaimable_bytes: reclaimable,
+        estimate_unknown: reclaimable.is_none(),
+        fingerprint_hint: fingerprint_hint_from_buildx_text_output(&out.stdout),
+    })
 }
 
 fn resolve_container_ownership(
@@ -1213,31 +1209,53 @@ fn candidate_reason(category: &CleanupCandidateCategory) -> &'static str {
 fn compute_confirmation_fingerprint(
     request: &CleanupPlanRequest,
     candidates: &[CleanupCandidate],
-    scanned_at: &str,
+    _scanned_at: &str,
     estimated_reclaimable_bytes: u64,
     has_unknown_size: bool,
 ) -> anyhow::Result<String> {
-    let selected = candidates
+    let mut selected = candidates
         .iter()
-        .map(|candidate| {
-            json!({
+        .map(|candidate| -> anyhow::Result<_> {
+            let ownership = ownership_json(&candidate.ownership);
+            let ownership_key = serde_json::to_string(&ownership)?;
+            let category = format!("{:?}", candidate.category);
+            let entry = json!({
                 "key": candidate.key,
                 "kind": candidate.kind.as_str(),
                 "resourceId": candidate.resource_id,
                 "label": candidate.label,
                 "estimatedReclaimableBytes": candidate.estimated_reclaimable_bytes,
                 "estimateUnknown": candidate.estimate_unknown,
-                "ownership": ownership_json(&candidate.ownership),
-                "category": format!("{:?}", candidate.category),
-            })
+                "requiresEphemeralConfirmation": candidate.requires_ephemeral_confirmation,
+                "ownership": ownership,
+                "category": category,
+            });
+            Ok((
+                (
+                    candidate.key.as_str().to_string(),
+                    candidate.kind.as_str().to_string(),
+                    candidate.resource_id.as_str().to_string(),
+                    candidate.label.as_str().to_string(),
+                    candidate.estimated_reclaimable_bytes,
+                    candidate.estimate_unknown,
+                    candidate.requires_ephemeral_confirmation,
+                    ownership_key,
+                    category,
+                ),
+                entry,
+            ))
         })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    selected.sort_by(|a, b| a.0.cmp(&b.0));
+    let selected = selected
+        .into_iter()
+        .map(|(_, entry)| entry)
         .collect::<Vec<_>>();
     let payload = json!({
         "preset": request.preset.as_str(),
         "scope": request.scope.as_str(),
         "stackId": request.stack_id,
         "serviceId": request.service_id,
-        "scannedAt": scanned_at,
         "estimatedReclaimableBytes": estimated_reclaimable_bytes,
         "hasUnknownSize": has_unknown_size,
         "selected": selected,
