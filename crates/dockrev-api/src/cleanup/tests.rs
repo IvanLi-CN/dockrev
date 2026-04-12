@@ -217,7 +217,7 @@ fn fingerprint_ignores_scanned_at_timestamp_changes() {
 }
 
 #[test]
-fn fingerprint_uses_scanned_at_timestamp_for_ephemeral_confirmation_candidates() {
+fn fingerprint_ignores_scanned_at_for_ephemeral_confirmation_candidates() {
     let request = CleanupPlanRequest {
         preset: CleanupPreset::ProjectDeepClean,
         scope: CleanupScope::All,
@@ -239,7 +239,7 @@ fn fingerprint_uses_scanned_at_timestamp_for_ephemeral_confirmation_candidates()
     let second =
         compute_confirmation_fingerprint(&request, &selected, "2026-03-29T00:00:30Z", 256, false)
             .unwrap();
-    assert_ne!(first, second);
+    assert_eq!(first, second);
 }
 
 #[test]

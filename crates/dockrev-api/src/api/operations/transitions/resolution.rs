@@ -148,12 +148,6 @@ pub(crate) async fn resolve_service_display_tag_for_digest(
     {
         return Ok(Some(resolved));
     }
-    if let Some(persisted) = persisted_resolved_tag
-        .map(str::trim)
-        .filter(|tag| !tag.is_empty())
-    {
-        return Ok(Some(persisted.to_string()));
-    }
     if let Some(inferred) = infer_service_display_tag_from_snapshot(state, service, digest).await? {
         return Ok(Some(inferred));
     }

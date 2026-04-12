@@ -80,7 +80,7 @@ services:
 }
 
 #[tokio::test]
-async fn cleanup_scan_uses_ephemeral_fingerprint_when_builder_cache_has_no_inventory_hint() {
+async fn cleanup_scan_keeps_stable_fingerprint_when_builder_cache_has_no_inventory_hint() {
     let db_path = format!("/tmp/dockrev-cleanup-builder-ephemeral-{}.sqlite3", ulid::Ulid::new());
     let runner = Arc::new(CleanupRunner::builder_cache_no_inventory_hint());
     let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
@@ -126,14 +126,14 @@ async fn cleanup_scan_uses_ephemeral_fingerprint_when_builder_cache_has_no_inven
     assert_eq!(second.status(), 200);
     let second_body = response_json(second).await;
 
-    assert_ne!(
+    assert_eq!(
         first_body["confirmationFingerprint"].as_str(),
         second_body["confirmationFingerprint"].as_str()
     );
 }
 
 #[tokio::test]
-async fn cleanup_scan_uses_ephemeral_fingerprint_when_builder_cache_falls_back_to_text_summary() {
+async fn cleanup_scan_keeps_stable_fingerprint_when_builder_cache_falls_back_to_text_summary() {
     let db_path = format!(
         "/tmp/dockrev-cleanup-builder-text-ephemeral-{}.sqlite3",
         ulid::Ulid::new()
@@ -182,7 +182,7 @@ async fn cleanup_scan_uses_ephemeral_fingerprint_when_builder_cache_falls_back_t
     assert_eq!(second.status(), 200);
     let second_body = response_json(second).await;
 
-    assert_ne!(
+    assert_eq!(
         first_body["confirmationFingerprint"].as_str(),
         second_body["confirmationFingerprint"].as_str()
     );

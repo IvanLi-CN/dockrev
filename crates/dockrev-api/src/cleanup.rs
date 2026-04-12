@@ -1212,13 +1212,10 @@ fn candidate_reason(category: &CleanupCandidateCategory) -> &'static str {
 fn compute_confirmation_fingerprint(
     request: &CleanupPlanRequest,
     candidates: &[CleanupCandidate],
-    scanned_at: &str,
+    _scanned_at: &str,
     estimated_reclaimable_bytes: u64,
     has_unknown_size: bool,
 ) -> anyhow::Result<String> {
-    let requires_ephemeral_confirmation = candidates
-        .iter()
-        .any(|candidate| candidate.requires_ephemeral_confirmation);
     let selected = candidates
         .iter()
         .map(|candidate| {
@@ -1242,7 +1239,6 @@ fn compute_confirmation_fingerprint(
         "serviceId": request.service_id,
         "estimatedReclaimableBytes": estimated_reclaimable_bytes,
         "hasUnknownSize": has_unknown_size,
-        "ephemeralConfirmationKey": requires_ephemeral_confirmation.then_some(scanned_at),
         "selected": selected,
     });
     let encoded = serde_json::to_vec(&payload)?;
