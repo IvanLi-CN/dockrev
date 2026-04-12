@@ -4,8 +4,8 @@
 
 - Status: 已完成
 - Created: 2026-04-06
-- Last: 2026-04-06
-- Notes: fast-track（PR #205；implementation + storybook evidence + review-loop completed）
+- Last: 2026-04-07
+- Notes: fast-track（PR #205 released as 0.39.3；2026-04-07 follow-up hardens runtime estimate fallbacks so Cleanup no longer stalls on unknown sizes when daemon metadata is missing）
 
 ## 背景 / 问题陈述
 
@@ -18,7 +18,7 @@
 ### Goals
 
 - 顶部 `全部 / 重扫` 复用现有图标体系，补齐一致的前导 icon。
-- 为 unused volume 增加 `docker system df -v` 尺寸兜底；builder cache 改为优先走 `docker buildx du --format=json`，并保留文本摘要 fallback。
+- 为 unused volume 增加 `docker system df -v` + `Mountpoint -> du -sk` 双层尺寸兜底；builder cache 改为优先走 `docker buildx du --format=json`，并在 shared/缺值场景回退到文本摘要 `Reclaimable:` 总量。
 - 当 Docker 仍不给值时，把 Cleanup 页文案统一为“大小未知 / 已知部分按下限展示”，不再显示 `待估`。
 - 保持现有 cleanup API schema、scope/filter/fingerprint/apply 语义不变。
 
@@ -32,7 +32,7 @@
 
 ### In scope
 
-- `crates/dockrev-api/src/cleanup.rs` 的 volume / builder cache 估算来源增强与测试。
+- `crates/dockrev-api/src/cleanup.rs` 的 volume / builder cache 估算来源增强（含 mountpoint/summary 强制兜底）与测试。
 - `web/src/pages/CleanupPage.tsx` 顶部按钮图标与 unknown copy 调整。
 - `web/src/stories/pages/CleanupPage.stories.tsx` 的 autodocs / play 回归更新。
 - 本 follow-up spec 的状态、验收、视觉证据与索引同步。
@@ -48,14 +48,14 @@
 ### MUST
 
 - 顶部 `全部` 按钮显示清理图标，`重扫` 按钮显示刷新图标，且 loading / disabled 态布局不退化。
-- 当 Docker 可从 `system df -v` 或 `buildx du --format=json` 提供估算时，Cleanup 页必须显示数值而非 unknown。
+- 当 Docker metadata 缺失但 volume mountpoint 可读、或 builder summary 可提供 `Reclaimable:` 汇总时，Cleanup 页仍必须显示数值而非 unknown。
 - 当所有估算来源都失败时，UI 必须显示“未知大小”语义，并明确“已知部分按下限展示 / 释放量按下限展示”。
 - Storybook 现有 `Pages/CleanupPage` 入口必须更新，覆盖新 copy 与顶部按钮 icon 回归。
 
 ### SHOULD
 
 - Builder cache JSON 主路径失败时自动回退到现有文本摘要解析，不把可估算状态错误降级为 unknown。
-- Volume 兜底只在 `volume inspect` 未提供 `UsageData.Size` 时触发，避免覆盖 daemon 直接给出的值。
+- Volume 兜底只在 `volume inspect` 未提供 `UsageData.Size` 时触发，并按 `system df -v` 优先、`Mountpoint -> du -sk` 次之，避免覆盖 daemon 直接给出的值。
 
 ### COULD
 
@@ -66,14 +66,14 @@
 ### Core flows
 
 - Cleanup 页继续先做 page scan，再基于 page scan 投影各 preset；顶部动作按钮仅新增前导 icon，不改交互路径。
-- 后端扫描 unused volumes 时，优先使用 `volume inspect` 的 `UsageData.Size`；若缺失，则从同轮 `docker system df -v` 的 local volumes 区块按 volume 名称补齐大小。
-- 后端扫描 builder cache 时，优先解析 `docker buildx du --format=json` 的 reclaimable 记录；若 JSON 不可用或不可解析，再回退到当前 `buildx du` 文本摘要的 `Reclaimable:` 行。
+- 后端扫描 unused volumes 时，优先使用 `volume inspect` 的 `UsageData.Size`；若缺失，则先从同轮 `docker system df -v` 的 local volumes 区块按 volume 名称补齐大小，再回退到 `Mountpoint -> du -sk` 读取真实占用。
+- 后端扫描 builder cache 时，优先解析 `docker buildx du --format=json` 的 reclaimable 记录；若 JSON 不可用、不可解析，或仅得到 shared lower-bound，则回退到当前 `buildx du` 文本摘要的 `Reclaimable:` 行作为总量兜底。
 - 前端渲染估算值时，未知且无已知字节时显示 `未知大小`；未知但已有已知部分时继续显示 `<bytes>+`，并在 hint 中明确“大小未知 / 下限展示”。
 
 ### Edge cases / errors
 
-- `docker system df -v` 失败或未返回目标 volume 行时，volume 继续保持 unknown，不阻断整页扫描。
-- `docker buildx du --format=json` 返回空或非法 JSON 时，builder cache 自动回退到文本摘要解析；若文本也无法解析，则保持 unknown。
+- `docker system df -v` 失败或未返回目标 volume 行时，volume 继续尝试 `Mountpoint -> du -sk`；仅在 mountpoint 不可读或命令失败时才保持 unknown，且不阻断整页扫描。
+- `docker buildx du --format=json` 返回空、非法 JSON，或只给 shared lower-bound 时，builder cache 自动回退到文本摘要解析；若文本也无法解析，则保持 unknown。
 - 顶部按钮 icon 不影响既有 `findButton(..., '全部'|'重扫')` 文本识别，也不影响 loading spinner 包装。
 
 ## 接口契约（Interfaces & Contracts）
@@ -89,8 +89,8 @@ None
 ## 验收标准（Acceptance Criteria）
 
 - Given 打开 Cleanup 页，When 顶部动作渲染，Then `全部` 与 `重扫` 左侧分别显示现有清理 / 刷新图标。
-- Given unused volume 在 `volume inspect` 中缺少 `UsageData.Size`，When `docker system df -v` 提供对应 local volume 大小，Then scan 响应中的该 volume/group 估算值为该字节数，且 `hasUnknownSize=false`。
-- Given builder cache JSON 主路径失败但文本摘要包含 `Reclaimable:`，When 执行 cleanup scan，Then builder cache 仍显示可回收字节值且不退化为 unknown。
+- Given unused volume 在 `volume inspect` 中缺少 `UsageData.Size` 且 `system df -v` 没给对应行，When volume `Mountpoint` 可读且 `du -sk` 返回占用，Then scan 响应中的该 volume/group 估算值为该字节数，且 `hasUnknownSize=false`。
+- Given builder cache JSON 主路径失败或仅返回 shared lower-bound，但文本摘要包含 `Reclaimable:`，When 执行 cleanup scan，Then builder cache 仍显示可回收字节值且不退化为 unknown。
 - Given Cleanup 页存在未知大小资源，When 页面渲染，Then UI 不出现 `待估`，而是显示 `未知大小` / `大小未知，已知部分按下限展示` 等明确语义。
 - Given 运行 `cargo test -p dockrev-api cleanup -- --nocapture`、`bun run --cwd web lint`、`bun run --cwd web build`、`bun run --cwd web build-storybook`、`bun run --cwd web test-storybook -- --url <leased-port>`，When 本改动完成，Then 全部通过。
 
@@ -176,9 +176,9 @@ None
 ## 风险 / 开放问题 / 假设（Risks, Open Questions, Assumptions）
 
 - 风险：不同 Docker 版本的 `system df -v` / `buildx du --format=json` 输出格式可能略有差异，parser 需要保守容错。
-- 风险：builder cache JSON 行按 reclaimable size 求和属于近似值，仍可能与 daemon 汇总显示存在轻微偏差。
+- 风险：builder cache JSON 行按 reclaimable size 求和属于近似值；当 shared rows 存在时改用 summary 总量，可读性更强，但与逐行统计口径可能略有差异。
 - 需要决策的问题：None
-- 假设（需主人确认）：当前目标环境支持 `docker system df -v`，且 local volume 名称能与 `volume ls` / `volume inspect` 对齐。
+- 假设（需主人确认）：当前目标环境允许 Dockrev 读取 volume mountpoint 并执行 `du -sk`；若部署环境限制宿主机文件系统读取，则该兜底会退回 unknown。
 
 ## 变更记录（Change log）
 
@@ -193,3 +193,5 @@ None
 - `docs/specs/qynjg-docker-prune-cleanup-console/SPEC.md`
 - `web/src/pages/CleanupPage.tsx`
 - `crates/dockrev-api/src/cleanup.rs`
+
+- 2026-04-07：发布后根据真实运行截图补强兜底策略：unused volume 在 `system df -v` 缺值时继续读取 `Mountpoint -> du -sk`，builder cache 在 JSON 仅返回 shared lower-bound 时继续使用文本摘要 `Reclaimable:` 总量，确保 Cleanup 页面尽可能输出明确数值。

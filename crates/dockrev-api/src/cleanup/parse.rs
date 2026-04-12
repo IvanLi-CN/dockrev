@@ -73,6 +73,22 @@ pub(super) fn parse_buildx_du_json_lines(input: &str) -> Option<BuilderCacheEsti
     })
 }
 
+pub(super) fn parse_buildx_du_text_summary(input: &str) -> Option<u64> {
+    input
+        .lines()
+        .find_map(|line| line.strip_prefix("Reclaimable:"))
+        .and_then(|raw| parse_human_size(raw.trim()))
+}
+
+pub(super) fn parse_du_kilobytes_output(input: &str) -> Option<u64> {
+    let line = input.lines().find(|line| !line.trim().is_empty())?;
+    let kib = line
+        .split_whitespace()
+        .next()
+        .and_then(|raw| raw.parse::<u64>().ok())?;
+    kib.checked_mul(1024)
+}
+
 fn parse_size_value(value: &serde_json::Value) -> Option<u64> {
     match value {
         serde_json::Value::Number(number) => number.as_u64(),

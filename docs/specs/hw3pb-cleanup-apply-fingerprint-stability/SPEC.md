@@ -119,7 +119,7 @@
   sensitive_exclusion: `shared host only validates run-scoped compose projects and owned cleanup targets`
   submission_gate: `chat-only`
   state: `stack-scoped cleanup deletes run-owned stopped container and old image on codex-testbox`
-  evidence_note: `scripts/verify_shared_testbox_cleanup.sh` 会把当前 worktree 同步到 `codex-testbox` 的 `/srv/codex/workspaces/ivan/dockrev__1f41701c/runs/<RUN_ID>`，部署 Dockrev 与一个唯一 fixture stack，额外造出一个带 compose labels 的 stopped ghost container 和同 repo 的 old image，随后触发 discovery、执行 `preset=balanced scope=stack` cleanup，并校验 `deletedCountsByKind.container=1`、`deletedCountsByKind.image=1`，且目标容器/镜像已从共享 Docker daemon 消失。最近一次保留供复查的 run 为 `20260411_163616_e230f4f`（脚本 proof job `job_01KNYPMSAMHNQMHWPQ150HCFQP`，remote gateway `127.0.0.1:33733`）；同一保留环境里再次重建 ghost container + old image 后，真实浏览器从 `/cleanup` 点击 `清理此 stack -> 确认清理`，成功跳转到 job `job_01KNYR2FDS5BANWSHPWQVHNA6Y` 详情页，并显示 `deleted container` / `deleted image` 日志；同日也验证了默认 auto-cleanup 模式会在成功后移除 run 目录与本次 compose 资源。
+  evidence_note: `scripts/verify_shared_testbox_cleanup.sh` 会把当前 worktree 同步到 `codex-testbox` 的 `/srv/codex/workspaces/ivan/dockrev__1f41701c/runs/<RUN_ID>`，部署 Dockrev 与一个唯一 fixture stack，额外造出一个带 compose labels 的 stopped ghost container 和同 repo 的 old image，随后触发 discovery、执行 `preset=balanced scope=stack` cleanup，并校验 `deletedCountsByKind.container=1`、`deletedCountsByKind.image=1`，且目标容器/镜像已从共享 Docker daemon 消失。当前最新保留供复查的 merged-head run 为 `20260412_020135_92e219e`（脚本 proof job `job_01KNZPZYWSRVA3X47MNR8ZE117`，remote gateway `127.0.0.1:46133`）；同一保留环境里再次重建 ghost container + old image 后，真实浏览器从 `/cleanup` 点击 `清理此 stack -> 确认清理`，成功跳转到 job `job_01KNZQ9C21GJ8J40XAZ69FDJAX` 详情页，并显示 `deleted container` / `deleted image` 日志。较早的 `20260411_163616_e230f4f` run 已证明同脚本在 pre-merge head 也能重复通过；默认 auto-cleanup 模式同样会在成功后移除 run 目录与本次 compose 资源。
 
 ## 实现里程碑（Milestones / Delivery checklist）
 
@@ -147,6 +147,7 @@
 - 2026-04-11：完成后端修复与回归测试，确认 `scannedAt` 不再触发伪 stale，真实候选变化仍返回 `409 cleanup_snapshot_stale`。
 - 2026-04-11：完成本地浏览器 proof 与 stale 诊断日志验证。
 - 2026-04-11：新增 `scripts/verify_shared_testbox_cleanup.sh`，并在 `codex-testbox` 真实部署 Dockrev + fixture stack，验证 stack-scoped cleanup 成功删除 run-owned stopped container 与 old image；随后在保留环境中重建清理目标，并通过真实 `/cleanup` 页面完成 `清理此 stack -> 确认清理 -> job detail success` 链路复验；同日也跑通默认 auto-cleanup 与 `--keep-run` 复查模式。
+- 2026-04-12：在合入 `origin/main` 的当前 HEAD 上再次跑通 shared testbox 脚本 proof（run `20260412_020135_92e219e`）与真实浏览器 stack cleanup 链路复验，确认 merged-head 仍可稳定删除 run-owned stopped container 与 old image。
 
 ## 参考（References）
 

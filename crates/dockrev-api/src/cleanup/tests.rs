@@ -1,3 +1,4 @@
+use super::parse::parse_human_size;
 use super::*;
 
 fn sample_candidate(
@@ -368,6 +369,22 @@ fn parse_buildx_du_json_lines_marks_lower_bound_unknown_when_shared_rows_are_pre
 }
 
 #[test]
+fn parse_buildx_du_text_summary_reads_reclaimable_total() {
+    let input = "ID: example
+Reclaimable:  26.6GB
+Total:  30.1GB
+";
+    assert_eq!(parse_buildx_du_text_summary(input), Some(26_600_000_000));
+}
+
+#[test]
+fn parse_du_kilobytes_output_reads_first_column() {
+    let input = "1536\t/var/lib/docker/volumes/demo_named/_data
+";
+    assert_eq!(parse_du_kilobytes_output(input), Some(1_572_864));
+}
+
+#[test]
 fn fingerprint_changes_when_reusable_volume_instance_changes() {
     let request = CleanupPlanRequest {
         preset: CleanupPreset::ProjectDeepClean,
@@ -422,6 +439,19 @@ fn fingerprint_hint_from_output_changes_with_builder_cache_inventory() {
     assert!(first.is_some());
     assert!(second.is_some());
     assert_ne!(first, second);
+}
+
+#[test]
+fn fingerprint_hint_from_output_is_order_insensitive_for_same_inventory() {
+    let first = fingerprint_hint_from_output(
+        r#"{"ID":"sha256:a","Reclaimable":true,"Shared":false,"Size":"128"}
+{"ID":"sha256:b","Reclaimable":true,"Shared":false,"Size":"64"}"#,
+    );
+    let second = fingerprint_hint_from_output(
+        r#"{"ID":"sha256:b","Reclaimable":true,"Shared":false,"Size":"64"}
+{"ID":"sha256:a","Reclaimable":true,"Shared":false,"Size":"128"}"#,
+    );
+    assert_eq!(first, second);
 }
 
 #[test]

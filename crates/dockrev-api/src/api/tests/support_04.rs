@@ -272,6 +272,73 @@ demo_named          0                   128 MB
                     }
                 }
             }
+            CleanupRunnerMode::VolumeMountpointFallback => {
+                if args == vec!["container", "ls", "-aq"]
+                    || args == vec!["image", "ls", "-aq", "--no-trunc"]
+                    || args == vec!["network", "ls", "-q"]
+                {
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["volume", "ls", "-q"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: "demo_named
+".to_string(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["volume", "inspect", "--format", "{{json .}}", "demo_named"]
+                {
+                    CommandOutput {
+                        status: 0,
+                        stdout: serde_json::json!({
+                            "Name": "demo_named",
+                            "Mountpoint": "/var/lib/docker/volumes/demo_named/_data",
+                            "Labels": {
+                                "com.docker.compose.project": "demo",
+                                "com.docker.compose.service": "web"
+                            }
+                        })
+                        .to_string(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["system", "df", "-v"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: r#"Images space usage:
+REPOSITORY          TAG                 IMAGE ID            CREATED             SIZE                SHARED SIZE         UNIQUE SIZE         CONTAINERS
+Local Volumes space usage:
+NAME                LINKS               SIZE
+"#
+                        .to_string(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["-sk", "/var/lib/docker/volumes/demo_named/_data"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: "1536	/var/lib/docker/volumes/demo_named/_data
+".to_string(),
+                        stderr: String::new(),
+                    }
+                } else if args == vec!["buildx", "du", "--format=json"] {
+                    CommandOutput {
+                        status: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                } else {
+                    CommandOutput {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: format!(
+                            "unexpected cleanup volume mountpoint fallback args: {:?}",
+                            args
+                        ),
+                    }
+                }
+            }
             CleanupRunnerMode::BuilderCacheTextFallback => {
                 if args == vec!["container", "ls", "-aq"]
                     || args == vec!["image", "ls", "-aq", "--no-trunc"]
