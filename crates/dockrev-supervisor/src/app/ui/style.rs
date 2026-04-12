@@ -1,5 +1,5 @@
 pub(crate) const STYLE_CSS: &str = r#"
-      :root {{
+      :root {
         color-scheme: dark;
         --bg: #081019;
         --bg-layered:
@@ -38,8 +38,8 @@ pub(crate) const STYLE_CSS: &str = r#"
         --warn: #ffb155;
         --info: #53a9ff;
         --selection: rgba(64, 180, 255, 0.18);
-      }}
-      html[data-theme='light'] {{
+      }
+      html[data-theme='light'] {
         color-scheme: light;
         --bg: #f4f7fb;
         --bg-layered:
@@ -78,10 +78,10 @@ pub(crate) const STYLE_CSS: &str = r#"
         --warn: #a16207;
         --info: #2563eb;
         --selection: rgba(22, 135, 217, 0.15);
-      }}
-      * {{ box-sizing: border-box; }}
-      html {{ background: var(--bg); }}
-      body {{
+      }
+      * { box-sizing: border-box; }
+      html { background: var(--bg); }
+      body {
         font-family: 'IBM Plex Sans', 'Avenir Next', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
         min-height: 100vh;
         margin: 0 auto;
@@ -91,21 +91,21 @@ pub(crate) const STYLE_CSS: &str = r#"
         background-size: 24px 24px, 24px 24px, auto, auto, auto;
         background-attachment: fixed;
         color: var(--text);
-      }}
-      ::selection {{ background: var(--selection); }}
-      a {{ color: var(--link); text-decoration: none; }}
-      a:hover {{ color: var(--link-hover); text-decoration: underline; }}
-      code {{
+      }
+      ::selection { background: var(--selection); }
+      a { color: var(--link); text-decoration: none; }
+      a:hover { color: var(--link-hover); text-decoration: underline; }
+      code {
         background: var(--code-bg);
         padding: 2px 7px;
         border-radius: 999px;
         word-break: break-all;
-      }}
+      }
       button,
       input,
       textarea,
-      select {{ font: inherit; }}
-      button {{
+      select { font: inherit; }
+      button {
         min-height: 38px;
         padding: 8px 12px;
         border-radius: 12px;
@@ -114,37 +114,37 @@ pub(crate) const STYLE_CSS: &str = r#"
         color: var(--button-text);
         cursor: pointer;
         transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
-      }}
-      button:hover:not([disabled]) {{
+      }
+      button:hover:not([disabled]) {
         background: var(--button-hover);
         border-color: rgba(64, 180, 255, 0.34);
         box-shadow: inset 0 0 0 1px rgba(64, 180, 255, 0.08);
-      }}
+      }
       button:focus-visible,
-      input:focus-visible {{
+      input:focus-visible {
         outline: 2px solid rgba(64, 180, 255, 0.38);
         outline-offset: 2px;
-      }}
-      button[disabled] {{
+      }
+      button[disabled] {
         opacity: 0.52;
         cursor: not-allowed;
         box-shadow: none;
-      }}
-      button.primary {{
+      }
+      button.primary {
         background: linear-gradient(135deg, rgba(64, 180, 255, 0.2), rgba(255, 176, 87, 0.16));
         border-color: rgba(64, 180, 255, 0.4);
-      }}
-      html[data-theme='light'] button.primary {{
+      }
+      html[data-theme='light'] button.primary {
         background: linear-gradient(135deg, rgba(22, 135, 217, 0.14), rgba(204, 122, 41, 0.12));
         border-color: rgba(15, 106, 169, 0.22);
-      }}
-      button.btnRunning {{
+      }
+      button.btnRunning {
         display: inline-flex;
         align-items: center;
         justify-content: center;
         gap: 7px;
-      }}
-      button.btnRunning::before {{
+      }
+      button.btnRunning::before {
         content: '';
         width: 11px;
         height: 11px;
@@ -152,8 +152,8 @@ pub(crate) const STYLE_CSS: &str = r#"
         border: 2px solid var(--spinner-track);
         border-top-color: var(--spinner-head);
         animation: supervisorButtonSpin 0.8s linear infinite;
-      }}
-      input {{
+      }
+      input {
         width: 100%;
         min-width: 0;
         padding: 9px 12px;
@@ -162,8 +162,8 @@ pub(crate) const STYLE_CSS: &str = r#"
         background: var(--input-bg);
         color: var(--text);
         box-shadow: var(--input-shadow);
-      }}
-      pre {{
+      }
+      pre {
         margin: 0;
         padding: 12px 14px;
         border-radius: 16px;
@@ -174,83 +174,83 @@ pub(crate) const STYLE_CSS: &str = r#"
         font-size: 13px;
         line-height: 1.52;
         font-family: 'IBM Plex Mono', 'JetBrains Mono', 'SFMono-Regular', 'Menlo', monospace;
-      }}
-      .shell {{
+      }
+      .shell {
         display: grid;
         gap: 14px;
         padding-top: 18px;
-      }}
-      .panel {{
+      }
+      .panel {
         border: 1px solid var(--panel-border);
         border-radius: 20px;
         padding: 16px;
         background: var(--panel);
         box-shadow: var(--panel-shadow);
-      }}
-      .muted {{
+      }
+      .muted {
         color: var(--muted);
         font-size: 12px;
         line-height: 1.48;
-      }}
+      }
       .eyebrow,
-      .sectionEyebrow {{
+      .sectionEyebrow {
         color: var(--accent);
         font-size: 11px;
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.14em;
-      }}
-      .sectionHeadingRow {{
+      }
+      .sectionHeadingRow {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 10px;
         flex-wrap: wrap;
         margin-bottom: 12px;
-      }}
-      .sectionHeadingRow h2 {{
+      }
+      .sectionHeadingRow h2 {
         margin: 5px 0 0;
         font-size: 18px;
         line-height: 1.08;
         letter-spacing: -0.02em;
-      }}
-      .sectionHeadingMeta {{
+      }
+      .sectionHeadingMeta {
         text-align: right;
-      }}
-      .sectionLead {{
+      }
+      .sectionLead {
         display: grid;
         gap: 4px;
         margin-bottom: 12px;
-      }}
-      .sectionLead h2 {{
+      }
+      .sectionLead h2 {
         margin: 0;
         font-size: 18px;
         line-height: 1.08;
         letter-spacing: -0.02em;
-      }}
-      .sectionNote {{
+      }
+      .sectionNote {
         max-width: 76ch;
-      }}
-      .masthead {{
+      }
+      .masthead {
         padding-top: 10px;
         padding-bottom: 10px;
-      }}
-      .mastheadRow {{
+      }
+      .mastheadRow {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto;
         gap: 12px;
         align-items: center;
-      }}
-      .titleBlock {{
+      }
+      .titleBlock {
         display: grid;
         gap: 6px;
-      }}
-      .brandRow {{
+      }
+      .brandRow {
         display: flex;
         gap: 10px;
         align-items: center;
-      }}
-      .brandMark {{
+      }
+      .brandMark {
         width: 36px;
         height: 36px;
         display: inline-flex;
@@ -260,26 +260,26 @@ pub(crate) const STYLE_CSS: &str = r#"
         background: linear-gradient(145deg, rgba(64, 180, 255, 0.16), rgba(255, 176, 87, 0.08));
         border: 1px solid rgba(64, 180, 255, 0.2);
         flex: 0 0 auto;
-      }}
-      .brandMark img {{
+      }
+      .brandMark img {
         display: block;
         width: 20px;
         height: 20px;
-      }}
-      .masthead h1 {{
+      }
+      .masthead h1 {
         margin: 0;
         font-size: clamp(24px, 2.2vw, 32px);
         line-height: 1;
         letter-spacing: -0.04em;
-      }}
-      .intro {{
+      }
+      .intro {
         margin: 0;
         max-width: 62ch;
         color: var(--muted);
         font-size: 12px;
         line-height: 1.45;
-      }}
-      .metaFooter {{
+      }
+      .metaFooter {
         display: grid;
         grid-template-columns: 180px minmax(0, 1fr) 160px;
         gap: 18px;
@@ -287,8 +287,8 @@ pub(crate) const STYLE_CSS: &str = r#"
         margin-top: 6px;
         padding: 16px 4px 0;
         border-top: 1px solid var(--panel-border);
-      }}
-      .metaPill {{
+      }
+      .metaPill {
         display: grid;
         gap: 4px;
         min-width: 0;
@@ -296,23 +296,23 @@ pub(crate) const STYLE_CSS: &str = r#"
         border: 0;
         border-radius: 0;
         background: none;
-      }}
-      .metaPill + .metaPill {{
+      }
+      .metaPill + .metaPill {
         padding-left: 18px;
         border-left: 1px solid var(--panel-border);
-      }}
-      .metaLabel {{
+      }
+      .metaLabel {
         color: var(--muted);
         font-size: 10px;
         text-transform: uppercase;
         letter-spacing: 0.14em;
-      }}
-      .metaValue {{
+      }
+      .metaValue {
         font-size: 12px;
         line-height: 1.42;
         word-break: break-word;
-      }}
-      .linkButton {{
+      }
+      .linkButton {
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -322,12 +322,12 @@ pub(crate) const STYLE_CSS: &str = r#"
         border: 1px solid var(--button-border);
         background: var(--surface);
         color: var(--link);
-      }}
-      .linkButton:hover {{
+      }
+      .linkButton:hover {
         background: var(--button-hover);
         text-decoration: none;
-      }}
-      .actionDeckGrid {{
+      }
+      .actionDeckGrid {
         display: grid;
         grid-template-columns: minmax(220px, 250px) minmax(0, 1fr) auto;
         grid-template-areas:
@@ -336,50 +336,50 @@ pub(crate) const STYLE_CSS: &str = r#"
         column-gap: 12px;
         row-gap: 10px;
         align-items: end;
-      }}
-      .actionDeckGrid > * {{ min-width: 0; }}
-      .fieldBlock {{
+      }
+      .actionDeckGrid > * { min-width: 0; }
+      .fieldBlock {
         grid-area: field;
         display: grid;
         gap: 7px;
         align-self: end;
-      }}
-      .fieldLabel {{
+      }
+      .fieldLabel {
         font-size: 11px;
         color: var(--muted);
         text-transform: uppercase;
         letter-spacing: 0.12em;
-      }}
-      .fieldHint {{
+      }
+      .fieldHint {
         font-size: 11px;
         color: var(--muted);
-      }}
-      .actionFieldHint {{
+      }
+      .actionFieldHint {
         grid-area: hint;
         margin-top: -2px;
-      }}
-      .actionControls {{
+      }
+      .actionControls {
         display: grid;
         gap: 10px;
-      }}
-      .buttonGroup {{
+      }
+      .buttonGroup {
         display: flex;
         flex-wrap: wrap;
         gap: 10px;
         align-items: center;
-      }}
-      .buttonGroup > * {{ flex: 0 0 auto; }}
-      .buttonGroup-main {{
+      }
+      .buttonGroup > * { flex: 0 0 auto; }
+      .buttonGroup-main {
         grid-area: primary;
         align-self: end;
-      }}
-      .buttonGroup-aux {{
+      }
+      .buttonGroup-aux {
         grid-area: aux;
         justify-content: flex-end;
         justify-self: end;
         align-self: end;
-      }}
-      .actionCallout {{
+      }
+      .actionCallout {
         grid-area: note;
         min-height: 40px;
         display: flex;
@@ -388,8 +388,8 @@ pub(crate) const STYLE_CSS: &str = r#"
         border-radius: 14px;
         border: 1px dashed var(--panel-border);
         background: var(--surface);
-      }}
-      .workspaceGrid {{
+      }
+      .workspaceGrid {
         display: grid;
         grid-template-columns: minmax(0, 1fr) 320px;
         grid-template-areas:
@@ -397,55 +397,55 @@ pub(crate) const STYLE_CSS: &str = r#"
           'detail sidebar';
         gap: 14px;
         align-items: start;
-      }}
-      .workspaceGrid.workspaceGrid-logsOnly {{
+      }
+      .workspaceGrid.workspaceGrid-logsOnly {
         grid-template-columns: minmax(0, 1fr);
         grid-template-areas:
           'logs'
           'sidebar'
           'detail';
-      }}
-      .opsSidebar {{
+      }
+      .opsSidebar {
         grid-area: sidebar;
         display: grid;
         gap: 12px;
         align-content: start;
-      }}
+      }
       .historyRail,
       .logPanel,
-      .statusSidebar {{
+      .statusSidebar {
         border-radius: 18px;
         border: 1px solid var(--panel-border);
         background: var(--surface);
-      }}
-      .logPanel {{
+      }
+      .logPanel {
         grid-area: logs;
         min-height: 420px;
         display: grid;
         grid-template-rows: auto 1fr;
         padding: 14px;
-      }}
-      .logHeader {{
+      }
+      .logHeader {
         display: flex;
         justify-content: space-between;
         align-items: flex-start;
         gap: 12px;
         flex-wrap: wrap;
         margin-bottom: 10px;
-      }}
-      .logTitle {{
+      }
+      .logTitle {
         margin-top: 2px;
         font-size: 16px;
         line-height: 1.08;
         font-weight: 600;
-      }}
-      .logSummary {{
+      }
+      .logSummary {
         max-width: 300px;
         text-align: right;
         font-size: 11px;
         line-height: 1.42;
-      }}
-      #logs {{
+      }
+      #logs {
         height: 100%;
         min-height: 320px;
         padding: 10px 12px;
@@ -453,116 +453,116 @@ pub(crate) const STYLE_CSS: &str = r#"
         line-height: 1.48;
         background: var(--console-bg);
         border: 1px solid var(--panel-border);
-      }}
-      .logLine {{
+      }
+      .logLine {
         display: block;
         margin: 0 -4px;
         padding: 3px 8px;
         border-radius: 10px;
-      }}
-      .logLine + .logLine {{
+      }
+      .logLine + .logLine {
         margin-top: 2px;
-      }}
-      .logLine-warn {{
+      }
+      .logLine-warn {
         background: rgba(255, 177, 85, 0.08);
-      }}
+      }
       .logLine-error,
-      .logLine-fatal {{
+      .logLine-fatal {
         background: rgba(255, 123, 123, 0.1);
-      }}
-      html[data-theme='light'] .logLine-warn {{
+      }
+      html[data-theme='light'] .logLine-warn {
         background: rgba(161, 98, 7, 0.09);
-      }}
+      }
       html[data-theme='light'] .logLine-error,
-      html[data-theme='light'] .logLine-fatal {{
+      html[data-theme='light'] .logLine-fatal {
         background: rgba(194, 65, 65, 0.1);
-      }}
-      .logToken-ts {{
+      }
+      .logToken-ts {
         color: var(--muted);
-      }}
-      .logToken-level {{
+      }
+      .logToken-level {
         font-weight: 700;
         letter-spacing: 0.04em;
-      }}
+      }
       .logLevel-trace,
-      .logLevel-debug {{
+      .logLevel-debug {
         color: var(--muted);
-      }}
-      .logLevel-info {{
+      }
+      .logLevel-info {
         color: var(--info);
-      }}
-      .logLevel-warn {{
+      }
+      .logLevel-warn {
         color: var(--warn);
-      }}
+      }
       .logLevel-error,
-      .logLevel-fatal {{
+      .logLevel-fatal {
         color: var(--bad);
-      }}
-      .logToken-msg {{
+      }
+      .logToken-msg {
         color: var(--text);
-      }}
-      .logToken-ref {{
+      }
+      .logToken-ref {
         color: var(--link);
-      }}
-      .logToken-opid {{
+      }
+      .logToken-opid {
         color: var(--accent);
-      }}
-      .logToken-digest {{
+      }
+      .logToken-digest {
         color: var(--accent-warm);
-      }}
-      .statusSidebar {{
+      }
+      .statusSidebar {
         padding: 14px;
         background: linear-gradient(180deg, rgba(64, 180, 255, 0.08), rgba(255, 255, 255, 0.015));
-      }}
-      html[data-theme='light'] .statusSidebar {{
+      }
+      html[data-theme='light'] .statusSidebar {
         background: linear-gradient(180deg, rgba(22, 135, 217, 0.06), rgba(255, 255, 255, 0.6));
-      }}
-      .statusSidebarHeader {{
+      }
+      .statusSidebarHeader {
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
         gap: 10px;
         margin-bottom: 12px;
-      }}
-      .statusSidebarTitle {{
+      }
+      .statusSidebarTitle {
         display: grid;
         gap: 6px;
-      }}
-      .snapshotGrid {{
+      }
+      .snapshotGrid {
         display: grid;
         gap: 10px;
-      }}
-      .snapshotItem {{
+      }
+      .snapshotItem {
         padding: 10px 12px;
         border-radius: 14px;
         border: 1px solid var(--panel-border);
         background: var(--panel-strong);
         display: grid;
         gap: 6px;
-      }}
-      .historyRail {{
+      }
+      .historyRail {
         min-height: 248px;
         padding: 12px;
         max-height: min(560px, calc(100vh - 190px));
         overflow: auto;
         overscroll-behavior: contain;
-      }}
-      .historyRailHeader {{
+      }
+      .historyRailHeader {
         display: grid;
         gap: 4px;
         padding-bottom: 10px;
         margin-bottom: 10px;
         border-bottom: 1px solid var(--panel-border);
-      }}
-      .historyHint {{
+      }
+      .historyHint {
         font-size: 11px;
         line-height: 1.45;
-      }}
-      .historyList {{
+      }
+      .historyList {
         display: grid;
         gap: 10px;
-      }}
-      .historyCard {{
+      }
+      .historyCard {
         width: 100%;
         min-height: 78px;
         padding: 12px;
@@ -573,40 +573,40 @@ pub(crate) const STYLE_CSS: &str = r#"
         text-align: left;
         display: grid;
         gap: 10px;
-      }}
-      .historyCard.active {{
+      }
+      .historyCard.active {
         border-color: rgba(64, 180, 255, 0.34);
         box-shadow: inset 3px 0 0 var(--accent), 0 0 0 1px rgba(64, 180, 255, 0.08);
         background: linear-gradient(180deg, rgba(64, 180, 255, 0.08), rgba(255, 255, 255, 0.015));
-      }}
-      html[data-theme='light'] .historyCard.active {{
+      }
+      html[data-theme='light'] .historyCard.active {
         background: linear-gradient(180deg, rgba(22, 135, 217, 0.08), rgba(255, 255, 255, 0.62));
-      }}
+      }
       .historyTop,
-      .historyBottom {{
+      .historyBottom {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 10px;
         flex-wrap: wrap;
-      }}
-      .historyTime {{
+      }
+      .historyTime {
         font-size: 13px;
         font-weight: 600;
-      }}
+      }
       .historyMeta,
-      .historyTail {{
+      .historyTail {
         color: var(--muted);
         font-size: 12px;
         line-height: 1.45;
-      }}
-      .historyBadges {{
+      }
+      .historyBadges {
         display: flex;
         flex-wrap: wrap;
         gap: 6px;
         justify-content: flex-end;
-      }}
-      .stateBadge {{
+      }
+      .stateBadge {
         display: inline-flex;
         align-items: center;
         gap: 5px;
@@ -616,38 +616,38 @@ pub(crate) const STYLE_CSS: &str = r#"
         font-size: 10px;
         text-transform: uppercase;
         letter-spacing: 0.08em;
-      }}
-      .stateDot {{
+      }
+      .stateDot {
         width: 8px;
         height: 8px;
         border-radius: 999px;
         flex: 0 0 auto;
-      }}
-      .stateDot-running {{ background: var(--info); }}
-      .stateDot-succeeded {{ background: var(--ok); }}
+      }
+      .stateDot-running { background: var(--info); }
+      .stateDot-succeeded { background: var(--ok); }
       .stateDot-failed,
       .stateDot-rolled_back,
-      .stateDot-offline {{ background: var(--bad); }}
+      .stateDot-offline { background: var(--bad); }
       .stateDot-idle,
-      .stateDot-unknown {{ background: #7f93a8; }}
-      .newBadge {{
+      .stateDot-unknown { background: #7f93a8; }
+      .newBadge {
         color: var(--warn);
         border: 1px solid rgba(255, 177, 85, 0.26);
         background: rgba(255, 177, 85, 0.14);
         border-radius: 999px;
         padding: 3px 8px;
         font-size: 10px;
-      }}
-      .statusPanel {{
+      }
+      .statusPanel {
         grid-area: detail;
         margin: 0;
-      }}
-      .statusGrid {{
+      }
+      .statusGrid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
-      }}
-      .statusTile {{
+      }
+      .statusTile {
         padding: 14px;
         border-radius: 18px;
         border: 1px solid var(--panel-border);
@@ -655,26 +655,26 @@ pub(crate) const STYLE_CSS: &str = r#"
         display: grid;
         gap: 8px;
         align-content: start;
-      }}
-      .statusTile-wide {{
+      }
+      .statusTile-wide {
         grid-column: auto;
-      }}
-      .statusTile-full {{
+      }
+      .statusTile-full {
         grid-column: 1 / -1;
-      }}
-      .statusLabelRow {{
+      }
+      .statusLabelRow {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 8px;
-      }}
-      .statusLabel {{
+      }
+      .statusLabel {
         color: var(--muted);
         font-size: 11px;
         text-transform: uppercase;
         letter-spacing: 0.12em;
-      }}
-      .copyButton {{
+      }
+      .copyButton {
         position: relative;
         min-height: 24px;
         min-width: 24px;
@@ -687,8 +687,8 @@ pub(crate) const STYLE_CSS: &str = r#"
         color: var(--muted);
         background: var(--surface-strong);
         overflow: visible;
-      }}
-      .copyButton::after {{
+      }
+      .copyButton::after {
         content: attr(data-tooltip);
         position: absolute;
         left: 50%;
@@ -706,8 +706,8 @@ pub(crate) const STYLE_CSS: &str = r#"
         opacity: 0;
         pointer-events: none;
         transition: opacity 140ms ease, transform 140ms ease;
-      }}
-      .copyButton::before {{
+      }
+      .copyButton::before {
         content: '';
         position: absolute;
         left: 50%;
@@ -721,63 +721,63 @@ pub(crate) const STYLE_CSS: &str = r#"
         opacity: 0;
         pointer-events: none;
         transition: opacity 140ms ease, transform 140ms ease;
-      }}
+      }
       .copyButton:not([disabled]):is(:hover, :focus-visible)::after,
-      .copyButton:not([disabled]):is(:hover, :focus-visible)::before {{
+      .copyButton:not([disabled]):is(:hover, :focus-visible)::before {
         opacity: 1;
         transform: translate(-50%, 0);
-      }}
-      .copyButton:not([disabled]):is(:hover, :focus-visible)::before {{
+      }
+      .copyButton:not([disabled]):is(:hover, :focus-visible)::before {
         transform: translateX(-50%) rotate(45deg);
-      }}
-      .copyButton svg {{
+      }
+      .copyButton svg {
         width: 12px;
         height: 12px;
         display: block;
-      }}
-      .copyButton.copied {{
+      }
+      .copyButton.copied {
         color: var(--ok);
         border-color: rgba(50, 201, 108, 0.32);
         background: rgba(50, 201, 108, 0.12);
-      }}
-      .copyButton.copied::after {{
+      }
+      .copyButton.copied::after {
         color: var(--ok);
         border-color: rgba(50, 201, 108, 0.28);
-      }}
-      .copyButton.copied::before {{
+      }
+      .copyButton.copied::before {
         border-right-color: rgba(50, 201, 108, 0.28);
         border-bottom-color: rgba(50, 201, 108, 0.28);
-      }}
-      .copyButton.failed {{
+      }
+      .copyButton.failed {
         color: var(--bad);
         border-color: rgba(255, 123, 123, 0.32);
         background: rgba(255, 123, 123, 0.12);
-      }}
-      .copyButton.failed::after {{
+      }
+      .copyButton.failed::after {
         color: var(--bad);
         border-color: rgba(255, 123, 123, 0.28);
-      }}
-      .copyButton.failed::before {{
+      }
+      .copyButton.failed::before {
         border-right-color: rgba(255, 123, 123, 0.28);
         border-bottom-color: rgba(255, 123, 123, 0.28);
-      }}
-      .statusValue {{
+      }
+      .statusValue {
         font-size: 13px;
         line-height: 1.35;
         font-weight: 600;
         word-break: break-word;
-      }}
-      .statusValue-lg {{
+      }
+      .statusValue-lg {
         font-size: clamp(22px, 2.4vw, 28px);
         line-height: 0.96;
         letter-spacing: -0.05em;
-      }}
-      .statusMeta {{
+      }
+      .statusMeta {
         color: var(--muted);
         font-size: 11px;
         line-height: 1.42;
-      }}
-      .statusTone {{
+      }
+      .statusTone {
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -789,39 +789,39 @@ pub(crate) const STYLE_CSS: &str = r#"
         font-size: 11px;
         text-transform: uppercase;
         letter-spacing: 0.12em;
-      }}
+      }
       .statusTone.state-running,
-      .stateBadge-running {{
+      .stateBadge-running {
         color: var(--info);
         border-color: rgba(83, 169, 255, 0.32);
         background: rgba(83, 169, 255, 0.12);
-      }}
+      }
       .statusTone.state-succeeded,
-      .stateBadge-succeeded {{
+      .stateBadge-succeeded {
         color: var(--ok);
         border-color: rgba(50, 201, 108, 0.28);
         background: rgba(50, 201, 108, 0.12);
-      }}
+      }
       .statusTone.state-failed,
       .statusTone.state-rolled_back,
       .statusTone.state-offline,
       .stateBadge-failed,
       .stateBadge-rolled_back,
-      .stateBadge-offline {{
+      .stateBadge-offline {
         color: var(--bad);
         border-color: rgba(255, 123, 123, 0.28);
         background: rgba(255, 123, 123, 0.12);
-      }}
+      }
       .statusTone.state-idle,
       .statusTone.state-unknown,
       .stateBadge-idle,
-      .stateBadge-unknown {{
+      .stateBadge-unknown {
         color: var(--muted);
         border-color: var(--panel-border);
         background: var(--surface-strong);
-      }}
+      }
       .statusCode,
-      .statusCodeInline {{
+      .statusCodeInline {
         background: var(--console-bg);
         border: 1px solid var(--panel-border);
         border-radius: 14px;
@@ -832,14 +832,14 @@ pub(crate) const STYLE_CSS: &str = r#"
         line-height: 1.58;
         white-space: pre-wrap;
         word-break: break-word;
-      }}
-      .statusCodeInline {{ min-height: 44px; }}
-      .popWrap {{
+      }
+      .statusCodeInline { min-height: 44px; }
+      .popWrap {
         position: relative;
         display: inline-flex;
         align-items: center;
-      }}
-      .popCard {{
+      }
+      .popCard {
         position: absolute;
         top: calc(100% + 10px);
         right: 0;
@@ -851,50 +851,50 @@ pub(crate) const STYLE_CSS: &str = r#"
         box-shadow: var(--panel-shadow);
         padding: 12px;
         z-index: 20;
-      }}
-      .popTitle {{
+      }
+      .popTitle {
         margin: 0 0 6px;
         font-size: 13px;
         font-weight: 700;
-      }}
-      .popActions {{
+      }
+      .popActions {
         display: flex;
         gap: 8px;
         justify-content: flex-end;
         margin-top: 12px;
-      }}
-      .danger {{
+      }
+      .danger {
         border-color: rgba(220, 38, 38, 0.84);
         background: rgba(220, 38, 38, 0.92);
         color: #fff;
-      }}
-      @keyframes supervisorButtonSpin {{
-        from {{ transform: rotate(0deg); }}
-        to {{ transform: rotate(360deg); }}
-      }}
-      @media (prefers-reduced-motion: reduce) {{
+      }
+      @keyframes supervisorButtonSpin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      @media (prefers-reduced-motion: reduce) {
         button,
-        .linkButton {{ transition: none; }}
-        button.btnRunning::before {{ animation: none; }}
-      }}
-      @media (max-width: 1024px) {{
-        body {{
+        .linkButton { transition: none; }
+        button.btnRunning::before { animation: none; }
+      }
+      @media (max-width: 1024px) {
+        body {
           padding-left: 16px;
           padding-right: 16px;
-        }}
-        .panel {{ padding: 15px; }}
+        }
+        .panel { padding: 15px; }
         .mastheadRow,
-        .statusGrid {{
+        .statusGrid {
           grid-template-columns: 1fr;
-        }}
-        .workspaceGrid {{
+        }
+        .workspaceGrid {
           grid-template-columns: 1fr;
           grid-template-areas:
             'logs'
             'sidebar'
             'detail';
-        }}
-        .actionDeckGrid {{
+        }
+        .actionDeckGrid {
           grid-template-columns: 1fr;
           grid-template-areas:
             'field'
@@ -903,96 +903,96 @@ pub(crate) const STYLE_CSS: &str = r#"
             'note'
             'aux';
           align-items: stretch;
-        }}
-        .buttonGroup-aux {{
+        }
+        .buttonGroup-aux {
           justify-content: flex-start;
           justify-self: stretch;
-        }}
+        }
         .actionCallout,
         .buttonGroup-main,
         .buttonGroup-aux,
-        .fieldBlock {{
+        .fieldBlock {
           align-self: stretch;
-        }}
-        .statusSidebarHeader {{
+        }
+        .statusSidebarHeader {
           align-items: flex-start;
-        }}
+        }
         .historyRail,
-        .logPanel {{
+        .logPanel {
           min-height: auto;
-        }}
-        .historyRail {{
+        }
+        .historyRail {
           max-height: min(360px, 44vh);
-        }}
+        }
         .logSummary,
-        .sectionHeadingMeta {{
+        .sectionHeadingMeta {
           text-align: left;
           max-width: none;
-        }}
-        .metaFooter {{
+        }
+        .metaFooter {
           grid-template-columns: 160px minmax(0, 1fr) 140px;
           gap: 14px;
-        }}
-        .metaPill + .metaPill {{
+        }
+        .metaPill + .metaPill {
           padding-left: 14px;
-        }}
-      }}
-      @media (max-width: 720px) {{
-        body {{
+        }
+      }
+      @media (max-width: 720px) {
+        body {
           padding-left: 12px;
           padding-right: 12px;
-        }}
-        .shell {{
+        }
+        .shell {
           gap: 12px;
           padding-top: 12px;
-        }}
-        .panel {{
+        }
+        .panel {
           padding: 14px;
           border-radius: 18px;
-        }}
+        }
         .mastheadRow,
         .brandRow,
         .sectionHeadingRow,
         .historyTop,
         .historyBottom,
         .logHeader,
-        .statusSidebarHeader {{
+        .statusSidebarHeader {
           align-items: flex-start;
-        }}
-        .brandRow {{
+        }
+        .brandRow {
           flex-direction: column;
           align-items: flex-start;
-        }}
+        }
         .metaFooter,
         .buttonGroup,
-        .buttonGroup-aux {{
+        .buttonGroup-aux {
           width: 100%;
-        }}
-        .metaFooter {{
+        }
+        .metaFooter {
           grid-template-columns: 1fr;
           gap: 10px;
           padding-top: 12px;
-        }}
-        .metaPill + .metaPill {{
+        }
+        .metaPill + .metaPill {
           padding-left: 0;
           border-left: 0;
           padding-top: 10px;
           border-top: 1px solid var(--panel-border);
-        }}
+        }
         .buttonGroup > *,
         .buttonGroup-aux > *,
         .linkButton,
         .popWrap,
-        .popWrap > button {{
+        .popWrap > button {
           width: 100%;
-        }}
-        .logTitle {{
+        }
+        .logTitle {
           font-size: 15px;
-        }}
-        .popCard {{
+        }
+        .popCard {
           left: 0;
           right: auto;
           width: min(320px, calc(100vw - 36px));
-        }}
-      }}
+        }
+      }
 "#;
