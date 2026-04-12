@@ -20,8 +20,9 @@ const DOCKER_TIMEOUT: Duration = Duration::from_secs(15);
 mod parse;
 
 use parse::{
-    ensure_success, parse_buildx_du_json_lines, parse_buildx_du_text_summary,
-    parse_du_kilobytes_output, parse_volume_sizes_from_system_df_verbose,
+    ensure_success, fingerprint_hint_from_output, parse_buildx_du_json_lines,
+    parse_buildx_du_text_summary, scan_volume_size_from_mountpoint,
+    scan_volume_sizes_from_system_df, volume_fingerprint_key,
 };
 
 #[derive(Clone, Debug)]
@@ -832,72 +833,6 @@ async fn scan_builder_cache_text_summary(state: &AppState) -> Option<BuilderCach
         estimate_unknown: reclaimable.is_none(),
         fingerprint_hint: fingerprint_hint_from_output(&out.stdout),
     })
-}
-
-fn fingerprint_hint_from_output(raw: &str) -> Option<String> {
-    let mut lines = raw
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>();
-    lines.sort_unstable();
-    let normalized = lines.join("\n");
-    if normalized.is_empty() {
-        return None;
-    }
-    let hashed = digest(&SHA256, normalized.as_bytes());
-    Some(hex::encode(hashed.as_ref()))
-}
-
-fn volume_fingerprint_key(volume: &DockerVolumeInspect) -> Option<String> {
-    volume
-        .created_at
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|created_at| format!("volume:{}:{created_at}", volume.name))
-}
-
-async fn scan_volume_sizes_from_system_df(state: &AppState) -> BTreeMap<String, u64> {
-    let out = match state
-        .runner
-        .run(
-            CommandSpec {
-                program: "docker".to_string(),
-                args: vec!["system".to_string(), "df".to_string(), "-v".to_string()],
-                env: Vec::new(),
-            },
-            DOCKER_TIMEOUT,
-        )
-        .await
-    {
-        Ok(out) if out.status == 0 => out,
-        _ => return BTreeMap::new(),
-    };
-    parse_volume_sizes_from_system_df_verbose(&out.stdout)
-}
-
-async fn scan_volume_size_from_mountpoint(state: &AppState, mountpoint: &str) -> Option<u64> {
-    let mountpoint = mountpoint.trim();
-    if mountpoint.is_empty() {
-        return None;
-    }
-    let out = state
-        .runner
-        .run(
-            CommandSpec {
-                program: "du".to_string(),
-                args: vec!["-sk".to_string(), mountpoint.to_string()],
-                env: Vec::new(),
-            },
-            DOCKER_TIMEOUT,
-        )
-        .await
-        .ok()?;
-    if out.status != 0 {
-        return None;
-    }
-    parse_du_kilobytes_output(&out.stdout)
 }
 
 fn resolve_container_ownership(
