@@ -154,7 +154,7 @@ export function useServiceDetailPageState(props: {
       const result = applyRollbackTargetSnapshot(requestId, svc, nextTarget, nextSource)
       if (result !== 'digest_mismatch') return result
       if (retries++ >= 5) {
-        setRollbackTarget(null)
+        setRollbackTarget(null); setRollbackActiveTarget(null)
         setRollbackTargetRefreshing(false)
         setError('回滚信息刷新失败，请稍后重试')
         return 'digest_mismatch'
@@ -208,7 +208,7 @@ export function useServiceDetailPageState(props: {
       } else if (rollbackRes.status === 'fulfilled') {
         await settleRollbackTargetSnapshot(stackRequestId, svc, rollbackRes.value, 'full-refresh')
       } else {
-        setRollbackTarget(null); setRollbackTargetRefreshing(false)
+        setRollbackTarget(null); setRollbackActiveTarget(null); setRollbackTargetRefreshing(false)
       }
       if (errors.length > 0) throw new Error(errors.join(' · '))
     } catch (error: unknown) {
@@ -239,7 +239,7 @@ export function useServiceDetailPageState(props: {
       await settleRollbackTargetSnapshot(requestId, svc, target, source)
     } catch (error: unknown) {
       if (requestId < latestAppliedStackRefreshRequestIdRef.current) return
-      if (rollbackSnapshotMayBeStale) setRollbackTarget(null)
+      if (rollbackSnapshotMayBeStale) { setRollbackTarget(null); if (source !== 'rollback-active-poll') setRollbackActiveTarget(null) }
       setRollbackTargetRefreshing(false)
       throw error
     }
