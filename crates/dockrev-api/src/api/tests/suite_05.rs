@@ -65,6 +65,7 @@ services:
                 name: "web".to_string(),
                 image_ref: "ghcr.io/acme/worker".to_string(),
                 image_tag: "latest".to_string(),
+                homepage: None,
             }],
             &test_offset_rfc3339(&now, time::Duration::minutes(1)),
         )
@@ -1126,4 +1127,3 @@ services:
         "expected resolvedTags to be preserved for incomplete scan: {detail}"
     );
 }
-

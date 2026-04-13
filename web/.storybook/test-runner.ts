@@ -72,13 +72,13 @@ const config: TestRunnerConfig = {
 
     if (context.id === 'pages-interactiveapp--dashboard') {
       // App-level navigation should work (route changes without full reload)
-      await page.getByRole('link', { name: '服务' }).click()
+      await page.getByRole('link', { name: '运维大盘' }).click()
       const h1 = page.locator('.h1')
       await h1.waitFor({ state: 'visible', timeout: 6_000 })
       const t1 = (await h1.textContent().catch(() => null)) ?? ''
       if (!t1.includes('服务')) throw new Error(`Expected App to navigate to Services page, got title=${JSON.stringify(t1)}`)
 
-      await page.getByRole('link', { name: '概览' }).click()
+      await page.getByRole('link', { name: '导航概览' }).click()
       const t2 = (await h1.textContent().catch(() => null)) ?? ''
       if (!t2.includes('概览')) throw new Error(`Expected App to navigate back to Overview, got title=${JSON.stringify(t2)}`)
       return

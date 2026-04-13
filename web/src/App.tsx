@@ -48,15 +48,19 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
     case 'overview':
       return {
         title: '概览',
-        pageSubtitle: '聚焦：可更新 / 需提示（同前缀新版本）/ 架构不匹配 / 被阻止',
-        topbarHint: 'Compose 镜像更新 / 版本提示',
+        pageSubtitle: 'Homepage 兼容导航入口：分组、搜索、新窗口打开与版本状态标记',
+        topbarHint: '服务导航',
       }
     case 'queue':
       return { title: '任务队列', topbarHint: '任务队列' }
     case 'job':
       return { title: '任务详情', topbarHint: '任务队列' }
     case 'services':
-      return { title: '服务', topbarHint: '服务' }
+      return {
+        title: '服务',
+        pageSubtitle: '运行态与结果、发现异常、更新候选与归档恢复',
+        topbarHint: '运维大盘',
+      }
     case 'cleanup':
       return {
         title: '清理',

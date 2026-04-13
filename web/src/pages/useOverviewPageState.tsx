@@ -1118,6 +1118,7 @@ export function useOverviewPageState(props: {
     onChangeFilter,
     overviewCardJobs,
     patchServiceInStackDetails,
+    requestRefresh,
     runDiscoveryScan,
     selfUpgradeUrl,
     setActiveDiscoveryIssue,

@@ -79,6 +79,10 @@ fn ensure_service_columns(conn: &rusqlite::Connection) -> anyhow::Result<()> {
             ddl: "ALTER TABLE services ADD COLUMN repo_url TEXT",
         },
         Col {
+            name: "homepage_json",
+            ddl: "ALTER TABLE services ADD COLUMN homepage_json TEXT",
+        },
+        Col {
             name: "repo_url_auto_disabled",
             ddl: "ALTER TABLE services ADD COLUMN repo_url_auto_disabled INTEGER NOT NULL DEFAULT 0",
         },
@@ -988,6 +992,7 @@ CREATE TABLE IF NOT EXISTS services (
   backup_targets_bind_paths_json TEXT NOT NULL,
   backup_targets_volume_names_json TEXT NOT NULL,
   repo_url TEXT,
+  homepage_json TEXT,
   repo_url_auto_disabled INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

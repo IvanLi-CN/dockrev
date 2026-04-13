@@ -518,6 +518,7 @@ mod tests {
                     resolved_tag: None,
                     resolved_tags: None,
                 },
+                homepage: None,
                 candidate: None,
                 ignore: None,
                 version_inference: None,

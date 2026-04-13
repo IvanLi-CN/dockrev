@@ -47,6 +47,13 @@ export function buildDashboardDemo(): Fixture {
     image: { ref: 'ghcr.io/acme/api:5.2.1', tag: '5.2.1', digest: d('a', 'b1') },
     candidate: { tag: '5.2.3', digest: d('b', '9f'), archMatch: 'match', arch: ['linux/amd64'] },
     ignore: null,
+    homepage: {
+      group: 'Developer',
+      name: 'Acme API',
+      icon: 'si-github',
+      href: 'https://api.example.com',
+      description: 'Primary API gateway',
+    },
     settings: { autoRollback: true, backupTargets: { bindPaths: { '/var/lib/api/data': 'inherit' }, volumeNames: {} }, repoUrl: null },
   } satisfies StackDetail['services'][number]
 
@@ -56,6 +63,13 @@ export function buildDashboardDemo(): Fixture {
     image: { ref: 'harbor.local/ops/web', tag: '5.2', digest: d('c', 'c2') },
     candidate: { tag: '5.2.7', digest: d('d', '7a'), archMatch: 'match', arch: ['linux/amd64'] },
     ignore: null,
+    homepage: {
+      group: 'Frontend',
+      name: 'Web Console',
+      icon: 'mdi-monitor-dashboard',
+      href: 'https://web.example.com',
+      description: 'User-facing dashboard',
+    },
     settings: { autoRollback: true, backupTargets: { bindPaths: { '/var/lib/web/uploads': 'force' }, volumeNames: { 'vol:web-data': 'inherit' } }, repoUrl: null },
   } satisfies StackDetail['services'][number]
 
@@ -81,6 +95,13 @@ export function buildDashboardDemo(): Fixture {
     image: { ref: 'ghcr.io/grafana/loki', tag: '2.9.0', digest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111' },
     candidate: { tag: '2.9.1', digest: 'sha256:2222222222222222222222222222222222222222222222222222222222222222', archMatch: 'unknown', arch: ['linux/amd64', 'linux/arm64'] },
     ignore: null,
+    homepage: {
+      group: 'Monitoring',
+      name: 'Loki',
+      icon: 'mdi-file-document-multiple-outline',
+      href: 'https://logs.example.com',
+      description: 'Centralized logs',
+    },
     settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} }, repoUrl: 'https://github.com/grafana/loki' },
   } satisfies StackDetail['services'][number]
 
@@ -90,6 +111,13 @@ export function buildDashboardDemo(): Fixture {
     image: { ref: 'quay.io/prometheus/prometheus', tag: '2.49.0', digest: 'sha256:3333333333333333333333333333333333333333333333333333333333333333' },
     candidate: { tag: '2.50.0', digest: 'sha256:4444444444444444444444444444444444444444444444444444444444444444', archMatch: 'mismatch', arch: ['linux/arm64'] },
     ignore: null,
+    homepage: {
+      group: 'Monitoring',
+      name: 'Prometheus',
+      icon: 'prometheus.svg',
+      href: 'https://metrics.example.com',
+      description: 'Metrics and alerting',
+    },
     settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} }, repoUrl: null },
   } satisfies StackDetail['services'][number]
 
@@ -99,6 +127,13 @@ export function buildDashboardDemo(): Fixture {
     image: { ref: 'docker.io/library/postgres:16', tag: '16', digest: d('p', '16') },
     candidate: { tag: '18.1', digest: d('p', '18'), archMatch: 'match', arch: ['linux/amd64'] },
     ignore: null,
+    homepage: {
+      group: 'Data',
+      name: 'Postgres',
+      icon: 'https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/postgres.svg',
+      href: 'https://db.example.com',
+      description: 'Primary relational database',
+    },
     settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} }, repoUrl: null },
   } satisfies StackDetail['services'][number]
 
@@ -612,4 +647,3 @@ export function buildVersionTagsPopoverDemo(options?: {
 
   return f
 }
-
