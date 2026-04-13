@@ -76,6 +76,19 @@ fn render_ui_renders_logs_as_semantic_lines() {
     assert!(html.contains("logsEl.replaceChildren(fragment);"));
 }
 
+#[test]
+fn render_ui_embeds_valid_css() {
+    let html = render_ui("/supervisor", &test_meta());
+    assert!(
+        !html.contains("{{"),
+        "rendered CSS must not contain template braces"
+    );
+    assert!(
+        html.contains("body {"),
+        "rendered CSS should include body rules"
+    );
+}
+
 #[tokio::test]
 async fn supervisor_ui_accepts_base_path_with_or_without_trailing_slash() {
     let app = test_app_for_authz(None, None, true).await;
