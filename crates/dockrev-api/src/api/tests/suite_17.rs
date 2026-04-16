@@ -224,6 +224,7 @@ services:
                 name: "web".to_string(),
                 image_ref: "ghcr.io/acme/web:1.1".to_string(),
                 image_tag: "1.1".to_string(),
+                homepage: None,
             }],
             &test_now_rfc3339(),
         )
@@ -1115,6 +1116,7 @@ async fn infer_service_repo_link_returns_none_for_invalid_service_image_ref() {
         name: "web".to_string(),
         image_ref: "ghcr.io/acme/web".to_string(),
         image_tag: "latest".to_string(),
+        homepage: None,
         auto_rollback: true,
         backup_bind_paths: BTreeMap::new(),
         backup_volume_names: BTreeMap::new(),
@@ -1147,4 +1149,3 @@ async fn infer_service_repo_link_returns_none_for_invalid_service_image_ref() {
         "registry should not be queried for invalid refs"
     );
 }
-

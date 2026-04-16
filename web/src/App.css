@@ -505,11 +505,16 @@
   animation: versionTagsTriggerPulse 1.15s ease-in-out infinite;
 }
 
+.inlineIconSpinning {
+  animation: btnInlineSpin 0.7s linear infinite;
+}
+
 .inlineIconMuted {
   color: var(--muted2);
 }
 
-.inlineIcon path {
+.inlineIcon path,
+.inlineIcon circle {
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
@@ -7837,5 +7842,316 @@ html[data-theme='light'] .card {
   .navItem,
   .mobileNavItem {
     transition: none;
+  }
+}
+
+.homepageOverviewControls {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  width: 100%;
+}
+
+.homepageOverviewSearchForm {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.homepageOverviewSearchShell {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  border: 1px solid var(--borderColor);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--dockrev-surface) 90%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  overflow: hidden;
+}
+
+.homepageOverviewSearchShell:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 32%, var(--borderColor) 68%);
+}
+
+.homepageOverviewSearchShell:focus-within {
+  border-color: color-mix(in srgb, var(--color-primary) 44%, var(--borderColor) 56%);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--color-primary) 18%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.homepageOverviewSearchInput {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0 14px;
+}
+
+.homepageOverviewSearchInput:hover,
+.homepageOverviewSearchInput:focus,
+.homepageOverviewSearchInput:focus-visible {
+  border: none;
+  box-shadow: none;
+}
+
+.homepageOverviewSearchButton {
+  height: 34px;
+  padding: 0 14px;
+  border: none;
+  border-left: 1px solid color-mix(in srgb, var(--borderColor) 84%, transparent);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.homepageOverviewSearchButton:hover:not(:disabled) {
+  transform: none;
+}
+
+.homepageOverviewSearchButtonContent {
+  gap: 6px;
+}
+
+.homepageOverviewSearchButtonIcon {
+  width: 14px;
+  height: 14px;
+}
+
+.homepageGroupSection {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.homepageGroupHeader {
+  margin-bottom: 0;
+}
+
+.homepageCardGrid {
+  --homepage-card-width: 264px;
+  --homepage-card-height: 110px;
+  display: grid;
+  grid-template-columns: repeat(
+    auto-fill,
+    minmax(var(--homepage-card-width), var(--homepage-card-width))
+  );
+  grid-auto-rows: var(--homepage-card-height);
+  justify-content: flex-start;
+  gap: 14px;
+}
+
+.homepageServiceCard {
+  box-sizing: border-box;
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(44px, auto) auto;
+  align-content: start;
+  gap: 6px;
+  height: 100%;
+  min-height: 0;
+  padding: 12px 14px 10px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: linear-gradient(180deg, rgba(10, 20, 38, 0.92), rgba(6, 18, 39, 0.78));
+  color: inherit;
+  text-decoration: none;
+  overflow: hidden;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    background 140ms ease;
+}
+
+.homepageServiceCard:hover,
+.homepageServiceCard:focus-visible {
+  transform: translateY(-2px);
+  border-color: rgba(96, 165, 250, 0.38);
+  box-shadow: 0 14px 32px rgba(2, 6, 23, 0.28);
+  background: linear-gradient(180deg, rgba(14, 28, 52, 0.96), rgba(9, 21, 42, 0.84));
+}
+
+.homepageServiceCardTop {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 10px;
+  min-height: 44px;
+}
+
+.homepageServiceCardHasRibbon .homepageServiceCardIdentity {
+  padding-right: 72px;
+}
+
+.homepageServiceCardIdentity {
+  display: flex;
+  min-width: 0;
+  min-height: 44px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+}
+
+.homepageServiceCardTitleRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  min-width: 0;
+  gap: 8px;
+}
+
+.homepageServiceCardTitle {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.homepageServiceCardDescription {
+  font-size: 12px;
+  line-height: 1.35;
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.homepageServiceCardMeta {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin-top: 0;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.homepageServiceCardMetaCompact {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.homepageServiceRibbon {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  padding: 6px 10px 5px;
+  border-bottom-left-radius: 14px;
+  border-top-right-radius: 18px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: rgba(248, 250, 252, 0.96);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.homepageServiceRibbonUpdatable {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.96), rgba(5, 150, 105, 0.96));
+}
+
+.homepageServiceRibbonHint {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.98), rgba(217, 119, 6, 0.98));
+}
+
+.homepageServiceRibbonArchMismatch,
+.homepageServiceRibbonBlocked {
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.98), rgba(190, 24, 93, 0.98));
+}
+
+.homepageServiceCardBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.homepageServiceCardNote {
+  font-size: 12px;
+  line-height: 1.45;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.homepageServiceIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.62);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.homepageServiceIconImage,
+.homepageServiceIconFallback {
+  width: 24px;
+  height: 24px;
+}
+
+.homepageServiceIconImage {
+  object-fit: contain;
+}
+
+.homepageServiceIconFallback {
+  color: rgba(191, 219, 254, 0.92);
+}
+
+@media (max-width: 980px) {
+  .homepageCardGrid {
+    --homepage-card-width: 240px;
+  }
+}
+
+@media (max-width: 640px) {
+  .homepageOverviewControls {
+    justify-content: stretch;
+  }
+
+  .homepageOverviewSearchForm {
+    width: 100%;
+  }
+
+  .homepageOverviewSearchInput {
+    width: 100%;
+  }
+
+  .homepageOverviewSearchButtonLabel {
+    display: none;
+  }
+
+  .homepageOverviewSearchButton {
+    min-width: 42px;
+    padding: 0 11px;
+  }
+
+  .homepageCardGrid {
+    grid-template-columns: 1fr;
+    --homepage-card-height: 114px;
+  }
+
+  .homepageServiceCardTitleRow {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

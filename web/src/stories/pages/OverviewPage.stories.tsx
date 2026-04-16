@@ -1,598 +1,413 @@
-import type { Meta, StoryObj } from '@storybook/react'
-import { OverviewPage } from '../../pages/OverviewPage'
-import { DOCKREV_AGGREGATE_GUARD_HINT } from '../../aggregateUpdateGuard'
-import { buildTopbarAuthIdentityFromSettings } from '../../topbarAuthIdentity'
-import { PageHarness } from '../mocks/PageHarness'
-import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
-
-const jobsCardOnlyScopeCss = `
-.appShell {
-  display: block !important;
-  min-height: 0 !important;
-  height: auto !important;
-}
-
-.topbar,
-.sidebar,
-.mobileDockrevPanel,
-.pageHead {
-  display: none !important;
-}
-
-.content {
-  padding: 0 !important;
-  overflow: visible !important;
-}
-
-.page {
-  gap: 0 !important;
-}
-
-.overviewJobsCardStoryFocusFrame {
-  width: min(100%, 760px);
-  margin: 18px;
-}
-
-.overviewJobsCardStoryFocusFrame-actual {
-  width: min(100%, 560px);
-}
-
-.twoCol {
-  display: block !important;
-}
-
-.twoCol > .card:not(:first-of-type),
-.overviewIndent {
-  display: none !important;
-}
-`
-
-const discoveryCardOnlyScopeCss = `
-.appShell {
-  display: block !important;
-  min-height: 0 !important;
-  height: auto !important;
-}
-
-.topbar,
-.sidebar,
-.mobileDockrevPanel,
-.pageHead {
-  display: none !important;
-}
-
-.content {
-  padding: 0 !important;
-  overflow: visible !important;
-}
-
-.page {
-  gap: 0 !important;
-}
-
-.discoveryCardStoryFocusFrame {
-  width: min(100%, 780px);
-  margin: 18px auto;
-}
-
-.twoCol {
-  display: block !important;
-}
-
-.twoCol > .card:first-of-type,
-.overviewIndent {
-  display: none !important;
-}
-`
+import type { Meta, StoryObj } from "@storybook/react";
+import { OverviewPage } from "../../pages/OverviewPage";
+import { PageHarness } from "../mocks/PageHarness";
+import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
 
 const meta: Meta<typeof OverviewPage> = {
-  title: 'Pages/OverviewPage',
+  title: "Pages/OverviewPage",
   component: OverviewPage,
   decorators: [withDockrevMockApi],
-  tags: ['autodocs'],
-}
+  tags: ["autodocs"],
+};
 
-export default meta
-type Story = StoryObj<typeof OverviewPage>
+export default meta;
 
-const TOOLTIP_WAIT_MS = 240
-
-const demoAuthIdentity = buildTopbarAuthIdentityFromSettings({
-  allowAnonymousInDev: true,
-  allowedGroupMasked: 'o**s',
-  allowedUserMasked: 'al***ce',
-  authorizationMode: 'user_or_group',
-  currentGroups: ['o**s'],
-  currentUser: 'alice',
-  forwardHeaderName: 'X-Forwarded-User',
-  groupHeaderName: 'Remote-Groups',
-  matchedBy: 'user',
-})
+type Story = StoryObj<typeof OverviewPage>;
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function expectStory(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new globalThis.Error(message)
+  if (!condition) throw new globalThis.Error(message);
 }
 
-function findGroup(root: ParentNode, stackName: string): HTMLElement | null {
-  return Array.from(root.querySelectorAll<HTMLElement>('.tableGroup')).find((group) => group.textContent?.includes(stackName)) ?? null
+function setInputValue(input: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    "value",
+  )?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-function findRowLine(root: ParentNode, text: string): HTMLElement | null {
-  return Array.from(root.querySelectorAll<HTMLElement>('.rowLine')).find((row) => row.textContent?.includes(text)) ?? null
-}
-
-function findButtonByText(root: ParentNode, text: string): HTMLButtonElement | null {
-  return Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.trim() === text) ?? null
-}
-
-async function openTooltip(trigger: HTMLElement): Promise<void> {
-  trigger.dispatchEvent(new PointerEvent('pointermove', { bubbles: true }))
-  trigger.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
-  trigger.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
-  await sleep(TOOLTIP_WAIT_MS)
+function renderOverview(pageSubtitle: string): Story["render"] {
+  return () => (
+    <PageHarness
+      route={{ name: "overview" }}
+      title="概览"
+      pageSubtitle={pageSubtitle}
+    >
+      {({ onLastScanHint, onTopActions }) => (
+        <OverviewPage
+          onLastScanHint={onLastScanHint}
+          onTopActions={onTopActions}
+        />
+      )}
+    </PageHarness>
+  );
 }
 
 export const Default: Story = {
-  parameters: { dockrevApiScenario: 'dashboard-demo' },
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="聚焦：运行态/结果 + 发现异常 + 更新候选筛选">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-}
-
-export const DefaultWithIdentityPopover: Story = {
-  parameters: { dockrevApiScenario: 'dashboard-demo' },
-  render: () => {
-    return (
-      <PageHarness
-        route={{ name: 'overview' }}
-        title="概览"
-        pageSubtitle="聚焦：运行态/结果 + 发现异常 + 更新候选筛选"
-        authIdentity={demoAuthIdentity}
-      >
-        {({ onLastScanHint, onTopActions }) => (
-          <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />
-        )}
-      </PageHarness>
-    )
-  },
-  play: async ({ canvasElement }) => {
-    await sleep(180)
-
-    const trigger = canvasElement.ownerDocument.querySelector<HTMLButtonElement>('.topbarUserTrigger')
-    expectStory(trigger?.textContent?.includes('alice'), 'overview layout should show the current user trigger in the topbar')
-    trigger?.click()
-    await sleep(180)
-
-    const popover = canvasElement.ownerDocument.querySelector<HTMLElement>('.topbarUserPopover')
-    expectStory(popover?.textContent?.includes('用户信息与认证方式'), 'overview layout should expose the identity popover title')
-    expectStory(popover?.textContent?.includes('Forward Auth'), 'overview layout should expose auth source details')
-  },
-}
-
-export const HydratedRunningUpdate: Story = {
-  parameters: { dockrevApiScenario: 'dashboard-demo-hydrated-update' },
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：首屏已存在 service update running job 时恢复按钮 spinner">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-}
-
-export const RegistryAndRepoLinks: Story = {
-  parameters: { dockrevApiScenario: 'link-icon-catalog' },
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="更新候选里的镜像名展示 registry / repo icon 外链">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-  play: async ({ canvasElement }) => {
-    await sleep(180)
-
-    const doc = canvasElement.ownerDocument
-    const apiRow = findRowLine(canvasElement, 'acme/api')
-    expectStory(apiRow, 'api row missing in overview link-icon story')
-
-    const apiRegistry = apiRow?.querySelector<HTMLAnchorElement>('[data-link-kind="registry"][data-link-icon="ghcr"]')
-    expectStory(apiRegistry?.href === 'https://ghcr.io/acme/api', 'overview GHCR registry icon missing or wrong href')
-
-    const apiRepo = apiRow?.querySelector<HTMLAnchorElement>('[data-link-kind="repo"][data-link-icon="generic"]')
-    expectStory(apiRepo?.href === 'https://codeberg.org/acme/api', 'overview generic repo icon missing or wrong href')
-
-    const hashBeforeClick = window.location.hash
-    apiRepo?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-    await sleep(80)
-    expectStory(window.location.hash === hashBeforeClick, 'clicking overview image icon should not trigger row navigation')
-
-    const webRow = findRowLine(canvasElement, 'ops/web')
-    expectStory(webRow, 'web row missing in overview link-icon story')
-    expectStory(!webRow?.querySelector('[data-link-kind="registry"]'), 'unknown registry should not render a registry icon in overview rows')
-    const webRepo = webRow?.querySelector<HTMLAnchorElement>('[data-link-kind="repo"][data-link-icon="gitlab"]')
-    expectStory(webRepo?.href === 'https://gitlab.com/ops/web', 'overview GitLab repo icon missing or wrong href')
-
-    const infraGroup = findGroup(canvasElement, 'infra')
-    expectStory(infraGroup, 'infra group missing in overview link-icon story')
-    const infraHead = infraGroup?.querySelector<HTMLElement>('.groupHead')
-    infraHead?.click()
-    await sleep(120)
-
-    const prometheusRow = findRowLine(canvasElement, 'prometheus/prometheus')
-    expectStory(prometheusRow, 'prometheus row missing after expanding infra group')
-    const quayRegistry = prometheusRow?.querySelector<HTMLAnchorElement>('[data-link-kind="registry"][data-link-icon="generic"]')
-    expectStory(quayRegistry?.href === 'https://quay.io/repository/prometheus/prometheus', 'overview Quay registry icon missing or wrong href')
-
-    const postgresRow = findRowLine(canvasElement, 'library/postgres')
-    expectStory(postgresRow, 'postgres row missing after expanding infra group')
-    const dockerRegistry = postgresRow?.querySelector<HTMLAnchorElement>('[data-link-kind="registry"][data-link-icon="docker"]')
-    expectStory(dockerRegistry?.href === 'https://hub.docker.com/_/postgres', 'overview Docker Hub registry icon missing or wrong href')
-
-    const updateButton = findButtonByText(apiRow ?? canvasElement, '执行更新')
-    expectStory(updateButton, 'api row update button missing in overview link-icon story')
-    updateButton.click()
-    await sleep(160)
-
-    const dialog = doc.querySelector<HTMLElement>('[role="alertdialog"]')
-    expectStory(dialog, 'service update confirm dialog missing in overview link-icon story')
-    const dialogRegistry = dialog?.querySelector<HTMLAnchorElement>('[data-link-kind="registry"][data-link-icon="ghcr"]')
-    expectStory(dialogRegistry?.href === 'https://ghcr.io/acme/api', 'overview service dialog should reuse GHCR registry icon')
-    const dialogRepo = dialog?.querySelector<HTMLAnchorElement>('[data-link-kind="repo"][data-link-icon="generic"]')
-    expectStory(dialogRepo?.href === 'https://codeberg.org/acme/api', 'overview service dialog should reuse repo icon rendering')
-  },
-}
-
-export const JobsCardHeavyInFlight: Story = {
-  parameters: { dockrevApiScenario: 'overview-jobs-card-heavy-inflight' },
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：未终止任务 >5 时，最多展示 10 条未终止">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-}
-
-export const JobsCardTerminalOnly: Story = {
-  parameters: { dockrevApiScenario: 'overview-jobs-card-terminal-only' },
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：未终止任务=0 时，仅展示最多 5 条终止状态任务">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-}
-
-export const JobsCardMixedFallback: Story = {
-  parameters: { dockrevApiScenario: 'queue-mixed' },
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：未终止任务不足 5 条时由终止状态补齐到 5 条">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-}
-
-export const JobsCardExactFiveNonTerminal: Story = {
-  parameters: { dockrevApiScenario: 'overview-jobs-card-exact-five-non-terminal' },
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：未终止任务=5 时只显示 5 条未终止任务，不补终止状态">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-}
-
-export const JobsCardRunningProgressModes: Story = {
-  parameters: { dockrevApiScenario: 'overview-jobs-card-running-progress-modes' },
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：第 1 条为 determinate（75%），流光仅在已完成区域">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-}
-
-export const JobsCardRunningProgressOnly: Story = {
-  parameters: { dockrevApiScenario: 'overview-jobs-card-running-progress-modes', layout: 'fullscreen' },
-  decorators: [
-    (Story) => (
-      <div className="overviewJobsCardStoryFocus">
-        <style>{jobsCardOnlyScopeCss}</style>
-        <div className="overviewJobsCardStoryFocusFrame">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="单卡聚焦：运行态与结果（仅卡片）">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-}
-
-export const JobsCardRunningProgressOnlyActualWidth: Story = {
-  parameters: { dockrevApiScenario: 'overview-jobs-card-running-progress-modes', layout: 'fullscreen' },
-  decorators: [
-    (Story) => (
-      <div className="overviewJobsCardStoryFocus">
-        <style>{jobsCardOnlyScopeCss}</style>
-        <div className="overviewJobsCardStoryFocusFrame overviewJobsCardStoryFocusFrame-actual">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="单卡聚焦：运行态与结果（接近真实宽度）">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-}
-
-export const DiscoveryCardReadable: Story = {
-  parameters: { dockrevApiScenario: 'overview-discovery-readable', layout: 'fullscreen' },
-  decorators: [
-    (Story) => (
-      <div className="discoveryCardStoryFocus">
-        <style>{discoveryCardOnlyScopeCss}</style>
-        <div className="discoveryCardStoryFocusFrame">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="聚焦：结构化发现异常列表与长错误次级暴露">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-  play: async ({ canvasElement }) => {
-    await sleep(180)
-    const doc = canvasElement.ownerDocument
-    const nav = window.navigator as Navigator & {
-      clipboard?: { writeText?: (text: string) => Promise<void> }
-    }
-    const originalClipboard = nav.clipboard
-    let copiedText: string | null = null
-    Object.defineProperty(nav, 'clipboard', {
-      configurable: true,
-      value: {
-        writeText: async (text: string) => {
-          copiedText = text
+  parameters: {
+    dockrevApiScenario: "dashboard-demo",
+    dockrevServiceOverridesById: {
+      "svc-prod-api": {
+        homepage: {
+          group: "Applications",
+          name: "Acme API",
+          icon: "si-github",
+          href: "https://api.example.com",
+          description: "API gateway & auth",
         },
       },
-    })
-    const statChips = Array.from(canvasElement.querySelectorAll<HTMLElement>('.discoveryStatChip')).map((chip) => chip.textContent ?? '')
-    expectStory(statChips.some((text) => text.includes('异常项目') && text.includes('4')), 'discovery summary should surface total issue count first')
-
-    const rows = Array.from(canvasElement.querySelectorAll<HTMLElement>('.discoveryIssueRow'))
-    expectStory(rows.length === 4, `expected 4 discovery issue rows, got ${rows.length}`)
-    expectStory(rows[0]?.textContent?.includes('forward-auth'), 'newest project should lead the discovery issue list')
-    expectStory(
-      rows[1]?.textContent?.includes('missing-compose'),
-      'recently re-confirmed missing project should stay near the top of the discovery issue list',
-    )
-
-    const warningRow = rows.find((row) => row.textContent?.includes('forward-auth'))
-    expectStory(warningRow, 'warning row missing in discovery readable story')
-    const detailsButton = warningRow?.querySelector<HTMLButtonElement>('.discoveryIssueDetailsBtn')
-    expectStory(detailsButton, 'warning row should expose a secondary details button for long errors')
-    detailsButton.click()
-    await sleep(180)
-
-    const dialog = doc.querySelector<HTMLElement>('[role="dialog"]')
-    expectStory(dialog?.textContent?.includes('DOCKREV_SUPERVISOR_STATE_PATH'), 'dialog should preserve the full discovery warning details')
-
-    const copyButton = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find((button) =>
-      button.textContent?.includes('复制完整详情'),
-    )
-    expectStory(copyButton, 'dialog should expose a copy button for the full discovery warning details')
-    copyButton?.click()
-    await sleep(120)
-    const copiedDetail = String(copiedText ?? '')
-    expectStory(
-      copiedDetail.includes('DOCKREV_SUPERVISOR_STATE_PATH'),
-      'copy button should write the full discovery warning details',
-    )
-    const copyButtonText = copyButton?.textContent ?? ''
-    expectStory(copyButtonText.includes('已复制'), 'copy button should surface copied feedback')
-
-    const closeButton = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find((button) =>
-      button.textContent?.includes('关闭'),
-    )
-    expectStory(closeButton, 'dialog should expose an explicit close button')
-    closeButton?.click()
-    await sleep(120)
-    expectStory(!doc.querySelector<HTMLElement>('[role="dialog"]'), 'dialog should close after clicking the close button')
-
-    const missingRow = rows.find((row) => row.textContent?.includes('missing-compose'))
-    expectStory(missingRow, 'missing row missing in discovery readable story')
-    expectStory(
-      !missingRow?.querySelector('.discoveryIssueDetailsBtn'),
-      'rows without full detail payload should not render a details button',
-    )
-    const missingSummary = missingRow?.querySelector<HTMLElement>('.discoveryIssueSummary')
-    expectStory(
-      missingSummary?.title === missingSummary?.textContent?.trim(),
-      'rows without a detail dialog should preserve a title fallback for truncated summaries',
-    )
-
-    Object.defineProperty(nav, 'clipboard', {
-      configurable: true,
-      value: originalClipboard,
-    })
+      "svc-prod-web": {
+        homepage: {
+          group: "Applications",
+          name: "Web Console",
+          icon: "mdi-monitor-dashboard",
+          href: "https://web.example.com",
+          description: "Primary admin console",
+        },
+      },
+      "svc-prod-worker": {
+        homepage: {
+          group: "Applications",
+          name: "Background Jobs",
+          icon: "mdi-cog-refresh-outline",
+          href: null,
+          description: "Queue workers & cron",
+        },
+      },
+      "svc-infra-loki": {
+        homepage: {
+          group: "Platform",
+          name: "Loki",
+          icon: "mdi-file-document-multiple-outline",
+          href: "https://logs.example.com",
+          description: "Log aggregation",
+        },
+      },
+      "svc-infra-prom": {
+        homepage: {
+          group: "Platform",
+          name: "Prometheus",
+          icon: "prometheus.svg",
+          href: "https://metrics.example.com",
+          description: "Metrics & alerts",
+        },
+      },
+      "svc-infra-postgres": {
+        homepage: {
+          group: "Platform",
+          name: "Postgres",
+          icon:
+            "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/postgres.svg",
+          href: "https://db.example.com",
+          description: "Transactional database",
+        },
+      },
+    },
   },
-}
-
-export const JobsCardEmpty: Story = {
-  parameters: { dockrevApiScenario: 'empty' },
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：无任务空态文案">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-}
-
-export const GuideLineLongNames: Story = {
-  parameters: { dockrevApiScenario: 'guide-line-long-names' },
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="对齐回归：长 stack / service 名称布局">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-}
-
-export const ResolvedTag: Story = {
-  parameters: { dockrevApiScenario: 'resolved-tag-demo' },
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：resolvedTag 展示与触发器内容">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-}
-
-export const Empty: Story = {
-  parameters: { dockrevApiScenario: 'empty' },
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-}
-
-export const Error: Story = {
-  parameters: { dockrevApiScenario: 'error' },
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-}
-
-export const NoCandidatesButHasServices: Story = {
-  parameters: { dockrevApiScenario: 'no-candidates' },
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="回归：services>0 且无 candidate">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-}
-
-export const MultiStackMixed: Story = {
-  parameters: { dockrevApiScenario: 'multi-stack-mixed' },
-  render: () => {
-    return (
-      <PageHarness
-        route={{ name: 'overview' }}
-        title="概览"
-        pageSubtitle="代表性场景：多 stacks / 归档对象 / discovered projects"
-      >
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-}
-
-export const VersionAnomalyBatchList: Story = {
-  parameters: { dockrevApiScenario: 'service-detail-version-anomaly' },
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="批量更新弹窗：版本异常服务高亮与单项提示">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
-}
-
-export const AggregateDockrevGuard: Story = {
-  parameters: { dockrevApiScenario: 'aggregate-dockrev-guard' },
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="聚合更新保护：Dockrev 预览保留但不会参与执行">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
+  render: renderOverview(
+    "Homepage 兼容导航：统一网格卡片 + 更新丝带 + 点开查看详情",
+  ),
   play: async ({ canvasElement }) => {
-    await sleep(180)
-    const doc = canvasElement.ownerDocument
-    const updateAllButton = findButtonByText(canvasElement, '更新全部')
-    expectStory(updateAllButton, 'missing aggregate update-all button')
+    await sleep(220);
 
-    updateAllButton.click()
-    await sleep(160)
+    expectStory(
+      !canvasElement.textContent?.includes("服务导航"),
+      "expected overview page to remove the legacy service-navigation summary card",
+    );
+    expectStory(
+      Array.from(canvasElement.querySelectorAll("button")).some((button) =>
+        button.textContent?.includes("搜索"),
+      ),
+      "expected overview page to render an explicit search button",
+    );
+    expectStory(
+      canvasElement.querySelector(".homepageOverviewSearchShell"),
+      "expected overview page to render an integrated search shell",
+    );
+    const searchShell = canvasElement.querySelector<HTMLElement>(
+      ".homepageOverviewSearchShell",
+    );
+    expectStory(searchShell, "expected overview search shell element");
+    const searchShellRect = searchShell.getBoundingClientRect();
+    const canvasRect = canvasElement.getBoundingClientRect();
+    expectStory(
+      searchShellRect.width >= canvasRect.width * 0.72,
+      `expected overview search shell to use near full-row width, got ${Math.round(searchShellRect.width)} / ${Math.round(canvasRect.width)}`,
+    );
+    expectStory(
+      canvasElement.querySelector(".homepageOverviewSearchButtonIcon"),
+      "expected overview search button to include a search icon",
+    );
+    expectStory(
+      !canvasElement.textContent?.includes("结果 6/6"),
+      "expected overview page to hide the legacy result counter",
+    );
 
-    const dialog = doc.querySelector<HTMLElement>('[role="alertdialog"]')
-    expectStory(dialog, 'confirm dialog missing after opening aggregate update-all preview')
-    expectStory(dialog.textContent?.includes('1 个（可更新/需确认）'), 'aggregate candidate count should exclude guarded dockrev')
+    const cards = Array.from(
+      canvasElement.querySelectorAll<HTMLAnchorElement>(".homepageServiceCard"),
+    );
+    expectStory(cards.length >= 4, "expected homepage cards to render");
 
-    const guardedItems = doc.querySelectorAll('.modalListItemGuarded')
-    expectStory(guardedItems.length === 1, `expected 1 guarded dockrev preview row, got ${guardedItems.length}`)
-
-    const guardTrigger = doc.querySelector<HTMLButtonElement>('.modalListGuardHintTrigger')
-    expectStory(guardTrigger, 'guard tooltip trigger missing in aggregate preview row')
-    guardTrigger.focus()
-    await sleep(TOOLTIP_WAIT_MS)
-
-    const tooltip = doc.querySelector<HTMLElement>('[role="tooltip"]')
-    expectStory(tooltip?.textContent?.includes(DOCKREV_AGGREGATE_GUARD_HINT), 'guard tooltip text missing for preview row')
+    const sizes = cards.map((card) => {
+      const rect = card.getBoundingClientRect();
+      return `${Math.round(rect.width)}x${Math.round(rect.height)}`;
+    });
+    expectStory(
+      new Set(sizes).size === 1,
+      `expected homepage cards to use a uniform grid size, got ${sizes.join(", ")}`,
+    );
+    expectStory(
+      !canvasElement.textContent?.includes("新窗口"),
+      "expected homepage cards to avoid the new-window pill text",
+    );
   },
-}
+};
 
-export const AggregateDockrevOnlyDisabled: Story = {
-  parameters: { dockrevApiScenario: 'aggregate-dockrev-only' },
-  render: () => {
-    return (
-      <PageHarness route={{ name: 'overview' }} title="概览" pageSubtitle="聚合更新保护：仅剩 Dockrev 时直接禁用更新全部">
-        {({ onLastScanHint, onTopActions }) => <OverviewPage onLastScanHint={onLastScanHint} onTopActions={onTopActions} />}
-      </PageHarness>
-    )
-  },
+export const SearchAndFallback: Story = {
+  parameters: { dockrevApiScenario: "multi-stack-mixed" },
+  render: renderOverview(
+    "回归：未配置 Homepage 标签的服务仍需兜底展示并可搜索",
+  ),
   play: async ({ canvasElement }) => {
-    await sleep(180)
-    const doc = canvasElement.ownerDocument
-    const updateAllButton = findButtonByText(canvasElement, '更新全部')
-    expectStory(updateAllButton, 'missing aggregate update-all button in dockrev-only story')
-    expectStory(updateAllButton.disabled, 'update-all button should be disabled when only dockrev is guardable')
+    await sleep(220);
 
-    const tooltipAnchor = updateAllButton.closest<HTMLElement>('.btnTooltipAnchor')
-    expectStory(tooltipAnchor, 'disabled aggregate button should be wrapped with tooltip anchor')
-    await openTooltip(tooltipAnchor)
+    const allCards = Array.from(
+      canvasElement.querySelectorAll<HTMLAnchorElement>(".homepageServiceCard"),
+    );
+    expectStory(
+      allCards.length >= 4,
+      "expected homepage overview cards to render",
+    );
 
-    const tooltip = doc.querySelector<HTMLElement>('[role="tooltip"]')
-    expectStory(tooltip?.textContent?.includes(DOCKREV_AGGREGATE_GUARD_HINT), 'disabled aggregate button tooltip missing')
+    const workerCard = allCards.find((card) =>
+      card.textContent?.includes("worker"),
+    );
+    expectStory(workerCard, "expected fallback worker card to render");
+    expectStory(
+      workerCard.getAttribute("target") === "_blank",
+      "fallback worker card should open in a new tab",
+    );
+    expectStory(
+      workerCard
+        .getAttribute("href")
+        ?.includes("/services/stack-prod/svc-prod-worker"),
+      "fallback worker card should link to the Dockrev service detail route",
+    );
+    expectStory(
+      workerCard.querySelector(".homepageServiceRibbon")?.textContent?.includes(
+        "被阻止",
+      ) === true,
+      "fallback worker card should show the update-status ribbon",
+    );
+
+    const searchInput = canvasElement.querySelector<HTMLInputElement>(
+      'input[placeholder*="搜索分组"]',
+    );
+    expectStory(searchInput, "expected overview search input");
+    const searchButton = Array.from(
+      canvasElement.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.includes("搜索"));
+    expectStory(searchButton, "expected overview search button");
+    setInputValue(searchInput, "worker");
+    searchButton.click();
+    await sleep(40);
+    expectStory(
+      searchButton
+        .querySelector(".homepageOverviewSearchButtonIcon")
+        ?.classList.contains("inlineIconSpinning") === true,
+      "expected search icon to spin while applying the query",
+    );
+    await sleep(240);
+
+    const filteredCards = Array.from(
+      canvasElement.querySelectorAll<HTMLAnchorElement>(".homepageServiceCard"),
+    );
+    expectStory(
+      filteredCards.length === 1,
+      "search should filter overview cards down to the fallback worker entry",
+    );
+    expectStory(
+      filteredCards[0].textContent?.includes("worker"),
+      "filtered overview card should be worker",
+    );
+
+    setInputValue(searchInput, "ghcr.io/acme/api");
+    searchButton.click();
+    await sleep(260);
+
+    const imageFilteredCards = Array.from(
+      canvasElement.querySelectorAll<HTMLAnchorElement>(".homepageServiceCard"),
+    );
+    expectStory(
+      imageFilteredCards.length === 1,
+      "search should still match homepage cards by image ref",
+    );
+    expectStory(
+      imageFilteredCards[0].textContent?.includes("Acme API"),
+      "image-ref search should keep the Acme API card visible",
+    );
+
+    setInputValue(searchInput, "miniflux");
+    searchButton.click();
+    await sleep(260);
+
+    const noUpdateCard = Array.from(
+      canvasElement.querySelectorAll<HTMLAnchorElement>(".homepageServiceCard"),
+    )[0];
+    expectStory(
+      !noUpdateCard.querySelector(".homepageServiceRibbon"),
+      "cards without updates should not render a ribbon",
+    );
   },
-}
+};
+
+export const IconKinds: Story = {
+  parameters: {
+    dockrevApiScenario: "dashboard-demo",
+    dockrevServiceOverridesById: {
+      "svc-prod-api": {
+        homepage: {
+          group: "Developer",
+          name: "Acme API",
+          icon: "si-github",
+          href: "https://api.example.com",
+          description: "Primary API gateway",
+        },
+      },
+      "svc-prod-web": {
+        homepage: {
+          group: "Frontend",
+          name: "Web Console",
+          icon: "mdi-monitor-dashboard",
+          href: "https://web.example.com",
+          description: "User-facing dashboard",
+        },
+      },
+      "svc-infra-loki": {
+        homepage: {
+          group: "Monitoring",
+          name: "Loki",
+          icon: "sh-home-assistant.png",
+          href: "https://logs.example.com",
+          description: "Centralized logs",
+        },
+      },
+      "svc-infra-prom": {
+        homepage: {
+          group: "Monitoring",
+          name: "Prometheus",
+          icon: "prometheus.svg",
+          href: "https://metrics.example.com",
+          description: "Metrics and alerting",
+        },
+      },
+      "svc-infra-postgres": {
+        homepage: {
+          group: "Data",
+          name: "Postgres",
+          icon: "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/postgres.svg",
+          href: "https://db.example.com",
+          description: "Primary relational database",
+        },
+      },
+    },
+  },
+  render: renderOverview(
+    "图标解析：si / mdi / sh / dashboard-icons / absolute URL",
+  ),
+  play: async ({ canvasElement }) => {
+    await sleep(220);
+
+    const findCard = (text: string) =>
+      Array.from(
+        canvasElement.querySelectorAll<HTMLAnchorElement>(
+          ".homepageServiceCard",
+        ),
+      ).find((card) => card.textContent?.includes(text));
+
+    expectStory(
+      findCard("Acme API")
+        ?.querySelector(".homepageServiceIcon")
+        ?.getAttribute("data-icon-kind") === "si",
+      "expected Acme API card to use simple-icons parsing",
+    );
+    expectStory(
+      findCard("Acme API")
+        ?.querySelector<HTMLImageElement>(".homepageServiceIconImage")
+        ?.src.includes("color=%23dbeafe") === true,
+      "expected simple-icons monochrome icons to use the default light tint",
+    );
+    expectStory(
+      findCard("Web Console")
+        ?.querySelector(".homepageServiceIcon")
+        ?.getAttribute("data-icon-kind") === "mdi",
+      "expected Web Console card to use mdi parsing",
+    );
+    expectStory(
+      findCard("Web Console")
+        ?.querySelector<HTMLImageElement>(".homepageServiceIconImage")
+        ?.src.includes("color=%23dbeafe") === true,
+      "expected mdi monochrome icons to use the default light tint",
+    );
+    expectStory(
+      findCard("Loki")
+        ?.querySelector(".homepageServiceIcon")
+        ?.getAttribute("data-icon-kind") === "sh",
+      "expected Loki card to use selfh.st parsing",
+    );
+    expectStory(
+      findCard("Prometheus")
+        ?.querySelector(".homepageServiceIcon")
+        ?.getAttribute("data-icon-kind") === "dashboard",
+      "expected Prometheus card to use dashboard-icons parsing",
+    );
+    expectStory(
+      findCard("Postgres")
+        ?.querySelector(".homepageServiceIcon")
+        ?.getAttribute("data-icon-kind") === "url",
+      "expected Postgres card to use absolute URL parsing",
+    );
+  },
+};
+
+export const UnsafeHomepageHrefFallsBack: Story = {
+  parameters: {
+    dockrevApiScenario: "dashboard-demo",
+    dockrevServiceOverridesById: {
+      "svc-prod-api": {
+        homepage: {
+          group: "Developer",
+          name: "Acme API",
+          icon: "si-github",
+          href: "javascript:alert(1)",
+          description: "Primary API gateway",
+        },
+      },
+    },
+  },
+  render: renderOverview("回归：不安全 Homepage href 必须回退到内部详情页"),
+  play: async ({ canvasElement }) => {
+    await sleep(220);
+
+    const apiCard = Array.from(
+      canvasElement.querySelectorAll<HTMLAnchorElement>(".homepageServiceCard"),
+    ).find((card) => card.textContent?.includes("Acme API"));
+    expectStory(apiCard, "expected Acme API card to render");
+    expectStory(
+      apiCard
+        .getAttribute("href")
+        ?.includes("/services/stack-prod/svc-prod-api"),
+      "unsafe homepage href should fall back to the Dockrev service detail route",
+    );
+    expectStory(
+      !apiCard.textContent?.includes("详情"),
+      "homepage cards should not render the legacy detail pill text",
+    );
+  },
+};

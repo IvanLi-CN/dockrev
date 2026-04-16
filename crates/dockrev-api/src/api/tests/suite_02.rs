@@ -250,6 +250,93 @@ services:
 }
 
 #[tokio::test]
+async fn get_stack_roundtrips_homepage_metadata_from_compose_labels() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+    labels:
+      - homepage.group=Developer
+      - homepage.name=Acme API
+      - homepage.icon=si-github
+      - homepage.href=https://api.example.com
+      - homepage.description=Primary API
+      - homepage.widget.type=custom
+  grafana:
+    image: grafana/grafana:11
+    labels:
+      homepage.group: Monitoring
+      homepage.name: Grafana
+      homepage.icon: mdi-chart-timeline-variant
+      homepage.href: https://grafana.example.com
+      homepage.description: Dashboards
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body = response_json(resp).await;
+    let services = body["stack"]["services"]
+        .as_array()
+        .expect("stack services array");
+    let web = services
+        .iter()
+        .find(|item| item["name"].as_str() == Some("web"))
+        .expect("web service");
+    let grafana = services
+        .iter()
+        .find(|item| item["name"].as_str() == Some("grafana"))
+        .expect("grafana service");
+
+    assert_eq!(web["homepage"]["group"].as_str(), Some("Developer"));
+    assert_eq!(web["homepage"]["name"].as_str(), Some("Acme API"));
+    assert_eq!(web["homepage"]["icon"].as_str(), Some("si-github"));
+    assert_eq!(web["homepage"]["href"].as_str(), Some("https://api.example.com"));
+    assert_eq!(
+        web["homepage"]["description"].as_str(),
+        Some("Primary API")
+    );
+    assert!(
+        web["homepage"]["widget"].is_null(),
+        "widget metadata should stay out of API payloads: {}",
+        web
+    );
+
+    assert_eq!(grafana["homepage"]["group"].as_str(), Some("Monitoring"));
+    assert_eq!(grafana["homepage"]["name"].as_str(), Some("Grafana"));
+    assert_eq!(
+        grafana["homepage"]["icon"].as_str(),
+        Some("mdi-chart-timeline-variant")
+    );
+    assert_eq!(
+        grafana["homepage"]["href"].as_str(),
+        Some("https://grafana.example.com")
+    );
+    assert_eq!(
+        grafana["homepage"]["description"].as_str(),
+        Some("Dashboards")
+    );
+}
+
+#[tokio::test]
 async fn register_stack_then_check_updates() {
     let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
     let state = test_state_with(":memory:", Arc::new(DigestOnlyUpdateRegistry), runner).await;

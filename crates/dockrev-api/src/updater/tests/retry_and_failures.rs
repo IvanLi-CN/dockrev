@@ -131,6 +131,7 @@ async fn up_command_is_not_retried_when_it_fails() {
                 resolved_tag: None,
                 resolved_tags: None,
             },
+            homepage: None,
             candidate: None,
             ignore: None,
             version_inference: None,

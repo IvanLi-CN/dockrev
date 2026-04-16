@@ -946,6 +946,7 @@ services:
                 name: "web".to_string(),
                 image_ref: "ghcr.io/acme/worker".to_string(),
                 image_tag: "latest".to_string(),
+                homepage: None,
             }],
             &test_now_rfc3339(),
         )
@@ -1011,6 +1012,7 @@ services:
                 name: "web".to_string(),
                 image_ref: "ghcr.io/acme/worker".to_string(),
                 image_tag: "latest".to_string(),
+                homepage: None,
             }],
             &test_now_rfc3339(),
         )
@@ -1028,6 +1030,83 @@ services:
         stored.repo_url_auto_disabled,
         "image changes should preserve explicit repo auto-backfill disable flag: {stored:?}"
     );
+}
+
+#[tokio::test]
+async fn sync_stack_from_compose_updates_and_clears_homepage_metadata_when_image_unchanged() {
+    let state = test_state(":memory:").await;
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+    labels:
+      - homepage.group=Developer
+      - homepage.name=Acme API
+      - homepage.icon=si-github
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let homepage_updated = crate::api::types::ServiceHomepage {
+        group: Some("Platform".to_string()),
+        name: Some("Acme Worker".to_string()),
+        icon: Some("mdi-rocket-launch".to_string()),
+        href: Some("https://worker.example.com".to_string()),
+        description: Some("Updated homepage metadata".to_string()),
+    };
+
+    state
+        .db
+        .sync_stack_from_compose(
+            &stack_id,
+            std::slice::from_ref(&compose_path),
+            &[crate::db::ComposeServiceSpec {
+                name: "web".to_string(),
+                image_ref: "ghcr.io/acme/web:latest".to_string(),
+                image_tag: "latest".to_string(),
+                homepage: Some(homepage_updated.clone()),
+            }],
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    let updated_stack = state.db.get_stack(&stack_id).await.unwrap().unwrap();
+    let updated_service = updated_stack
+        .services
+        .iter()
+        .find(|service| service.name == "web")
+        .expect("web service after metadata update");
+    assert_eq!(updated_service.homepage, Some(homepage_updated));
+
+    state
+        .db
+        .sync_stack_from_compose(
+            &stack_id,
+            std::slice::from_ref(&compose_path),
+            &[crate::db::ComposeServiceSpec {
+                name: "web".to_string(),
+                image_ref: "ghcr.io/acme/web:latest".to_string(),
+                image_tag: "latest".to_string(),
+                homepage: None,
+            }],
+            &test_now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    let cleared_stack = state.db.get_stack(&stack_id).await.unwrap().unwrap();
+    let cleared_service = cleared_stack
+        .services
+        .iter()
+        .find(|service| service.name == "web")
+        .expect("web service after metadata clear");
+    assert!(cleared_service.homepage.is_none());
 }
 
 #[tokio::test]
@@ -1168,4 +1247,3 @@ services:
         "stack-scoped enqueue should yield to pending all-scope repo backfill"
     );
 }
-

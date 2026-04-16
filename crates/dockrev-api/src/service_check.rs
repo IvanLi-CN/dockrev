@@ -803,6 +803,7 @@ mod tests {
             name: "web".to_string(),
             image_ref: "ghcr.io/acme/web:latest".to_string(),
             image_tag: "latest".to_string(),
+            homepage: None,
             auto_rollback: false,
             backup_bind_paths: BTreeMap::new(),
             backup_volume_names: BTreeMap::new(),

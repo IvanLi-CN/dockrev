@@ -123,7 +123,11 @@ fn stack_services_match_specs(
         .map(|svc| {
             (
                 svc.name.clone(),
-                (svc.image.reference.clone(), svc.image.tag.clone()),
+                (
+                    svc.image.reference.clone(),
+                    svc.image.tag.clone(),
+                    svc.homepage.clone(),
+                ),
             )
         })
         .collect::<BTreeMap<_, _>>();
@@ -133,7 +137,11 @@ fn stack_services_match_specs(
         .map(|svc| {
             (
                 svc.name.clone(),
-                (svc.image_ref.clone(), svc.image_tag.clone()),
+                (
+                    svc.image_ref.clone(),
+                    svc.image_tag.clone(),
+                    svc.homepage.clone(),
+                ),
             )
         })
         .collect::<BTreeMap<_, _>>();
@@ -1037,6 +1045,7 @@ async fn run_scan_inner(
                 name: svc.name.clone(),
                 image_ref: svc.image_ref.clone(),
                 image_tag: svc.image_tag.clone(),
+                homepage: svc.homepage.clone(),
             })
             .collect();
 
@@ -1070,6 +1079,7 @@ async fn run_scan_inner(
                     name: svc.name.clone(),
                     image_ref: svc.image_ref.clone(),
                     image_tag: svc.image_tag.clone(),
+                    homepage: svc.homepage.clone(),
                     auto_rollback: true,
                     backup_bind_paths: BTreeMap::new(),
                     backup_volume_names: BTreeMap::new(),

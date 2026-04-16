@@ -285,6 +285,7 @@ async fn seed_stack_from_compose(state: &Arc<AppState>, name: &str, compose_file
             name: svc.name.clone(),
             image_ref: svc.image_ref.clone(),
             image_tag: svc.image_tag.clone(),
+            homepage: svc.homepage.clone(),
             auto_rollback: true,
             backup_bind_paths: BTreeMap::new(),
             backup_volume_names: BTreeMap::new(),

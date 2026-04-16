@@ -55,6 +55,7 @@ pub(super) fn single_service_stack(
                 resolved_tag: None,
                 resolved_tags: None,
             },
+            homepage: None,
             candidate,
             ignore: None,
             version_inference: None,
@@ -245,6 +246,7 @@ pub(super) fn selection_test_service(id: &str, name: &str, image_reference: &str
             resolved_tag: None,
             resolved_tags: None,
         },
+        homepage: None,
         candidate: Some(Candidate {
             tag: "latest".to_string(),
             resolved_tag: Some("0.29.5".to_string()),

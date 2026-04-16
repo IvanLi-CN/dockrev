@@ -47,6 +47,13 @@ fn stack_services_match_specs_detects_changes() {
                 resolved_tag: None,
                 resolved_tags: None,
             },
+            homepage: Some(crate::api::types::ServiceHomepage {
+                group: Some("Developer".to_string()),
+                name: Some("Web".to_string()),
+                icon: Some("si-github".to_string()),
+                href: Some("https://example.com/web".to_string()),
+                description: Some("Docs".to_string()),
+            }),
             candidate: None,
             ignore: None,
             version_inference: None,
@@ -67,6 +74,13 @@ fn stack_services_match_specs_detects_changes() {
         name: "web".to_string(),
         image_ref: "ghcr.io/acme/web:1.0".to_string(),
         image_tag: "1.0".to_string(),
+        homepage: Some(crate::api::types::ServiceHomepage {
+            group: Some("Developer".to_string()),
+            name: Some("Web".to_string()),
+            icon: Some("si-github".to_string()),
+            href: Some("https://example.com/web".to_string()),
+            description: Some("Docs".to_string()),
+        }),
     }];
     assert!(stack_services_match_specs(&stack, &specs_ok));
 
@@ -74,8 +88,29 @@ fn stack_services_match_specs_detects_changes() {
         name: "web".to_string(),
         image_ref: "ghcr.io/acme/web:1.1".to_string(),
         image_tag: "1.1".to_string(),
+        homepage: Some(crate::api::types::ServiceHomepage {
+            group: Some("Developer".to_string()),
+            name: Some("Web".to_string()),
+            icon: Some("si-github".to_string()),
+            href: Some("https://example.com/web".to_string()),
+            description: Some("Docs".to_string()),
+        }),
     }];
     assert!(!stack_services_match_specs(&stack, &specs_changed));
+
+    let specs_homepage_changed = vec![ComposeServiceSpec {
+        name: "web".to_string(),
+        image_ref: "ghcr.io/acme/web:1.0".to_string(),
+        image_tag: "1.0".to_string(),
+        homepage: Some(crate::api::types::ServiceHomepage {
+            group: Some("Developer".to_string()),
+            name: Some("Web".to_string()),
+            icon: Some("si-gitea".to_string()),
+            href: Some("https://example.com/web".to_string()),
+            description: Some("Docs".to_string()),
+        }),
+    }];
+    assert!(!stack_services_match_specs(&stack, &specs_homepage_changed));
 }
 
 #[test]

@@ -32,6 +32,14 @@ export type ServiceSettings = {
   repoUrl?: string | null
 }
 
+export type ServiceHomepage = {
+  group?: string | null
+  name?: string | null
+  icon?: string | null
+  href?: string | null
+  description?: string | null
+}
+
 export type ServiceImage = {
   ref: string
   tag: string
@@ -50,6 +58,7 @@ export type Service = {
   id: string
   name: string
   image: ServiceImage
+  homepage?: ServiceHomepage | null
   candidate?: {
     tag: string
     resolvedTag?: string | null
@@ -800,4 +809,3 @@ export type RemoveGitHubPackagesTargetRequest = {
 export type RemoveGitHubPackagesTargetResponse = {
   ok: boolean
 }
-

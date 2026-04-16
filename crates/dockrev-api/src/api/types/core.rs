@@ -55,6 +55,8 @@ pub struct Service {
     pub name: String,
     pub image: ComposeRef,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub homepage: Option<ServiceHomepage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub candidate: Option<Candidate>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ignore: Option<IgnoreMatch>,
@@ -65,6 +67,31 @@ pub struct Service {
     pub settings: ServiceSettings,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archived: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceHomepage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub href: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+impl ServiceHomepage {
+    pub fn is_empty(&self) -> bool {
+        self.group.is_none()
+            && self.name.is_none()
+            && self.icon.is_none()
+            && self.href.is_none()
+            && self.description.is_none()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
