@@ -62,11 +62,14 @@
 - `/services` 必须保留现有 archived stacks / services 恢复区，并置于运维大盘下方。
 - `/services` 的新增搜索只过滤更新候选区，且匹配 `stack.name`、`service.name`、`image.ref`、`homepage.name`、`homepage.description`。
 - `/` 必须展示分组导航卡片；优先使用 `homepage.group/name/icon/href/description`，未配置时按 `stack.name` + `service.name` + `image.ref` 自动兜底。
-- 导航卡片点击必须在新标签页打开；若存在 `homepage.href` 则打开该外部地址，否则打开 Dockrev 内部服务详情页。
+- 导航卡片点击必须在新标签页打开；若存在 `homepage.href` 则打开该外部地址，否则打开 Dockrev 内部服务详情页，但卡片正文不再显示“新窗口/详情”提示文案。
 - 服务 API 中的 `Service` 必须新增可空 `homepage` 元数据对象，包含 `group`、`name`、`icon`、`href`、`description` 五项。
 - compose 解析必须兼容 `labels` 的 YAML list / map 两种写法，并只提取 Homepage 基础五项标签。
 - 前端图标解析必须支持绝对 URL、`mdi-*`、`si-*`、`sh-*` 与 dashboard-icons 文件名；无法识别时回退默认图标。
 - 导航卡片上的新版本/状态标记必须复用现有 `serviceRowStatus` 与 `newVersionDiscoveryCount` 语义，不引入第二套状态口径。
+- 导航页卡片必须使用统一网格布局，且同一视口下所有服务卡片保持一致尺寸。
+- 导航卡片右上角仅在存在更新相关状态时显示彩色丝带；更新细节不在卡片正文展开，需点击后查看。
+- 导航页顶部不再显示独立“服务导航”汇总卡片，仅保留左对齐、全宽的一体化搜索入口与带搜索图标的显式搜索按钮。
 - Storybook 必须覆盖新 `/` 导航页与新 `/services` 运维页的主要状态与关键交互。
 
 ### SHOULD
@@ -86,6 +89,7 @@
 - 用户进入 `/services` 时，页面顶部先显示运维大盘：运行态与结果卡片、discovery 异常卡片、更新候选区域；更新候选区域提供搜索，并继续支持现有批量更新、单服务更新、跳转任务等操作。
 - 用户继续向下滚动 `/services` 时，仍能看到当前的 active/archived 服务列表与归档恢复区，不丢失恢复能力。
 - 用户进入 `/` 时，页面显示“以入口导航为主”的卡片网格；服务按 `homepage.group` 分组，未标记服务按所属 `stack.name` 分组兜底。
+- `/` 顶部使用左对齐、全宽的一体化搜索栏过滤当前导航卡片，并提供带搜索图标的显式搜索按钮；空间不足时允许按钮仅显示图标，搜索应用期间图标旋转。不再额外展示独立汇总卡片或统计芯片区。
 - 每张导航卡片优先显示 `homepage.name`、`homepage.description`、`homepage.icon` 与 `homepage.href`；若对应字段缺失，则分别回退到 `service.name`、`image.ref`、默认图标与 Dockrev 服务详情页。
 - 用户点击任一卡片时，Dockrev 在新标签页打开目标地址，不影响当前页面上下文。
 - 若某服务存在新版本候选、需确认、被阻止、架构不匹配等状态，导航卡片上必须展示对应标记；若存在 `newVersionDiscoveryCount`，则继续显示发现次数。
@@ -125,6 +129,8 @@
 - Given 导航卡片不存在 `homepage.href`，When 用户点击卡片，Then Dockrev 内部服务详情页在新标签页打开。
 - Given 服务当前存在 `serviceRowStatus=blocked|confirm|archMismatch|newVersion` 等状态或 `newVersionDiscoveryCount>0`，When `/` 渲染导航卡片，Then 卡片展示与现有服务列表一致的状态标记与发现次数。
 - Given `homepage.icon` 为绝对 URL、`mdi-*`、`si-*`、`sh-*`、dashboard-icons 文件名或未知值，When `/` 渲染导航卡片，Then 图标分别按对应规则显示或回退默认图标。
+- Given 用户打开 `/`，When 页面展示 Homepage 导航卡片，Then 页面使用统一网格布局，且当前视口内每张服务卡片尺寸一致。
+- Given 某服务存在 `serviceRowStatus=updatable|hint|archMismatch|blocked`，When `/` 渲染导航卡片，Then 该卡片右上角显示对应彩色丝带；若状态为 `ok`，Then 右上角不显示任何丝带。
 - Given 运行 `cargo test`、`bun run --cwd web lint`、`bun run --cwd web build`、`bun run --cwd web build-storybook` 与 `bun run --cwd web test-storybook -- --url <leased-port>`，When 本改动完成，Then 全部通过。
 
 ## 实现前置条件（Definition of Ready / Preconditions）
@@ -170,10 +176,10 @@
 
 - source_type: storybook_canvas
   story_id_or_title: `pages-overviewpage--default`
-  state: `homepage navigation default`
-  evidence_note: 验证 `/` 已切换为 Homepage 兼容导航页，展示分组卡片、新窗口入口与状态标记。
+  state: `homepage navigation compact search + update ribbon grid`
+  evidence_note: 验证 `/` 已切换为 Homepage 兼容导航页，顶部仅保留轻量搜索栏，服务卡片使用统一网格与一致尺寸，且仅在有更新相关状态时显示右上角彩色丝带。
 
-  ![导航概览页面](./assets/overview-homepage-navigation.png)
+  ![导航概览页面](./assets/overview-homepage-navigation-grid.png)
 
 - source_type: storybook_canvas
   story_id_or_title: `pages-servicespage--default`

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useMemo,
   useState,
   type ReactNode,
@@ -16,13 +17,8 @@ import {
 } from "../api";
 import { HomepageServiceIcon } from "../components/HomepageServiceIcon";
 import { currentHref, navigate } from "../routes";
-import { Button, DiscoveryCountPill, Input, Mono, Pill } from "../ui";
-import {
-  noteFor,
-  serviceRowStatus,
-  statusLabel,
-  type RowStatus,
-} from "../updateStatus";
+import { Button, Input, Mono, SearchIcon } from "../ui";
+import { serviceRowStatus, statusLabel, type RowStatus } from "../updateStatus";
 import { usePageResumeRefresh } from "../usePageResumeRefresh";
 
 type HomepageNavCard = {
@@ -36,34 +32,17 @@ type HomepageNavCard = {
   title: string;
   description: string;
   href: string;
-  external: boolean;
   icon: string | null;
   status: RowStatus;
-  note: string;
-  discoveryCount: number;
 };
 
-function statusTone(
-  status: RowStatus,
-): "ok" | "warn" | "bad" | "muted" | "info" {
-  if (status === "updatable") return "ok";
-  if (status === "hint") return "warn";
-  if (status === "archMismatch" || status === "blocked") return "bad";
-  return "muted";
-}
-
-function summaryCounts(cards: HomepageNavCard[]) {
-  return cards.reduce(
-    (acc, card) => {
-      acc.total += 1;
-      if (card.status === "updatable") acc.updatable += 1;
-      if (card.status === "hint") acc.hint += 1;
-      if (card.status === "archMismatch") acc.archMismatch += 1;
-      if (card.status === "blocked") acc.blocked += 1;
-      return acc;
-    },
-    { total: 0, updatable: 0, hint: 0, archMismatch: 0, blocked: 0 },
-  );
+function ribbonClassName(status: RowStatus): string {
+  if (status === "updatable") return "homepageServiceRibbon homepageServiceRibbonUpdatable";
+  if (status === "hint") return "homepageServiceRibbon homepageServiceRibbonHint";
+  if (status === "archMismatch")
+    return "homepageServiceRibbon homepageServiceRibbonArchMismatch";
+  if (status === "blocked") return "homepageServiceRibbon homepageServiceRibbonBlocked";
+  return "homepageServiceRibbon";
 }
 
 function normalizeHomepageHref(
@@ -116,11 +95,8 @@ function toNavCards(
         title,
         description,
         href,
-        external: Boolean(homepageHref),
         icon: service.homepage?.icon ?? null,
         status,
-        note: noteFor(service, status),
-        discoveryCount: service.newVersionDiscoveryCount ?? 0,
       });
     }
   }
@@ -156,6 +132,29 @@ export function OverviewPage(props: {
     Record<string, StackDetail | undefined>
   >({});
   const [search, setSearch] = useState("");
+  const [searchDraft, setSearchDraft] = useState("");
+  const [searchBusy, setSearchBusy] = useState(false);
+  const searchBusyTimerRef = useRef<number | null>(null);
+
+  const applySearch = useCallback(() => {
+    if (searchBusyTimerRef.current != null) {
+      window.clearTimeout(searchBusyTimerRef.current);
+    }
+    setSearchBusy(true);
+    setSearch(searchDraft);
+    searchBusyTimerRef.current = window.setTimeout(() => {
+      setSearchBusy(false);
+      searchBusyTimerRef.current = null;
+    }, 240);
+  }, [searchDraft]);
+
+  useEffect(() => {
+    return () => {
+      if (searchBusyTimerRef.current != null) {
+        window.clearTimeout(searchBusyTimerRef.current);
+      }
+    };
+  }, []);
 
   const refresh = useCallback(async () => {
     const nextStacks = await listStacks();
@@ -325,52 +324,41 @@ export function OverviewPage(props: {
       .sort((left, right) => left.groupName.localeCompare(right.groupName));
   }, [filteredCards]);
 
-  const stats = useMemo(() => summaryCounts(filteredCards), [filteredCards]);
-
   return (
     <div className="page">
-      <div className="card homepageOverviewHero">
-        <div className="sectionRow">
-          <div>
-            <div className="title">服务导航</div>
-            <div className="muted">
-              兼容 Homepage 基础标签，按分组快速打开你的自托管服务入口。
-            </div>
-          </div>
-          <div
-            style={{
-              marginLeft: "auto",
-              display: "flex",
-              gap: 10,
-              alignItems: "center",
-            }}
-          >
+      <div className="homepageOverviewControls">
+        <div className="homepageOverviewSearchForm">
+          <div className="homepageOverviewSearchShell">
             <Input
-              className="input"
-              onChange={(event) => setSearch(event.target.value)}
+              className="input homepageOverviewSearchInput"
+              onChange={(event) => setSearchDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  applySearch();
+                }
+              }}
               placeholder="搜索分组 / 服务 / 描述 / 镜像"
-              value={search}
+              value={searchDraft}
             />
-            <div className="muted">
-              {filteredCards.length}/{allCards.length}
-            </div>
+            <Button
+              className="homepageOverviewSearchButton"
+              onClick={applySearch}
+              title="搜索"
+              variant="primary"
+            >
+              <span className="btnInlineContent homepageOverviewSearchButtonContent">
+                <SearchIcon
+                  className={
+                    searchBusy
+                      ? "inlineIcon homepageOverviewSearchButtonIcon inlineIconSpinning"
+                      : "inlineIcon homepageOverviewSearchButtonIcon"
+                  }
+                />
+                <span className="homepageOverviewSearchButtonLabel">搜索</span>
+              </span>
+            </Button>
           </div>
-        </div>
-        <div className="chipRow" style={{ marginTop: 14 }}>
-          <div className="chipStatic">分组 {groupedCards.length}</div>
-          <div className="chipStatic">服务 {stats.total}</div>
-          {stats.updatable > 0 ? (
-            <div className="chipStatic">新版本 {stats.updatable}</div>
-          ) : null}
-          {stats.hint > 0 ? (
-            <div className="chipStatic">需确认 {stats.hint}</div>
-          ) : null}
-          {stats.archMismatch > 0 ? (
-            <div className="chipStatic">架构不匹配 {stats.archMismatch}</div>
-          ) : null}
-          {stats.blocked > 0 ? (
-            <div className="chipStatic">被阻止 {stats.blocked}</div>
-          ) : null}
         </div>
       </div>
 
@@ -391,11 +379,20 @@ export function OverviewPage(props: {
               {group.cards.map((card) => (
                 <a
                   key={card.id}
-                  className="homepageServiceCard"
+                  className={
+                    card.status !== "ok"
+                      ? "homepageServiceCard homepageServiceCardHasRibbon"
+                      : "homepageServiceCard"
+                  }
                   href={card.href}
                   rel="noopener noreferrer"
                   target="_blank"
                 >
+                  {card.status !== "ok" ? (
+                    <span className={ribbonClassName(card.status)}>
+                      {statusLabel(card.status)}
+                    </span>
+                  ) : null}
                   <div className="homepageServiceCardTop">
                     <HomepageServiceIcon icon={card.icon} title={card.title} />
                     <div className="homepageServiceCardIdentity">
@@ -403,9 +400,6 @@ export function OverviewPage(props: {
                         <div className="homepageServiceCardTitle">
                           {card.title}
                         </div>
-                        <Pill tone="muted">
-                          {card.external ? "新窗口" : "详情"}
-                        </Pill>
                       </div>
                       <div className="muted homepageServiceCardDescription">
                         {card.description}
@@ -414,28 +408,10 @@ export function OverviewPage(props: {
                   </div>
 
                   <div className="homepageServiceCardMeta">
-                    <span className="muted">
-                      stack <Mono>{card.stackName}</Mono>
-                    </span>
-                    <span className="muted">
-                      service <Mono>{card.serviceName}</Mono>
+                    <span className="muted homepageServiceCardMetaCompact">
+                      <Mono>{card.stackName}</Mono> · <Mono>{card.serviceName}</Mono>
                     </span>
                   </div>
-
-                  <div className="homepageServiceCardBadges">
-                    {card.status !== "ok" ? (
-                      <Pill tone={statusTone(card.status)}>
-                        {statusLabel(card.status)}
-                      </Pill>
-                    ) : null}
-                    <DiscoveryCountPill count={card.discoveryCount} />
-                  </div>
-
-                  {card.note ? (
-                    <div className="muted homepageServiceCardNote">
-                      {card.note}
-                    </div>
-                  ) : null}
                 </a>
               ))}
             </div>

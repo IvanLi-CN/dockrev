@@ -90,6 +90,15 @@ export function RefreshIcon(props: { className?: string }) {
   )
 }
 
+export function SearchIcon(props: { className?: string }) {
+  return (
+    <svg className={props.className} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.5-3.5" />
+    </svg>
+  )
+}
+
 export function ExternalLinkIcon(props: { className?: string }) {
   return (
     <svg className={props.className} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -144,6 +153,7 @@ type AppButtonVariant = 'primary' | 'danger' | 'ghost'
 
 type ButtonProps = {
   variant?: AppButtonVariant
+  className?: string
   disabled?: boolean
   loading?: boolean
   loadingClickable?: boolean
@@ -217,7 +227,7 @@ export function Button(props: ButtonProps) {
   const disabled = props.disabled || (props.loading && !props.loadingClickable)
   const button = (
     <PrimitiveButton
-      className={cn('btn', buttonVariantClass(variant))}
+      className={cn('btn', buttonVariantClass(variant), props.className)}
       disabled={disabled}
       aria-busy={props.loading ? true : undefined}
       data-hint={props.hint ?? undefined}

@@ -2,6 +2,8 @@ import apps from "@iconify-icons/mdi/apps";
 import { Icon } from "@iconify/react";
 import { useMemo, useState } from "react";
 
+const DEFAULT_MONOCHROME_ICON_COLOR = "#dbeafe";
+
 function isAbsoluteUrl(value: string): boolean {
   return /^https?:\/\//i.test(value);
 }
@@ -21,7 +23,8 @@ function buildIconifyUrl(
   color?: string,
 ): string {
   const base = `https://api.iconify.design/${collection}/${name}.svg`;
-  return color ? `${base}?color=${encodeURIComponent(color)}` : base;
+  const resolvedColor = color ?? DEFAULT_MONOCHROME_ICON_COLOR;
+  return `${base}?color=${encodeURIComponent(resolvedColor)}`;
 }
 
 function buildSelfhStUrl(spec: string): string {

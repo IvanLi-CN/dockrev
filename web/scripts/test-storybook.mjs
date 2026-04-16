@@ -457,8 +457,11 @@ async function runInteractive({ baseUrl, browser }) {
     const page = await openStory("pages-overviewpage--search-and-fallback");
     try {
       const search = page.getByPlaceholder("搜索分组 / 服务 / 描述 / 镜像");
+      const searchButton = page.getByRole("button", { name: "搜索" });
       await search.waitFor({ timeout: 10_000 });
+      await searchButton.waitFor({ timeout: 10_000 });
       await search.fill("worker");
+      await searchButton.click();
       await page.waitForTimeout(250);
 
       await page.waitForFunction(
@@ -471,7 +474,9 @@ async function runInteractive({ baseUrl, browser }) {
           });
           return (
             visibleCards.length === 1 &&
-            visibleCards[0]?.textContent?.includes("worker")
+            visibleCards[0]
+              ?.getAttribute("href")
+              ?.includes("/services/stack-prod/svc-prod-worker")
           );
         },
         null,
@@ -501,7 +506,7 @@ async function runInteractive({ baseUrl, browser }) {
     }
   }
 
-  // 2) Overview page: homepage cards should expose external links and status chips.
+  // 2) Overview page: homepage cards should expose external links and status ribbons.
   {
     const page = await openStory("pages-overviewpage--default");
     try {
@@ -512,6 +517,7 @@ async function runInteractive({ baseUrl, browser }) {
       const href = await apiCard.getAttribute("href");
       const target = await apiCard.getAttribute("target");
       const cardText = (await apiCard.textContent()) ?? "";
+      const ribbonText = (await apiCard.locator(".homepageServiceRibbon").textContent()) ?? "";
 
       if (!href || new URL(href).href !== new URL("https://api.example.com").href) {
         throw new Error(
@@ -523,9 +529,14 @@ async function runInteractive({ baseUrl, browser }) {
           `Expected Acme API card to open in a new tab, got target=${String(target)}.`,
         );
       }
-      if (!cardText.includes("可更新")) {
+      if (!ribbonText.includes("可更新")) {
         throw new Error(
-          `Expected Acme API card to surface the update status chip, got ${JSON.stringify(cardText)}.`,
+          `Expected Acme API card to surface the update status ribbon, got ribbon=${JSON.stringify(ribbonText)} full=${JSON.stringify(cardText)}.`,
+        );
+      }
+      if (cardText.includes("新窗口")) {
+        throw new Error(
+          `Expected overview cards to remove the legacy new-window pill text, got ${JSON.stringify(cardText)}.`,
         );
       }
     } finally {
