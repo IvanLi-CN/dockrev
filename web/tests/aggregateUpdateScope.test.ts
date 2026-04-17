@@ -43,7 +43,7 @@ function makeService(overrides: Partial<StackDetail['services'][number]>): Stack
 }
 
 describe('aggregateUpdateScope', () => {
-  test('keeps stack submission aligned to the full actionable set when search narrows visible rows', () => {
+  test('limits stack submission to the currently visible actionable set when search narrows rows', () => {
     const detail: StackDetail = {
       id: 'stack-prod',
       name: 'prod',
@@ -69,17 +69,14 @@ describe('aggregateUpdateScope', () => {
     const scope = buildStackAggregateScope(detail, 'all', 'Primary API')
 
     expect(scope.visibleServiceCount).toBe(1)
-    expect(scope.visibleActionableCount).toBe(1)
-    expect(scope.actualActionableCount).toBe(2)
-    expect(scope.hiddenActionableCount).toBe(1)
-    expect(scope.actualPreviewItems).toHaveLength(2)
-    expect(scope.actualActionableServices.map((service) => service.id)).toEqual([
-      'svc-api',
-      'svc-web',
-    ])
+    expect(scope.actionableCount).toBe(1)
+    expect(scope.previewItems).toHaveLength(1)
+    expect(scope.actionableServices.map((service) => service.id)).toEqual(['svc-api'])
+    expect(scope.counts.updatable).toBe(1)
+    expect(scope.counts.blocked).toBe(0)
   })
 
-  test('keeps aggregate-all submission aligned to the full actionable set across stacks', () => {
+  test('limits aggregate-all submission to the currently visible actionable set across stacks', () => {
     const stackA: StackDetail = {
       id: 'stack-a',
       name: 'prod',
@@ -131,11 +128,10 @@ describe('aggregateUpdateScope', () => {
     })
 
     expect(scope.visibleServiceCount).toBe(1)
-    expect(scope.visibleActionableCount).toBe(1)
-    expect(scope.actualActionableCount).toBe(3)
-    expect(scope.hiddenActionableCount).toBe(2)
-    expect(scope.actualPreviewItems).toHaveLength(3)
-    expect(scope.actualCounts.hint).toBe(1)
-    expect(scope.actualCounts.archMismatch).toBe(1)
+    expect(scope.actionableCount).toBe(1)
+    expect(scope.previewItems).toHaveLength(1)
+    expect(scope.counts.updatable).toBe(1)
+    expect(scope.counts.hint).toBe(0)
+    expect(scope.counts.archMismatch).toBe(0)
   })
 })

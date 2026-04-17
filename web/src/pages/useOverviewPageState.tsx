@@ -743,16 +743,14 @@ export function useOverviewPageState(props: {
       candidateSearch,
     })
     return {
-      counts: scope.actualCounts,
-      actionablePreviewItems: scope.actualPreviewItems.filter((item) => !item.guardedDockrev),
-      guardedPreviewItems: scope.actualPreviewItems.filter((item) => item.guardedDockrev),
-      visibleActionableCount: scope.visibleActionableCount,
-      actualActionableCount: scope.actualActionableCount,
-      hiddenActionableCount: scope.hiddenActionableCount,
+      counts: scope.counts,
+      actionablePreviewItems: scope.previewItems.filter((item) => !item.guardedDockrev),
+      guardedPreviewItems: scope.previewItems.filter((item) => item.guardedDockrev),
+      actionableCount: scope.actionableCount,
       visibleServiceCount: scope.visibleServiceCount,
       totalServiceCount: scope.totalServiceCount,
       isFilteredSubset: scope.isFilteredSubset,
-      actualActionableServices: scope.actualActionableServices,
+      actionableServices: scope.actionableServices,
     }
   }, [candidateSearch, details, filter, stacks])
 
@@ -985,7 +983,7 @@ export function useOverviewPageState(props: {
         <div className="actionStack">
           {aggregateAll.isFilteredSubset ? (
             <div className="muted aggregateScopeHint">
-              当前可见 {aggregateAll.visibleActionableCount} / 实际提交 {aggregateAll.actualActionableCount}
+              仅更新当前筛选结果（{aggregateAll.actionableCount} 个候选）
             </div>
           ) : null}
           <Button
@@ -1005,7 +1003,7 @@ export function useOverviewPageState(props: {
                 return
               }
               const previewItems = [...aggregateAll.actionablePreviewItems, ...aggregateAll.guardedPreviewItems]
-              const totalCandidates = aggregateAll.actualActionableCount
+              const totalCandidates = aggregateAll.actionableCount
               const anomalyCount = previewItems.filter((item) => isSemverDowngradeAnomaly(item.svc)).length
               const body = (
                 <>
@@ -1018,16 +1016,9 @@ export function useOverviewPageState(props: {
                     <div className="modalKvValue">{totalCandidates} 个（可更新/需确认）</div>
                     {aggregateAll.isFilteredSubset ? (
                       <>
-                        <div className="modalKvLabel">当前可见</div>
+                        <div className="modalKvLabel">筛选范围</div>
                         <div className="modalKvValue">
-                          {aggregateAll.visibleActionableCount} 个候选 / {aggregateAll.visibleServiceCount} 个服务
-                        </div>
-                        <div className="modalKvLabel">实际提交</div>
-                        <div className="modalKvValue">
-                          {aggregateAll.actualActionableCount} 个服务
-                          {aggregateAll.hiddenActionableCount > 0
-                            ? `（隐藏 ${aggregateAll.hiddenActionableCount} 个）`
-                            : ''}
+                          当前列表可见 {aggregateAll.visibleServiceCount} 个服务；本次仅提交这些可见服务里的候选项
                         </div>
                       </>
                     ) : null}
@@ -1047,7 +1038,7 @@ export function useOverviewPageState(props: {
                   ) : null}
                   {aggregateAll.isFilteredSubset ? (
                     <div className="muted" style={{ marginTop: 10 }}>
-                      当前筛选 / 搜索只影响列表显示，不影响“更新全部”的实际提交范围。
+                      当前筛选 / 搜索已生效；“更新全部”只会提交当前列表可见的候选服务。
                     </div>
                   ) : null}
                   <div className="modalDivider" />
@@ -1090,7 +1081,7 @@ export function useOverviewPageState(props: {
                 buildRequest: async () => ({
                   scope: 'all',
                   targets: await buildUpdateServiceTargets(
-                    aggregateAll.actualActionableServices,
+                    aggregateAll.actionableServices,
                   ),
                   mode: 'apply',
                   allowArchMismatch: false,

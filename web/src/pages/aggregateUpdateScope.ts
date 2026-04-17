@@ -13,15 +13,13 @@ type ServiceRow = {
 export type AggregateScopeSummary = {
   totalServiceCount: number
   visibleServiceCount: number
-  visibleActionableCount: number
-  actualActionableCount: number
-  hiddenActionableCount: number
+  actionableCount: number
   isFilteredSubset: boolean
   rows: ServiceRow[]
   visibleServices: StackDetail['services']
-  actualPreviewItems: AggregateUpdatePreviewListItem[]
-  actualActionableServices: StackDetail['services']
-  actualCounts: ReturnType<typeof partitionAggregateUpdateServices>['counts']
+  previewItems: AggregateUpdatePreviewListItem[]
+  actionableServices: StackDetail['services']
+  counts: ReturnType<typeof partitionAggregateUpdateServices>['counts']
   guardedPreviewCount: number
 }
 
@@ -57,29 +55,23 @@ export function buildStackAggregateScope(
   const rows = buildVisibleRows(detail, filter, candidateSearch)
   const visibleServices = rows.map((row) => row.svc)
   const totalServiceCount = detail.services.filter((svc) => !svc.archived).length
-  const actualPartition = partitionAggregateUpdateServices(detail.services)
   const visiblePartition = partitionAggregateUpdateServices(visibleServices)
-  const actualPreviewItems = [
-    ...withDisplayName(actualPartition.actionable, detail.name, detail.id),
-    ...withDisplayName(actualPartition.guardedDockrevPreview, detail.name, detail.id),
+  const previewItems = [
+    ...withDisplayName(visiblePartition.actionable, detail.name, detail.id),
+    ...withDisplayName(visiblePartition.guardedDockrevPreview, detail.name, detail.id),
   ]
 
   return {
     totalServiceCount,
     visibleServiceCount: visibleServices.length,
-    visibleActionableCount: visiblePartition.actionable.length,
-    actualActionableCount: actualPartition.actionable.length,
-    hiddenActionableCount: Math.max(
-      0,
-      actualPartition.actionable.length - visiblePartition.actionable.length,
-    ),
+    actionableCount: visiblePartition.actionable.length,
     isFilteredSubset: visibleServices.length !== totalServiceCount,
     rows,
     visibleServices,
-    actualPreviewItems,
-    actualActionableServices: actualPartition.actionable.map((item) => item.svc),
-    actualCounts: actualPartition.counts,
-    guardedPreviewCount: actualPartition.guardedDockrevPreview.length,
+    previewItems,
+    actionableServices: visiblePartition.actionable.map((item) => item.svc),
+    counts: visiblePartition.counts,
+    guardedPreviewCount: visiblePartition.guardedDockrevPreview.length,
   }
 }
 
@@ -91,12 +83,11 @@ export function buildAllAggregateScope(input: {
 }): Omit<AggregateScopeSummary, 'rows' | 'visibleServices'> {
   let totalServiceCount = 0
   let visibleServiceCount = 0
-  let visibleActionableCount = 0
-  let actualActionableCount = 0
+  let actionableCount = 0
   let guardedPreviewCount = 0
-  const actualPreviewItems: AggregateUpdatePreviewListItem[] = []
-  const actualActionableServices: StackDetail['services'] = []
-  const actualCounts = {
+  const previewItems: AggregateUpdatePreviewListItem[] = []
+  const actionableServices: StackDetail['services'] = []
+  const counts = {
     updatable: 0,
     hint: 0,
     archMismatch: 0,
@@ -113,27 +104,24 @@ export function buildAllAggregateScope(input: {
     )
     totalServiceCount += scope.totalServiceCount
     visibleServiceCount += scope.visibleServiceCount
-    visibleActionableCount += scope.visibleActionableCount
-    actualActionableCount += scope.actualActionableCount
+    actionableCount += scope.actionableCount
     guardedPreviewCount += scope.guardedPreviewCount
-    actualCounts.updatable += scope.actualCounts.updatable
-    actualCounts.hint += scope.actualCounts.hint
-    actualCounts.archMismatch += scope.actualCounts.archMismatch
-    actualCounts.blocked += scope.actualCounts.blocked
-    actualPreviewItems.push(...scope.actualPreviewItems)
-    actualActionableServices.push(...scope.actualActionableServices)
+    counts.updatable += scope.counts.updatable
+    counts.hint += scope.counts.hint
+    counts.archMismatch += scope.counts.archMismatch
+    counts.blocked += scope.counts.blocked
+    previewItems.push(...scope.previewItems)
+    actionableServices.push(...scope.actionableServices)
   }
 
   return {
     totalServiceCount,
     visibleServiceCount,
-    visibleActionableCount,
-    actualActionableCount,
-    hiddenActionableCount: Math.max(0, actualActionableCount - visibleActionableCount),
+    actionableCount,
     isFilteredSubset: visibleServiceCount !== totalServiceCount,
-    actualPreviewItems,
-    actualActionableServices,
-    actualCounts,
+    previewItems,
+    actionableServices,
+    counts,
     guardedPreviewCount,
   }
 }

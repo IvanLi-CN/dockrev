@@ -141,8 +141,8 @@ export const CandidateSearchKeepsArchivedVisible: Story = {
     );
 
     expectStory(
-      canvasElement.textContent?.includes("当前可见 1 / 实际提交 4"),
-      "top aggregate CTA should disclose visible vs submitted counts under active search",
+      canvasElement.textContent?.includes("仅更新当前筛选结果（1 个候选）"),
+      "top aggregate CTA should disclose that only the filtered subset will be submitted",
     );
 
     const allAction = Array.from(
@@ -157,18 +157,18 @@ export const CandidateSearchKeepsArchivedVisible: Story = {
       document.querySelector<HTMLElement>('[role="dialog"]');
     expectStory(allDialog, "expected aggregate-all confirm dialog");
     expectStory(
-      allDialog.textContent?.includes("当前可见") &&
-        allDialog.textContent?.includes("1 个候选 / 1 个服务"),
-      "aggregate-all confirm dialog should disclose visible candidate/service counts",
+      allDialog.textContent?.includes("筛选范围") &&
+        allDialog.textContent?.includes("当前列表可见 1 个服务"),
+      "aggregate-all confirm dialog should disclose the active filtered scope",
     );
     expectStory(
-      allDialog.textContent?.includes("实际提交") &&
-        allDialog.textContent?.includes("4 个服务（隐藏 3 个）"),
-      "aggregate-all confirm dialog should disclose actual submitted targets",
+      allDialog.textContent?.includes("候选服务") &&
+        allDialog.textContent?.includes("1 个（可更新/需确认）"),
+      "aggregate-all confirm dialog should only submit currently visible candidates",
     );
     expectStory(
-      allDialog.querySelectorAll(".modalListItem").length === 4,
-      "aggregate-all preview should list every submitted target, not only visible rows",
+      allDialog.querySelectorAll(".modalListItem").length === 1,
+      "aggregate-all preview should list only the currently visible submitted target",
     );
 
     const allCancelButton = Array.from(
@@ -194,18 +194,18 @@ export const CandidateSearchKeepsArchivedVisible: Story = {
       "confirm dialog should keep stack scope semantics explicit",
     );
     expectStory(
-      dialog.textContent?.includes("当前可见") &&
-        dialog.textContent?.includes("1 个候选 / 1 个服务"),
-      "confirm dialog should report visible candidate/service counts",
+      dialog.textContent?.includes("筛选范围") &&
+        dialog.textContent?.includes("当前 stack 列表可见 1 个服务"),
+      "confirm dialog should report the filtered stack scope",
     );
     expectStory(
-      dialog.textContent?.includes("实际提交") &&
-        dialog.textContent?.includes("2 个服务（隐藏 1 个）"),
-      "confirm dialog should report submitted stack targets beyond the visible subset",
+      dialog.textContent?.includes("候选服务") &&
+        dialog.textContent?.includes("1 个（可更新/需确认）"),
+      "confirm dialog should only submit the currently visible stack target",
     );
     expectStory(
-      dialog.querySelectorAll(".modalListItem").length === 2,
-      "filtered stack update preview should include every submitted stack target",
+      dialog.querySelectorAll(".modalListItem").length === 1,
+      "filtered stack update preview should include only the visible stack target",
     );
 
     const cancelButton = Array.from(

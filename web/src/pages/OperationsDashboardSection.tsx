@@ -399,12 +399,12 @@ export function OperationsDashboardSectionView(props: {
             const totalServices = scope.visibleServiceCount;
             const groupSummary = formatGroupSummary(
               totalServices,
-              scope.actualCounts,
+              scope.counts,
             );
             const stackApply =
               resolveAggregateUpdateActionState({
-                counts: scope.actualCounts,
-                guardedDockrevPreview: scope.actualPreviewItems.filter(
+                counts: scope.counts,
+                guardedDockrevPreview: scope.previewItems.filter(
                   (item) => item.guardedDockrev,
                 ),
               });
@@ -457,8 +457,7 @@ export function OperationsDashboardSectionView(props: {
                     <div className="actionStack">
                       {scope.isFilteredSubset ? (
                         <div className="muted aggregateScopeHint">
-                          当前可见 {scope.visibleActionableCount} / 实际提交{" "}
-                          {scope.actualActionableCount}
+                          仅更新当前筛选结果（{scope.actionableCount} 个候选）
                         </div>
                       ) : null}
                       <Button
@@ -494,8 +493,8 @@ export function OperationsDashboardSectionView(props: {
                             });
                             return;
                           }
-                          const totalCandidates = scope.actualActionableCount;
-                          const anomalyCount = scope.actualPreviewItems.filter(
+                          const totalCandidates = scope.actionableCount;
+                          const anomalyCount = scope.previewItems.filter(
                             (item) => isSemverDowngradeAnomaly(item.svc),
                           ).length;
                           const body = (
@@ -511,17 +510,9 @@ export function OperationsDashboardSectionView(props: {
                                 </div>
                                 {scope.isFilteredSubset ? (
                                   <>
-                                    <div className="modalKvLabel">当前可见</div>
+                                    <div className="modalKvLabel">筛选范围</div>
                                     <div className="modalKvValue">
-                                      {scope.visibleActionableCount} 个候选 /{" "}
-                                      {scope.visibleServiceCount} 个服务
-                                    </div>
-                                    <div className="modalKvLabel">实际提交</div>
-                                    <div className="modalKvValue">
-                                      {scope.actualActionableCount} 个服务
-                                      {scope.hiddenActionableCount > 0
-                                        ? `（隐藏 ${scope.hiddenActionableCount} 个）`
-                                        : ""}
+                                      当前 stack 列表可见 {scope.visibleServiceCount} 个服务；本次仅提交这些可见服务里的候选项
                                     </div>
                                   </>
                                 ) : null}
@@ -531,14 +522,14 @@ export function OperationsDashboardSectionView(props: {
                                 </div>
                                 <div className="modalKvLabel">其中</div>
                                 <div className="modalKvValue">
-                                  可更新 {scope.actualCounts.updatable} · 需确认{" "}
-                                  {scope.actualCounts.hint}
+                                  可更新 {scope.counts.updatable} · 需确认{" "}
+                                  {scope.counts.hint}
                                 </div>
                                 <div className="modalKvLabel">将跳过</div>
                                 <div className="modalKvValue">
                                   架构不匹配{" "}
-                                  {scope.actualCounts.archMismatch} · 被阻止{" "}
-                                  {scope.actualCounts.blocked}
+                                  {scope.counts.archMismatch} · 被阻止{" "}
+                                  {scope.counts.blocked}
                                 </div>
                               </div>
                               {anomalyCount > 0 ? (
@@ -549,7 +540,7 @@ export function OperationsDashboardSectionView(props: {
                               ) : null}
                               {scope.isFilteredSubset ? (
                                 <div className="muted" style={{ marginTop: 10 }}>
-                                  当前筛选 / 搜索只影响列表显示，不影响“更新此 stack”的实际提交范围。
+                                  当前筛选 / 搜索已生效；“更新此 stack”只会提交当前 stack 列表可见的候选服务。
                                 </div>
                               ) : null}
                               <div className="modalDivider" />
@@ -557,7 +548,7 @@ export function OperationsDashboardSectionView(props: {
                                 将更新的服务（预览）
                               </div>
                               <AggregateUpdatePreviewList
-                                items={scope.actualPreviewItems}
+                                items={scope.previewItems}
                                 dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
                                 onServiceResolvedTags={(update) => {
                                   const stackId =
@@ -604,7 +595,7 @@ export function OperationsDashboardSectionView(props: {
                               scope: "stack",
                               stackId: st.id,
                               targets: await buildUpdateServiceTargets(
-                                scope.actualActionableServices,
+                                scope.actionableServices,
                               ),
                               mode: "apply",
                               allowArchMismatch: false,
