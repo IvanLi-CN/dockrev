@@ -61,6 +61,53 @@ export const DashboardDemo: Story = {
   render: renderServices("兼容旧 smoke：运维大盘默认场景"),
 };
 
+export const AllActionableServicesVisible: Story = {
+  parameters: { dockrevApiScenario: "dashboard-demo" },
+  render: renderServices("回归：默认列表必须完整显示全部 actionable 服务"),
+  play: async ({ canvasElement }) => {
+    await sleep(260);
+
+    const rows = Array.from(
+      canvasElement.querySelectorAll<HTMLElement>(".rowLine"),
+    );
+    expectStory(
+      rows.length === 6,
+      `expected all 6 actionable services to be visible, received ${rows.length}`,
+    );
+
+    for (const label of [
+      "api",
+      "web",
+      "worker",
+      "loki",
+      "prometheus",
+      "postgres",
+    ]) {
+      expectStory(
+        rows.some((row) => row.textContent?.includes(label)),
+        `expected actionable row for ${label}`,
+      );
+    }
+
+    expectStory(
+      canvasElement.textContent?.includes("可更新 3"),
+      "expected actionable filter count for updatable services",
+    );
+    expectStory(
+      canvasElement.textContent?.includes("需确认 1"),
+      "expected actionable filter count for hint services",
+    );
+    expectStory(
+      canvasElement.textContent?.includes("架构不匹配 1"),
+      "expected actionable filter count for arch mismatch services",
+    );
+    expectStory(
+      canvasElement.textContent?.includes("被阻止 1"),
+      "expected actionable filter count for blocked services",
+    );
+  },
+};
+
 export const GuideLineLongNames: Story = {
   parameters: { dockrevApiScenario: "guide-line-long-names" },
   render: renderServices("兼容旧 smoke：长名称分组对齐"),
