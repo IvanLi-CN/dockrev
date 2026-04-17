@@ -1985,12 +1985,6 @@ html[data-theme='light'] .releaseDrawerContent {
   gap: 6px;
 }
 
-.aggregateScopeHint {
-  font-size: 11px;
-  line-height: 1.35;
-  text-align: right;
-}
-
 .svcName {
   font-size: 12px;
   font-weight: 650;

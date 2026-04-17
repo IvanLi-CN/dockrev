@@ -188,8 +188,8 @@ export const CandidateSearchKeepsArchivedVisible: Story = {
     );
 
     expectStory(
-      canvasElement.textContent?.includes("仅更新当前筛选结果（1 个候选）"),
-      "top aggregate CTA should disclose that only the filtered subset will be submitted",
+      !canvasElement.textContent?.includes("仅更新当前筛选结果"),
+      "inline aggregate scope hint should not be rendered on the page",
     );
 
     const allAction = Array.from(
@@ -203,11 +203,6 @@ export const CandidateSearchKeepsArchivedVisible: Story = {
       document.querySelector<HTMLElement>('[role="alertdialog"]') ??
       document.querySelector<HTMLElement>('[role="dialog"]');
     expectStory(allDialog, "expected aggregate-all confirm dialog");
-    expectStory(
-      allDialog.textContent?.includes("筛选范围") &&
-        allDialog.textContent?.includes("当前列表可见 1 个服务"),
-      "aggregate-all confirm dialog should disclose the active filtered scope",
-    );
     expectStory(
       allDialog.textContent?.includes("候选服务") &&
         allDialog.textContent?.includes("1 个（可更新/需确认）"),
@@ -239,11 +234,6 @@ export const CandidateSearchKeepsArchivedVisible: Story = {
       dialog.textContent?.includes("范围") &&
         dialog.textContent?.includes("stack"),
       "confirm dialog should keep stack scope semantics explicit",
-    );
-    expectStory(
-      dialog.textContent?.includes("筛选范围") &&
-        dialog.textContent?.includes("当前 stack 列表可见 1 个服务"),
-      "confirm dialog should report the filtered stack scope",
     );
     expectStory(
       dialog.textContent?.includes("候选服务") &&

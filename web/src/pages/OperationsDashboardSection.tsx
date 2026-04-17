@@ -455,11 +455,6 @@ export function OperationsDashboardSectionView(props: {
                     onKeyDown={(e) => e.stopPropagation()}
                   >
                     <div className="actionStack">
-                      {scope.isFilteredSubset ? (
-                        <div className="muted aggregateScopeHint">
-                          仅更新当前筛选结果（{scope.actionableCount} 个候选）
-                        </div>
-                      ) : null}
                       <Button
                         variant="ghost"
                         disabled={
@@ -508,14 +503,6 @@ export function OperationsDashboardSectionView(props: {
                                 <div className="modalKvValue">
                                   <Mono>{d.name}</Mono>
                                 </div>
-                                {scope.isFilteredSubset ? (
-                                  <>
-                                    <div className="modalKvLabel">筛选范围</div>
-                                    <div className="modalKvValue">
-                                      当前 stack 列表可见 {scope.visibleServiceCount} 个服务；本次仅提交这些可见服务里的候选项
-                                    </div>
-                                  </>
-                                ) : null}
                                 <div className="modalKvLabel">候选服务</div>
                                 <div className="modalKvValue">
                                   {totalCandidates} 个（可更新/需确认）
@@ -536,11 +523,6 @@ export function OperationsDashboardSectionView(props: {
                                 <div className="muted" style={{ marginTop: 10 }}>
                                   ⚠ 检测到 {anomalyCount}{" "}
                                   个版本异常（候选低于当前）；手动确认后仍可继续更新。
-                                </div>
-                              ) : null}
-                              {scope.isFilteredSubset ? (
-                                <div className="muted" style={{ marginTop: 10 }}>
-                                  当前筛选 / 搜索已生效；“更新此 stack”只会提交当前 stack 列表可见的候选服务。
                                 </div>
                               ) : null}
                               <div className="modalDivider" />
