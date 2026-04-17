@@ -1,8 +1,6 @@
 import { useCallback,useEffect,useMemo,useRef,useState,type ReactNode } from 'react'
 import {
 DOCKREV_AGGREGATE_GUARD_HINT,
-emptyAggregateUpdateCounts,
-partitionAggregateUpdateServices,
 resolveAggregateUpdateActionState,
 } from '../aggregateUpdateGuard'
 import {
@@ -25,7 +23,7 @@ type StackDetail,
 type StackListItem,
 type TriggerUpdateInput
 } from '../api'
-import { AggregateUpdatePreviewList,type AggregateUpdatePreviewListItem } from '../components/AggregateUpdatePreviewList'
+import { AggregateUpdatePreviewList } from '../components/AggregateUpdatePreviewList'
 import { normalizeDigest } from '../components/digest'
 import { type UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
 import { useConfirm } from '../confirm'
@@ -55,6 +53,7 @@ import {
 inferResolvedTagsFromSnapshot,
 isStrictSemverTag
 } from '../versionDisplay'
+import { buildAllAggregateScope } from './aggregateUpdateScope'
 import { selectOverviewJobsForCard,toOverviewJobCardItem } from './overviewJobsCard'
 
 import {
@@ -67,7 +66,6 @@ readCollapsedFromStorage,
 readUpdateCandidateFilterFromUrl,
 scanHasFailures,
 scanIsComplete,
-withAggregateDisplayName,
 withCollapseDefaults,
 writeCollapsedToStorage,
 writeUpdateCandidateFilterToUrl,
@@ -86,6 +84,7 @@ export function useOverviewPageState(props: {
   const { onLastScanHint, onTopActions } = props
   const confirm = useConfirm()
   const [filter, setFilter] = useState<UpdateCandidateFilter>(() => readUpdateCandidateFilterFromUrl() ?? 'all')
+  const [candidateSearch, setCandidateSearch] = useState('')
   const [stacks, setStacks] = useState<StackListItem[]>([])
   const [details, setDetails] = useState<Record<string, StackDetail | undefined>>({})
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
@@ -737,25 +736,25 @@ export function useOverviewPageState(props: {
   }, [details, stacks])
 
   const aggregateAll = useMemo(() => {
-    const counts = emptyAggregateUpdateCounts()
-    const actionablePreviewItems: AggregateUpdatePreviewListItem[] = []
-    const guardedPreviewItems: AggregateUpdatePreviewListItem[] = []
-
-    for (const st of stacks) {
-      const d = details[st.id]
-      if (!d) continue
-
-      const partition = partitionAggregateUpdateServices(d.services)
-      counts.updatable += partition.counts.updatable
-      counts.hint += partition.counts.hint
-      counts.archMismatch += partition.counts.archMismatch
-      counts.blocked += partition.counts.blocked
-      actionablePreviewItems.push(...withAggregateDisplayName(partition.actionable, d.name, st.id))
-      guardedPreviewItems.push(...withAggregateDisplayName(partition.guardedDockrevPreview, d.name, st.id))
+    const scope = buildAllAggregateScope({
+      stacks,
+      details,
+      filter,
+      candidateSearch,
+    })
+    return {
+      counts: scope.actualCounts,
+      actionablePreviewItems: scope.actualPreviewItems.filter((item) => !item.guardedDockrev),
+      guardedPreviewItems: scope.actualPreviewItems.filter((item) => item.guardedDockrev),
+      visibleActionableCount: scope.visibleActionableCount,
+      actualActionableCount: scope.actualActionableCount,
+      hiddenActionableCount: scope.hiddenActionableCount,
+      visibleServiceCount: scope.visibleServiceCount,
+      totalServiceCount: scope.totalServiceCount,
+      isFilteredSubset: scope.isFilteredSubset,
+      actualActionableServices: scope.actualActionableServices,
     }
-
-    return { counts, actionablePreviewItems, guardedPreviewItems }
-  }, [details, stacks])
+  }, [candidateSearch, details, filter, stacks])
 
   const totalServicesAll = useMemo(() => {
     let total = 0
@@ -983,53 +982,79 @@ export function useOverviewPageState(props: {
         >
           立即扫描
         </Button>
-        <Button
-          variant="danger"
-          disabled={
-            allApplyActiveJob
-              ? false
-              : !allApply.enabled || busy || allApplySubmitting
-          }
-          loading={allApplyActionBusy}
-          loadingClickable={Boolean(allApplyActiveJob)}
-          title={allApplyActiveJob ? '任务进行中，点击查看任务详情' : (allApply.title ?? undefined)}
-          hint={allApplyActiveJob ? '任务进行中，点击查看任务详情' : (!allApply.enabled ? (allApply.hint ?? undefined) : undefined)}
-          onClick={() => {
-            if (allApplyActiveJob) {
-              navigate({ name: 'job', jobId: allApplyActiveJob.jobId })
-              return
+        <div className="actionStack">
+          {aggregateAll.isFilteredSubset ? (
+            <div className="muted aggregateScopeHint">
+              当前可见 {aggregateAll.visibleActionableCount} / 实际提交 {aggregateAll.actualActionableCount}
+            </div>
+          ) : null}
+          <Button
+            variant="danger"
+            disabled={
+              allApplyActiveJob
+                ? false
+                : !allApply.enabled || busy || allApplySubmitting
             }
-            const previewItems = [...aggregateAll.actionablePreviewItems, ...aggregateAll.guardedPreviewItems]
-            const totalCandidates = aggregateAll.actionablePreviewItems.length
-            const anomalyCount = previewItems.filter((item) => isSemverDowngradeAnomaly(item.svc)).length
-            const body = (
-              <>
-                <div className="modalKvGrid">
-                  <div className="modalKvLabel">范围</div>
-                  <div className="modalKvValue">
-                    <Mono>all</Mono>
+            loading={allApplyActionBusy}
+            loadingClickable={Boolean(allApplyActiveJob)}
+            title={allApplyActiveJob ? '任务进行中，点击查看任务详情' : (allApply.title ?? undefined)}
+            hint={allApplyActiveJob ? '任务进行中，点击查看任务详情' : (!allApply.enabled ? (allApply.hint ?? undefined) : undefined)}
+            onClick={() => {
+              if (allApplyActiveJob) {
+                navigate({ name: 'job', jobId: allApplyActiveJob.jobId })
+                return
+              }
+              const previewItems = [...aggregateAll.actionablePreviewItems, ...aggregateAll.guardedPreviewItems]
+              const totalCandidates = aggregateAll.actualActionableCount
+              const anomalyCount = previewItems.filter((item) => isSemverDowngradeAnomaly(item.svc)).length
+              const body = (
+                <>
+                  <div className="modalKvGrid">
+                    <div className="modalKvLabel">范围</div>
+                    <div className="modalKvValue">
+                      <Mono>all</Mono>
+                    </div>
+                    <div className="modalKvLabel">候选服务</div>
+                    <div className="modalKvValue">{totalCandidates} 个（可更新/需确认）</div>
+                    {aggregateAll.isFilteredSubset ? (
+                      <>
+                        <div className="modalKvLabel">当前可见</div>
+                        <div className="modalKvValue">
+                          {aggregateAll.visibleActionableCount} 个候选 / {aggregateAll.visibleServiceCount} 个服务
+                        </div>
+                        <div className="modalKvLabel">实际提交</div>
+                        <div className="modalKvValue">
+                          {aggregateAll.actualActionableCount} 个服务
+                          {aggregateAll.hiddenActionableCount > 0
+                            ? `（隐藏 ${aggregateAll.hiddenActionableCount} 个）`
+                            : ''}
+                        </div>
+                      </>
+                    ) : null}
+                    <div className="modalKvLabel">其中</div>
+                    <div className="modalKvValue">
+                      可更新 {aggregateAll.counts.updatable} · 需确认 {aggregateAll.counts.hint}
+                    </div>
+                    <div className="modalKvLabel">将跳过</div>
+                    <div className="modalKvValue">
+                      架构不匹配 {aggregateAll.counts.archMismatch} · 被阻止 {aggregateAll.counts.blocked}
+                    </div>
                   </div>
-                  <div className="modalKvLabel">候选服务</div>
-                  <div className="modalKvValue">{totalCandidates} 个（可更新/需确认）</div>
-                  <div className="modalKvLabel">其中</div>
-                  <div className="modalKvValue">
-                    可更新 {aggregateAll.counts.updatable} · 需确认 {aggregateAll.counts.hint}
-                  </div>
-                  <div className="modalKvLabel">将跳过</div>
-                  <div className="modalKvValue">
-                    架构不匹配 {aggregateAll.counts.archMismatch} · 被阻止 {aggregateAll.counts.blocked}
-                  </div>
-                </div>
-                {anomalyCount > 0 ? (
-                  <div className="muted" style={{ marginTop: 10 }}>
-                    ⚠ 检测到 {anomalyCount} 个版本异常（候选低于当前）；手动确认后仍可继续更新。
-                  </div>
-                ) : null}
-	                <div className="modalDivider" />
-	                <div className="modalLead">将更新的服务（预览）</div>
-	                <AggregateUpdatePreviewList
-	                  items={previewItems}
-	                  dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
+                  {anomalyCount > 0 ? (
+                    <div className="muted" style={{ marginTop: 10 }}>
+                      ⚠ 检测到 {anomalyCount} 个版本异常（候选低于当前）；手动确认后仍可继续更新。
+                    </div>
+                  ) : null}
+                  {aggregateAll.isFilteredSubset ? (
+                    <div className="muted" style={{ marginTop: 10 }}>
+                      当前筛选 / 搜索只影响列表显示，不影响“更新全部”的实际提交范围。
+                    </div>
+                  ) : null}
+                  <div className="modalDivider" />
+                  <div className="modalLead">将更新的服务（预览）</div>
+                  <AggregateUpdatePreviewList
+                    items={previewItems}
+                    dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
                     onServiceResolvedTags={(update) => {
                       const stackId = (update.stackId ?? '').trim()
                       if (!stackId) return
@@ -1055,35 +1080,36 @@ export function useOverviewPageState(props: {
                           : prev.candidate,
                       }))
                     }}
-	                />
-	                <div className="modalDivider" />
-	              </>
-	            )
-                        void triggerApply({
-                          scope: 'all',
-                          targetLabel: '全部服务',
-                          buildRequest: async () => ({
-                            scope: 'all',
-                            targets: await buildUpdateServiceTargets(
-                              aggregateAll.actionablePreviewItems.map((item) => item.svc),
-                            ),
-                            mode: 'apply',
-                            allowArchMismatch: false,
-                            backupMode: 'inherit',
-                          }),
-                          confirmBody: body,
-                          confirmTitle: '确认更新全部服务？',
-                        })
-          }}
-        >
-          {allApplyActiveJob?.status === 'queued'
-            ? '排队中…'
-            : allApplyActiveJob
-              ? '更新中…'
-              : allApplySubmitting
-                ? '提交中…'
-                : '更新全部'}
-        </Button>
+                  />
+                  <div className="modalDivider" />
+                </>
+              )
+              void triggerApply({
+                scope: 'all',
+                targetLabel: '全部服务',
+                buildRequest: async () => ({
+                  scope: 'all',
+                  targets: await buildUpdateServiceTargets(
+                    aggregateAll.actualActionableServices,
+                  ),
+                  mode: 'apply',
+                  allowArchMismatch: false,
+                  backupMode: 'inherit',
+                }),
+                confirmBody: body,
+                confirmTitle: '确认更新全部服务？',
+              })
+            }}
+          >
+            {allApplyActiveJob?.status === 'queued'
+              ? '排队中…'
+              : allApplyActiveJob
+                ? '更新中…'
+                : allApplySubmitting
+                  ? '提交中…'
+                  : '更新全部'}
+          </Button>
+        </div>
       </>,
     )
 	  }, [
@@ -1101,6 +1127,7 @@ export function useOverviewPageState(props: {
   return {
     activeDiscoveryIssue,
     busy,
+    candidateSearch,
     collapsed,
     countsAll,
     details,
@@ -1121,6 +1148,7 @@ export function useOverviewPageState(props: {
     requestRefresh,
     runDiscoveryScan,
     selfUpgradeUrl,
+    setCandidateSearch,
     setActiveDiscoveryIssue,
     stacks,
     supervisor,

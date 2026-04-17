@@ -606,6 +606,21 @@
   min-width: 0;
 }
 
+.versionInlineHint {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 28%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  color: color-mix(in srgb, var(--color-primary) 78%, var(--text) 22%);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
 .versionTagsTrigger:hover {
   text-decoration: underline;
 }
@@ -1968,6 +1983,12 @@ html[data-theme='light'] .releaseDrawerContent {
   flex-direction: column;
   align-items: flex-end;
   gap: 6px;
+}
+
+.aggregateScopeHint {
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: right;
 }
 
 .svcName {

@@ -3,16 +3,13 @@ import { Icon } from '@iconify/react'
 import helpCircleOutline from '@iconify-icons/mdi/help-circle-outline'
 
 import type { Service } from '../api'
+import { resolveCandidateVersionState } from '../candidateVersionState'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui'
 import { isSemverDowngradeAnomaly, statusLabel, type RowStatus } from '../updateStatus'
 import { CurrentVersionPopover } from './CurrentVersionPopover'
 import { DiscoveryHistoryPopover } from './DiscoveryHistoryPopover'
 import { VersionTagsPopover } from './VersionTagsPopover'
-import {
-  formatCandidateTagDisplay,
-  formatCurrentTagDisplay as formatTagDisplay,
-  isStrictSemverTag,
-} from '../versionDisplay'
+import { isStrictSemverTag } from '../versionDisplay'
 
 export type AggregateUpdatePreviewListItem = {
   svc: Service
@@ -143,18 +140,15 @@ export function AggregateUpdatePreviewList(props: {
             : item.svc.candidate,
         }
 
-        const currentDisplayTag = formatTagDisplay(
-          svc.image.tag,
-          svc.image.resolvedTag,
-          svc.versionInference?.status,
-        )
-        const inferencePending = svc.versionInference?.status === 'pending'
-        const rawTagTrim = (svc.image.tag ?? '').trim()
-        const showRawTag = Boolean(rawTagTrim && rawTagTrim !== currentDisplayTag)
-        const candidateTag = svc.candidate?.tag && svc.candidate.tag !== '-' ? svc.candidate.tag : null
-        const candidateDisplayTag = candidateTag
-          ? formatCandidateTagDisplay(candidateTag, svc.candidate?.resolvedTag ?? null, svc.versionInference?.status)
-          : null
+        const {
+          candidateDisplayTag,
+          candidateTag,
+          currentDisplayTag,
+          inferencePending,
+          sameDisplayUpdate,
+          showCandidate,
+          showRawTag,
+        } = resolveCandidateVersionState(svc)
         const candidatePrefetchOnMount =
           candidateTag && candidateDisplayTag
             ? shouldPrefetchFloatingCandidate(
@@ -253,30 +247,35 @@ export function AggregateUpdatePreviewList(props: {
                       <path d="M9 4l4 4-4 4" />
                     </svg>
                   </span>
-                  {candidateTag && candidateDisplayTag ? (
-                    <VersionTagsPopover
-                      serviceId={svc.id}
-                      candidateTag={candidateTag}
-                      candidateDigest={svc.candidate?.digest ?? null}
-                      prefetchOnMount={candidatePrefetchOnMount}
-                      onLocalResolvedTag={(resolvedTag) => {
-                        setCandidateOverrides((prev) => {
-                          const next = new Map(prev)
-                          next.set(candidateOverrideKey, {
-                            baseResolvedTag: normalizeTag(item.svc.candidate?.resolvedTag),
+                  {showCandidate ? (
+                    <>
+                      <VersionTagsPopover
+                        serviceId={svc.id}
+                        candidateTag={candidateTag}
+                        candidateDigest={svc.candidate?.digest ?? null}
+                        prefetchOnMount={candidatePrefetchOnMount}
+                        onLocalResolvedTag={(resolvedTag) => {
+                          setCandidateOverrides((prev) => {
+                            const next = new Map(prev)
+                            next.set(candidateOverrideKey, {
+                              baseResolvedTag: normalizeTag(item.svc.candidate?.resolvedTag),
+                              resolvedTag,
+                            })
+                            return next
+                          })
+                          props.onServiceCandidateResolvedTag?.({
+                            stackId: item.stackId,
+                            serviceId: svcId,
                             resolvedTag,
                           })
-                          return next
-                        })
-                        props.onServiceCandidateResolvedTag?.({
-                          stackId: item.stackId,
-                          serviceId: svcId,
-                          resolvedTag,
-                        })
-                      }}
-                    >
-                      {candidateDisplayTag}
-                    </VersionTagsPopover>
+                        }}
+                      >
+                        {candidateDisplayTag}
+                      </VersionTagsPopover>
+                      {sameDisplayUpdate ? (
+                        <span className="versionInlineHint">同标签新 digest</span>
+                      ) : null}
+                    </>
                   ) : (
                     <span className="mono monoPrimary">-</span>
                   )}

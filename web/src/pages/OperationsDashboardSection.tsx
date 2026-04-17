@@ -1,11 +1,9 @@
 import {
-  useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
 import {
   DOCKREV_AGGREGATE_GUARD_HINT,
-  partitionAggregateUpdateServices,
   resolveAggregateUpdateActionState,
 } from "../aggregateUpdateGuard";
 import { AggregateUpdatePreviewList } from "../components/AggregateUpdatePreviewList";
@@ -19,20 +17,16 @@ import {
   splitImageRef,
 } from "../imageLinks";
 import { navigate } from "../routes";
+import { resolveCandidateVersionState } from "../candidateVersionState";
 import { ArrowRightIcon, Button, Input, Mono, Pill, StatusRemark } from "../ui";
 import { resolveUpdateActionTargetKey } from "../updateActionTracking";
 import {
   isSemverDowngradeAnomaly,
-  serviceRowStatus,
 } from "../updateStatus";
 import {
   buildUpdateServiceTarget,
   buildUpdateServiceTargets,
 } from "../updateTargets";
-import {
-  formatCandidateTagDisplay,
-  formatCurrentTagDisplay as formatTagDisplay,
-} from "../versionDisplay";
 import {
   DiscoveryIssueDetailDialog,
   buildDiscoveryIssueMetaParts,
@@ -44,11 +38,10 @@ import {
   formatGroupSummary,
   formatShort,
   isDockrevService,
-  matchesCandidateSearch,
   shouldPrefetchFloatingCandidate,
   stopRowLink,
-  withAggregateDisplayName,
 } from "./operationsDashboardShared";
+import { buildStackAggregateScope } from "./aggregateUpdateScope";
 import { useOverviewPageState } from "./useOverviewPageState";
 
 export function OperationsDashboardSection(props: {
@@ -65,6 +58,7 @@ export function OperationsDashboardSectionView(props: {
   const {
     activeDiscoveryIssue,
     busy,
+    candidateSearch,
     collapsed,
     countsAll,
     details,
@@ -84,6 +78,7 @@ export function OperationsDashboardSectionView(props: {
     patchServiceInStackDetails,
     runDiscoveryScan,
     selfUpgradeUrl,
+    setCandidateSearch,
     setActiveDiscoveryIssue,
     stacks,
     supervisor,
@@ -91,7 +86,6 @@ export function OperationsDashboardSectionView(props: {
     totalServicesAll,
     triggerApply,
   } = props.state;
-  const [candidateSearch, setCandidateSearch] = useState("");
 
   return (
     <>
@@ -392,44 +386,28 @@ export function OperationsDashboardSectionView(props: {
             const d = details[st.id];
             if (!d) return null;
 
-            const rows = d.services
-              .filter((svc) => !svc.archived)
-              .map((svc) => ({ svc, stt: serviceRowStatus(svc) }))
-              .filter((x) => filter === "all" || x.stt === filter)
-              .filter((x) =>
-                matchesCandidateSearch(d.name, x.svc, candidateSearch),
-              );
+            const scope = buildStackAggregateScope(
+              d,
+              filter,
+              candidateSearch,
+            );
+            const rows = scope.rows;
 
             if (rows.length === 0) return null;
 
-            const visibleServices = rows.map((row) => row.svc);
-            const stackServiceCount = d.services.filter(
-              (svc) => !svc.archived,
-            ).length;
-            const isFilteredSubset =
-              visibleServices.length !== stackServiceCount;
-            const aggregatePartition =
-              partitionAggregateUpdateServices(visibleServices);
-            const aggregatePreviewItems = [
-              ...withAggregateDisplayName(
-                aggregatePartition.actionable,
-                undefined,
-                st.id,
-              ),
-              ...withAggregateDisplayName(
-                aggregatePartition.guardedDockrevPreview,
-                undefined,
-                st.id,
-              ),
-            ];
             const isCollapsed = collapsed[st.id] ?? false;
-            const totalServices = visibleServices.length;
+            const totalServices = scope.visibleServiceCount;
             const groupSummary = formatGroupSummary(
               totalServices,
-              aggregatePartition.counts,
+              scope.actualCounts,
             );
             const stackApply =
-              resolveAggregateUpdateActionState(aggregatePartition);
+              resolveAggregateUpdateActionState({
+                counts: scope.actualCounts,
+                guardedDockrevPreview: scope.actualPreviewItems.filter(
+                  (item) => item.guardedDockrev,
+                ),
+              });
             const stackApplyActionKey = resolveUpdateActionTargetKey(
               "stack",
               st.id,
@@ -476,195 +454,192 @@ export function OperationsDashboardSectionView(props: {
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={(e) => e.stopPropagation()}
                   >
-                    <Button
-                      variant="ghost"
-                      disabled={
-                        stackApplyActiveJob
-                          ? false
-                          : !stackApply.enabled || busy || stackApplySubmitting
-                      }
-                      loading={
-                        stackApplyActionKey
-                          ? isTargetBusy(stackApplyActionKey)
-                          : false
-                      }
-                      loadingClickable={Boolean(stackApplyActiveJob)}
-                      title={
-                        stackApplyActiveJob
-                          ? "任务进行中，点击查看任务详情"
-                          : (stackApply.title ?? undefined)
-                      }
-                      hint={
-                        stackApplyActiveJob
-                          ? "任务进行中，点击查看任务详情"
-                          : !stackApply.enabled
-                            ? (stackApply.hint ?? undefined)
-                            : undefined
-                      }
-                      onClick={() => {
-                        if (stackApplyActiveJob) {
-                          navigate({
-                            name: "job",
-                            jobId: stackApplyActiveJob.jobId,
-                          });
-                          return;
+                    <div className="actionStack">
+                      {scope.isFilteredSubset ? (
+                        <div className="muted aggregateScopeHint">
+                          当前可见 {scope.visibleActionableCount} / 实际提交{" "}
+                          {scope.actualActionableCount}
+                        </div>
+                      ) : null}
+                      <Button
+                        variant="ghost"
+                        disabled={
+                          stackApplyActiveJob
+                            ? false
+                            : !stackApply.enabled || busy || stackApplySubmitting
                         }
-                        const totalCandidates =
-                          aggregatePartition.actionable.length;
-                        const anomalyCount = aggregatePreviewItems.filter(
-                          (item) => isSemverDowngradeAnomaly(item.svc),
-                        ).length;
-                        const body = (
-                          <>
-                            <div className="modalKvGrid">
-                              <div className="modalKvLabel">范围</div>
-                              <div className="modalKvValue">
-                                <Mono>
-                                  {isFilteredSubset
-                                    ? "stack（当前筛选）"
-                                    : "stack"}
-                                </Mono>
+                        loading={
+                          stackApplyActionKey
+                            ? isTargetBusy(stackApplyActionKey)
+                            : false
+                        }
+                        loadingClickable={Boolean(stackApplyActiveJob)}
+                        title={
+                          stackApplyActiveJob
+                            ? "任务进行中，点击查看任务详情"
+                            : (stackApply.title ?? undefined)
+                        }
+                        hint={
+                          stackApplyActiveJob
+                            ? "任务进行中，点击查看任务详情"
+                            : !stackApply.enabled
+                              ? (stackApply.hint ?? undefined)
+                              : undefined
+                        }
+                        onClick={() => {
+                          if (stackApplyActiveJob) {
+                            navigate({
+                              name: "job",
+                              jobId: stackApplyActiveJob.jobId,
+                            });
+                            return;
+                          }
+                          const totalCandidates = scope.actualActionableCount;
+                          const anomalyCount = scope.actualPreviewItems.filter(
+                            (item) => isSemverDowngradeAnomaly(item.svc),
+                          ).length;
+                          const body = (
+                            <>
+                              <div className="modalKvGrid">
+                                <div className="modalKvLabel">范围</div>
+                                <div className="modalKvValue">
+                                  <Mono>stack</Mono>
+                                </div>
+                                <div className="modalKvLabel">目标</div>
+                                <div className="modalKvValue">
+                                  <Mono>{d.name}</Mono>
+                                </div>
+                                {scope.isFilteredSubset ? (
+                                  <>
+                                    <div className="modalKvLabel">当前可见</div>
+                                    <div className="modalKvValue">
+                                      {scope.visibleActionableCount} 个候选 /{" "}
+                                      {scope.visibleServiceCount} 个服务
+                                    </div>
+                                    <div className="modalKvLabel">实际提交</div>
+                                    <div className="modalKvValue">
+                                      {scope.actualActionableCount} 个服务
+                                      {scope.hiddenActionableCount > 0
+                                        ? `（隐藏 ${scope.hiddenActionableCount} 个）`
+                                        : ""}
+                                    </div>
+                                  </>
+                                ) : null}
+                                <div className="modalKvLabel">候选服务</div>
+                                <div className="modalKvValue">
+                                  {totalCandidates} 个（可更新/需确认）
+                                </div>
+                                <div className="modalKvLabel">其中</div>
+                                <div className="modalKvValue">
+                                  可更新 {scope.actualCounts.updatable} · 需确认{" "}
+                                  {scope.actualCounts.hint}
+                                </div>
+                                <div className="modalKvLabel">将跳过</div>
+                                <div className="modalKvValue">
+                                  架构不匹配{" "}
+                                  {scope.actualCounts.archMismatch} · 被阻止{" "}
+                                  {scope.actualCounts.blocked}
+                                </div>
                               </div>
-                              <div className="modalKvLabel">目标</div>
-                              <div className="modalKvValue">
-                                <Mono>{d.name}</Mono>
-                              </div>
-                              {isFilteredSubset ? (
-                                <>
-                                  <div className="modalKvLabel">可见服务</div>
-                                  <div className="modalKvValue">
-                                    {visibleServices.length} /{" "}
-                                    {stackServiceCount}
-                                  </div>
-                                </>
+                              {anomalyCount > 0 ? (
+                                <div className="muted" style={{ marginTop: 10 }}>
+                                  ⚠ 检测到 {anomalyCount}{" "}
+                                  个版本异常（候选低于当前）；手动确认后仍可继续更新。
+                                </div>
                               ) : null}
-                              <div className="modalKvLabel">候选服务</div>
-                              <div className="modalKvValue">
-                                {totalCandidates} 个（可更新/需确认）
+                              {scope.isFilteredSubset ? (
+                                <div className="muted" style={{ marginTop: 10 }}>
+                                  当前筛选 / 搜索只影响列表显示，不影响“更新此 stack”的实际提交范围。
+                                </div>
+                              ) : null}
+                              <div className="modalDivider" />
+                              <div className="modalLead">
+                                将更新的服务（预览）
                               </div>
-                              <div className="modalKvLabel">其中</div>
-                              <div className="modalKvValue">
-                                可更新 {aggregatePartition.counts.updatable} ·
-                                需确认 {aggregatePartition.counts.hint}
-                              </div>
-                              <div className="modalKvLabel">将跳过</div>
-                              <div className="modalKvValue">
-                                架构不匹配{" "}
-                                {aggregatePartition.counts.archMismatch} ·
-                                被阻止 {aggregatePartition.counts.blocked}
-                              </div>
-                            </div>
-                            {anomalyCount > 0 ? (
-                              <div className="muted" style={{ marginTop: 10 }}>
-                                ⚠ 检测到 {anomalyCount}{" "}
-                                个版本异常（候选低于当前）；手动确认后仍可继续更新。
-                              </div>
-                            ) : null}
-                            <div className="modalDivider" />
-                            <div className="modalLead">
-                              将更新的服务（预览）
-                            </div>
-                            <AggregateUpdatePreviewList
-                              items={aggregatePreviewItems}
-                              dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
-                              onServiceResolvedTags={(update) => {
-                                const stackId =
-                                  (update.stackId ?? "").trim() || st.id;
-                                patchServiceInStackDetails(
-                                  stackId,
-                                  update.serviceId,
-                                  (prev) => ({
-                                    ...prev,
-                                    image: {
-                                      ...prev.image,
-                                      resolvedTag: update.resolvedTag,
-                                      resolvedTags: update.resolvedTags,
-                                    },
-                                  }),
-                                );
-                              }}
-                              onServiceCandidateResolvedTag={(update) => {
-                                const stackId =
-                                  (update.stackId ?? "").trim() || st.id;
-                                patchServiceInStackDetails(
-                                  stackId,
-                                  update.serviceId,
-                                  (prev) => ({
-                                    ...prev,
-                                    candidate: prev.candidate
-                                      ? {
-                                          ...prev.candidate,
-                                          resolvedTag: update.resolvedTag,
-                                        }
-                                      : prev.candidate,
-                                  }),
-                                );
-                              }}
-                            />
-                            <div className="modalDivider" />
-                          </>
-                        );
-                        void triggerApply({
-                          scope: "stack",
-                          stackId: st.id,
-                          targetLabel: `stack:${d.name}`,
-                          buildRequest: async () => ({
+                              <AggregateUpdatePreviewList
+                                items={scope.actualPreviewItems}
+                                dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
+                                onServiceResolvedTags={(update) => {
+                                  const stackId =
+                                    (update.stackId ?? "").trim() || st.id;
+                                  patchServiceInStackDetails(
+                                    stackId,
+                                    update.serviceId,
+                                    (prev) => ({
+                                      ...prev,
+                                      image: {
+                                        ...prev.image,
+                                        resolvedTag: update.resolvedTag,
+                                        resolvedTags: update.resolvedTags,
+                                      },
+                                    }),
+                                  );
+                                }}
+                                onServiceCandidateResolvedTag={(update) => {
+                                  const stackId =
+                                    (update.stackId ?? "").trim() || st.id;
+                                  patchServiceInStackDetails(
+                                    stackId,
+                                    update.serviceId,
+                                    (prev) => ({
+                                      ...prev,
+                                      candidate: prev.candidate
+                                        ? {
+                                            ...prev.candidate,
+                                            resolvedTag: update.resolvedTag,
+                                          }
+                                        : prev.candidate,
+                                    }),
+                                  );
+                                }}
+                              />
+                              <div className="modalDivider" />
+                            </>
+                          );
+                          void triggerApply({
                             scope: "stack",
                             stackId: st.id,
-                            targets: await buildUpdateServiceTargets(
-                              aggregatePartition.actionable.map(
-                                (item) => item.svc,
+                            targetLabel: `stack:${d.name}`,
+                            buildRequest: async () => ({
+                              scope: "stack",
+                              stackId: st.id,
+                              targets: await buildUpdateServiceTargets(
+                                scope.actualActionableServices,
                               ),
-                            ),
-                            mode: "apply",
-                            allowArchMismatch: false,
-                            backupMode: "inherit",
-                          }),
-                          confirmBody: body,
-                          confirmTitle: `确认更新此 stack？`,
-                        });
-                      }}
-                    >
-                      {stackApplyActiveJob?.status === "queued"
-                        ? "排队中…"
-                        : stackApplyActiveJob
-                          ? "更新中…"
-                          : stackApplySubmitting
-                            ? "提交中…"
-                            : "更新此 stack"}
-                    </Button>
+                              mode: "apply",
+                              allowArchMismatch: false,
+                              backupMode: "inherit",
+                            }),
+                            confirmBody: body,
+                            confirmTitle: `确认更新此 stack？`,
+                          });
+                        }}
+                      >
+                        {stackApplyActiveJob?.status === "queued"
+                          ? "排队中…"
+                          : stackApplyActiveJob
+                            ? "更新中…"
+                            : stackApplySubmitting
+                              ? "提交中…"
+                              : "更新此 stack"}
+                      </Button>
+                    </div>
                   </div>
                 </div>
 
                 {!isCollapsed
                   ? rows.map(({ svc, stt }) => {
                       const isDockrev = isDockrevService(svc);
-                      const currentDisplayTag = formatTagDisplay(
-                        svc.image.tag,
-                        svc.image.resolvedTag,
-                        svc.versionInference?.status,
-                      );
-                      const inferencePending =
-                        svc.versionInference?.status === "pending";
-                      const rawTagTrim = (svc.image.tag ?? "").trim();
-                      const showRawTag = Boolean(
-                        rawTagTrim && rawTagTrim !== currentDisplayTag,
-                      );
-                      const candidateTag =
-                        svc.candidate?.tag && svc.candidate.tag !== "-"
-                          ? svc.candidate.tag
-                          : null;
-                      const candidateDisplayTag = candidateTag
-                        ? formatCandidateTagDisplay(
-                            candidateTag,
-                            svc.candidate?.resolvedTag ?? null,
-                            svc.versionInference?.status,
-                          )
-                        : null;
-                      const showCandidate = Boolean(
-                        candidateDisplayTag &&
-                        candidateDisplayTag !== currentDisplayTag,
-                      );
+                      const versionState = resolveCandidateVersionState(svc);
+                      const {
+                        candidateDisplayTag,
+                        candidateTag,
+                        currentDisplayTag,
+                        inferencePending,
+                        sameDisplayUpdate,
+                        showCandidate,
+                        showRawTag,
+                      } = versionState;
                       const candidatePrefetchOnMount =
                         candidateTag && candidateDisplayTag
                           ? shouldPrefetchFloatingCandidate(
@@ -863,6 +838,11 @@ export function OperationsDashboardSectionView(props: {
                                   >
                                     {candidateDisplayTag}
                                   </VersionTagsPopover>
+                                  {sameDisplayUpdate ? (
+                                    <span className="versionInlineHint">
+                                      同标签新 digest
+                                    </span>
+                                  ) : null}
                                 </>
                               ) : null}
                             </div>
