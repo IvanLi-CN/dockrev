@@ -160,13 +160,6 @@ export function useOverviewPageState(props: {
       latestAppliedStacksRequestIdRef.current = requestId
       setStacks(s)
       onLastScanHint(maxLastScan)
-      setCollapsed((prev) => {
-        const next = { ...prev }
-        for (const st of s) {
-          if (next[st.id] == null) next[st.id] = st.updates === 0
-        }
-        return next
-      })
       setError(errors.length > 0 ? errors.join(' · ') : null)
 
       const ids = s.map((x) => x.id)
@@ -215,13 +208,6 @@ export function useOverviewPageState(props: {
 
       setStacks((prev) => prev.map((item) => byId.get(item.id) ?? item))
       onLastScanHint(maxLastScan)
-      setCollapsed((prev) => {
-        const merged = { ...prev }
-        for (const item of next) {
-          if (merged[item.id] == null) merged[item.id] = item.updates === 0
-        }
-        return merged
-      })
     },
     [onLastScanHint],
   )
@@ -674,9 +660,9 @@ export function useOverviewPageState(props: {
     (next: UpdateCandidateFilter, mode: 'push' | 'replace') => {
       setFilter(next)
       writeUpdateCandidateFilterToUrl(next, mode)
-      setCollapsed(withCollapseDefaults(readCollapsedFromStorage(next), stacks))
+      setCollapsed(withCollapseDefaults(readCollapsedFromStorage(next), stacks, details, next))
     },
-    [stacks],
+    [details, stacks],
   )
 
   const onChangeFilter = useCallback(
@@ -705,7 +691,7 @@ export function useOverviewPageState(props: {
       // Only update when necessary to avoid resetting local UI state.
       if (next === filter) return
       setFilter(next)
-      setCollapsed(withCollapseDefaults(readCollapsedFromStorage(next), stacks))
+      setCollapsed(withCollapseDefaults(readCollapsedFromStorage(next), stacks, details, next))
     }
     window.addEventListener('popstate', onNav)
     window.addEventListener('hashchange', onNav)
@@ -713,7 +699,20 @@ export function useOverviewPageState(props: {
       window.removeEventListener('popstate', onNav)
       window.removeEventListener('hashchange', onNav)
     }
-  }, [filter, stacks])
+  }, [details, filter, stacks])
+
+  useEffect(() => {
+    setCollapsed((prev) => {
+      const next = withCollapseDefaults(prev, stacks, details, filter)
+      const prevKeys = Object.keys(prev)
+      const nextKeys = Object.keys(next)
+      if (prevKeys.length !== nextKeys.length) return next
+      for (const key of nextKeys) {
+        if (next[key] !== prev[key]) return next
+      }
+      return prev
+    })
+  }, [details, filter, stacks])
 
   const countsAll = useMemo(() => {
     const c: Record<Exclude<RowStatus, 'ok'>, number> = {

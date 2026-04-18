@@ -3,6 +3,7 @@ import {
 type DiscoveredProject,
 type Service,
 type ServiceDigestTagsScanSummary,
+type StackDetail,
 type StackListItem
 } from '../api'
 import { type AggregateUpdatePreviewListItem } from '../components/AggregateUpdatePreviewList'
@@ -18,7 +19,7 @@ DialogHeader,
 DialogTitle,
 Pill
 } from '../ui'
-import { type RowStatus } from '../updateStatus'
+import { serviceRowStatus, type RowStatus } from '../updateStatus'
 import {
 isStrictSemverTag
 } from '../versionDisplay'
@@ -396,10 +397,21 @@ export function writeCollapsedToStorage(filter: UpdateCandidateFilter, value: Re
 export function withCollapseDefaults(
   collapsed: Record<string, boolean>,
   stacks: StackListItem[],
+  details?: Record<string, StackDetail | undefined>,
+  filter: UpdateCandidateFilter = 'all',
 ): Record<string, boolean> {
   const next = { ...collapsed }
   for (const st of stacks) {
-    if (next[st.id] == null) next[st.id] = st.updates === 0
+    if (next[st.id] != null) continue
+    const detail = details?.[st.id]
+    if (!detail) continue
+    const hasVisibleCandidateRows = detail.services.some((svc) => {
+      if (svc.archived) return false
+      const status = serviceRowStatus(svc)
+      if (status === 'ok') return false
+      return filter === 'all' ? true : status === filter
+    })
+    next[st.id] = !hasVisibleCandidateRows
   }
   return next
 }
