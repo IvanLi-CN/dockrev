@@ -126,3 +126,50 @@ export const AllStatesLight: Story = {
     backgrounds: { value: 'light' },
   },
 }
+
+export const SameTagDigestUpdate: Story = {
+  parameters: {
+    dockrevApiScenario: 'default',
+  },
+  render: () => {
+    const sameTag = {
+      ...baseService(),
+      id: 'svc-same-tag',
+      name: 'api',
+      image: {
+        ref: 'ghcr.io/acme/api:latest',
+        tag: 'latest',
+        digest: d('2', '21'),
+        resolvedTag: 'v5.2.3',
+        resolvedTags: ['v5.2.3'],
+      },
+      candidate: {
+        tag: 'latest',
+        resolvedTag: 'v5.2.3',
+        digest: d('3', '32'),
+        archMatch: 'match',
+        arch: ['linux/amd64'],
+      },
+    } satisfies Service
+
+    return (
+      <div className="card" style={{ width: 760 }}>
+        <div className="title">same-tag / digest-only 预览</div>
+        <div className="muted" style={{ marginTop: 6 }}>
+          同标签候选仍需在聚合更新预览里明确标出新 digest
+        </div>
+        <div style={{ marginTop: 14 }}>
+          <AggregateUpdatePreviewList
+            items={[{ svc: sameTag, status: 'updatable' }]}
+            dockrevGuardHint="Dockrev 自升级不参与聚合更新，需改走 Supervisor。"
+          />
+        </div>
+      </div>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    if (!canvasElement.textContent?.includes('同标签新 digest')) {
+      throw new Error('expected same-tag digest-only hint in aggregate preview list')
+    }
+  },
+}

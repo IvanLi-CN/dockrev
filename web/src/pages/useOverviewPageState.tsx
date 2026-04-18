@@ -1,8 +1,6 @@
 import { useCallback,useEffect,useMemo,useRef,useState,type ReactNode } from 'react'
 import {
 DOCKREV_AGGREGATE_GUARD_HINT,
-emptyAggregateUpdateCounts,
-partitionAggregateUpdateServices,
 resolveAggregateUpdateActionState,
 } from '../aggregateUpdateGuard'
 import {
@@ -25,7 +23,7 @@ type StackDetail,
 type StackListItem,
 type TriggerUpdateInput
 } from '../api'
-import { AggregateUpdatePreviewList,type AggregateUpdatePreviewListItem } from '../components/AggregateUpdatePreviewList'
+import { AggregateUpdatePreviewList } from '../components/AggregateUpdatePreviewList'
 import { normalizeDigest } from '../components/digest'
 import { type UpdateCandidateFilter } from '../components/UpdateCandidateFilters'
 import { useConfirm } from '../confirm'
@@ -55,6 +53,7 @@ import {
 inferResolvedTagsFromSnapshot,
 isStrictSemverTag
 } from '../versionDisplay'
+import { buildAllAggregateScope } from './aggregateUpdateScope'
 import { selectOverviewJobsForCard,toOverviewJobCardItem } from './overviewJobsCard'
 
 import {
@@ -67,7 +66,6 @@ readCollapsedFromStorage,
 readUpdateCandidateFilterFromUrl,
 scanHasFailures,
 scanIsComplete,
-withAggregateDisplayName,
 withCollapseDefaults,
 writeCollapsedToStorage,
 writeUpdateCandidateFilterToUrl,
@@ -86,6 +84,7 @@ export function useOverviewPageState(props: {
   const { onLastScanHint, onTopActions } = props
   const confirm = useConfirm()
   const [filter, setFilter] = useState<UpdateCandidateFilter>(() => readUpdateCandidateFilterFromUrl() ?? 'all')
+  const [candidateSearch, setCandidateSearch] = useState('')
   const [stacks, setStacks] = useState<StackListItem[]>([])
   const [details, setDetails] = useState<Record<string, StackDetail | undefined>>({})
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
@@ -161,13 +160,6 @@ export function useOverviewPageState(props: {
       latestAppliedStacksRequestIdRef.current = requestId
       setStacks(s)
       onLastScanHint(maxLastScan)
-      setCollapsed((prev) => {
-        const next = { ...prev }
-        for (const st of s) {
-          if (next[st.id] == null) next[st.id] = st.updates === 0
-        }
-        return next
-      })
       setError(errors.length > 0 ? errors.join(' · ') : null)
 
       const ids = s.map((x) => x.id)
@@ -216,13 +208,6 @@ export function useOverviewPageState(props: {
 
       setStacks((prev) => prev.map((item) => byId.get(item.id) ?? item))
       onLastScanHint(maxLastScan)
-      setCollapsed((prev) => {
-        const merged = { ...prev }
-        for (const item of next) {
-          if (merged[item.id] == null) merged[item.id] = item.updates === 0
-        }
-        return merged
-      })
     },
     [onLastScanHint],
   )
@@ -675,9 +660,9 @@ export function useOverviewPageState(props: {
     (next: UpdateCandidateFilter, mode: 'push' | 'replace') => {
       setFilter(next)
       writeUpdateCandidateFilterToUrl(next, mode)
-      setCollapsed(withCollapseDefaults(readCollapsedFromStorage(next), stacks))
+      setCollapsed(withCollapseDefaults(readCollapsedFromStorage(next), stacks, details, next))
     },
-    [stacks],
+    [details, stacks],
   )
 
   const onChangeFilter = useCallback(
@@ -706,7 +691,7 @@ export function useOverviewPageState(props: {
       // Only update when necessary to avoid resetting local UI state.
       if (next === filter) return
       setFilter(next)
-      setCollapsed(withCollapseDefaults(readCollapsedFromStorage(next), stacks))
+      setCollapsed(withCollapseDefaults(readCollapsedFromStorage(next), stacks, details, next))
     }
     window.addEventListener('popstate', onNav)
     window.addEventListener('hashchange', onNav)
@@ -714,7 +699,20 @@ export function useOverviewPageState(props: {
       window.removeEventListener('popstate', onNav)
       window.removeEventListener('hashchange', onNav)
     }
-  }, [filter, stacks])
+  }, [details, filter, stacks])
+
+  useEffect(() => {
+    setCollapsed((prev) => {
+      const next = withCollapseDefaults(prev, stacks, details, filter)
+      const prevKeys = Object.keys(prev)
+      const nextKeys = Object.keys(next)
+      if (prevKeys.length !== nextKeys.length) return next
+      for (const key of nextKeys) {
+        if (next[key] !== prev[key]) return next
+      }
+      return prev
+    })
+  }, [details, filter, stacks])
 
   const countsAll = useMemo(() => {
     const c: Record<Exclude<RowStatus, 'ok'>, number> = {
@@ -737,25 +735,23 @@ export function useOverviewPageState(props: {
   }, [details, stacks])
 
   const aggregateAll = useMemo(() => {
-    const counts = emptyAggregateUpdateCounts()
-    const actionablePreviewItems: AggregateUpdatePreviewListItem[] = []
-    const guardedPreviewItems: AggregateUpdatePreviewListItem[] = []
-
-    for (const st of stacks) {
-      const d = details[st.id]
-      if (!d) continue
-
-      const partition = partitionAggregateUpdateServices(d.services)
-      counts.updatable += partition.counts.updatable
-      counts.hint += partition.counts.hint
-      counts.archMismatch += partition.counts.archMismatch
-      counts.blocked += partition.counts.blocked
-      actionablePreviewItems.push(...withAggregateDisplayName(partition.actionable, d.name, st.id))
-      guardedPreviewItems.push(...withAggregateDisplayName(partition.guardedDockrevPreview, d.name, st.id))
+    const scope = buildAllAggregateScope({
+      stacks,
+      details,
+      filter,
+      candidateSearch,
+    })
+    return {
+      counts: scope.counts,
+      actionablePreviewItems: scope.previewItems.filter((item) => !item.guardedDockrev),
+      guardedPreviewItems: scope.previewItems.filter((item) => item.guardedDockrev),
+      actionableCount: scope.actionableCount,
+      visibleServiceCount: scope.visibleServiceCount,
+      totalServiceCount: scope.totalServiceCount,
+      isFilteredSubset: scope.isFilteredSubset,
+      actionableServices: scope.actionableServices,
     }
-
-    return { counts, actionablePreviewItems, guardedPreviewItems }
-  }, [details, stacks])
+  }, [candidateSearch, details, filter, stacks])
 
   const totalServicesAll = useMemo(() => {
     let total = 0
@@ -983,53 +979,54 @@ export function useOverviewPageState(props: {
         >
           立即扫描
         </Button>
-        <Button
-          variant="danger"
-          disabled={
-            allApplyActiveJob
-              ? false
-              : !allApply.enabled || busy || allApplySubmitting
-          }
-          loading={allApplyActionBusy}
-          loadingClickable={Boolean(allApplyActiveJob)}
-          title={allApplyActiveJob ? '任务进行中，点击查看任务详情' : (allApply.title ?? undefined)}
-          hint={allApplyActiveJob ? '任务进行中，点击查看任务详情' : (!allApply.enabled ? (allApply.hint ?? undefined) : undefined)}
-          onClick={() => {
-            if (allApplyActiveJob) {
-              navigate({ name: 'job', jobId: allApplyActiveJob.jobId })
-              return
+        <div className="actionStack">
+          <Button
+            variant="danger"
+            disabled={
+              allApplyActiveJob
+                ? false
+                : !allApply.enabled || busy || allApplySubmitting
             }
-            const previewItems = [...aggregateAll.actionablePreviewItems, ...aggregateAll.guardedPreviewItems]
-            const totalCandidates = aggregateAll.actionablePreviewItems.length
-            const anomalyCount = previewItems.filter((item) => isSemverDowngradeAnomaly(item.svc)).length
-            const body = (
-              <>
-                <div className="modalKvGrid">
-                  <div className="modalKvLabel">范围</div>
-                  <div className="modalKvValue">
-                    <Mono>all</Mono>
+            loading={allApplyActionBusy}
+            loadingClickable={Boolean(allApplyActiveJob)}
+            title={allApplyActiveJob ? '任务进行中，点击查看任务详情' : (allApply.title ?? undefined)}
+            hint={allApplyActiveJob ? '任务进行中，点击查看任务详情' : (!allApply.enabled ? (allApply.hint ?? undefined) : undefined)}
+            onClick={() => {
+              if (allApplyActiveJob) {
+                navigate({ name: 'job', jobId: allApplyActiveJob.jobId })
+                return
+              }
+              const previewItems = [...aggregateAll.actionablePreviewItems, ...aggregateAll.guardedPreviewItems]
+              const totalCandidates = aggregateAll.actionableCount
+              const anomalyCount = previewItems.filter((item) => isSemverDowngradeAnomaly(item.svc)).length
+              const body = (
+                <>
+                  <div className="modalKvGrid">
+                    <div className="modalKvLabel">范围</div>
+                    <div className="modalKvValue">
+                      <Mono>all</Mono>
+                    </div>
+                    <div className="modalKvLabel">候选服务</div>
+                    <div className="modalKvValue">{totalCandidates} 个（可更新/需确认）</div>
+                    <div className="modalKvLabel">其中</div>
+                    <div className="modalKvValue">
+                      可更新 {aggregateAll.counts.updatable} · 需确认 {aggregateAll.counts.hint}
+                    </div>
+                    <div className="modalKvLabel">将跳过</div>
+                    <div className="modalKvValue">
+                      架构不匹配 {aggregateAll.counts.archMismatch} · 被阻止 {aggregateAll.counts.blocked}
+                    </div>
                   </div>
-                  <div className="modalKvLabel">候选服务</div>
-                  <div className="modalKvValue">{totalCandidates} 个（可更新/需确认）</div>
-                  <div className="modalKvLabel">其中</div>
-                  <div className="modalKvValue">
-                    可更新 {aggregateAll.counts.updatable} · 需确认 {aggregateAll.counts.hint}
-                  </div>
-                  <div className="modalKvLabel">将跳过</div>
-                  <div className="modalKvValue">
-                    架构不匹配 {aggregateAll.counts.archMismatch} · 被阻止 {aggregateAll.counts.blocked}
-                  </div>
-                </div>
-                {anomalyCount > 0 ? (
-                  <div className="muted" style={{ marginTop: 10 }}>
-                    ⚠ 检测到 {anomalyCount} 个版本异常（候选低于当前）；手动确认后仍可继续更新。
-                  </div>
-                ) : null}
-	                <div className="modalDivider" />
-	                <div className="modalLead">将更新的服务（预览）</div>
-	                <AggregateUpdatePreviewList
-	                  items={previewItems}
-	                  dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
+                  {anomalyCount > 0 ? (
+                    <div className="muted" style={{ marginTop: 10 }}>
+                      ⚠ 检测到 {anomalyCount} 个版本异常（候选低于当前）；手动确认后仍可继续更新。
+                    </div>
+                  ) : null}
+                  <div className="modalDivider" />
+                  <div className="modalLead">将更新的服务（预览）</div>
+                  <AggregateUpdatePreviewList
+                    items={previewItems}
+                    dockrevGuardHint={DOCKREV_AGGREGATE_GUARD_HINT}
                     onServiceResolvedTags={(update) => {
                       const stackId = (update.stackId ?? '').trim()
                       if (!stackId) return
@@ -1055,35 +1052,36 @@ export function useOverviewPageState(props: {
                           : prev.candidate,
                       }))
                     }}
-	                />
-	                <div className="modalDivider" />
-	              </>
-	            )
-                        void triggerApply({
-                          scope: 'all',
-                          targetLabel: '全部服务',
-                          buildRequest: async () => ({
-                            scope: 'all',
-                            targets: await buildUpdateServiceTargets(
-                              aggregateAll.actionablePreviewItems.map((item) => item.svc),
-                            ),
-                            mode: 'apply',
-                            allowArchMismatch: false,
-                            backupMode: 'inherit',
-                          }),
-                          confirmBody: body,
-                          confirmTitle: '确认更新全部服务？',
-                        })
-          }}
-        >
-          {allApplyActiveJob?.status === 'queued'
-            ? '排队中…'
-            : allApplyActiveJob
-              ? '更新中…'
-              : allApplySubmitting
-                ? '提交中…'
-                : '更新全部'}
-        </Button>
+                  />
+                  <div className="modalDivider" />
+                </>
+              )
+              void triggerApply({
+                scope: 'all',
+                targetLabel: '全部服务',
+                buildRequest: async () => ({
+                  scope: 'all',
+                  targets: await buildUpdateServiceTargets(
+                    aggregateAll.actionableServices,
+                  ),
+                  mode: 'apply',
+                  allowArchMismatch: false,
+                  backupMode: 'inherit',
+                }),
+                confirmBody: body,
+                confirmTitle: '确认更新全部服务？',
+              })
+            }}
+          >
+            {allApplyActiveJob?.status === 'queued'
+              ? '排队中…'
+              : allApplyActiveJob
+                ? '更新中…'
+                : allApplySubmitting
+                  ? '提交中…'
+                  : '更新全部'}
+          </Button>
+        </div>
       </>,
     )
 	  }, [
@@ -1101,6 +1099,7 @@ export function useOverviewPageState(props: {
   return {
     activeDiscoveryIssue,
     busy,
+    candidateSearch,
     collapsed,
     countsAll,
     details,
@@ -1121,6 +1120,7 @@ export function useOverviewPageState(props: {
     requestRefresh,
     runDiscoveryScan,
     selfUpgradeUrl,
+    setCandidateSearch,
     setActiveDiscoveryIssue,
     stacks,
     supervisor,

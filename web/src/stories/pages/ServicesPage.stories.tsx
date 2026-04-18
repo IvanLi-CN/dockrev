@@ -22,6 +22,16 @@ function expectStory(condition: unknown, message: string): asserts condition {
   if (!condition) throw new globalThis.Error(message);
 }
 
+function setInputValue(input: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    "value",
+  )?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
 function renderServices(pageSubtitle: string): Story["render"] {
   return () => (
     <PageHarness
@@ -49,6 +59,53 @@ export const Default: Story = {
 export const DashboardDemo: Story = {
   parameters: { dockrevApiScenario: "dashboard-demo" },
   render: renderServices("兼容旧 smoke：运维大盘默认场景"),
+};
+
+export const AllActionableServicesVisible: Story = {
+  parameters: { dockrevApiScenario: "dashboard-demo" },
+  render: renderServices("回归：默认列表必须完整显示全部 actionable 服务"),
+  play: async ({ canvasElement }) => {
+    await sleep(260);
+
+    const rows = Array.from(
+      canvasElement.querySelectorAll<HTMLElement>(".rowLine"),
+    );
+    expectStory(
+      rows.length === 6,
+      `expected all 6 actionable services to be visible, received ${rows.length}`,
+    );
+
+    for (const label of [
+      "api",
+      "web",
+      "worker",
+      "loki",
+      "prometheus",
+      "postgres",
+    ]) {
+      expectStory(
+        rows.some((row) => row.textContent?.includes(label)),
+        `expected actionable row for ${label}`,
+      );
+    }
+
+    expectStory(
+      canvasElement.textContent?.includes("可更新 3"),
+      "expected actionable filter count for updatable services",
+    );
+    expectStory(
+      canvasElement.textContent?.includes("需确认 1"),
+      "expected actionable filter count for hint services",
+    );
+    expectStory(
+      canvasElement.textContent?.includes("架构不匹配 1"),
+      "expected actionable filter count for arch mismatch services",
+    );
+    expectStory(
+      canvasElement.textContent?.includes("被阻止 1"),
+      "expected actionable filter count for blocked services",
+    );
+  },
 };
 
 export const GuideLineLongNames: Story = {
@@ -104,8 +161,7 @@ export const CandidateSearchKeepsArchivedVisible: Story = {
       searchInput,
       "expected candidate search input in operations dashboard",
     );
-    searchInput.value = "Primary API";
-    searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+    setInputValue(searchInput, "Primary API");
     await sleep(160);
 
     const visibleRows = Array.from(
@@ -131,6 +187,38 @@ export const CandidateSearchKeepsArchivedVisible: Story = {
       "archived services section should remain visible after candidate search",
     );
 
+    expectStory(
+      !canvasElement.textContent?.includes("仅更新当前筛选结果"),
+      "inline aggregate scope hint should not be rendered on the page",
+    );
+
+    const allAction = Array.from(
+      canvasElement.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.includes("更新全部"));
+    expectStory(allAction, "expected top-level aggregate update button");
+    allAction.click();
+    await sleep(220);
+
+    const allDialog =
+      document.querySelector<HTMLElement>('[role="alertdialog"]') ??
+      document.querySelector<HTMLElement>('[role="dialog"]');
+    expectStory(allDialog, "expected aggregate-all confirm dialog");
+    expectStory(
+      allDialog.textContent?.includes("候选服务") &&
+        allDialog.textContent?.includes("1 个（可更新/需确认）"),
+      "aggregate-all confirm dialog should only submit currently visible candidates",
+    );
+    expectStory(
+      allDialog.querySelectorAll(".modalListItem").length === 1,
+      "aggregate-all preview should list only the currently visible submitted target",
+    );
+
+    const allCancelButton = Array.from(
+      allDialog.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.includes("取消"));
+    allCancelButton?.click();
+    await sleep(120);
+
     const stackAction = canvasElement.querySelector<HTMLButtonElement>(
       ".tableGroup .groupHead .actionCell button",
     );
@@ -143,21 +231,75 @@ export const CandidateSearchKeepsArchivedVisible: Story = {
       document.querySelector<HTMLElement>('[role="dialog"]');
     expectStory(dialog, "expected filtered stack update confirm dialog");
     expectStory(
-      dialog.textContent?.includes("stack（当前筛选）"),
-      "confirm dialog should disclose filtered stack scope",
-    );
-    expectStory(
-      dialog.textContent?.includes("1 / 3"),
-      "confirm dialog should report visible services vs full stack services",
+      dialog.textContent?.includes("范围") &&
+        dialog.textContent?.includes("stack"),
+      "confirm dialog should keep stack scope semantics explicit",
     );
     expectStory(
       dialog.textContent?.includes("候选服务") &&
         dialog.textContent?.includes("1 个（可更新/需确认）"),
-      "confirm dialog should only count visible matching candidates",
+      "confirm dialog should only submit the currently visible stack target",
     );
     expectStory(
       dialog.querySelectorAll(".modalListItem").length === 1,
-      "filtered stack update preview should only include the visible matching service",
+      "filtered stack update preview should include only the visible stack target",
+    );
+
+    const cancelButton = Array.from(
+      dialog.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.includes("取消"));
+    cancelButton?.click();
+    await sleep(120);
+  },
+};
+
+export const SameTagDigestUpdateVisible: Story = {
+  parameters: {
+    dockrevApiScenario: "dashboard-demo",
+    dockrevServiceOverridesById: {
+      "svc-prod-api": {
+        image: {
+          ref: "ghcr.io/acme/api:latest",
+          tag: "latest",
+          digest:
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          resolvedTag: "v5.2.3",
+          resolvedTags: ["v5.2.3"],
+        },
+        candidate: {
+          tag: "latest",
+          resolvedTag: "v5.2.3",
+          digest:
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          archMatch: "match",
+          arch: ["linux/amd64"],
+        },
+      },
+    },
+  },
+  render: renderServices("回归：same-tag / digest-only 候选必须明确可见"),
+  play: async ({ canvasElement }) => {
+    await sleep(260);
+
+    expectStory(
+      canvasElement.textContent?.includes("同标签新 digest"),
+      "services table should surface same-tag digest-only updates explicitly",
+    );
+
+    const stackAction = canvasElement.querySelector<HTMLButtonElement>(
+      ".tableGroup .groupHead .actionCell button",
+    );
+    expectStory(stackAction, "expected stack action button for same-tag case");
+    stackAction.click();
+    await sleep(220);
+
+    const dialog =
+      document.querySelector<HTMLElement>('[role="alertdialog"]') ??
+      document.querySelector<HTMLElement>('[role="dialog"]');
+    expectStory(dialog, "expected same-tag confirm dialog");
+    expectStory(
+      dialog.textContent?.includes("同标签新 digest"),
+      "aggregate preview should also expose same-tag digest-only updates",
     );
 
     const cancelButton = Array.from(
