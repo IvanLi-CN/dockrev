@@ -80,32 +80,32 @@
   sensitive_exclusion: N/A
   submission_gate: pending-owner-approval
   story_id_or_title: Pages/ServicesPage/CandidateSearchKeepsArchivedVisible
-  state: search-narrowed + aggregate-cta-visible
-  evidence_note: 验证 active search 下顶部 CTA 会显式显示 `仅更新当前筛选结果（1 个候选）`。
+  state: search-narrowed + top-actions-no-inline-hint
+  evidence_note: 验证 active search 下顶部操作区不再显示额外的批量更新范围提示文案。
   image:
-  ![批量更新 CTA 显式展示仅更新当前筛选结果](./assets/batch-update-cta-scope-hint.png)
-
-- source_type: storybook_canvas
-  target_program: mock-only
-  capture_scope: browser-viewport
-  sensitive_exclusion: N/A
-  submission_gate: pending-owner-approval
-  story_id_or_title: Pages/ServicesPage/CandidateSearchKeepsArchivedVisible
-  state: search-narrowed + aggregate-all-confirm-open
-  evidence_note: 验证 active search 下顶部 CTA 与确认框同时展示“仅更新当前筛选结果”，且预览列表只列出当前可见提交目标。
-  image:
-  ![批量更新仅提交当前筛选结果](./assets/batch-update-visible-vs-submitted.png)
+  ![批量更新顶部操作区不再显示额外提示](./assets/batch-update-cta-scope-hint.png)
 
 - source_type: storybook_canvas
   target_program: mock-only
   capture_scope: element
   sensitive_exclusion: N/A
   submission_gate: pending-owner-approval
-  story_id_or_title: Components/AggregateUpdatePreviewList/SameTagDigestUpdate
-  state: same-tag-digest-only-visible
-  evidence_note: 验证 same-tag / digest-only 候选在聚合预览里显式展示 `同标签新 digest`，不会再被误读为无更新。
+  story_id_or_title: Pages/ServicesPage/CandidateSearchKeepsArchivedVisible
+  state: search-narrowed + aggregate-all-confirm-open
+  evidence_note: 验证 active search 下“更新全部”确认框不再显示筛选提示文案，且预览列表只保留当前可见提交目标。
   image:
-  ![same-tag digest-only 候选显式可见](./assets/same-tag-digest-update.png)
+  ![批量更新确认框只保留当前可见提交目标](./assets/batch-update-visible-vs-submitted.png)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: element
+  sensitive_exclusion: N/A
+  submission_gate: pending-owner-approval
+  story_id_or_title: Pages/ServicesPage/SameTagDigestUpdateVisible
+  state: same-tag-digest-only-row-visible
+  evidence_note: 验证 same-tag / digest-only 候选在服务列表行内显式展示 `同标签新 digest`，不会再被误读为无更新。
+  image:
+  ![same-tag digest-only 候选在列表行内显式可见](./assets/same-tag-digest-update.png)
 
 ## 参考（References）
 
