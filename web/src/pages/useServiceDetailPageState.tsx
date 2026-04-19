@@ -947,7 +947,6 @@ export function useServiceDetailPageState(props: {
     if (!service) return '加载中…'
     const st = serviceRowStatus(service)
     if (st === 'blocked') {
-      if (service.updateGuard?.blocked) return '已阻止（需手工零停机）'
       return '已阻止（忽略规则命中）'
     }
     if (st === 'ok') return '暂无候选版本'
@@ -1033,17 +1032,6 @@ export function useServiceDetailPageState(props: {
               {' · '}reason: <Mono>{service.ignore.reason}</Mono>
             </>
           ) : null}
-        </>
-      )
-    }
-
-    if (service.updateGuard?.blocked) {
-      return (
-        <>
-          当前: {currentNode}
-          {currentDigestNode}
-          {rawTagNode}
-          {' · '}reason: <Mono>{service.updateGuard.reason}</Mono>
         </>
       )
     }

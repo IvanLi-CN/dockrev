@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
 import type { StackDetail, StackListItem } from '../src/api'
-import { resolveAggregateUpdateActionState } from '../src/aggregateUpdateGuard'
 import { buildAllAggregateScope, buildStackAggregateScope } from '../src/pages/aggregateUpdateScope'
 
 const digest = (fill: string) => `sha256:${fill.repeat(64).slice(0, 64)}`
@@ -136,35 +135,4 @@ describe('aggregateUpdateScope', () => {
     expect(scope.counts.archMismatch).toBe(0)
   })
 
-  test('keeps visible guarded services as apply blockers for aggregate scope', () => {
-    const detail: StackDetail = {
-      id: 'stack-prod',
-      name: 'prod',
-      compose: { type: 'path', composeFiles: ['/srv/prod/compose.yml'], envFile: null },
-      services: [
-        makeService({
-          id: 'svc-edge',
-          name: 'edge',
-          updateGuard: {
-            blocked: true,
-            code: 'traefik_online_service_requires_manual_zero_downtime',
-            reason: 'Traefik 在线服务需走手工零停机流程（blue/green）',
-          },
-        }),
-      ],
-    }
-
-    const scope = buildStackAggregateScope(detail, 'all', '')
-
-    expect(scope.guardedApplyBlocked).toHaveLength(1)
-    expect(scope.counts.blocked).toBe(1)
-
-    const action = resolveAggregateUpdateActionState({
-      counts: scope.counts,
-      guardedDockrevPreview: [],
-      guardedApplyBlocked: scope.guardedApplyBlocked,
-    })
-    expect(action.enabled).toBe(false)
-    expect(action.hint).toContain('手工零停机流程')
-  })
 })

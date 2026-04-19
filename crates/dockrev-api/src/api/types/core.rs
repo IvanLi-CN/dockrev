@@ -56,7 +56,7 @@ pub struct Service {
     pub image: ComposeRef,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub homepage: Option<ServiceHomepage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing, skip_deserializing, default)]
     pub update_guard: Option<ServiceUpdateGuard>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub candidate: Option<Candidate>,
@@ -71,27 +71,12 @@ pub struct Service {
     pub archived: Option<bool>,
 }
 
-pub const TRAEFIK_ONLINE_SERVICE_UPDATE_GUARD_CODE: &str =
-    "traefik_online_service_requires_manual_zero_downtime";
-pub const TRAEFIK_ONLINE_SERVICE_UPDATE_GUARD_REASON: &str =
-    "Traefik 在线服务需走手工零停机流程（blue/green）";
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceUpdateGuard {
     pub blocked: bool,
     pub code: String,
     pub reason: String,
-}
-
-impl ServiceUpdateGuard {
-    pub fn traefik_online_service() -> Self {
-        Self {
-            blocked: true,
-            code: TRAEFIK_ONLINE_SERVICE_UPDATE_GUARD_CODE.to_string(),
-            reason: TRAEFIK_ONLINE_SERVICE_UPDATE_GUARD_REASON.to_string(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]

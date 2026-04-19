@@ -246,39 +246,3 @@ export const Error: Story = {
   parameters: { dockrevApiScenario: 'error' },
   render: render('stack-prod', 'svc-prod-api'),
 }
-
-export const TraefikGuarded: Story = {
-  parameters: {
-    dockrevApiScenario: 'dashboard-demo',
-    dockrevServiceOverridesById: {
-      'svc-prod-api': {
-        updateGuard: {
-          blocked: true,
-          code: 'traefik_online_service_requires_manual_zero_downtime',
-          reason: 'Traefik 在线服务需走手工零停机流程（blue/green）',
-        },
-      },
-    },
-  },
-  render: render('stack-prod', 'svc-prod-api'),
-  play: async ({ canvasElement }) => {
-    const doc = canvasElement.ownerDocument
-    await waitForCondition(() => findButton(doc, '预览更新') != null && findButton(doc, '执行更新') != null)
-
-    const preview = findButton(doc, '预览更新')
-    const apply = findButton(doc, '执行更新')
-    expectStory(preview, 'preview action missing')
-    expectStory(apply, 'apply action missing')
-
-    expectStory(!preview.disabled, 'preview should stay enabled for guarded services')
-    expectStory(apply.disabled, 'apply should be disabled for guarded services')
-    expectStory(
-      apply.title.includes('手工零停机流程'),
-      'apply action should expose the zero-downtime guard reason',
-    )
-    expectStory(
-      doc.body.textContent?.includes('已阻止（需手工零停机）') ?? false,
-      'service detail banner should call out the zero-downtime block state',
-    )
-  },
-}

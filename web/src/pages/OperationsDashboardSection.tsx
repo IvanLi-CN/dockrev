@@ -408,7 +408,6 @@ export function OperationsDashboardSectionView(props: {
                 guardedDockrevPreview: scope.previewItems.filter(
                   (item) => item.guardedDockrev,
                 ),
-                guardedApplyBlocked: scope.guardedApplyBlocked,
               });
             const stackApplyActionKey = resolveUpdateActionTargetKey(
               "stack",

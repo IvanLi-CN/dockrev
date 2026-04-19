@@ -40,18 +40,19 @@ impl ComposeStack {
         }
     }
 
-    pub fn pull_service(&self, cfg: &ComposeRunnerConfig, service: &str) -> CommandSpec {
+    pub fn pull_services(&self, cfg: &ComposeRunnerConfig, services: &[String]) -> CommandSpec {
         let mut cmd = self.base_command(cfg);
-        cmd.args.extend(["pull".to_string(), service.to_string()]);
+        cmd.args.push("pull".to_string());
+        cmd.args.extend(services.iter().cloned());
         cmd
     }
 
-    pub fn pull_service_with_progress(
+    pub fn pull_services_with_progress(
         &self,
         cfg: &ComposeRunnerConfig,
-        service: &str,
+        services: &[String],
     ) -> CommandSpec {
-        let mut cmd = self.pull_service(cfg, service);
+        let mut cmd = self.pull_services(cfg, services);
         // Docker Compose v2 supports COMPOSE_PROGRESS=plain for stable machine-friendly output.
         if is_docker_plugin(&cfg.compose_bin) {
             cmd.env
@@ -60,10 +61,10 @@ impl ComposeStack {
         cmd
     }
 
-    pub fn up_service(&self, cfg: &ComposeRunnerConfig, service: &str) -> CommandSpec {
+    pub fn up_services(&self, cfg: &ComposeRunnerConfig, services: &[String]) -> CommandSpec {
         let mut cmd = self.base_command(cfg);
-        cmd.args
-            .extend(["up".to_string(), "-d".to_string(), service.to_string()]);
+        cmd.args.extend(["up".to_string(), "-d".to_string()]);
+        cmd.args.extend(services.iter().cloned());
         cmd
     }
 
@@ -110,7 +111,7 @@ mod tests {
             compose_bin: "docker".to_string(),
             env: vec![("DOCKER_CONFIG".to_string(), "/tmp/auth/.docker".to_string())],
         };
-        let cmd = stack.pull_service(&cfg, "web");
+        let cmd = stack.pull_services(&cfg, &["web".to_string()]);
         assert_eq!(cmd.program, "docker");
         assert_eq!(cmd.args[0], "compose");
         assert!(cmd.args.iter().any(|a| a == "--project-name"));
@@ -157,7 +158,7 @@ mod tests {
             )],
         };
 
-        let cmd = stack.pull_service_with_progress(&cfg, "web");
+        let cmd = stack.pull_services_with_progress(&cfg, &["web".to_string()]);
 
         assert_eq!(
             cmd.env,
@@ -167,6 +168,46 @@ mod tests {
                     "/tmp/dockrev-auth-config/.docker".to_string()
                 ),
                 ("COMPOSE_PROGRESS".to_string(), "plain".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn docker_compose_plugin_batches_pull_and_up_for_multiple_services() {
+        let stack = ComposeStack {
+            project_name: "myproj".to_string(),
+            compose: ComposeConfig {
+                kind: "path".to_string(),
+                compose_files: vec!["/srv/app/docker-compose.yml".to_string()],
+                env_file: None,
+            },
+        };
+        let cfg = ComposeRunnerConfig {
+            compose_bin: "docker".to_string(),
+            env: Vec::new(),
+        };
+        let services = vec!["web".to_string(), "worker".to_string()];
+
+        let pull_cmd = stack.pull_services_with_progress(&cfg, &services);
+        assert_eq!(pull_cmd.program, "docker");
+        assert_eq!(
+            pull_cmd.args[pull_cmd.args.len() - 3..],
+            ["pull".to_string(), "web".to_string(), "worker".to_string()]
+        );
+        assert_eq!(
+            pull_cmd.env,
+            vec![("COMPOSE_PROGRESS".to_string(), "plain".to_string())]
+        );
+
+        let up_cmd = stack.up_services(&cfg, &services);
+        assert_eq!(up_cmd.program, "docker");
+        assert_eq!(
+            up_cmd.args[up_cmd.args.len() - 4..],
+            [
+                "up".to_string(),
+                "-d".to_string(),
+                "web".to_string(),
+                "worker".to_string()
             ]
         );
     }

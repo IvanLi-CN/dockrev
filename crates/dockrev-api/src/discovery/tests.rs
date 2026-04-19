@@ -115,24 +115,6 @@ fn stack_services_match_specs_detects_changes() {
         update_guard: None,
     }];
     assert!(!stack_services_match_specs(&stack, &specs_homepage_changed));
-
-    let specs_update_guard_changed = vec![ComposeServiceSpec {
-        name: "web".to_string(),
-        image_ref: "ghcr.io/acme/web:1.0".to_string(),
-        image_tag: "1.0".to_string(),
-        homepage: Some(crate::api::types::ServiceHomepage {
-            group: Some("Developer".to_string()),
-            name: Some("Web".to_string()),
-            icon: Some("si-github".to_string()),
-            href: Some("https://example.com/web".to_string()),
-            description: Some("Docs".to_string()),
-        }),
-        update_guard: Some(crate::api::types::ServiceUpdateGuard::traefik_online_service()),
-    }];
-    assert!(!stack_services_match_specs(
-        &stack,
-        &specs_update_guard_changed
-    ));
 }
 
 #[test]

@@ -168,7 +168,6 @@ export function tagSeriesMatches(currentTag: string, candidateTag: string): bool
 
 export function serviceRowStatus(svc: Service): RowStatus {
   if (svc.ignore?.matched) return 'blocked'
-  if (svc.updateGuard?.blocked) return 'blocked'
   if (!svc.candidate) return 'ok'
   if (svc.candidate.archMatch === 'mismatch') return 'archMismatch'
 
@@ -203,12 +202,7 @@ export function statusLabel(st: RowStatus): string {
 
 export function blockedReasonFor(svc: Service): string | null {
   if (svc.ignore?.matched) return svc.ignore.reason ?? '被阻止'
-  if (svc.updateGuard?.blocked) return svc.updateGuard.reason ?? '被阻止'
   return null
-}
-
-export function hasApplyUpdateGuard(svc: Service): boolean {
-  return Boolean(svc.updateGuard?.blocked)
 }
 
 export function noteFor(svc: Service, st: RowStatus): string {
