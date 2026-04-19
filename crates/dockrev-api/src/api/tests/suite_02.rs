@@ -337,6 +337,213 @@ services:
 }
 
 #[tokio::test]
+async fn get_stack_roundtrips_update_guard_metadata_from_compose_labels() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  edge:
+    image: ghcr.io/acme/edge:5.2
+    labels:
+      - traefik.http.routers.edge.rule=Host(`edge.example.com`)
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body = response_json(resp).await;
+    let service = &body["stack"]["services"][0];
+    assert_eq!(service["name"].as_str(), Some("edge"));
+    assert_eq!(service["updateGuard"]["blocked"].as_bool(), Some(true));
+    assert_eq!(
+        service["updateGuard"]["code"].as_str(),
+        Some("traefik_online_service_requires_manual_zero_downtime")
+    );
+    assert_eq!(
+        service["updateGuard"]["reason"].as_str(),
+        Some("Traefik 在线服务需走手工零停机流程（blue/green）")
+    );
+}
+
+async fn seed_guarded_service_with_candidate(
+    state: &Arc<AppState>,
+) -> (String, String, String, String) {
+    let compose_path = format!("/tmp/dockrev-test-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+    labels:
+      - traefik.http.routers.web.rule=Host(`api.example.com`)
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let svc = services.first().unwrap().clone();
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    state
+        .db
+        .update_service_check_result(
+            &svc.id,
+            Some("sha256:cur".to_string()),
+            Some("5.2".to_string()),
+            Some(r#"["5.2"]"#.to_string()),
+            Some("5.2".to_string()),
+            Some("5.2.3".to_string()),
+            Some("sha256:candidate".to_string()),
+            Some("match".to_string()),
+            Some(r#"["linux/amd64"]"#.to_string()),
+            None,
+            None,
+            &now,
+            &now,
+        )
+        .await
+        .unwrap();
+
+    (
+        stack_id,
+        svc.id,
+        svc.image_tag,
+        "sha256:candidate".to_string(),
+    )
+}
+
+#[tokio::test]
+async fn service_apply_rejects_update_guarded_service_but_dry_run_still_works() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let (stack_id, service_id, target_tag, target_digest) =
+        seed_guarded_service_with_candidate(&state).await;
+
+    let apply_req = serde_json::json!({
+        "scope": "service",
+        "stackId": stack_id,
+        "serviceId": service_id,
+        "targetTag": target_tag,
+        "targetDigest": target_digest,
+        "pullTags": [],
+        "mode": "apply",
+        "allowArchMismatch": false,
+        "backupMode": "inherit",
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/updates")
+                .header("content-type", "application/json")
+                .body(Body::from(apply_req.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    let body = response_json(resp).await;
+    assert_eq!(body["error"]["code"].as_str(), Some("update_guard_blocked"));
+    assert_eq!(
+        body["error"]["details"]["reason"].as_str(),
+        Some("zero_downtime_required")
+    );
+    assert_eq!(
+        body["error"]["details"]["blockedServiceIds"][0].as_str(),
+        Some(service_id.as_str())
+    );
+    assert_eq!(
+        body["error"]["details"]["blockedServiceNames"][0].as_str(),
+        Some("web")
+    );
+
+    let dry_run_req = serde_json::json!({
+        "scope": "service",
+        "stackId": stack_id,
+        "serviceId": service_id,
+        "targetTag": target_tag,
+        "targetDigest": target_digest,
+        "pullTags": [],
+        "mode": "dry-run",
+        "allowArchMismatch": false,
+        "backupMode": "inherit",
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/updates")
+                .header("content-type", "application/json")
+                .body(Body::from(dry_run_req.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert!(body["jobId"].as_str().unwrap().starts_with("job_"));
+}
+
+#[tokio::test]
+async fn stack_apply_rejects_when_scope_contains_guarded_service() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let (stack_id, service_id, ..) = seed_guarded_service_with_candidate(&state).await;
+
+    let req = serde_json::json!({
+        "scope": "stack",
+        "stackId": stack_id,
+        "targets": [],
+        "mode": "apply",
+        "allowArchMismatch": false,
+        "backupMode": "inherit",
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/updates")
+                .header("content-type", "application/json")
+                .body(Body::from(req.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    let body = response_json(resp).await;
+    assert_eq!(body["error"]["code"].as_str(), Some("update_guard_blocked"));
+    assert_eq!(
+        body["error"]["details"]["blockedServiceIds"][0].as_str(),
+        Some(service_id.as_str())
+    );
+}
+
+#[tokio::test]
 async fn register_stack_then_check_updates() {
     let runner = Arc::new(CheckAndRuntimeScanRunner::new("sha256:old"));
     let state = test_state_with(":memory:", Arc::new(DigestOnlyUpdateRegistry), runner).await;

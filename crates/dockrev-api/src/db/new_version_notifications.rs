@@ -563,6 +563,7 @@ mod tests {
             image_ref: "ghcr.io/acme/web".to_string(),
             image_tag: "latest".to_string(),
             homepage: None,
+            update_guard: None,
             auto_rollback: false,
             backup_bind_paths: BTreeMap::new(),
             backup_volume_names: BTreeMap::new(),
@@ -840,6 +841,7 @@ mod tests {
                 image_ref: "ghcr.io/acme/web".to_string(),
                 image_tag: "latest".to_string(),
                 homepage: None,
+                update_guard: None,
             }],
             "2026-03-09T00:02:00Z",
         )
@@ -892,6 +894,7 @@ mod tests {
                 image_ref: "ghcr.io/acme/web-next".to_string(),
                 image_tag: "stable".to_string(),
                 homepage: None,
+                update_guard: None,
             }],
             "2026-03-09T00:02:00Z",
         )
@@ -990,6 +993,7 @@ mod tests {
                 image_ref: "ghcr.io/acme/worker".to_string(),
                 image_tag: "stable".to_string(),
                 homepage: None,
+                update_guard: None,
             }],
             "2026-03-09T00:02:00Z",
         )

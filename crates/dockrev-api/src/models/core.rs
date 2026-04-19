@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::api::types::{
-    ComposeConfig, Service, ServiceHomepage, StackBackupConfig, TernaryChoice,
+    ComposeConfig, Service, ServiceHomepage, ServiceUpdateGuard, StackBackupConfig, TernaryChoice,
 };
 
 #[derive(Clone, Debug)]
@@ -21,6 +21,7 @@ pub struct ServiceSeed {
     pub image_ref: String,
     pub image_tag: String,
     pub homepage: Option<ServiceHomepage>,
+    pub update_guard: Option<ServiceUpdateGuard>,
     pub auto_rollback: bool,
     pub backup_bind_paths: BTreeMap<String, TernaryChoice>,
     pub backup_volume_names: BTreeMap<String, TernaryChoice>,

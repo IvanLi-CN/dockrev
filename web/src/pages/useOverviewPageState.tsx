@@ -1,6 +1,7 @@
 import { useCallback,useEffect,useMemo,useRef,useState,type ReactNode } from 'react'
 import {
 DOCKREV_AGGREGATE_GUARD_HINT,
+readUpdateGuardBlockedReason,
 resolveAggregateUpdateActionState,
 } from '../aggregateUpdateGuard'
 import {
@@ -745,6 +746,7 @@ export function useOverviewPageState(props: {
       counts: scope.counts,
       actionablePreviewItems: scope.previewItems.filter((item) => !item.guardedDockrev),
       guardedPreviewItems: scope.previewItems.filter((item) => item.guardedDockrev),
+      guardedApplyBlocked: scope.guardedApplyBlocked,
       actionableCount: scope.actionableCount,
       visibleServiceCount: scope.visibleServiceCount,
       totalServiceCount: scope.totalServiceCount,
@@ -768,6 +770,7 @@ export function useOverviewPageState(props: {
       resolveAggregateUpdateActionState({
         counts: aggregateAll.counts,
         guardedDockrevPreview: aggregateAll.guardedPreviewItems,
+        guardedApplyBlocked: aggregateAll.guardedApplyBlocked,
       }),
     [aggregateAll],
   )
@@ -923,10 +926,13 @@ export function useOverviewPageState(props: {
         if (e instanceof ApiError) {
           if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
           else if (e.status === 409) {
-            setError('扫描结果已变化，请刷新并重新扫描后再更新')
-            await requestRefresh()
-          }
-          else setError(e.message)
+            const guardReason = readUpdateGuardBlockedReason(e)
+            if (guardReason) setError(guardReason)
+            else {
+              setError('扫描结果已变化，请刷新并重新扫描后再更新')
+              await requestRefresh()
+            }
+          } else setError(e.message)
         } else {
           setError(e instanceof Error ? e.message : String(e))
         }

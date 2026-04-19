@@ -1,74 +1,25 @@
-import { useCallback,useEffect,useMemo,useRef,useState,type ReactNode } from 'react'
-import {
-  ApiError,
-  archiveService,
-createIgnore,
-getServiceRollbackTarget,
-getServiceSettings,
-getStack,
-listIgnores,
-newJobEventsSource,
-restoreService,
-  triggerRuntimeScan,
-  triggerServiceRollback,
-  triggerUpdate,
-  type IgnoreRule,
-  type Service,
-  type ServiceRollbackTargetResponse,
-  type ServiceSettings,
-  type StackDetail
-} from '../api'
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ApiError, archiveService, createIgnore, getServiceRollbackTarget, getServiceSettings, getStack, listIgnores, newJobEventsSource, restoreService, triggerRuntimeScan, triggerServiceRollback, triggerUpdate, type IgnoreRule, type Service, type ServiceRollbackTargetResponse, type ServiceSettings, type StackDetail } from '../api'
+import { readUpdateGuardBlockedReason } from '../aggregateUpdateGuard'
 import { ConfirmServiceVersionCell } from '../components/ConfirmServiceVersionCell'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
 import { normalizeDigest } from '../components/digest'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { useConfirm } from '../confirm'
-import {
-DIGEST_SNAPSHOT_UPDATED_EVENT,
-type DigestSnapshotUpdatedDetail,
-} from '../digestInferenceTracker'
-import {
-  normalizeExternalHttpUrl,
-  splitImageNameForDisplay,
-  splitImageRef
-} from '../imageLinks'
+import { DIGEST_SNAPSHOT_UPDATED_EVENT, type DigestSnapshotUpdatedDetail } from '../digestInferenceTracker'
+import { normalizeExternalHttpUrl, splitImageNameForDisplay, splitImageRef } from '../imageLinks'
 import { imageRepoFromImageRef } from '../imageRepo'
-import {
-  errorMessage,
-  formatMap,
-  isDockrevService,
-  normalizeMaybeDigest,
-  rollbackTargetMatchesServiceDigest,
-  rollbackUnavailableReasonLabel,
-  rollbackVersionLabel,
-  ROLLBACK_TARGET_REFRESH_HINT,
-  scanHasFailures,
-  scanIsComplete,
-  shortDigest,
-  shouldPrefetchFloatingCandidate,
-  svcTone,
-  useRollbackTargetInvariantWarning,
-} from './serviceDetailUtils'
+import { errorMessage, formatMap, isDockrevService, normalizeMaybeDigest, rollbackTargetMatchesServiceDigest, rollbackUnavailableReasonLabel, rollbackVersionLabel, ROLLBACK_TARGET_REFRESH_HINT, scanHasFailures, scanIsComplete, shortDigest, shouldPrefetchFloatingCandidate, svcTone, useRollbackTargetInvariantWarning } from './serviceDetailUtils'
 import { navigate } from '../routes'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
-import { Button,Mono } from '../ui'
-import {
-UPDATE_JOB_SETTLED_EVENT,
-UPDATE_JOB_SETTLE_RETRY_MS,
-resolveUpdateActionTargetKey,
-useUpdateActionTracker,
-type UpdateJobSettledDetail,
-} from '../updateActionTracking'
-import { isSemverDowngradeAnomaly,serviceRowStatus } from '../updateStatus'
+import { Button, Mono } from '../ui'
+import { UPDATE_JOB_SETTLED_EVENT, UPDATE_JOB_SETTLE_RETRY_MS, resolveUpdateActionTargetKey, useUpdateActionTracker, type UpdateJobSettledDetail } from '../updateActionTracking'
+import { blockedReasonFor, isSemverDowngradeAnomaly, serviceRowStatus } from '../updateStatus'
 import { buildUpdateServiceTarget } from '../updateTargets'
 import { usePageResumeRefresh } from '../usePageResumeRefresh'
 import { useSupervisorHealth } from '../useSupervisorHealth'
-import {
-formatCandidateTagDisplay,
-formatCurrentTagDisplay as formatTagDisplay,
-inferResolvedTagsFromSnapshot,
-isStrictSemverTag,
-} from '../versionDisplay'
+import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, inferResolvedTagsFromSnapshot, isStrictSemverTag } from '../versionDisplay'
+
 export function useServiceDetailPageState(props: {
   stackId: string
   serviceId: string
@@ -607,7 +558,7 @@ export function useServiceDetailPageState(props: {
                     ? false
                     : busy ||
                       !service ||
-                      service.ignore?.matched ||
+                      serviceRowStatus(service) === 'blocked' ||
                       !service.candidate ||
                       service.candidate.archMatch === 'mismatch'
               }
@@ -619,8 +570,8 @@ export function useServiceDetailPageState(props: {
                   ? '任务进行中，点击查看任务详情'
                   : !service
                     ? undefined
-                    : service.ignore?.matched
-                      ? service.ignore.reason ?? '被阻止'
+                    : serviceRowStatus(service) === 'blocked'
+                      ? blockedReasonFor(service) ?? '被阻止'
                       : !service.candidate
                         ? '无候选版本'
                         : service.candidate.archMatch === 'mismatch'
@@ -757,8 +708,12 @@ export function useServiceDetailPageState(props: {
                     if (e instanceof ApiError) {
                       if (e.status === 401) setError('需要登录/鉴权（Forward Auth）')
                       else if (e.status === 409) {
-                        setError('扫描结果已变化，请刷新并重新扫描后再更新')
-                        await requestRefresh()
+                        const guardReason = readUpdateGuardBlockedReason(e)
+                        if (guardReason) setError(guardReason)
+                        else {
+                          setError('扫描结果已变化，请刷新并重新扫描后再更新')
+                          await requestRefresh()
+                        }
                       } else setError(e.message)
                     } else {
                       setError(errorMessage(e))
@@ -991,7 +946,10 @@ export function useServiceDetailPageState(props: {
   const bannerTitle = useMemo(() => {
     if (!service) return '加载中…'
     const st = serviceRowStatus(service)
-    if (st === 'blocked') return '已阻止（忽略规则命中）'
+    if (st === 'blocked') {
+      if (service.updateGuard?.blocked) return '已阻止（需手工零停机）'
+      return '已阻止（忽略规则命中）'
+    }
     if (st === 'ok') return '暂无候选版本'
     if (st === 'archMismatch') return '架构不匹配（仅提示，不允许更新）'
     if (st === 'hint') return '需确认（arch 未知）'
@@ -1075,6 +1033,17 @@ export function useServiceDetailPageState(props: {
               {' · '}reason: <Mono>{service.ignore.reason}</Mono>
             </>
           ) : null}
+        </>
+      )
+    }
+
+    if (service.updateGuard?.blocked) {
+      return (
+        <>
+          当前: {currentNode}
+          {currentDigestNode}
+          {rawTagNode}
+          {' · '}reason: <Mono>{service.updateGuard.reason}</Mono>
         </>
       )
     }

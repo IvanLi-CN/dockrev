@@ -168,6 +168,7 @@ export function tagSeriesMatches(currentTag: string, candidateTag: string): bool
 
 export function serviceRowStatus(svc: Service): RowStatus {
   if (svc.ignore?.matched) return 'blocked'
+  if (svc.updateGuard?.blocked) return 'blocked'
   if (!svc.candidate) return 'ok'
   if (svc.candidate.archMatch === 'mismatch') return 'archMismatch'
 
@@ -200,8 +201,18 @@ export function statusLabel(st: RowStatus): string {
   return '无更新'
 }
 
+export function blockedReasonFor(svc: Service): string | null {
+  if (svc.ignore?.matched) return svc.ignore.reason ?? '被阻止'
+  if (svc.updateGuard?.blocked) return svc.updateGuard.reason ?? '被阻止'
+  return null
+}
+
+export function hasApplyUpdateGuard(svc: Service): boolean {
+  return Boolean(svc.updateGuard?.blocked)
+}
+
 export function noteFor(svc: Service, st: RowStatus): string {
-  if (st === 'blocked') return svc.ignore?.reason ?? '被阻止'
+  if (st === 'blocked') return blockedReasonFor(svc) ?? '被阻止'
   if (st === 'archMismatch') return '仅提示，不允许更新'
   if (st === 'hint') {
     if (isSemverDowngradeAnomaly(svc)) return '⚠ 版本异常：候选版本低于当前版本'

@@ -309,3 +309,63 @@ export const SameTagDigestUpdateVisible: Story = {
     await sleep(120);
   },
 };
+
+export const TraefikGuardBlocksApply: Story = {
+  parameters: {
+    dockrevApiScenario: "dashboard-demo",
+    dockrevServiceOverridesById: {
+      "svc-prod-api": {
+        updateGuard: {
+          blocked: true,
+          code: "traefik_online_service_requires_manual_zero_downtime",
+          reason: "Traefik 在线服务需走手工零停机流程（blue/green）",
+        },
+      },
+    },
+  },
+  render: renderServices("回归：Traefik 在线服务必须前置阻止 apply"),
+  play: async ({ canvasElement }) => {
+    await sleep(260);
+
+    const apiRow = Array.from(
+      canvasElement.querySelectorAll<HTMLElement>(".rowLine"),
+    ).find((row) => row.textContent?.includes("api"));
+    expectStory(apiRow, "expected guarded api row");
+    expectStory(
+      apiRow.textContent?.includes("手工零停机流程"),
+      "guarded row should surface the zero-downtime requirement",
+    );
+
+    const rowApply = apiRow.querySelector<HTMLButtonElement>("button");
+    expectStory(rowApply, "expected guarded row apply action");
+    expectStory(rowApply.disabled, "guarded row apply should be disabled");
+    expectStory(
+      rowApply.title.includes("手工零停机流程"),
+      "guarded row apply should explain the zero-downtime requirement",
+    );
+
+    const stackAction = canvasElement.querySelector<HTMLButtonElement>(
+      ".tableGroup .groupHead .actionCell button",
+    );
+    expectStory(stackAction, "expected guarded stack action");
+    expectStory(stackAction.disabled, "guarded stack apply should be disabled");
+    expectStory(
+      (stackAction.getAttribute("data-hint") ?? stackAction.title).includes(
+        "手工零停机流程",
+      ),
+      "guarded stack apply should expose the update guard reason",
+    );
+
+    const allAction = Array.from(
+      canvasElement.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.includes("更新全部"));
+    expectStory(allAction, "expected aggregate apply action");
+    expectStory(allAction.disabled, "aggregate apply should be disabled");
+    expectStory(
+      (allAction.getAttribute("data-hint") ?? allAction.title).includes(
+        "手工零停机流程",
+      ),
+      "aggregate apply should expose the update guard reason",
+    );
+  },
+};

@@ -527,11 +527,81 @@ pub(crate) fn validate_target_against_service(
     Ok(())
 }
 
+#[derive(Clone, Debug)]
+struct ApplyUpdateGuardBlocker {
+    service_id: String,
+    service_name: String,
+    reason: String,
+}
+
+fn update_guard_blocked_error(blockers: &[ApplyUpdateGuardBlocker]) -> ApiError {
+    let message = blockers
+        .first()
+        .map(|blocker| blocker.reason.clone())
+        .unwrap_or_else(|| {
+            crate::api::types::TRAEFIK_ONLINE_SERVICE_UPDATE_GUARD_REASON.to_string()
+        });
+    ApiError::update_guard_blocked(message).with_details(json!({
+        "reason": "zero_downtime_required",
+        "guardCode": crate::api::types::TRAEFIK_ONLINE_SERVICE_UPDATE_GUARD_CODE,
+        "blockedServiceIds": blockers.iter().map(|blocker| blocker.service_id.clone()).collect::<Vec<_>>(),
+        "blockedServiceNames": blockers.iter().map(|blocker| blocker.service_name.clone()).collect::<Vec<_>>(),
+    }))
+}
+
+async fn find_apply_update_guard_blockers(
+    state: &AppState,
+    req: &TriggerUpdateRequest,
+    stack_ids: &[String],
+) -> Result<Vec<ApplyUpdateGuardBlocker>, ApiError> {
+    if !matches!(req.mode, UpdateMode::Apply) {
+        return Ok(Vec::new());
+    }
+
+    let requested_service_id = req.service_id.as_deref().unwrap_or_default().trim();
+    let mut blockers = std::collections::BTreeMap::<String, ApplyUpdateGuardBlocker>::new();
+
+    for stack_id in stack_ids {
+        let Some(stack) = state.db.get_stack(stack_id).await.map_err(map_internal)? else {
+            continue;
+        };
+
+        for svc in &stack.services {
+            if svc.archived.unwrap_or(false) {
+                continue;
+            }
+            if matches!(req.scope, JobScope::Service) && svc.id != requested_service_id {
+                continue;
+            }
+            let Some(update_guard) = svc.update_guard.as_ref() else {
+                continue;
+            };
+            if !update_guard.blocked {
+                continue;
+            }
+            blockers
+                .entry(svc.id.clone())
+                .or_insert_with(|| ApplyUpdateGuardBlocker {
+                    service_id: svc.id.clone(),
+                    service_name: svc.name.clone(),
+                    reason: update_guard.reason.clone(),
+                });
+        }
+    }
+
+    Ok(blockers.into_values().collect())
+}
+
 pub(crate) async fn resolve_validated_update_targets(
     state: &AppState,
     req: &TriggerUpdateRequest,
     stack_ids: &[String],
 ) -> Result<Vec<UpdateServiceTarget>, ApiError> {
+    let guard_blockers = find_apply_update_guard_blockers(state, req, stack_ids).await?;
+    if !guard_blockers.is_empty() {
+        return Err(update_guard_blocked_error(&guard_blockers));
+    }
+
     let normalized_targets = requested_update_targets(req)?;
     let mut requested_by_service = std::collections::BTreeMap::<String, UpdateServiceTarget>::new();
     for target in normalized_targets {

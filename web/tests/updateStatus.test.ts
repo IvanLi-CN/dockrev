@@ -262,4 +262,18 @@ describe('updateStatus semver downgrade anomaly', () => {
     expect(serviceRowStatus(svc)).toBe('hint')
     expect(noteFor(svc, 'hint')).toContain('版本异常')
   })
+
+  test('treats apply update guard as blocked with guard reason', () => {
+    const svc = makeService({
+      updateGuard: {
+        blocked: true,
+        code: 'traefik_online_service_requires_manual_zero_downtime',
+        reason: 'Traefik 在线服务需走手工零停机流程（blue/green）',
+      },
+      ignore: null,
+    })
+
+    expect(serviceRowStatus(svc)).toBe('blocked')
+    expect(noteFor(svc, 'blocked')).toContain('手工零停机流程')
+  })
 })

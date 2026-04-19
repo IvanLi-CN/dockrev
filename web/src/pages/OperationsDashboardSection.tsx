@@ -21,6 +21,7 @@ import { resolveCandidateVersionState } from "../candidateVersionState";
 import { ArrowRightIcon, Button, Input, Mono, Pill, StatusRemark } from "../ui";
 import { resolveUpdateActionTargetKey } from "../updateActionTracking";
 import {
+  blockedReasonFor,
   isSemverDowngradeAnomaly,
 } from "../updateStatus";
 import {
@@ -407,6 +408,7 @@ export function OperationsDashboardSectionView(props: {
                 guardedDockrevPreview: scope.previewItems.filter(
                   (item) => item.guardedDockrev,
                 ),
+                guardedApplyBlocked: scope.guardedApplyBlocked,
               });
             const stackApplyActionKey = resolveUpdateActionTargetKey(
               "stack",
@@ -649,7 +651,7 @@ export function OperationsDashboardSectionView(props: {
                                   }
                                 : {
                                     enabled: false,
-                                    title: svc.ignore?.reason ?? "被阻止",
+                                    title: blockedReasonFor(svc) ?? "被阻止",
                                     note: null,
                                   };
                       const svcApplyActionKey = resolveUpdateActionTargetKey(

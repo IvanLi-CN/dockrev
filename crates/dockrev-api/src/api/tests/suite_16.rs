@@ -947,6 +947,7 @@ services:
                 image_ref: "ghcr.io/acme/worker".to_string(),
                 image_tag: "latest".to_string(),
                 homepage: None,
+                update_guard: None,
             }],
             &test_now_rfc3339(),
         )
@@ -1013,6 +1014,7 @@ services:
                 image_ref: "ghcr.io/acme/worker".to_string(),
                 image_tag: "latest".to_string(),
                 homepage: None,
+                update_guard: None,
             }],
             &test_now_rfc3339(),
         )
@@ -1070,6 +1072,7 @@ services:
                 image_ref: "ghcr.io/acme/web:latest".to_string(),
                 image_tag: "latest".to_string(),
                 homepage: Some(homepage_updated.clone()),
+                update_guard: None,
             }],
             &test_now_rfc3339(),
         )
@@ -1094,6 +1097,7 @@ services:
                 image_ref: "ghcr.io/acme/web:latest".to_string(),
                 image_tag: "latest".to_string(),
                 homepage: None,
+                update_guard: None,
             }],
             &test_now_rfc3339(),
         )
