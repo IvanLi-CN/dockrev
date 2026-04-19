@@ -31,14 +31,13 @@ pub fn parse_services(compose_yaml: &str) -> anyhow::Result<Vec<ServiceFromCompo
             .map(collect_labels)
             .unwrap_or_default();
         let homepage = parse_homepage_labels(&label_values);
-        let update_guard = parse_update_guard_labels(&label_values);
         let image_ref = svc_val
             .get("image")
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
 
-        if image_ref.is_empty() && homepage.is_none() && update_guard.is_none() {
+        if image_ref.is_empty() && homepage.is_none() {
             continue;
         }
 
@@ -53,7 +52,7 @@ pub fn parse_services(compose_yaml: &str) -> anyhow::Result<Vec<ServiceFromCompo
             image_ref,
             image_tag,
             homepage,
-            update_guard,
+            update_guard: None,
         });
     }
 
@@ -150,19 +149,6 @@ fn parse_homepage_labels(values: &BTreeMap<String, String>) -> Option<ServiceHom
     };
 
     (!homepage.is_empty()).then_some(homepage)
-}
-
-fn parse_update_guard_labels(values: &BTreeMap<String, String>) -> Option<ServiceUpdateGuard> {
-    values
-        .iter()
-        .any(|(key, value)| is_traefik_router_rule_label(key) && !value.trim().is_empty())
-        .then(ServiceUpdateGuard::traefik_online_service)
-}
-
-fn is_traefik_router_rule_label(key: &str) -> bool {
-    (key.starts_with("traefik.http.routers.") && key.ends_with(".rule"))
-        || (key.starts_with("traefik.tcp.routers.") && key.ends_with(".rule"))
-        || (key.starts_with("traefik.udp.routers.") && key.ends_with(".rule"))
 }
 
 fn collect_labels(value: &serde_yaml_ng::Value) -> BTreeMap<String, String> {
@@ -332,7 +318,7 @@ services:
     }
 
     #[test]
-    fn parse_services_extracts_traefik_router_guard_from_list_labels() {
+    fn parse_services_ignores_traefik_router_labels_for_update_blocking() {
         let yaml = r#"
 services:
   whoami:
@@ -342,27 +328,7 @@ services:
 "#;
         let services = parse_services(yaml).unwrap();
         assert_eq!(services.len(), 1);
-        assert_eq!(
-            services[0].update_guard,
-            Some(ServiceUpdateGuard::traefik_online_service())
-        );
-    }
-
-    #[test]
-    fn parse_services_extracts_traefik_router_guard_from_map_labels() {
-        let yaml = r#"
-services:
-  tcp-app:
-    image: ghcr.io/acme/tcp-app:1.0
-    labels:
-      traefik.tcp.routers.tcp-app.rule: HostSNI(`tcp.example.com`)
-"#;
-        let services = parse_services(yaml).unwrap();
-        assert_eq!(services.len(), 1);
-        assert_eq!(
-            services[0].update_guard,
-            Some(ServiceUpdateGuard::traefik_online_service())
-        );
+        assert_eq!(services[0].update_guard, None);
     }
 
     #[test]
@@ -457,7 +423,7 @@ services:
     }
 
     #[test]
-    fn merge_services_preserves_base_update_guard_when_override_only_changes_homepage() {
+    fn merge_services_keeps_update_guard_empty_when_override_only_changes_homepage() {
         let base = parse_services(
             r#"
 services:
@@ -486,10 +452,7 @@ services:
         );
         let edge = merged.get("edge").unwrap();
 
-        assert_eq!(
-            edge.update_guard,
-            Some(ServiceUpdateGuard::traefik_online_service())
-        );
+        assert_eq!(edge.update_guard, None);
         assert_eq!(
             edge.homepage,
             Some(ServiceHomepage {

@@ -66,26 +66,4 @@ describe('StatusRemark discovery count', () => {
     expect(html).not.toContain('发现')
   })
 
-  test('renders apply guard reason when a service is blocked by traefik zero-downtime guard', () => {
-    const service = makeService({
-      updateGuard: {
-        blocked: true,
-        code: 'traefik_online_service_requires_manual_zero_downtime',
-        reason: 'Traefik 在线服务需走手工零停机流程（blue/green）',
-      },
-      candidate: {
-        tag: 'latest',
-        resolvedTag: 'v1.1.0',
-        digest: 'sha256:candidate',
-        archMatch: 'match',
-        arch: ['linux/amd64'],
-      },
-    })
-    const html = renderToStaticMarkup(
-      <StatusRemark service={service} status={serviceRowStatus(service)} />,
-    )
-
-    expect(html).toContain('被阻止')
-    expect(html).toContain('Traefik 在线服务需走手工零停机流程')
-  })
 })

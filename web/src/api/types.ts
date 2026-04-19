@@ -40,12 +40,6 @@ export type ServiceHomepage = {
   description?: string | null
 }
 
-export type ServiceUpdateGuard = {
-  blocked: true
-  code: 'traefik_online_service_requires_manual_zero_downtime' | string
-  reason: string
-}
-
 export type ServiceImage = {
   ref: string
   tag: string
@@ -65,7 +59,6 @@ export type Service = {
   name: string
   image: ServiceImage
   homepage?: ServiceHomepage | null
-  updateGuard?: ServiceUpdateGuard | null
   candidate?: {
     tag: string
     resolvedTag?: string | null

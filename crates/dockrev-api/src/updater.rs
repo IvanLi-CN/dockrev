@@ -357,9 +357,10 @@ pub async fn run_update_job(
     let compose_for_update = override_stack.as_ref().unwrap_or(&compose_stack);
 
     let service_total = services.len() as u32;
+    let mut prepared_services = Vec::new();
+
     for (service_index, svc) in services.into_iter().enumerate() {
         let service_index = service_index as u32;
-        let target = explicit_targets_by_service.get(svc.id.as_str());
 
         emit_update_progress(
             progress_events.as_ref(),
@@ -395,8 +396,6 @@ pub async fn run_update_job(
             continue;
         }
 
-        let sync_local_tag = should_sync_local_tag(&svc.image.reference);
-
         let old_image_id = run_to_string_with_retry(
             runner,
             docker_runner::inspect_image_id(&docker_cfg, &pre_update_container_id),
@@ -406,33 +405,67 @@ pub async fn run_update_job(
         )
         .await?;
         let old_image_id = old_image_id.trim().to_string();
-        old_images.insert(svc.id.clone(), json!(old_image_id));
+        old_images.insert(svc.id.clone(), json!(&old_image_id));
 
+        prepared_services.push((
+            svc,
+            service_index,
+            old_image_id,
+            should_sync_local_tag(&svc.image.reference),
+        ));
+    }
+
+    if prepared_services.is_empty() {
+        return Ok(UpdateOutcome {
+            status: "success".to_string(),
+            summary_json: serde_json::Value::Object(build_update_summary(UpdateSummaryInput {
+                changed,
+                old_images: &old_images,
+                new_images: &new_images,
+                final_images: &final_images,
+                target_tags_pulled: &target_tags_pulled,
+                pull_tags_pulled: &pull_tags_pulled,
+                pull_tag_warnings: &pull_tag_warnings,
+                rollback_trigger: None,
+                skipped_version_anomaly: &skipped_version_anomaly,
+            })),
+        });
+    }
+
+    let prepared_service_names = prepared_services
+        .iter()
+        .map(|(svc, _, _, _)| svc.name.clone())
+        .collect::<Vec<_>>();
+
+    for (svc, service_index, _, _) in &prepared_services {
         emit_update_progress(
             progress_events.as_ref(),
             UpdateProgressEvent {
                 step: UpdateProgressStep::PullStart,
                 service_name: svc.name.clone(),
-                service_index,
+                service_index: *service_index,
                 service_total,
                 pull_fraction: None,
                 message: format!("pulling image for {}", svc.name),
             },
         );
-        if let Some(progress_events) = progress_events.as_ref() {
-            run_checked_with_pull_progress(
-                runner,
-                compose_for_update.pull_service_with_progress(&compose_cfg, &svc.name),
-                Duration::from_secs(300),
-                "pull_service",
-                idempotent_retry_policy,
-                |fraction| {
+    }
+
+    if let Some(progress_events) = progress_events.as_ref() {
+        run_checked_with_pull_progress(
+            runner,
+            compose_for_update.pull_services_with_progress(&compose_cfg, &prepared_service_names),
+            Duration::from_secs(300),
+            "pull_services",
+            idempotent_retry_policy,
+            |fraction| {
+                for (svc, service_index, _, _) in &prepared_services {
                     emit_update_progress(
                         Some(progress_events),
                         UpdateProgressEvent {
                             step: UpdateProgressStep::PullProgress,
                             service_name: svc.name.clone(),
-                            service_index,
+                            service_index: *service_index,
                             service_total,
                             pull_fraction: Some(fraction),
                             message: format!(
@@ -442,59 +475,75 @@ pub async fn run_update_job(
                             ),
                         },
                     );
-                },
-            )
-            .await?;
-        } else {
-            run_checked_with_retry(
-                runner,
-                compose_for_update.pull_service_with_progress(&compose_cfg, &svc.name),
-                Duration::from_secs(300),
-                "pull_service",
-                idempotent_retry_policy,
-            )
-            .await?;
-        }
+                }
+            },
+        )
+        .await?;
+    } else {
+        run_checked_with_retry(
+            runner,
+            compose_for_update.pull_services_with_progress(&compose_cfg, &prepared_service_names),
+            Duration::from_secs(300),
+            "pull_services",
+            idempotent_retry_policy,
+        )
+        .await?;
+    }
+
+    for (svc, service_index, _, _) in &prepared_services {
         emit_update_progress(
             progress_events.as_ref(),
             UpdateProgressEvent {
                 step: UpdateProgressStep::PullDone,
                 service_name: svc.name.clone(),
-                service_index,
+                service_index: *service_index,
                 service_total,
                 pull_fraction: Some(1.0),
                 message: format!("pull completed for {}", svc.name),
             },
         );
+    }
 
+    for (svc, service_index, _, _) in &prepared_services {
         emit_update_progress(
             progress_events.as_ref(),
             UpdateProgressEvent {
                 step: UpdateProgressStep::UpStart,
                 service_name: svc.name.clone(),
-                service_index,
+                service_index: *service_index,
                 service_total,
                 pull_fraction: None,
                 message: format!("recreating service {}", svc.name),
             },
         );
-        run_checked(
-            runner,
-            compose_for_update.up_service(&compose_cfg, &svc.name),
-            Duration::from_secs(300),
-        )
-        .await?;
+    }
+
+    run_checked(
+        runner,
+        compose_for_update.up_services(&compose_cfg, &prepared_service_names),
+        Duration::from_secs(300),
+    )
+    .await?;
+
+    for (svc, service_index, _, _) in &prepared_services {
         emit_update_progress(
             progress_events.as_ref(),
             UpdateProgressEvent {
                 step: UpdateProgressStep::UpDone,
                 service_name: svc.name.clone(),
-                service_index,
+                service_index: *service_index,
                 service_total,
                 pull_fraction: None,
                 message: format!("service {} updated", svc.name),
             },
         );
+    }
+
+    let mut rollback_trigger: Option<&str> = None;
+    let mut rolled_back_any = false;
+
+    for (svc, service_index, old_image_id, sync_local_tag) in prepared_services {
+        let target = explicit_targets_by_service.get(svc.id.as_str());
 
         let post_update_container_id = run_to_string(
             runner,
@@ -507,8 +556,7 @@ pub async fn run_update_job(
             return Err(anyhow::anyhow!("container_missing_after_update"));
         }
 
-        let active_container_id = post_update_container_id;
-        let mut active_container_id = active_container_id;
+        let mut active_container_id = post_update_container_id;
         let has_health = has_healthcheck(
             runner,
             &docker_cfg,
@@ -850,6 +898,10 @@ pub async fn run_update_job(
         changed += 1;
 
         if rolled_back {
+            rolled_back_any = true;
+            if rollback_trigger.is_none() {
+                rollback_trigger = rollback_failure_step;
+            }
             emit_update_progress(
                 progress_events.as_ref(),
                 UpdateProgressEvent {
@@ -878,21 +930,7 @@ pub async fn run_update_job(
                     },
                 },
             );
-            let summary = build_update_summary(UpdateSummaryInput {
-                changed,
-                old_images: &old_images,
-                new_images: &new_images,
-                final_images: &final_images,
-                target_tags_pulled: &target_tags_pulled,
-                pull_tags_pulled: &pull_tags_pulled,
-                pull_tag_warnings: &pull_tag_warnings,
-                rollback_trigger: rollback_failure_step,
-                skipped_version_anomaly: &skipped_version_anomaly,
-            });
-            return Ok(UpdateOutcome {
-                status: "rolled_back".to_string(),
-                summary_json: serde_json::Value::Object(summary),
-            });
+            continue;
         }
 
         emit_update_progress(
@@ -909,7 +947,11 @@ pub async fn run_update_job(
     }
 
     Ok(UpdateOutcome {
-        status: "success".to_string(),
+        status: if rolled_back_any {
+            "rolled_back".to_string()
+        } else {
+            "success".to_string()
+        },
         summary_json: serde_json::Value::Object(build_update_summary(UpdateSummaryInput {
             changed,
             old_images: &old_images,
@@ -918,7 +960,7 @@ pub async fn run_update_job(
             target_tags_pulled: &target_tags_pulled,
             pull_tags_pulled: &pull_tags_pulled,
             pull_tag_warnings: &pull_tag_warnings,
-            rollback_trigger: None,
+            rollback_trigger,
             skipped_version_anomaly: &skipped_version_anomaly,
         })),
     })

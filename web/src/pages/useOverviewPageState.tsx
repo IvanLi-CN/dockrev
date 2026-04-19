@@ -746,7 +746,6 @@ export function useOverviewPageState(props: {
       counts: scope.counts,
       actionablePreviewItems: scope.previewItems.filter((item) => !item.guardedDockrev),
       guardedPreviewItems: scope.previewItems.filter((item) => item.guardedDockrev),
-      guardedApplyBlocked: scope.guardedApplyBlocked,
       actionableCount: scope.actionableCount,
       visibleServiceCount: scope.visibleServiceCount,
       totalServiceCount: scope.totalServiceCount,
@@ -770,7 +769,6 @@ export function useOverviewPageState(props: {
       resolveAggregateUpdateActionState({
         counts: aggregateAll.counts,
         guardedDockrevPreview: aggregateAll.guardedPreviewItems,
-        guardedApplyBlocked: aggregateAll.guardedApplyBlocked,
       }),
     [aggregateAll],
   )

@@ -21,7 +21,6 @@ export type AggregateScopeSummary = {
   actionableServices: StackDetail['services']
   counts: ReturnType<typeof partitionAggregateUpdateServices>['counts']
   guardedPreviewCount: number
-  guardedApplyBlocked: StackDetail['services']
 }
 
 function withDisplayName(
@@ -73,7 +72,6 @@ export function buildStackAggregateScope(
     actionableServices: visiblePartition.actionable.map((item) => item.svc),
     counts: visiblePartition.counts,
     guardedPreviewCount: visiblePartition.guardedDockrevPreview.length,
-    guardedApplyBlocked: visiblePartition.guardedApplyBlocked,
   }
 }
 
@@ -87,7 +85,6 @@ export function buildAllAggregateScope(input: {
   let visibleServiceCount = 0
   let actionableCount = 0
   let guardedPreviewCount = 0
-  const guardedApplyBlocked: StackDetail['services'] = []
   const previewItems: AggregateUpdatePreviewListItem[] = []
   const actionableServices: StackDetail['services'] = []
   const counts = {
@@ -109,7 +106,6 @@ export function buildAllAggregateScope(input: {
     visibleServiceCount += scope.visibleServiceCount
     actionableCount += scope.actionableCount
     guardedPreviewCount += scope.guardedPreviewCount
-    guardedApplyBlocked.push(...scope.guardedApplyBlocked)
     counts.updatable += scope.counts.updatable
     counts.hint += scope.counts.hint
     counts.archMismatch += scope.counts.archMismatch
@@ -127,6 +123,5 @@ export function buildAllAggregateScope(input: {
     actionableServices,
     counts,
     guardedPreviewCount,
-    guardedApplyBlocked,
   }
 }

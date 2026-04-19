@@ -61,7 +61,6 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 - `POST /api/updates` 契约：
   - `scope=service`：必须显式携带 `serviceId + targetTag + targetDigest + pullTags`。
   - `scope=stack|all`：必须显式携带 `targets[]`，元素为 `{ serviceId, targetTag, targetDigest, pullTags }`。
-  - 对带有 Traefik router rule 的在线服务，`mode=apply` 会返回 `409 update_guard_blocked`，并在 `details` 中给出 `reason=zero_downtime_required`、`blockedServiceIds`、`blockedServiceNames`。
   - 同一服务仍可继续使用 `mode=dry-run` 做预检查。
 
 ### 4) Jobs / Events

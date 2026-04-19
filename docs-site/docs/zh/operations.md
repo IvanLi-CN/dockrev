@@ -55,10 +55,9 @@ cp /data/supervisor/self-upgrade.json /backup/self-upgrade.json.$(date +%F-%H%M%
 
 ### Traefik 在线服务的零停机约束
 
-- Dockrev 标准 apply 适用于允许短暂重建窗口的服务。
-- 如果某个 compose service 带有 Traefik router rule（例如 `traefik.http.routers.*.rule`），Dockrev 会把它识别为在线入口服务。
-- 这类服务的标准 apply 会被直接阻止，原因是普通 compose recreate 可能让旧实例先退出、新实例后接流量，导致入口出现 404/空窗。
-- 当前版本不会把这类阻止伪装成“已支持零停机”；你需要改走手工零停机流程。
+- Dockrev 标准 apply 不会自动提供零停机切换策略。
+- 如果某个 compose service 带有 Traefik router rule（例如 `traefik.http.routers.*.rule`），普通 compose recreate 仍可能让旧实例先退出、新实例后接流量，导致入口出现 404/空窗。
+- 这类场景需要运维侧自行设计零停机切换流程；Dockrev 只负责常规镜像更新与失败回滚。
 
 推荐手工流程：
 

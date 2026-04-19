@@ -75,7 +75,6 @@ SELECT
       sv.stack_id = s.id
       AND sv.candidate_tag IS NOT NULL
       AND sv.ignore_rule_id IS NULL
-      AND sv.update_guard_json IS NULL
       AND sv.candidate_arch_match = 'match'
   ) AS updates
 FROM stacks s

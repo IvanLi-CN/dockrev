@@ -337,7 +337,7 @@ services:
 }
 
 #[tokio::test]
-async fn get_stack_roundtrips_update_guard_metadata_from_compose_labels() {
+async fn get_stack_hides_legacy_update_guard_metadata_even_when_compose_has_traefik_labels() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
 
@@ -370,15 +370,7 @@ services:
     let body = response_json(resp).await;
     let service = &body["stack"]["services"][0];
     assert_eq!(service["name"].as_str(), Some("edge"));
-    assert_eq!(service["updateGuard"]["blocked"].as_bool(), Some(true));
-    assert_eq!(
-        service["updateGuard"]["code"].as_str(),
-        Some("traefik_online_service_requires_manual_zero_downtime")
-    );
-    assert_eq!(
-        service["updateGuard"]["reason"].as_str(),
-        Some("Traefik 在线服务需走手工零停机流程（blue/green）")
-    );
+    assert!(service.get("updateGuard").is_none());
 }
 
 async fn seed_guarded_service_with_candidate(
@@ -432,7 +424,7 @@ services:
 }
 
 #[tokio::test]
-async fn service_apply_rejects_update_guarded_service_but_dry_run_still_works() {
+async fn service_apply_accepts_traefik_labeled_service_and_dry_run_still_works() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
     let (stack_id, service_id, target_tag, target_digest) =
@@ -462,21 +454,9 @@ async fn service_apply_rejects_update_guarded_service_but_dry_run_still_works() 
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), 409);
+    assert_eq!(resp.status(), 200);
     let body = response_json(resp).await;
-    assert_eq!(body["error"]["code"].as_str(), Some("update_guard_blocked"));
-    assert_eq!(
-        body["error"]["details"]["reason"].as_str(),
-        Some("zero_downtime_required")
-    );
-    assert_eq!(
-        body["error"]["details"]["blockedServiceIds"][0].as_str(),
-        Some(service_id.as_str())
-    );
-    assert_eq!(
-        body["error"]["details"]["blockedServiceNames"][0].as_str(),
-        Some("web")
-    );
+    assert!(body["jobId"].as_str().unwrap().starts_with("job_"));
 
     let dry_run_req = serde_json::json!({
         "scope": "service",
@@ -505,42 +485,6 @@ async fn service_apply_rejects_update_guarded_service_but_dry_run_still_works() 
     assert_eq!(resp.status(), 200);
     let body = response_json(resp).await;
     assert!(body["jobId"].as_str().unwrap().starts_with("job_"));
-}
-
-#[tokio::test]
-async fn stack_apply_rejects_when_scope_contains_guarded_service() {
-    let state = test_state(":memory:").await;
-    let app = api::router(state.clone());
-    let (stack_id, service_id, ..) = seed_guarded_service_with_candidate(&state).await;
-
-    let req = serde_json::json!({
-        "scope": "stack",
-        "stackId": stack_id,
-        "targets": [],
-        "mode": "apply",
-        "allowArchMismatch": false,
-        "backupMode": "inherit",
-        "reason": "ui"
-    });
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/updates")
-                .header("content-type", "application/json")
-                .body(Body::from(req.to_string()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 409);
-    let body = response_json(resp).await;
-    assert_eq!(body["error"]["code"].as_str(), Some("update_guard_blocked"));
-    assert_eq!(
-        body["error"]["details"]["blockedServiceIds"][0].as_str(),
-        Some(service_id.as_str())
-    );
 }
 
 #[tokio::test]

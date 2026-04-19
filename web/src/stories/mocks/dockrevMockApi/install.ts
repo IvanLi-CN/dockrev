@@ -503,21 +503,6 @@ export function installDockrevMockApi(
     )
   }
 
-  function selectScopedServices(scope: string, stackId: string | null, serviceId: string | null) {
-    if (!state) return []
-    if (scope === 'service') {
-      const found = serviceId ? findService(serviceId) : null
-      return found ? [found.svc] : []
-    }
-    if (scope === 'stack') {
-      const stack = stackId ? state.stackById[stackId] : null
-      return stack ? stack.services.filter((service) => !service.archived) : []
-    }
-    return Object.values(state.stackById).flatMap((stack) =>
-      stack.services.filter((service) => !service.archived),
-    )
-  }
-
   function applyMockUpdateSettlement(
     serviceId: string,
     targetTag: string,
@@ -874,32 +859,6 @@ export function installDockrevMockApi(
           { error: { code: 'invalid_argument', message: 'stackId is required for scope=stack' } },
           { status: 400 },
         )
-      }
-
-      if (mode === 'apply') {
-        const guardedServices = selectScopedServices(scope, stackId, serviceId).filter(
-          (service) => service.updateGuard?.blocked,
-        )
-        if (guardedServices.length > 0) {
-          const firstReason =
-            guardedServices.find((service) => service.updateGuard?.reason?.trim())?.updateGuard?.reason?.trim() ??
-            'Traefik 在线服务需走手工零停机流程（blue/green）'
-          return json(
-            {
-              error: {
-                code: 'update_guard_blocked',
-                message: firstReason,
-                details: {
-                  reason: 'zero_downtime_required',
-                  guardCode: 'traefik_online_service_requires_manual_zero_downtime',
-                  blockedServiceIds: guardedServices.map((service) => service.id),
-                  blockedServiceNames: guardedServices.map((service) => service.name),
-                },
-              },
-            },
-            { status: 409 },
-          )
-        }
       }
 
       const affectedServiceIds = selectUpdateServiceIds(scope, stackId, serviceId)
