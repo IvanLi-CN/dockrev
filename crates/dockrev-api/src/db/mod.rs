@@ -34,7 +34,7 @@ use crate::api::types::{
     GitHubPackagesWebhookDeliverySummary, IgnoreRule, IgnoreRuleMatch, IgnoreRuleScope,
     JobListItem, JobLogLine, JobScope, JobType, NotificationSettings, ResourceMonitorSettings,
     ScheduleItemSettings, SchedulesSettings, ServiceHomepage, ServiceResourceSample,
-    ServiceSettings, StackListItem, StackRecord, StackStatus,
+    ServiceSettings, ServiceUpdateGuard, StackListItem, StackRecord, StackStatus,
 };
 
 #[derive(Clone, Debug)]
@@ -51,6 +51,7 @@ pub struct ComposeServiceSpec {
     pub image_ref: String,
     pub image_tag: String,
     pub homepage: Option<ServiceHomepage>,
+    pub update_guard: Option<ServiceUpdateGuard>,
 }
 
 #[derive(Clone, Debug)]

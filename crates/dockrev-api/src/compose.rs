@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use anyhow::Context as _;
 
-use crate::api::types::ServiceHomepage;
+use crate::api::types::{ServiceHomepage, ServiceUpdateGuard};
 
 #[derive(Clone, Debug)]
 pub struct ServiceFromCompose {
@@ -10,6 +10,7 @@ pub struct ServiceFromCompose {
     pub image_ref: String,
     pub image_tag: String,
     pub homepage: Option<ServiceHomepage>,
+    pub update_guard: Option<ServiceUpdateGuard>,
 }
 
 pub fn parse_services(compose_yaml: &str) -> anyhow::Result<Vec<ServiceFromCompose>> {
@@ -25,14 +26,19 @@ pub fn parse_services(compose_yaml: &str) -> anyhow::Result<Vec<ServiceFromCompo
         let Some(name) = name_key.as_str() else {
             continue;
         };
-        let homepage = parse_homepage_labels(svc_val);
+        let label_values = svc_val
+            .get("labels")
+            .map(collect_labels)
+            .unwrap_or_default();
+        let homepage = parse_homepage_labels(&label_values);
+        let update_guard = parse_update_guard_labels(&label_values);
         let image_ref = svc_val
             .get("image")
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
 
-        if image_ref.is_empty() && homepage.is_none() {
+        if image_ref.is_empty() && homepage.is_none() && update_guard.is_none() {
             continue;
         }
 
@@ -47,6 +53,7 @@ pub fn parse_services(compose_yaml: &str) -> anyhow::Result<Vec<ServiceFromCompo
             image_ref,
             image_tag,
             homepage,
+            update_guard,
         });
     }
 
@@ -79,6 +86,7 @@ fn merge_service(existing: &mut ServiceFromCompose, incoming: ServiceFromCompose
     }
 
     existing.homepage = merge_homepage(existing.homepage.take(), incoming.homepage);
+    existing.update_guard = merge_update_guard(existing.update_guard.take(), incoming.update_guard);
 }
 
 fn merge_homepage(
@@ -103,6 +111,13 @@ fn merge_homepage(
     }
 }
 
+fn merge_update_guard(
+    base: Option<ServiceUpdateGuard>,
+    incoming: Option<ServiceUpdateGuard>,
+) -> Option<ServiceUpdateGuard> {
+    incoming.or(base)
+}
+
 fn extract_tag(image_ref: &str) -> Option<String> {
     // Strip digest first so refs like `repo:tag@sha256:...` still yield the tag, while
     // digest-only refs like `repo@sha256:...` return None.
@@ -121,10 +136,7 @@ fn extract_tag(image_ref: &str) -> Option<String> {
     Some(right.to_string())
 }
 
-fn parse_homepage_labels(service: &serde_yaml_ng::Value) -> Option<ServiceHomepage> {
-    let labels = service.get("labels")?;
-
-    let values = collect_labels(labels);
+fn parse_homepage_labels(values: &BTreeMap<String, String>) -> Option<ServiceHomepage> {
     if values.is_empty() {
         return None;
     }
@@ -138,6 +150,19 @@ fn parse_homepage_labels(service: &serde_yaml_ng::Value) -> Option<ServiceHomepa
     };
 
     (!homepage.is_empty()).then_some(homepage)
+}
+
+fn parse_update_guard_labels(values: &BTreeMap<String, String>) -> Option<ServiceUpdateGuard> {
+    values
+        .iter()
+        .any(|(key, value)| is_traefik_router_rule_label(key) && !value.trim().is_empty())
+        .then(ServiceUpdateGuard::traefik_online_service)
+}
+
+fn is_traefik_router_rule_label(key: &str) -> bool {
+    (key.starts_with("traefik.http.routers.") && key.ends_with(".rule"))
+        || (key.starts_with("traefik.tcp.routers.") && key.ends_with(".rule"))
+        || (key.starts_with("traefik.udp.routers.") && key.ends_with(".rule"))
 }
 
 fn collect_labels(value: &serde_yaml_ng::Value) -> BTreeMap<String, String> {
@@ -307,6 +332,40 @@ services:
     }
 
     #[test]
+    fn parse_services_extracts_traefik_router_guard_from_list_labels() {
+        let yaml = r#"
+services:
+  whoami:
+    image: traefik/whoami:latest
+    labels:
+      - traefik.http.routers.whoami.rule=Host(`whoami.example.com`)
+"#;
+        let services = parse_services(yaml).unwrap();
+        assert_eq!(services.len(), 1);
+        assert_eq!(
+            services[0].update_guard,
+            Some(ServiceUpdateGuard::traefik_online_service())
+        );
+    }
+
+    #[test]
+    fn parse_services_extracts_traefik_router_guard_from_map_labels() {
+        let yaml = r#"
+services:
+  tcp-app:
+    image: ghcr.io/acme/tcp-app:1.0
+    labels:
+      traefik.tcp.routers.tcp-app.rule: HostSNI(`tcp.example.com`)
+"#;
+        let services = parse_services(yaml).unwrap();
+        assert_eq!(services.len(), 1);
+        assert_eq!(
+            services[0].update_guard,
+            Some(ServiceUpdateGuard::traefik_online_service())
+        );
+    }
+
+    #[test]
     fn merge_services_preserves_base_homepage_when_override_omits_labels() {
         let base = parse_services(
             r#"
@@ -393,6 +452,52 @@ services:
                 icon: None,
                 href: Some("https://grafana.example.com".to_string()),
                 description: Some("Dashboards".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn merge_services_preserves_base_update_guard_when_override_only_changes_homepage() {
+        let base = parse_services(
+            r#"
+services:
+  edge:
+    image: ghcr.io/acme/edge:1.0
+    labels:
+      - traefik.http.routers.edge.rule=Host(`edge.example.com`)
+"#,
+        )
+        .unwrap();
+        let override_services = parse_services(
+            r#"
+services:
+  edge:
+    labels:
+      homepage.name: Edge
+"#,
+        )
+        .unwrap();
+
+        let merged = merge_services(
+            base.into_iter()
+                .map(|svc| (svc.name.clone(), svc))
+                .collect::<BTreeMap<_, _>>(),
+            override_services,
+        );
+        let edge = merged.get("edge").unwrap();
+
+        assert_eq!(
+            edge.update_guard,
+            Some(ServiceUpdateGuard::traefik_online_service())
+        );
+        assert_eq!(
+            edge.homepage,
+            Some(ServiceHomepage {
+                group: None,
+                name: Some("Edge".to_string()),
+                icon: None,
+                href: None,
+                description: None,
             })
         );
     }

@@ -10,12 +10,38 @@ fn serialize_service_homepage(
         .context("serialize service homepage")
 }
 
+fn serialize_service_update_guard(
+    update_guard: &Option<crate::api::types::ServiceUpdateGuard>,
+) -> anyhow::Result<Option<String>> {
+    update_guard
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .context("serialize service update guard")
+}
+
 fn deserialize_service_homepage(
     homepage_json: Option<String>,
 ) -> rusqlite::Result<Option<crate::api::types::ServiceHomepage>> {
     homepage_json
         .map(|value| {
             serde_json::from_str::<crate::api::types::ServiceHomepage>(&value).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })
+        })
+        .transpose()
+}
+
+fn deserialize_service_update_guard(
+    update_guard_json: Option<String>,
+) -> rusqlite::Result<Option<crate::api::types::ServiceUpdateGuard>> {
+    update_guard_json
+        .map(|value| {
+            serde_json::from_str::<crate::api::types::ServiceUpdateGuard>(&value).map_err(|error| {
                 rusqlite::Error::FromSqlConversionFailure(
                     0,
                     rusqlite::types::Type::Text,
@@ -49,6 +75,7 @@ SELECT
       sv.stack_id = s.id
       AND sv.candidate_tag IS NOT NULL
       AND sv.ignore_rule_id IS NULL
+      AND sv.update_guard_json IS NULL
       AND sv.candidate_arch_match = 'match'
   ) AS updates
 FROM stacks s
@@ -168,6 +195,7 @@ WHERE id = ?1
 	  backup_targets_volume_names_json,
 	  repo_url,
 	  homepage_json,
+	  update_guard_json,
 	  archived
 	FROM services
 	WHERE stack_id = ?1
@@ -192,6 +220,7 @@ WHERE id = ?1
                 let bind_paths_json: String = row.get(15)?;
                 let volume_names_json: String = row.get(16)?;
                 let homepage = deserialize_service_homepage(row.get(18)?)?;
+                let update_guard = deserialize_service_update_guard(row.get(19)?)?;
                 let bind_paths: BTreeMap<String, crate::api::types::TernaryChoice> =
                     serde_json::from_str(&bind_paths_json).map_err(|e| {
                         rusqlite::Error::FromSqlConversionFailure(
@@ -265,6 +294,7 @@ WHERE id = ?1
                             resolved_tags: current_resolved_tags,
                         },
                         homepage,
+                        update_guard,
                         candidate,
                         ignore,
                         version_inference: None,
@@ -277,7 +307,7 @@ WHERE id = ?1
                             },
                             repo_url: row.get(17)?,
                         },
-                        archived: Some(row.get::<_, i64>(19)? != 0),
+                        archived: Some(row.get::<_, i64>(20)? != 0),
                     },
                     image_digest,
                     current_resolved_tag.clone(),
@@ -364,6 +394,7 @@ INSERT INTO stacks (
 
             for svc in services {
                 let homepage_json = serialize_service_homepage(&svc.homepage)?;
+                let update_guard_json = serialize_service_update_guard(&svc.update_guard)?;
                 tx.execute(
                     r#"
 INSERT INTO services (
@@ -376,9 +407,10 @@ INSERT INTO services (
   backup_targets_bind_paths_json,
   backup_targets_volume_names_json,
   homepage_json,
+  update_guard_json,
   created_at,
   updated_at
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
 "#,
                     params![
                         svc.id,
@@ -390,6 +422,7 @@ INSERT INTO services (
                         serde_json::to_string(&svc.backup_bind_paths)?,
                         serde_json::to_string(&svc.backup_volume_names)?,
                         homepage_json,
+                        update_guard_json,
                         now,
                         now
                     ],
@@ -518,7 +551,7 @@ WHERE id = ?1
 
             let existing_by_name = {
                 let mut stmt = tx.prepare(
-                    "SELECT id, name, image_ref, image_tag, homepage_json FROM services WHERE stack_id = ?1",
+                    "SELECT id, name, image_ref, image_tag, homepage_json, update_guard_json FROM services WHERE stack_id = ?1",
                 )?;
                 let existing_rows = stmt.query_map(params![stack_id.clone()], |row| {
                     Ok((
@@ -527,6 +560,7 @@ WHERE id = ?1
                         row.get::<_, String>(2)?,
                         row.get::<_, String>(3)?,
                         deserialize_service_homepage(row.get(4)?)?,
+                        deserialize_service_update_guard(row.get(5)?)?,
                     ))
                 })?;
                 let mut m = BTreeMap::<
@@ -536,11 +570,12 @@ WHERE id = ?1
                         String,
                         String,
                         Option<crate::api::types::ServiceHomepage>,
+                        Option<crate::api::types::ServiceUpdateGuard>,
                     ),
                 >::new();
                 for r in existing_rows {
-                    let (id, name, image_ref, image_tag, homepage) = r?;
-                    m.insert(name, (id, image_ref, image_tag, homepage));
+                    let (id, name, image_ref, image_tag, homepage, update_guard) = r?;
+                    m.insert(name, (id, image_ref, image_tag, homepage, update_guard));
                 }
                 m
             };
@@ -548,12 +583,21 @@ WHERE id = ?1
             let mut keep_ids = Vec::<String>::new();
 
             for svc in services {
-                if let Some((id, existing_image_ref, existing_image_tag, existing_homepage)) =
+                if let Some((
+                    id,
+                    existing_image_ref,
+                    existing_image_tag,
+                    existing_homepage,
+                    existing_update_guard,
+                )) =
                     existing_by_name.get(&svc.name)
                 {
                     let homepage_json = serialize_service_homepage(&svc.homepage)?;
+                    let update_guard_json = serialize_service_update_guard(&svc.update_guard)?;
                     if existing_image_ref == &svc.image_ref && existing_image_tag == &svc.image_tag {
-                        if existing_homepage == &svc.homepage {
+                        if existing_homepage == &svc.homepage
+                            && existing_update_guard == &svc.update_guard
+                        {
                             tx.execute(
                                 r#"
 UPDATE services
@@ -566,10 +610,10 @@ WHERE id = ?1
                             tx.execute(
                                 r#"
 UPDATE services
-SET homepage_json = ?2, updated_at = ?3
+SET homepage_json = ?2, update_guard_json = ?3, updated_at = ?4
 WHERE id = ?1
 "#,
-                                params![id, homepage_json, now],
+                                params![id, homepage_json, update_guard_json, now],
                             )?;
                         }
                         keep_ids.push(id.clone());
@@ -593,6 +637,7 @@ SET
   image_tag = ?3,
   repo_url = CASE WHEN ?4 THEN repo_url ELSE NULL END,
   homepage_json = ?5,
+  update_guard_json = ?6,
   current_digest = NULL,
   current_resolved_tag = NULL,
   current_runtime_started_at = NULL,
@@ -605,10 +650,18 @@ SET
   ignore_rule_id = NULL,
   ignore_reason = NULL,
   checked_at = NULL,
-  updated_at = ?6
+  updated_at = ?7
 WHERE id = ?1
 "#,
-                        params![id, image_ref, image_tag, preserve_repo_url, homepage_json, now],
+                        params![
+                            id,
+                            image_ref,
+                            image_tag,
+                            preserve_repo_url,
+                            homepage_json,
+                            update_guard_json,
+                            now
+                        ],
                     )?;
                     super::new_version_notifications::reconcile_service_new_version_notifications_tx(
                         &tx,
@@ -622,6 +675,7 @@ WHERE id = ?1
                 } else {
                     let id = crate::ids::new_service_id();
                     let homepage_json = serialize_service_homepage(&svc.homepage)?;
+                    let update_guard_json = serialize_service_update_guard(&svc.update_guard)?;
                     tx.execute(
                         r#"
 INSERT INTO services (
@@ -634,9 +688,10 @@ INSERT INTO services (
   backup_targets_bind_paths_json,
   backup_targets_volume_names_json,
   homepage_json,
+  update_guard_json,
   created_at,
   updated_at
-) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
 "#,
                         params![
                             id,
@@ -648,6 +703,7 @@ INSERT INTO services (
                             "{}",
                             "{}",
                             homepage_json,
+                            update_guard_json,
                             now,
                             now
                         ],

@@ -37,6 +37,10 @@ impl ApiError {
         Self::new(StatusCode::CONFLICT, "conflict", message)
     }
 
+    pub fn update_guard_blocked(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::CONFLICT, "update_guard_blocked", message)
+    }
+
     pub fn cleanup_snapshot_stale(latest: CleanupScanResponse) -> Self {
         Self::new(
             StatusCode::CONFLICT,

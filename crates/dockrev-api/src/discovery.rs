@@ -127,6 +127,7 @@ fn stack_services_match_specs(
                     svc.image.reference.clone(),
                     svc.image.tag.clone(),
                     svc.homepage.clone(),
+                    svc.update_guard.clone(),
                 ),
             )
         })
@@ -141,6 +142,7 @@ fn stack_services_match_specs(
                     svc.image_ref.clone(),
                     svc.image_tag.clone(),
                     svc.homepage.clone(),
+                    svc.update_guard.clone(),
                 ),
             )
         })
@@ -1046,6 +1048,7 @@ async fn run_scan_inner(
                 image_ref: svc.image_ref.clone(),
                 image_tag: svc.image_tag.clone(),
                 homepage: svc.homepage.clone(),
+                update_guard: svc.update_guard.clone(),
             })
             .collect();
 
@@ -1080,6 +1083,7 @@ async fn run_scan_inner(
                     image_ref: svc.image_ref.clone(),
                     image_tag: svc.image_tag.clone(),
                     homepage: svc.homepage.clone(),
+                    update_guard: svc.update_guard.clone(),
                     auto_rollback: true,
                     backup_bind_paths: BTreeMap::new(),
                     backup_volume_names: BTreeMap::new(),

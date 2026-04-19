@@ -6,7 +6,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { partitionAggregateUpdateServices } from "../aggregateUpdateGuard";
+import {
+  partitionAggregateUpdateServices,
+  readUpdateGuardBlockedReason,
+} from "../aggregateUpdateGuard";
 import {
   ApiError,
   getStack,
@@ -742,8 +745,12 @@ export function useServicesPageState(props: {
         if (e instanceof ApiError) {
           if (e.status === 401) setError("需要登录/鉴权（Forward Auth）");
           else if (e.status === 409) {
-            setError("扫描结果已变化，请刷新并重新扫描后再更新");
-            await requestRefresh();
+            const guardReason = readUpdateGuardBlockedReason(e);
+            if (guardReason) setError(guardReason);
+            else {
+              setError("扫描结果已变化，请刷新并重新扫描后再更新");
+              await requestRefresh();
+            }
           } else setError(e.message);
         } else {
           setError(e instanceof Error ? e.message : String(e));

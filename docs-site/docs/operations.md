@@ -53,6 +53,20 @@ cp /data/supervisor/self-upgrade.json /backup/self-upgrade.json.$(date +%F-%H%M%
 - 自升级：通过 supervisor API 执行 apply 或 rollback
 - 失败回滚：优先恢复到前一稳定镜像 + 最近可用 DB 备份
 
+### Traefik 在线服务的零停机约束
+
+- Dockrev 标准 apply 适用于允许短暂重建窗口的服务。
+- 如果某个 compose service 带有 Traefik router rule（例如 `traefik.http.routers.*.rule`），Dockrev 会把它识别为在线入口服务。
+- 这类服务的标准 apply 会被直接阻止，原因是普通 compose recreate 可能让旧实例先退出、新实例后接流量，导致入口出现 404/空窗。
+- 当前版本不会把这类阻止伪装成“已支持零停机”；你需要改走手工零停机流程。
+
+推荐手工流程：
+
+1. 预置 blue/green 双槽位。
+2. 先拉起新槽位并完成健康检查。
+3. 再切换 Traefik 活跃路由。
+4. 最后回收旧槽位。
+
 最小回滚步骤：
 
 1. 切回上一稳定镜像 tag。
