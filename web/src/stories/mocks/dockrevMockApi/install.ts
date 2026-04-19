@@ -22,6 +22,7 @@ import {
   type CleanupMockRuntimeState,
 } from '../cleanupMockData'
 import type { MockRouteContext } from './context'
+import { buildMockDiscoveryTimeline as buildMockDiscoveryTimelineResponse } from './discoveryTimeline'
 import { buildFixture } from './fixturesMisc'
 import { handleGhcrRoutes } from './handlers/ghcr'
 import { handleServiceStateRoutes } from './handlers/serviceState'
@@ -185,58 +186,6 @@ export function installDockrevMockApi(
                       : [imageTag]
 
     return { repoTags, tags }
-  }
-
-  function buildMockDiscoveryTimeline(serviceId: string) {
-    const override = options.discoveryTimelineByServiceId?.[serviceId]
-    if (override) {
-      return {
-        items: override.items.map((item) => ({ ...item })),
-      }
-    }
-
-    const found = findService(serviceId)
-    const count = Math.max(1, found?.svc.newVersionDiscoveryCount ?? ((hashString(serviceId) % 3) + 2))
-    const runningVersion =
-      found?.svc.image.resolvedTag?.trim() ||
-      found?.svc.image.tag?.trim() ||
-      '1.0.0'
-    const candidateVersion =
-      found?.svc.candidate?.resolvedTag?.trim() ||
-      found?.svc.candidate?.tag?.trim() ||
-      offsetMockVersion(runningVersion, 2, '1.0.2')
-
-    const items: Array<{
-      kind: 'currentCandidate' | 'historicalCandidate' | 'currentRunning'
-      version: string
-      occurredAt: string | null
-    }> = [
-      {
-        kind: 'currentCandidate',
-        version: candidateVersion,
-        occurredAt: nowIso(-15 * 60 * 1000),
-      },
-    ]
-
-    for (let index = 1; index < count; index += 1) {
-      items.push({
-        kind: 'historicalCandidate',
-        version: offsetMockVersion(
-          candidateVersion,
-          -index,
-          `1.0.${Math.max(0, count - index)}`,
-        ),
-        occurredAt: nowIso(-(15 + index * 37) * 60 * 1000),
-      })
-    }
-
-    items.push({
-      kind: 'currentRunning',
-      version: runningVersion,
-      occurredAt: found ? nowIso(-4 * 60 * 60 * 1000) : null,
-    })
-
-    return { items }
   }
 
   function parseMockGitHubRepoRef(input: string | null | undefined): ServiceGitHubRepoRef | null {
@@ -681,7 +630,8 @@ export function installDockrevMockApi(
       findService,
       normalizeDigestValue,
       buildMockDigestTagData,
-      buildMockDiscoveryTimeline,
+      buildMockDiscoveryTimeline: (serviceId) =>
+        buildMockDiscoveryTimelineResponse(serviceId, options, findService),
       buildMockGitHubReleasesResponse,
       buildMockGitHubReleaseLocateResponse,
       applyMockUpdateSettlement,

@@ -1,75 +1,25 @@
-import { useCallback,useEffect,useMemo,useRef,useState,type ReactNode } from 'react'
-import {
-  ApiError,
-  archiveService,
-createIgnore,
-getServiceRollbackTarget,
-getServiceSettings,
-getStack,
-listIgnores,
-newJobEventsSource,
-restoreService,
-  triggerRuntimeScan,
-  triggerServiceRollback,
-  triggerUpdate,
-  type IgnoreRule,
-  type Service,
-  type ServiceRollbackTargetResponse,
-  type ServiceSettings,
-  type StackDetail
-} from '../api'
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ApiError, archiveService, createIgnore, getServiceRollbackTarget, getServiceSettings, getStack, listIgnores, newJobEventsSource, restoreService, triggerRuntimeScan, triggerServiceRollback, triggerUpdate, type IgnoreRule, type Service, type ServiceRollbackTargetResponse, type ServiceSettings, type StackDetail } from '../api'
 import { readUpdateGuardBlockedReason } from '../aggregateUpdateGuard'
 import { ConfirmServiceVersionCell } from '../components/ConfirmServiceVersionCell'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
 import { normalizeDigest } from '../components/digest'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { useConfirm } from '../confirm'
-import {
-DIGEST_SNAPSHOT_UPDATED_EVENT,
-type DigestSnapshotUpdatedDetail,
-} from '../digestInferenceTracker'
-import {
-  normalizeExternalHttpUrl,
-  splitImageNameForDisplay,
-  splitImageRef
-} from '../imageLinks'
+import { DIGEST_SNAPSHOT_UPDATED_EVENT, type DigestSnapshotUpdatedDetail } from '../digestInferenceTracker'
+import { normalizeExternalHttpUrl, splitImageNameForDisplay, splitImageRef } from '../imageLinks'
 import { imageRepoFromImageRef } from '../imageRepo'
-import {
-  errorMessage,
-  formatMap,
-  isDockrevService,
-  normalizeMaybeDigest,
-  rollbackTargetMatchesServiceDigest,
-  rollbackUnavailableReasonLabel,
-  rollbackVersionLabel,
-  ROLLBACK_TARGET_REFRESH_HINT,
-  scanHasFailures,
-  scanIsComplete,
-  shortDigest,
-  shouldPrefetchFloatingCandidate,
-  svcTone,
-  useRollbackTargetInvariantWarning,
-} from './serviceDetailUtils'
+import { errorMessage, formatMap, isDockrevService, normalizeMaybeDigest, rollbackTargetMatchesServiceDigest, rollbackUnavailableReasonLabel, rollbackVersionLabel, ROLLBACK_TARGET_REFRESH_HINT, scanHasFailures, scanIsComplete, shortDigest, shouldPrefetchFloatingCandidate, svcTone, useRollbackTargetInvariantWarning } from './serviceDetailUtils'
 import { navigate } from '../routes'
 import { selfUpgradeBaseUrl } from '../runtimeConfig'
-import { Button,Mono } from '../ui'
-import {
-UPDATE_JOB_SETTLED_EVENT,
-UPDATE_JOB_SETTLE_RETRY_MS,
-resolveUpdateActionTargetKey,
-useUpdateActionTracker,
-type UpdateJobSettledDetail,
-} from '../updateActionTracking'
-import { blockedReasonFor, isSemverDowngradeAnomaly,serviceRowStatus } from '../updateStatus'
+import { Button, Mono } from '../ui'
+import { UPDATE_JOB_SETTLED_EVENT, UPDATE_JOB_SETTLE_RETRY_MS, resolveUpdateActionTargetKey, useUpdateActionTracker, type UpdateJobSettledDetail } from '../updateActionTracking'
+import { blockedReasonFor, isSemverDowngradeAnomaly, serviceRowStatus } from '../updateStatus'
 import { buildUpdateServiceTarget } from '../updateTargets'
 import { usePageResumeRefresh } from '../usePageResumeRefresh'
 import { useSupervisorHealth } from '../useSupervisorHealth'
-import {
-formatCandidateTagDisplay,
-formatCurrentTagDisplay as formatTagDisplay,
-inferResolvedTagsFromSnapshot,
-isStrictSemverTag,
-} from '../versionDisplay'
+import { formatCandidateTagDisplay, formatCurrentTagDisplay as formatTagDisplay, inferResolvedTagsFromSnapshot, isStrictSemverTag } from '../versionDisplay'
+
 export function useServiceDetailPageState(props: {
   stackId: string
   serviceId: string

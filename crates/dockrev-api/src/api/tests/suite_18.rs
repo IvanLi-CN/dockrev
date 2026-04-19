@@ -1,4 +1,39 @@
 #[tokio::test]
+async fn all_apply_rejects_when_scope_contains_guarded_service() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let (_, service_id, ..) = seed_guarded_service_with_candidate(&state).await;
+
+    let req = serde_json::json!({
+        "scope": "all",
+        "targets": [],
+        "mode": "apply",
+        "allowArchMismatch": false,
+        "backupMode": "inherit",
+        "reason": "ui"
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/updates")
+                .header("content-type", "application/json")
+                .body(Body::from(req.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+    let body = response_json(resp).await;
+    assert_eq!(body["error"]["code"].as_str(), Some("update_guard_blocked"));
+    assert_eq!(
+        body["error"]["details"]["blockedServiceIds"][0].as_str(),
+        Some(service_id.as_str())
+    );
+}
+
+#[tokio::test]
 async fn cleanup_apply_creates_job_when_confirm_snapshot_only_changes_timestamp() {
     let db_path = format!("/tmp/dockrev-cleanup-apply-{}.sqlite3", ulid::Ulid::new());
     let runner = Arc::new(CleanupRunner::volume_in_use());
