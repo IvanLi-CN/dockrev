@@ -11,7 +11,7 @@ const meta: Meta<typeof CleanupPage> = {
   parameters: {
     docs: {
       description: {
-        component: 'Cleanup 页默认走 autodocs；这里补充顶部动作图标、扫描/清理中的明确 loading 态、未知大小文案与确认弹窗行为的稳定回归覆盖。',
+        component: 'Cleanup 页默认走 autodocs；这里补充服务器磁盘展示、顶部动作图标、扫描/清理中的明确 loading 态、未知大小文案与确认弹窗行为的稳定回归覆盖。',
       },
     },
   },
@@ -85,9 +85,12 @@ export const Default: Story = {
     assertStory(canvasElement.textContent?.includes('旧镜像未被任何容器使用'), 'resource reason should be visible')
     assertStory(!(canvasElement.textContent?.includes('服务直属候选') ?? false), 'generic candidate copy should be removed')
     assertStory(canvasElement.textContent?.includes('空间概览'), 'cleanup summary section should be visible')
+    assertStory(canvasElement.textContent?.includes('服务器磁盘'), 'server disk usage should be visible')
+    assertStory(canvasElement.textContent?.includes('37.8 GB / 80.0 GB'), 'server disk used and total bytes should be visible')
     assertStory(canvasElement.textContent?.includes('容器'), 'cleanup container card should be visible')
     assertStory(canvasElement.textContent?.includes('镜像'), 'cleanup image card should be visible')
     assertStory(canvasElement.textContent?.includes('卷'), 'cleanup volume card should be visible')
+    assertStory(canvasElement.textContent?.includes('已知候选占比'), 'cleanup share copy should clarify known candidate basis')
     assertStory(!(canvasElement.textContent?.includes('待估') ?? false), 'cleanup copy should avoid the old pending-estimate wording')
     assertButtonHasIcon(doc, '全部')
     assertButtonHasIcon(doc, '重扫')
@@ -220,5 +223,31 @@ export const UsageOverviewFocus: Story = {
     assertStory(canvasElement.textContent?.includes('其他'), 'cleanup other card should be visible in focus story')
     assertStory(canvasElement.textContent?.includes('Docker 清理候选'), 'cleanup summary pill should be visible')
     assertStory(canvasElement.textContent?.includes('大小未知'), 'cleanup focus story should expose the refined unknown-size copy')
+    assertStory(!(canvasElement.textContent?.includes('占比 100%') ?? false), 'cleanup share copy should avoid ambiguous bare percent labels')
+  },
+}
+
+export const StorageOverviewNormal: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console-storage-normal' },
+  render: renderPage,
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => canvasElement.textContent?.includes('服务器磁盘') ?? false)
+    assertStory(canvasElement.textContent?.includes('37.8 GB / 80.0 GB'), 'normal storage story should show server disk usage')
+    assertStory(canvasElement.textContent?.includes('已知候选占比'), 'normal storage story should clarify known candidate share')
+    assertStory(!(canvasElement.textContent?.includes('大小未知') ?? false), 'normal storage story should not show unknown-size copy')
+    assertStory(!(canvasElement.textContent?.includes('未知大小') ?? false), 'normal storage story should not show unknown-size title')
+  },
+}
+
+export const UnknownOnlyVolumeSize: Story = {
+  parameters: { dockrevApiScenario: 'cleanup-console-unknown-volume-only' },
+  render: renderPage,
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => canvasElement.textContent?.includes('服务器磁盘') ?? false)
+    const volumeFill = canvasElement.querySelector<HTMLElement>('.cleanupUsageCardVolume .cleanupUsageCardBar > span')
+    assertStory(canvasElement.textContent?.includes('已识别 0 B'), 'unknown-only volume card should keep known bytes at 0 B')
+    assertStory(canvasElement.textContent?.includes('含 1 项大小未知'), 'unknown-only volume card should expose unknown size count')
+    assertStory(volumeFill, 'unknown-only volume bar fill should exist for stable layout')
+    assertStory(volumeFill.style.width === '0%', 'unknown-only volume bar fill should stay empty')
   },
 }

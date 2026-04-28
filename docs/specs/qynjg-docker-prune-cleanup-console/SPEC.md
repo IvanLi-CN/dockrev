@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-03-29
-- Last: 2026-04-04
+- Last: 2026-04-28
 
 ## 背景 / 问题陈述
 
@@ -61,6 +61,7 @@
 ### SHOULD
 
 - UI 对“未知或近似空间”提供清晰文案，而不是伪装成精确字节值。
+- UI 在清理空间概览中展示服务器磁盘“已使用 / 总容量”，并明确候选卡片百分比是“已知候选占比”。
 - 确认弹窗复用页面分组语义，避免操作者在执行前看到另一套信息结构。
 - apply job 的日志/summary 能明确列出预计释放空间、实际删除计数与跳过原因。
 
@@ -169,12 +170,12 @@
 
 - source_type: `storybook_canvas`
   target_program: `mock-only`
-  capture_scope: `browser-viewport`
+  capture_scope: `element`
   sensitive_exclusion: `N/A`
   submission_gate: `approved`
-  story_id_or_title: `Pages/CleanupPage/UsageOverviewFocus`
-  state: `reclaimable candidate summary above cleanup rules`
-  evidence_note: 验证清理页把“可回收候选”提升为独立上层摘要区，使用 `7.15 GB+` 这类更友好的主值表达，并将清理规则 tabs 内联到标题区、压缩占用卡片高度，减少首屏空间浪费，同时避免把候选回收量误写成服务器总占用。
+  story_id_or_title: `Pages/CleanupPage/StorageOverviewNormal`
+  state: `normal server disk usage with known reclaimable candidate distribution`
+  evidence_note: 验证清理页在正常场景中展示服务器磁盘“已使用 / 总容量”，并把候选卡片百分比明确为“已知候选占比”；未知大小边界由 `Pages/CleanupPage/UnknownOnlyVolumeSize` 单独覆盖。
 
 ![Cleanup page storage status](./assets/cleanup-page-storage-status.png)
 
@@ -210,7 +211,6 @@ None
 
 - 风险：Docker CLI 对 builder cache/volume reclaim bytes 可能只提供近似值或未知值，UI 需容忍估算值。
 - 风险：volume/image 归属元数据不足时，只能保守地下沉到 stack orphan 或 unownedGroup。
-- 风险：当前 worktree 存在用户已修改的 `crates/dockrev-api/src/db/new_version_discoveries.rs`，导致全量 `cargo test -p dockrev-api` 仍被一个既有断言失败阻断；cleanup 相关新增测试与接口测试已单独通过。
 - 需要决策的问题：None
 - 假设（需主人确认）：当前 managed stack 的 compose project 信息在数据库中完整可读，可用于 cleanup 归属分类。
 
@@ -219,6 +219,7 @@ None
 - 2026-03-29：创建规格，冻结 cleanup preset、scope、confirm 与 stale fingerprint 契约。
 - 2026-03-29：完成 cleanup console 实装、Storybook 场景、视觉证据与 contract 同步。
 - 2026-04-04：将清理页“服务器状态”摘要区压缩为更紧凑的信息密度，并把 preset tabs 内联进清理规则标题区，减少首屏纵向空白。
+- 2026-04-28：补充服务器磁盘已使用/总容量展示，明确候选百分比语义，并修正未知大小资源的空轨道展示。
 
 ## 参考（References）
 

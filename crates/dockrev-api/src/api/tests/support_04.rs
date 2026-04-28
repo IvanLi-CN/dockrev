@@ -2,6 +2,13 @@
 impl CommandRunner for CleanupRunner {
     async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
         let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
+        if spec.program == "df" && args == vec!["-P", "-B1", "/"] {
+            return Ok(CommandOutput {
+                status: 0,
+                stdout: "Filesystem 1B-blocks Used Available Use% Mounted on\n/dev/root 85899345920 40587440947 45311904973 48% /\n".to_string(),
+                stderr: String::new(),
+            });
+        }
         let out = match self.mode {
             CleanupRunnerMode::StaleOnSecondScan => {
                 if args == vec!["container", "ls", "-aq"] {

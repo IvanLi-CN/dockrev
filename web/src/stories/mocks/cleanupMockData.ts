@@ -11,12 +11,14 @@ import type {
 
 export type CleanupMockScenario =
   | 'cleanup-console'
+  | 'cleanup-console-storage-normal'
   | 'cleanup-console-empty'
   | 'cleanup-console-aggressive-unowned'
   | 'cleanup-console-stale'
   | 'cleanup-console-scan-pending'
   | 'cleanup-console-scan-slow'
   | 'cleanup-console-apply-slow'
+  | 'cleanup-console-unknown-volume-only'
 
 export type CleanupMockRuntimeState = {
   nextJobSeq: number
@@ -58,12 +60,14 @@ const UNOWNED_TITLE = '未归属资源'
 export function isCleanupMockScenario(value: string): value is CleanupMockScenario {
   return (
     value === 'cleanup-console' ||
+    value === 'cleanup-console-storage-normal' ||
     value === 'cleanup-console-empty' ||
     value === 'cleanup-console-aggressive-unowned' ||
     value === 'cleanup-console-stale' ||
     value === 'cleanup-console-scan-pending' ||
     value === 'cleanup-console-scan-slow' ||
-    value === 'cleanup-console-apply-slow'
+    value === 'cleanup-console-apply-slow' ||
+    value === 'cleanup-console-unknown-volume-only'
   )
 }
 
@@ -97,6 +101,30 @@ function entriesForScenario(
 ): { entries: CleanupEntry[]; scannedAt: string } {
   if (scenario === 'cleanup-console-empty') {
     return { entries: [], scannedAt: '2026-03-29T10:00:00Z' }
+  }
+
+  if (scenario === 'cleanup-console-unknown-volume-only') {
+    return {
+      entries: [
+        {
+          resourceId: 'prod-api-volume-unknown',
+          kind: 'volume',
+          label: 'prod_api_cache_unknown',
+          reason: '卷未挂载到任何容器',
+          minPreset: 'project_deep_clean',
+          estimatedReclaimableBytes: null,
+          estimateUnknown: true,
+          owner: {
+            kind: 'service',
+            stackId: 'stack-prod',
+            stackName: 'prod',
+            serviceId: 'svc-prod-api',
+            serviceName: 'api',
+          },
+        },
+      ],
+      scannedAt: '2026-03-29T10:05:00Z',
+    }
   }
 
   const base: CleanupEntry[] = [
@@ -262,6 +290,21 @@ function entriesForScenario(
     })
   }
 
+  if (scenario === 'cleanup-console-storage-normal') {
+    return {
+      entries: base.map((entry) =>
+        entry.resourceId === 'prod-api-volume'
+          ? {
+              ...entry,
+              estimatedReclaimableBytes: 860 * 1024 * 1024,
+              estimateUnknown: false,
+            }
+          : entry,
+      ),
+      scannedAt: '2026-03-29T10:05:00Z',
+    }
+  }
+
   return {
     entries: base,
     scannedAt: revision === 2 ? '2026-03-29T10:08:00Z' : '2026-03-29T10:05:00Z',
@@ -341,7 +384,7 @@ export function buildCleanupMockScanResponse(
       continue
     }
 
-      const service =
+    const service =
       existingStack.services.get(entry.owner.serviceId) ?? {
         serviceId: entry.owner.serviceId,
         serviceName: entry.owner.serviceName,
@@ -392,6 +435,10 @@ export function buildCleanupMockScanResponse(
     scannedAt: fixture.scannedAt,
     estimatedReclaimableBytes: sumKnown(allResources),
     hasUnknownSize: allResources.some(itemHasUnknown),
+    serverDiskUsage: {
+      usedBytes: 40_587_440_947,
+      totalBytes: 85_899_345_920,
+    },
     stackGroups,
     unownedGroup,
     confirmationFingerprint:

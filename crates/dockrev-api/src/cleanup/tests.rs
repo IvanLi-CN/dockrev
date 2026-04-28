@@ -1,6 +1,6 @@
 use super::parse::{
-    parse_du_kilobytes_output, parse_human_size, parse_volume_sizes_from_system_df_verbose,
-    volume_fingerprint_key,
+    parse_df_bytes_output, parse_du_kilobytes_output, parse_human_size,
+    parse_volume_sizes_from_system_df_verbose, volume_fingerprint_key,
 };
 use super::*;
 
@@ -598,4 +598,22 @@ my-named-vol                                                       0            
         Some(&36)
     );
     assert_eq!(parsed.get("my-named-vol"), Some(&(1_500_000_000_u64)));
+}
+
+#[test]
+fn parse_df_bytes_output_reads_used_and_total_bytes() {
+    let input = "Filesystem 1B-blocks Used Available Use% Mounted on\n/dev/root 80000000000 37800000000 42200000000 48% /\n";
+    assert_eq!(
+        parse_df_bytes_output(input),
+        Some((37_800_000_000, 80_000_000_000))
+    );
+}
+
+#[test]
+fn parse_df_bytes_output_reads_wrapped_filesystem_line() {
+    let input = "Filesystem 1B-blocks Used Available Use% Mounted on\n/dev/mapper/really-long-root-volume-name\n 80000000000 37800000000 42200000000 48% /\n";
+    assert_eq!(
+        parse_df_bytes_output(input),
+        Some((37_800_000_000, 80_000_000_000))
+    );
 }
