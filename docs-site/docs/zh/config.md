@@ -86,5 +86,5 @@ description: Dockrev API 与 Supervisor 运行参数说明。
 - 关闭匿名模式
 - 固定 Forward Auth 头并由入口网关注入
 - 使用持久卷保存 DB 与 supervisor state
-- 限制 Docker socket 暴露面（可改用 docker-socket-proxy）
+- 直接挂载 Docker Unix socket：`/var/run/docker.sock:/var/run/docker.sock`；不要把 Dockrev 的 Docker CLI 访问依赖放在会随 Dockrev 更新链路重建的 proxy 容器上
 - 修改配置后，以命中 allowlist 的身份执行 `GET /api/deploy-check/report` 与 `GET /supervisor/health` 做回归核验

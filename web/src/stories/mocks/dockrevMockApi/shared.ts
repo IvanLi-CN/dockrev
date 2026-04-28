@@ -26,12 +26,14 @@ import type {
 
 export type DockrevApiScenario =
   | 'cleanup-console'
+  | 'cleanup-console-storage-normal'
   | 'cleanup-console-empty'
   | 'cleanup-console-aggressive-unowned'
   | 'cleanup-console-stale'
   | 'cleanup-console-scan-pending'
   | 'cleanup-console-scan-slow'
   | 'cleanup-console-apply-slow'
+  | 'cleanup-console-unknown-volume-only'
   | 'default'
   | 'dashboard-demo'
   | 'dashboard-demo-slow-update'

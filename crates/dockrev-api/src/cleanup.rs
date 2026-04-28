@@ -8,8 +8,8 @@ use serde_json::json;
 
 use crate::api::types::{
     CleanupPreset, CleanupResourceItem, CleanupResourceKind, CleanupScanReason, CleanupScanRequest,
-    CleanupScanResponse, CleanupScope, CleanupServiceGroup, CleanupStackGroup, CleanupUnownedGroup,
-    JobLogLine, JobProgress,
+    CleanupScanResponse, CleanupScope, CleanupServerDiskUsage, CleanupServiceGroup,
+    CleanupStackGroup, CleanupUnownedGroup, JobLogLine, JobProgress,
 };
 use crate::db::ArchivedFilter;
 use crate::runner::{CommandOutput, CommandSpec};
@@ -22,7 +22,7 @@ mod parse;
 use parse::{
     ensure_success, fingerprint_hint_from_buildx_text_output, fingerprint_hint_from_output,
     parse_buildx_du_json_lines, parse_buildx_du_text_summary, resolve_volume_fingerprint,
-    scan_volume_size_from_mountpoint, scan_volume_sizes_from_system_df,
+    scan_server_disk_usage, scan_volume_size_from_mountpoint, scan_volume_sizes_from_system_df,
 };
 
 #[derive(Clone, Debug)]
@@ -31,6 +31,7 @@ pub struct CleanupExecutionPlan {
     scanned_at: String,
     estimated_reclaimable_bytes: u64,
     has_unknown_size: bool,
+    server_disk_usage: Option<CleanupServerDiskUsage>,
     stack_groups: Vec<CleanupStackGroup>,
     unowned_group: Option<CleanupUnownedGroup>,
     confirmation_fingerprint: String,
@@ -46,6 +47,7 @@ impl CleanupExecutionPlan {
             scanned_at: self.scanned_at.clone(),
             estimated_reclaimable_bytes: self.estimated_reclaimable_bytes,
             has_unknown_size: self.has_unknown_size,
+            server_disk_usage: self.server_disk_usage.clone(),
             stack_groups: self.stack_groups.clone(),
             unowned_group: self.unowned_group.clone(),
             confirmation_fingerprint: Some(self.confirmation_fingerprint.clone()),
@@ -293,7 +295,6 @@ pub async fn build_execution_plan(
         stack_id: req.stack_id.clone(),
         service_id: req.service_id.clone(),
     };
-
     let mut selected = candidates
         .into_iter()
         .filter(|candidate| candidate_matches_request(candidate, &request))
@@ -302,6 +303,9 @@ pub async fn build_execution_plan(
 
     let (stack_groups, unowned_group, estimated_reclaimable_bytes, has_unknown_size) =
         build_grouped_response(&selected);
+    let server_disk_usage = scan_server_disk_usage(state)
+        .await
+        .map(CleanupServerDiskUsage::from);
     let confirmation_fingerprint = compute_confirmation_fingerprint(
         &request,
         &selected,
@@ -324,6 +328,7 @@ pub async fn build_execution_plan(
         scanned_at: scanned_at.to_string(),
         estimated_reclaimable_bytes,
         has_unknown_size,
+        server_disk_usage,
         stack_groups,
         unowned_group,
         confirmation_fingerprint,

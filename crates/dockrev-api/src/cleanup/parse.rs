@@ -89,6 +89,32 @@ pub(super) fn parse_du_kilobytes_output(input: &str) -> Option<u64> {
     kib.checked_mul(1024)
 }
 
+pub(super) fn parse_df_bytes_output(input: &str) -> Option<(u64, u64)> {
+    let mut wrapped_filesystem = false;
+    for line in input.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("Filesystem") {
+            continue;
+        }
+
+        let columns = trimmed.split_whitespace().collect::<Vec<_>>();
+        if wrapped_filesystem && columns.len() >= 2 {
+            let total = columns[0].parse::<u64>().ok()?;
+            let used = columns[1].parse::<u64>().ok()?;
+            return (total > 0 && used <= total).then_some((used, total));
+        }
+
+        if columns.len() >= 3 {
+            let total = columns[1].parse::<u64>().ok()?;
+            let used = columns[2].parse::<u64>().ok()?;
+            return (total > 0 && used <= total).then_some((used, total));
+        }
+
+        wrapped_filesystem = true;
+    }
+    None
+}
+
 pub(super) fn fingerprint_hint_from_buildx_text_output(raw: &str) -> Option<String> {
     let mut records = raw
         .lines()
@@ -308,6 +334,25 @@ pub(super) async fn scan_volume_sizes_from_system_df(state: &AppState) -> BTreeM
         _ => return BTreeMap::new(),
     };
     parse_volume_sizes_from_system_df_verbose(&out.stdout)
+}
+
+pub(super) async fn scan_server_disk_usage(state: &AppState) -> Option<(u64, u64)> {
+    let out = state
+        .runner
+        .run(
+            CommandSpec {
+                program: "df".to_string(),
+                args: vec!["-P".to_string(), "-B1".to_string(), "/".to_string()],
+                env: Vec::new(),
+            },
+            DOCKER_TIMEOUT,
+        )
+        .await
+        .ok()?;
+    if out.status != 0 {
+        return None;
+    }
+    parse_df_bytes_output(&out.stdout)
 }
 
 pub(super) async fn scan_volume_size_from_mountpoint(

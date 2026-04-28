@@ -119,6 +119,22 @@ pub struct CleanupApplyResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CleanupServerDiskUsage {
+    pub used_bytes: u64,
+    pub total_bytes: u64,
+}
+
+impl From<(u64, u64)> for CleanupServerDiskUsage {
+    fn from((used_bytes, total_bytes): (u64, u64)) -> Self {
+        Self {
+            used_bytes,
+            total_bytes,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CleanupResourceItem {
     pub resource_id: String,
     pub kind: CleanupResourceKind,
@@ -174,6 +190,8 @@ pub struct CleanupScanResponse {
     pub estimated_reclaimable_bytes: u64,
     #[serde(default)]
     pub has_unknown_size: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_disk_usage: Option<CleanupServerDiskUsage>,
     pub stack_groups: Vec<CleanupStackGroup>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unowned_group: Option<CleanupUnownedGroup>,

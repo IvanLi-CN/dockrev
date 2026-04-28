@@ -11,6 +11,7 @@ import {
   type CleanupResourceKind,
   type CleanupScanResponse,
   type CleanupScope,
+  type CleanupServerDiskUsage,
   type CleanupStackGroup,
 } from '../api'
 import { useConfirm } from '../confirm'
@@ -123,7 +124,7 @@ function formatShort(ts?: string | null): string {
   if (!ts) return '-'
   const date = new Date(ts)
   if (Number.isNaN(date.valueOf())) return ts
-  return date.toLocaleString()
+  return date.toLocaleString('zh-CN', { hour12: false })
 }
 
 function formatBytes(bytes: number): string {
@@ -149,6 +150,22 @@ function formatEstimate(bytes: number, hasUnknown?: boolean): string {
 
 function formatUnknownCount(count: number): string {
   return `${count} 项大小未知`
+}
+
+function formatDiskUsage(usage?: CleanupServerDiskUsage | null): { value: string; hint: string; percent: number } {
+  if (!usage || usage.totalBytes <= 0) {
+    return {
+      value: '未获取',
+      hint: '运行环境未返回 df 数据',
+      percent: 0,
+    }
+  }
+  const percent = Math.min(1, Math.max(0, usage.usedBytes / usage.totalBytes))
+  return {
+    value: `${formatBytes(usage.usedBytes)} / ${formatBytes(usage.totalBytes)}`,
+    hint: `服务器磁盘已使用 ${formatPercent(percent)}`,
+    percent,
+  }
 }
 
 function formatPercent(value: number): string {
@@ -406,9 +423,11 @@ function CleanupUsageCardView(props: { card: CleanupUsageCard }) {
   const meta = CLEANUP_USAGE_CARD_META.find((item) => item.key === props.card.key) ?? CLEANUP_USAGE_CARD_META[3]
   const Icon = meta.icon
   const knownOnly = props.card.bytes > 0 ? formatBytes(props.card.bytes) : '0 B'
+  const knownShareLabel = `已知候选占比 ${formatPercent(props.card.share)}`
+  const barWidth = props.card.bytes > 0 && props.card.share > 0 ? Math.max(2, Math.round(props.card.share * 100)) : 0
 
   return (
-    <article className={`cleanupUsageCard ${meta.toneClassName}`}>
+    <article className={`cleanupUsageCard ${meta.toneClassName}${props.card.unknownCount > 0 ? ' cleanupUsageCardUnknown' : ''}`}>
       <div className="cleanupUsageCardHead">
         <div className="cleanupUsageCardIconWrap">
           <Icon aria-hidden="true" className="cleanupUsageCardIcon" size={18} strokeWidth={2} />
@@ -424,11 +443,11 @@ function CleanupUsageCardView(props: { card: CleanupUsageCard }) {
 
       <div className="cleanupUsageCardMeta">
         <span>已识别 {knownOnly}</span>
-        <span>{props.card.unknownCount > 0 ? formatUnknownCount(props.card.unknownCount) : `占比 ${formatPercent(props.card.share)}`}</span>
+        <span>{props.card.unknownCount > 0 ? `含 ${formatUnknownCount(props.card.unknownCount)}` : knownShareLabel}</span>
       </div>
 
       <div aria-hidden="true" className="cleanupUsageCardBar">
-        <span style={{ width: `${Math.max(props.card.count > 0 ? 10 : 0, Math.round(props.card.share * 100))}%` }} />
+        <span style={{ width: `${barWidth}%` }} />
       </div>
     </article>
   )
@@ -698,6 +717,7 @@ export function CleanupPage(props: {
     [activePreset, pageScan],
   )
   const usageCards = useMemo(() => (pageScan ? buildUsageCards(pageScan) : []), [pageScan])
+  const serverDiskUsage = useMemo(() => formatDiskUsage(pageScan?.serverDiskUsage), [pageScan?.serverDiskUsage])
   const pageUnknownCount = useMemo(() => (pageScan ? countUnknownResources(flattenAllResources(pageScan)) : 0), [pageScan])
   const projectedUnknownCount = useMemo(
     () => (projected ? countUnknownResources(flattenAllResources(projected)) : 0),
@@ -935,6 +955,14 @@ export function CleanupPage(props: {
             <div className="cleanupUsageSectionHint">这是最近一次全量扫描识别到的可回收候选分布，用来看清回收空间主要集中在哪类资源。</div>
           </div>
           <div className="cleanupOverviewStats cleanupStatusStats">
+            <div className="cleanupOverviewStat cleanupDiskStat">
+              <div className="sectionTitle">服务器磁盘</div>
+              <div className="cleanupOverviewStatValue">{serverDiskUsage.value}</div>
+              <div className="cleanupOverviewStatHint">{serverDiskUsage.hint}</div>
+              <div aria-hidden="true" className="cleanupDiskUsageBar">
+                <span style={{ width: `${Math.round(serverDiskUsage.percent * 100)}%` }} />
+              </div>
+            </div>
             <div className="cleanupOverviewStat">
               <div className="sectionTitle">当前可回收候选</div>
               <div className="cleanupOverviewStatValue">
@@ -944,7 +972,7 @@ export function CleanupPage(props: {
                 {pageUnknownCount > 0 ? `${formatUnknownCount(pageUnknownCount)}，已知部分按下限展示` : '基于最近一次全量扫描候选'}
               </div>
             </div>
-            <div className="cleanupOverviewStat">
+            <div className="cleanupOverviewStat cleanupLatestScanStat">
               <div className="sectionTitle">最新扫描</div>
               <div className="cleanupOverviewStatMeta">
                 <Mono>{pageScan ? formatShort(pageScan.scannedAt) : '-'}</Mono>

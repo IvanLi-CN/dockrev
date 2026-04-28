@@ -164,7 +164,7 @@ async fn check_docker_engine(state: &AppState) -> DeployCheckItem {
             "docker daemon unreachable",
             "不可用时无法执行更新与运行时检查",
             summarize_command_failure(output.status, &output.stderr),
-            "在 Dockrev 运行环境先执行 `docker info`；容器部署请挂载 `/var/run/docker.sock:/var/run/docker.sock` 或设置 `DOCKER_HOST=tcp://docker-socket-proxy:2375`；修复后重启 Dockrev 并点击“重新检查”。",
+            "在 Dockrev 运行环境先执行 `docker info`；容器部署请直接挂载 `/var/run/docker.sock:/var/run/docker.sock`，避免通过会随更新链路重建的 proxy 容器访问 Docker；修复后重启 Dockrev 并点击“重新检查”。",
         ),
         Err(err) => fail_core(
             "core.docker_engine",

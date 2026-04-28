@@ -404,6 +404,13 @@ services:
         body["stackGroups"][0]["services"][0]["hasUnknownSize"].as_bool(),
         Some(false)
     );
+    assert_eq!(
+        body["serverDiskUsage"],
+        serde_json::json!({
+            "usedBytes": 40_587_440_947_u64,
+            "totalBytes": 85_899_345_920_u64
+        })
+    );
 }
 
 #[tokio::test]

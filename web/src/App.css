@@ -7294,7 +7294,7 @@ html[data-theme='light'] .card {
 
 .cleanupStatusHead {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
 }
@@ -7330,7 +7330,8 @@ html[data-theme='light'] .card {
 }
 
 .cleanupStatusStats {
-  min-width: min(460px, 100%);
+  grid-template-columns: minmax(190px, 1.2fr) minmax(170px, 1fr) minmax(150px, 0.9fr);
+  min-width: min(620px, 100%);
 }
 
 .cleanupRuleStats {
@@ -7369,6 +7370,27 @@ html[data-theme='light'] .card {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.cleanupDiskUsageBar {
+  overflow: hidden;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel2) 76%, transparent);
+  margin-top: 10px;
+}
+
+.cleanupDiskUsageBar > span {
+  display: block;
+  height: 100%;
+  min-width: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-primary) 70%, transparent) 0%,
+    color-mix(in srgb, var(--color-warning) 42%, var(--color-primary) 58%) 100%
+  );
+  box-shadow: 0 0 16px color-mix(in srgb, var(--color-primary) 22%, transparent);
 }
 
 .cleanupUsageSection {
@@ -7504,6 +7526,12 @@ html[data-theme='light'] .card {
   border-radius: inherit;
   background: linear-gradient(90deg, color-mix(in srgb, currentColor 68%, transparent) 0%, color-mix(in srgb, var(--text) 18%, currentColor 82%) 100%);
   box-shadow: 0 0 16px color-mix(in srgb, currentColor 24%, transparent);
+}
+
+.cleanupUsageCardUnknown .cleanupUsageCardBar {
+  background: color-mix(in srgb, var(--panel2) 68%, transparent);
+  outline: 1px dashed color-mix(in srgb, currentColor 18%, transparent);
+  outline-offset: -1px;
 }
 
 .cleanupUsageCardContainer {

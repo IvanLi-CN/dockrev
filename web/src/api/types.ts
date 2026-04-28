@@ -523,6 +523,11 @@ export type CleanupApplyResponse = {
   jobId: string
 }
 
+export type CleanupServerDiskUsage = {
+  usedBytes: number
+  totalBytes: number
+}
+
 export type CleanupResourceItem = {
   resourceId: string
   kind: CleanupResourceKind
@@ -564,6 +569,7 @@ export type CleanupScanResponse = {
   scannedAt: string
   estimatedReclaimableBytes: number
   hasUnknownSize?: boolean
+  serverDiskUsage?: CleanupServerDiskUsage | null
   stackGroups: CleanupStackGroup[]
   unownedGroup?: CleanupUnownedGroup | null
   confirmationFingerprint?: string | null

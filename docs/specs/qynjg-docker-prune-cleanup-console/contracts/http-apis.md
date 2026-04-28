@@ -6,6 +6,7 @@
 - `CleanupScope = "all" | "stack" | "service"`
 - `CleanupResourceKind = "image" | "container" | "network" | "volume" | "builder_cache"`
 - `CleanupScanResponse`
+- `CleanupServerDiskUsage`
 - `CleanupStackGroup`
 - `CleanupServiceGroup`
 - `CleanupApplyRequest`
@@ -21,6 +22,10 @@
   "scannedAt": "RFC3339",
   "estimatedReclaimableBytes": 123456,
   "hasUnknownSize": false,
+  "serverDiskUsage": {
+    "usedBytes": 37800000000,
+    "totalBytes": 80000000000
+  },
   "stackGroups": [
     {
       "stackId": "stack_123",
@@ -81,6 +86,7 @@
 - `reason=page` 的实现约定是：前端固定以 `preset=aggressive, scope=all` 拉取一份完整 inventory，再用每个资源项的 `minPreset` 做本地 tab 投影；页面默认展示 `balanced` 投影，但不重复全量扫描。
 - `minPreset` 表示该资源最早在哪个 preset 开始出现，前端据此决定 tabs 是否显示该资源。
 - `estimatedReclaimableBytes` 对资源项来说允许为 `null`；这时 `estimateUnknown=true`，group/response 级 `hasUnknownSize=true`。
+- `serverDiskUsage` 表示 Dockrev 运行环境看到的服务器根文件系统用量；字段可省略，省略时前端必须展示“未获取”而不是把它混入可回收候选估算。
 - `reason=confirm` 返回当前动作作用域的最新候选；`confirmationFingerprint` 在 page/confirm 两类响应里都可能出现，但前端只使用 confirm 返回值发起 apply。
 - `unownedGroup` 仅允许在 `scope=all` 时出现。
 - `service` 作用域的 payload 仍沿用 `stackGroups[] -> services[]` 结构，只是只包含目标 service 所属 stack 与该 service。
@@ -120,6 +126,11 @@ Response: `200 OK`
   "scope": "stack",
   "scannedAt": "2026-03-29T13:40:00Z",
   "estimatedReclaimableBytes": 53248,
+  "hasUnknownSize": false,
+  "serverDiskUsage": {
+    "usedBytes": 37800000000,
+    "totalBytes": 80000000000
+  },
   "stackGroups": [],
   "confirmationFingerprint": "sha256-abc"
 }
