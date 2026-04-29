@@ -497,6 +497,7 @@ async fn settings_auth_reports_group_match_details() {
                 .method("GET")
                 .uri("/api/settings")
                 .header("X-Forwarded-User", "bob")
+                .header("X-Forwarded-User-Picture", "https://example.test/avatar/bob.png")
                 .header("Remote-Groups", "dev, ops")
                 .body(Body::empty())
                 .unwrap(),
@@ -510,6 +511,10 @@ async fn settings_auth_reports_group_match_details() {
     assert_eq!(body["auth"]["authorizationMode"], "user_or_group");
     assert_eq!(body["auth"]["matchedBy"], "group");
     assert_eq!(body["auth"]["currentUser"], "bob");
+    assert_eq!(
+        body["auth"]["avatarUrl"],
+        "https://example.test/avatar/bob.png"
+    );
     assert_eq!(
         body["auth"]["currentGroups"],
         serde_json::json!(["d**v", "o**s"])
@@ -1094,4 +1099,3 @@ services:
     assert_eq!(resolved_a, resolved_b);
     assert_eq!(resolved_tags_a, resolved_tags_b);
 }
-

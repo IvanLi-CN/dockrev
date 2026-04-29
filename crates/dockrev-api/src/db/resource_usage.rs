@@ -187,6 +187,79 @@ ORDER BY sampled_at ASC
         .context("list service resource samples since")
     }
 
+    pub async fn list_service_resource_overview_samples_since(
+        &self,
+        since: &str,
+    ) -> anyhow::Result<Vec<ServiceResourceOverviewSamples>> {
+        let since = since.to_string();
+        self.call(move |conn| {
+            let mut stmt = conn.prepare(
+                r#"
+SELECT
+  sv.id,
+  s.sampled_at,
+  s.cpu_percent,
+  s.mem_used_bytes,
+  s.mem_limit_bytes,
+  s.net_rx_bytes,
+  s.net_tx_bytes,
+  s.block_read_bytes,
+  s.block_write_bytes,
+  s.pids,
+  s.container_count
+FROM services sv
+JOIN stacks st ON st.id = sv.stack_id
+LEFT JOIN service_resource_samples s
+  ON s.service_id = sv.id
+  AND s.sampled_at >= ?1
+WHERE st.archived = 0 AND sv.archived = 0
+ORDER BY sv.stack_id ASC, sv.name ASC, s.sampled_at ASC
+"#,
+            )?;
+            let rows = stmt.query_map(params![since], |row| {
+                let service_id: String = row.get(0)?;
+                let sampled_at: Option<String> = row.get(1)?;
+                let sample = match sampled_at {
+                    Some(sampled_at) => Some(ServiceResourceSample {
+                        sampled_at,
+                        cpu_percent: row.get(2)?,
+                        mem_used_bytes: row.get::<_, Option<i64>>(3)?.map(|v| v as u64),
+                        mem_limit_bytes: row.get::<_, Option<i64>>(4)?.map(|v| v as u64),
+                        net_rx_bytes: row.get::<_, Option<i64>>(5)?.map(|v| v as u64),
+                        net_tx_bytes: row.get::<_, Option<i64>>(6)?.map(|v| v as u64),
+                        block_read_bytes: row.get::<_, Option<i64>>(7)?.map(|v| v as u64),
+                        block_write_bytes: row.get::<_, Option<i64>>(8)?.map(|v| v as u64),
+                        pids: row.get::<_, Option<i64>>(9)?.map(|v| v as u64),
+                        container_count: row.get::<_, i64>(10)? as u32,
+                    }),
+                    None => None,
+                };
+                Ok((service_id, sample))
+            })?;
+
+            let mut out = Vec::<ServiceResourceOverviewSamples>::new();
+            for row in rows {
+                let (service_id, sample) = row?;
+                match out.last_mut() {
+                    Some(current) if current.service_id == service_id => {
+                        if let Some(sample) = sample {
+                            current.samples.push(sample);
+                        }
+                    }
+                    _ => {
+                        out.push(ServiceResourceOverviewSamples {
+                            service_id,
+                            samples: sample.into_iter().collect(),
+                        });
+                    }
+                }
+            }
+            Ok(out)
+        })
+        .await
+        .context("list service resource overview samples since")
+    }
+
     pub async fn delete_expired_service_resource_samples(
         &self,
         older_than: &str,

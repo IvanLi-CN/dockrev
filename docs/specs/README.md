@@ -74,7 +74,7 @@
 | ttq9u | Dockrev：Supervisor 自升级 dry-run/apply 按钮运行态修复（禁用 + spin） | 已完成 | `ttq9u-supervisor-self-upgrade-running-buttons/SPEC.md` | 2026-03-03 | fast-track（running 禁用 dry/apply，按 request.mode 显示 spinner） |
 | rxcb6 | Dockrev：Telegram 群组支持与 Bot Token 脱敏改造 | 已完成 | `rxcb6-telegram-group-token-mask/SPEC.md` | 2026-03-03 | fast-track（群组 chatId 明文 + token 不回传 + 圆点掩码 + review-loop 收敛） |
 | xg3dj | Dockrev：概览卡片任务列表增强（运行中/排队展示 + 补齐 + 直达详情） | 已完成 | `xg3dj-overview-card-job-list/SPEC.md` | 2026-03-03 | fast-track（5/10 动态上限 + jobs SSE 实时刷新 + 点击直达详情） |
-| kbz3z | Dockrev：服务资源监控（SSE 实时推送 + 图表 + 历史持久化） | 已完成 | `kbz3z-service-resource-monitoring-sse/SPEC.md` | 2026-03-11 | fast-track（settings 开关/频率 + history + service detail SSE+SVG 图表；修复 SSE guard 提前释放导致的 10s 断流；2026-03-11 面板视觉层级升级） |
+| kbz3z | Dockrev：服务资源监控（SSE 实时推送 + 图表 + 历史持久化） | 已完成 | `kbz3z-service-resource-monitoring-sse/SPEC.md` | 2026-04-28 | fast-track（settings 开关/频率 + history + service detail SSE+SVG 图表；修复 SSE guard 提前释放导致的 10s 断流；2026-03-11 面板视觉层级升级；2026-04-28 明确 Overview 仅展示聚合最新摘要，不扩展为列表图表或逐卡片 SSE） |
 | q6x2g | Dockrev：执行更新按钮绑定任务运行态（Spin） | 已完成 | `q6x2g-update-action-button-spin/SPEC.md` | 2026-03-02 | fast-track（all/stack/service 按钮按任务态显示 spinner） |
 | gh58m | Dockrev：全站任务展示优先人可读名称 | 已完成 | `gh58m-queue-readable-task-name/SPEC.md` | 2026-03-02 | fast-track（scope/type tag 与 type 颜色区分，PR #116 补图 spec-sync） |
 | x2n6v | Dockrev：GHCR 状态同步（全量 + 单仓库）与队列并发可视 | 已完成 | `x2n6v-ghcr-sync-all-and-repo/SPEC.md` | 2026-03-03 | fast-track（sync-all/sync-repo + 并发与去重） |
@@ -119,5 +119,5 @@
 | hw3pb | Dockrev：Cleanup apply 指纹稳定化与 stale 诊断补强 | 已完成 | `hw3pb-cleanup-apply-fingerprint-stability/SPEC.md` | 2026-04-11 | fast-track（implementation + cleanup tests + local browser proof + stale diagnostics） |
 | d2u78 | Dockrev：Cleanup 顶部按钮 loading 态去重与语义收口 | 已完成 | `d2u78-cleanup-top-action-loading-clarity/SPEC.md` | 2026-04-11 | fast-track（PR #206 follow-up；cleanup top actions loading affordance + storybook evidence + web validation） |
 | hw3pb | Dockrev：Cleanup apply 指纹稳定化与 stale 诊断补强 | 已完成 | `hw3pb-cleanup-apply-fingerprint-stability/SPEC.md` | 2026-04-11 | fast-track（implementation + cleanup tests + local browser proof + stale diagnostics + shared-testbox cleanup proof script） |
-| hps4f | Dockrev：服务页接管运维大盘，概览页改为 Homepage 兼容导航页 | 已完成 | `hps4f-overview-homepage-nav/SPEC.md` | 2026-04-13 | fast-track（page role swap + homepage metadata + PR-ready） |
+| hps4f | Dockrev：服务页接管运维大盘，概览页改为 Homepage 兼容导航页 | 已完成 | `hps4f-overview-homepage-nav/SPEC.md` | 2026-04-28 | fast-track（page role swap + homepage metadata + Homepage-like v2 navigation + resource overview metrics + visual evidence） |
 | v3g2q | Dockrev：批量更新可见范围与实际提交范围对齐 | 已完成 | `v3g2q-batch-update-visibility-alignment/SPEC.md` | 2026-04-18 | fast-track（CTA/确认框/预览/提交对齐 + same-tag digest-only 可见性） |

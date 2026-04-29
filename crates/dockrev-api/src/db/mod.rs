@@ -179,6 +179,12 @@ pub struct ServiceResourceTarget {
     pub compose_project: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct ServiceResourceOverviewSamples {
+    pub service_id: String,
+    pub samples: Vec<ServiceResourceSample>,
+}
+
 #[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewVersionNotificationRecord {

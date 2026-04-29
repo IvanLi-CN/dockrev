@@ -94,6 +94,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(get_service_resource_usage_history),
         )
         .route(
+            "/api/services/resource-usage/overview",
+            get(get_service_resource_usage_overview),
+        )
+        .route(
             "/api/services/{service_id}/resource-usage/events",
             get(service_resource_usage_events),
         )
@@ -384,6 +388,7 @@ async fn get_settings(
             allowed_group_masked: auth_view.allowed_group_masked,
             current_user: auth.user.clone(),
             current_groups: authz::mask_list(&auth.groups),
+            avatar_url: auth.avatar_url.clone(),
             matched_by: authz_match_label(&auth.matched_by).to_string(),
         },
         instance: InstanceSettings { public_base_url },
@@ -579,6 +584,7 @@ async fn authz_error(state: &AppState, failure: AuthzFailure) -> ApiError {
         "allowedGroupMasked": auth_view.allowed_group_masked,
         "currentUser": failure.current_user,
         "currentGroups": authz::mask_list(&failure.current_groups),
+        "avatarUrl": failure.avatar_url,
         "authorizationMode": auth_view.authorization_mode,
     }))
 }

@@ -32,6 +32,8 @@ pub struct AuthSettings {
     pub current_user: Option<String>,
     #[serde(default)]
     pub current_groups: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
     pub matched_by: String,
 }
 

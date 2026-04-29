@@ -47,8 +47,7 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
   switch (route.name) {
     case 'overview':
       return {
-        title: '概览',
-        pageSubtitle: 'Homepage 兼容导航入口：分组、搜索、新窗口打开与版本状态标记',
+        title: '',
         topbarHint: '服务导航',
       }
     case 'queue':
@@ -114,6 +113,9 @@ export default function App() {
   const route = useRoute()
   const [releaseDrawerState, setReleaseDrawerState] = useState(() => readGitHubReleaseDrawerState())
   const [pageActions, setPageActions] = useState<ReactNode>(null)
+  const [topbarContent, setTopbarContent] = useState<ReactNode>(null)
+  const [sidebarNavContent, setSidebarNavContent] = useState<ReactNode>(null)
+  const [mobileNavContent, setMobileNavContent] = useState<ReactNode>(null)
   const [lastScanHint, setLastScanHint] = useState<string | undefined>(undefined)
   const [deployWelcomeState, setDeployWelcomeState] = useState<{ loaded: boolean; neverAutoOpen: boolean }>({
     loaded: false,
@@ -131,6 +133,15 @@ export default function App() {
   const topActions = useMemo(() => {
     return <>{pageActions}</>
   }, [pageActions])
+
+  useEffect(() => {
+    if (route.name !== 'overview') {
+      setTopbarContent(null)
+      setSidebarNavContent(null)
+      setMobileNavContent(null)
+    }
+  }, [route.name])
+
   const refreshAuthIdentity = useCallback(async () => {
     if (authIdentityRefreshInFlightRef.current) return null
     authIdentityRefreshInFlightRef.current = true
@@ -317,10 +328,21 @@ export default function App() {
         pageSubtitle={head.pageSubtitle}
         topbarHint={head.topbarHint}
         topActions={topActions}
+        topbarContent={topbarContent}
+        sidebarNavContent={sidebarNavContent}
+        mobileNavContent={mobileNavContent}
         authIdentity={authIdentity}
         lastScanHint={lastScanHint}
       >
-        {route.name === 'overview' ? <OverviewPage onLastScanHint={setLastScanHint} onTopActions={setPageActions} /> : null}
+        {route.name === 'overview' ? (
+            <OverviewPage
+              onLastScanHint={setLastScanHint}
+              onTopActions={setPageActions}
+              onTopbarContent={setTopbarContent}
+              onSidebarNavContent={setSidebarNavContent}
+              onMobileNavContent={setMobileNavContent}
+            />
+        ) : null}
         {route.name === 'queue' ? <QueuePage onTopActions={setPageActions} /> : null}
         {route.name === 'job' ? <JobDetailPage jobId={route.jobId} onTopActions={setPageActions} /> : null}
         {route.name === 'services' ? <ServicesPage onLastScanHint={setLastScanHint} onTopActions={setPageActions} /> : null}

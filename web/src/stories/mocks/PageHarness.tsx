@@ -19,10 +19,16 @@ export function PageHarness(props: {
   authIdentity?: TopbarAuthIdentity | null
   children: (ctx: {
     onTopActions: (node: ReactNode) => void
+    onTopbarContent: (node: ReactNode) => void
+    onSidebarNavContent: (node: ReactNode) => void
+    onMobileNavContent: (node: ReactNode) => void
     onLastScanHint: (lastScan?: string) => void
   }) => ReactNode
 }) {
   const [topActions, setTopActions] = useState<ReactNode>(null)
+  const [topbarContent, setTopbarContent] = useState<ReactNode>(null)
+  const [sidebarNavContent, setSidebarNavContent] = useState<ReactNode>(null)
+  const [mobileNavContent, setMobileNavContent] = useState<ReactNode>(null)
   const [lastScanHint, setLastScanHint] = useState<string | undefined>(undefined)
   const [releaseDrawerState, setReleaseDrawerState] = useState(CLOSED_GITHUB_RELEASE_DRAWER_STATE)
 
@@ -62,11 +68,17 @@ export function PageHarness(props: {
         pageSubtitle={props.pageSubtitle}
         topbarHint={props.topbarHint}
         topActions={topActions}
+        topbarContent={topbarContent}
+        sidebarNavContent={sidebarNavContent}
+        mobileNavContent={mobileNavContent}
         authIdentity={props.authIdentity}
         lastScanHint={lastScanHint}
       >
         {props.children({
           onTopActions: setTopActions,
+          onTopbarContent: setTopbarContent,
+          onSidebarNavContent: setSidebarNavContent,
+          onMobileNavContent: setMobileNavContent,
           onLastScanHint: setLastScanHint,
         })}
       </AppShell>

@@ -604,6 +604,149 @@ pub(super) async fn get_service_resource_usage_history(
     }))
 }
 
+pub(super) async fn get_service_resource_usage_overview(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<ServiceResourceHistoryQuery>,
+) -> Result<Json<ServiceResourceOverviewResponse>, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+    let settings = state
+        .db
+        .get_resource_monitor_settings()
+        .await
+        .map_err(map_internal)?;
+
+    let window = q.window.unwrap_or_else(|| "1h".to_string());
+    let Some(window_seconds) = resource_usage::parse_window_to_seconds(&window) else {
+        return Err(ApiError::invalid_argument(
+            "window must be one of 15m/1h/6h",
+        ));
+    };
+    let generated_at = time::OffsetDateTime::now_utc();
+    let generated_at_label = generated_at
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|err| map_internal(err.into()))?;
+    let stale_after_seconds =
+        resource_usage::normalize_sample_interval_seconds(settings.sample_interval_seconds)
+            .saturating_mul(2)
+            .max(60);
+
+    if !settings.enabled {
+        return Ok(Json(ServiceResourceOverviewResponse {
+            enabled: false,
+            window,
+            generated_at: generated_at_label,
+            stale_after_seconds,
+            services: Vec::new(),
+        }));
+    }
+
+    let since = (generated_at - time::Duration::seconds(window_seconds as i64))
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|err| map_internal(err.into()))?;
+    let rows = state
+        .db
+        .list_service_resource_overview_samples_since(&since)
+        .await
+        .map_err(map_internal)?;
+    let services = rows
+        .into_iter()
+        .map(|row| {
+            to_resource_overview_item(
+                row.service_id,
+                row.samples,
+                generated_at,
+                stale_after_seconds,
+            )
+        })
+        .collect();
+
+    Ok(Json(ServiceResourceOverviewResponse {
+        enabled: true,
+        window,
+        generated_at: generated_at_label,
+        stale_after_seconds,
+        services,
+    }))
+}
+
+fn to_resource_overview_item(
+    service_id: String,
+    samples: Vec<ServiceResourceSample>,
+    generated_at: time::OffsetDateTime,
+    stale_after_seconds: u64,
+) -> ServiceResourceOverviewItem {
+    let latest = samples.last();
+    let previous = samples
+        .len()
+        .checked_sub(2)
+        .and_then(|index| samples.get(index));
+    let (net_rx_rate_bps, net_tx_rate_bps) = match (previous, latest) {
+        (Some(prev), Some(next)) => compute_resource_rates(prev, next),
+        _ => (None, None),
+    };
+    let stale = latest
+        .and_then(|sample| {
+            time::OffsetDateTime::parse(
+                &sample.sampled_at,
+                &time::format_description::well_known::Rfc3339,
+            )
+            .ok()
+        })
+        .is_none_or(|sampled_at| {
+            (generated_at - sampled_at).whole_seconds() > stale_after_seconds as i64
+        });
+
+    ServiceResourceOverviewItem {
+        service_id,
+        sampled_at: latest.map(|sample| sample.sampled_at.clone()),
+        cpu_percent: latest.map(|sample| sample.cpu_percent),
+        mem_used_bytes: latest.and_then(|sample| sample.mem_used_bytes),
+        mem_limit_bytes: latest.and_then(|sample| sample.mem_limit_bytes),
+        net_rx_rate_bps,
+        net_tx_rate_bps,
+        stale,
+        sample_count: samples.len() as u32,
+    }
+}
+
+fn compute_resource_rates(
+    prev: &ServiceResourceSample,
+    next: &ServiceResourceSample,
+) -> (Option<f64>, Option<f64>) {
+    let prev_ts = time::OffsetDateTime::parse(
+        &prev.sampled_at,
+        &time::format_description::well_known::Rfc3339,
+    )
+    .ok();
+    let next_ts = time::OffsetDateTime::parse(
+        &next.sampled_at,
+        &time::format_description::well_known::Rfc3339,
+    )
+    .ok();
+    let Some((prev_ts, next_ts)) = prev_ts.zip(next_ts) else {
+        return (None, None);
+    };
+    let seconds = (next_ts - prev_ts).as_seconds_f64();
+    if seconds <= 0.0 {
+        return (None, None);
+    }
+    (
+        compute_counter_rate(prev.net_rx_bytes, next.net_rx_bytes, seconds),
+        compute_counter_rate(prev.net_tx_bytes, next.net_tx_bytes, seconds),
+    )
+}
+
+fn compute_counter_rate(prev: Option<u64>, next: Option<u64>, seconds: f64) -> Option<f64> {
+    let (Some(prev), Some(next)) = (prev, next) else {
+        return None;
+    };
+    if next < prev {
+        return None;
+    }
+    Some((next - prev) as f64 / seconds)
+}
+
 pub(super) async fn service_resource_usage_events(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

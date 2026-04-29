@@ -201,7 +201,7 @@ async function requireBoundingBox(locator, label) {
 }
 
 function getModal(page) {
-  return page.locator('[role="alertdialog"], [role="dialog"]').first();
+  return page.locator('[role="alertdialog"]:visible, [role="dialog"]:visible').first();
 }
 
 async function assertHoverPinKeepsPopoverOpen({
@@ -456,12 +456,15 @@ async function runInteractive({ baseUrl, browser }) {
   {
     const page = await openStory("pages-overviewpage--search-and-fallback");
     try {
-      const search = page.getByPlaceholder("搜索分组 / 服务 / 描述 / 镜像");
-      const searchButton = page.getByRole("button", { name: "搜索" });
+      const search = page
+        .locator('.homepageOverviewSearchForm input[placeholder="Search..."]')
+        .first();
       await search.waitFor({ timeout: 10_000 });
-      await searchButton.waitFor({ timeout: 10_000 });
+      if ((await page.locator(".homepageOverviewSearchButton").count()) > 0) {
+        throw new Error("Expected overview search to submit with Enter and render no search button.");
+      }
       await search.fill("worker");
-      await searchButton.click();
+      await search.press("Enter");
       await page.waitForTimeout(250);
 
       await page.waitForFunction(
@@ -506,7 +509,7 @@ async function runInteractive({ baseUrl, browser }) {
     }
   }
 
-  // 2) Overview page: homepage cards should expose external links and status ribbons.
+  // 2) Overview page: homepage cards should expose external links, status badges, and resource cells.
   {
     const page = await openStory("pages-overviewpage--default");
     try {
@@ -517,7 +520,8 @@ async function runInteractive({ baseUrl, browser }) {
       const href = await apiCard.getAttribute("href");
       const target = await apiCard.getAttribute("target");
       const cardText = (await apiCard.textContent()) ?? "";
-      const ribbonText = (await apiCard.locator(".homepageServiceRibbon").textContent()) ?? "";
+      const badgeText = (await apiCard.locator(".homepageServiceStateBadge").textContent()) ?? "";
+      const metricCount = await apiCard.locator(".homepageServiceMetric").count();
 
       if (!href || new URL(href).href !== new URL("https://api.example.com").href) {
         throw new Error(
@@ -529,9 +533,14 @@ async function runInteractive({ baseUrl, browser }) {
           `Expected Acme API card to open in a new tab, got target=${String(target)}.`,
         );
       }
-      if (!ribbonText.includes("可更新")) {
+      if (!badgeText.includes("可更新")) {
         throw new Error(
-          `Expected Acme API card to surface the update status ribbon, got ribbon=${JSON.stringify(ribbonText)} full=${JSON.stringify(cardText)}.`,
+          `Expected Acme API card to surface the update status badge, got badge=${JSON.stringify(badgeText)} full=${JSON.stringify(cardText)}.`,
+        );
+      }
+      if (metricCount !== 4) {
+        throw new Error(
+          `Expected Acme API card to render CPU/MEM/RX/TX metric cells, got ${metricCount}.`,
         );
       }
       if (cardText.includes("新窗口")) {
@@ -539,6 +548,54 @@ async function runInteractive({ baseUrl, browser }) {
           `Expected overview cards to remove the legacy new-window pill text, got ${JSON.stringify(cardText)}.`,
         );
       }
+
+      await page.setViewportSize({ width: 390, height: 920 });
+      await page.waitForTimeout(150);
+      if (await page.locator(".topbarGlobalContent .homepageTopStrip").isVisible()) {
+        throw new Error(
+          "Expected mobile overview to remove the resource/search/time strip from the shell header.",
+        );
+      }
+      const mobileModuleStrip = page.locator(
+        ".homepageMobileNavModule .homepageTopStrip",
+      );
+      await mobileModuleStrip.waitFor({ state: "visible", timeout: 10_000 });
+      if ((await mobileModuleStrip.getByPlaceholder("Search...").count()) > 0) {
+        throw new Error(
+          "Expected mobile resource strip to keep search out of the metric row.",
+        );
+      }
+      await page.locator(".topbar .homepageHeaderSearchToggle").waitFor({
+        timeout: 10_000,
+      });
+
+      await page.getByRole("button", { name: "打开主导航" }).click();
+      const drawerSearch = page.locator(
+        "#mobileDockrevMenu .mobileMenuEmbeddedContent .homepageDrawerSearchSlot",
+      );
+      await drawerSearch.waitFor({ state: "visible", timeout: 10_000 });
+      await drawerSearch.getByPlaceholder("Search...").waitFor({
+        timeout: 10_000,
+      });
+      await page
+        .locator("#mobileDockrevMenu .homepageDrawerBottomSummary")
+        .waitFor({
+          state: "visible",
+          timeout: 10_000,
+        });
+      await page.locator("#mobileDockrevMenu .homepageDrawerBottomSummary .homepageClock").waitFor({
+        timeout: 10_000,
+      });
+      const mobileOverflow = await page.evaluate(() => document.body.style.overflow);
+      if (mobileOverflow !== "hidden") {
+        throw new Error(
+          `Expected open mobile drawer to lock body scroll, got ${JSON.stringify(mobileOverflow)}.`,
+        );
+      }
+      await page.setViewportSize({ width: 1200, height: 920 });
+      await page.waitForFunction(() => document.body.style.overflow !== "hidden", null, {
+        timeout: 10_000,
+      });
     } finally {
       await page.close().catch(() => {});
     }

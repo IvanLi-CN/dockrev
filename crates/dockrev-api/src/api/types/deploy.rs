@@ -32,6 +32,34 @@ pub struct ServiceResourceHistoryResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ServiceResourceOverviewItem {
+    pub service_id: String,
+    pub sampled_at: Option<String>,
+    pub cpu_percent: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mem_used_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mem_limit_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub net_rx_rate_bps: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub net_tx_rate_bps: Option<f64>,
+    pub stale: bool,
+    pub sample_count: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceResourceOverviewResponse {
+    pub enabled: bool,
+    pub window: String,
+    pub generated_at: String,
+    pub stale_after_seconds: u64,
+    pub services: Vec<ServiceResourceOverviewItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeployCheckReportResponse {
     pub overall: DeployCheckOverall,
     pub generated_at: String,

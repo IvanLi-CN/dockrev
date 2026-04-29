@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { History, X } from 'lucide-react'
 import { getDockrevVersion } from './api'
 import { GitHubIcon, Mono, ToggleGroup, ToggleGroupItem } from './ui'
 import { ConfirmProvider } from './ConfirmProvider'
@@ -8,6 +9,12 @@ import type { Route } from './routes'
 import { currentHref, navigate } from './routes'
 import { TopbarUserIdentity } from './components/TopbarUserIdentity'
 import type { TopbarAuthIdentity } from './topbarAuthIdentity'
+
+const MOBILE_MENU_MEDIA_QUERY = '(max-width: 960px)'
+
+function readMobileMenuMediaMatches(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia(MOBILE_MENU_MEDIA_QUERY).matches
+}
 
 function formatShort(ts: string) {
   const d = new Date(ts)
@@ -43,6 +50,9 @@ export function AppShell(props: {
   pageSubtitle?: string
   topbarHint?: string
   topActions?: ReactNode
+  topbarContent?: ReactNode
+  sidebarNavContent?: ReactNode
+  mobileNavContent?: ReactNode
   authIdentity?: TopbarAuthIdentity | null
   lastScanHint?: string
   children: ReactNode
@@ -59,6 +69,8 @@ export function AppShell(props: {
           ? 'settings'
         : props.route.name
   const [appVersion, setAppVersion] = useState<string | null>(null)
+  const [mobileMenuOpenFor, setMobileMenuOpenFor] = useState<string | null>(null)
+  const [mobileMenuMediaMatches, setMobileMenuMediaMatches] = useState(readMobileMenuMediaMatches)
 
   const lastScan = props.lastScanHint
 
@@ -92,32 +104,136 @@ export function AppShell(props: {
   const versionLabel = formatVersionLabel(appVersion)
   const versionRef = (appVersion ?? '').trim()
   const versionDisplay = formatVersionDisplay(appVersion)
+  const mobileMenuOpen = mobileMenuOpenFor === active
+  const mobileMenuVisible = mobileMenuOpen && mobileMenuMediaMatches
   const versionHref =
     versionLabel !== '-' && versionRef
       ? `https://github.com/IvanLi-CN/dockrev/releases/tag/${encodeGitRefForPath(versionRef)}`
       : null
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const query = window.matchMedia(MOBILE_MENU_MEDIA_QUERY)
+    const sync = () => {
+      setMobileMenuMediaMatches(query.matches)
+      if (!query.matches) setMobileMenuOpenFor(null)
+    }
+    sync()
+    query.addEventListener('change', sync)
+    return () => query.removeEventListener('change', sync)
+  }, [])
+
+  useEffect(() => {
+    if (!mobileMenuVisible) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileMenuOpenFor(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [mobileMenuVisible])
+
   return (
     <UpdateActionTrackerProvider>
       <ConfirmProvider>
-        <div className="appShell">
-        <header className="topbar">
-          <div className="topbarLeft">
-            <div className="topbarIdentity">
-              <div className="brand">
-                <img className="brandMark" src={brandMarkUrl} alt="" aria-hidden="true" />
-                Dockrev
+        <div className={props.topbarContent ? 'appShell appShellWithTopbarContent' : 'appShell'}>
+          <header className="topbar">
+            <div className="topbarMain">
+              <div className="topbarLeft">
+                <div className={mobileMenuOpen ? 'mobileDockrevPanel mobileDockrevPanelOpen' : 'mobileDockrevPanel'}>
+                  <button
+                    type="button"
+                    className="mobileMenuButton"
+                    aria-label={mobileMenuOpen ? '关闭主导航' : '打开主导航'}
+                    aria-controls="mobileDockrevMenu"
+                    aria-expanded={mobileMenuOpen}
+                    onClick={() => setMobileMenuOpenFor((value) => (value === active ? null : active))}
+                  >
+                    <span className="mobileMenuIcon" aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                  </button>
+                </div>
+                <div className="topbarIdentity">
+                  <div className="brand">
+                    <img className="brandMark" src={brandMarkUrl} alt="" aria-hidden="true" />
+                    Dockrev
+                  </div>
+                  {props.topbarHint ? <div className="topbarHint">{props.topbarHint}</div> : null}
+                </div>
               </div>
-              {props.topbarHint ? <div className="topbarHint">{props.topbarHint}</div> : null}
+              {props.topbarContent ? <div className="topbarGlobalContent">{props.topbarContent}</div> : null}
+              <div className="topbarRight">
+                {props.topActions ? <div className="topActions">{props.topActions}</div> : null}
+                <div className="topbarUserSlot">
+                  <TopbarUserIdentity authIdentity={props.authIdentity} />
+                </div>
+              </div>
+            </div>
+          </header>
+
+          {mobileMenuVisible ? (
+            <button
+              type="button"
+              className="mobileMenuBackdrop"
+              aria-label="关闭主导航"
+              onClick={() => setMobileMenuOpenFor(null)}
+            />
+          ) : null}
+          <div
+            id="mobileDockrevMenu"
+            className="mobileMenuDrawer"
+            role="dialog"
+            aria-modal="true"
+            aria-label="主导航"
+            hidden={!mobileMenuVisible}
+          >
+            <div className="mobileMenuDrawerHead">
+              <div className="mobileMenuDrawerBrand">
+                <img className="brandMark" src={brandMarkUrl} alt="" aria-hidden="true" />
+                <div className="mobileMenuDrawerTitle">Dockrev</div>
+              </div>
+              <button
+                type="button"
+                className="mobileMenuDrawerClose"
+                aria-label="关闭主导航"
+                onClick={() => setMobileMenuOpenFor(null)}
+              >
+                <X size={18} strokeWidth={2.2} />
+              </button>
+            </div>
+            {props.mobileNavContent ? (
+              <div className="mobileMenuEmbeddedContent">{props.mobileNavContent}</div>
+            ) : null}
+            <nav className="mobileNav" aria-label="主导航">
+              {nav.map((item) => (
+                <a
+                  key={`mobile-${item.key}`}
+                  href={currentHref(item.to)}
+                  className={active === item.key ? 'mobileNavItem mobileNavItemActive' : 'mobileNavItem'}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    setMobileMenuOpenFor(null)
+                    navigate(item.to)
+                  }}
+                >
+                  {item.label}
+                </a>
+              ))}
+            </nav>
+            <div className="mobileMeta">
+              <div className="mobileMetaRow">
+                <span className="sectionTitle">最近扫描</span>
+                <span className="mono">{lastScan ? formatShort(lastScan) : '-'}</span>
+              </div>
             </div>
           </div>
-          <div className="topbarRight">
-            {props.topActions ? <div className="topActions">{props.topActions}</div> : null}
-            <div className="topbarUserSlot">
-              <TopbarUserIdentity authIdentity={props.authIdentity} />
-            </div>
-          </div>
-        </header>
 
         <aside className="sidebar">
           <div className="sidebarSectionLabel">导航</div>
@@ -136,16 +252,23 @@ export function AppShell(props: {
               </a>
             ))}
           </nav>
+          {props.sidebarNavContent ? (
+            <div className="sidebarEmbeddedContent">{props.sidebarNavContent}</div>
+          ) : null}
 
           <div className="sidebarSectionLabel" style={{ marginTop: 24 }}>
             最近一次扫描
           </div>
           {lastScan ? (
-            <div className="sidebarMono">
+            <div className="sidebarMono sidebarInfoLine">
+              <History className="sidebarInfoIcon" aria-hidden="true" />
               <Mono>{formatShort(lastScan)}</Mono>
             </div>
           ) : (
-            <div className="sidebarMuted">-</div>
+            <div className="sidebarMuted sidebarInfoLine">
+              <History className="sidebarInfoIcon" aria-hidden="true" />
+              <span>-</span>
+            </div>
           )}
 
           <div className="sidebarMeta">
@@ -188,33 +311,12 @@ export function AppShell(props: {
         </aside>
 
         <main className="content">
-          <div className="mobileDockrevPanel">
-            <nav className="mobileNav" aria-label="主导航">
-              {nav.map((item) => (
-                <a
-                  key={`mobile-${item.key}`}
-                  href={currentHref(item.to)}
-                  className={active === item.key ? 'mobileNavItem mobileNavItemActive' : 'mobileNavItem'}
-                  onClick={(e) => {
-                    e.preventDefault()
-                    navigate(item.to)
-                  }}
-                >
-                  {item.label}
-                </a>
-              ))}
-            </nav>
-            <div className="mobileMeta">
-              <div className="mobileMetaRow">
-                <span className="sectionTitle">最近扫描</span>
-                <span className="mono">{lastScan ? formatShort(lastScan) : '-'}</span>
-              </div>
+          {props.title || props.pageSubtitle ? (
+            <div className="pageHead">
+              {props.title ? <div className="h1">{props.title}</div> : null}
+              {props.pageSubtitle ? <div className="muted">{props.pageSubtitle}</div> : null}
             </div>
-          </div>
-          <div className="pageHead">
-            {props.title ? <div className="h1">{props.title}</div> : null}
-            {props.pageSubtitle ? <div className="muted">{props.pageSubtitle}</div> : null}
-          </div>
+          ) : null}
           {props.children}
         </main>
         </div>

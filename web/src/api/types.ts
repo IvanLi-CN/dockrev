@@ -414,6 +414,7 @@ export type SettingsResponse = {
     allowedGroupMasked?: string | null
     currentUser?: string | null
     currentGroups: string[]
+    avatarUrl?: string | null
     matchedBy?: string | null
   }
   instance: {
@@ -457,6 +458,26 @@ export type ServiceResourceHistoryResponse = {
   serviceId: string
   window: ServiceResourceUsageWindow | string
   samples: ServiceResourceSample[]
+}
+
+export type ServiceResourceOverviewItem = {
+  serviceId: string
+  sampledAt?: string | null
+  cpuPercent?: number | null
+  memUsedBytes?: number | null
+  memLimitBytes?: number | null
+  netRxRateBps?: number | null
+  netTxRateBps?: number | null
+  stale: boolean
+  sampleCount: number
+}
+
+export type ServiceResourceOverviewResponse = {
+  enabled: boolean
+  window: ServiceResourceUsageWindow | string
+  generatedAt: string
+  staleAfterSeconds: number
+  services: ServiceResourceOverviewItem[]
 }
 
 export type DeployCheckStatus = 'pass' | 'fail' | 'na'

@@ -4,6 +4,7 @@ type TopbarAuthIdentitySource = {
   authorizationMode?: string | null
   currentGroups?: string[] | null
   currentUser?: string | null
+  avatarUrl?: string | null
   forwardHeaderName?: string | null
   groupHeaderName?: string | null
   matchedBy?: string | null
@@ -14,6 +15,7 @@ export type TopbarAuthIdentity = {
   currentUser: string
   currentGroups: string
   currentGroupsList: string[]
+  avatarUrl: string | null
   authSource: string
   authorizationMode: string
   matchedBy: string
@@ -52,6 +54,22 @@ function displayOrDash(value: string | null | undefined): string {
   return trimOrNull(value) ?? '-'
 }
 
+function hasControlCharacter(value: string): boolean {
+  return Array.from(value).some((char) => {
+    const code = char.charCodeAt(0)
+    return code < 32 || code === 127
+  })
+}
+
+function normalizeAvatarUrl(value: string | null | undefined): string | null {
+  const trimmed = trimOrNull(value)
+  if (!trimmed || trimmed.length > 2048 || hasControlCharacter(trimmed)) return null
+  const lower = trimmed.toLowerCase()
+  if (lower.startsWith('https://') || lower.startsWith('http://')) return trimmed
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) return trimmed
+  return null
+}
+
 function labelFromMap(raw: string | null, labels: Record<string, string>): string {
   if (!raw) return '-'
   return labels[raw] ?? raw
@@ -75,6 +93,7 @@ function buildTopbarAuthIdentity(source?: TopbarAuthIdentitySource | null): Topb
     currentUser: displayOrDash(currentUser),
     currentGroups: currentGroupsList.length > 0 ? currentGroupsList.join(', ') : '-',
     currentGroupsList,
+    avatarUrl: normalizeAvatarUrl(source?.avatarUrl),
     authSource: AUTH_SOURCE_LABEL,
     authorizationMode: labelFromMap(authorizationMode, AUTHORIZATION_MODE_LABELS),
     matchedBy: labelFromMap(matchedBy, MATCHED_BY_LABELS),

@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-03-03
-- Last: 2026-03-11
+- Last: 2026-04-28
 
 ## 背景 / 问题陈述
 
@@ -23,7 +23,7 @@
 
 ### Non-goals
 
-- 不扩展到 Overview/Services 列表页。
+- 服务详情页保留完整趋势图与 1s SSE；Overview 仅允许展示聚合最新摘要，不扩展为列表页图表或逐卡片 SSE。
 - 不引入告警规则、阈值通知、自动扩缩容。
 - 不实现多实例分布式采样去重。
 
@@ -49,7 +49,9 @@
   - `resource_usage_snapshot`
   - `resource_usage_tick`
   - `resource_usage_error`
+- `GET /api/services/resource-usage/overview?window=15m|1h|6h`：Overview 聚合最新摘要，只返回 CPU、内存、网络 RX/TX、样本时间、stale 与样本数量，不提供图表序列或 SSE。
 - 监控关闭统一错误：`409` + `details.reason=resource_monitor_disabled`。
+  - 例外：Overview 聚合摘要接口返回 `200 enabled=false`，用于导航页非阻塞降级。
 
 ## 数据与运行时设计
 
@@ -96,6 +98,7 @@
 - 2026-03-03: 完成后端采样与 SSE 能力、前端设置与服务详情图表、Storybook 监控场景。
 - 2026-03-09: 修复资源监控 SSE 订阅 guard 生命周期，避免活跃连接在约 10 秒后被误回收，并补充持续 streaming 回归测试。
 - 2026-03-11: 完成 Service Detail 资源监控面板中等强度视觉升级，统一工具栏并强化实时状态/响应式层级。
+- 2026-04-28: 修正 Overview 边界：服务详情继续承载图表/SSE，Overview 仅展示聚合最新资源摘要并允许监控关闭时非阻塞降级。
 
 ## 参考（References）
 
