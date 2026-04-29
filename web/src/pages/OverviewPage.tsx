@@ -1,23 +1,36 @@
 import {
   useCallback,
   useEffect,
-  useRef,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
 import {
+  Activity,
+  Clock3,
+  Cpu,
+  Download,
+  MemoryStick,
+  RefreshCw,
+  ScanSearch,
+  Search,
+  Upload,
+} from "lucide-react";
+import {
   ApiError,
   getJob,
+  getServiceResourceUsageOverview,
   getStack,
   listStacks,
   triggerCheck,
+  type ServiceResourceOverviewItem,
+  type ServiceResourceOverviewResponse,
   type StackDetail,
   type StackListItem,
 } from "../api";
 import { HomepageServiceIcon } from "../components/HomepageServiceIcon";
 import { currentHref, navigate } from "../routes";
-import { Button, Input, Mono, SearchIcon } from "../ui";
+import { Button, Input, Mono } from "../ui";
 import { serviceRowStatus, statusLabel, type RowStatus } from "../updateStatus";
 import { usePageResumeRefresh } from "../usePageResumeRefresh";
 
@@ -36,14 +49,10 @@ type HomepageNavCard = {
   status: RowStatus;
 };
 
-function ribbonClassName(status: RowStatus): string {
-  if (status === "updatable") return "homepageServiceRibbon homepageServiceRibbonUpdatable";
-  if (status === "hint") return "homepageServiceRibbon homepageServiceRibbonHint";
-  if (status === "archMismatch")
-    return "homepageServiceRibbon homepageServiceRibbonArchMismatch";
-  if (status === "blocked") return "homepageServiceRibbon homepageServiceRibbonBlocked";
-  return "homepageServiceRibbon";
-}
+type ServiceBadge = {
+  label: string;
+  tone: "running" | "healthy" | "stale" | "muted" | "updatable" | "hint" | "bad";
+};
 
 function normalizeHomepageHref(
   value: string | null | undefined,
@@ -119,51 +128,363 @@ function matchesSearch(card: HomepageNavCard, query: string): boolean {
   return haystack.includes(normalized);
 }
 
+function formatPercent(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "-";
+  if (value < 10) return `${value.toFixed(1)}%`;
+  return `${value.toFixed(0)}%`;
+}
+
+function formatBytes(bytes: number | null | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes)) return "-";
+  const units = ["B", "kB", "MB", "GB", "TB"];
+  let value = bytes;
+  let idx = 0;
+  while (value >= 1024 && idx < units.length - 1) {
+    value /= 1024;
+    idx += 1;
+  }
+  const digits = idx === 0 || value >= 100 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(digits)} ${units[idx]}`;
+}
+
+function formatRate(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "-";
+  if (value < 1) return "0 B/s";
+  return `${formatBytes(value)}/s`;
+}
+
+function formatClock(date: Date): string {
+  const pad2 = (value: number) => String(value).padStart(2, "0");
+  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+}
+
+function formatGmtOffset(date: Date): string {
+  const offsetMinutes = -date.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const abs = Math.abs(offsetMinutes);
+  const hours = Math.trunc(abs / 60);
+  const minutes = abs % 60;
+  return minutes === 0
+    ? `GMT${sign}${hours}`
+    : `GMT${sign}${hours}:${String(minutes).padStart(2, "0")}`;
+}
+
+function metricMap(
+  overview: ServiceResourceOverviewResponse | null,
+): Map<string, ServiceResourceOverviewItem> {
+  const map = new Map<string, ServiceResourceOverviewItem>();
+  for (const item of overview?.services ?? []) {
+    map.set(item.serviceId, item);
+  }
+  return map;
+}
+
+function sumMetricValues<T>(
+  items: T[],
+  read: (item: T) => number | null | undefined,
+): number | null {
+  const values = items
+    .map(read)
+    .filter((value): value is number => value != null && Number.isFinite(value));
+  if (values.length === 0) return null;
+  return values.reduce((sum, value) => sum + value, 0);
+}
+
+function aggregateMetrics(items: ServiceResourceOverviewItem[]) {
+  const active = items.filter((item) => item.sampledAt && !item.stale);
+  return {
+    activeCount: active.length,
+    cpu: sumMetricValues(active, (item) => item.cpuPercent),
+    memory: sumMetricValues(active, (item) => item.memUsedBytes),
+    rx: sumMetricValues(active, (item) => item.netRxRateBps),
+    tx: sumMetricValues(active, (item) => item.netTxRateBps),
+  };
+}
+
+function serviceBadge(
+  card: HomepageNavCard,
+  metric: ServiceResourceOverviewItem | undefined,
+  overview: ServiceResourceOverviewResponse | null,
+  resourceUnavailable: boolean,
+): ServiceBadge {
+  if (card.status === "updatable")
+    return { label: statusLabel(card.status), tone: "updatable" };
+  if (card.status === "hint")
+    return { label: statusLabel(card.status), tone: "hint" };
+  if (card.status === "archMismatch" || card.status === "blocked")
+    return { label: statusLabel(card.status), tone: "bad" };
+  if (resourceUnavailable) return { label: "NO DATA", tone: "muted" };
+  if (overview?.enabled === false) return { label: "NO DATA", tone: "muted" };
+  if (metric?.sampledAt && !metric.stale)
+    return { label: "RUNNING", tone: "running" };
+  if (metric?.sampledAt && metric.stale) return { label: "STALE", tone: "stale" };
+  if (metric || overview) return { label: "NO DATA", tone: "muted" };
+  return { label: "NO DATA", tone: "muted" };
+}
+
+function DashboardMetric(props: {
+  icon: ReactNode;
+  value: string;
+  label: string;
+}) {
+  return (
+    <div className="homepageTopMetric">
+      <span className="homepageTopMetricIcon" aria-hidden="true">
+        {props.icon}
+      </span>
+      <span className="homepageTopMetricValue">{props.value}</span>
+      <span className="homepageTopMetricLabel">{props.label}</span>
+    </div>
+  );
+}
+
+function HomepageResourceMetrics(props: {
+  className?: string;
+  metricsLabel: string;
+  summary: ReturnType<typeof aggregateMetrics>;
+}) {
+  return (
+    <div
+      className={props.className ? `homepageSystemMetrics ${props.className}` : "homepageSystemMetrics"}
+      aria-label={props.metricsLabel}
+    >
+      <DashboardMetric
+        icon={<Cpu />}
+        value={formatPercent(props.summary.cpu)}
+        label="CPU"
+      />
+      <DashboardMetric
+        icon={<MemoryStick />}
+        value={formatBytes(props.summary.memory)}
+        label="MEM"
+      />
+      <DashboardMetric
+        icon={<Download />}
+        value={formatRate(props.summary.rx)}
+        label="RX"
+      />
+      <DashboardMetric
+        icon={<Upload />}
+        value={formatRate(props.summary.tx)}
+        label="TX"
+      />
+    </div>
+  );
+}
+
+function HomepageSearchForm(props: {
+  searchDraft: string;
+  autoFocus?: boolean;
+  onSearchDraftChange: (value: string) => void;
+  onApplySearch: () => void;
+  onEscape?: () => void;
+}) {
+  return (
+    <form
+      className="homepageOverviewSearchForm"
+      onSubmit={(event) => {
+        event.preventDefault();
+        props.onApplySearch();
+      }}
+    >
+      <div className="homepageOverviewSearchShell">
+        <Input
+          autoFocus={props.autoFocus}
+          className="input homepageOverviewSearchInput"
+          name="overview-search"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") props.onEscape?.();
+          }}
+          onChange={(event) => props.onSearchDraftChange(event.target.value)}
+          placeholder="Search..."
+          value={props.searchDraft}
+        />
+      </div>
+    </form>
+  );
+}
+
+function HomepageClockBlock(props: {
+  className?: string;
+  clockLabel: string;
+  now: Date;
+}) {
+  return (
+    <div
+      className={props.className ? `homepageClock ${props.className}` : "homepageClock"}
+      aria-label={props.clockLabel}
+    >
+      <Clock3 className="homepageClockIcon" aria-hidden="true" />
+      <span>{formatClock(props.now)}</span>
+      <span className="homepageClockZone">{formatGmtOffset(props.now)}</span>
+    </div>
+  );
+}
+
+function HomepageTopStrip(props: {
+  className?: string;
+  metricsLabel: string;
+  clockLabel: string;
+  summary: ReturnType<typeof aggregateMetrics>;
+  now: Date;
+  showClock?: boolean;
+}) {
+  const className = props.className
+    ? `homepageTopStrip ${props.className}`
+    : "homepageTopStrip";
+
+  return (
+    <div className={className}>
+      <HomepageResourceMetrics metricsLabel={props.metricsLabel} summary={props.summary} />
+      {props.showClock === false ? null : (
+        <HomepageClockBlock clockLabel={props.clockLabel} now={props.now} />
+      )}
+    </div>
+  );
+}
+
+function HomepageHeaderContent(props: {
+  metricsLabel: string;
+  summary: ReturnType<typeof aggregateMetrics>;
+  searchDraft: string;
+  searchOpen: boolean;
+  onSearchDraftChange: (value: string) => void;
+  onApplySearch: () => void;
+  onToggleSearch: () => void;
+  onCloseSearch: () => void;
+}) {
+  return (
+    <div className="homepageHeaderContent">
+      <HomepageResourceMetrics
+        className="homepageHeaderMetrics"
+        metricsLabel={props.metricsLabel}
+        summary={props.summary}
+      />
+      <div className="homepageHeaderSearch">
+        <div className="homepageHeaderSearchDesktop">
+          <HomepageSearchForm
+            searchDraft={props.searchDraft}
+            onSearchDraftChange={props.onSearchDraftChange}
+            onApplySearch={props.onApplySearch}
+          />
+        </div>
+        <button
+          type="button"
+          className="homepageHeaderSearchToggle"
+          aria-label={props.searchOpen ? "关闭搜索" : "打开搜索"}
+          aria-expanded={props.searchOpen}
+          onClick={props.onToggleSearch}
+        >
+          <Search size={19} strokeWidth={2.3} aria-hidden="true" />
+        </button>
+        {props.searchOpen ? (
+          <div className="homepageHeaderSearchPopover">
+            <HomepageSearchForm
+              autoFocus
+              searchDraft={props.searchDraft}
+              onSearchDraftChange={props.onSearchDraftChange}
+              onApplySearch={props.onApplySearch}
+              onEscape={props.onCloseSearch}
+            />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function HomepageSidebarClock(props: { now: Date }) {
+  return (
+    <div className="homepageSidebarClockPanel">
+      <div className="homepageSidebarClockLabel">当前时间</div>
+      <HomepageClockBlock
+        className="homepageSidebarClock"
+        clockLabel="侧边栏当前时间"
+        now={props.now}
+      />
+    </div>
+  );
+}
+
+function CardMetric(props: { value: string; label: string }) {
+  return (
+    <span className="homepageServiceMetric">
+      <span className="homepageServiceMetricValue">{props.value}</span>
+      <span className="homepageServiceMetricLabel">{props.label}</span>
+    </span>
+  );
+}
+
 export function OverviewPage(props: {
   onLastScanHint: (lastScan?: string) => void;
   onTopActions: (node: ReactNode) => void;
+  onTopbarContent: (node: ReactNode) => void;
+  onSidebarNavContent: (node: ReactNode) => void;
+  onMobileNavContent: (node: ReactNode) => void;
 }) {
-  const { onLastScanHint, onTopActions } = props;
+  const {
+    onLastScanHint,
+    onMobileNavContent,
+    onSidebarNavContent,
+    onTopActions,
+    onTopbarContent,
+  } =
+    props;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resourceError, setResourceError] = useState<string | null>(null);
   const [noticeCheckJobId, setNoticeCheckJobId] = useState<string | null>(null);
   const [stacks, setStacks] = useState<StackListItem[]>([]);
   const [details, setDetails] = useState<
     Record<string, StackDetail | undefined>
   >({});
+  const [resourceOverview, setResourceOverview] =
+    useState<ServiceResourceOverviewResponse | null>(null);
   const [search, setSearch] = useState("");
   const [searchDraft, setSearchDraft] = useState("");
-  const [searchBusy, setSearchBusy] = useState(false);
-  const searchBusyTimerRef = useRef<number | null>(null);
+  const [headerSearchOpen, setHeaderSearchOpen] = useState(false);
+  const [now, setNow] = useState(() => new Date());
 
   const applySearch = useCallback(() => {
-    if (searchBusyTimerRef.current != null) {
-      window.clearTimeout(searchBusyTimerRef.current);
-    }
-    setSearchBusy(true);
     setSearch(searchDraft);
-    searchBusyTimerRef.current = window.setTimeout(() => {
-      setSearchBusy(false);
-      searchBusyTimerRef.current = null;
-    }, 240);
   }, [searchDraft]);
+  const applyHeaderSearch = useCallback(() => {
+    applySearch();
+    setHeaderSearchOpen(false);
+  }, [applySearch]);
 
   useEffect(() => {
-    return () => {
-      if (searchBusyTimerRef.current != null) {
-        window.clearTimeout(searchBusyTimerRef.current);
-      }
-    };
+    const timer = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const refresh = useCallback(async () => {
-    const nextStacks = await listStacks();
+    const [nextStacks, metricsResult] = await Promise.all([
+      listStacks(),
+      getServiceResourceUsageOverview("1h").then(
+        (value) => ({ ok: true, value }) as const,
+        (error: unknown) => ({ ok: false, error }) as const,
+      ),
+    ]);
     const maxLastScan = nextStacks
       .map((item) => item.lastCheckAt)
       .sort()
       .at(-1);
     onLastScanHint(maxLastScan);
     setStacks(nextStacks);
+
+    if (metricsResult.ok) {
+      setResourceOverview(metricsResult.value);
+      setResourceError(null);
+    } else {
+      setResourceOverview(null);
+      setResourceError(
+        metricsResult.error instanceof Error
+          ? metricsResult.error.message
+          : String(metricsResult.error),
+      );
+    }
+
     const nextDetails = await Promise.all(
       nextStacks.map(async (stack) => {
         try {
@@ -209,14 +530,8 @@ export function OverviewPage(props: {
             })();
           }}
         >
-          刷新
-        </Button>
-        <Button
-          variant="ghost"
-          disabled={busy}
-          onClick={() => navigate({ name: "services" })}
-        >
-          运维大盘
+          <RefreshCw className="homepageTopActionIcon" aria-hidden="true" />
+          <span className="homepageTopActionLabel">刷新</span>
         </Button>
         <Button
           variant="primary"
@@ -256,7 +571,8 @@ export function OverviewPage(props: {
             })();
           }}
         >
-          立即扫描
+          <ScanSearch className="homepageTopActionIcon" aria-hidden="true" />
+          <span className="homepageTopActionLabel">立即扫描</span>
         </Button>
       </>,
     );
@@ -323,100 +639,170 @@ export function OverviewPage(props: {
       }))
       .sort((left, right) => left.groupName.localeCompare(right.groupName));
   }, [filteredCards]);
+  const metricsByServiceId = useMemo(
+    () => metricMap(resourceOverview),
+    [resourceOverview],
+  );
+  const summary = useMemo(
+    () => aggregateMetrics(resourceOverview?.services ?? []),
+    [resourceOverview],
+  );
+
+  const topbarContent = useMemo(
+    () => (
+      <HomepageHeaderContent
+        metricsLabel="资源摘要"
+        summary={summary}
+        searchDraft={searchDraft}
+        searchOpen={headerSearchOpen}
+        onSearchDraftChange={setSearchDraft}
+        onApplySearch={applyHeaderSearch}
+        onToggleSearch={() => setHeaderSearchOpen((value) => !value)}
+        onCloseSearch={() => setHeaderSearchOpen(false)}
+      />
+    ),
+    [applyHeaderSearch, headerSearchOpen, searchDraft, summary],
+  );
+  const sidebarNavContent = useMemo(
+    () => <HomepageSidebarClock now={now} />,
+    [now],
+  );
+  const mobileNavContent = useMemo(
+    () => (
+      <div className="homepageDrawerNavControls">
+        <div className="homepageDrawerSearchSlot">
+          <HomepageSearchForm
+            searchDraft={searchDraft}
+            onSearchDraftChange={setSearchDraft}
+            onApplySearch={applySearch}
+          />
+        </div>
+        <div className="homepageDrawerBottomSummary">
+          <HomepageResourceMetrics metricsLabel="菜单资源摘要" summary={summary} />
+          <HomepageClockBlock clockLabel="菜单当前时间" now={now} />
+        </div>
+      </div>
+    ),
+    [applySearch, now, searchDraft, summary],
+  );
+
+  useEffect(() => {
+    onTopbarContent(topbarContent);
+  }, [onTopbarContent, topbarContent]);
+
+  useEffect(() => {
+    onSidebarNavContent(sidebarNavContent);
+  }, [onSidebarNavContent, sidebarNavContent]);
+
+  useEffect(() => {
+    onMobileNavContent(mobileNavContent);
+  }, [mobileNavContent, onMobileNavContent]);
+
+  useEffect(() => {
+    return () => {
+      onTopbarContent(null);
+      onSidebarNavContent(null);
+      onMobileNavContent(null);
+    };
+  }, [onMobileNavContent, onSidebarNavContent, onTopbarContent]);
 
   return (
-    <div className="page">
-      <div className="homepageOverviewControls">
-        <div className="homepageOverviewSearchForm">
-          <div className="homepageOverviewSearchShell">
-            <Input
-              className="input homepageOverviewSearchInput"
-              onChange={(event) => setSearchDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  applySearch();
-                }
-              }}
-              placeholder="搜索分组 / 服务 / 描述 / 镜像"
-              value={searchDraft}
-            />
-            <Button
-              className="homepageOverviewSearchButton"
-              onClick={applySearch}
-              title="搜索"
-              variant="primary"
-            >
-              <span className="btnInlineContent homepageOverviewSearchButtonContent">
-                <SearchIcon
-                  className={
-                    searchBusy
-                      ? "inlineIcon homepageOverviewSearchButtonIcon inlineIconSpinning"
-                      : "inlineIcon homepageOverviewSearchButtonIcon"
-                  }
-                />
-                <span className="homepageOverviewSearchButtonLabel">搜索</span>
-              </span>
-            </Button>
-          </div>
-        </div>
+    <div className="page homepageDashboardPage">
+      <div className="homepageMobileNavModule" aria-label="导航页快捷栏">
+        <HomepageTopStrip
+          className="homepageTopStripMobile"
+          metricsLabel="导航页资源摘要"
+          clockLabel="导航页当前时间"
+          summary={summary}
+          now={now}
+          showClock={false}
+        />
+      </div>
+
+      <div className="homepageStatusLine">
+        <span>
+          {summary.activeCount > 0
+            ? `${summary.activeCount} 个服务提供实时摘要`
+            : resourceOverview?.enabled === false
+              ? "资源监控已关闭"
+              : "等待资源样本"}
+        </span>
+        {resourceError ? <span>资源指标暂不可用：{resourceError}</span> : null}
       </div>
 
       {groupedCards.length === 0 ? (
-        <div className="card">
-          <div className="muted">当前搜索条件下没有可展示的服务入口。</div>
+        <div className="homepageEmptyState">
+          <Activity className="homepageEmptyIcon" aria-hidden="true" />
+          <div>当前搜索条件下没有可展示的服务入口。</div>
         </div>
       ) : (
-        groupedCards.map((group) => (
-          <section key={group.groupName} className="homepageGroupSection">
-            <div className="sectionRow homepageGroupHeader">
-              <div>
-                <div className="title">{group.groupName}</div>
-                <div className="muted">{group.cards.length} 个入口</div>
+        <div className="homepageDashboardGrid">
+          {groupedCards.map((group) => (
+            <section key={group.groupName} className="homepageDashboardGroup">
+              <div className="homepageDashboardGroupHeader">
+                <h2>{group.groupName}</h2>
+                <span>{group.cards.length}</span>
               </div>
-            </div>
-            <div className="homepageCardGrid">
-              {group.cards.map((card) => (
-                <a
-                  key={card.id}
-                  className={
-                    card.status !== "ok"
-                      ? "homepageServiceCard homepageServiceCardHasRibbon"
-                      : "homepageServiceCard"
-                  }
-                  href={card.href}
-                  rel="noopener noreferrer"
-                  target="_blank"
-                >
-                  {card.status !== "ok" ? (
-                    <span className={ribbonClassName(card.status)}>
-                      {statusLabel(card.status)}
-                    </span>
-                  ) : null}
-                  <div className="homepageServiceCardTop">
-                    <HomepageServiceIcon icon={card.icon} title={card.title} />
-                    <div className="homepageServiceCardIdentity">
-                      <div className="homepageServiceCardTitleRow">
-                        <div className="homepageServiceCardTitle">
-                          {card.title}
+              <div className="homepageDashboardStack">
+                {group.cards.map((card) => {
+                  const metric = metricsByServiceId.get(card.serviceId);
+                  const badge = serviceBadge(
+                    card,
+                    metric,
+                    resourceOverview,
+                    resourceError !== null || resourceOverview === null,
+                  );
+                  return (
+                    <a
+                      key={card.id}
+                      className="homepageServiceCard"
+                      href={card.href}
+                      rel="noopener noreferrer"
+                      target="_blank"
+                    >
+                      <span
+                        className={`homepageServiceStateBadge homepageServiceStateBadge-${badge.tone}`}
+                      >
+                        {badge.label}
+                      </span>
+                      <div className="homepageServiceCardTop">
+                        <HomepageServiceIcon icon={card.icon} title={card.title} />
+                        <div className="homepageServiceCardIdentity">
+                          <div className="homepageServiceCardTitle">
+                            {card.title}
+                          </div>
+                          <div className="muted homepageServiceCardDescription">
+                            {card.description}
+                          </div>
                         </div>
                       </div>
-                      <div className="muted homepageServiceCardDescription">
-                        {card.description}
-                      </div>
-                    </div>
-                  </div>
 
-                  <div className="homepageServiceCardMeta">
-                    <span className="muted homepageServiceCardMetaCompact">
-                      <Mono>{card.stackName}</Mono> · <Mono>{card.serviceName}</Mono>
-                    </span>
-                  </div>
-                </a>
-              ))}
-            </div>
-          </section>
-        ))
+                      <div className="homepageServiceMetricsGrid">
+                        <CardMetric
+                          value={formatPercent(metric?.cpuPercent)}
+                          label="CPU"
+                        />
+                        <CardMetric
+                          value={formatBytes(metric?.memUsedBytes)}
+                          label="MEM"
+                        />
+                        <CardMetric
+                          value={formatRate(metric?.netRxRateBps)}
+                          label="RX"
+                        />
+                        <CardMetric
+                          value={formatRate(metric?.netTxRateBps)}
+                          label="TX"
+                        />
+                      </div>
+
+                    </a>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
       )}
 
       {error ? <div className="error">{error}</div> : null}

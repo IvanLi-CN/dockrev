@@ -61,6 +61,15 @@ bun install
 bun run dev
 ```
 
+Pure front-end app demo:
+
+```bash
+cd web
+bun run demo:app
+```
+
+Open the Vite URL printed by the command at `/`. The demo uses browser-only mock data from `VITE_DOCKREV_DEMO=app`; it does not add a separate URL path.
+
 Storybook:
 
 ```bash
@@ -124,13 +133,14 @@ Environment variables (Supervisor):
 - `DOCKREV_SUPERVISOR_COMPOSE_BIN` (default `docker-compose`; set to `docker` to use the plugin)
 - `DOCKREV_SUPERVISOR_STATE_PATH` (default `./data/supervisor/self-upgrade.json`)
 
-## UI: scan / preview / apply
+## UI: navigation / scan / preview / apply
 
+- Navigation: Overview (`/`) is a Homepage-compatible service launcher with grouped cards, search, and live resource summaries.
+- Operations: Services (`/services`) is the update and recovery dashboard.
 - Scan: Overview/Services “立即扫描”
 - Preview (dry-run): Service detail “预览更新”
 - Apply (one-click):
-  - Overview: “更新全部”
-  - Overview/Services: “更新此 stack” + service row “执行更新”
+  - Services: “更新全部” / “更新此 stack” + service row “执行更新”
   - Service detail: “执行更新”
 - Dockrev self-upgrade:
   - For the Dockrev service, “升级 Dockrev” jumps to the supervisor console (disabled unless `GET {selfUpgradeBaseUrl}/self-upgrade` returns 2xx; a 401 means Forward Auth is missing or Dockrev authorization denied the request).

@@ -553,6 +553,73 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     })
   }
 
+  if (method === 'GET' && urlPath === '/api/services/resource-usage/overview') {
+    const parsedWindow = parseResourceWindow(url?.searchParams.get('window') ?? null)
+    const generatedAt = new Date().toISOString()
+    const staleAfterSeconds = Math.max(60, f.settings.resourceMonitor.sampleIntervalSeconds * 2)
+
+    if (scenario === 'overview-resource-monitor-error') {
+      return json({ error: { code: 'upstream_error', message: 'resource monitor unavailable' } }, { status: 503 })
+    }
+
+    if (!f.settings.resourceMonitor.enabled) {
+      return json({
+        enabled: false,
+        window: parsedWindow.window,
+        generatedAt,
+        staleAfterSeconds,
+        services: [],
+      })
+    }
+
+    const services = Object.values(f.stackById)
+      .filter((stack) => !stack.archived)
+      .flatMap((stack) => stack.services.filter((service) => !service.archived))
+      .map((service) => {
+        const samples =
+          scenario === 'service-detail-resource-monitor-empty'
+            ? []
+            : buildResourceHistorySamples(service.id, parsedWindow.seconds)
+        const shiftedSamples =
+          scenario === 'overview-resource-monitor-stale'
+            ? samples.map((sample) => ({
+                ...sample,
+                sampledAt: new Date(Date.parse(sample.sampledAt) - 10 * 60 * 1000).toISOString(),
+              }))
+            : samples
+        const latest = shiftedSamples[shiftedSamples.length - 1] ?? null
+        const previous = shiftedSamples[shiftedSamples.length - 2] ?? null
+        const prevTs = previous ? Date.parse(previous.sampledAt) : Number.NaN
+        const nextTs = latest ? Date.parse(latest.sampledAt) : Number.NaN
+        const seconds = Number.isFinite(prevTs) && Number.isFinite(nextTs) ? (nextTs - prevTs) / 1000 : 0
+        const rate = (prev: number | null | undefined, next: number | null | undefined) =>
+          seconds > 0 && prev != null && next != null && next >= prev ? (next - prev) / seconds : null
+        const sampledAtMs = latest ? Date.parse(latest.sampledAt) : Number.NaN
+        const stale = !Number.isFinite(sampledAtMs) || Date.now() - sampledAtMs > staleAfterSeconds * 1000
+        const zeroRateSummary = scenario === 'overview-resource-monitor-zero-rates' && latest !== null
+
+        return {
+          serviceId: service.id,
+          sampledAt: latest?.sampledAt ?? null,
+          cpuPercent: zeroRateSummary ? 25 : latest?.cpuPercent ?? null,
+          memUsedBytes: zeroRateSummary ? 0 : latest?.memUsedBytes ?? null,
+          memLimitBytes: latest?.memLimitBytes ?? null,
+          netRxRateBps: zeroRateSummary ? 0 : rate(previous?.netRxBytes, latest?.netRxBytes),
+          netTxRateBps: zeroRateSummary ? 0 : rate(previous?.netTxBytes, latest?.netTxBytes),
+          stale,
+          sampleCount: shiftedSamples.length,
+        }
+      })
+
+    return json({
+      enabled: true,
+      window: parsedWindow.window,
+      generatedAt,
+      staleAfterSeconds,
+      services,
+    })
+  }
+
   if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/resource-usage/events')) {
     const parts = urlPath.split('/').filter(Boolean)
     const serviceId = decodeURIComponent(parts[2] ?? '')

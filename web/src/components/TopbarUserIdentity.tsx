@@ -62,7 +62,11 @@ export function TopbarUserIdentity(props: { authIdentity?: TopbarAuthIdentity | 
         {...triggerProps}
       >
         <span className="topbarUserTriggerIcon" aria-hidden="true">
-          <UserRound size={14} strokeWidth={2.1} />
+          {authIdentity.avatarUrl ? (
+            <img className="topbarUserAvatarImage" src={authIdentity.avatarUrl} alt="" loading="lazy" decoding="async" />
+          ) : (
+            <UserRound size={14} strokeWidth={2.1} />
+          )}
         </span>
         <span className="topbarUserTriggerLabel">{authIdentity.triggerLabel}</span>
       </button>

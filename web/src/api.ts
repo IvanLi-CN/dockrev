@@ -22,6 +22,7 @@ import type {
   PutSettingsInput,
   ServiceResourceUsageWindow,
   ServiceResourceHistoryResponse,
+  ServiceResourceOverviewResponse,
   DeployCheckReportResponse,
   DeployWelcomeResponse,
   CleanupScanRequest,
@@ -87,6 +88,7 @@ export type AuthRequiredDetails = {
   allowedGroupMasked?: string | null
   currentUser?: string | null
   currentGroups?: string[]
+  avatarUrl?: string | null
 }
 
 export const AUTH_REQUIRED_EVENT = 'dockrev:auth-required'
@@ -125,6 +127,8 @@ export function asAuthRequiredDetails(details: unknown): AuthRequiredDetails | n
         ? (details.currentUser as string | null)
         : undefined,
     currentGroups,
+    avatarUrl:
+      typeof details.avatarUrl === 'string' || details.avatarUrl === null ? (details.avatarUrl as string | null) : undefined,
   }
 }
 
@@ -440,6 +444,14 @@ export async function getServiceResourceUsageHistory(
     `/api/services/${encodeURIComponent(serviceId)}/resource-usage/history?${query.toString()}`,
   )
   return (await resp.json()) as ServiceResourceHistoryResponse
+}
+
+export async function getServiceResourceUsageOverview(
+  window: ServiceResourceUsageWindow = '1h',
+): Promise<ServiceResourceOverviewResponse> {
+  const query = new URLSearchParams({ window })
+  const resp = await apiFetch(`/api/services/resource-usage/overview?${query.toString()}`)
+  return (await resp.json()) as ServiceResourceOverviewResponse
 }
 
 export function serviceResourceUsageEventsUrl(serviceId: string): string {

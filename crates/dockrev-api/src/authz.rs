@@ -14,6 +14,7 @@ pub struct RequestAuth {
     pub principal: String,
     pub user: Option<String>,
     pub groups: Vec<String>,
+    pub avatar_url: Option<String>,
     pub matched_by: AuthzMatchKind,
 }
 
@@ -23,6 +24,7 @@ pub struct AuthzFailure {
     pub message: &'static str,
     pub current_user: Option<String>,
     pub current_groups: Vec<String>,
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -41,6 +43,7 @@ pub fn authorize_request(
 ) -> Result<RequestAuth, AuthzFailure> {
     let user = read_header_value(headers, &config.auth_forward_header_name);
     let groups = read_groups(headers, &config.auth_group_header_name);
+    let avatar_url = read_avatar_url(headers);
     let allowlist_configured =
         config.auth_allowed_user.is_some() || config.auth_allowed_group.is_some();
 
@@ -51,6 +54,7 @@ pub fn authorize_request(
             principal: current_user.clone(),
             user: Some(current_user),
             groups,
+            avatar_url,
             matched_by: AuthzMatchKind::User,
         });
     }
@@ -64,6 +68,7 @@ pub fn authorize_request(
                 .unwrap_or_else(|| format!("group:{allowed_group}")),
             user,
             groups,
+            avatar_url,
             matched_by: AuthzMatchKind::Group,
         });
     }
@@ -74,6 +79,7 @@ pub fn authorize_request(
             principal,
             user,
             groups,
+            avatar_url,
             matched_by: AuthzMatchKind::AnonymousDev,
         });
     }
@@ -84,6 +90,7 @@ pub fn authorize_request(
             message: "authorization target is not configured",
             current_user: user,
             current_groups: groups,
+            avatar_url,
         });
     }
 
@@ -93,6 +100,7 @@ pub fn authorize_request(
             message: "forward auth identity is missing",
             current_user: None,
             current_groups: Vec::new(),
+            avatar_url,
         });
     }
 
@@ -101,6 +109,7 @@ pub fn authorize_request(
         message: "forward auth identity is not allowed",
         current_user: user,
         current_groups: groups,
+        avatar_url,
     })
 }
 
@@ -169,6 +178,37 @@ fn read_header_value(headers: &HeaderMap, name: &HeaderName) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn read_avatar_url(headers: &HeaderMap) -> Option<String> {
+    [
+        "x-forwarded-user-avatar",
+        "x-forwarded-user-picture",
+        "x-auth-request-user-avatar",
+        "x-auth-request-user-picture",
+        "x-forwarded-avatar",
+    ]
+    .iter()
+    .find_map(|name| {
+        let header_name = HeaderName::from_static(name);
+        read_header_value(headers, &header_name).and_then(normalize_avatar_url)
+    })
+}
+
+fn normalize_avatar_url(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.len() > 2048 || trimmed.chars().any(char::is_control) {
+        return None;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("https://")
+        || lower.starts_with("http://")
+        || (trimmed.starts_with('/') && !trimmed.starts_with("//"))
+    {
+        return Some(trimmed.to_string());
+    }
+    None
+}
+
 fn read_groups(headers: &HeaderMap, name: &HeaderName) -> Vec<String> {
     let Some(raw) = read_header_value(headers, name) else {
         return Vec::new();
@@ -221,11 +261,34 @@ mod tests {
         config.auth_allowed_user = Some("alice".to_string());
         let mut headers = HeaderMap::new();
         headers.insert("X-Forwarded-User", "alice".parse().unwrap());
+        headers.insert(
+            "X-Auth-Request-User-Avatar",
+            "https://example.test/avatar/alice.png".parse().unwrap(),
+        );
 
         let auth = authorize_request(&config, &headers).unwrap();
         assert_eq!(auth.principal, "alice");
         assert_eq!(auth.user.as_deref(), Some("alice"));
+        assert_eq!(
+            auth.avatar_url.as_deref(),
+            Some("https://example.test/avatar/alice.png")
+        );
         assert_eq!(auth.matched_by, AuthzMatchKind::User);
+    }
+
+    #[test]
+    fn ignores_unsafe_avatar_header_values() {
+        let mut config = config();
+        config.auth_allowed_user = Some("alice".to_string());
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Forwarded-User", "alice".parse().unwrap());
+        headers.insert(
+            "X-Forwarded-User-Avatar",
+            "javascript:alert(1)".parse().unwrap(),
+        );
+
+        let auth = authorize_request(&config, &headers).unwrap();
+        assert_eq!(auth.avatar_url, None);
     }
 
     #[test]

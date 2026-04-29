@@ -761,6 +761,172 @@ services:
 }
 
 #[tokio::test]
+async fn resource_usage_overview_returns_latest_samples_and_rates() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-resource-overview-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: nginx:1.27
+  worker:
+    image: busybox:1.36
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let services = state.db.list_services_for_check(&stack_id).await.unwrap();
+    let web_id = services
+        .iter()
+        .find(|svc| svc.name == "web")
+        .unwrap()
+        .id
+        .clone();
+    let worker_id = services
+        .iter()
+        .find(|svc| svc.name == "worker")
+        .unwrap()
+        .id
+        .clone();
+
+    let now = time::OffsetDateTime::now_utc();
+    let sampled_at_1 = (now - time::Duration::minutes(10))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let sampled_at_2 = (now - time::Duration::minutes(5))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+
+    state
+        .db
+        .insert_service_resource_samples(&[
+            crate::db::ServiceResourceSampleInput {
+                service_id: web_id.clone(),
+                sampled_at: sampled_at_1,
+                cpu_percent: 10.0,
+                mem_used_bytes: Some(128 * 1024 * 1024),
+                mem_limit_bytes: Some(1024 * 1024 * 1024),
+                net_rx_bytes: Some(1_000_000),
+                net_tx_bytes: Some(2_000_000),
+                block_read_bytes: None,
+                block_write_bytes: None,
+                pids: Some(5),
+                container_count: 1,
+            },
+            crate::db::ServiceResourceSampleInput {
+                service_id: web_id.clone(),
+                sampled_at: sampled_at_2,
+                cpu_percent: 15.5,
+                mem_used_bytes: Some(160 * 1024 * 1024),
+                mem_limit_bytes: Some(1024 * 1024 * 1024),
+                net_rx_bytes: Some(1_300_000),
+                net_tx_bytes: Some(2_600_000),
+                block_read_bytes: None,
+                block_write_bytes: None,
+                pids: Some(6),
+                container_count: 1,
+            },
+        ])
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/services/resource-usage/overview?window=1h")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let payload = response_json(resp).await;
+    assert_eq!(payload["enabled"].as_bool(), Some(true));
+    assert_eq!(payload["window"].as_str(), Some("1h"));
+    assert_eq!(payload["staleAfterSeconds"].as_u64(), Some(60));
+    let rows = payload["services"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+
+    let web = rows
+        .iter()
+        .find(|row| row["serviceId"].as_str() == Some(web_id.as_str()))
+        .unwrap();
+    assert_eq!(web["sampleCount"].as_u64(), Some(2));
+    assert_eq!(web["cpuPercent"].as_f64(), Some(15.5));
+    assert_eq!(web["memUsedBytes"].as_u64(), Some(160 * 1024 * 1024));
+    assert_eq!(web["stale"].as_bool(), Some(true));
+    assert_eq!(web["netRxRateBps"].as_f64(), Some(1000.0));
+    assert_eq!(web["netTxRateBps"].as_f64(), Some(2000.0));
+
+    let worker = rows
+        .iter()
+        .find(|row| row["serviceId"].as_str() == Some(worker_id.as_str()))
+        .unwrap();
+    assert_eq!(worker["sampleCount"].as_u64(), Some(0));
+    assert!(worker["sampledAt"].is_null());
+    assert_eq!(worker["stale"].as_bool(), Some(true));
+}
+
+#[tokio::test]
+async fn resource_usage_overview_degrades_when_monitor_disabled() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/settings")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let settings = response_json(resp).await;
+    let put = serde_json::json!({
+        "backup": settings["backup"],
+        "resourceMonitor": {
+            "enabled": false,
+            "sampleIntervalSeconds": 60
+        }
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/settings")
+                .header("content-type", "application/json")
+                .body(Body::from(put.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/services/resource-usage/overview?window=1h")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let payload = response_json(resp).await;
+    assert_eq!(payload["enabled"].as_bool(), Some(false));
+    assert_eq!(payload["window"].as_str(), Some("1h"));
+    assert_eq!(payload["staleAfterSeconds"].as_u64(), Some(120));
+    assert_eq!(payload["services"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
 async fn resource_usage_events_emits_error_when_runtime_stats_unavailable() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
@@ -1130,4 +1296,3 @@ services:
         .collect::<Vec<_>>();
     assert!(blocking.contains(&"feature.notifications.webhook"));
 }
-

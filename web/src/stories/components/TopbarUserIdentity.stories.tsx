@@ -129,6 +129,27 @@ export const StateGallery: Story = {
   },
 }
 
+export const AvatarImage: Story = {
+  args: {
+    authIdentity: buildTopbarAuthIdentityFromSettings({
+      allowAnonymousInDev: true,
+      allowedGroupMasked: 'o**s',
+      allowedUserMasked: 'al***ce',
+      authorizationMode: 'user_or_group',
+      avatarUrl: '/brand-mark.png',
+      currentGroups: ['o**s'],
+      currentUser: 'alice',
+      forwardHeaderName: 'X-Forwarded-User',
+      groupHeaderName: 'Remote-Groups',
+      matchedBy: 'user',
+    }),
+  },
+  play: async ({ canvasElement }) => {
+    const avatar = canvasElement.querySelector<HTMLImageElement>('.topbarUserAvatarImage')
+    expectStory(avatar?.getAttribute('src') === '/brand-mark.png', 'topbar user trigger should render avatar URL')
+  },
+}
+
 export const MobileCompact: Story = {
   args: {
     width: 390,

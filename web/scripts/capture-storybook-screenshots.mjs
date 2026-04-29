@@ -207,9 +207,12 @@ async function main() {
     deviceScaleFactor: 2,
   })
 
-  const openStory = async (id) => {
+  const openStory = async (id, viewport) => {
     const page = await context.newPage()
     page.on('dialog', (d) => d.accept().catch(() => {}))
+    if (viewport) {
+      await page.setViewportSize(viewport)
+    }
     await page.goto(iframeUrl(resolvedBaseUrl, id), { waitUntil: 'domcontentloaded' })
     await page.waitForFunction(
       () => {
@@ -325,20 +328,53 @@ async function main() {
     },
     {
       id: 'pages-overviewpage--default',
-      file: 'overview-default-confirm.png',
+      file: 'overview-homepage-v2-desktop.png',
+      viewport: { width: 1920, height: 1000 },
       setup: async (page) => {
-        const btn = page.getByRole('button', { name: '更新全部' })
-        await btn.waitFor({ timeout: STORY_TIMEOUT_MS })
-        await page.waitForFunction(
-          () => {
-            const el = Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.trim() === '更新全部')
-            return Boolean(el && !el.disabled)
-          },
-          null,
-          { timeout: STORY_TIMEOUT_MS }
-        )
-        await btn.click()
-        await page.getByText(/确认更新.*服务/).waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page
+          .locator('.topbarGlobalContent .homepageHeaderContent')
+          .waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('.homepageServiceCard').first().waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.evaluate(() => window.scrollTo(0, 0))
+      },
+      screenshot: async (page, filePath) => {
+        await page.screenshot({ path: filePath, fullPage: false })
+      },
+    },
+    {
+      id: 'pages-overviewpage--mobile-stacked',
+      file: 'overview-homepage-v2-mobile.png',
+      viewport: { width: 390, height: 900 },
+      setup: async (page) => {
+        await page
+          .locator('.homepageMobileNavModule .homepageTopStrip')
+          .waitFor({ state: 'visible', timeout: STORY_TIMEOUT_MS })
+        await page.locator('.homepageServiceCard').first().waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.evaluate(() => window.scrollTo(0, 0))
+      },
+      screenshot: async (page, filePath) => {
+        await page.screenshot({ path: filePath, fullPage: true })
+      },
+    },
+    {
+      id: 'pages-overviewpage--mobile-stacked',
+      file: 'overview-homepage-v2-mobile-menu.png',
+      viewport: { width: 390, height: 900 },
+      setup: async (page) => {
+        await page
+          .locator('.homepageMobileNavModule .homepageTopStrip')
+          .waitFor({ state: 'visible', timeout: STORY_TIMEOUT_MS })
+        await page.getByRole('button', { name: '打开主导航' }).click()
+        await page
+          .locator('#mobileDockrevMenu .mobileMenuEmbeddedContent .homepageDrawerSearchSlot')
+          .waitFor({ state: 'visible', timeout: STORY_TIMEOUT_MS })
+        await page
+          .locator('#mobileDockrevMenu .mobileMenuEmbeddedContent .homepageDrawerBottomSummary')
+          .waitFor({ state: 'visible', timeout: STORY_TIMEOUT_MS })
+      },
+      screenshot: async (page, filePath) => {
+        const el = page.locator('#mobileDockrevMenu')
+        await el.screenshot({ path: filePath })
       },
     },
     {
@@ -346,24 +382,11 @@ async function main() {
       file: 'services-dashboard.png',
       setup: async () => {},
     },
-    {
-      id: 'pages-servicespage--status-badge-layout',
-      file: 'services-status-badge-layout.png',
-      setup: async () => {},
-      screenshot: async (page, filePath) => {
-        const row = page
-          .locator('.rowLine')
-          .filter({ has: page.locator('.discoveryHistoryTriggerCompact') })
-          .first()
-        await row.waitFor({ timeout: STORY_TIMEOUT_MS })
-        await row.screenshot({ path: filePath })
-      },
-    },
   ]
 
   try {
     for (const s of shots) {
-      const page = await openStory(s.id)
+      const page = await openStory(s.id, s.viewport)
       try {
         await s.setup(page)
         await page.waitForTimeout(250)
