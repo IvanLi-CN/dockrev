@@ -19,6 +19,7 @@ import type {
   ServiceRollbackTargetResponse,
   ServiceSettings,
   SettingsResponse,
+  StackSettings,
   StackDetail,
   StackListItem,
   GitHubReleaseAuthMode,
@@ -338,6 +339,7 @@ export type Fixture = {
   githubPackagesSettings: GitHubPackagesSettingsResponse
   githubPackagesRepos: GitHubPackagesRepo[]
   serviceSettingsById: Record<string, ServiceSettings>
+  stackSettingsById: Record<string, StackSettings>
   rollbackTargetByServiceId: Record<string, ServiceRollbackTargetResponse>
   repoLinkInferenceByServiceId: Record<string, ServiceRepoLinkInferenceResponse>
   deployCheckReport: DeployCheckReportResponse

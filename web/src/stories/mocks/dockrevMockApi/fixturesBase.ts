@@ -23,6 +23,7 @@ export function baseEmpty(): Fixture {
     githubPackagesSettings: makeDefaultGitHubPackagesSettings(),
     githubPackagesRepos: [],
     serviceSettingsById: {},
+    stackSettingsById: {},
     rollbackTargetByServiceId: {},
     repoLinkInferenceByServiceId: {},
     deployCheckReport: makeDefaultDeployCheckReport(),
@@ -172,6 +173,31 @@ export function buildDashboardDemo(): Fixture {
 
   f.stacks = [prodListItem, infraListItem]
   f.stackById = { [prodStackId]: prodDetail, [infraStackId]: infraDetail }
+  f.stackSettingsById = {
+    [prodStackId]: {
+      autoUpdatePolicy: {
+        mode: 'override',
+        enabled: true,
+        rules: [
+          {
+            id: 'stable-semver',
+            name: 'Stable semver',
+            enabled: true,
+            matcher: { type: 'semver', pattern: '>=5.2.0, <6.0.0' },
+            action: 'delayed',
+            delay: { minAgeSeconds: 3600, minVersionLag: 2 },
+          },
+        ],
+      },
+    },
+    [infraStackId]: {
+      autoUpdatePolicy: {
+        mode: 'override',
+        enabled: false,
+        rules: [],
+      },
+    },
+  }
   f.ignores = [ignoreRule]
   f.serviceSettingsById = {
     [serviceProdApi.id]: serviceProdApi.settings,

@@ -69,6 +69,7 @@ pub struct ServiceSettingsResponse {
     pub auto_rollback: bool,
     pub backup_targets: BackupTargetOverrides,
     pub repo_url: Option<String>,
+    pub auto_update_policy: AutoUpdatePolicy,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -77,10 +78,30 @@ pub struct ServiceSettingsRequest {
     pub auto_rollback: bool,
     pub backup_targets: BackupTargetOverrides,
     pub repo_url: Option<Option<String>>,
+    #[serde(default)]
+    pub auto_update_policy: Option<AutoUpdatePolicy>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PutServiceSettingsResponse {
+    pub ok: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackSettingsResponse {
+    pub auto_update_policy: AutoUpdatePolicy,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackSettingsRequest {
+    pub auto_update_policy: AutoUpdatePolicy,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PutStackSettingsResponse {
     pub ok: bool,
 }

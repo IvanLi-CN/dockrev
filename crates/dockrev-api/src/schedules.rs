@@ -3,12 +3,11 @@ use std::{str::FromStr, sync::Arc, time::Duration};
 use anyhow::Context as _;
 use chrono::Local;
 use cron::Schedule;
-use serde_json::json;
 
 use crate::{
     api,
     api::types::{JobLogLine, JobRecord, JobScope, JobType},
-    ghcr_webhook_jobs, ids, notify, registry,
+    ghcr_webhook_jobs, ids, registry,
     state::AppState,
 };
 
@@ -194,65 +193,16 @@ async fn trigger_scheduled_check(state: Arc<AppState>) -> anyhow::Result<()> {
                 run_started_at.clone()
             }
         };
-        match outcome {
-            Ok(summary) => {
-                if let Err(e) = run_state
-                    .db
-                    .finish_job(&run_check_id, "success", &finished_at, &summary)
-                    .await
-                {
-                    tracing::error!(job_id = %run_check_id, error = %e, "failed to finish check job");
-                } else {
-                    let discovered_services = notify::extract_new_versions_discovered(&summary);
-                    if !discovered_services.is_empty() {
-                        let services_checked = summary
-                            .get("servicesChecked")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or_default()
-                            .min(u32::MAX as u64)
-                            as u32;
-                        let notify_state = run_state.clone();
-                        let notify_job_id = run_check_id.clone();
-                        let notify_finished_at = finished_at.clone();
-                        tokio::spawn(async move {
-                            let _ = notify::notify_new_versions_discovered(
-                                notify_state.as_ref(),
-                                &notify_job_id,
-                                "schedule",
-                                &notify_finished_at,
-                                services_checked,
-                                &discovered_services,
-                            )
-                            .await;
-                        });
-                    }
-                }
-            }
-            Err(e) => {
-                if let Err(err) = run_state
-                    .db
-                    .insert_job_log(
-                        &run_check_id,
-                        &JobLogLine {
-                            ts: finished_at.clone(),
-                            level: "error".to_string(),
-                            msg: format!("check failed: {e:?}"),
-                        },
-                    )
-                    .await
-                {
-                    tracing::warn!(job_id = %run_check_id, error = %err, "failed to insert check failure log");
-                }
-                let summary = json!({"error": format!("{e:?}")});
-                if let Err(err) = run_state
-                    .db
-                    .finish_job(&run_check_id, "failed", &finished_at, &summary)
-                    .await
-                {
-                    tracing::error!(job_id = %run_check_id, error = %err, "failed to finish failed check job");
-                }
-            }
-        }
+        api::complete_check_job(
+            &run_state,
+            &run_check_id,
+            "schedule",
+            &finished_at,
+            outcome,
+            "check failed",
+            None,
+        )
+        .await;
     });
 
     Ok(())

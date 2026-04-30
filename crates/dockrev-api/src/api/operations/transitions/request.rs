@@ -185,7 +185,10 @@ pub(crate) async fn enqueue_update_job(
     );
     job.allow_arch_mismatch = req.allow_arch_mismatch;
     job.backup_mode = req.backup_mode.as_str().to_string();
-    job.summary_json = json!({ "mode": req.mode.as_str() });
+    job.summary_json = json!({
+        "mode": req.mode.as_str(),
+        "targets": &req.targets,
+    });
 
     let mut job_db = job.to_db();
     job_db.created_by = created_by;

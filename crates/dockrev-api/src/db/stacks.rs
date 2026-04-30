@@ -195,7 +195,7 @@ WHERE id = ?1
 	  repo_url,
 	  homepage_json,
 	  update_guard_json,
-	  archived
+	  services.archived
 	FROM services
 	WHERE stack_id = ?1
 	ORDER BY name ASC

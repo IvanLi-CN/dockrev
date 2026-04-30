@@ -7,6 +7,7 @@ use anyhow::Context as _;
 use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 use tokio_rusqlite::Connection;
 
+mod auto_update;
 mod backups;
 mod discovery;
 mod github_packages;
@@ -94,6 +95,50 @@ pub struct ServiceSnapshotTarget {
 pub struct StoredServiceSettings {
     pub settings: ServiceSettings,
     pub repo_url_auto_disabled: bool,
+    pub auto_update_policy: crate::api::types::AutoUpdatePolicy,
+}
+
+#[derive(Clone, Debug)]
+pub struct AutoUpdatePendingInput {
+    pub id: String,
+    pub policy_scope_type: String,
+    pub policy_scope_id: String,
+    pub rule_id: String,
+    pub stack_id: String,
+    pub service_id: String,
+    pub source_check_job_id: String,
+    pub candidate_tag: String,
+    pub candidate_display_tag: String,
+    pub candidate_digest: String,
+    pub current_display_tag: String,
+    pub first_seen_at: String,
+    pub due_at: String,
+    pub min_age_seconds: u32,
+    pub min_version_lag: u32,
+    pub summary_json: serde_json::Value,
+}
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub struct AutoUpdatePendingRow {
+    pub id: String,
+    pub policy_scope_type: String,
+    pub policy_scope_id: String,
+    pub rule_id: String,
+    pub stack_id: String,
+    pub service_id: String,
+    pub source_check_job_id: String,
+    pub candidate_tag: String,
+    pub candidate_display_tag: String,
+    pub candidate_digest: String,
+    pub current_display_tag: String,
+    pub first_seen_at: String,
+    pub due_at: String,
+    pub min_age_seconds: u32,
+    pub min_version_lag: u32,
+    pub status: String,
+    pub update_job_id: Option<String>,
+    pub summary_json: serde_json::Value,
 }
 
 #[derive(Clone, Debug)]

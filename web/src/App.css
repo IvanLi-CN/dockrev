@@ -4573,6 +4573,141 @@ html[data-theme='light'] .modalOverlay {
   flex: 1 1 auto;
 }
 
+.autoPolicyEditor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.autoPolicyTop,
+.autoPolicyControls,
+.autoPolicyRuleHead,
+.autoPolicyActions,
+.autoPolicyPreview,
+.autoPolicyInherited,
+.autoPolicySliderHead,
+.stackDetailHero,
+.stackServiceRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.autoPolicyTop,
+.stackDetailHero,
+.stackServiceRow {
+  justify-content: space-between;
+}
+
+.autoPolicyControls {
+  flex-wrap: wrap;
+}
+
+.autoPolicySwitchRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+}
+
+.autoPolicyInherited,
+.autoPolicyEmpty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.autoPolicyRuleList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.autoPolicyRule {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(15, 23, 42, 0.18);
+}
+
+.autoPolicyRuleName {
+  min-width: 160px;
+  flex: 1;
+}
+
+.autoPolicyRuleGrid,
+.autoPolicyDelayGrid {
+  display: grid;
+  grid-template-columns: 140px minmax(180px, 1fr) 130px;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.autoPolicyDelayGrid {
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+}
+
+.autoPolicyPattern {
+  min-width: 0;
+}
+
+.autoPolicySlider {
+  min-width: 0;
+}
+
+.autoPolicySlider input[type='range'] {
+  width: 100%;
+  accent-color: var(--color-primary);
+}
+
+.autoPolicySliderTicks {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.autoPolicyPreview {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.autoPolicyValidation {
+  color: var(--color-warning);
+  font-size: 12px;
+}
+
+.stackDetailHero {
+  margin-bottom: 16px;
+}
+
+.stackServiceList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.stackServiceRow {
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  padding-top: 8px;
+}
+
+@media (max-width: 760px) {
+  .autoPolicyRuleGrid,
+  .autoPolicyDelayGrid {
+    grid-template-columns: 1fr;
+  }
+  .autoPolicyTop,
+  .stackDetailHero,
+  .stackServiceRow {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 .svcBanner {
   border-radius: 14px;
   padding: 12px 14px;

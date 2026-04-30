@@ -562,6 +562,54 @@ CREATE INDEX IF NOT EXISTS idx_discovered_compose_projects_stack_id ON discovere
     Ok(())
 }
 
+fn ensure_auto_update_schema(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+CREATE TABLE IF NOT EXISTS auto_update_policies (
+  scope_type TEXT NOT NULL,
+  scope_id TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  rules_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (scope_type, scope_id)
+);
+CREATE INDEX IF NOT EXISTS idx_auto_update_policies_scope
+  ON auto_update_policies(scope_type, scope_id);
+
+CREATE TABLE IF NOT EXISTS auto_update_pending (
+  id TEXT PRIMARY KEY NOT NULL,
+  policy_scope_type TEXT NOT NULL,
+  policy_scope_id TEXT NOT NULL,
+  rule_id TEXT NOT NULL,
+  stack_id TEXT NOT NULL,
+  service_id TEXT NOT NULL,
+  source_check_job_id TEXT NOT NULL,
+  candidate_tag TEXT NOT NULL,
+  candidate_display_tag TEXT NOT NULL,
+  candidate_digest TEXT NOT NULL,
+  current_display_tag TEXT NOT NULL,
+  first_seen_at TEXT NOT NULL,
+  due_at TEXT NOT NULL,
+  min_age_seconds INTEGER NOT NULL,
+  min_version_lag INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  update_job_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  summary_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_auto_update_pending_active_candidate
+  ON auto_update_pending(service_id, rule_id, candidate_digest)
+  WHERE status IN ('pending', 'enqueuing', 'enqueued');
+CREATE INDEX IF NOT EXISTS idx_auto_update_pending_due
+  ON auto_update_pending(status, due_at);
+"#,
+    )?;
+    Ok(())
+}
+
 fn ensure_schema_migrations_table(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -584,6 +632,7 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     ensure_stack_archive_columns(conn)?;
     ensure_service_archive_columns(conn)?;
     ensure_discovery_schema(conn)?;
+    ensure_auto_update_schema(conn)?;
     ensure_github_packages_repos_webhook_columns(conn)?;
     ensure_github_packages_deliveries_columns(conn)?;
     ensure_github_packages_delivery_events_schema(conn)?;
@@ -1191,6 +1240,47 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_service_new_version_discoveries_unique_can
   );
 CREATE INDEX IF NOT EXISTS idx_service_new_version_discoveries_service_discovered_at
   ON service_new_version_discoveries(service_id, discovered_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS auto_update_policies (
+  scope_type TEXT NOT NULL,
+  scope_id TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  rules_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (scope_type, scope_id)
+);
+CREATE INDEX IF NOT EXISTS idx_auto_update_policies_scope
+  ON auto_update_policies(scope_type, scope_id);
+
+CREATE TABLE IF NOT EXISTS auto_update_pending (
+  id TEXT PRIMARY KEY NOT NULL,
+  policy_scope_type TEXT NOT NULL,
+  policy_scope_id TEXT NOT NULL,
+  rule_id TEXT NOT NULL,
+  stack_id TEXT NOT NULL,
+  service_id TEXT NOT NULL,
+  source_check_job_id TEXT NOT NULL,
+  candidate_tag TEXT NOT NULL,
+  candidate_display_tag TEXT NOT NULL,
+  candidate_digest TEXT NOT NULL,
+  current_display_tag TEXT NOT NULL,
+  first_seen_at TEXT NOT NULL,
+  due_at TEXT NOT NULL,
+  min_age_seconds INTEGER NOT NULL,
+  min_version_lag INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  update_job_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  summary_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_auto_update_pending_active_candidate
+  ON auto_update_pending(service_id, rule_id, candidate_digest)
+  WHERE status IN ('pending', 'enqueuing', 'enqueued');
+CREATE INDEX IF NOT EXISTS idx_auto_update_pending_due
+  ON auto_update_pending(status, due_at);
 
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY NOT NULL,

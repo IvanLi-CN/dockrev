@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ApiError, archiveService, createIgnore, getServiceRollbackTarget, getServiceSettings, getStack, listIgnores, newJobEventsSource, restoreService, triggerRuntimeScan, triggerServiceRollback, triggerUpdate, type IgnoreRule, type Service, type ServiceRollbackTargetResponse, type ServiceSettings, type StackDetail } from '../api'
+import { ApiError, archiveService, createIgnore, getServiceRollbackTarget, getServiceSettings, getStack, getStackSettings, listIgnores, newJobEventsSource, restoreService, triggerRuntimeScan, triggerServiceRollback, triggerUpdate, type IgnoreRule, type Service, type ServiceRollbackTargetResponse, type ServiceSettings, type StackDetail, type StackSettings } from '../api'
 import { readUpdateGuardBlockedReason } from '../aggregateUpdateGuard'
 import { ConfirmServiceVersionCell } from '../components/ConfirmServiceVersionCell'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
@@ -31,6 +31,7 @@ export function useServiceDetailPageState(props: {
   const [stack, setStack] = useState<StackDetail | null>(null)
   const [service, setService] = useState<Service | null>(null)
   const [settings, setSettings] = useState<ServiceSettings | null>(null)
+  const [stackSettings, setStackSettings] = useState<StackSettings | null>(null)
   const [rules, setRules] = useState<IgnoreRule[]>([])
   const [busy, setBusy] = useState(false)
   const [repoInferBusy, setRepoInferBusy] = useState(false)
@@ -141,15 +142,21 @@ export function useServiceDetailPageState(props: {
         listIgnores(),
         svc && !isDockrevService(svc) ? getServiceRollbackTarget(serviceId) : Promise.resolve(null),
       ])
+      const stackSettingsRes = await getStackSettings(stackId).then(
+        (value) => ({ status: 'fulfilled' as const, value }),
+        (reason: unknown) => ({ status: 'rejected' as const, reason }),
+      )
       const errors: string[] = []
 
       if (settingsRes.status === 'rejected') errors.push(errorMessage(settingsRes.reason))
+      if (stackSettingsRes.status === 'rejected') errors.push(errorMessage(stackSettingsRes.reason))
       if (rulesRes.status === 'rejected') errors.push(errorMessage(rulesRes.reason))
       if (rollbackRes.status === 'rejected') errors.push(errorMessage(rollbackRes.reason))
 
       if (fullRefreshRequestId < latestAppliedFullRefreshRequestIdRef.current) return
 
       if (settingsRes.status === 'fulfilled') setSettings(settingsRes.value)
+      if (stackSettingsRes.status === 'fulfilled') setStackSettings(stackSettingsRes.value)
       if (rulesRes.status === 'fulfilled') {
         setRules(rulesRes.value.filter((r) => r.scope.serviceId === serviceId))
       }
@@ -1145,6 +1152,7 @@ export function useServiceDetailPageState(props: {
     setRepoInferBusy,
     setSettings,
     settings,
+    stackSettings,
     settingsBusy,
     stack,
     supervisorErrorAt,

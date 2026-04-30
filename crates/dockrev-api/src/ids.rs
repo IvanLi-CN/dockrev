@@ -31,3 +31,7 @@ pub fn new_backup_id() -> String {
 pub fn new_notification_id() -> String {
     format!("ntf_{}", Ulid::new())
 }
+
+pub fn new_auto_update_pending_id() -> String {
+    format!("aup_{}", Ulid::new())
+}

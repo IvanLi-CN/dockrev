@@ -656,6 +656,7 @@ pub(crate) async fn run_update_job(
                 let progress_json = serde_json::to_value(&progress)?;
                 let final_summary = json!({
                     "mode": job_kind.summary_mode(&req.mode),
+                    "targets": &req.targets,
                     "stacks": stack_summaries.clone(),
                     "progress": progress_json,
                 });
@@ -693,6 +694,7 @@ pub(crate) async fn run_update_job(
                     .await;
                 let final_summary = json!({
                     "mode": job_kind.summary_mode(&req.mode),
+                    "targets": &req.targets,
                     "error": err.to_string(),
                     "progress": progress_json,
                 });

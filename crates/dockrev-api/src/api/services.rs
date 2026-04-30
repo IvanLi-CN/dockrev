@@ -28,17 +28,18 @@ pub(super) async fn get_service_settings(
     let _user = require_user(&state, &headers).await?;
     let settings = state
         .db
-        .get_service_settings(&service_id)
+        .get_stored_service_settings(&service_id)
         .await
         .map_err(map_internal)?;
-    let Some(settings) = settings else {
+    let Some(stored) = settings else {
         return Err(ApiError::not_found("service not found"));
     };
 
     Ok(Json(ServiceSettingsResponse {
-        auto_rollback: settings.auto_rollback,
-        backup_targets: settings.backup_targets,
-        repo_url: settings.repo_url,
+        auto_rollback: stored.settings.auto_rollback,
+        backup_targets: stored.settings.backup_targets,
+        repo_url: stored.settings.repo_url,
+        auto_update_policy: stored.auto_update_policy,
     }))
 }
 
@@ -1273,6 +1274,11 @@ pub(super) async fn put_service_settings(
         backup_targets: req.backup_targets,
         repo_url,
     };
+    let auto_update_policy = req
+        .auto_update_policy
+        .clone()
+        .unwrap_or(current_settings.auto_update_policy.clone());
+    crate::auto_update::validate_policy_for_scope(&auto_update_policy, "service")?;
 
     let updated = state
         .db
@@ -1288,6 +1294,11 @@ pub(super) async fn put_service_settings(
     if !updated {
         return Err(ApiError::not_found("service not found"));
     }
+    state
+        .db
+        .put_auto_update_policy("service", &service_id, &auto_update_policy, &now)
+        .await
+        .map_err(map_internal)?;
 
     Ok(Json(PutServiceSettingsResponse { ok: true }))
 }

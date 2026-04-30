@@ -11,6 +11,7 @@ import { Button, IconButton, Input, Mono, Pill, RefreshIcon, SelectField, Switch
 import { isDockrevImageRef } from '../runtimeConfig'
 import { serviceRowStatus } from '../updateStatus'
 import { ServiceResourcePanel } from '../components/ServiceResourcePanel'
+import { AutoUpdatePolicyEditor, createDefaultAutoUpdatePolicy } from '../components/AutoUpdatePolicyEditor'
 import {
   ImageLinkIcons,
   RepositoryLinkIcon,
@@ -77,6 +78,7 @@ export function ServiceDetailPage(props: {
     settings,
     settingsBusy,
     stack,
+    stackSettings,
     supervisorErrorAt,
     supervisorState,
     tone,
@@ -179,9 +181,36 @@ export function ServiceDetailPage(props: {
 
       <ServiceResourcePanel serviceId={service.id} />
 
+      <div className="card" style={{ marginTop: 16 }}>
+        <AutoUpdatePolicyEditor
+          busy={settingsBusy}
+          onChange={(autoUpdatePolicy) => setSettings({ ...settings, autoUpdatePolicy })}
+          onSave={() => {
+            void (async () => {
+              setBusy(true)
+              setError(null)
+              try {
+                await putServiceSettings(props.serviceId, {
+                  ...settings,
+                  repoUrl: undefined,
+                })
+                await requestRefresh()
+              } catch (e: unknown) {
+                setError(errorMessage(e))
+              } finally {
+                setBusy(false)
+              }
+            })()
+          }}
+          policy={settings.autoUpdatePolicy ?? createDefaultAutoUpdatePolicy('inherit')}
+          scope="service"
+          stackPolicy={stackSettings?.autoUpdatePolicy ?? null}
+        />
+      </div>
+
       <div className="twoCol">
         <div className="card">
-          <div className="title">更新策略</div>
+          <div className="title">忽略规则</div>
 
           <div className="ruleList">
             {rules.map((r) => (

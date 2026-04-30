@@ -66,6 +66,11 @@ use ignore_rules::*;
 use jobs::*;
 use notifications::*;
 use operations::*;
+pub(crate) use operations::{
+    complete_check_job, enqueue_update_job, new_version_notification_reason,
+    normalize_digest_for_compare, summary_emits_new_version_notification,
+    summary_matched_service_ids,
+};
 use services::*;
 pub(crate) use stacks::needs_version_inference_for_tags;
 use stacks::*;
@@ -83,6 +88,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(list_stacks).post(register_stack_disabled),
         )
         .route("/api/stacks/{stack_id}", get(get_stack))
+        .route(
+            "/api/stacks/{stack_id}/settings",
+            get(get_stack_settings).put(put_stack_settings),
+        )
         .route("/api/stacks/{stack_id}/archive", post(archive_stack))
         .route("/api/stacks/{stack_id}/restore", post(restore_stack))
         .route("/api/services/{service_id}/archive", post(archive_service))
