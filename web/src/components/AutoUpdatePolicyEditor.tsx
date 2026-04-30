@@ -52,23 +52,28 @@ function presetIndex<T extends readonly { value: number }[]>(items: T, value: nu
   return index >= 0 ? index : 0
 }
 
-function timeLabel(value: number): string {
+export function autoUpdateTimeLabel(value: number): string {
   return AUTO_UPDATE_TIME_PRESETS[presetIndex(AUTO_UPDATE_TIME_PRESETS, value)]?.label ?? '立即'
 }
 
-function versionLabel(value: number): string {
+export function autoUpdateVersionLagLabel(value: number): string {
   return AUTO_UPDATE_VERSION_PRESETS[presetIndex(AUTO_UPDATE_VERSION_PRESETS, value)]?.label ?? '0'
 }
 
-function ruleSummary(rule: AutoUpdateRule): string {
+export function autoUpdateRuleSummary(rule: AutoUpdateRule): string {
   if (rule.action === 'immediate') return '命中后立即部署'
-  return `延迟 ${timeLabel(rule.delay.minAgeSeconds)}，并落后 ${versionLabel(rule.delay.minVersionLag)} 个匹配版本`
+  return `延迟 ${autoUpdateTimeLabel(rule.delay.minAgeSeconds)}，并落后 ${autoUpdateVersionLagLabel(rule.delay.minVersionLag)} 个匹配版本`
 }
 
-function policySummary(policy: AutoUpdatePolicy | null | undefined): string {
+export function autoUpdatePolicySummary(policy: AutoUpdatePolicy | null | undefined): string {
   if (!policy || !policy.enabled) return '未启用'
   const active = policy.rules.filter((rule) => rule.enabled).length
   return `${active}/${policy.rules.length} 条规则启用`
+}
+
+export function activeAutoUpdateRules(policy: AutoUpdatePolicy | null | undefined): AutoUpdateRule[] {
+  if (!policy || !policy.enabled) return []
+  return policy.rules.filter((rule) => rule.enabled)
 }
 
 function validationMessage(policy: AutoUpdatePolicy): string | null {
@@ -111,7 +116,7 @@ export function AutoUpdatePolicyEditor(props: {
           <div className="title">自动更新策略</div>
           <div className="muted">延迟门槛按时间和版本数同时计算。</div>
         </div>
-        <Pill tone={policy.enabled ? 'ok' : 'muted'}>{policySummary(policy)}</Pill>
+        <Pill tone={policy.enabled ? 'ok' : 'muted'}>{autoUpdatePolicySummary(policy)}</Pill>
       </div>
 
       <div className="autoPolicyControls">
@@ -141,7 +146,7 @@ export function AutoUpdatePolicyEditor(props: {
         {isService && effectiveMode === 'inherit' ? (
           <div className="autoPolicyInherited">
             <span>继承 Stack</span>
-            <Mono>{policySummary(props.stackPolicy)}</Mono>
+            <Mono>{autoUpdatePolicySummary(props.stackPolicy)}</Mono>
           </div>
         ) : null}
       </div>
@@ -231,7 +236,7 @@ export function AutoUpdatePolicyEditor(props: {
                 <div className="autoPolicyPreview">
                   <Mono>{rule.matcher.type}</Mono>
                   <span>{rule.matcher.pattern || '-'}</span>
-                  <span>{ruleSummary(rule)}</span>
+                  <span>{autoUpdateRuleSummary(rule)}</span>
                 </div>
               </div>
             ))}

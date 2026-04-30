@@ -17,7 +17,7 @@
 - 支持 `immediate` 与 `delayed` 两类动作；`delayed` 必须同时满足最早发现时间门槛与版本落后门槛。
 - 时间与版本数使用固定非线性档位，API 只存储规范值 `minAgeSeconds` 与 `minVersionLag`。
 - 自动执行只由定时检查与 GHCR webhook 检查触发，UI 手动扫描不得触发自动部署。
-- 在 Service 详情页和 Stack 详情页提供紧凑策略配置器、规则预览和 Storybook 视觉证据。
+- 在 Service 详情页和 Stack 详情页展示最终策略结果与最近三次更新记录；完整设置在独立响应式抽屉中完成，并提供 Storybook 视觉证据。
 
 ### Non-goals
 
@@ -33,7 +33,7 @@
 - API 数据类型、持久化 schema、迁移与校验器。
 - 自动策略匹配、延迟 pending 记录、定时轮询与自动 update job 入队。
 - Service settings 与 Stack settings API。
-- Service 详情页、Stack 详情页、Services/Operations Stack 分组入口。
+- Service 详情页、Stack 详情页、独立设置抽屉、Services/Operations Stack 分组入口。
 - Storybook stories、mock API、交互覆盖与视觉证据。
 
 ### Out of scope
@@ -118,8 +118,9 @@
 
 ### UI
 
-- Service 详情页展示当前模式、继承来源、规则列表和保存入口。
-- Stack 详情页展示 Stack 级策略配置和该 Stack 下服务列表。
+- Service 详情页展示当前最终自动更新结果、继承/覆盖/禁用来源、主规则摘要，以及最近三次影响该服务的 update job。
+- Stack 详情页展示当前 Stack 自动更新结果、主规则摘要、最近三次影响该 Stack 服务的 update job，以及该 Stack 下服务列表。
+- Service 与 Stack 的完整设置界面必须放在独立抽屉内：桌面端从右侧出现，移动端从底部出现。
 - Services/Operations 的 Stack 分组标题可进入 Stack 详情。
 - 非线性滑块必须显示档位 label，不使用线性数字输入作为主控件。
 
@@ -189,7 +190,7 @@
 - `cd web && bun run build`
 - `cd web && bun run build-storybook`
 - `cd web && bun run test-storybook`
-- Service and Stack policy configurators have Storybook states for inherited/override/disabled, nonlinear slider labels, delayed gate copy, invalid input display.
+- Service and Stack policy drawers have Storybook states for inherited/override/disabled, nonlinear slider labels, delayed gate copy, invalid input display, and recent update record summaries.
 
 ### Integration smoke
 
@@ -199,29 +200,42 @@
 
 - source_type: storybook_canvas
   target_program: mock-only
-  capture_scope: element
+  capture_scope: browser-viewport
   requested_viewport: 1440x900
   viewport_strategy: browser-resize-fallback
   sensitive_exclusion: N/A
   submission_gate: pending-owner-approval
   story_id_or_title: Pages/ServiceDetailPage/Auto Policy Override Delayed
-  state: Service override delayed policy
-  evidence_note: verifies Service policy override editing, delayed time/version gates, matcher controls, and nonlinear slider labels.
+  state: Service settings drawer desktop
+  evidence_note: verifies the Service detail summary opens the full settings drawer from the right on desktop, with auto policy, nonlinear sliders, rollback, repo, and backup settings inside the drawer.
 
-![Service auto update policy override delayed](./assets/service-auto-update-policy-override-delayed.png)
+![Service settings drawer desktop](./assets/service-auto-update-settings-drawer-desktop.png)
 
 - source_type: storybook_canvas
   target_program: mock-only
-  capture_scope: element
+  capture_scope: browser-viewport
+  requested_viewport: 390x860
+  viewport_strategy: browser-resize-fallback
+  sensitive_exclusion: N/A
+  submission_gate: pending-owner-approval
+  story_id_or_title: Pages/ServiceDetailPage/Auto Policy Override Delayed
+  state: Service settings drawer mobile
+  evidence_note: verifies the same Service settings drawer appears from the bottom on mobile and keeps nonlinear slider controls usable in a narrow viewport.
+
+![Service settings drawer mobile](./assets/service-auto-update-settings-drawer-mobile.png)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: browser-viewport
   requested_viewport: 1440x900
   viewport_strategy: browser-resize-fallback
   sensitive_exclusion: N/A
   submission_gate: pending-owner-approval
   story_id_or_title: Pages/StackDetailPage/Policy Enabled
-  state: Stack enabled delayed policy
-  evidence_note: verifies Stack policy editing, enabled policy summary, delayed time/version gates, and nonlinear slider labels.
+  state: Stack settings drawer desktop
+  evidence_note: verifies the Stack detail summary opens the full Stack policy drawer from the right on desktop with delayed time/version gates and matcher controls.
 
-![Stack auto update policy enabled](./assets/stack-auto-update-policy-enabled.png)
+![Stack settings drawer desktop](./assets/stack-auto-update-settings-drawer-desktop.png)
 
 ## Related PRs
 

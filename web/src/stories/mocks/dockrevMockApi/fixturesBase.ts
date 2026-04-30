@@ -248,7 +248,67 @@ export function buildDashboardDemo(): Fixture {
     summary: {},
   } satisfies JobListItem
 
-  f.jobs = [job1]
+  const recentAutoPolicyJob = {
+    id: 'job-auto-policy-api-5-2-3',
+    type: 'update',
+    scope: 'service',
+    stackId: prodStackId,
+    serviceId: serviceProdApi.id,
+    status: 'success',
+    createdBy: 'auto-policy',
+    reason: 'auto_policy',
+    createdAt: nowIso(-3_600_000),
+    startedAt: nowIso(-3_590_000),
+    finishedAt: nowIso(-3_480_000),
+    allowArchMismatch: false,
+    backupMode: 'inherit',
+    summary: {
+      targets: [{ serviceId: serviceProdApi.id, from: '5.2.1', to: '5.2.3' }],
+    },
+  } satisfies JobListItem
+
+  const recentWebhookJob = {
+    id: 'job-webhook-api-5-2-2',
+    type: 'update',
+    scope: 'service',
+    stackId: prodStackId,
+    serviceId: serviceProdApi.id,
+    status: 'success',
+    createdBy: 'ghcr-webhook',
+    reason: 'webhook',
+    createdAt: nowIso(-9_000_000),
+    startedAt: nowIso(-8_990_000),
+    finishedAt: nowIso(-8_880_000),
+    allowArchMismatch: false,
+    backupMode: 'inherit',
+    summary: {
+      targets: [{ serviceId: serviceProdApi.id, from: '5.2.0', to: '5.2.2' }],
+    },
+  } satisfies JobListItem
+
+  const recentStackJob = {
+    id: 'job-stack-prod-batch',
+    type: 'update',
+    scope: 'stack',
+    stackId: prodStackId,
+    serviceId: null,
+    status: 'failed',
+    createdBy: 'ivan',
+    reason: 'ui',
+    createdAt: nowIso(-18_000_000),
+    startedAt: nowIso(-17_990_000),
+    finishedAt: nowIso(-17_940_000),
+    allowArchMismatch: false,
+    backupMode: 'inherit',
+    summary: {
+      targets: [
+        { serviceId: serviceProdApi.id, from: '5.1.9', to: '5.2.0' },
+        { serviceId: serviceProdWeb.id, from: '5.1', to: '5.2' },
+      ],
+    },
+  } satisfies JobListItem
+
+  f.jobs = [job1, recentAutoPolicyJob, recentWebhookJob, recentStackJob]
   f.jobById = {
     [job1.id]: {
       ...job1,

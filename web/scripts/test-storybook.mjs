@@ -1979,6 +1979,11 @@ async function runInteractive({ baseUrl, browser }) {
       "pages-interactiveapp--repo-link-editing-flow",
     );
     try {
+      await page.getByRole("button", { name: "设置" }).click();
+      await page.getByText("服务设置", { exact: true }).waitFor({
+        timeout: 10_000,
+      });
+
       const repoInput = page.getByPlaceholder("https://github.com/owner/repo");
       await repoInput.waitFor({ timeout: 10_000 });
       await page
