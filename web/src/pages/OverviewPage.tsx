@@ -34,6 +34,12 @@ import { Button, Input, Mono } from "../ui";
 import { serviceRowStatus, statusLabel, type RowStatus } from "../updateStatus";
 import { usePageResumeRefresh } from "../usePageResumeRefresh";
 
+const HOMEPAGE_COLUMN_BREAKPOINTS = [
+  { query: "(max-width: 720px)", columns: 1 },
+  { query: "(max-width: 1160px)", columns: 2 },
+  { query: "(max-width: 1500px)", columns: 3 },
+] as const;
+
 type HomepageNavCard = {
   id: string;
   stackId: string;
@@ -53,6 +59,59 @@ type ServiceBadge = {
   label: string;
   tone: "running" | "healthy" | "stale" | "muted" | "updatable" | "hint" | "bad";
 };
+
+type HomepageCardGroup = {
+  groupName: string;
+  cards: HomepageNavCard[];
+};
+
+function currentHomepageColumnCount(): number {
+  if (typeof window === "undefined") return 4;
+  for (const breakpoint of HOMEPAGE_COLUMN_BREAKPOINTS) {
+    if (window.matchMedia(breakpoint.query).matches) return breakpoint.columns;
+  }
+  return 4;
+}
+
+function useHomepageColumnCount(): number {
+  const [columnCount, setColumnCount] = useState(currentHomepageColumnCount);
+
+  useEffect(() => {
+    const update = () => setColumnCount(currentHomepageColumnCount());
+    const queries = HOMEPAGE_COLUMN_BREAKPOINTS.map((breakpoint) =>
+      window.matchMedia(breakpoint.query),
+    );
+
+    update();
+    for (const query of queries) query.addEventListener("change", update);
+    return () => {
+      for (const query of queries) query.removeEventListener("change", update);
+    };
+  }, []);
+
+  return columnCount;
+}
+
+function balanceHomepageGroups(
+  groups: HomepageCardGroup[],
+  columnCount: number,
+): HomepageCardGroup[][] {
+  const safeColumnCount = Math.max(1, Math.min(4, Math.floor(columnCount)));
+  const columns = Array.from({ length: safeColumnCount }, () => ({
+    groups: [] as HomepageCardGroup[],
+    weight: 0,
+  }));
+
+  for (const group of groups) {
+    const target = columns.reduce((best, column) =>
+      column.weight < best.weight ? column : best,
+    );
+    target.groups.push(group);
+    target.weight += 1 + group.cards.length;
+  }
+
+  return columns.map((column) => column.groups).filter((column) => column.length > 0);
+}
 
 function normalizeHomepageHref(
   value: string | null | undefined,
@@ -289,6 +348,7 @@ function HomepageSearchForm(props: {
     >
       <div className="homepageOverviewSearchShell">
         <Input
+          aria-label="搜索服务入口"
           autoFocus={props.autoFocus}
           className="input homepageOverviewSearchInput"
           name="overview-search"
@@ -296,7 +356,8 @@ function HomepageSearchForm(props: {
             if (event.key === "Escape") props.onEscape?.();
           }}
           onChange={(event) => props.onSearchDraftChange(event.target.value)}
-          placeholder="Search..."
+          placeholder="搜索服务入口..."
+          type="search"
           value={props.searchDraft}
         />
       </div>
@@ -444,6 +505,7 @@ export function OverviewPage(props: {
   const [searchDraft, setSearchDraft] = useState("");
   const [headerSearchOpen, setHeaderSearchOpen] = useState(false);
   const [now, setNow] = useState(() => new Date());
+  const homepageColumnCount = useHomepageColumnCount();
 
   const applySearch = useCallback(() => {
     setSearch(searchDraft);
@@ -512,6 +574,7 @@ export function OverviewPage(props: {
     onTopActions(
       <>
         <Button
+          aria-label="刷新服务列表"
           variant="ghost"
           disabled={busy}
           onClick={() => {
@@ -534,6 +597,7 @@ export function OverviewPage(props: {
           <span className="homepageTopActionLabel">刷新</span>
         </Button>
         <Button
+          aria-label="立即扫描更新"
           variant="primary"
           disabled={busy}
           onClick={() => {
@@ -639,6 +703,10 @@ export function OverviewPage(props: {
       }))
       .sort((left, right) => left.groupName.localeCompare(right.groupName));
   }, [filteredCards]);
+  const balancedCardColumns = useMemo(
+    () => balanceHomepageGroups(groupedCards, homepageColumnCount),
+    [groupedCards, homepageColumnCount],
+  );
   const metricsByServiceId = useMemo(
     () => metricMap(resourceOverview),
     [resourceOverview],
@@ -708,6 +776,7 @@ export function OverviewPage(props: {
 
   return (
     <div className="page homepageDashboardPage">
+      <h1 className="srOnly">服务导航</h1>
       <div className="homepageMobileNavModule" aria-label="导航页快捷栏">
         <HomepageTopStrip
           className="homepageTopStripMobile"
@@ -736,71 +805,80 @@ export function OverviewPage(props: {
           <div>当前搜索条件下没有可展示的服务入口。</div>
         </div>
       ) : (
-        <div className="homepageDashboardGrid">
-          {groupedCards.map((group) => (
-            <section key={group.groupName} className="homepageDashboardGroup">
-              <div className="homepageDashboardGroupHeader">
-                <h2>{group.groupName}</h2>
-                <span>{group.cards.length}</span>
-              </div>
-              <div className="homepageDashboardStack">
-                {group.cards.map((card) => {
-                  const metric = metricsByServiceId.get(card.serviceId);
-                  const badge = serviceBadge(
-                    card,
-                    metric,
-                    resourceOverview,
-                    resourceError !== null || resourceOverview === null,
-                  );
-                  return (
-                    <a
-                      key={card.id}
-                      className="homepageServiceCard"
-                      href={card.href}
-                      rel="noopener noreferrer"
-                      target="_blank"
-                    >
-                      <span
-                        className={`homepageServiceStateBadge homepageServiceStateBadge-${badge.tone}`}
-                      >
-                        {badge.label}
-                      </span>
-                      <div className="homepageServiceCardTop">
-                        <HomepageServiceIcon icon={card.icon} title={card.title} />
-                        <div className="homepageServiceCardIdentity">
-                          <div className="homepageServiceCardTitle">
-                            {card.title}
+        <div
+          className="homepageDashboardGrid"
+          data-column-count={balancedCardColumns.length}
+        >
+          {balancedCardColumns.map((column, columnIndex) => (
+            <div
+              key={`homepage-column-${columnIndex}`}
+              className="homepageDashboardColumn"
+            >
+              {column.map((group) => (
+                <section key={group.groupName} className="homepageDashboardGroup">
+                  <div className="homepageDashboardGroupHeader">
+                    <h2>{group.groupName}</h2>
+                    <span>{group.cards.length}</span>
+                  </div>
+                  <div className="homepageDashboardStack">
+                    {group.cards.map((card) => {
+                      const metric = metricsByServiceId.get(card.serviceId);
+                      const badge = serviceBadge(
+                        card,
+                        metric,
+                        resourceOverview,
+                        resourceError !== null || resourceOverview === null,
+                      );
+                      return (
+                        <a
+                          key={card.id}
+                          className="homepageServiceCard"
+                          href={card.href}
+                          rel="noopener noreferrer"
+                          target="_blank"
+                        >
+                          <span
+                            className={`homepageServiceStateBadge homepageServiceStateBadge-${badge.tone}`}
+                          >
+                            {badge.label}
+                          </span>
+                          <div className="homepageServiceCardTop">
+                            <HomepageServiceIcon icon={card.icon} title={card.title} />
+                            <div className="homepageServiceCardIdentity">
+                              <div className="homepageServiceCardTitle">
+                                {card.title}
+                              </div>
+                              <div className="muted homepageServiceCardDescription">
+                                {card.description}
+                              </div>
+                            </div>
                           </div>
-                          <div className="muted homepageServiceCardDescription">
-                            {card.description}
+
+                          <div className="homepageServiceMetricsGrid">
+                            <CardMetric
+                              value={formatPercent(metric?.cpuPercent)}
+                              label="CPU"
+                            />
+                            <CardMetric
+                              value={formatBytes(metric?.memUsedBytes)}
+                              label="MEM"
+                            />
+                            <CardMetric
+                              value={formatRate(metric?.netRxRateBps)}
+                              label="RX"
+                            />
+                            <CardMetric
+                              value={formatRate(metric?.netTxRateBps)}
+                              label="TX"
+                            />
                           </div>
-                        </div>
-                      </div>
-
-                      <div className="homepageServiceMetricsGrid">
-                        <CardMetric
-                          value={formatPercent(metric?.cpuPercent)}
-                          label="CPU"
-                        />
-                        <CardMetric
-                          value={formatBytes(metric?.memUsedBytes)}
-                          label="MEM"
-                        />
-                        <CardMetric
-                          value={formatRate(metric?.netRxRateBps)}
-                          label="RX"
-                        />
-                        <CardMetric
-                          value={formatRate(metric?.netTxRateBps)}
-                          label="TX"
-                        />
-                      </div>
-
-                    </a>
-                  );
-                })}
-              </div>
-            </section>
+                        </a>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
+            </div>
           ))}
         </div>
       )}

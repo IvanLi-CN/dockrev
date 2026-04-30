@@ -457,7 +457,7 @@ async function runInteractive({ baseUrl, browser }) {
     const page = await openStory("pages-overviewpage--search-and-fallback");
     try {
       const search = page
-        .locator('.homepageOverviewSearchForm input[placeholder="Search..."]')
+        .locator('.homepageOverviewSearchForm input[aria-label="搜索服务入口"]')
         .first();
       await search.waitFor({ timeout: 10_000 });
       if ((await page.locator(".homepageOverviewSearchButton").count()) > 0) {
@@ -560,7 +560,7 @@ async function runInteractive({ baseUrl, browser }) {
         ".homepageMobileNavModule .homepageTopStrip",
       );
       await mobileModuleStrip.waitFor({ state: "visible", timeout: 10_000 });
-      if ((await mobileModuleStrip.getByPlaceholder("Search...").count()) > 0) {
+      if ((await mobileModuleStrip.getByRole("searchbox", { name: "搜索服务入口" }).count()) > 0) {
         throw new Error(
           "Expected mobile resource strip to keep search out of the metric row.",
         );
@@ -574,7 +574,7 @@ async function runInteractive({ baseUrl, browser }) {
         "#mobileDockrevMenu .mobileMenuEmbeddedContent .homepageDrawerSearchSlot",
       );
       await drawerSearch.waitFor({ state: "visible", timeout: 10_000 });
-      await drawerSearch.getByPlaceholder("Search...").waitFor({
+      await drawerSearch.getByRole("searchbox", { name: "搜索服务入口" }).waitFor({
         timeout: 10_000,
       });
       await page
@@ -659,8 +659,8 @@ async function runInteractive({ baseUrl, browser }) {
         const completed = fills[1];
         return {
           fillCount: fills.length,
-          plannedWidth: planned ? planned.style.width : null,
-          completedWidth: completed ? completed.style.width : null,
+          plannedTransform: planned ? planned.style.transform : null,
+          completedTransform: completed ? completed.style.transform : null,
         };
       });
 
@@ -668,9 +668,9 @@ async function runInteractive({ baseUrl, browser }) {
         throw new Error(
           `Expected at least 2 queue progress fill layers, got ${info.fillCount}`,
         );
-      if (info.plannedWidth === info.completedWidth) {
+      if (info.plannedTransform === info.completedTransform) {
         throw new Error(
-          `Expected queue planned/completed widths to differ for split progress, got planned=${String(info.plannedWidth)}, completed=${String(info.completedWidth)}`,
+          `Expected queue planned/completed transforms to differ for split progress, got planned=${String(info.plannedTransform)}, completed=${String(info.completedTransform)}`,
         );
       }
     } finally {
@@ -701,8 +701,8 @@ async function runInteractive({ baseUrl, browser }) {
         const completed = fills[1];
         return {
           fillCount: fills.length,
-          plannedWidth: planned ? planned.style.width : null,
-          completedWidth: completed ? completed.style.width : null,
+          plannedTransform: planned ? planned.style.transform : null,
+          completedTransform: completed ? completed.style.transform : null,
         };
       });
 
@@ -710,9 +710,12 @@ async function runInteractive({ baseUrl, browser }) {
         throw new Error(
           `Expected at least 2 queue progress fill layers, got ${info.fillCount}`,
         );
-      if (info.plannedWidth !== "40%" || info.completedWidth !== "40%") {
+      if (
+        info.plannedTransform !== "scaleX(0.4)" ||
+        info.completedTransform !== "scaleX(0.4)"
+      ) {
         throw new Error(
-          `Expected queue legacy fallback widths to match 40%, got planned=${String(info.plannedWidth)}, completed=${String(info.completedWidth)}`,
+          `Expected queue legacy fallback transforms to match 40%, got planned=${String(info.plannedTransform)}, completed=${String(info.completedTransform)}`,
         );
       }
     } finally {
@@ -743,8 +746,8 @@ async function runInteractive({ baseUrl, browser }) {
         const completed = fills[1];
         return {
           fillCount: fills.length,
-          plannedWidth: planned ? planned.style.width : null,
-          completedWidth: completed ? completed.style.width : null,
+          plannedTransform: planned ? planned.style.transform : null,
+          completedTransform: completed ? completed.style.transform : null,
         };
       });
 
@@ -752,9 +755,12 @@ async function runInteractive({ baseUrl, browser }) {
         throw new Error(
           `Expected at least 2 job detail progress fill layers, got ${info.fillCount}`,
         );
-      if (info.plannedWidth !== "90%" || info.completedWidth !== "70%") {
+      if (
+        info.plannedTransform !== "scaleX(0.9)" ||
+        info.completedTransform !== "scaleX(0.7)"
+      ) {
         throw new Error(
-          `Expected job detail split widths planned=90% completed=70%, got planned=${String(info.plannedWidth)}, completed=${String(info.completedWidth)}`,
+          `Expected job detail split transforms planned=90% completed=70%, got planned=${String(info.plannedTransform)}, completed=${String(info.completedTransform)}`,
         );
       }
     } finally {
@@ -787,8 +793,8 @@ async function runInteractive({ baseUrl, browser }) {
         const completed = fills[1];
         return {
           fillCount: fills.length,
-          plannedWidth: planned ? planned.style.width : null,
-          completedWidth: completed ? completed.style.width : null,
+          plannedTransform: planned ? planned.style.transform : null,
+          completedTransform: completed ? completed.style.transform : null,
         };
       });
 
@@ -796,9 +802,12 @@ async function runInteractive({ baseUrl, browser }) {
         throw new Error(
           `Expected at least 2 job detail progress fill layers, got ${info.fillCount}`,
         );
-      if (info.plannedWidth !== "40%" || info.completedWidth !== "40%") {
+      if (
+        info.plannedTransform !== "scaleX(0.4)" ||
+        info.completedTransform !== "scaleX(0.4)"
+      ) {
         throw new Error(
-          `Expected job detail legacy fallback widths to match 40%, got planned=${String(info.plannedWidth)}, completed=${String(info.completedWidth)}`,
+          `Expected job detail legacy fallback transforms to match 40%, got planned=${String(info.plannedTransform)}, completed=${String(info.completedTransform)}`,
         );
       }
 

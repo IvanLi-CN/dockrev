@@ -618,7 +618,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
                               ? 'queueProgressFill queueProgressFillPlanned queueProgressFillLayerPlanned queueProgressFillIndeterminate'
                               : 'queueProgressFill queueProgressFillPlanned queueProgressFillLayerPlanned'
                           }
-                          style={plannedPercent === null ? undefined : { width: `${plannedPercent}%` }}
+                          style={plannedPercent === null ? undefined : { transform: `scaleX(${plannedPercent / 100})` }}
                         />
                         <div
                           className={
@@ -626,7 +626,7 @@ export function QueuePage(props: { onTopActions: (node: React.ReactNode) => void
                               ? 'queueProgressFill queueProgressFillCompleted queueProgressFillLayerCompleted queueProgressFillIndeterminate'
                               : 'queueProgressFill queueProgressFillCompleted queueProgressFillLayerCompleted'
                           }
-                          style={completedPercent === null ? undefined : { width: `${completedPercent}%` }}
+                          style={completedPercent === null ? undefined : { transform: `scaleX(${completedPercent / 100})` }}
                         />
                       </div>
                     </div>

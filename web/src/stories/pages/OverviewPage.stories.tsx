@@ -138,6 +138,65 @@ function defaultHomepageOverrides() {
   };
 }
 
+function denseHomepageOverrides() {
+  return {
+    "svc-prod-api": {
+      homepage: {
+        group: "Brain",
+        name: "Acme API",
+        icon: "si-github",
+        href: "https://api.example.com",
+        description: "API gateway & auth",
+      },
+    },
+    "svc-prod-web": {
+      homepage: {
+        group: "Brain",
+        name: "Web Console",
+        icon: "mdi-monitor-dashboard",
+        href: "https://web.example.com",
+        description: "Primary admin console",
+      },
+    },
+    "svc-prod-worker": {
+      homepage: {
+        group: "Ops",
+        name: "Background Jobs",
+        icon: "mdi-cog-refresh-outline",
+        href: null,
+        description: "Queue workers & cron",
+      },
+    },
+    "svc-infra-loki": {
+      homepage: {
+        group: "Media",
+        name: "Loki",
+        icon: "mdi-file-document-multiple-outline",
+        href: "https://logs.example.com",
+        description: "Log aggregation",
+      },
+    },
+    "svc-infra-prom": {
+      homepage: {
+        group: "Tools",
+        name: "Prometheus",
+        icon: "prometheus.svg",
+        href: "https://metrics.example.com",
+        description: "Metrics & alerts",
+      },
+    },
+    "svc-infra-postgres": {
+      homepage: {
+        group: "Data",
+        name: "Postgres",
+        icon: "postgres.svg",
+        href: "https://db.example.com",
+        description: "Transactional database",
+      },
+    },
+  };
+}
+
 export const Default: Story = {
   parameters: {
     dockrevApiScenario: "dashboard-demo",
@@ -187,6 +246,24 @@ export const Default: Story = {
       "expected overview page to render an integrated search shell",
     );
     expectStory(
+      canvasElement.querySelector('h1.srOnly')?.textContent === "服务导航",
+      "expected overview page to expose a hidden page heading",
+    );
+    expectStory(
+      canvasElement.querySelector<HTMLInputElement>(
+        'input[type="search"][aria-label="搜索服务入口"]',
+      ),
+      "expected overview search input to expose a stable accessible label",
+    );
+    expectStory(
+      canvasElement.querySelector('button[aria-label="刷新服务列表"]'),
+      "expected refresh top action to keep an accessible name when labels collapse",
+    );
+    expectStory(
+      canvasElement.querySelector('button[aria-label="立即扫描更新"]'),
+      "expected scan top action to keep an accessible name when labels collapse",
+    );
+    expectStory(
       canvasElement.querySelector(".topbar .homepageHeaderSearchToggle"),
       "expected overview header search to provide a mobile collapsed button",
     );
@@ -212,6 +289,10 @@ export const Default: Story = {
     );
     expectStory(groups.length >= 2, "expected grouped Homepage columns");
     expectStory(
+      canvasElement.querySelectorAll(".homepageDashboardColumn").length >= 2,
+      "expected grouped Homepage sections to render through balanced columns",
+    );
+    expectStory(
       groups.some((group) => group.textContent?.includes("Brain")),
       "expected homepage.group to drive column headings",
     );
@@ -232,6 +313,43 @@ export const Default: Story = {
         "expected every card to reuse update status badge surface",
       );
     }
+  },
+};
+
+export const DenseBalancedGroups: Story = {
+  parameters: {
+    dockrevApiScenario: "dashboard-demo",
+    dockrevServiceOverridesById: denseHomepageOverrides(),
+    docs: {
+      description: {
+        story:
+          "Review this story at desktop width to verify short groups continue below taller groups without grid-row whitespace.",
+      },
+    },
+  },
+  render: renderOverview(),
+  play: async ({ canvasElement }) => {
+    await sleep(260);
+
+    const columns = Array.from(
+      canvasElement.querySelectorAll<HTMLElement>(".homepageDashboardColumn"),
+    );
+    expectStory(columns.length >= 3, "expected desktop overview to use multiple balanced columns");
+    expectStory(
+      columns.some(
+        (column) =>
+          column.querySelectorAll(".homepageDashboardGroup").length > 1,
+      ),
+      "expected at least one balanced column to contain stacked groups",
+    );
+    expectStory(
+      Array.from(canvasElement.querySelectorAll(".homepageDashboardGroupHeader")).some(
+        (group) =>
+          group.textContent?.includes("Brain") &&
+          group.textContent?.includes("2"),
+      ),
+      "expected the dense story to keep a visibly taller group for density review",
+    );
   },
 };
 
@@ -269,7 +387,7 @@ export const SearchAndFallback: Story = {
     );
 
     const searchInput = canvasElement.querySelector<HTMLInputElement>(
-      'input[placeholder="Search..."]',
+      'input[type="search"][aria-label="搜索服务入口"]',
     );
     expectStory(searchInput, "expected overview search input");
 
@@ -349,6 +467,44 @@ export const MetricsUnavailable: Story = {
     expectStory(
       badges.some((badge) => badge.textContent?.includes("NO DATA")),
       "expected metric fetch failures to degrade cards to NO DATA instead of HEALTHY",
+    );
+  },
+};
+
+export const LightContrast: Story = {
+  globals: {
+    backgrounds: { value: "light" },
+    theme: "light",
+  },
+  parameters: {
+    dockrevApiScenario: "dashboard-demo",
+    dockrevServiceOverridesById: defaultHomepageOverrides(),
+    docs: {
+      description: {
+        story:
+          "Light-theme evidence for primary actions, status text, and group-count badge contrast.",
+      },
+    },
+  },
+  render: renderOverview(),
+  play: async ({ canvasElement }) => {
+    await sleep(260);
+
+    expectStory(
+      document.documentElement.dataset.theme === "light",
+      "expected light contrast story to render with light theme tokens",
+    );
+    expectStory(
+      canvasElement.querySelector(".homepageStatusLine"),
+      "expected light contrast story to include the homepage status line",
+    );
+    expectStory(
+      canvasElement.querySelector(".homepageDashboardGroupHeader span"),
+      "expected light contrast story to expose group count badges",
+    );
+    expectStory(
+      canvasElement.querySelector('button[aria-label="立即扫描更新"]'),
+      "expected light contrast story to expose the primary scan action",
     );
   },
 };
@@ -520,9 +676,10 @@ export const IconKinds: Story = {
     );
     expectStory(
       findCard("Acme API")
-        ?.querySelector<HTMLImageElement>(".homepageServiceIconImage")
-        ?.src.includes("color=%23dbeafe") === true,
-      "expected simple-icons monochrome icons to use the default light tint",
+        ?.querySelector(".homepageServiceIcon")
+        ?.getAttribute("data-icon-src")
+        ?.includes("/api/homepage-icons/iconify/simple-icons/github.svg?color=%23dbeafe") === true,
+      "expected simple-icons monochrome icons to use the local proxy with the default light tint",
     );
     expectStory(
       findCard("Web Console")
@@ -532,9 +689,10 @@ export const IconKinds: Story = {
     );
     expectStory(
       findCard("Web Console")
-        ?.querySelector<HTMLImageElement>(".homepageServiceIconImage")
-        ?.src.includes("color=%23dbeafe") === true,
-      "expected mdi monochrome icons to use the default light tint",
+        ?.querySelector(".homepageServiceIcon")
+        ?.getAttribute("data-icon-src")
+        ?.includes("/api/homepage-icons/iconify/mdi/monitor-dashboard.svg?color=%23dbeafe") === true,
+      "expected mdi monochrome icons to use the local proxy with the default light tint",
     );
     expectStory(
       findCard("Loki")

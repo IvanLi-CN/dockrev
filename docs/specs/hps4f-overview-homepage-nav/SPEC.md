@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-04-13
-- Last: 2026-04-30
+- Last: 2026-05-01
 
 ## 背景 / 问题陈述
 
@@ -24,6 +24,7 @@
 - 在后端 discovery / compose 解析链中兼容 `homepage.group/name/icon/href/description` 五项标签，并通过现有 stack/service API 暴露给前端。
 - 为未配置 `homepage.*` 的服务提供兜底卡片，避免导航页漏项。
 - 保持现有更新状态、新版本发现次数、归档恢复等既有语义不变。
+- 修复 Homepage 导航页 audit 发现的信息密度、可访问性、light theme 对比度、图标可靠性与动画性能问题。
 
 ### Non-goals
 
@@ -33,6 +34,7 @@
 - 不伪造磁盘或主机级资源指标；顶部摘要只展示后端已有服务样本可聚合出的 CPU/MEM/RX/TX。
 - 不改动服务详情、任务队列、更新执行语义。
 - 不在本规格内执行 101 线上数据修复或批量补标签。
+- 不把任意外部绝对图标 URL 交给后端代理；只有 Dockrev 自己生成的 Iconify/selfhst/dashboard-icons 地址走白名单代理。
 
 ## 范围（Scope）
 
@@ -74,8 +76,13 @@
 - 服务 API 中的 `Service` 必须新增可空 `homepage` 元数据对象，包含 `group`、`name`、`icon`、`href`、`description` 五项。
 - compose 解析必须兼容 `labels` 的 YAML list / map 两种写法，并只提取 Homepage 基础五项标签。
 - 前端图标解析必须支持绝对 URL、`mdi-*`、`si-*`、`sh-*` 与 dashboard-icons 文件名；无法识别时回退默认图标。
+- Dockrev 生成的 `mdi-*`、`si-*`、`sh-*` 与 dashboard-icons 图标请求必须走同源白名单代理；代理仅允许固定 provider/path pattern、`svg|png|webp` 响应类型、短超时与缓存头。
+- 已失败的 Homepage 图标 URL 必须在前端会话中缓存，后续渲染直接走默认图标，避免重复慢失败。
 - 导航卡片上的新版本/状态标记必须复用现有 `serviceRowStatus` 与 `newVersionDiscoveryCount` 语义，不引入第二套状态口径。
-- 导航页主体必须使用多列分组布局，分组列内服务卡片纵向堆叠；移动端必须降级为单列。
+- 导航页主体必须使用平衡多列分组布局，按 `1 + cards.length` 估算分组高度分配到最短列，分组列内服务卡片纵向堆叠；移动端必须降级为单列。
+- 导航页搜索框必须使用 `type="search"` 且提供稳定可访问名称；窄屏顶部刷新、扫描、搜索与身份入口必须在标签隐藏后仍有 accessible name，触控目标不小于 44px。
+- Light theme 下主 CTA、状态行文字与分组数量徽标必须满足 WCAG AA 4.5:1 对比度目标。
+- 进度条动画不得通过 `width` transition 驱动；必须使用 transform 类动画并继续尊重 reduced-motion。
 - 导航卡片右上角状态徽标必须复用 `serviceRowStatus` 对更新相关状态的判断；资源样本状态仅用于 `RUNNING/STALE/NO DATA` 等摘要态，不替代更新口径。
 - 导航页顶部不再显示独立“服务导航”汇总卡片或旧 summary-card 布局。
 - Storybook 必须覆盖新 `/` 导航页与新 `/services` 运维页的主要状态与关键交互，但不作为 owner-facing demo 入口。
@@ -99,6 +106,7 @@
 - 用户进入 `/` 时，页面显示“以入口导航为主”的 Homepage-like 多列导航；服务按 `homepage.group` 分组，未标记服务按所属 `stack.name` 分组兜底。
 - `/` 顶部使用资源摘要、搜索栏、当前时间组成的一体化条；搜索栏过滤当前导航卡片，提交方式为输入框回车，不展示独立搜索按钮。不再额外展示独立汇总卡片或统计芯片区。
 - 每张导航卡片优先显示 `homepage.name`、`homepage.description`、`homepage.icon` 与 `homepage.href`；若对应字段缺失，则分别回退到 `service.name`、`image.ref`、默认图标与 Dockrev 服务详情页。
+- 每张导航卡片的内置图标源优先请求 `/api/homepage-icons/{provider}/{path}`，该接口只代理 Iconify、selfh.st icons 与 dashboard-icons 的受限路径；任意绝对 URL 仍由浏览器直连。
 - 每张导航卡片读取 `/api/services/resource-usage/overview?window=1h` 的聚合结果展示 CPU、内存、网络 RX/TX 速率；该接口按窗口返回最新样本与前一条样本推导出的网络速率。
 - 用户点击任一卡片时，Dockrev 在新标签页打开目标地址，不影响当前页面上下文。
 - 若某服务存在新版本候选、需确认、被阻止、架构不匹配等状态，导航卡片上必须展示对应标记；若存在 `newVersionDiscoveryCount`，则继续显示发现次数。
@@ -122,6 +130,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `Service.homepage` | HTTP API | internal | Modify | `./contracts/http-apis.md` | dockrev-api | web | stack/service 响应新增可空 Homepage 元数据 |
 | `GET /api/services/resource-usage/overview` | HTTP API | internal | New | `./contracts/http-apis.md` | dockrev-api | web | Overview 聚合最新资源摘要 |
+| `GET /api/homepage-icons/{provider}/{path}` | HTTP API | internal | New | `./contracts/http-apis.md` | dockrev-api | web | Homepage 内置图标源同源白名单代理 |
 | `services.homepage_json` | DB | internal | New | `./contracts/db.md` | dockrev-api | dockrev-api | 持久化 Homepage 五项基础元数据 |
 | `compose services.<name>.labels homepage.*` | File format | internal | Modify | `./contracts/file-formats.md` | dockrev-api | dockrev-api | 兼容 Homepage 标签 list/map 两种写法 |
 
@@ -141,7 +150,11 @@
 - Given 导航卡片不存在 `homepage.href`，When 用户点击卡片，Then Dockrev 内部服务详情页在新标签页打开。
 - Given 服务当前存在 `serviceRowStatus=blocked|confirm|archMismatch|newVersion` 等状态或 `newVersionDiscoveryCount>0`，When `/` 渲染导航卡片，Then 卡片展示与现有服务列表一致的状态标记与发现次数。
 - Given `homepage.icon` 为绝对 URL、`mdi-*`、`si-*`、`sh-*`、dashboard-icons 文件名或未知值，When `/` 渲染导航卡片，Then 图标分别按对应规则显示或回退默认图标。
+- Given `homepage.icon` 为 Dockrev 可解析的 `mdi-*`、`si-*`、`sh-*` 或 dashboard-icons 文件名，When `/` 渲染导航卡片，Then 图片请求使用 `/api/homepage-icons/...` 同源代理；若代理返回失败，Then 卡片立即回退默认图标且后续同 URL 不重复请求。
 - Given 用户打开 `/`，When 页面展示 Homepage 导航卡片，Then 页面使用顶部资源/搜索/时间条、多列分组、紧凑深色服务卡片，且移动端降级为单列。
+- Given 用户在桌面宽度打开 `/` 且存在长短不一的分组，When 导航页渲染完成，Then 分组按平衡列堆叠，短分组下方不再出现由 CSS grid 行高导致的大块空白。
+- Given 用户在 390px 宽度打开 `/`，When 顶部动作标签被视觉隐藏，Then 刷新、扫描、搜索按钮仍可被辅助技术读出，主要顶栏控件触控目标不小于 44px，页面没有横向滚动。
+- Given 用户在 light theme 打开 `/`，When 页面展示主 CTA、资源状态行与分组数量徽标，Then 这些文字与背景的对比度满足 WCAG AA 4.5:1。
 - Given 用户通过 `bun run demo:app` 打开 `/`，When 前端加载完成，Then 页面通过纯前端 mock API 渲染同一 Dockrev 应用体验，且不出现 Storybook shell。
 - Given `/api/services/resource-usage/overview?window=1h` 返回最新样本，When `/` 渲染导航卡片，Then 每张卡片显示真实 CPU/MEM/RX/TX。
 - Given 资源监控关闭、无样本或样本 stale，When `/` 渲染导航卡片，Then 服务入口仍展示，指标显示稳定占位或 stale 状态。
@@ -167,8 +180,8 @@
 - App demo: `/` under `VITE_DOCKREV_DEMO=app` must install a browser-only mock API before React renders; no alternate demo route or query trigger is allowed
 - Stories to add/update: `OverviewPage`, `ServicesPage`
 - Docs pages / state galleries to add/update: Overview grouped navigation gallery；Services operations-dashboard + archived restore gallery
-- `play` / interaction coverage to add/update: overview search + card target behavior；services candidate search + archived area preservation
-- Visual regression baseline changes (if any): new Homepage-style grouped navigation canvas/docs screenshots
+- `play` / interaction coverage to add/update: overview search + card target behavior；homepage accessibility names；dense balanced grouping；light contrast story；services candidate search + archived area preservation
+- Visual regression baseline changes (if any): new Homepage-style balanced grouped navigation canvas/docs screenshots
 
 ### Quality checks
 
@@ -177,6 +190,7 @@
 - `bun run --cwd web build`
 - `bun run --cwd web build-storybook`
 - `bun run --cwd web test-storybook -- --url <leased-port>`
+- `npx --yes impeccable detect --json --fast web/src`
 - App demo smoke: run Vite app with `VITE_DOCKREV_DEMO=app` and verify `/`
 
 ## 文档更新（Docs to Update）
@@ -193,17 +207,24 @@
 
 - source_type: app_demo
   story_id_or_title: `http://127.0.0.1:<leased-port>/`
-  state: `homepage v2 app demo desktop`
-  evidence_note: 验证 owner-facing demo 已切到 Vite app 入口，页面不依赖 Storybook shell，顶部展示资源摘要、搜索与当前时间，主体按 Homepage 分组形成多列，卡片展示 CPU/MEM/RX/TX 摘要与复用的更新状态徽标。
+  state: `homepage audit app demo desktop`
+  evidence_note: 验证 Vite app demo 已使用修复后的 Homepage 入口，桌面端为紧凑平衡列，顶部资源/搜索/时间条与 CTA 在 light theme 下保持可读对比度。
 
-  ![Homepage v2 纯前端桌面 demo](./assets/overview-homepage-v2-frontend-demo-desktop.png)
+  ![Homepage audit 纯前端桌面 demo](./assets/overview-homepage-audit-app-demo-desktop.png)
 
 - source_type: app_demo
   story_id_or_title: `http://127.0.0.1:<leased-port>/`
-  state: `homepage v2 app demo mobile hamburger menu`
+  state: `homepage audit app demo mobile`
+  evidence_note: 验证 390px app demo 无横向滚动，移动端主内容降级为单列，顶部动作保持 44px 触控目标与稳定 accessible name。
+
+  ![Homepage audit 纯前端移动 demo](./assets/overview-homepage-audit-app-demo-mobile.png)
+
+- source_type: app_demo
+  story_id_or_title: `http://127.0.0.1:<leased-port>/`
+  state: `homepage audit app demo mobile hamburger menu`
   evidence_note: 验证全站前端 demo 的移动端汉堡菜单中，搜索位于导航项上方，资源摘要与当前时间固定在抽屉底部，且无 live/story wrapper 残留。
 
-  ![Homepage v2 纯前端移动菜单 demo](./assets/overview-homepage-v2-frontend-demo-mobile-menu.png)
+  ![Homepage audit 纯前端移动菜单 demo](./assets/overview-homepage-audit-app-demo-mobile-menu.png)
 
 - source_type: storybook_canvas
   story_id_or_title: `pages-overviewpage--default`
@@ -213,15 +234,29 @@
   ![Homepage v2 桌面导航页](./assets/overview-homepage-v2-desktop.png)
 
 - source_type: storybook_canvas
+  story_id_or_title: `pages-overviewpage--dense-balanced-groups`
+  state: `homepage audit dense balanced grouping`
+  evidence_note: 验证长短分组不再被同一 CSS grid row 拉齐，桌面端分组按列连续堆叠，消除短分组下方的大块空白。
+
+  ![Homepage audit 平衡列导航页](./assets/overview-homepage-audit-balanced-desktop.png)
+
+- source_type: storybook_canvas
+  story_id_or_title: `pages-overviewpage--light-contrast`
+  state: `homepage audit light theme contrast`
+  evidence_note: 验证 light theme 下主 CTA、状态行文字与分组数量徽标使用修复后的对比度 token。
+
+  ![Homepage audit light theme 对比度](./assets/overview-homepage-audit-light-contrast.png)
+
+- source_type: storybook_canvas
   story_id_or_title: `pages-overviewpage--mobile-stacked`
-  state: `homepage v2 mobile single-column stack`
+  state: `homepage audit mobile single-column stack`
   evidence_note: 验证移动端页头不再承载资源/搜索/时间条；该条进入导航页内容模块，分组列降级为单列纵向堆叠。
 
   ![Homepage v2 移动端导航页](./assets/overview-homepage-v2-mobile.png)
 
 - source_type: storybook_canvas
   story_id_or_title: `pages-overviewpage--mobile-stacked`
-  state: `homepage v2 mobile hamburger menu`
+  state: `homepage audit mobile hamburger menu`
   evidence_note: 验证移动端汉堡菜单内同样提供资源摘要、搜索与当前时间，导航抽屉不依赖页头承载这些控件。
 
   ![Homepage v2 移动端汉堡菜单](./assets/overview-homepage-v2-mobile-menu.png)
@@ -253,6 +288,7 @@ None
 ## 变更记录（Change log）
 
 - 2026-04-13：创建规格，锁定页面职责互换、Homepage 五项标签合同、前端图标兼容范围与 fast-track PR-ready 收口条件。
+- 2026-05-01：追加 Homepage audit 修复：平衡列信息密度、可访问名称、44px 移动端触控、light theme 对比度、同源白名单图标代理与 transform 进度动画。
 
 ## 参考（References）
 

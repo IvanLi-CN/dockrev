@@ -60,3 +60,26 @@ Rules:
 - Network RX/TX rates are derived from the latest two monotonic byte counters in the requested window; missing or reset counters return `null`.
 - `stale` is true when the latest sample is older than `max(sample_interval_seconds * 2, 60)`.
 - When resource monitoring is disabled, the endpoint returns `200` with `enabled=false` and an empty `services` array so Overview can degrade without blocking navigation.
+
+## `GET /api/homepage-icons/{provider}/{path}`
+
+Proxies the built-in Homepage icon sources through the Dockrev origin so the navigation page is not dependent on cross-origin image policy for known providers.
+
+Allowed forms:
+
+- `/api/homepage-icons/iconify/mdi/{name}.svg?color=%23dbeafe`
+- `/api/homepage-icons/iconify/simple-icons/{name}.svg?color=%23dbeafe`
+- `/api/homepage-icons/selfhst/{svg|png|webp}/{name}.{ext}`
+- `/api/homepage-icons/dashboard/{svg|png|webp}/{name}.{ext}`
+
+Rules:
+
+- Requires the same app authorization boundary as other app routes.
+- `provider` is limited to `iconify`, `selfhst`, and `dashboard`.
+- Iconify collections are limited to `mdi` and `simple-icons`.
+- Static icon extensions are limited to `svg`, `png`, and `webp`.
+- Filenames may only contain ASCII letters, digits, `.`, `_`, and `-`, and must not contain traversal segments.
+- `color` is accepted only for Iconify and must be a hex color.
+- Successful responses set an image content type and public cache headers.
+- Upstream errors, unsupported providers, unsafe paths, oversized responses, or unknown content families must fail closed so the web client can render the default fallback icon.
+- Absolute `homepage.icon` URLs supplied by compose are not proxied by this endpoint and remain direct browser image loads.

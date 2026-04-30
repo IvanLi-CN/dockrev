@@ -2,7 +2,12 @@ import apps from "@iconify-icons/mdi/apps";
 import { Icon } from "@iconify/react";
 import { useMemo, useState } from "react";
 
+import { apiBaseUrl } from "../api";
+
 const DEFAULT_MONOCHROME_ICON_COLOR = "#dbeafe";
+const MAX_STORED_FAILED_ICONS = 80;
+
+const failedIconSources = new Set<string>();
 
 function isAbsoluteUrl(value: string): boolean {
   return /^https?:\/\//i.test(value);
@@ -17,14 +22,21 @@ function splitIconColor(raw: string): { name: string; color?: string } {
   };
 }
 
+function apiIconUrl(path: string): string {
+  const base = apiBaseUrl().replace(/\/$/, "");
+  return `${base}${path}`;
+}
+
 function buildIconifyUrl(
   collection: string,
   name: string,
   color?: string,
 ): string {
-  const base = `https://api.iconify.design/${collection}/${name}.svg`;
   const resolvedColor = color ?? DEFAULT_MONOCHROME_ICON_COLOR;
-  return `${base}?color=${encodeURIComponent(resolvedColor)}`;
+  const params = new URLSearchParams({ color: resolvedColor });
+  return apiIconUrl(
+    `/api/homepage-icons/iconify/${collection}/${encodeURIComponent(name)}.svg?${params.toString()}`,
+  );
 }
 
 function buildSelfhStUrl(spec: string): string {
@@ -32,7 +44,9 @@ function buildSelfhStUrl(spec: string): string {
   const match = trimmed.match(/^(.*)\.(svg|png|webp)$/i);
   const name = match ? match[1] : trimmed;
   const ext = match ? match[2].toLowerCase() : "png";
-  return `https://cdn.jsdelivr.net/gh/selfhst/icons/${ext}/${name}.${ext}`;
+  return apiIconUrl(
+    `/api/homepage-icons/selfhst/${ext}/${encodeURIComponent(name)}.${ext}`,
+  );
 }
 
 function buildDashboardIconUrl(spec: string): string {
@@ -40,7 +54,22 @@ function buildDashboardIconUrl(spec: string): string {
   const match = trimmed.match(/^(.*)\.(svg|png|webp)$/i);
   const name = match ? match[1] : trimmed;
   const ext = match ? match[2].toLowerCase() : "svg";
-  return `https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/${ext}/${name}.${ext}`;
+  return apiIconUrl(
+    `/api/homepage-icons/dashboard/${ext}/${encodeURIComponent(name)}.${ext}`,
+  );
+}
+
+function isKnownFailedIconSource(src: string): boolean {
+  return failedIconSources.has(src);
+}
+
+function rememberFailedIconSource(src: string) {
+  failedIconSources.add(src);
+  while (failedIconSources.size > MAX_STORED_FAILED_ICONS) {
+    const oldest = failedIconSources.values().next().value;
+    if (!oldest) break;
+    failedIconSources.delete(oldest);
+  }
 }
 
 export function resolveHomepageIconSource(icon: string | null | undefined): {
@@ -79,11 +108,15 @@ export function HomepageServiceIcon(props: {
     [props.icon],
   );
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
-  const shouldRenderImage = Boolean(source.src) && failedSrc !== source.src;
+  const shouldRenderImage =
+    Boolean(source.src) &&
+    failedSrc !== source.src &&
+    !isKnownFailedIconSource(source.src ?? "");
 
   return (
     <span
       className="homepageServiceIcon"
+      data-icon-src={source.src}
       data-icon-kind={source.kind}
       title={props.title}
     >
@@ -92,8 +125,14 @@ export function HomepageServiceIcon(props: {
           alt=""
           aria-hidden="true"
           className="homepageServiceIconImage"
+          decoding="async"
+          fetchPriority="low"
           loading="lazy"
-          onError={() => setFailedSrc(source.src ?? null)}
+          onError={() => {
+            if (source.src) rememberFailedIconSource(source.src);
+            setFailedSrc(source.src ?? null);
+          }}
+          referrerPolicy="no-referrer"
           src={source.src}
         />
       ) : (

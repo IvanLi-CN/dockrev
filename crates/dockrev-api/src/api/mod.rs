@@ -49,6 +49,7 @@ use types::*;
 mod cleanup_routes;
 mod discovery_routes;
 mod github_packages;
+mod homepage_icons;
 mod ignore_rules;
 mod jobs;
 mod notifications;
@@ -60,6 +61,7 @@ mod webhooks;
 use cleanup_routes::*;
 use discovery_routes::*;
 use github_packages::*;
+use homepage_icons::*;
 use ignore_rules::*;
 use jobs::*;
 use notifications::*;
@@ -72,6 +74,10 @@ pub fn router(state: Arc<AppState>) -> Router {
     Router::<Arc<AppState>>::new()
         .route("/api/health", get(health))
         .route("/api/version", get(version))
+        .route(
+            "/api/homepage-icons/{provider}/{*path}",
+            get(proxy_homepage_icon),
+        )
         .route(
             "/api/stacks",
             get(list_stacks).post(register_stack_disabled),
