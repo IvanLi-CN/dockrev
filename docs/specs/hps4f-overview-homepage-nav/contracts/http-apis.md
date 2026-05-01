@@ -81,5 +81,6 @@ Rules:
 - Filenames may only contain ASCII letters, digits, `.`, `_`, and `-`, and must not contain traversal segments.
 - `color` is accepted only for Iconify and must be a hex color.
 - Successful responses set an image content type and public cache headers.
+- SVG responses also set a restrictive `Content-Security-Policy` that sandboxes the document and disables script execution.
 - Upstream errors, unsupported providers, unsafe paths, oversized responses, or unknown content families must fail closed so the web client can render the default fallback icon.
 - Absolute `homepage.icon` URLs supplied by compose are not proxied by this endpoint and remain direct browser image loads.

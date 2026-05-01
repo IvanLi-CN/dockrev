@@ -76,7 +76,7 @@
 - 服务 API 中的 `Service` 必须新增可空 `homepage` 元数据对象，包含 `group`、`name`、`icon`、`href`、`description` 五项。
 - compose 解析必须兼容 `labels` 的 YAML list / map 两种写法，并只提取 Homepage 基础五项标签。
 - 前端图标解析必须支持绝对 URL、`mdi-*`、`si-*`、`sh-*` 与 dashboard-icons 文件名；无法识别时回退默认图标。
-- Dockrev 生成的 `mdi-*`、`si-*`、`sh-*` 与 dashboard-icons 图标请求必须走同源白名单代理；代理仅允许固定 provider/path pattern、`svg|png|webp` 响应类型、短超时与缓存头。
+- Dockrev 生成的 `mdi-*`、`si-*`、`sh-*` 与 dashboard-icons 图标请求必须走同源白名单代理；代理仅允许固定 provider/path pattern、`svg|png|webp` 响应类型、短超时与缓存头，且 SVG 响应必须带禁止脚本执行的 CSP。
 - 已失败的 Homepage 图标 URL 必须在前端会话中缓存，后续渲染直接走默认图标，避免重复慢失败。
 - 导航卡片上的新版本/状态标记必须复用现有 `serviceRowStatus` 与 `newVersionDiscoveryCount` 语义，不引入第二套状态口径。
 - 导航页主体必须使用平衡多列分组布局，按 `1 + cards.length` 估算分组高度分配到最短列，分组列内服务卡片纵向堆叠；移动端必须降级为单列。
