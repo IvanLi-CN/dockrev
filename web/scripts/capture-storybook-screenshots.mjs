@@ -342,6 +342,37 @@ async function main() {
       },
     },
     {
+      id: 'pages-overviewpage--dense-balanced-groups',
+      file: 'overview-homepage-audit-balanced-desktop.png',
+      viewport: { width: 1920, height: 1000 },
+      setup: async (page) => {
+        await page
+          .locator('.homepageDashboardColumn')
+          .first()
+          .waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('.homepageServiceCard').first().waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.evaluate(() => window.scrollTo(0, 0))
+      },
+      screenshot: async (page, filePath) => {
+        await page.screenshot({ path: filePath, fullPage: false })
+      },
+    },
+    {
+      id: 'pages-overviewpage--light-contrast',
+      file: 'overview-homepage-audit-light-contrast.png',
+      viewport: { width: 1440, height: 920 },
+      setup: async (page) => {
+        await page
+          .locator('.homepageStatusLine')
+          .waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.locator('.homepageServiceCard').first().waitFor({ timeout: STORY_TIMEOUT_MS })
+        await page.evaluate(() => window.scrollTo(0, 0))
+      },
+      screenshot: async (page, filePath) => {
+        await page.screenshot({ path: filePath, fullPage: false })
+      },
+    },
+    {
       id: 'pages-overviewpage--mobile-stacked',
       file: 'overview-homepage-v2-mobile.png',
       viewport: { width: 390, height: 900 },

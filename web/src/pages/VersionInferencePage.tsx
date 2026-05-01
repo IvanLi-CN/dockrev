@@ -501,7 +501,7 @@ export function VersionInferencePage(props: {
                             ? 'versionInferenceProgressFill versionInferenceProgressFillAssigned versionInferenceProgressFillIndeterminate'
                             : 'versionInferenceProgressFill versionInferenceProgressFillAssigned'
                         }
-                        style={assignmentPercent == null ? undefined : { width: `${assignmentPercent}%` }}
+                        style={assignmentPercent == null ? undefined : { transform: `scaleX(${assignmentPercent / 100})` }}
                       />
                       <div
                         className={
@@ -509,7 +509,7 @@ export function VersionInferencePage(props: {
                             ? 'versionInferenceProgressFill versionInferenceProgressFillResult versionInferenceProgressFillIndeterminate'
                             : 'versionInferenceProgressFill versionInferenceProgressFillResult'
                         }
-                        style={resultPercent == null ? undefined : { width: `${resultPercent}%` }}
+                        style={resultPercent == null ? undefined : { transform: `scaleX(${resultPercent / 100})` }}
                       />
                     </div>
                     <div className="versionInferenceProgressMeta">

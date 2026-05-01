@@ -49,6 +49,18 @@
   gap: 16px;
 }
 
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .topActions {
   display: flex;
   align-items: center;
@@ -262,10 +274,12 @@
   position: absolute;
   left: 0;
   top: 0;
-  width: 0;
+  width: 100%;
   height: 100%;
   border-radius: 999px;
-  transition: width 420ms cubic-bezier(0.4, 0, 0.2, 1);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 420ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .jobProgressFillCompleted {
@@ -1019,17 +1033,16 @@ html[data-theme='light'] .versionTagsPopover {
   max-height: 100dvh;
   padding: 0;
   overflow: hidden;
-  border-top: none;
-  border-right: none;
-  border-bottom: none;
-  border-left: 1px solid var(--surface-border-strong);
+  border: none;
   border-radius: 0;
   background: linear-gradient(
     180deg,
     color-mix(in srgb, var(--panel) 98%, var(--color-primary) 2%) 0%,
-    color-mix(in srgb, var(--panel) 94%, black 6%) 100%
+    color-mix(in srgb, var(--panel) 94%, oklch(0.08 0.02 256) 6%) 100%
   );
-  box-shadow: -24px 0 56px rgba(0, 0, 0, 0.4);
+  box-shadow:
+    inset 1px 0 0 var(--surface-border-strong),
+    -24px 0 56px rgba(1, 8, 20, 0.4);
 }
 
 .releaseDrawerHeader {
@@ -3045,9 +3058,12 @@ html[data-theme='light'] .modalOverlay {
   position: absolute;
   left: 0;
   top: 0;
+  width: 100%;
   height: 100%;
   border-radius: 999px;
-  transition: width 420ms cubic-bezier(0.4, 0, 0.2, 1);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 420ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .versionInferenceProgressFillAssigned {
@@ -4280,10 +4296,12 @@ html[data-theme='light'] .modalOverlay {
   position: absolute;
   left: 0;
   top: 0;
-  width: 0;
+  width: 100%;
   height: 100%;
   border-radius: 999px;
-  transition: width 420ms cubic-bezier(0.4, 0, 0.2, 1);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 420ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .queueProgressFill.queueProgressFillIndeterminate {
@@ -6570,6 +6588,18 @@ html[data-theme='light'] .card {
     inset 0 0 0 1px color-mix(in srgb, #ffffff 34%, transparent);
 }
 
+html[data-theme='light'] .btnPrimary {
+  background: linear-gradient(
+    150deg,
+    oklch(0.48 0.14 250) 0%,
+    oklch(0.4 0.12 252) 100%
+  );
+  color: oklch(0.98 0.008 252);
+  box-shadow:
+    0 8px 18px oklch(0.48 0.14 250 / 0.22),
+    inset 0 0 0 1px oklch(0.96 0.02 252 / 0.2);
+}
+
 .btnGhost {
   border-color: var(--borderColor);
   background: color-mix(in srgb, var(--dockrev-surface) 88%, transparent);
@@ -7059,8 +7089,8 @@ html[data-theme='light'] .card {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 38px;
-    height: 38px;
+    width: 44px;
+    height: 44px;
     padding: 0;
     border: 1px solid var(--borderColor);
     border-radius: 11px;
@@ -8562,7 +8592,26 @@ html[data-theme='light'] .card {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: start;
-  gap: 10px;
+  gap: 14px;
+}
+
+.homepageDashboardGrid[data-column-count="1"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.homepageDashboardGrid[data-column-count="2"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.homepageDashboardGrid[data-column-count="3"] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.homepageDashboardColumn {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 18px;
 }
 
 .homepageDashboardGroup {
@@ -8825,12 +8874,19 @@ html[data-theme='light'] .homepageHeaderContent {
   --homepage-panel-strong: oklch(0.95 0.018 252 / 0.98);
   --homepage-panel-deep: oklch(0.91 0.024 252 / 0.9);
   --homepage-cell: oklch(0.93 0.018 252 / 0.82);
-  --homepage-text-soft: oklch(0.35 0.038 252 / 0.9);
-  --homepage-text-dim: oklch(0.47 0.032 252 / 0.78);
+  --homepage-text-soft: oklch(0.3 0.038 252 / 0.96);
+  --homepage-text-dim: oklch(0.36 0.032 252 / 0.96);
 }
 
 html[data-theme='light'] .homepageOverviewSearchShell {
   background: oklch(0.98 0.01 252 / 0.98);
+}
+
+html[data-theme='light'] .homepageDashboardGroupHeader span {
+  border-color: oklch(0.52 0.052 248 / 0.28);
+  background: oklch(0.88 0.026 252 / 0.94);
+  color: oklch(0.3 0.056 248);
+  box-shadow: inset 0 1px 0 oklch(0.98 0.006 252 / 0.72);
 }
 
 html[data-theme='light'] .homepageHeaderSearchPopover {
@@ -8895,15 +8951,15 @@ html[data-theme='light'] .homepageHeaderSearchPopover {
 
 @media (max-width: 1040px) {
   .topbarRight .btn {
-    width: 38px;
-    height: 38px;
-    min-height: 38px;
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
     padding: 0;
     border-radius: 11px;
   }
 
   .topbarRight .btnPrimary {
-    width: 38px;
+    width: 44px;
   }
 
   .homepageTopActionIcon {
@@ -8916,12 +8972,12 @@ html[data-theme='light'] .homepageHeaderSearchPopover {
   }
 
   .chipStaticUser.topbarUserTrigger {
-    width: 38px;
-    min-width: 38px;
-    max-width: 38px;
-    height: 38px;
-    min-height: 38px;
-    flex: 0 0 38px;
+    width: 44px;
+    min-width: 44px;
+    max-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    flex: 0 0 44px;
     justify-content: center;
     padding: 0;
     border-radius: 999px;
@@ -8968,8 +9024,8 @@ html[data-theme='light'] .homepageHeaderSearchPopover {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 38px;
-    height: 38px;
+    width: 44px;
+    height: 44px;
     border: 1px solid var(--borderColor);
     border-radius: 11px;
     background: color-mix(in srgb, var(--dockrev-surface) 88%, var(--panel2) 12%);

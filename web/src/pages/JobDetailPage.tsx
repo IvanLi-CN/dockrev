@@ -384,10 +384,10 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
                 }
                 style={
                   displayedPlannedPercent !== null
-                    ? { width: `${displayedPlannedPercent}%` }
+                    ? { transform: `scaleX(${displayedPlannedPercent / 100})` }
                     : isPlannedIndeterminateRunning
                       ? undefined
-                      : { width: '100%' }
+                      : { transform: 'scaleX(1)' }
                 }
               />
               <div
@@ -398,10 +398,10 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
                 }
                 style={
                   displayedCompletedPercent !== null
-                    ? { width: `${displayedCompletedPercent}%` }
+                    ? { transform: `scaleX(${displayedCompletedPercent / 100})` }
                     : isCompletedIndeterminateRunning
                       ? undefined
-                      : { width: '100%' }
+                      : { transform: 'scaleX(1)' }
                 }
               />
             </div>
