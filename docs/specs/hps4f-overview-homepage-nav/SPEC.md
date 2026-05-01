@@ -234,6 +234,13 @@
   ![Homepage v2 桌面导航页](./assets/overview-homepage-v2-desktop.png)
 
 - source_type: storybook_canvas
+  story_id_or_title: `pages-overviewpage--audit-proof`
+  state: `homepage audit proof story canvas`
+  evidence_note: 验证单个 proof story 同时覆盖 light theme、搜索/刷新/扫描 accessible name、平衡列连续堆叠、内置图标代理、绝对 URL 直连与 fallback 图标行为。
+
+  ![Homepage audit proof story canvas](./assets/overview-homepage-audit-proof-story.png)
+
+- source_type: storybook_canvas
   story_id_or_title: `pages-overviewpage--dense-balanced-groups`
   state: `homepage audit dense balanced grouping`
   evidence_note: 验证长短分组不再被同一 CSS grid row 拉齐，桌面端分组按列连续堆叠，消除短分组下方的大块空白。
