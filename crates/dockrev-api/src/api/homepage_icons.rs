@@ -17,6 +17,8 @@ use super::{map_internal, require_user};
 
 const MAX_ICON_BYTES: usize = 512 * 1024;
 const ICON_TIMEOUT: Duration = Duration::from_secs(4);
+const SVG_CONTENT_SECURITY_POLICY: &str =
+    "sandbox; default-src 'none'; script-src 'none'; style-src 'unsafe-inline'";
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct HomepageIconQuery {
@@ -80,6 +82,12 @@ pub(crate) async fn proxy_homepage_icon(
         header::CONTENT_TYPE,
         HeaderValue::from_static(upstream.content_type),
     );
+    if upstream.content_type == "image/svg+xml" {
+        headers.insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(SVG_CONTENT_SECURITY_POLICY),
+        );
+    }
     headers.insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("public, max-age=86400, stale-while-revalidate=604800"),
