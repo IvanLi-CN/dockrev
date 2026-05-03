@@ -2486,7 +2486,7 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .modalCard {
-  width: min(520px, 100%);
+  width: min(760px, calc(100vw - 48px));
   border-radius: 16px;
   border: 1px solid rgba(229, 231, 235, 0.12);
   background: var(--panel);
@@ -2518,6 +2518,7 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .modalBody {
+  min-width: 0;
   margin-top: 10px;
   color: var(--muted2);
   font-size: 12px;
@@ -2593,6 +2594,7 @@ html[data-theme='light'] .modalOverlay {
   grid-template-columns: 120px 1fr;
   gap: 8px 12px;
   align-items: start;
+  min-width: 0;
 }
 
 @media (max-width: 520px) {
@@ -2608,8 +2610,17 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .modalKvValue {
+  min-width: 0;
   color: var(--text);
   font-size: 12px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.modalKvValue .mono {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .modalDivider {

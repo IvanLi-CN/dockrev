@@ -1,9 +1,15 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { useState } from 'react'
-import { ConfirmProvider } from '../../ConfirmProvider'
+import { ConfirmDialog, ConfirmProvider } from '../../ConfirmProvider'
 import { useConfirm } from '../../confirm'
 import { Mono } from '../../ui'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
+
+const LONG_DIGEST = 'sha256:eda3fe8c1c9d782840ded123b7f16936e4abb4d29e13981d132c27877c2f4680'
+
+function expectStory(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new globalThis.Error(message)
+}
 
 function ConfirmSandbox() {
   const confirm = useConfirm()
@@ -274,3 +280,58 @@ export default meta
 type Story = StoryObj<typeof WithProvider>
 
 export const Demo: Story = {}
+
+export const ServiceUpdateLongDigest: Story = {
+  render: () => (
+    <div data-story-root="confirm-dialog-long-digest">
+      <ConfirmDialog
+        title="确认更新服务 ani-rss?"
+        body={
+          <>
+            <div className="modalLead">将对该服务执行更新，并保留默认备份策略。</div>
+            <div className="modalKvGrid">
+              <div className="modalKvLabel">服务</div>
+              <div className="modalKvValue">
+                <Mono>media/media-ani-rss</Mono>
+              </div>
+              <div className="modalKvLabel">当前镜像</div>
+              <div className="modalKvValue">
+                <Mono>docker.io/wushuo894/ani-rss:latest</Mono>
+              </div>
+              <div className="modalKvLabel">目标版本</div>
+              <div className="modalKvValue">
+                <Mono>latest</Mono>
+              </div>
+              <div className="modalKvLabel">目标 digest</div>
+              <div className="modalKvValue">
+                <Mono>{LONG_DIGEST}</Mono>
+              </div>
+            </div>
+          </>
+        }
+        confirmText="执行更新"
+        cancelText="取消"
+        confirmVariant="primary"
+        badgeText="将更新并重启"
+        badgeTone="warn"
+        onClose={() => undefined}
+      />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const card = canvasElement.ownerDocument.querySelector<HTMLElement>('.modalCard')
+    const digest = Array.from(canvasElement.ownerDocument.querySelectorAll<HTMLElement>('.modalKvValue .mono')).find(
+      (node) => node.textContent === LONG_DIGEST,
+    )
+
+    expectStory(card, 'expected confirm dialog card to be rendered')
+    expectStory(digest, 'expected long digest to be rendered')
+
+    const cardBounds = card.getBoundingClientRect()
+    const digestBounds = digest.getBoundingClientRect()
+    expectStory(
+      digestBounds.right <= cardBounds.right + 1,
+      'long digest should stay inside the confirm dialog card',
+    )
+  },
+}

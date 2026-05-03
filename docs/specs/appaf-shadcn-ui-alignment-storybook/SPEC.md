@@ -134,6 +134,8 @@
 - Given simple primitive（Button/Input/Select/Switch/Tabs/ToggleGroup/Tooltip/Popover/AlertDialog/Label），When 打开 Storybook docs，Then 通过 autodocs 渲染 props 与基本示例。
 - Given complex composite（ResponsiveActionButton/ConfirmDialog/NotificationChannelCard/ServiceResourcePanel/CurrentVersionPopover/VersionTagsPopover），When 打开 Storybook docs，Then 存在 attached MDX，对交互语义、状态与使用方式有说明。
 - Given 现有页面交互，When 完成迁移，Then `useConfirm()`、版本浮层 hover/pin 行为、通知测试气泡、资源面板 tabs/window 切换保持当前语义。
+- Given ConfirmDialog 正文包含完整 `sha256:*` digest，When 在桌面视口打开确认弹窗，Then 默认弹窗宽度足以容纳 digest 且不会越过弹窗边界。
+- Given ConfirmDialog 正文包含完整 `sha256:*` digest，When 在窄屏视口打开确认弹窗，Then digest 在字段值区域内自动换行且不会产生横向溢出。
 - Given 执行 `bun --cwd web lint`、`bun --cwd web build`、`bun --cwd web build-storybook -- --quiet`、`bun --cwd web test-storybook`，Then 全部通过。
 
 ## 实现里程碑（Milestones / Delivery checklist）
@@ -161,3 +163,18 @@
 - 2026-03-07：review-loop 修复 hover-open → click-pin 固定气泡回归，并恢复 `DeployWelcomePage` 中 switch 与 label 的可点击关联；Storybook smoke 新增 hover-pin 留存校验。
 - 2026-03-07：创建 PR #147，补齐 `type:patch` / `channel:stable` 标签并合入 `origin/main` 最新主干；review-loop 阻塞项已清零，远端 checks 通过。
 - 2026-03-08：补齐 Storybook 预览背景与 Docs 深色主题默认值，并为显式 light story 追加 `backgrounds.value`，避免 Docs 页白底吞掉浅色组件；本地再次验证 `lint/build/build-storybook/test-storybook` 通过。
+- 2026-05-03：修复 ConfirmDialog `modalKvGrid` 长 digest 溢出：桌面默认弹窗提升到 760px，字段值列允许收缩，窄屏下 mono token 在值列内自动换行；新增 `ServiceUpdateLongDigest` Storybook 回归场景与视觉证据。
+
+## Visual Evidence
+
+- story_id_or_title: `Components/ConfirmDialog/ServiceUpdateLongDigest`
+- state: desktop viewport, long target digest
+- evidence_note: 桌面弹窗宽度为 760px，完整 digest 保持单行并位于弹窗边界内。
+
+![Confirm dialog long digest desktop](./assets/confirm-dialog-long-digest-desktop.png)
+
+- story_id_or_title: `Components/ConfirmDialog/ServiceUpdateLongDigest`
+- state: mobile viewport, long target digest
+- evidence_note: 窄屏弹窗中 digest 在字段值区域内自动换行，无横向溢出。
+
+![Confirm dialog long digest mobile](./assets/confirm-dialog-long-digest-mobile.png)
