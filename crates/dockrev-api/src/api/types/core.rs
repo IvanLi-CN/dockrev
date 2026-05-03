@@ -196,18 +196,13 @@ pub enum TernaryChoice {
     Force,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AutoUpdatePolicyMode {
+    #[default]
     Inherit,
     Override,
     Disabled,
-}
-
-impl Default for AutoUpdatePolicyMode {
-    fn default() -> Self {
-        Self::Inherit
-    }
 }
 
 impl AutoUpdatePolicyMode {
@@ -251,20 +246,11 @@ pub enum AutoUpdateRuleAction {
     Delayed,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AutoUpdateDelay {
     pub min_age_seconds: u32,
     pub min_version_lag: u32,
-}
-
-impl Default for AutoUpdateDelay {
-    fn default() -> Self {
-        Self {
-            min_age_seconds: 0,
-            min_version_lag: 0,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
