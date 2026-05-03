@@ -3,6 +3,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  type KeyboardEvent,
   type ReactNode,
 } from "react";
 import {
@@ -33,6 +34,7 @@ import {
 } from "../api";
 import { HomepageServiceIcon } from "../components/HomepageServiceIcon";
 import { navigate } from "../routes";
+import { buildUpdateServiceTarget } from "../updateTargets";
 import {
   Button,
   Dialog,
@@ -490,6 +492,14 @@ function openHomepageHref(href: string) {
   window.open(href, "_blank", "noopener,noreferrer");
 }
 
+function eventTargetIsNestedAction(event: KeyboardEvent<HTMLElement>): boolean {
+  const target = event.target;
+  return (
+    target instanceof HTMLElement &&
+    target.closest("button, a, input, select, textarea") !== event.currentTarget
+  );
+}
+
 export function OverviewPage(props: {
   onLastScanHint: (lastScan?: string) => void;
   onTopActions: (node: ReactNode) => void;
@@ -853,6 +863,7 @@ export function OverviewPage(props: {
                           tabIndex={0}
                           onClick={() => openHomepageHref(card.href)}
                           onKeyDown={(event) => {
+                            if (eventTargetIsNestedAction(event)) return;
                             if (event.key !== "Enter" && event.key !== " ") return;
                             event.preventDefault();
                             openHomepageHref(card.href);
@@ -1003,10 +1014,7 @@ export function OverviewPage(props: {
                     const response = await triggerUpdate({
                       scope: "service",
                       stackId: card.stackId,
-                      serviceId: card.serviceId,
-                      targetTag: card.service.candidate!.tag,
-                      targetDigest: card.service.candidate!.digest,
-                      pullTags: [card.service.candidate!.tag],
+                      ...(await buildUpdateServiceTarget(card.service)),
                       mode: "apply",
                       allowArchMismatch: false,
                       backupMode: "inherit",
