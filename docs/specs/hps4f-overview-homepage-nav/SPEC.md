@@ -175,7 +175,7 @@
 ### Testing
 
 - Unit tests: Rust compose label parsing、DB persistence / readback、discovery sync coverage；前端 overview/homepage helper tests（若新增 helper）
-- Integration tests: stack/service API round-trip for Homepage metadata；页面搜索/新标签页行为的 Storybook `play` 覆盖；全站前端 demo smoke 验证
+- Integration tests: stack/service API round-trip for Homepage metadata；Dockrev self-update guard 的普通 service-scope API 与更新选择回归；页面搜索/新标签页行为的 Storybook `play` 覆盖；全站前端 demo smoke 验证
 - E2E tests (if applicable): Frontend-demo-driven smoke checks for owner-facing `/` under `VITE_DOCKREV_DEMO=app`；Storybook-driven interaction checks for overview navigation and services candidate search
 
 ### UI / Demo / Storybook (if applicable)
