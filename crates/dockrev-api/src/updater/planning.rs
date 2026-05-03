@@ -136,6 +136,8 @@ pub fn select_update_services<'a>(
             .collect::<Vec<_>>(),
     };
 
+    services.retain(|svc| !is_dockrev_image_ref(&svc.image.reference, dockrev_image_repo));
+
     // For stack/all updates, only apply to actionable candidates (UI shows others as skipped).
     if !matches!(scope, JobScope::Service) {
         services.retain(|svc| {
@@ -151,9 +153,6 @@ pub fn select_update_services<'a>(
             if !allow_arch_mismatch
                 && matches!(candidate.arch_match, crate::api::types::ArchMatch::Mismatch)
             {
-                return false;
-            }
-            if is_dockrev_image_ref(&svc.image.reference, dockrev_image_repo) {
                 return false;
             }
             true

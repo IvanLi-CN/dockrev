@@ -34,6 +34,7 @@ import {
 } from "../api";
 import { HomepageServiceIcon } from "../components/HomepageServiceIcon";
 import { navigate } from "../routes";
+import { isDockrevImageRef } from "../runtimeConfig";
 import { buildUpdateServiceTarget } from "../updateTargets";
 import {
   Button,
@@ -69,6 +70,7 @@ type HomepageNavCard = {
   href: string;
   icon: string | null;
   status: RowStatus;
+  isDockrev: boolean;
   service: Service;
 };
 
@@ -176,6 +178,7 @@ function toNavCards(
         href: homepageHref,
         icon: service.homepage?.icon ?? null,
         status,
+        isDockrev: isDockrevImageRef(service.image.ref),
         service,
       });
     }
@@ -869,7 +872,7 @@ export function OverviewPage(props: {
                             openHomepageHref(card.href);
                           }}
                         >
-                          {card.status === "updatable" ? (
+                          {card.status === "updatable" && !card.isDockrev ? (
                             <button
                               type="button"
                               className={`homepageServiceStateBadge homepageServiceStateBadge-${badge.tone} homepageServiceStateButton`}
