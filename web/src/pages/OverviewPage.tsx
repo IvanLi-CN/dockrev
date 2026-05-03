@@ -10,6 +10,7 @@ import {
   Clock3,
   Cpu,
   Download,
+  Info,
   MemoryStick,
   RefreshCw,
   ScanSearch,
@@ -23,14 +24,27 @@ import {
   getStack,
   listStacks,
   triggerCheck,
+  triggerUpdate,
+  type Service,
   type ServiceResourceOverviewItem,
   type ServiceResourceOverviewResponse,
   type StackDetail,
   type StackListItem,
 } from "../api";
 import { HomepageServiceIcon } from "../components/HomepageServiceIcon";
-import { currentHref, navigate } from "../routes";
-import { Button, Input, Mono } from "../ui";
+import { navigate } from "../routes";
+import {
+  Button,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Input,
+  Mono,
+} from "../ui";
 import { serviceRowStatus, statusLabel, type RowStatus } from "../updateStatus";
 import { usePageResumeRefresh } from "../usePageResumeRefresh";
 
@@ -53,6 +67,7 @@ type HomepageNavCard = {
   href: string;
   icon: string | null;
   status: RowStatus;
+  service: Service;
 };
 
 type ServiceBadge = {
@@ -139,18 +154,12 @@ function toNavCards(
     if (!detail) continue;
     for (const service of detail.services) {
       if (service.archived) continue;
+      const homepageHref = normalizeHomepageHref(service.homepage?.href);
+      if (!homepageHref) continue;
       const groupName = service.homepage?.group?.trim() || detail.name;
       const title = service.homepage?.name?.trim() || service.name;
       const description =
         service.homepage?.description?.trim() || service.image.ref;
-      const homepageHref = normalizeHomepageHref(service.homepage?.href);
-      const href =
-        homepageHref ||
-        currentHref({
-          name: "service",
-          stackId: stack.id,
-          serviceId: service.id,
-        });
       const status = serviceRowStatus(service);
       cards.push({
         id: service.id,
@@ -162,9 +171,10 @@ function toNavCards(
         groupName,
         title,
         description,
-        href,
+        href: homepageHref,
         icon: service.homepage?.icon ?? null,
         status,
+        service,
       });
     }
   }
@@ -476,6 +486,10 @@ function CardMetric(props: { value: string; label: string }) {
   );
 }
 
+function openHomepageHref(href: string) {
+  window.open(href, "_blank", "noopener,noreferrer");
+}
+
 export function OverviewPage(props: {
   onLastScanHint: (lastScan?: string) => void;
   onTopActions: (node: ReactNode) => void;
@@ -504,6 +518,8 @@ export function OverviewPage(props: {
   const [search, setSearch] = useState("");
   const [searchDraft, setSearchDraft] = useState("");
   const [headerSearchOpen, setHeaderSearchOpen] = useState(false);
+  const [updateDialogCard, setUpdateDialogCard] =
+    useState<HomepageNavCard | null>(null);
   const [now, setNow] = useState(() => new Date());
   const homepageColumnCount = useHomepageColumnCount();
 
@@ -830,18 +846,37 @@ export function OverviewPage(props: {
                         resourceError !== null || resourceOverview === null,
                       );
                       return (
-                        <a
+                        <div
                           key={card.id}
                           className="homepageServiceCard"
-                          href={card.href}
-                          rel="noopener noreferrer"
-                          target="_blank"
+                          role="link"
+                          tabIndex={0}
+                          onClick={() => openHomepageHref(card.href)}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter" && event.key !== " ") return;
+                            event.preventDefault();
+                            openHomepageHref(card.href);
+                          }}
                         >
-                          <span
-                            className={`homepageServiceStateBadge homepageServiceStateBadge-${badge.tone}`}
-                          >
-                            {badge.label}
-                          </span>
+                          {card.status === "updatable" ? (
+                            <button
+                              type="button"
+                              className={`homepageServiceStateBadge homepageServiceStateBadge-${badge.tone} homepageServiceStateButton`}
+                              aria-label={`更新 ${card.title}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setUpdateDialogCard(card);
+                              }}
+                            >
+                              {badge.label}
+                            </button>
+                          ) : (
+                            <span
+                              className={`homepageServiceStateBadge homepageServiceStateBadge-${badge.tone}`}
+                            >
+                              {badge.label}
+                            </span>
+                          )}
                           <div className="homepageServiceCardTop">
                             <HomepageServiceIcon icon={card.icon} title={card.title} />
                             <div className="homepageServiceCardIdentity">
@@ -852,6 +887,22 @@ export function OverviewPage(props: {
                                 {card.description}
                               </div>
                             </div>
+                            <button
+                              type="button"
+                              className="homepageServiceDetailButton"
+                              aria-label={`查看 ${card.title} 服务详情`}
+                              title="服务详情"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                navigate({
+                                  name: "service",
+                                  stackId: card.stackId,
+                                  serviceId: card.serviceId,
+                                });
+                              }}
+                            >
+                              <Info size={15} strokeWidth={2.2} aria-hidden="true" />
+                            </button>
                           </div>
 
                           <div className="homepageServiceMetricsGrid">
@@ -872,7 +923,7 @@ export function OverviewPage(props: {
                               label="TX"
                             />
                           </div>
-                        </a>
+                        </div>
                       );
                     })}
                   </div>
@@ -897,6 +948,86 @@ export function OverviewPage(props: {
         </div>
       ) : null}
       {busy ? <div className="muted">处理中…</div> : null}
+      <Dialog
+        open={updateDialogCard !== null}
+        onOpenChange={(open) => {
+          if (!open) setUpdateDialogCard(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              确认更新服务 {updateDialogCard?.title ?? ""}？
+            </DialogTitle>
+            <DialogDescription>
+              将对该服务执行更新，并保留默认备份策略。
+            </DialogDescription>
+          </DialogHeader>
+          {updateDialogCard ? (
+            <div className="modalKvGrid">
+              <div className="modalKvLabel">服务</div>
+              <div className="modalKvValue">
+                <Mono>{updateDialogCard.stackName}/{updateDialogCard.serviceName}</Mono>
+              </div>
+              <div className="modalKvLabel">当前镜像</div>
+              <div className="modalKvValue">
+                <Mono>{updateDialogCard.imageRef}</Mono>
+              </div>
+              <div className="modalKvLabel">目标版本</div>
+              <div className="modalKvValue">
+                <Mono>{updateDialogCard.service.candidate?.tag ?? "-"}</Mono>
+              </div>
+              <div className="modalKvLabel">目标 digest</div>
+              <div className="modalKvValue">
+                <Mono>{updateDialogCard.service.candidate?.digest ?? "-"}</Mono>
+              </div>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="ghost" disabled={busy}>
+                取消
+              </Button>
+            </DialogClose>
+            <Button
+              variant="primary"
+              disabled={busy || !updateDialogCard?.service.candidate}
+              onClick={() => {
+                if (!updateDialogCard?.service.candidate) return;
+                const card = updateDialogCard;
+                void (async () => {
+                  setBusy(true);
+                  setError(null);
+                  setNoticeCheckJobId(null);
+                  try {
+                    const response = await triggerUpdate({
+                      scope: "service",
+                      stackId: card.stackId,
+                      serviceId: card.serviceId,
+                      targetTag: card.service.candidate!.tag,
+                      targetDigest: card.service.candidate!.digest,
+                      pullTags: [card.service.candidate!.tag],
+                      mode: "apply",
+                      allowArchMismatch: false,
+                      backupMode: "inherit",
+                    });
+                    setUpdateDialogCard(null);
+                    navigate({ name: "job", jobId: response.jobId });
+                  } catch (value: unknown) {
+                    setError(
+                      value instanceof Error ? value.message : String(value),
+                    );
+                  } finally {
+                    setBusy(false);
+                  }
+                })();
+              }}
+            >
+              执行更新
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -57,7 +57,7 @@ function renderOverview(): Story["render"] {
 
 function serviceCards(canvasElement: HTMLElement) {
   return Array.from(
-    canvasElement.querySelectorAll<HTMLAnchorElement>(".homepageServiceCard"),
+    canvasElement.querySelectorAll<HTMLElement>(".homepageServiceCard"),
   );
 }
 
@@ -378,7 +378,27 @@ export const Default: Story = {
         card.querySelector(".homepageServiceStateBadge"),
         "expected every card to reuse update status badge surface",
       );
+      expectStory(
+        card.querySelector(".homepageServiceDetailButton"),
+        "expected every card to expose a compact service detail action",
+      );
     }
+    expectStory(
+      cards.every((card) => card.getAttribute("role") === "link"),
+      "expected homepage service cards to keep direct launcher semantics",
+    );
+    expectStory(
+      canvasElement.querySelector(".homepageServiceStateButton"),
+      "expected updatable cards to expose the status badge as a clickable update action",
+    );
+    canvasElement
+      .querySelector<HTMLButtonElement>(".homepageServiceStateButton")
+      ?.click();
+    await sleep(120);
+    expectStory(
+      document.body.textContent?.includes("确认更新服务"),
+      "clicking the updatable badge should open the update confirmation dialog",
+    );
   },
 };
 
@@ -573,22 +593,9 @@ export const SearchAndFallback: Story = {
     const workerCard = allCards.find((card) =>
       card.textContent?.includes("worker"),
     );
-    expectStory(workerCard, "expected fallback worker card to render");
     expectStory(
-      workerCard.getAttribute("target") === "_blank",
-      "fallback worker card should open in a new tab",
-    );
-    expectStory(
-      workerCard
-        .getAttribute("href")
-        ?.includes("/services/stack-prod/svc-prod-worker"),
-      "fallback worker card should link to the Dockrev service detail route",
-    );
-    expectStory(
-      workerCard
-        .querySelector(".homepageServiceStateBadge")
-        ?.textContent?.includes("被阻止") === true,
-      "fallback worker card should keep serviceRowStatus semantics",
+      !workerCard,
+      "services without a valid homepage.href should stay out of the launcher",
     );
 
     const searchInput = canvasElement.querySelector<HTMLInputElement>(
@@ -596,18 +603,18 @@ export const SearchAndFallback: Story = {
     );
     expectStory(searchInput, "expected overview search input");
 
-    setInputValue(searchInput, "worker");
+    setInputValue(searchInput, "Acme API");
     searchInput.form?.requestSubmit();
     await sleep(260);
 
     const filteredCards = serviceCards(canvasElement);
     expectStory(
       filteredCards.length === 1,
-      "search should filter overview cards down to the fallback worker entry",
+      "search should filter overview cards down to one Web entry",
     );
     expectStory(
-      filteredCards[0].textContent?.includes("worker"),
-      "filtered overview card should be worker",
+      filteredCards[0].textContent?.includes("Acme API"),
+      "filtered overview card should be Acme API",
     );
 
     setInputValue(searchInput, "ghcr.io/acme/api");
@@ -942,16 +949,13 @@ export const UnsafeHomepageHrefFallsBack: Story = {
     const apiCard = serviceCards(canvasElement).find((card) =>
       card.textContent?.includes("Acme API"),
     );
-    expectStory(apiCard, "expected Acme API card to render");
     expectStory(
-      apiCard
-        .getAttribute("href")
-        ?.includes("/services/stack-prod/svc-prod-api"),
-      "unsafe homepage href should fall back to the Dockrev service detail route",
+      !apiCard,
+      "unsafe homepage href should remove the service from the launcher",
     );
     expectStory(
-      !apiCard.textContent?.includes("详情"),
-      "homepage cards should not render the legacy detail pill text",
+      !canvasElement.textContent?.includes("javascript:alert"),
+      "unsafe homepage href should not leak into visible card text",
     );
   },
 };
