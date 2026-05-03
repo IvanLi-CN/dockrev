@@ -4586,7 +4586,7 @@ html[data-theme='light'] .modalOverlay {
   background: linear-gradient(
     180deg,
     color-mix(in srgb, var(--panel) 98%, var(--color-primary) 2%) 0%,
-    color-mix(in srgb, var(--panel) 94%, black 6%) 100%
+    color-mix(in srgb, var(--panel) 94%, var(--bg) 6%) 100%
   );
   box-shadow: -24px 0 56px rgba(0, 0, 0, 0.42);
 }
@@ -4683,10 +4683,10 @@ html[data-theme='light'] .modalOverlay {
 
 .autoPolicyResultFacts > div {
   min-width: 0;
-  border: 1px solid rgba(148, 163, 184, 0.14);
+  border: 1px solid color-mix(in srgb, var(--borderColor) 70%, transparent);
   border-radius: 8px;
   padding: 10px;
-  background: rgba(15, 23, 42, 0.16);
+  background: color-mix(in srgb, var(--panel2) 24%, transparent);
 }
 
 .autoPolicyResultFacts span:not(.label),
@@ -4714,7 +4714,7 @@ html[data-theme='light'] .modalOverlay {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 70%, transparent);
   padding-top: 8px;
 }
 
@@ -4774,10 +4774,10 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .autoPolicyRule {
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid color-mix(in srgb, var(--borderColor) 78%, transparent);
   border-radius: 8px;
   padding: 12px;
-  background: rgba(15, 23, 42, 0.18);
+  background: color-mix(in srgb, var(--panel2) 28%, transparent);
 }
 
 .autoPolicyRuleName {
@@ -4808,6 +4808,12 @@ html[data-theme='light'] .modalOverlay {
 .autoPolicySlider input[type='range'] {
   width: 100%;
   accent-color: var(--color-primary);
+}
+
+.autoPolicySlider input[type='range']:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 4px;
+  border-radius: 999px;
 }
 
 .autoPolicySliderTicks {

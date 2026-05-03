@@ -138,6 +138,7 @@ export function AutoUpdatePolicyEditor(props: {
         <div className="autoPolicySwitchRow">
           <span className="label">启用</span>
           <Switch
+            aria-label="启用自动更新策略"
             checked={policy.enabled}
             disabled={props.busy || effectiveMode === 'disabled' || effectiveMode === 'inherit'}
             onChange={(enabled) => setPolicy({ enabled })}
@@ -160,6 +161,7 @@ export function AutoUpdatePolicyEditor(props: {
               <div className="autoPolicyRule" key={`${rule.id}-${index}`}>
                 <div className="autoPolicyRuleHead">
                   <Switch
+                    aria-label={`启用规则 ${rule.name || index + 1}`}
                     checked={rule.enabled}
                     disabled={props.busy}
                     onChange={(enabled) => setRule(index, { ...rule, enabled })}
