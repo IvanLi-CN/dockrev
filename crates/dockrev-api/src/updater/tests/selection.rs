@@ -40,7 +40,7 @@ fn aggregate_selection_excludes_dockrev_but_keeps_supervisor() {
 }
 
 #[test]
-fn service_scope_still_allows_dockrev_update_selection() {
+fn service_scope_excludes_dockrev_update_selection() {
     let stack = StackRecord {
         id: "stk_guard".to_string(),
         name: "dockrev-mod".to_string(),
@@ -67,8 +67,7 @@ fn service_scope_still_allows_dockrev_update_selection() {
         Some("ghcr.io/ivanli-cn/dockrev"),
     );
 
-    assert_eq!(selection.services.len(), 1);
-    assert_eq!(selection.services[0].id, "svc-dockrev");
+    assert!(selection.services.is_empty());
 }
 
 #[test]

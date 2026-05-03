@@ -633,6 +633,58 @@ export const SearchAndFallback: Story = {
   },
 };
 
+export const DockrevSelfUpdateGuard: Story = {
+  parameters: {
+    dockrevApiScenario: "aggregate-dockrev-guard",
+    dockrevServiceOverridesById: {
+      "svc-aggregate-guard-api": {
+        homepage: {
+          group: "Core",
+          name: "Acme API",
+          icon: "si-github",
+          href: "https://api.example.com",
+          description: "Regular app update target",
+        },
+      },
+      "svc-aggregate-guard-dockrev": {
+        homepage: {
+          group: "Core",
+          name: "Dockrev",
+          icon: "mdi-docker",
+          href: "https://dockrev.example.com",
+          description: "Dockrev control plane",
+        },
+      },
+    },
+  },
+  render: renderOverview(),
+  play: async ({ canvasElement }) => {
+    await sleep(260);
+
+    const dockrevCard = serviceCards(canvasElement).find((card) =>
+      card.textContent?.includes("Dockrev"),
+    );
+    expectStory(dockrevCard, "expected Dockrev launcher card to remain visible");
+    expectStory(
+      dockrevCard.querySelector(".homepageServiceStateBadge")?.textContent?.includes("可更新"),
+      "expected Dockrev card to keep the updatable status visible",
+    );
+    expectStory(
+      !dockrevCard.querySelector(".homepageServiceStateButton"),
+      "Dockrev card must not expose the ordinary service update action",
+    );
+
+    const apiCard = serviceCards(canvasElement).find((card) =>
+      card.textContent?.includes("Acme API"),
+    );
+    expectStory(apiCard, "expected regular app launcher card");
+    expectStory(
+      apiCard.querySelector(".homepageServiceStateButton"),
+      "regular updatable services should keep the homepage update action",
+    );
+  },
+};
+
 export const MetricsDisabled: Story = {
   parameters: { dockrevApiScenario: "service-detail-resource-monitor-disabled" },
   render: renderOverview(),

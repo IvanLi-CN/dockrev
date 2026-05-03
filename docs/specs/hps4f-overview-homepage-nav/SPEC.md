@@ -79,6 +79,7 @@
 - Dockrev 生成的 `mdi-*`、`si-*`、`sh-*` 与 dashboard-icons 图标请求必须走同源白名单代理；代理仅允许固定 provider/path pattern、`svg|png|webp` 响应类型、短超时与缓存头，且 SVG 响应必须带禁止脚本执行的 CSP。
 - 已失败的 Homepage 图标 URL 必须在前端会话中缓存，后续渲染直接走默认图标，避免重复慢失败。
 - 导航卡片上的新版本/状态标记必须复用现有 `serviceRowStatus` 与 `newVersionDiscoveryCount` 语义，不引入第二套状态口径。
+- Dockrev 自身服务即使有合法 `homepage.href` 与新版本候选，导航卡片也不得暴露普通单服务更新动作；Dockrev 自升级仍必须通过 Supervisor 专用入口执行。
 - 导航页主体必须使用平衡多列分组布局，按 `1 + cards.length` 估算分组高度分配到最短列，分组列内服务卡片纵向堆叠；移动端必须降级为单列。
 - 导航页搜索框必须使用 `type="search"` 且提供稳定可访问名称；窄屏顶部刷新、扫描、搜索与身份入口必须在标签隐藏后仍有 accessible name，触控目标不小于 44px。
 - Light theme 下主 CTA、状态行文字与分组数量徽标必须满足 WCAG AA 4.5:1 对比度目标。
@@ -109,7 +110,7 @@
 - 每张导航卡片的内置图标源优先请求 `/api/homepage-icons/{provider}/{path}`，该接口只代理 Iconify、selfh.st icons 与 dashboard-icons 的受限路径；任意绝对 URL 仍由浏览器直连。
 - 每张导航卡片读取 `/api/services/resource-usage/overview?window=1h` 的聚合结果展示 CPU、内存、网络 RX/TX 速率；该接口按窗口返回最新样本与前一条样本推导出的网络速率。
 - 用户点击任一卡片时，Dockrev 在新标签页打开 `homepage.href`，不影响当前页面上下文；点击卡片内详情 icon 时进入 Dockrev 服务详情页。
-- 若某服务存在新版本候选、需确认、被阻止、架构不匹配等状态，导航卡片上必须展示对应标记；其中“可更新”标记可点击并弹出单服务更新确认对话框；若存在 `newVersionDiscoveryCount`，则继续显示发现次数。
+- 若某服务存在新版本候选、需确认、被阻止、架构不匹配等状态，导航卡片上必须展示对应标记；其中非 Dockrev 自身服务的“可更新”标记可点击并弹出单服务更新确认对话框；若存在 `newVersionDiscoveryCount`，则继续显示发现次数。
 
 ### Edge cases / errors
 
@@ -148,7 +149,8 @@
 - Given 服务未配置 `homepage.href` 或 href 不合法，When 用户打开 `/`，Then 该服务不会出现在导航页。
 - Given 导航卡片存在 `homepage.href`，When 用户点击卡片，Then 该地址在新标签页打开。
 - Given 导航卡片存在对应服务，When 用户点击卡片右侧详情 icon，Then Dockrev 进入该服务详情页。
-- Given 导航卡片状态为“可更新”，When 用户点击该标记，Then 弹出单服务更新确认对话框。
+- Given 非 Dockrev 自身导航卡片状态为“可更新”，When 用户点击该标记，Then 弹出单服务更新确认对话框。
+- Given Dockrev 自身导航卡片状态为“可更新”，When 用户打开 `/`，Then 卡片保留状态展示但不渲染普通单服务更新按钮，且后端普通 service-scope update 也不会选中 Dockrev 镜像。
 - Given 服务当前存在 `serviceRowStatus=blocked|confirm|archMismatch|newVersion` 等状态或 `newVersionDiscoveryCount>0`，When `/` 渲染导航卡片，Then 卡片展示与现有服务列表一致的状态标记与发现次数。
 - Given `homepage.icon` 为绝对 URL、`mdi-*`、`si-*`、`sh-*`、dashboard-icons 文件名或未知值，When `/` 渲染导航卡片，Then 图标分别按对应规则显示或回退默认图标。
 - Given `homepage.icon` 为 Dockrev 可解析的 `mdi-*`、`si-*`、`sh-*` 或 dashboard-icons 文件名，When `/` 渲染导航卡片，Then 图片请求使用 `/api/homepage-icons/...` 同源代理；若代理返回失败，Then 卡片立即回退默认图标且后续同 URL 不重复请求。
