@@ -452,7 +452,7 @@ async function runInteractive({ baseUrl, browser }) {
     }
   }
 
-  // 1) Overview page: search should filter down to the fallback worker card.
+  // 1) Overview page: search should exclude services without Web launch hrefs and filter Web cards.
   {
     const page = await openStory("pages-overviewpage--search-and-fallback");
     try {
@@ -475,35 +475,32 @@ async function runInteractive({ baseUrl, browser }) {
             const style = window.getComputedStyle(card);
             return style.display !== "none" && style.visibility !== "hidden";
           });
-          return (
-            visibleCards.length === 1 &&
-            visibleCards[0]
-              ?.getAttribute("href")
-              ?.includes("/services/stack-prod/svc-prod-worker")
-          );
+          return visibleCards.length === 0;
         },
         null,
         { timeout: 10_000 },
       );
 
-      const workerHref = await page
-        .locator(".homepageServiceCard")
-        .first()
-        .getAttribute("href");
-      const workerTarget = await page
-        .locator(".homepageServiceCard")
-        .first()
-        .getAttribute("target");
-      if (!workerHref?.includes("/services/stack-prod/svc-prod-worker")) {
-        throw new Error(
-          `Expected fallback worker card to link to the internal service detail page, got ${String(workerHref)}.`,
-        );
-      }
-      if (workerTarget !== "_blank") {
-        throw new Error(
-          `Expected fallback worker card to open in a new tab, got target=${String(workerTarget)}.`,
-        );
-      }
+      await search.fill("Acme API");
+      await search.press("Enter");
+      await page.waitForTimeout(250);
+
+      await page.waitForFunction(
+        () => {
+          const visibleCards = Array.from(
+            document.querySelectorAll(".homepageServiceCard"),
+          ).filter((card) => {
+            const style = window.getComputedStyle(card);
+            return style.display !== "none" && style.visibility !== "hidden";
+          });
+          return (
+            visibleCards.length === 1 &&
+            visibleCards[0]?.textContent?.includes("Acme API")
+          );
+        },
+        null,
+        { timeout: 10_000 },
+      );
     } finally {
       await page.close().catch(() => {});
     }
@@ -517,20 +514,16 @@ async function runInteractive({ baseUrl, browser }) {
         .locator(".homepageServiceCard", { hasText: "Acme API" })
         .first();
       await apiCard.waitFor({ timeout: 10_000 });
-      const href = await apiCard.getAttribute("href");
-      const target = await apiCard.getAttribute("target");
+      const role = await apiCard.getAttribute("role");
       const cardText = (await apiCard.textContent()) ?? "";
       const badgeText = (await apiCard.locator(".homepageServiceStateBadge").textContent()) ?? "";
       const metricCount = await apiCard.locator(".homepageServiceMetric").count();
+      const detailButtonCount = await apiCard.locator(".homepageServiceDetailButton").count();
+      const updateButtonCount = await apiCard.locator(".homepageServiceStateButton").count();
 
-      if (!href || new URL(href).href !== new URL("https://api.example.com").href) {
+      if (role !== "link") {
         throw new Error(
-          `Expected Acme API card to link to the external homepage href, got ${String(href)}.`,
-        );
-      }
-      if (target !== "_blank") {
-        throw new Error(
-          `Expected Acme API card to open in a new tab, got target=${String(target)}.`,
+          `Expected Acme API card to expose direct launcher semantics, got role=${String(role)}.`,
         );
       }
       if (!badgeText.includes("可更新")) {
@@ -541,6 +534,16 @@ async function runInteractive({ baseUrl, browser }) {
       if (metricCount !== 4) {
         throw new Error(
           `Expected Acme API card to render CPU/MEM/RX/TX metric cells, got ${metricCount}.`,
+        );
+      }
+      if (detailButtonCount !== 1) {
+        throw new Error(
+          `Expected Acme API card to expose one service detail button, got ${detailButtonCount}.`,
+        );
+      }
+      if (updateButtonCount !== 1) {
+        throw new Error(
+          `Expected Acme API updatable badge to be clickable, got ${updateButtonCount}.`,
         );
       }
       if (cardText.includes("新窗口")) {

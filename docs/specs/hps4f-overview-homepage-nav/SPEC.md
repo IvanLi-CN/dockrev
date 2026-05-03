@@ -22,7 +22,7 @@
 - 将 `/` 的视觉结构升级为接近 Homepage：顶部资源摘要 / 搜索 / 当前时间一体化条，主体按分组形成多列，紧凑服务卡片纵向堆叠，移动端单列。
 - 为 `/` 新增资源聚合摘要接口，卡片展示每个服务最新 CPU、内存、网络 RX/TX 速率与 stale 状态，避免前端逐服务请求历史接口。
 - 在后端 discovery / compose 解析链中兼容 `homepage.group/name/icon/href/description` 五项标签，并通过现有 stack/service API 暴露给前端。
-- 为未配置 `homepage.*` 的服务提供兜底卡片，避免导航页漏项。
+- 导航页仅展示带有合法 `homepage.href` 的 Web 入口服务，避免无 Web 界面的运行服务污染入口列表。
 - 保持现有更新状态、新版本发现次数、归档恢复等既有语义不变。
 - 修复 Homepage 导航页 audit 发现的信息密度、可访问性、light theme 对比度、图标可靠性与动画性能问题。
 
@@ -67,9 +67,9 @@
 - `/services` 首屏必须展示原 `/` 概览页的三块核心内容：运行态与结果、discovery 异常、更新候选。
 - `/services` 必须保留现有 archived stacks / services 恢复区，并置于运维大盘下方。
 - `/services` 的新增搜索只过滤更新候选区，且匹配 `stack.name`、`service.name`、`image.ref`、`homepage.name`、`homepage.description`。
-- `/` 必须展示分组导航卡片；优先使用 `homepage.group/name/icon/href/description`，未配置时按 `stack.name` + `service.name` + `image.ref` 自动兜底。
+- `/` 必须展示分组导航卡片；仅纳入带有合法 `homepage.href` 的服务，显示时优先使用 `homepage.group/name/icon/description`，缺失字段按 `stack.name`、`service.name`、`image.ref`、默认图标兜底。
 - `/` 顶部必须展示 Homepage-like 一体化条：资源摘要、搜索输入、当前时间；资源摘要只允许展示聚合服务样本得出的 CPU/MEM/RX/TX。
-- 导航卡片点击必须在新标签页打开；若存在 `homepage.href` 则打开该外部地址，否则打开 Dockrev 内部服务详情页，但卡片正文不再显示“新窗口/详情”提示文案。
+- 导航卡片点击必须在新标签页打开合法 `homepage.href`；服务详情通过卡片标题/描述行右侧的独立 icon 按钮进入。
 - 导航卡片必须显示真实资源摘要 `CPU/MEM/RX/TX`；资源监控关闭、无样本、stale 或请求失败时显示稳定占位，不发起逐服务历史请求。
 - `/api/services/resource-usage/overview?window=1h` 必须返回所有 active 服务的最新资源样本摘要、样本数量、采样时间与 stale 标记；监控关闭时返回 `enabled=false` 且不以错误中断导航页。
 - 必须提供全站前端 demo：通过 Vite app 根路径 `/` 配合 `VITE_DOCKREV_DEMO=app` 安装本地 mock API 并渲染真实 Dockrev 应用；该 demo 不增加第二个 URL path 或 query 入口，且不依赖 Storybook iframe、toolbar 或 story runtime。
@@ -103,23 +103,23 @@
 
 - 用户进入 `/services` 时，页面顶部先显示运维大盘：运行态与结果卡片、discovery 异常卡片、更新候选区域；更新候选区域提供搜索，并继续支持现有批量更新、单服务更新、跳转任务等操作。
 - 用户继续向下滚动 `/services` 时，仍能看到当前的 active/archived 服务列表与归档恢复区，不丢失恢复能力。
-- 用户进入 `/` 时，页面显示“以入口导航为主”的 Homepage-like 多列导航；服务按 `homepage.group` 分组，未标记服务按所属 `stack.name` 分组兜底。
+- 用户进入 `/` 时，页面显示“以入口导航为主”的 Homepage-like 多列导航；带有合法 `homepage.href` 的服务按 `homepage.group` 分组，缺失 group 时按所属 `stack.name` 分组兜底。
 - `/` 顶部使用资源摘要、搜索栏、当前时间组成的一体化条；搜索栏过滤当前导航卡片，提交方式为输入框回车，不展示独立搜索按钮。不再额外展示独立汇总卡片或统计芯片区。
-- 每张导航卡片优先显示 `homepage.name`、`homepage.description`、`homepage.icon` 与 `homepage.href`；若对应字段缺失，则分别回退到 `service.name`、`image.ref`、默认图标与 Dockrev 服务详情页。
+- 每张导航卡片优先显示 `homepage.name`、`homepage.description`、`homepage.icon` 与 `homepage.href`；若展示字段缺失，则分别回退到 `service.name`、`image.ref` 与默认图标；没有合法 `homepage.href` 的服务不进入导航页。
 - 每张导航卡片的内置图标源优先请求 `/api/homepage-icons/{provider}/{path}`，该接口只代理 Iconify、selfh.st icons 与 dashboard-icons 的受限路径；任意绝对 URL 仍由浏览器直连。
 - 每张导航卡片读取 `/api/services/resource-usage/overview?window=1h` 的聚合结果展示 CPU、内存、网络 RX/TX 速率；该接口按窗口返回最新样本与前一条样本推导出的网络速率。
-- 用户点击任一卡片时，Dockrev 在新标签页打开目标地址，不影响当前页面上下文。
-- 若某服务存在新版本候选、需确认、被阻止、架构不匹配等状态，导航卡片上必须展示对应标记；若存在 `newVersionDiscoveryCount`，则继续显示发现次数。
+- 用户点击任一卡片时，Dockrev 在新标签页打开 `homepage.href`，不影响当前页面上下文；点击卡片内详情 icon 时进入 Dockrev 服务详情页。
+- 若某服务存在新版本候选、需确认、被阻止、架构不匹配等状态，导航卡片上必须展示对应标记；其中“可更新”标记可点击并弹出单服务更新确认对话框；若存在 `newVersionDiscoveryCount`，则继续显示发现次数。
 
 ### Edge cases / errors
 
-- 若服务没有 `homepage.group`，则必须归入 `stack.name` 兜底分组，而不是隐藏。
-- 若服务没有 `homepage.href` 或值为空，则卡片默认打开内部服务详情页，而不是不可点击。
+- 若服务有合法 `homepage.href` 但没有 `homepage.group`，则必须归入 `stack.name` 兜底分组，而不是隐藏。
+- 若服务没有 `homepage.href`、值为空或 URL 不合法，则不显示在导航页；它仍可在 `/services` 与服务详情页中管理。
 - 若 `homepage.icon` 不可识别或加载失败，则使用统一默认图标，不能让卡片留空。
-- 若资源监控关闭，则 Overview 资源摘要和卡片指标显示占位，并保留所有服务入口。
+- 若资源监控关闭，则 Overview 资源摘要和卡片指标显示占位，并保留所有合法 Web 入口。
 - 若资源样本缺失或超过 stale 阈值，则卡片布局不抖动；无样本显示 `NO DATA`，stale 样本显示 `STALE` 并保留最近数值。
 - 若 `/services` 搜索为空结果，仅更新候选区域展示空态；任务摘要、discovery 异常与归档恢复区仍应正常显示。
-- 若同一 stack 下部分服务有 Homepage 标签、部分没有，页面仍需把它们全部纳入导航，只是按各自分组规则显示。
+- 若同一 stack 下部分服务有合法 Homepage href、部分没有，则导航页只展示有 Web 入口的服务，其余服务留在运维大盘管理。
 - 若 compose 同时出现 `homepage.widget.*`，本轮必须忽略，不得报错或污染 `homepage` 基础元数据。
 
 ## 接口契约（Interfaces & Contracts）
@@ -145,9 +145,10 @@
 - Given `/services` 的更新候选区存在搜索关键字，When 用户输入 `gitea` 或某个服务名，Then 仅候选区结果被过滤，任务摘要、discovery 异常与 archived 恢复区不受影响。
 - Given compose 为某服务配置了 `homepage.group/name/icon/href/description`，When discovery 完成并前端获取 stack/service 数据，Then 该服务的 `homepage` 元数据按原值返回且可在导航页展示。
 - Given compose 的 `labels` 使用 YAML map 写法或 list 写法，When 后端解析，Then Homepage 基础五项标签都能正确提取。
-- Given 服务未配置任何 `homepage.*`，When 用户打开 `/`，Then 该服务仍以兜底卡片展示在其 `stack.name` 分组中。
+- Given 服务未配置 `homepage.href` 或 href 不合法，When 用户打开 `/`，Then 该服务不会出现在导航页。
 - Given 导航卡片存在 `homepage.href`，When 用户点击卡片，Then 该地址在新标签页打开。
-- Given 导航卡片不存在 `homepage.href`，When 用户点击卡片，Then Dockrev 内部服务详情页在新标签页打开。
+- Given 导航卡片存在对应服务，When 用户点击卡片右侧详情 icon，Then Dockrev 进入该服务详情页。
+- Given 导航卡片状态为“可更新”，When 用户点击该标记，Then 弹出单服务更新确认对话框。
 - Given 服务当前存在 `serviceRowStatus=blocked|confirm|archMismatch|newVersion` 等状态或 `newVersionDiscoveryCount>0`，When `/` 渲染导航卡片，Then 卡片展示与现有服务列表一致的状态标记与发现次数。
 - Given `homepage.icon` 为绝对 URL、`mdi-*`、`si-*`、`sh-*`、dashboard-icons 文件名或未知值，When `/` 渲染导航卡片，Then 图标分别按对应规则显示或回退默认图标。
 - Given `homepage.icon` 为 Dockrev 可解析的 `mdi-*`、`si-*`、`sh-*` 或 dashboard-icons 文件名，When `/` 渲染导航卡片，Then 图片请求使用 `/api/homepage-icons/...` 同源代理；若代理返回失败，Then 卡片立即回退默认图标且后续同 URL 不重复请求。
@@ -165,7 +166,7 @@
 
 - 页面职责互换、Homepage 五项标签范围与 PR-ready 收口条件已锁定。
 - 已确认本轮只兼容 `homepage.group/name/icon/href/description`，忽略 `homepage.widget.*`。
-- 已确认 `/services` 继续保留 archived 恢复区，且未标记服务使用兜底卡片。
+- 已确认 `/services` 继续保留 archived 恢复区，且无 Web 入口的服务不出现在导航页。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
@@ -277,7 +278,7 @@ None
 - [x] M1: 后端完成 Homepage 元数据数据模型、持久化列与 API 类型扩展
 - [x] M2: compose/discovery 链完成 Homepage 标签解析、同步与 Rust 回归
 - [x] M3: `/services` 接管运维大盘并新增更新候选搜索，同时保留 archived 恢复区
-- [x] M4: `/` 重建为 Homepage 兼容导航页，完成分组卡片、图标解析、兜底卡片与状态标记
+- [x] M4: `/` 重建为 Homepage 兼容导航页，完成分组卡片、图标解析、Web 入口过滤、详情入口与状态标记
 - [x] M5: 全站前端 demo、Storybook 覆盖、视觉证据、浏览器 smoke、review-loop 与 PR-ready 收口完成
 
 ## 方案概述（Approach, high-level）
