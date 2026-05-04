@@ -681,7 +681,10 @@ pub async fn process_due_pending(
     now: &str,
     limit: usize,
 ) -> anyhow::Result<usize> {
-    let due = state.db.list_due_auto_update_pending(now, limit).await?;
+    let due = state
+        .db
+        .list_auto_update_pending_candidates(now, limit)
+        .await?;
     let mut enqueued = 0usize;
     for pending in due {
         if !pending_delay_gates_met(state, &pending, now).await? {

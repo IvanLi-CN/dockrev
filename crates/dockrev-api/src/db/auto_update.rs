@@ -278,7 +278,7 @@ LIMIT 1
         .context("reserve auto update pending")
     }
 
-    pub async fn list_due_auto_update_pending(
+    pub async fn list_auto_update_pending_candidates(
         &self,
         now: &str,
         limit: usize,
@@ -307,8 +307,11 @@ SELECT
   update_job_id,
   summary_json
 FROM auto_update_pending
-WHERE status = 'pending' AND due_at <= ?1
-ORDER BY due_at ASC, created_at ASC
+WHERE status = 'pending'
+ORDER BY
+  CASE WHEN due_at <= ?1 THEN 0 ELSE 1 END ASC,
+  due_at ASC,
+  created_at ASC
 LIMIT ?2
 "#,
             )?;
@@ -316,7 +319,7 @@ LIMIT ?2
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
         })
         .await
-        .context("list due auto update pending")
+        .context("list auto update pending candidates")
     }
 
     pub async fn try_claim_auto_update_pending(
