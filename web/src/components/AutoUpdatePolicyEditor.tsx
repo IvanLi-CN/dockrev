@@ -47,6 +47,30 @@ function defaultRule(index: number): AutoUpdateRule {
   }
 }
 
+function policyModeLabel(mode: AutoUpdatePolicyMode): string {
+  if (mode === 'inherit') return '继承 Stack'
+  if (mode === 'override') return '服务覆盖'
+  return '禁用自动更新'
+}
+
+function matcherTypeLabel(type: AutoUpdateMatcherType): string {
+  if (type === 'semver') return 'Semver 版本范围'
+  if (type === 'regex') return 'Regex 正则'
+  return 'Glob 通配符'
+}
+
+function matcherHelp(type: AutoUpdateMatcherType): string {
+  if (type === 'semver') return '匹配候选展示版本，例如 >=1.0.0, <2.0.0。'
+  if (type === 'regex') return '匹配完整候选版本或 raw tag，不匹配镜像仓库名。'
+  return '使用 Docker tag 通配符 * 和 ?，例如 5.2.*。'
+}
+
+function matcherPlaceholder(type: AutoUpdateMatcherType): string {
+  if (type === 'semver') return '>=1.0.0, <2.0.0'
+  if (type === 'regex') return '^5\\.2\\.[0-9]+$'
+  return '5.2.*'
+}
+
 function presetIndex<T extends readonly { value: number }[]>(items: T, value: number): number {
   const index = items.findIndex((item) => item.value === value)
   return index >= 0 ? index : 0
@@ -80,8 +104,10 @@ function validationMessage(policy: AutoUpdatePolicy): string | null {
   if (policy.mode === 'disabled') return null
   if (policy.mode === 'inherit') return null
   if (policy.enabled && policy.rules.length === 0) return '启用后至少需要一条规则'
-  const badRule = policy.rules.find((rule) => !rule.id.trim() || !rule.name.trim() || !rule.matcher.pattern.trim())
-  if (badRule) return `规则 ${badRule.id || badRule.name || '-'} 缺少必要字段`
+  const unnamedRule = policy.rules.find((rule) => !rule.name.trim())
+  if (unnamedRule) return `规则 ${unnamedRule.id || '-'} 需要名称`
+  const emptyPatternRule = policy.rules.find((rule) => !rule.matcher.pattern.trim())
+  if (emptyPatternRule) return `规则 ${emptyPatternRule.name || emptyPatternRule.id || '-'} 需要匹配规则`
   return null
 }
 
@@ -127,9 +153,9 @@ export function AutoUpdatePolicyEditor(props: {
               disabled={props.busy}
               onChange={(value) => setPolicy({ mode: value })}
               options={[
-                { value: 'inherit', label: 'inherit' },
-                { value: 'override', label: 'override' },
-                { value: 'disabled', label: 'disabled' },
+                { value: 'inherit', label: policyModeLabel('inherit') },
+                { value: 'override', label: policyModeLabel('override') },
+                { value: 'disabled', label: policyModeLabel('disabled') },
               ]}
               value={policy.mode}
             />
@@ -184,12 +210,13 @@ export function AutoUpdatePolicyEditor(props: {
                       disabled={props.busy}
                       onChange={(type) => setRule(index, { ...rule, matcher: { ...rule.matcher, type } })}
                       options={[
-                        { value: 'semver', label: 'semver' },
-                        { value: 'regex', label: 'regex' },
-                        { value: 'glob', label: 'glob' },
+                        { value: 'semver', label: matcherTypeLabel('semver') },
+                        { value: 'regex', label: matcherTypeLabel('regex') },
+                        { value: 'glob', label: matcherTypeLabel('glob') },
                       ]}
                       value={rule.matcher.type}
                     />
+                    <span className="muted autoPolicyFieldHint">{matcherHelp(rule.matcher.type)}</span>
                   </label>
                   <label className="formField autoPolicyPattern">
                     <span className="label">规则</span>
@@ -199,8 +226,10 @@ export function AutoUpdatePolicyEditor(props: {
                       onChange={(event) =>
                         setRule(index, { ...rule, matcher: { ...rule.matcher, pattern: event.target.value } })
                       }
+                      placeholder={matcherPlaceholder(rule.matcher.type)}
                       value={rule.matcher.pattern}
                     />
+                    <span className="muted autoPolicyFieldHint">先匹配候选展示版本；没有展示版本时回退 raw tag。</span>
                   </label>
                   <label className="formField">
                     <span className="label">动作</span>

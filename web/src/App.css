@@ -4801,6 +4801,12 @@ html[data-theme='light'] .modalOverlay {
   min-width: 0;
 }
 
+.autoPolicyFieldHint {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .autoPolicySlider {
   min-width: 0;
 }
