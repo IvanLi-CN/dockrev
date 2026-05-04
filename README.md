@@ -115,12 +115,13 @@ Environment variables (API):
 - `DOCKREV_DISCOVERY_INTERVAL_SECONDS` (default `60`; must be `>= 10`)
 - `DOCKREV_DISCOVERY_MAX_ACTIONS` (default `200`) max actions returned by `POST /api/discovery/scan`
 - Check scheduling is fixed: `7` concurrent check workers with a `1s` stagger between worker starts (not runtime-configurable)
-- Registry host concurrency is fixed: `5` in-flight requests per host (independent fixed cap; not runtime-configurable)
+- Registry host concurrency is fixed: `7` in-flight requests per host (independent fixed cap; not runtime-configurable)
 - Legacy `DOCKREV_CHECK_CONCURRENCY` / `DOCKREV_REGISTRY_PER_HOST_CONCURRENCY` are deprecated:
   any value = warning + ignored (remove them)
 - `DOCKREV_REGISTRY_RETRY_MAX_ATTEMPTS` (default `3`) max retry attempts after a `429 Too Many Requests`
 - `DOCKREV_REGISTRY_RETRY_BASE_MS` (default `250`; must be `>= 1`) exponential backoff base for `429` retries
 - `DOCKREV_REGISTRY_RETRY_MAX_MS` (default `2000`; must be `>= DOCKREV_REGISTRY_RETRY_BASE_MS`) max single retry delay
+- `DOCKREV_REGISTRY_RATE_LIMIT_COOLDOWN_SECONDS` (default `21600`; must be `>= 1`) per-host cooldown after registry `429`; Docker Hub manifest checks use `HEAD` first when a runtime digest is already known
 
 Environment variables (Supervisor):
 

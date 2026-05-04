@@ -29,6 +29,7 @@ pub struct Config {
     pub registry_retry_max_attempts: usize,
     pub registry_retry_base_ms: u64,
     pub registry_retry_max_ms: u64,
+    pub registry_rate_limit_cooldown_seconds: u64,
     pub update_idempotent_retry_max_attempts: usize,
     pub update_idempotent_retry_base_ms: u64,
     pub update_idempotent_retry_max_ms: u64,
@@ -165,6 +166,17 @@ impl Config {
             ));
         }
 
+        let registry_rate_limit_cooldown_seconds =
+            std::env::var("DOCKREV_REGISTRY_RATE_LIMIT_COOLDOWN_SECONDS")
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .unwrap_or(6 * 60 * 60);
+        if registry_rate_limit_cooldown_seconds == 0 {
+            return Err(anyhow::anyhow!(
+                "DOCKREV_REGISTRY_RATE_LIMIT_COOLDOWN_SECONDS must be >= 1"
+            ));
+        }
+
         let update_idempotent_retry_max_attempts =
             std::env::var("DOCKREV_UPDATE_IDEMPOTENT_RETRY_MAX_ATTEMPTS")
                 .ok()
@@ -226,6 +238,7 @@ impl Config {
             registry_retry_max_attempts,
             registry_retry_base_ms,
             registry_retry_max_ms,
+            registry_rate_limit_cooldown_seconds,
             update_idempotent_retry_max_attempts,
             update_idempotent_retry_base_ms,
             update_idempotent_retry_max_ms,

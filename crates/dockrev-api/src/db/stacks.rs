@@ -754,7 +754,11 @@ SELECT
   current_resolved_tag,
   current_resolved_tags_json,
   candidate_digest,
-  candidate_resolved_tag
+  candidate_resolved_tag,
+  candidate_arch_match,
+  candidate_arch_json,
+  ignore_rule_id,
+  ignore_reason
 FROM services
 WHERE stack_id = ?1
 ORDER BY name ASC
@@ -772,6 +776,10 @@ ORDER BY name ASC
                     current_resolved_tags_json: row.get(7)?,
                     candidate_digest: row.get(8)?,
                     candidate_resolved_tag: row.get(9)?,
+                    candidate_arch_match: row.get(10)?,
+                    candidate_arch_json: row.get(11)?,
+                    ignore_rule_id: row.get(12)?,
+                    ignore_reason: row.get(13)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -798,7 +806,11 @@ SELECT
   current_resolved_tag,
   current_resolved_tags_json,
   candidate_digest,
-  candidate_resolved_tag
+  candidate_resolved_tag,
+  candidate_arch_match,
+  candidate_arch_json,
+  ignore_rule_id,
+  ignore_reason
 FROM services
 WHERE stack_id = ?1
 ORDER BY name ASC
@@ -816,6 +828,10 @@ ORDER BY name ASC
                     current_resolved_tags_json: row.get(7)?,
                     candidate_digest: row.get(8)?,
                     candidate_resolved_tag: row.get(9)?,
+                    candidate_arch_match: row.get(10)?,
+                    candidate_arch_json: row.get(11)?,
+                    ignore_rule_id: row.get(12)?,
+                    ignore_reason: row.get(13)?,
                 })
             })?;
             Ok(rows.collect::<Result<Vec<_>, _>>()?)

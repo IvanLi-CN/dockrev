@@ -63,6 +63,49 @@ async fn run_to_string_with_retry_succeeds_after_transient_failures() {
 }
 
 #[derive(Default)]
+struct PullRateLimitRunner {
+    calls: Mutex<usize>,
+}
+
+#[async_trait::async_trait]
+impl CommandRunner for PullRateLimitRunner {
+    async fn run(&self, _spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        let mut calls = self.calls.lock().unwrap();
+        *calls += 1;
+        Ok(CommandOutput {
+            status: 1,
+            stdout: String::new(),
+            stderr: "toomanyrequests: You have reached your pull rate limit".to_string(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn pull_rate_limit_failure_is_not_retried() {
+    let runner = PullRateLimitRunner::default();
+    let err = run_checked_with_retry(
+        &runner,
+        CommandSpec {
+            program: "docker-compose".to_string(),
+            args: vec!["pull".to_string(), "web".to_string()],
+            env: Vec::new(),
+        },
+        Duration::from_millis(100),
+        "pull_services",
+        IdempotentRetryPolicy {
+            max_attempts: 3,
+            base_ms: 1,
+            max_ms: 2,
+        },
+    )
+    .await
+    .expect_err("rate limit failures should fail fast");
+
+    assert!(err.to_string().contains("registry rate limited"));
+    assert_eq!(*runner.calls.lock().unwrap(), 1);
+}
+
+#[derive(Default)]
 struct FailUpRunner {
     up_calls: Mutex<usize>,
     step: Mutex<usize>,

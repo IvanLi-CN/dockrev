@@ -143,9 +143,15 @@ pub(crate) async fn check_service_and_persist(
             .and_then(|observation| observation.started_at.as_deref()),
     );
 
+    let known_manifest_digests = runtime_digest
+        .iter()
+        .filter(|digest| !digest.trim().is_empty())
+        .cloned()
+        .collect::<Vec<_>>();
+
     let mut current_manifest = state
         .registry
-        .get_manifest(&img, &svc.image_tag, host_platform)
+        .get_manifest_if_changed(&img, &svc.image_tag, host_platform, &known_manifest_digests)
         .await
         .ok();
     if current_manifest.is_none() {
@@ -153,7 +159,7 @@ pub(crate) async fn check_service_and_persist(
         // digest-only updates, so transient registry failures should not immediately erase it.
         current_manifest = state
             .registry
-            .get_manifest(&img, &svc.image_tag, host_platform)
+            .get_manifest_if_changed(&img, &svc.image_tag, host_platform, &known_manifest_digests)
             .await
             .ok();
     }
@@ -188,6 +194,15 @@ pub(crate) async fn check_service_and_persist(
             candidate_arch_match = Some(arch_match.as_str().to_string());
             candidate_arch_json = Some(serde_json::to_string(&m.arch).unwrap_or_default());
         }
+    } else if current_manifest.is_none()
+        && let Some(existing_candidate_digest) = svc.candidate_digest.clone()
+    {
+        // Registry failures are not authoritative. Keep the visible candidate fields stable until
+        // a later successful check proves the candidate changed or disappeared.
+        candidate_tag = Some(svc.image_tag.clone());
+        candidate_digest = Some(existing_candidate_digest);
+        candidate_arch_match = svc.candidate_arch_match.clone();
+        candidate_arch_json = svc.candidate_arch_json.clone();
     }
 
     // If the candidate resolves to the same digest as current, there's no actionable update.
@@ -221,7 +236,12 @@ pub(crate) async fn check_service_and_persist(
     let candidate_state_authoritative =
         runtime_digest.is_some() && current_manifest_digest.is_some();
 
-    let mut ignore_match: Option<(String, String)> = None;
+    let mut ignore_match: Option<(String, String)> =
+        if current_manifest.is_none() && candidate_tag.is_some() {
+            svc.ignore_rule_id.clone().zip(svc.ignore_reason.clone())
+        } else {
+            None
+        };
     if let Some(ref tag) = candidate_tag
         && let Some((rule_id, _)) = matchers.iter().find(|(_, m)| m.matches(tag))
     {

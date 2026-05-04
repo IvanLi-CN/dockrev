@@ -170,6 +170,7 @@ async fn resolve_owner_ghcr_linked_repo_keys(
             retry_max_attempts: state.config.registry_retry_max_attempts,
             retry_base_ms: state.config.registry_retry_base_ms,
             retry_max_ms: state.config.registry_retry_max_ms,
+            rate_limit_cooldown_seconds: state.config.registry_rate_limit_cooldown_seconds,
         },
         auth_overrides,
     ) {
