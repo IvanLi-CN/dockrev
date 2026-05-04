@@ -613,3 +613,89 @@ services:
     );
 }
 
+#[tokio::test]
+async fn schedule_auto_policy_re_reserves_after_scope_change() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(FakeRegistry),
+        Arc::new(UpdateAndRuntimeScanRunner::new()),
+    )
+    .await;
+    let first_seen = "2026-04-30T00:00:00Z".to_string();
+    let override_at = "2026-04-30T00:05:00Z".to_string();
+    let compose_path = format!(
+        "/tmp/dockrev-auto-policy-scope-change-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id =
+        set_single_service_check_result(&state, &stack_id, Some("sha256:old"), Some("latest"), Some("sha256:new")).await;
+
+    state
+        .db
+        .put_auto_update_policy(
+            "stack",
+            &stack_id,
+            &delayed_stack_auto_update_policy(3600, 0),
+            &first_seen,
+        )
+        .await
+        .unwrap();
+
+    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    crate::auto_update::handle_completed_check(
+        &state,
+        "chk_schedule_initial",
+        "schedule",
+        &first_seen,
+        &summary,
+    )
+    .await
+    .unwrap();
+    assert!(
+        state
+            .db
+            .list_jobs()
+            .await
+            .unwrap()
+            .iter()
+            .all(|job| job.reason != "auto_policy")
+    );
+
+    state
+        .db
+        .put_auto_update_policy(
+            "service",
+            &service_id,
+            &immediate_stack_auto_update_policy(),
+            &override_at,
+        )
+        .await
+        .unwrap();
+    crate::auto_update::handle_completed_check(
+        &state,
+        "chk_schedule_override",
+        "schedule",
+        &override_at,
+        &summary,
+    )
+    .await
+    .unwrap();
+
+    let jobs = state.db.list_jobs().await.unwrap();
+    let auto_jobs = jobs
+        .iter()
+        .filter(|job| job.reason == "auto_policy")
+        .collect::<Vec<_>>();
+    assert_eq!(auto_jobs.len(), 1, "auto policy jobs: {jobs:?}");
+    assert_eq!(auto_jobs[0].service_id.as_deref(), Some(service_id.as_str()));
+}

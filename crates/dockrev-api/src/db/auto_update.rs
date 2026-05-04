@@ -148,6 +148,47 @@ ON CONFLICT(scope_type, scope_id) DO UPDATE SET
         let now = now.to_string();
         self.call(move |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let stale_rows = {
+                let mut stmt = tx.prepare(
+                    r#"
+SELECT id, summary_json
+FROM auto_update_pending
+WHERE service_id = ?1 AND rule_id = ?2 AND candidate_digest = ?3
+  AND status IN ('pending', 'enqueuing', 'enqueued')
+  AND (policy_scope_type != ?4 OR policy_scope_id != ?5)
+"#,
+                )?;
+                let rows = stmt.query_map(
+                    params![
+                        input.service_id,
+                        input.rule_id,
+                        input.candidate_digest,
+                        input.policy_scope_type,
+                        input.policy_scope_id,
+                    ],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )?;
+                rows.collect::<Result<Vec<_>, _>>()?
+            };
+            for (pending_id, summary_raw) in stale_rows {
+                let mut summary = serde_json::from_str::<serde_json::Value>(&summary_raw)
+                    .unwrap_or_else(|_| serde_json::json!({}));
+                if !summary.is_object() {
+                    summary = serde_json::json!({});
+                }
+                if let Some(obj) = summary.as_object_mut() {
+                    obj.insert("skipReason".to_string(), serde_json::json!("policy_changed"));
+                    obj.insert("skippedAt".to_string(), serde_json::json!(now));
+                }
+                tx.execute(
+                    r#"
+UPDATE auto_update_pending
+SET status = 'skipped', summary_json = ?2, updated_at = ?3
+WHERE id = ?1
+"#,
+                    params![pending_id, serde_json::to_string(&summary)?, now],
+                )?;
+            }
             tx.execute(
                 r#"
 INSERT OR IGNORE INTO auto_update_pending (
@@ -216,6 +257,7 @@ SELECT
   summary_json
 FROM auto_update_pending
 WHERE service_id = ?1 AND rule_id = ?2 AND candidate_digest = ?3
+  AND policy_scope_type = ?4 AND policy_scope_id = ?5
   AND status IN ('pending', 'enqueuing', 'enqueued')
 ORDER BY created_at ASC, id ASC
 LIMIT 1
@@ -223,7 +265,9 @@ LIMIT 1
                 params![
                     input.service_id,
                     input.rule_id,
-                    input.candidate_digest
+                    input.candidate_digest,
+                    input.policy_scope_type,
+                    input.policy_scope_id,
                 ],
                 map_auto_update_pending_row,
             )?;
