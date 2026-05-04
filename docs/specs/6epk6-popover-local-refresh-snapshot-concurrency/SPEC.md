@@ -23,12 +23,15 @@
 - popover 局部刷新期间只影响本组件的 trigger / notice / snapshot 状态，不再触发页面级 `versionInference.status=pending` 联动。
 - 当局部刷新完成且 snapshot ready 后，popover 允许用最新 snapshot tags 在本地更新自身 trigger 展示。
 - 固定并发策略调整为：任务并发 `2`、单任务 manifest 并发 `4`、registry host 总并发 `7`。
+- Docker Hub manifest 检查在已知运行态 digest 时优先使用 `HEAD` 比对 `Docker-Content-Digest`，digest 未变化时不再 `GET` manifest body。
+- registry 返回 `429` 后进入 host 级冷却窗口，后续请求快速失败并记录可观测日志，避免把限额状态放大成并发重试风暴。
 
 ### Non-goals
 
 - 不改变自动后台版本推测的既有触发条件与 `GET /api/stacks/{id}` 的 `pending/ready` 语义。
 - 不新增新的并发 env 开关，也不恢复 legacy 并发 env override。
 - 不重构 version popover 的 hover/pin 基座与 snapshot 数据模型。
+- 不通过多匿名客户端、多账号、代理池或绕过登录态的方式规避 Docker Hub 限额。
 
 ## 范围（Scope）
 
@@ -36,6 +39,7 @@
 
 - `crates/dockrev-api/src/api/services.rs` 与相关 API type/tests：digest 级 refresh 契约与 in-flight snapshot 行为。
 - `crates/dockrev-api/src/snapshot_worker.rs` / `service_check.rs` / `config.rs` / `registry.rs`：并发常量收敛到 `2 / 4 / 7`。
+- `crates/dockrev-api/src/updater.rs`：Docker Hub / registry 限额类 pull 失败不再按普通幂等错误重复拉取。
 - `web/src/api.ts`、`web/src/components/CurrentVersionPopover.tsx`、`web/src/components/VersionTagsPopover.tsx`：局部刷新改造与本地 trigger 收敛。
 - `web/src/stories/**` 与 `web/scripts/test-storybook.mjs`：新增 / 调整局部刷新不越界回归。
 - `docs/specs/README.md` 与本文档：索引、状态与验收口径。
@@ -70,6 +74,8 @@
 - Given 多个 service 可能复用同一个 `imageRepo + digest`，When 其中任一 service 的 popover 触发局部刷新并完成 ready，Then 不回填其它 service（即使 digest 相同），只更新发起 service 的本侧展示。
 - Given refresh API 成功 enqueue 或命中 in-flight 去重，When 前端接收响应，Then 仍返回 `status=pending` 与 `reason=force|running`，并带回本次目标 `digest`。
 - Given snapshot worker 有多个 digest 待处理，When 运行采集，Then 同时运行的 snapshot task 不超过 `2`，单个 task 的 manifest fan-out 仍为 `4`，同 registry host 的 HTTP 并发不超过 `7`。
+- Given Docker Hub 服务已有运行态 digest 且 tag 指向同一 digest，When check 读取 manifest，Then 只需要 `HEAD` 确认 digest 未变化，不发起 manifest `GET` body 请求。
+- Given update job 的 `docker compose pull` 返回 Docker Hub pull rate limit / `TooManyRequests`，When idempotent retry policy 配置为多次重试，Then 该步骤仍在首次失败后终止，并把失败摘要标记为 registry rate limited。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
@@ -78,6 +84,7 @@
 - Rust API / worker tests：覆盖 digest refresh 契约、unknown digest 拦截、单 digest enqueue、snapshot in-flight pending 与 worker concurrency cap。
 - Web tests：覆盖 API client 变更、popover 局部刷新不越界、story 交互回归。
 - 回归检查：现有自动 background inference 的 `pending -> ready`、snapshot miss/failure/retry/anchor 相关测试继续通过。
+- Registry / updater tests：覆盖 Docker Hub rate-limit header 解析、429 冷却、pull rate limit fail-fast。
 
 ## 文档更新（Docs to Update）
 
@@ -100,6 +107,8 @@
 - `GET /digest-tags-snapshot` 在发现目标 digest 已有 in-flight task 时优先返回 `pending`，即使库里已有旧 snapshot；popover 通过局部 polling 自行等待 ready，而不是依赖页面级 `versionInference` 轮询。
 - popover 内部维护本地 display override：snapshot ready 后优先用返回 tags 的最佳 semver 刷新自身 trigger；raw-tag 辅助行继续保持 raw 文案。
 - 并发值仍保持固定常量风格：任务层收敛、manifest fan-out 不变、registry host limiter 提升到 7。
+- check 主链路仅把运行态 digest 作为 Docker Hub `HEAD` 已知 digest；这样 floating tag 在运行态未知时仍走原始 manifest GET 解析，不因为旧持久化 digest 产生误判。
+- update 执行层保留普通瞬时错误的幂等重试，但对 registry 限额文本执行 fail-fast，避免每次失败真实消耗额外 pull 尝试。
 
 ## 风险 / 开放问题 / 假设（Risks, Open Questions, Assumptions）
 

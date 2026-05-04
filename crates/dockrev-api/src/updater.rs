@@ -1123,6 +1123,14 @@ where
         {
             Ok(out) => out,
             Err(err) => {
+                if is_registry_rate_limit_failure_text(&err.to_string()) {
+                    return Err(anyhow::Error::new(UpdateStepFailure::new(
+                        step,
+                        retry_policy,
+                        attempt,
+                        format!("registry rate limited: {err}"),
+                    )));
+                }
                 if attempt >= retry_policy.max_attempts {
                     return Err(anyhow::Error::new(UpdateStepFailure::new(
                         step,
@@ -1140,15 +1148,25 @@ where
             return Ok(());
         }
 
+        let failure_message = format!(
+            "command failed: status={} stderr={}",
+            out.status, out.stderr
+        );
+        if is_registry_rate_limit_failure_text(&failure_message) {
+            return Err(anyhow::Error::new(UpdateStepFailure::new(
+                step,
+                retry_policy,
+                attempt,
+                format!("registry rate limited: {failure_message}"),
+            )));
+        }
+
         if attempt >= retry_policy.max_attempts {
             return Err(anyhow::Error::new(UpdateStepFailure::new(
                 step,
                 retry_policy,
                 attempt,
-                format!(
-                    "command failed: status={} stderr={}",
-                    out.status, out.stderr
-                ),
+                failure_message,
             )));
         }
         tokio::time::sleep(retry_backoff_delay(retry_policy, attempt)).await;
@@ -1296,6 +1314,14 @@ async fn run_checked_with_retry(
         let out = match runner.run(spec.clone(), timeout).await {
             Ok(out) => out,
             Err(err) => {
+                if is_registry_rate_limit_failure_text(&err.to_string()) {
+                    return Err(anyhow::Error::new(UpdateStepFailure::new(
+                        step,
+                        retry_policy,
+                        attempt,
+                        format!("registry rate limited: {err}"),
+                    )));
+                }
                 if attempt >= retry_policy.max_attempts {
                     return Err(anyhow::Error::new(UpdateStepFailure::new(
                         step,
@@ -1311,15 +1337,24 @@ async fn run_checked_with_retry(
         if out.status == 0 {
             return Ok(());
         }
+        let failure_message = format!(
+            "command failed: status={} stderr={}",
+            out.status, out.stderr
+        );
+        if is_registry_rate_limit_failure_text(&failure_message) {
+            return Err(anyhow::Error::new(UpdateStepFailure::new(
+                step,
+                retry_policy,
+                attempt,
+                format!("registry rate limited: {failure_message}"),
+            )));
+        }
         if attempt >= retry_policy.max_attempts {
             return Err(anyhow::Error::new(UpdateStepFailure::new(
                 step,
                 retry_policy,
                 attempt,
-                format!(
-                    "command failed: status={} stderr={}",
-                    out.status, out.stderr
-                ),
+                failure_message,
             )));
         }
         tokio::time::sleep(retry_backoff_delay(retry_policy, attempt)).await;
@@ -1360,6 +1395,14 @@ async fn run_to_string_with_retry(
         let out = match runner.run(spec.clone(), timeout).await {
             Ok(out) => out,
             Err(err) => {
+                if is_registry_rate_limit_failure_text(&err.to_string()) {
+                    return Err(anyhow::Error::new(UpdateStepFailure::new(
+                        step,
+                        retry_policy,
+                        attempt,
+                        format!("registry rate limited: {err}"),
+                    )));
+                }
                 if attempt >= retry_policy.max_attempts {
                     return Err(anyhow::Error::new(UpdateStepFailure::new(
                         step,
@@ -1375,15 +1418,24 @@ async fn run_to_string_with_retry(
         if out.status == 0 {
             return Ok(out.stdout);
         }
+        let failure_message = format!(
+            "command failed: status={} stderr={}",
+            out.status, out.stderr
+        );
+        if is_registry_rate_limit_failure_text(&failure_message) {
+            return Err(anyhow::Error::new(UpdateStepFailure::new(
+                step,
+                retry_policy,
+                attempt,
+                format!("registry rate limited: {failure_message}"),
+            )));
+        }
         if attempt >= retry_policy.max_attempts {
             return Err(anyhow::Error::new(UpdateStepFailure::new(
                 step,
                 retry_policy,
                 attempt,
-                format!(
-                    "command failed: status={} stderr={}",
-                    out.status, out.stderr
-                ),
+                failure_message,
             )));
         }
         tokio::time::sleep(retry_backoff_delay(retry_policy, attempt)).await;
@@ -1395,6 +1447,14 @@ async fn run_to_string_with_retry(
         retry_policy.max_attempts,
         "retry loop exhausted unexpectedly",
     )))
+}
+
+fn is_registry_rate_limit_failure_text(input: &str) -> bool {
+    let lower = input.to_ascii_lowercase();
+    lower.contains("pull rate limit")
+        || lower.contains("toomanyrequests")
+        || lower.contains("too many requests")
+        || lower.contains("rate limit")
 }
 
 fn sanitize_project_name(name: &str) -> String {

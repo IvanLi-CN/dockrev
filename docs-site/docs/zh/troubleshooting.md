@@ -48,7 +48,7 @@ description: Dockrev 常见问题的定位路径与修复建议。
 立即处理：
 
 1. 先确认镜像仓库凭据是否过期。
-2. 遇到 `429` 时，提高 `DOCKREV_REGISTRY_RETRY_MAX_ATTEMPTS` 与 `MAX_MS`。
+2. 遇到 `429` 时，先确认 Docker 登录态与上游限额；必要时调大 `DOCKREV_REGISTRY_RATE_LIMIT_COOLDOWN_SECONDS`，让 host 冷却窗口覆盖限额恢复周期。
 3. 对单服务执行 check，对比全量 check 判断是否为局部仓库问题。
 
 ## 4) GHCR webhook 未触发扫描

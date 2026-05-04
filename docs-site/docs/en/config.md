@@ -51,13 +51,16 @@ Notes:
 | `DOCKREV_REGISTRY_RETRY_MAX_ATTEMPTS` | `3` | Retry attempts after 429 |
 | `DOCKREV_REGISTRY_RETRY_BASE_MS` | `250` | Retry backoff base |
 | `DOCKREV_REGISTRY_RETRY_MAX_MS` | `2000` | Retry backoff cap |
+| `DOCKREV_REGISTRY_RATE_LIMIT_COOLDOWN_SECONDS` | `21600` | Per-host cooldown after registry 429 |
 | `DOCKREV_DEPLOY_CHECK_LOCAL_COMMAND_TIMEOUT_SECONDS` | `12` | Preflight local probe timeout |
 
 Fixed scheduler behavior:
 
 - Check worker concurrency: `7`
 - Worker start stagger: `1s`
-- Registry per-host concurrency: `5`
+- Registry per-host concurrency: `7`
+
+When a runtime digest is already known, Docker Hub manifest checks use `HEAD` first to reduce pull quota pressure. After a registry 429, Dockrev enters a per-host cooldown instead of immediately amplifying retries.
 
 ## Supervisor config (`dockrev-supervisor`)
 

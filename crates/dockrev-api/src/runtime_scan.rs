@@ -461,6 +461,10 @@ async fn run_runtime_scan_for_job(
                 current_resolved_tags_json: svc.current_resolved_tags_json.clone(),
                 candidate_digest: svc.candidate_digest.clone(),
                 candidate_resolved_tag: svc.candidate_resolved_tag.clone(),
+                candidate_arch_match: svc.candidate_arch_match.clone(),
+                candidate_arch_json: svc.candidate_arch_json.clone(),
+                ignore_rule_id: svc.ignore_rule_id.clone(),
+                ignore_reason: svc.ignore_reason.clone(),
             };
 
             let before_digest = svc.current_digest.clone();

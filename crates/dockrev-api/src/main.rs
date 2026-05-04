@@ -94,6 +94,7 @@ async fn main() -> anyhow::Result<()> {
             retry_max_attempts: config.registry_retry_max_attempts,
             retry_base_ms: config.registry_retry_base_ms,
             retry_max_ms: config.registry_retry_max_ms,
+            rate_limit_cooldown_seconds: config.registry_rate_limit_cooldown_seconds,
         },
     )?);
     let runner = std::sync::Arc::new(runner::TokioCommandRunner);

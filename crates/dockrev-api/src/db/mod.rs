@@ -67,6 +67,10 @@ pub struct ServiceForCheck {
     pub current_resolved_tags_json: Option<String>,
     pub candidate_digest: Option<String>,
     pub candidate_resolved_tag: Option<String>,
+    pub candidate_arch_match: Option<String>,
+    pub candidate_arch_json: Option<String>,
+    pub ignore_rule_id: Option<String>,
+    pub ignore_reason: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -81,6 +85,10 @@ pub struct ServiceForRuntimeScan {
     pub current_resolved_tags_json: Option<String>,
     pub candidate_digest: Option<String>,
     pub candidate_resolved_tag: Option<String>,
+    pub candidate_arch_match: Option<String>,
+    pub candidate_arch_json: Option<String>,
+    pub ignore_rule_id: Option<String>,
+    pub ignore_reason: Option<String>,
 }
 
 #[derive(Clone, Debug)]

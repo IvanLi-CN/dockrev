@@ -1,28 +1,36 @@
 use std::{
     collections::HashMap,
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
     path::Path,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::Context as _;
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use reqwest::header::{ACCEPT, AUTHORIZATION, LINK, RETRY_AFTER, WWW_AUTHENTICATE};
+use reqwest::{
+    Method,
+    header::{ACCEPT, AUTHORIZATION, LINK, WWW_AUTHENTICATE},
+};
 use serde::Deserialize;
 use tokio::sync::Semaphore;
 
 use crate::api::types::ArchMatch;
 
+mod auth;
 mod platform;
+mod rate_limit;
 
+use auth::{BearerAuth, DockerConfig, normalize_auth_key, parse_www_authenticate_bearer};
 use platform::platform_matches;
 pub use platform::{compute_arch_match, host_platform_override};
+use rate_limit::{
+    is_registry_rate_limit_error_text, parse_ratelimit_remaining, parse_retry_after_delay,
+    retry_backoff_with_jitter,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImageRef {
@@ -134,6 +142,16 @@ pub trait RegistryClient: Send + Sync {
         reference: &str,
         host_platform: &str,
     ) -> anyhow::Result<ManifestInfo>;
+    async fn get_manifest_if_changed(
+        &self,
+        image: &ImageRef,
+        reference: &str,
+        host_platform: &str,
+        known_digests: &[String],
+    ) -> anyhow::Result<ManifestInfo> {
+        let _ = known_digests;
+        self.get_manifest(image, reference, host_platform).await
+    }
     async fn get_oci_version(
         &self,
         image: &ImageRef,
@@ -161,6 +179,7 @@ pub struct HttpRegistryClient {
     basic_auth_overrides: HashMap<String, (String, String)>,
     token_cache: Arc<Mutex<HashMap<String, String>>>,
     host_limiters: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
+    rate_limit_cooldowns: Arc<Mutex<HashMap<String, Instant>>>,
     options: HttpRegistryClientOptions,
 }
 
@@ -170,6 +189,7 @@ pub struct HttpRegistryClientOptions {
     pub retry_max_attempts: usize,
     pub retry_base_ms: u64,
     pub retry_max_ms: u64,
+    pub rate_limit_cooldown_seconds: u64,
 }
 
 impl Default for HttpRegistryClientOptions {
@@ -179,6 +199,7 @@ impl Default for HttpRegistryClientOptions {
             retry_max_attempts: 3,
             retry_base_ms: 250,
             retry_max_ms: 2000,
+            rate_limit_cooldown_seconds: 6 * 60 * 60,
         }
     }
 }
@@ -211,6 +232,7 @@ impl HttpRegistryClient {
                 .collect(),
             token_cache: Arc::new(Mutex::new(HashMap::new())),
             host_limiters: Arc::new(Mutex::new(HashMap::new())),
+            rate_limit_cooldowns: Arc::new(Mutex::new(HashMap::new())),
             options: HttpRegistryClientOptions {
                 per_host_concurrency,
                 ..options
@@ -357,6 +379,82 @@ impl RegistryClient for HttpRegistryClient {
         parse_manifest_json(&body, digest, host_platform)
     }
 
+    async fn get_manifest_if_changed(
+        &self,
+        image: &ImageRef,
+        reference: &str,
+        host_platform: &str,
+        known_digests: &[String],
+    ) -> anyhow::Result<ManifestInfo> {
+        let known = known_digests
+            .iter()
+            .filter_map(|digest| {
+                let trimmed = digest.trim();
+                (!trimmed.is_empty()).then(|| trimmed.to_string())
+            })
+            .collect::<Vec<_>>();
+        if image.registry != "docker.io" || known.is_empty() {
+            return self.get_manifest(image, reference, host_platform).await;
+        }
+
+        let scope = format!("repository:{}:pull", image.name);
+        let url = format!(
+            "https://{}/v2/{}/manifests/{}",
+            registry_api_host(&image.registry),
+            image.name,
+            reference
+        );
+
+        match self
+            .request_with_auth(
+                Method::HEAD,
+                &image.registry,
+                &scope,
+                url,
+                Some(manifest_accept_header()),
+            )
+            .await
+        {
+            Ok(resp) => {
+                let digest = resp
+                    .headers()
+                    .get("Docker-Content-Digest")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string());
+                if let Some(digest) = digest
+                    && known
+                        .iter()
+                        .any(|known| known.eq_ignore_ascii_case(digest.trim()))
+                {
+                    tracing::debug!(
+                        image = %image.name,
+                        reference,
+                        digest,
+                        "docker hub manifest unchanged after HEAD"
+                    );
+                    return Ok(ManifestInfo {
+                        digest: Some(digest),
+                        platform_digest: None,
+                        arch: Vec::new(),
+                    });
+                }
+            }
+            Err(err) => {
+                if is_registry_rate_limit_error_text(&err.to_string()) {
+                    return Err(err);
+                }
+                tracing::debug!(
+                    image = %image.name,
+                    reference,
+                    error = %err,
+                    "docker hub manifest HEAD failed; falling back to GET"
+                );
+            }
+        }
+
+        self.get_manifest(image, reference, host_platform).await
+    }
+
     async fn get_oci_version(
         &self,
         image: &ImageRef,
@@ -464,6 +562,18 @@ impl HttpRegistryClient {
         url: String,
         accept: Option<&str>,
     ) -> anyhow::Result<reqwest::Response> {
+        self.request_with_auth(Method::GET, registry_host, scope, url, accept)
+            .await
+    }
+
+    async fn request_with_auth(
+        &self,
+        method: Method,
+        registry_host: &str,
+        scope: &str,
+        url: String,
+        accept: Option<&str>,
+    ) -> anyhow::Result<reqwest::Response> {
         let basic_auth = self
             .basic_auth_for_registry_host(registry_host)
             .map(|(user, pass)| format!("Basic {}", BASE64.encode(format!("{user}:{pass}"))));
@@ -471,7 +581,7 @@ impl HttpRegistryClient {
         let limit_host = request_limit_host(&url, registry_host);
         let resp = self
             .send_with_429_retry(&limit_host, || {
-                let mut builder = self.http.get(url.clone());
+                let mut builder = self.http.request(method.clone(), url.clone());
                 if let Some(accept) = accept_header.as_deref() {
                     builder = builder.header(ACCEPT, accept);
                 }
@@ -509,7 +619,7 @@ impl HttpRegistryClient {
         let token_auth = format!("Bearer {token}");
         let resp2 = self
             .send_with_429_retry(&limit_host, || {
-                let mut builder = self.http.get(url.clone());
+                let mut builder = self.http.request(method.clone(), url.clone());
                 if let Some(accept) = accept_header.as_deref() {
                     builder = builder.header(ACCEPT, accept);
                 }
@@ -532,7 +642,7 @@ impl HttpRegistryClient {
             let token_auth = format!("Bearer {token}");
             let resp3 = self
                 .send_with_429_retry(&limit_host, || {
-                    let mut builder = self.http.get(url.clone());
+                    let mut builder = self.http.request(method.clone(), url.clone());
                     if let Some(accept) = accept_header.as_deref() {
                         builder = builder.header(ACCEPT, accept);
                     }
@@ -554,6 +664,33 @@ impl HttpRegistryClient {
             ));
         }
         Ok(resp2)
+    }
+
+    fn cooldown_remaining_for_host(&self, host: &str) -> Option<Duration> {
+        let now = Instant::now();
+        let mut guard = self.rate_limit_cooldowns.lock().ok()?;
+        let until = *guard.get(host)?;
+        if until <= now {
+            guard.remove(host);
+            return None;
+        }
+        Some(until.saturating_duration_since(now))
+    }
+
+    fn record_rate_limit_cooldown(&self, host: &str, headers: &reqwest::header::HeaderMap) {
+        let fallback = Duration::from_secs(self.options.rate_limit_cooldown_seconds.max(1));
+        let cooldown = parse_retry_after_delay(headers, fallback.as_millis() as u64)
+            .unwrap_or(fallback)
+            .max(Duration::from_secs(1));
+        let until = Instant::now() + cooldown;
+        if let Ok(mut guard) = self.rate_limit_cooldowns.lock() {
+            guard.insert(host.to_string(), until);
+        }
+        tracing::warn!(
+            registry_host = host,
+            cooldown_seconds = cooldown.as_secs(),
+            "registry rate limited; entering cooldown"
+        );
     }
 
     fn limiter_for_host(&self, host: &str) -> Arc<Semaphore> {
@@ -579,6 +716,13 @@ impl HttpRegistryClient {
         let mut attempts_done: usize = 0;
 
         loop {
+            if let Some(remaining) = self.cooldown_remaining_for_host(host) {
+                return Err(anyhow::anyhow!(
+                    "registry rate limited: host {host} cooling down for {}s",
+                    remaining.as_secs().max(1)
+                ));
+            }
+
             let resp = {
                 let limiter = self.limiter_for_host(host);
                 let _permit = limiter
@@ -588,10 +732,21 @@ impl HttpRegistryClient {
                 make_request().send().await?
             };
             if resp.status() != reqwest::StatusCode::TOO_MANY_REQUESTS {
+                if let Some((remaining, limit)) = parse_ratelimit_remaining(resp.headers())
+                    && remaining <= 1
+                {
+                    tracing::warn!(
+                        registry_host = host,
+                        ratelimit_remaining = remaining,
+                        ratelimit_limit = limit,
+                        "registry rate-limit budget nearly exhausted"
+                    );
+                }
                 return Ok(resp);
             }
 
             if attempts_done >= self.options.retry_max_attempts {
+                self.record_rate_limit_cooldown(host, resp.headers());
                 return Ok(resp);
             }
 
@@ -697,157 +852,6 @@ fn request_limit_host(url: &str, fallback_host: &str) -> String {
 }
 
 static RETRY_JITTER_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-fn parse_retry_after_delay(headers: &reqwest::header::HeaderMap, max_ms: u64) -> Option<Duration> {
-    let raw = headers.get(RETRY_AFTER)?.to_str().ok()?.trim();
-    if raw.is_empty() {
-        return None;
-    }
-
-    let cap_ms = max_ms.max(1);
-
-    if let Ok(seconds) = raw.parse::<u64>() {
-        return Some(Duration::from_millis(
-            seconds.saturating_mul(1000).min(cap_ms),
-        ));
-    }
-
-    if let Ok(at) = time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc2822)
-    {
-        let now = time::OffsetDateTime::now_utc();
-        let delta = at - now;
-        let millis = if delta.is_negative() {
-            0
-        } else {
-            delta.whole_milliseconds().try_into().unwrap_or(u64::MAX)
-        };
-        return Some(Duration::from_millis(millis.min(cap_ms)));
-    }
-
-    None
-}
-
-fn retry_backoff_with_jitter(
-    base_ms: u64,
-    max_ms: u64,
-    attempt: usize,
-    host: &str,
-    request_seed: u64,
-) -> Duration {
-    let cap_ms = max_ms.max(1);
-    let factor = 1u64
-        .checked_shl((attempt as u32).min(16))
-        .unwrap_or(u64::MAX);
-    let raw_ms = base_ms.saturating_mul(factor).min(cap_ms);
-
-    let jitter_cap = (base_ms / 2).max(1);
-    let mut hasher = DefaultHasher::new();
-    host.hash(&mut hasher);
-    attempt.hash(&mut hasher);
-    request_seed.hash(&mut hasher);
-    let jitter_ms = hasher.finish() % (jitter_cap + 1);
-
-    Duration::from_millis(raw_ms.saturating_add(jitter_ms).min(cap_ms))
-}
-
-#[derive(Clone, Debug)]
-struct BearerAuth {
-    realm: String,
-    service: Option<String>,
-}
-
-fn parse_www_authenticate_bearer(header_value: &str) -> Option<BearerAuth> {
-    let mut parts = header_value.splitn(2, ' ');
-    let scheme = parts.next()?.trim().to_ascii_lowercase();
-    let params = parts.next().unwrap_or("").trim();
-    if scheme != "bearer" {
-        return None;
-    }
-
-    let mut realm: Option<String> = None;
-    let mut service: Option<String> = None;
-    for item in params.split(',') {
-        let item = item.trim();
-        let (k, v) = item.split_once('=')?;
-        let v = v.trim().trim_matches('"');
-        match k.trim() {
-            "realm" => realm = Some(v.to_string()),
-            "service" => service = Some(v.to_string()),
-            _ => {}
-        }
-    }
-
-    Some(BearerAuth {
-        realm: realm?,
-        service,
-    })
-}
-
-#[derive(Clone, Debug)]
-struct DockerConfig {
-    auths: HashMap<String, DockerAuthEntry>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct DockerAuthEntry {
-    auth: Option<String>,
-    #[serde(rename = "identitytoken")]
-    identity_token: Option<String>,
-}
-
-impl DockerConfig {
-    fn load(path: &Path) -> anyhow::Result<Self> {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("read docker config {path:?}"))?;
-        #[derive(Deserialize)]
-        struct Root {
-            auths: Option<HashMap<String, DockerAuthEntry>>,
-        }
-        let root: Root = serde_json::from_str(&text).context("parse docker config json")?;
-        let mut auths = HashMap::new();
-        for (k, v) in root.auths.unwrap_or_default() {
-            auths.insert(normalize_auth_key(&k), v);
-        }
-        Ok(Self { auths })
-    }
-
-    fn basic_auth(&self, registry_host: &str) -> Option<(String, String)> {
-        let key = normalize_auth_key(registry_host);
-        let entry = self.auths.get(&key)?;
-
-        if let Some(token) = entry.identity_token.as_deref() {
-            return Some(("oauth2".to_string(), token.to_string()));
-        }
-
-        let auth = entry.auth.as_deref()?;
-        let decoded = BASE64.decode(auth).ok()?;
-        let decoded = String::from_utf8(decoded).ok()?;
-        let (user, pass) = decoded.split_once(':')?;
-        Some((user.to_string(), pass.to_string()))
-    }
-}
-
-fn normalize_auth_key(input: &str) -> String {
-    if let Ok(url) = reqwest::Url::parse(input)
-        && let Some(host) = url.host_str()
-    {
-        return normalize_auth_key(host);
-    }
-
-    let host = input
-        .trim()
-        .trim_end_matches('/')
-        .trim_end_matches("/v1/")
-        .trim_end_matches("/v2/")
-        .trim_end_matches("/v1")
-        .trim_end_matches("/v2")
-        .to_string();
-
-    match host.as_str() {
-        "index.docker.io" | "registry-1.docker.io" => "docker.io".to_string(),
-        _ => host,
-    }
-}
 
 pub fn parse_manifest_json(
     body: &str,
@@ -1171,6 +1175,7 @@ mod http_registry_tests {
                 // Fixed backoff so the timing assertion is deterministic.
                 retry_base_ms: 800,
                 retry_max_ms: 800,
+                ..HttpRegistryClientOptions::default()
             },
         )
         .unwrap();
@@ -1225,7 +1230,7 @@ mod http_registry_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reqwest::header::HeaderValue;
+    use reqwest::header::{HeaderValue, RETRY_AFTER};
 
     #[test]
     fn parse_image_ref_with_registry() {
@@ -1305,6 +1310,15 @@ mod tests {
         let delay = parse_retry_after_delay(&headers, 10_000).unwrap();
         assert!(delay.as_millis() <= 3_000);
         assert!(delay.as_millis() > 0);
+    }
+
+    #[test]
+    fn parse_ratelimit_remaining_docker_header() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("ratelimit-remaining", HeaderValue::from_static("1;w=21600"));
+        headers.insert("ratelimit-limit", HeaderValue::from_static("200;w=21600"));
+
+        assert_eq!(parse_ratelimit_remaining(&headers), Some((1, Some(200))));
     }
 
     #[test]

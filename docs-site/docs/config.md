@@ -51,17 +51,18 @@ description: Dockrev API 与 Supervisor 运行参数说明。
 | `DOCKREV_REGISTRY_RETRY_MAX_ATTEMPTS` | `3` | 429 重试次数 |
 | `DOCKREV_REGISTRY_RETRY_BASE_MS` | `250` | 退避基数 |
 | `DOCKREV_REGISTRY_RETRY_MAX_MS` | `2000` | 退避上限 |
+| `DOCKREV_REGISTRY_RATE_LIMIT_COOLDOWN_SECONDS` | `21600` | registry 429 后的 host 冷却时间 |
 | `DOCKREV_DEPLOY_CHECK_LOCAL_COMMAND_TIMEOUT_SECONDS` | `12` | 本地探测超时 |
 
 固定策略（非环境变量）：
 
 - Check 并发固定为 `7`
 - Worker 启动错峰固定 `1s`
-- Registry host 并发固定 `5`
+- Registry host 并发固定 `7`
 
 调参建议：
 
-- 经常遇到 `429`：先增大 `DOCKREV_REGISTRY_RETRY_MAX_ATTEMPTS`。
+- 经常遇到 `429`：降低检查频率，确认 Docker 登录状态；Dockrev 会在已知运行 digest 时用 Docker Hub `HEAD` manifest 探测减少 pull 配额消耗，并在 429 后进入 host 冷却。
 - 目标 registry 响应慢：提高 `DOCKREV_REGISTRY_RETRY_MAX_MS`（保持 >= `BASE_MS`）。
 
 ## Supervisor 配置（`dockrev-supervisor`）
