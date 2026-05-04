@@ -4592,8 +4592,10 @@ html[data-theme='light'] .modalOverlay {
 }
 
 .settingsDrawerContent[data-settings-drawer-direction='right'] {
-  border-left: 1px solid var(--surface-border-strong);
   border-radius: 0;
+  box-shadow:
+    inset 1px 0 0 var(--surface-border-strong),
+    -24px 0 56px rgba(0, 0, 0, 0.42);
 }
 
 .settingsDrawerContent[data-settings-drawer-direction='bottom'] {
@@ -4678,15 +4680,43 @@ html[data-theme='light'] .modalOverlay {
 .autoPolicyResultFacts {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .autoPolicyResultFacts > div {
   min-width: 0;
   border: 1px solid color-mix(in srgb, var(--borderColor) 70%, transparent);
   border-radius: 8px;
-  padding: 10px;
+  padding: 9px 10px 10px;
   background: color-mix(in srgb, var(--panel2) 24%, transparent);
+}
+
+.autoPolicyFactCell {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  min-height: 54px;
+}
+
+.autoPolicyFactLabel {
+  color: var(--muted2);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.1;
+}
+
+.autoPolicyFactValue {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 620;
+  line-height: 1.28;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.autoPolicyFactValue .mono {
+  font-variant-numeric: tabular-nums;
 }
 
 .autoPolicyResultFacts span:not(.label),

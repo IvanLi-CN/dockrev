@@ -76,17 +76,23 @@ export function AutoUpdatePolicyResultCard(props: {
       </div>
 
       <div className="autoPolicyResultFacts">
-        <div>
-          <span className="label">来源</span>
-          <Mono>{result.source}</Mono>
+        <div className="autoPolicyFactCell">
+          <span className="label autoPolicyFactLabel">来源</span>
+          <span className="autoPolicyFactValue">
+            <Mono>{result.source}</Mono>
+          </span>
         </div>
-        <div>
-          <span className="label">启用规则</span>
-          <Mono>{rules.length}</Mono>
+        <div className="autoPolicyFactCell">
+          <span className="label autoPolicyFactLabel">启用规则</span>
+          <span className="autoPolicyFactValue">
+            <Mono>{rules.length}</Mono>
+          </span>
         </div>
-        <div>
-          <span className="label">最终动作</span>
-          <span>{primaryRule ? `${primaryRule.name} · ${autoUpdateRuleSummary(primaryRule)}` : '无自动部署动作'}</span>
+        <div className="autoPolicyFactCell">
+          <span className="label autoPolicyFactLabel">最终动作</span>
+          <span className="autoPolicyFactValue">
+            {primaryRule ? `${primaryRule.name} · ${autoUpdateRuleSummary(primaryRule)}` : '无自动部署动作'}
+          </span>
         </div>
       </div>
 
