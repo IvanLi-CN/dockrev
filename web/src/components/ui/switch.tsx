@@ -10,7 +10,7 @@ const Switch = React.forwardRef<
   return (
     <SwitchPrimitive.Root
       className={cn(
-        'peer inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50',
+        'peer group inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50',
         className,
       )}
       {...props}
@@ -18,9 +18,8 @@ const Switch = React.forwardRef<
     >
       <span
         className={cn(
-          'pointer-events-none inline-flex h-5 w-9 items-center rounded-full border border-transparent bg-input shadow-xs transition-colors data-[state=checked]:bg-primary',
+          'pointer-events-none inline-flex h-5 w-9 items-center rounded-full border border-transparent bg-input shadow-xs transition-colors group-data-[state=checked]:bg-primary',
         )}
-        data-state={props.checked ? 'checked' : 'unchecked'}
         aria-hidden="true"
       >
         <SwitchPrimitive.Thumb
