@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use crate::service_check;
 mod transitions;
-pub(super) use transitions::*;
+pub(crate) use transitions::*;
 
 pub(super) const CHECK_PROGRESS_LOG_INTERVAL: Duration = Duration::from_millis(500);
 pub(super) const CHECK_PARALLELISM: usize = crate::config::FIXED_CHECK_PARALLELISM;
@@ -526,7 +526,7 @@ async fn should_enqueue_new_version_inference(
     )
 }
 
-pub(super) fn new_version_notification_reason(
+pub(crate) fn new_version_notification_reason(
     reason: &str,
     summary: &serde_json::Value,
 ) -> Option<&'static str> {
@@ -541,14 +541,14 @@ pub(super) fn new_version_notification_reason(
     }
 }
 
-pub(super) fn summary_emits_new_version_notification(summary: &serde_json::Value) -> bool {
+pub(crate) fn summary_emits_new_version_notification(summary: &serde_json::Value) -> bool {
     summary
         .get("source")
         .and_then(|value| value.as_str())
         .is_some_and(|value| value.eq_ignore_ascii_case("github_webhook"))
 }
 
-pub(super) fn summary_matched_service_ids(
+pub(crate) fn summary_matched_service_ids(
     summary: &serde_json::Value,
 ) -> Option<std::collections::HashSet<String>> {
     let items = summary.get("matchedServiceIds")?.as_array()?;
@@ -621,7 +621,7 @@ pub(super) async fn maybe_notify_check_new_versions(
     .await
 }
 
-pub(super) async fn complete_check_job(
+pub(crate) async fn complete_check_job(
     state: &Arc<AppState>,
     job_id: &str,
     reason: &str,
@@ -661,6 +661,21 @@ pub(super) async fn complete_check_job(
                         job_id = %job_id,
                         error = %e,
                         "failed to send discovered-version notification"
+                    );
+                }
+                if let Err(e) = crate::auto_update::handle_completed_check(
+                    state,
+                    job_id,
+                    reason,
+                    finished_at,
+                    &notify_summary,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        job_id = %job_id,
+                        error = %e,
+                        "failed to evaluate auto update policies"
                     );
                 }
             }

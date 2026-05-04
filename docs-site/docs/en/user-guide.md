@@ -38,7 +38,15 @@ description: Daily usage flows and UI operations in Dockrev.
 - Trigger from Overview, Services, or Service Detail
 - Submit update jobs according to selected scope
 
-### 5) Track jobs in Queue
+### 5) Auto-update policies
+
+- Configure from Service Detail, or from the Stack group “Policy” action in Services/Operations
+- Stack policies define defaults; each Service can inherit, override, or disable auto updates
+- Rules match candidate versions or tags with semver, regex, or glob
+- Delayed rules require both gates: candidate first-seen age and current version lag behind N matching versions
+- Automatic apply only runs after scheduled checks or GHCR webhook checks; UI manual scans never auto deploy
+
+### 6) Track jobs in Queue
 
 - Monitor states: `running/success/failed`
 - Open logs per job for diagnosis

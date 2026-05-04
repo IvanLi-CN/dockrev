@@ -9,6 +9,7 @@ import { JobDetailPage } from './pages/JobDetailPage'
 import { ServicesPage } from './pages/ServicesPage'
 import { CleanupPage } from './pages/CleanupPage'
 import { ServiceDetailPage } from './pages/ServiceDetailPage'
+import { StackDetailPage } from './pages/StackDetailPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { VersionInferencePage } from './pages/VersionInferencePage'
 import { GhcrWebhookQueuePage } from './pages/GhcrWebhookQueuePage'
@@ -104,6 +105,8 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
       }
     case 'service':
       return { title: '服务详情', topbarHint: '服务详情' }
+    case 'stack':
+      return { title: 'Stack 详情', topbarHint: 'Stack 详情' }
     case 'supervisor-misroute':
       return { title: '部署问题', topbarHint: '自我升级（Supervisor）' }
   }
@@ -354,6 +357,13 @@ export default function App() {
         {route.name === 'ghcr-webhook-inbox' ? <GhcrWebhookInboxPage onTopActions={setPageActions} /> : null}
         {route.name === 'ghcr-webhook-registry' ? <GhcrWebhookRegistryPage onTopActions={setPageActions} /> : null}
         {route.name === 'settings' ? <SettingsPage onTopActions={setPageActions} /> : null}
+        {route.name === 'stack' ? (
+          <StackDetailPage
+            stackId={route.stackId}
+            onLastScanHint={setLastScanHint}
+            onTopActions={setPageActions}
+          />
+        ) : null}
         {route.name === 'service' ? (
           <ServiceDetailPage
             stackId={route.stackId}

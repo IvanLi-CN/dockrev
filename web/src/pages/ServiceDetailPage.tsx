@@ -1,9 +1,11 @@
-import { type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
   createIgnore,
   deleteIgnore,
   inferServiceRepoLink,
+  listJobs,
   putServiceSettings,
+  type JobListItem,
   type Service,
 } from '../api'
 import { navigate } from '../routes'
@@ -11,6 +13,10 @@ import { Button, IconButton, Input, Mono, Pill, RefreshIcon, SelectField, Switch
 import { isDockrevImageRef } from '../runtimeConfig'
 import { serviceRowStatus } from '../updateStatus'
 import { ServiceResourcePanel } from '../components/ServiceResourcePanel'
+import { AutoUpdatePolicyEditor, createDefaultAutoUpdatePolicy } from '../components/AutoUpdatePolicyEditor'
+import { AutoUpdatePolicyResultCard } from '../components/AutoUpdatePolicyResultCard'
+import { RecentUpdateRecords, selectRecentServiceUpdateJobs } from '../components/RecentUpdateRecords'
+import { ResponsiveSettingsDrawer } from '../components/ResponsiveSettingsDrawer'
 import {
   ImageLinkIcons,
   RepositoryLinkIcon,
@@ -77,15 +83,35 @@ export function ServiceDetailPage(props: {
     settings,
     settingsBusy,
     stack,
+    stackSettings,
     supervisorErrorAt,
     supervisorState,
     tone,
     volTargets,
   } = useServiceDetailPageState(props)
+  const [jobs, setJobs] = useState<JobListItem[]>([])
+  const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false)
+
+  const refreshRecentJobs = useCallback(async () => {
+    setJobs(await listJobs())
+  }, [])
+
+  useEffect(() => {
+    void refreshRecentJobs().catch(() => undefined)
+  }, [props.serviceId, refreshRecentJobs])
+
+  useEffect(() => {
+    if (!notice?.jobId) return
+    void refreshRecentJobs().catch(() => undefined)
+  }, [notice?.jobId, refreshRecentJobs])
 
   if (!stack || !service || !settings) {
     return <div className="muted">加载中…</div>
   }
+
+  const policy = settings.autoUpdatePolicy ?? createDefaultAutoUpdatePolicy('inherit')
+  const recentUpdateJobs = selectRecentServiceUpdateJobs(jobs, service.id)
+
   return (
     <div className="page">
       <div className="svcTitleRow">
@@ -179,9 +205,19 @@ export function ServiceDetailPage(props: {
 
       <ServiceResourcePanel serviceId={service.id} />
 
-      <div className="twoCol">
-        <div className="card">
-          <div className="title">更新策略</div>
+      <div className="settingsSummaryGrid" style={{ marginTop: 16 }}>
+        <AutoUpdatePolicyResultCard
+          busy={settingsBusy}
+          onOpenSettings={() => setSettingsDrawerOpen(true)}
+          policy={policy}
+          scope="service"
+          stackPolicy={stackSettings?.autoUpdatePolicy ?? null}
+        />
+        <RecentUpdateRecords jobs={recentUpdateJobs} />
+      </div>
+
+      <div className="card" style={{ marginTop: 16 }}>
+          <div className="title">忽略规则</div>
 
           <div className="ruleList">
             {rules.map((r) => (
@@ -282,7 +318,38 @@ export function ServiceDetailPage(props: {
           </div>
         </div>
 
-        <div className="card">
+      <ResponsiveSettingsDrawer
+        description="配置自动更新策略、失败回滚和服务级备份目标。"
+        onOpenChange={setSettingsDrawerOpen}
+        open={settingsDrawerOpen}
+        title="服务设置"
+      >
+        <AutoUpdatePolicyEditor
+          busy={settingsBusy}
+          onChange={(autoUpdatePolicy) => setSettings({ ...settings, autoUpdatePolicy })}
+          onSave={() => {
+            void (async () => {
+              setBusy(true)
+              setError(null)
+              try {
+                await putServiceSettings(props.serviceId, {
+                  ...settings,
+                  repoUrl: undefined,
+                })
+                await requestRefresh()
+              } catch (e: unknown) {
+                setError(errorMessage(e))
+              } finally {
+                setBusy(false)
+              }
+            })()
+          }}
+          policy={policy}
+          scope="service"
+          stackPolicy={stackSettings?.autoUpdatePolicy ?? null}
+        />
+        <div className="settingsDrawerDivider" />
+        <div className="settingsDrawerSection">
           <div className="title">更新前备份 / 回滚</div>
           <div className="muted">服务级策略（失败回滚 + 备份 targets 三态选择）</div>
 
@@ -432,7 +499,7 @@ export function ServiceDetailPage(props: {
             </div>
           </div>
         </div>
-      </div>
+      </ResponsiveSettingsDrawer>
 
       <div className="card" style={{ marginTop: 16 }}>
         <div className="title">Webhook 触发（服务级）</div>

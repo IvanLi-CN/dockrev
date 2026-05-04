@@ -12,6 +12,7 @@ export type Route =
   | { name: 'ghcr-webhook-registry' }
   | { name: 'deploy-check' }
   | { name: 'settings' }
+  | { name: 'stack'; stackId: string }
   | { name: 'service'; stackId: string; serviceId: string }
   | { name: 'supervisor-misroute'; basePath: string; pathname: string }
 
@@ -41,6 +42,9 @@ export function parseRoute(pathname: string): Route {
   if (parts.length === 1 && parts[0] === 'version-inference') return { name: 'version-inference' }
   if (parts.length === 1 && parts[0] === 'deploy-check') return { name: 'deploy-check' }
   if (parts.length === 1 && parts[0] === 'settings') return { name: 'settings' }
+  if (parts.length === 2 && parts[0] === 'services') {
+    return { name: 'stack', stackId: parts[1] }
+  }
   if (parts.length === 3 && parts[0] === 'services') {
     return { name: 'service', stackId: parts[1], serviceId: parts[2] }
   }
@@ -71,6 +75,8 @@ export function href(route: Route): string {
       return '/deploy-check'
     case 'settings':
       return '/settings'
+    case 'stack':
+      return `/services/${encodeURIComponent(route.stackId)}`
     case 'service':
       return `/services/${encodeURIComponent(route.stackId)}/${encodeURIComponent(route.serviceId)}`
     case 'supervisor-misroute': {

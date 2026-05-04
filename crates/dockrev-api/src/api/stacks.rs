@@ -14,6 +14,59 @@ pub(super) async fn list_stacks(
     Ok(Json(ListStacksResponse { stacks }))
 }
 
+pub(super) async fn get_stack_settings(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(stack_id): Path<String>,
+) -> Result<Json<StackSettingsResponse>, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+    if state
+        .db
+        .get_stack(&stack_id)
+        .await
+        .map_err(map_internal)?
+        .is_none()
+    {
+        return Err(ApiError::not_found("stack not found"));
+    }
+    let auto_update_policy = state
+        .db
+        .get_auto_update_policy(
+            "stack",
+            &stack_id,
+            crate::api::types::AutoUpdatePolicyMode::Override,
+        )
+        .await
+        .map_err(map_internal)?;
+    Ok(Json(StackSettingsResponse { auto_update_policy }))
+}
+
+pub(super) async fn put_stack_settings(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(stack_id): Path<String>,
+    Json(req): Json<StackSettingsRequest>,
+) -> Result<Json<PutStackSettingsResponse>, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+    if state
+        .db
+        .get_stack(&stack_id)
+        .await
+        .map_err(map_internal)?
+        .is_none()
+    {
+        return Err(ApiError::not_found("stack not found"));
+    }
+    crate::auto_update::validate_policy_for_scope(&req.auto_update_policy, "stack")?;
+    let now = now_rfc3339().map_err(map_internal)?;
+    state
+        .db
+        .put_auto_update_policy("stack", &stack_id, &req.auto_update_policy, &now)
+        .await
+        .map_err(map_internal)?;
+    Ok(Json(PutStackSettingsResponse { ok: true }))
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ListStacksQuery {

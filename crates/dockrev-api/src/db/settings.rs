@@ -15,8 +15,14 @@ SELECT
   backup_targets_bind_paths_json,
   backup_targets_volume_names_json,
   repo_url,
-  repo_url_auto_disabled
+  repo_url_auto_disabled,
+  auto_policy.mode,
+  auto_policy.enabled,
+  auto_policy.rules_json,
+  auto_policy.updated_at
 FROM services
+LEFT JOIN auto_update_policies auto_policy
+  ON auto_policy.scope_type = 'service' AND auto_policy.scope_id = services.id
 WHERE id = ?1
 "#,
                     params![service_id],
@@ -39,6 +45,13 @@ WHERE id = ?1
                                 )
                             })?;
                         Ok(StoredServiceSettings {
+                            auto_update_policy: super::auto_update::auto_update_policy_from_row(
+                                row.get(5)?,
+                                row.get(6)?,
+                                row.get(7)?,
+                                row.get(8)?,
+                                crate::api::types::AutoUpdatePolicyMode::Inherit,
+                            )?,
                             settings: ServiceSettings {
                                 auto_rollback: row.get::<_, i64>(0)? != 0,
                                 backup_targets: crate::api::types::BackupTargetOverrides {

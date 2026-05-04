@@ -2,6 +2,7 @@
 
 mod api;
 mod authz;
+mod auto_update;
 mod backup;
 mod cleanup;
 mod compose;
@@ -130,6 +131,7 @@ async fn main() -> anyhow::Result<()> {
     ghcr_webhook_jobs::spawn_tasks(state.clone());
     repo_link_backfill::spawn_tasks(state.clone());
     schedules::spawn_tasks(state.clone());
+    auto_update::spawn_tasks(state.clone());
     resource_usage::spawn_history_sampler(state.db.clone(), state.runner.clone());
     if let Err(err) = repo_link_backfill::enqueue_startup_backfill_if_needed(state.as_ref()).await {
         tracing::warn!(error = %err, "failed to enqueue startup repo link backfill");

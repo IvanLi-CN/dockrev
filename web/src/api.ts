@@ -2,6 +2,7 @@ export * from './api/types'
 
 import type {
   StackListItem,
+  StackSettings,
   ServiceSettings,
   ServiceDigestTagsResponse,
   ServiceDigestTagsSnapshotResult,
@@ -223,6 +224,19 @@ export async function getStack(stackId: string): Promise<StackDetail> {
   const resp = await apiFetch(`/api/stacks/${encodeURIComponent(stackId)}`)
   const data = await resp.json()
   return data.stack as StackDetail
+}
+
+export async function getStackSettings(stackId: string): Promise<StackSettings> {
+  const resp = await apiFetch(`/api/stacks/${encodeURIComponent(stackId)}/settings`)
+  return (await resp.json()) as StackSettings
+}
+
+export async function putStackSettings(stackId: string, settings: StackSettings) {
+  const resp = await apiFetch(`/api/stacks/${encodeURIComponent(stackId)}/settings`, {
+    method: 'PUT',
+    body: JSON.stringify(settings),
+  })
+  return (await resp.json()) as { ok: boolean }
 }
 
 export async function triggerDiscoveryScan(): Promise<TriggerDiscoveryScanJobResponse> {

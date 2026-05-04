@@ -142,6 +142,7 @@ pub enum UpdateReason {
     Ui,
     Webhook,
     Schedule,
+    AutoPolicy,
 }
 
 impl UpdateReason {
@@ -150,6 +151,7 @@ impl UpdateReason {
             Self::Ui => "ui",
             Self::Webhook => "webhook",
             Self::Schedule => "schedule",
+            Self::AutoPolicy => "auto_policy",
         }
     }
 }

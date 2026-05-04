@@ -12,6 +12,7 @@ import type {
   ServiceGitHubRepoRef,
   ServiceRollbackTargetResponse,
   StackDetail,
+  StackSettings,
 } from '../../../api'
 import { isDockrevImageRef } from '../../../runtimeConfig'
 import { serviceRowStatus } from '../../../updateStatus'
@@ -803,6 +804,18 @@ export function installDockrevMockApi(
       if (archived === 'exclude') stacks = stacks.filter((s) => !s.archived)
 
       return json({ stacks })
+    }
+    if (method === 'GET' && urlPath.startsWith('/api/stacks/') && urlPath.endsWith('/settings')) {
+      const id = decodeURIComponent(urlPath.split('/').slice(3, -1).join('/'))
+      const settings = f.stackSettingsById[id] ?? { autoUpdatePolicy: { mode: 'override', enabled: false, rules: [] } }
+      return json(settings)
+    }
+    if (method === 'PUT' && urlPath.startsWith('/api/stacks/') && urlPath.endsWith('/settings')) {
+      const id = decodeURIComponent(urlPath.split('/').slice(3, -1).join('/'))
+      const body = typeof init?.body === 'string' ? init.body : ''
+      const parsed = body ? (JSON.parse(body) as StackSettings) : null
+      if (parsed) f.stackSettingsById[id] = parsed
+      return json({ ok: true })
     }
     if (method === 'GET' && urlPath.startsWith('/api/stacks/')) {
       const id = decodeURIComponent(urlPath.split('/').slice(3).join('/'))

@@ -196,6 +196,88 @@ pub enum TernaryChoice {
     Force,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoUpdatePolicyMode {
+    #[default]
+    Inherit,
+    Override,
+    Disabled,
+}
+
+impl AutoUpdatePolicyMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Inherit => "inherit",
+            Self::Override => "override",
+            Self::Disabled => "disabled",
+        }
+    }
+
+    pub fn from_str(input: &str) -> Self {
+        match input {
+            "override" => Self::Override,
+            "disabled" => Self::Disabled,
+            _ => Self::Inherit,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoUpdateMatcherType {
+    Semver,
+    Regex,
+    Glob,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoUpdateMatcher {
+    #[serde(rename = "type")]
+    pub kind: AutoUpdateMatcherType,
+    pub pattern: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoUpdateRuleAction {
+    Immediate,
+    Delayed,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoUpdateDelay {
+    pub min_age_seconds: u32,
+    pub min_version_lag: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoUpdateRule {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub matcher: AutoUpdateMatcher,
+    pub action: AutoUpdateRuleAction,
+    #[serde(default)]
+    pub delay: AutoUpdateDelay,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoUpdatePolicy {
+    #[serde(default)]
+    pub mode: AutoUpdatePolicyMode,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub rules: Vec<AutoUpdateRule>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
 pub use crate::models::ServiceSeed;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

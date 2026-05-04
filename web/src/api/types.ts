@@ -26,10 +26,45 @@ export type BackupTargetOverrides = {
   volumeNames: Record<string, TernaryChoice>
 }
 
+export type AutoUpdatePolicyMode = 'inherit' | 'override' | 'disabled'
+export type AutoUpdateMatcherType = 'semver' | 'regex' | 'glob'
+export type AutoUpdateRuleAction = 'immediate' | 'delayed'
+
+export type AutoUpdateMatcher = {
+  type: AutoUpdateMatcherType
+  pattern: string
+}
+
+export type AutoUpdateDelay = {
+  minAgeSeconds: number
+  minVersionLag: number
+}
+
+export type AutoUpdateRule = {
+  id: string
+  name: string
+  enabled: boolean
+  matcher: AutoUpdateMatcher
+  action: AutoUpdateRuleAction
+  delay: AutoUpdateDelay
+}
+
+export type AutoUpdatePolicy = {
+  mode: AutoUpdatePolicyMode
+  enabled: boolean
+  rules: AutoUpdateRule[]
+  updatedAt?: string | null
+}
+
 export type ServiceSettings = {
   autoRollback: boolean
   backupTargets: BackupTargetOverrides
   repoUrl?: string | null
+  autoUpdatePolicy?: AutoUpdatePolicy
+}
+
+export type StackSettings = {
+  autoUpdatePolicy: AutoUpdatePolicy
 }
 
 export type ServiceHomepage = {

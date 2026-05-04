@@ -20,6 +20,7 @@ import type {
   SettingsResponse,
   StackDetail,
   StackListItem,
+  StackSettings,
   VersionInferenceOverviewResponse,
 } from '../api'
 
@@ -160,6 +161,32 @@ const stackDetails: Record<string, StackDetail> = {
     name: 'infra',
     compose: { type: 'path', composeFiles: ['/srv/infra/compose.yml'], envFile: '/srv/infra/.env' },
     services: [services.loki, services.prometheus, services.postgres],
+  },
+}
+
+const stackSettingsById: Record<string, StackSettings> = {
+  'stack-prod': {
+    autoUpdatePolicy: {
+      mode: 'override',
+      enabled: true,
+      rules: [
+        {
+          id: 'demo-prod-stable',
+          name: 'Stable releases',
+          enabled: true,
+          matcher: { type: 'semver', pattern: '>=5.0.0, <6.0.0' },
+          action: 'delayed',
+          delay: { minAgeSeconds: 86400, minVersionLag: 2 },
+        },
+      ],
+    },
+  },
+  'stack-infra': {
+    autoUpdatePolicy: {
+      mode: 'override',
+      enabled: false,
+      rules: [],
+    },
   },
 }
 
@@ -588,6 +615,16 @@ export function installAppDemoApi(): DemoInstallResult | null {
       return json({ ok: true, neverAutoOpen: true, updatedAt: nowIso() } satisfies DeployWelcomeResponse & { ok: boolean })
     }
     if (path === '/api/stacks' && method === 'GET') return json({ stacks: stackList })
+    if (path.startsWith('/api/stacks/') && path.endsWith('/settings') && method === 'GET') {
+      const id = decodeURIComponent(path.split('/').slice(3, -1).join('/'))
+      return json(stackSettingsById[id] ?? { autoUpdatePolicy: { mode: 'override', enabled: false, rules: [] } })
+    }
+    if (path.startsWith('/api/stacks/') && path.endsWith('/settings') && method === 'PUT') {
+      const id = decodeURIComponent(path.split('/').slice(3, -1).join('/'))
+      const body = typeof init?.body === 'string' ? init.body : ''
+      if (body) stackSettingsById[id] = JSON.parse(body) as StackSettings
+      return json({ ok: true })
+    }
     if (path.startsWith('/api/stacks/') && method === 'GET') {
       const id = decodeURIComponent(path.split('/').slice(3).join('/'))
       const stack = stackDetails[id]

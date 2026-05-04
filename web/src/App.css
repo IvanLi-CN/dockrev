@@ -4573,6 +4573,344 @@ html[data-theme='light'] .modalOverlay {
   flex: 1 1 auto;
 }
 
+.settingsDrawerContent {
+  display: flex;
+  flex-direction: column;
+  width: min(620px, 100vw);
+  max-width: min(620px, 100vw);
+  height: 100dvh;
+  max-height: 100dvh;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel) 98%, var(--color-primary) 2%) 0%,
+    color-mix(in srgb, var(--panel) 94%, var(--bg) 6%) 100%
+  );
+  box-shadow: -24px 0 56px rgba(0, 0, 0, 0.42);
+}
+
+.settingsDrawerContent[data-settings-drawer-direction='right'] {
+  border-radius: 0;
+  box-shadow:
+    inset 1px 0 0 var(--surface-border-strong),
+    -24px 0 56px rgba(0, 0, 0, 0.42);
+}
+
+.settingsDrawerContent[data-settings-drawer-direction='bottom'] {
+  width: 100vw;
+  max-width: 100vw;
+  height: min(86dvh, 760px);
+  max-height: 86dvh;
+  border-top: 1px solid var(--surface-border-strong);
+  border-radius: 18px 18px 0 0;
+  box-shadow: 0 -24px 56px rgba(0, 0, 0, 0.42);
+}
+
+.settingsDrawerHeader {
+  padding: 18px 20px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--panel2) 74%, transparent) 0%, transparent 100%);
+}
+
+.settingsDrawerTitleRow,
+.autoPolicyResultHead,
+.recentUpdatesHead,
+.recentUpdateTitle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settingsDrawerTitleRow,
+.autoPolicyResultHead,
+.recentUpdatesHead {
+  justify-content: space-between;
+}
+
+.settingsDrawerDescription {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.settingsDrawerBody {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 20px 22px;
+}
+
+.settingsDrawerDivider {
+  height: 1px;
+  background: color-mix(in srgb, var(--borderColor) 82%, transparent);
+}
+
+.settingsDrawerSection {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settingsSummaryGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.autoPolicyResultCard,
+.recentUpdatesCard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.autoPolicyResultActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.autoPolicyResultFacts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.autoPolicyResultFacts > div {
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 70%, transparent);
+  border-radius: 8px;
+  padding: 9px 10px 10px;
+  background: color-mix(in srgb, var(--panel2) 24%, transparent);
+}
+
+.autoPolicyFactCell {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  min-height: 54px;
+}
+
+.autoPolicyFactLabel {
+  color: var(--muted2);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.1;
+}
+
+.autoPolicyFactValue {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 620;
+  line-height: 1.28;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.autoPolicyFactValue .mono {
+  font-variant-numeric: tabular-nums;
+}
+
+.autoPolicyResultFacts span:not(.label),
+.autoPolicyResultRule span {
+  overflow-wrap: anywhere;
+}
+
+.autoPolicyResultRule {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.recentUpdatesList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.recentUpdateRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 70%, transparent);
+  padding-top: 8px;
+}
+
+.recentUpdateTime {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.autoPolicyEditor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.autoPolicyTop,
+.autoPolicyControls,
+.autoPolicyRuleHead,
+.autoPolicyActions,
+.autoPolicyPreview,
+.autoPolicyInherited,
+.autoPolicySliderHead,
+.stackDetailHero,
+.stackServiceRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.autoPolicyTop,
+.stackDetailHero,
+.stackServiceRow {
+  justify-content: space-between;
+}
+
+.autoPolicyControls {
+  flex-wrap: wrap;
+}
+
+.autoPolicySwitchRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+}
+
+.autoPolicyInherited,
+.autoPolicyEmpty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.autoPolicyRuleList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.autoPolicyRule {
+  border: 1px solid color-mix(in srgb, var(--borderColor) 78%, transparent);
+  border-radius: 8px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--panel2) 28%, transparent);
+}
+
+.autoPolicyRuleName {
+  min-width: 160px;
+  flex: 1;
+}
+
+.autoPolicyRuleGrid,
+.autoPolicyDelayGrid {
+  display: grid;
+  grid-template-columns: 140px minmax(180px, 1fr) 130px;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.autoPolicyDelayGrid {
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+}
+
+.autoPolicyPattern {
+  min-width: 0;
+}
+
+.autoPolicyFieldHint {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.autoPolicySlider {
+  min-width: 0;
+}
+
+.autoPolicySlider input[type='range'] {
+  width: 100%;
+  accent-color: var(--color-primary);
+}
+
+.autoPolicySlider input[type='range']:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 4px;
+  border-radius: 999px;
+}
+
+.autoPolicySliderTicks {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.autoPolicyPreview {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.autoPolicyValidation {
+  color: var(--color-warning);
+  font-size: 12px;
+}
+
+.stackDetailHero {
+  margin-bottom: 16px;
+}
+
+.stackServiceList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.stackServiceRow {
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  padding-top: 8px;
+}
+
+@media (max-width: 760px) {
+  .settingsSummaryGrid,
+  .autoPolicyResultFacts {
+    grid-template-columns: 1fr;
+  }
+  .autoPolicyResultHead,
+  .recentUpdatesHead,
+  .recentUpdateRow {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .autoPolicyRuleGrid,
+  .autoPolicyDelayGrid {
+    grid-template-columns: 1fr;
+  }
+  .autoPolicyTop,
+  .stackDetailHero,
+  .stackServiceRow {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 .svcBanner {
   border-radius: 14px;
   padding: 12px 14px;

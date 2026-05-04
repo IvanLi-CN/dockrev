@@ -64,6 +64,83 @@ export const Updatable: Story = {
   render: render('stack-prod', 'svc-prod-api'),
 }
 
+export const AutoPolicyInherited: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-prod', 'svc-prod-api'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => canvasElement.textContent?.includes('自动更新结果') ?? false)
+    expectStory(canvasElement.textContent?.includes('继承 Stack'), 'service auto policy inherited summary missing')
+    expectStory(canvasElement.textContent?.includes('最近更新记录'), 'recent update records missing')
+  },
+}
+
+export const AutoPolicyOverrideDelayed: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    dockrevServiceOverridesById: {
+      'svc-prod-api': {
+        settings: {
+          autoRollback: true,
+          backupTargets: { bindPaths: { '/var/lib/api/data': 'inherit' }, volumeNames: {} },
+          repoUrl: 'https://codeberg.org/acme/api',
+          autoUpdatePolicy: {
+            mode: 'override',
+            enabled: true,
+            rules: [
+              {
+                id: 'svc-stable',
+                name: 'Service stable',
+                enabled: true,
+                matcher: { type: 'glob', pattern: '5.2.*' },
+                action: 'delayed',
+                delay: { minAgeSeconds: 10800, minVersionLag: 3 },
+              },
+            ],
+          },
+        },
+      },
+    },
+  },
+  render: render('stack-prod', 'svc-prod-api'),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => canvasElement.textContent?.includes('Service stable') ?? false)
+    expectStory(canvasElement.textContent?.includes('延迟 3h'), 'nonlinear time slider label missing')
+    expectStory(canvasElement.textContent?.includes('落后 3 个匹配版本'), 'version lag copy missing')
+
+    const settingsTrigger = findButton(doc, '设置')
+    expectStory(settingsTrigger, 'service settings drawer trigger missing')
+    settingsTrigger.click()
+    await waitForCondition(() => doc.body.textContent?.includes('服务设置') ?? false)
+    expectStory(doc.body.textContent?.includes('更新前备份 / 回滚'), 'service settings drawer content missing')
+    expectStory(doc.body.textContent?.includes('Service stable'), 'service policy editor missing in drawer')
+  },
+}
+
+export const AutoPolicyDisabled: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    dockrevServiceOverridesById: {
+      'svc-prod-api': {
+        settings: {
+          autoRollback: true,
+          backupTargets: { bindPaths: { '/var/lib/api/data': 'inherit' }, volumeNames: {} },
+          repoUrl: null,
+          autoUpdatePolicy: {
+            mode: 'disabled',
+            enabled: false,
+            rules: [],
+          },
+        },
+      },
+    },
+  },
+  render: render('stack-prod', 'svc-prod-api'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => canvasElement.textContent?.includes('不会执行 Stack 级自动部署策略') ?? false)
+  },
+}
+
 export const HydratedRunningUpdate: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo-hydrated-update' },
   render: render('stack-prod', 'svc-prod-api'),
@@ -235,7 +312,11 @@ export const RepoLinkEditing: Story = {
   parameters: { dockrevApiScenario: 'repo-link-editing' },
   render: render('stack-prod', 'svc-prod-api'),
   play: async ({ canvasElement }) => {
-    const helper = Array.from(canvasElement.querySelectorAll<HTMLElement>('.muted')).find((node) =>
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => findButton(doc, '设置') != null)
+    findButton(doc, '设置')?.click()
+    await waitForCondition(() => doc.body.textContent?.includes('服务设置') ?? false)
+    const helper = Array.from(doc.body.querySelectorAll<HTMLElement>('.muted')).find((node) =>
       node.textContent?.includes('清空并保存会禁用后续自动补齐'),
     )
     expectStory(helper, 'repoUrl auto-backfill helper copy missing in service detail story')

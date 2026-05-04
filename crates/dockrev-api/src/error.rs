@@ -63,6 +63,10 @@ impl ApiError {
         self.details = details;
         self
     }
+
+    pub fn code(&self) -> &'static str {
+        self.code
+    }
 }
 
 #[derive(Serialize)]
