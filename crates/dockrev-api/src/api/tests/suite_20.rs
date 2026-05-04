@@ -329,6 +329,73 @@ services:
 }
 
 #[tokio::test]
+async fn schedule_auto_policy_restricts_generic_webhook_checks() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(FakeRegistry),
+        Arc::new(UpdateAndRuntimeScanRunner::new()),
+    )
+    .await;
+    let now = test_now_rfc3339();
+    let compose_path = format!(
+        "/tmp/dockrev-auto-policy-webhook-source-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+"#,
+    )
+    .unwrap();
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id =
+        set_single_service_check_result(&state, &stack_id, Some("sha256:old"), Some("latest"), Some("sha256:new")).await;
+
+    state
+        .db
+        .put_auto_update_policy(
+            "stack",
+            &stack_id,
+            &immediate_stack_auto_update_policy(),
+            &now,
+        )
+        .await
+        .unwrap();
+
+    let summary = auto_update_discovery_summary(&stack_id, &service_id, "sha256:new");
+    crate::auto_update::handle_completed_check(&state, "chk_generic_webhook", "webhook", &now, &summary)
+        .await
+        .unwrap();
+    assert!(
+        state
+            .db
+            .list_jobs()
+            .await
+            .unwrap()
+            .iter()
+            .all(|job| job.reason != "auto_policy")
+    );
+
+    let mut ghcr_summary = summary;
+    ghcr_summary["source"] = json!("github_webhook");
+    ghcr_summary["matchedServiceIds"] = json!([service_id.clone()]);
+    crate::auto_update::handle_completed_check(&state, "chk_ghcr_webhook", "webhook", &now, &ghcr_summary)
+        .await
+        .unwrap();
+
+    let jobs = state.db.list_jobs().await.unwrap();
+    let auto_jobs = jobs
+        .iter()
+        .filter(|job| job.reason == "auto_policy")
+        .collect::<Vec<_>>();
+    assert_eq!(auto_jobs.len(), 1, "auto policy jobs: {jobs:?}");
+    assert_eq!(auto_jobs[0].service_id.as_deref(), Some(service_id.as_str()));
+}
+
+#[tokio::test]
 async fn schedule_auto_policy_skips_ignored_services() {
     let state = test_state_with(
         ":memory:",

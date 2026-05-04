@@ -646,7 +646,7 @@ async fn evaluate_candidate(
 }
 
 fn auto_policy_source(reason: &str, summary: &serde_json::Value) -> bool {
-    api::new_version_notification_reason(reason, summary).is_some()
+    reason.eq_ignore_ascii_case("schedule") || api::summary_emits_new_version_notification(summary)
 }
 
 pub async fn handle_completed_check(
