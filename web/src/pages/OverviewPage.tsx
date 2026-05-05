@@ -265,13 +265,14 @@ function sumMetricValues<T>(
 }
 
 function aggregateMetrics(items: ServiceResourceOverviewItem[]) {
-  const active = items.filter((item) => item.sampledAt && !item.stale);
+  const sampled = items.filter((item) => item.sampledAt);
+  const active = sampled.filter((item) => !item.stale);
   return {
     activeCount: active.length,
-    cpu: sumMetricValues(active, (item) => item.cpuPercent),
-    memory: sumMetricValues(active, (item) => item.memUsedBytes),
-    rx: sumMetricValues(active, (item) => item.netRxRateBps),
-    tx: sumMetricValues(active, (item) => item.netTxRateBps),
+    cpu: sumMetricValues(sampled, (item) => item.cpuPercent),
+    memory: sumMetricValues(sampled, (item) => item.memUsedBytes),
+    rx: sumMetricValues(sampled, (item) => item.netRxRateBps),
+    tx: sumMetricValues(sampled, (item) => item.netTxRateBps),
   };
 }
 

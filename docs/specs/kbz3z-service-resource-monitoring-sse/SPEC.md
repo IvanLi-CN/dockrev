@@ -15,7 +15,7 @@
 
 ### Goals
 
-- 系统设置支持资源监控开关与采样频率（10/30/60/300，默认 30）。
+- 系统设置支持资源监控开关与采样频率（10/30/60/300，默认 10）。
 - 历史采样按服务持久化，保留 30 天并自动清理。
 - 服务详情页提供 1s SSE 实时流与趋势图（CPU/内存/网络/磁盘 I/O/PIDs）。
 - 服务详情资源监控面板强化头部层级、SSE 状态可见性、统一工具栏与移动端数值排版。
@@ -57,7 +57,7 @@
 
 - `settings` 表新增：
   - `resource_monitor_enabled INTEGER NOT NULL DEFAULT 1`
-  - `resource_sample_interval_seconds INTEGER NOT NULL DEFAULT 30`
+  - `resource_sample_interval_seconds INTEGER NOT NULL DEFAULT 10`
 - 新增 `service_resource_samples` 表与索引：
   - `(service_id, sampled_at)`
   - `(sampled_at)`
@@ -80,7 +80,7 @@
 
 ## 验收标准（Acceptance Criteria）
 
-- 设置页可读写资源监控开关与采样频率，默认开启且默认 30 秒。
+- 设置页可读写资源监控开关与采样频率，默认开启且默认 10 秒。
 - 监控关闭后，history/events 返回 `409 resource_monitor_disabled`，前端展示禁用态。
 - 服务详情页在开启状态可看到历史曲线与实时滚动，且实时状态无需查看 footer 即可感知。
 - 图表支持指标切换与窗口切换，空数据/错误态有明确提示。
