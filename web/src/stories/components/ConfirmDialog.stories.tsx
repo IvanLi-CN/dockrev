@@ -1,11 +1,14 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { useState } from 'react'
+import type { Service } from '../../api'
+import { ServiceUpdateConfirmDetails } from '../../components/ServiceUpdateConfirmDetails'
 import { ConfirmDialog, ConfirmProvider } from '../../ConfirmProvider'
 import { useConfirm } from '../../confirm'
 import { Mono } from '../../ui'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 
 const LONG_DIGEST = 'sha256:eda3fe8c1c9d782840ded123b7f16936e4abb4d29e13981d132c27877c2f4680'
+const CURRENT_DIGEST = 'sha256:6aa3fe8c1c9d782840ded123b7f16936e4abb4d29e13981d132c27877c2f4680'
 
 function expectStory(condition: unknown, message: string): asserts condition {
   if (!condition) throw new globalThis.Error(message)
@@ -282,50 +285,55 @@ type Story = StoryObj<typeof WithProvider>
 export const Demo: Story = {}
 
 export const ServiceUpdateLongDigest: Story = {
-  render: () => (
-    <div data-story-root="confirm-dialog-long-digest">
-      <ConfirmDialog
-        title="确认更新服务 ani-rss?"
-        body={
-          <>
-            <div className="modalLead">将对该服务执行更新，并保留默认备份策略。</div>
-            <div className="modalKvGrid">
-              <div className="modalKvLabel">服务</div>
-              <div className="modalKvValue">
-                <Mono>media/media-ani-rss</Mono>
-              </div>
-              <div className="modalKvLabel">当前镜像</div>
-              <div className="modalKvValue">
-                <Mono>docker.io/wushuo894/ani-rss:latest</Mono>
-              </div>
-              <div className="modalKvLabel">目标版本</div>
-              <div className="modalKvValue">
-                <Mono>latest</Mono>
-              </div>
-              <div className="modalKvLabel">目标 digest</div>
-              <div className="modalKvValue">
-                <Mono>{LONG_DIGEST}</Mono>
-              </div>
-            </div>
-          </>
-        }
-        confirmText="执行更新"
-        cancelText="取消"
-        confirmVariant="primary"
-        badgeText="将更新并重启"
-        badgeTone="warn"
-        onClose={() => undefined}
-      />
-    </div>
-  ),
+  render: () => {
+    const service = {
+      id: 'svc-ani-rss',
+      name: 'media-ani-rss',
+      image: {
+        ref: 'docker.io/wushuo894/ani-rss:latest',
+        tag: 'latest',
+        digest: CURRENT_DIGEST,
+        resolvedTag: 'v1.55.1',
+        resolvedTags: ['v1.55.1', 'latest'],
+      },
+      candidate: {
+        tag: 'latest',
+        digest: LONG_DIGEST,
+        resolvedTag: 'v1.55.3',
+        archMatch: 'match',
+        arch: ['linux/amd64'],
+      },
+      ignore: null,
+      settings: { autoRollback: true, backupTargets: { bindPaths: {}, volumeNames: {} } },
+      archived: false,
+    } satisfies Service
+
+    return (
+      <div data-story-root="confirm-dialog-long-digest">
+        <ConfirmDialog
+          title="确认更新服务 ani-rss?"
+          body={<ServiceUpdateConfirmDetails service={service} status="updatable" />}
+          confirmText="执行更新"
+          cancelText="取消"
+          confirmVariant="primary"
+          badgeText={null}
+          onClose={() => undefined}
+        />
+      </div>
+    )
+  },
   play: async ({ canvasElement }) => {
     const card = canvasElement.ownerDocument.querySelector<HTMLElement>('.modalCard')
-    const digest = Array.from(canvasElement.ownerDocument.querySelectorAll<HTMLElement>('.modalKvValue .mono')).find(
-      (node) => node.textContent === LONG_DIGEST,
+    const digest = Array.from(canvasElement.ownerDocument.querySelectorAll<HTMLElement>('.modalKvValue')).find((node) =>
+      node.textContent?.includes(LONG_DIGEST),
     )
 
     expectStory(card, 'expected confirm dialog card to be rendered')
-    expectStory(digest, 'expected long digest to be rendered')
+    expectStory(digest, 'expected full long digest to be visibly rendered')
+    expectStory(
+      canvasElement.ownerDocument.body.textContent?.includes('版本'),
+      'service update confirm should show version summary',
+    )
 
     const cardBounds = card.getBoundingClientRect()
     const digestBounds = digest.getBoundingClientRect()

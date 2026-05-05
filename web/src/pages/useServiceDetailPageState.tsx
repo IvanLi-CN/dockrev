@@ -1,13 +1,13 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError, archiveService, createIgnore, getServiceRollbackTarget, getServiceSettings, getStack, getStackSettings, listIgnores, newJobEventsSource, restoreService, triggerRuntimeScan, triggerServiceRollback, triggerUpdate, type IgnoreRule, type Service, type ServiceRollbackTargetResponse, type ServiceSettings, type StackDetail, type StackSettings } from '../api'
 import { readUpdateGuardBlockedReason } from '../aggregateUpdateGuard'
-import { ConfirmServiceVersionCell } from '../components/ConfirmServiceVersionCell'
 import { CurrentVersionPopover } from '../components/CurrentVersionPopover'
 import { normalizeDigest } from '../components/digest'
+import { ServiceUpdateConfirmDetails } from '../components/ServiceUpdateConfirmDetails'
 import { VersionTagsPopover } from '../components/VersionTagsPopover'
 import { useConfirm } from '../confirm'
 import { DIGEST_SNAPSHOT_UPDATED_EVENT, type DigestSnapshotUpdatedDetail } from '../digestInferenceTracker'
-import { normalizeExternalHttpUrl, splitImageNameForDisplay, splitImageRef } from '../imageLinks'
+import { normalizeExternalHttpUrl } from '../imageLinks'
 import { imageRepoFromImageRef } from '../imageRepo'
 import { errorMessage, formatMap, isDockrevService, normalizeMaybeDigest, rollbackTargetMatchesServiceDigest, rollbackUnavailableReasonLabel, rollbackVersionLabel, ROLLBACK_TARGET_REFRESH_HINT, scanHasFailures, scanIsComplete, shortDigest, shouldPrefetchFloatingCandidate, svcTone, useRollbackTargetInvariantWarning } from './serviceDetailUtils'
 import { navigate } from '../routes'
@@ -592,103 +592,34 @@ export function useServiceDetailPageState(props: {
 	                    return
 	                  }
 	                  if (!service || !service.candidate) return
-	                  const semverDowngradeAnomaly = isSemverDowngradeAnomaly(service)
-	                  const candidatePrefetchOnMount = shouldPrefetchFloatingCandidate(
-	                    service.candidate.tag,
-	                    service.candidate.resolvedTag ?? null,
-	                    service.candidate.digest ?? null,
-	                  )
 		                  const ok = await confirm({
 		                    title: `确认更新服务 ${service.name}？`,
 		                    body: (
-		                      <>
-	                        <div className="modalLead">将对该服务执行更新（apply）。</div>
-	                        <div className="modalKvGrid">
-	                          <div className="modalKvLabel">范围</div>
-	                          <div className="modalKvValue">
-	                            <Mono>service</Mono>
-	                          </div>
-	                          <div className="modalKvLabel">目标</div>
-	                          <div className="modalKvValue">
-	                            <Mono>{`${stack?.name ?? stackId}/${service.name}`}</Mono>
-	                          </div>
-		                          <div className="modalKvLabel">镜像</div>
-		                          <div className="modalKvValue">
-		                            {(() => {
-		                              const img = splitImageRef(service.image.ref)
-		                              const dn = splitImageNameForDisplay(img.name, service.image.tag)
-		                              return (
-		                                <div className="cellTwoLine">
-		                                  <div
-		                                    className="mono monoPrimary monoSplit"
-		                                    title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}
-		                                  >
-		                                    <span className="monoSplitBase">{dn.base}</span>
-		                                  </div>
-		                                  <div className="mono monoSecondary">{img.registry}</div>
-		                                </div>
-		                              )
-		                            })()}
-		                          </div>
-		                          <div className="modalKvLabel">目标版本</div>
-		                          <div className="modalKvValue">
-                                <ConfirmServiceVersionCell
-                                  serviceId={service.id}
-                                  imageTag={service.image.tag}
-                                  imageDigest={service.image.digest ?? null}
-                                  resolvedTag={service.image.resolvedTag}
-                                  resolvedTags={service.image.resolvedTags}
-                                  inferenceStatus={service.versionInference?.status}
-                                  candidateTag={service.candidate.tag}
-                                  candidateDigest={service.candidate.digest ?? null}
-                                  candidateResolvedTag={service.candidate.resolvedTag}
-                                  prefetchOnMount={candidatePrefetchOnMount}
-                                  onHostResolvedTags={(update) => {
-                                    patchServiceInStack((prev) => ({
-                                      ...prev,
-                                      image: {
-                                        ...prev.image,
-                                        resolvedTag: update.resolvedTag,
-                                        resolvedTags: update.resolvedTags,
-                                      },
-                                    }))
-                                  }}
-                                  onHostCandidateResolvedTag={(resolvedTag) => {
-                                    patchServiceInStack((prev) => ({
-                                      ...prev,
-                                      candidate: prev.candidate
-                                        ? {
-                                            ...prev.candidate,
-                                            resolvedTag,
-                                          }
-                                        : prev.candidate,
-                                    }))
-                                  }}
-                                />
-		                          </div>
-	                          <div className="modalKvLabel">状态</div>
-	                          <div className="modalKvValue">
-	                            <Mono>{serviceRowStatus(service)}</Mono>
-	                          </div>
-                            {semverDowngradeAnomaly ? (
-                              <>
-                                <div className="modalKvLabel">版本异常</div>
-                                <div className="modalKvValue">
-                                  <Mono>⚠ 候选版本低于当前版本（仍允许手动更新）</Mono>
-                                </div>
-                              </>
-                            ) : null}
-	                          <div className="modalKvLabel">备份</div>
-	                          <div className="modalKvValue">
-	                            <Mono>inherit</Mono>
-	                          </div>
-	                          <div className="modalKvLabel">架构不匹配</div>
-	                          <div className="modalKvValue">
-	                            <Mono>disallow</Mono>
-	                          </div>
-	                        </div>
-	                        <div className="modalDivider" />
-	                      </>
+		                      <ServiceUpdateConfirmDetails
+                            service={service}
+                            status={serviceRowStatus(service)}
+                            onHostResolvedTags={(update) => {
+                              patchServiceInStack((prev) => ({
+                                ...prev,
+                                image: {
+                                  ...prev.image,
+                                  resolvedTag: update.resolvedTag,
+                                  resolvedTags: update.resolvedTags,
+                                },
+                              }))
+                            }}
+                            onHostCandidateResolvedTag={(resolvedTag) => {
+                              patchServiceInStack((prev) => ({
+                                ...prev,
+                                candidate: prev.candidate
+                                  ? {
+                                      ...prev.candidate,
+                                      resolvedTag,
+                                    }
+                                  : prev.candidate,
+                              }))
+                            }}
+                          />
 	                    ),
 	                    confirmText: '执行更新',
 	                    cancelText: '取消',

@@ -399,6 +399,14 @@ export const Default: Story = {
       document.body.textContent?.includes("确认更新服务"),
       "clicking the updatable badge should open the update confirmation dialog",
     );
+    expectStory(
+      document.body.textContent?.includes("版本"),
+      "homepage update confirmation should show the version summary",
+    );
+    expectStory(
+      document.body.textContent?.includes("目标 digest"),
+      "homepage update confirmation should show the target digest",
+    );
   },
 };
 

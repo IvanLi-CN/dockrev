@@ -290,6 +290,24 @@ export const RollbackRefreshRaceAfterUpdate: Story = {
   },
 }
 
+export const UpdateConfirmOpen: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-prod', 'svc-prod-api'),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => findButton(doc, '执行更新') != null)
+
+    const updateTrigger = findButton(doc, '执行更新')
+    expectStory(updateTrigger, 'service update action missing')
+    updateTrigger.click()
+
+    await waitForCondition(() => doc.body.textContent?.includes('确认更新服务 api？') ?? false)
+    expectStory(doc.body.textContent?.includes('版本'), 'service update confirm version summary missing')
+    expectStory(doc.body.textContent?.includes('目标 digest'), 'service update confirm target digest missing')
+    expectStory(doc.body.textContent?.includes('架构策略'), 'service update confirm arch policy missing')
+  },
+}
+
 export const RollbackConfirmOpen: Story = {
   parameters: { dockrevApiScenario: 'service-detail-rollback-confirm-open' },
   render: render('stack-prod', 'svc-prod-api'),

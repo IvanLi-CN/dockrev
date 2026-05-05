@@ -33,6 +33,7 @@ import {
   type StackListItem,
 } from "../api";
 import { HomepageServiceIcon } from "../components/HomepageServiceIcon";
+import { ServiceUpdateConfirmDetails } from "../components/ServiceUpdateConfirmDetails";
 import { navigate } from "../routes";
 import { isDockrevImageRef } from "../runtimeConfig";
 import { buildUpdateServiceTarget } from "../updateTargets";
@@ -41,7 +42,6 @@ import {
   Dialog,
   DialogClose,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -973,29 +973,12 @@ export function OverviewPage(props: {
             <DialogTitle>
               确认更新服务 {updateDialogCard?.title ?? ""}？
             </DialogTitle>
-            <DialogDescription>
-              将对该服务执行更新，并保留默认备份策略。
-            </DialogDescription>
           </DialogHeader>
           {updateDialogCard ? (
-            <div className="modalKvGrid">
-              <div className="modalKvLabel">服务</div>
-              <div className="modalKvValue">
-                <Mono>{updateDialogCard.stackName}/{updateDialogCard.serviceName}</Mono>
-              </div>
-              <div className="modalKvLabel">当前镜像</div>
-              <div className="modalKvValue">
-                <Mono>{updateDialogCard.imageRef}</Mono>
-              </div>
-              <div className="modalKvLabel">目标版本</div>
-              <div className="modalKvValue">
-                <Mono>{updateDialogCard.service.candidate?.tag ?? "-"}</Mono>
-              </div>
-              <div className="modalKvLabel">目标 digest</div>
-              <div className="modalKvValue">
-                <Mono>{updateDialogCard.service.candidate?.digest ?? "-"}</Mono>
-              </div>
-            </div>
+            <ServiceUpdateConfirmDetails
+              service={updateDialogCard.service}
+              status={updateDialogCard.status}
+            />
           ) : null}
           <DialogFooter>
             <DialogClose asChild>
