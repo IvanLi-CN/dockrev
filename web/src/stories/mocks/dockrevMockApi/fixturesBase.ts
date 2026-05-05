@@ -26,6 +26,7 @@ export function baseEmpty(): Fixture {
     stackSettingsById: {},
     rollbackTargetByServiceId: {},
     repoLinkInferenceByServiceId: {},
+    serviceTagSuggestionsById: {},
     deployCheckReport: makeDefaultDeployCheckReport(),
     deployWelcome: makeDefaultDeployWelcome(),
     versionInferenceOverview: makeVersionInferenceOverview(),

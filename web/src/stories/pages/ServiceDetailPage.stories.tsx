@@ -214,6 +214,100 @@ export const AutoPolicyHistoryPreviewError: Story = {
   },
 }
 
+export const ComposeTagEditorSuggestions: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    dockrevServiceTagSuggestionsById: {
+      'svc-prod-api': [
+        { tag: '5.3.0', lastUsedAt: '2026-05-05T14:20:00Z', source: 'manual', useCount: 3 },
+        { tag: '5.2.7', lastUsedAt: '2026-05-01T09:00:00Z', source: 'update', useCount: 2 },
+        { tag: 'stable', lastUsedAt: '2026-04-25T18:30:00Z', source: 'manual', useCount: 1 },
+      ],
+    },
+  },
+  render: render('stack-prod', 'svc-prod-api'),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => findButton(doc, '编辑 tag') != null)
+    const tagTrigger = findButton(doc, '编辑 tag')
+    expectStory(tagTrigger, 'compose tag drawer trigger missing')
+    tagTrigger.click()
+    await waitForCondition(() => doc.body.textContent?.includes('部署 tag') ?? false)
+    expectStory(!drawerText(doc).includes('更新前备份 / 回滚'), 'compose tag drawer should not include service protection settings')
+    const input = Array.from(doc.body.querySelectorAll<HTMLInputElement>('input')).find(
+      (item) => item.placeholder === '例如 5.2.3 或 stable',
+    )
+    expectStory(input, 'compose tag input missing')
+    expectStory(Number(globalThis.__DOCKREV_MOCK_DEBUG__?.serviceTagSuggestionCalls ?? -1) === 0, 'suggestions should be lazy')
+    input.focus()
+    await waitForCondition(() => doc.body.textContent?.includes('5.3.0') ?? false)
+    expectStory(doc.body.textContent?.includes('2026'), 'suggestion subtitle should include last used time')
+    expectStory(!doc.body.textContent?.includes('次'), 'suggestion subtitle should not show use count')
+    expectStory(Number(globalThis.__DOCKREV_MOCK_DEBUG__?.serviceTagSuggestionCalls ?? -1) === 1, 'suggestions should load once')
+    input.value = '5.2'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await waitForCondition(() => doc.body.textContent?.includes('5.2.7') ?? false)
+    expectStory(!doc.body.textContent?.includes('5.3.0'), 'autocomplete should filter non-matching tag suggestions')
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await waitForCondition(() => input.value === '5.2.7')
+    input.blur()
+    input.focus()
+    await sleep(80)
+    expectStory(Number(globalThis.__DOCKREV_MOCK_DEBUG__?.serviceTagSuggestionCalls ?? -1) === 1, 'suggestions should not reload')
+  },
+}
+
+export const ComposeTagEditorSaveError: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-prod', 'svc-prod-api'),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => findButton(doc, '编辑 tag') != null)
+    findButton(doc, '编辑 tag')?.click()
+    await waitForCondition(() => doc.body.textContent?.includes('部署 tag') ?? false)
+    const input = Array.from(doc.body.querySelectorAll<HTMLInputElement>('input')).find(
+      (item) => item.placeholder === '例如 5.2.3 或 stable',
+    )
+    expectStory(input, 'compose tag input missing')
+    input.focus()
+    input.value = 'compose-error'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    findButton(doc, '保存 tag')?.click()
+    await waitForCondition(() => doc.body.textContent?.includes('variable interpolation') ?? false)
+  },
+}
+
+export const ComposeTagEditorMobileDrawer: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    dockrevServiceTagSuggestionsById: {
+      'svc-prod-api': [
+        { tag: '5.3.0', lastUsedAt: '2026-05-05T14:20:00Z', source: 'manual', useCount: 3 },
+        { tag: '5.2.7', lastUsedAt: '2026-05-01T09:00:00Z', source: 'update', useCount: 2 },
+      ],
+    },
+    docs: {
+      description: {
+        story: 'Capture this story with a narrow viewport to verify the bottom settings drawer tag editor.',
+      },
+    },
+  },
+  render: render('stack-prod', 'svc-prod-api'),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => findButton(doc, '编辑 tag') != null)
+    findButton(doc, '编辑 tag')?.click()
+    await waitForCondition(() => doc.body.textContent?.includes('部署 tag') ?? false)
+    expectStory(!drawerText(doc).includes('更新前备份 / 回滚'), 'compose tag drawer should not include service protection settings')
+    const input = Array.from(doc.body.querySelectorAll<HTMLInputElement>('input')).find(
+      (item) => item.placeholder === '例如 5.2.3 或 stable',
+    )
+    expectStory(input, 'compose tag input missing')
+    input.focus()
+    await waitForCondition(() => doc.body.textContent?.includes('5.3.0') ?? false)
+  },
+}
+
 export const AutoPolicyDisabled: Story = {
   parameters: {
     dockrevApiScenario: 'dashboard-demo',

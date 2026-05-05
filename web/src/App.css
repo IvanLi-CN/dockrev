@@ -4641,6 +4641,98 @@ html[data-theme='light'] .modalOverlay {
   flex: 1 1 auto;
 }
 
+.serviceTagEditor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.serviceTagEditorHeader,
+.serviceTagEditorControls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.serviceTagEditorHeader {
+  justify-content: space-between;
+}
+
+.serviceTagEditorControls {
+  align-items: flex-start;
+}
+
+.serviceTagInputWrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.serviceTagSuggestionMenu {
+  position: absolute;
+  z-index: 90;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 24%, var(--borderColor) 76%);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel2) 94%, var(--bg) 6%);
+  box-shadow: var(--shadow-soft);
+}
+
+.serviceTagSuggestionItem {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.serviceTagSuggestionItem:last-child {
+  border-bottom: 0;
+}
+
+.serviceTagSuggestionItem:hover,
+.serviceTagSuggestionItem:focus-visible,
+.serviceTagSuggestionItem.active,
+.serviceTagSuggestionItem[aria-selected='true'] {
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  outline: none;
+}
+
+.serviceTagSuggestionItem .muted {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.serviceTagSuggestionEmpty,
+.serviceTagFieldError {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.serviceTagSuggestionEmpty {
+  padding: 10px;
+}
+
+.serviceTagFieldError {
+  color: var(--color-danger);
+}
+
 .settingsDrawerContent {
   display: flex;
   flex-direction: column;
@@ -4798,6 +4890,13 @@ html[data-theme='light'] .modalOverlay {
   justify-content: space-between;
   gap: 14px;
   margin-top: 16px;
+}
+
+.serviceTagCardActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
 }
 
 .settingsSummaryGrid {

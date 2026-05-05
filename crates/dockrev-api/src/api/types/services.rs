@@ -65,6 +65,37 @@ pub struct ServiceRepoLinkInferenceResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ServiceTagSuggestionItem {
+    pub tag: String,
+    pub last_used_at: String,
+    pub source: String,
+    pub use_count: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceTagSuggestionsResponse {
+    pub items: Vec<ServiceTagSuggestionItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PutServiceComposeTagRequest {
+    pub tag: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PutServiceComposeTagResponse {
+    pub ok: bool,
+    pub tag: String,
+    pub image_ref: String,
+    pub compose_file: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum NewVersionDiscoveryTimelineItemKind {
     CurrentCandidate,
     HistoricalCandidate,

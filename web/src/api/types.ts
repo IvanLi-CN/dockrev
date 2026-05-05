@@ -164,6 +164,25 @@ export type ServiceRepoLinkInferenceResponse = {
   reason?: string | null
 }
 
+export type ServiceTagSuggestionItem = {
+  tag: string
+  lastUsedAt: string
+  source: string
+  useCount: number
+}
+
+export type ServiceTagSuggestionsResponse = {
+  items: ServiceTagSuggestionItem[]
+}
+
+export type PutServiceComposeTagResponse = {
+  ok: boolean
+  tag: string
+  imageRef: string
+  composeFile: string
+  updatedAt: string
+}
+
 export type DiscoveredProjectStatus = 'active' | 'missing' | 'invalid'
 
 export type DiscoveredProject = {

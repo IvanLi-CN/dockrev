@@ -22,7 +22,7 @@ use axum::{
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
     response::sse::{Event, KeepAlive, Sse},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use base64::Engine as _;
 use cron::Schedule;
@@ -122,6 +122,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(
             "/api/services/{service_id}/repo-link/infer",
             post(infer_service_repo_link),
+        )
+        .route(
+            "/api/services/{service_id}/tag-suggestions",
+            get(list_service_tag_suggestions),
+        )
+        .route(
+            "/api/services/{service_id}/compose-tag",
+            put(put_service_compose_tag),
         )
         .route(
             "/api/services/{service_id}/new-version-discovery-timeline",

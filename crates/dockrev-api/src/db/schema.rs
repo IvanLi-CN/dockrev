@@ -610,6 +610,25 @@ CREATE INDEX IF NOT EXISTS idx_auto_update_pending_due
     Ok(())
 }
 
+fn ensure_service_tag_history_schema(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    conn.execute_batch(
+        r#"
+CREATE TABLE IF NOT EXISTS service_tag_history (
+  service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+  image_repo TEXT NOT NULL,
+  tag TEXT NOT NULL,
+  last_used_at TEXT NOT NULL,
+  use_count INTEGER NOT NULL DEFAULT 1,
+  source TEXT NOT NULL,
+  PRIMARY KEY (service_id, image_repo, tag)
+);
+CREATE INDEX IF NOT EXISTS idx_service_tag_history_service_last_used
+  ON service_tag_history(service_id, last_used_at DESC);
+"#,
+    )?;
+    Ok(())
+}
+
 fn ensure_schema_migrations_table(conn: &rusqlite::Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         r#"
@@ -633,6 +652,7 @@ pub(super) fn migrate(conn: &mut rusqlite::Connection) -> anyhow::Result<()> {
     ensure_service_archive_columns(conn)?;
     ensure_discovery_schema(conn)?;
     ensure_auto_update_schema(conn)?;
+    ensure_service_tag_history_schema(conn)?;
     ensure_github_packages_repos_webhook_columns(conn)?;
     ensure_github_packages_deliveries_columns(conn)?;
     ensure_github_packages_delivery_events_schema(conn)?;

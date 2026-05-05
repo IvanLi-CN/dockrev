@@ -8,6 +8,8 @@ import type {
   ServiceDigestTagsSnapshotResult,
   StackDetail,
   ServiceRepoLinkInferenceResponse,
+  ServiceTagSuggestionsResponse,
+  PutServiceComposeTagResponse,
   DiscoveredProject,
   TriggerDiscoveryScanJobResponse,
   TriggerVersionInferenceRefreshResponse,
@@ -821,4 +823,20 @@ export async function inferServiceRepoLink(serviceId: string): Promise<ServiceRe
     method: 'POST',
   })
   return (await resp.json()) as ServiceRepoLinkInferenceResponse
+}
+
+export async function listServiceTagSuggestions(serviceId: string): Promise<ServiceTagSuggestionsResponse> {
+  const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/tag-suggestions`)
+  return (await resp.json()) as ServiceTagSuggestionsResponse
+}
+
+export async function putServiceComposeTag(
+  serviceId: string,
+  tag: string,
+): Promise<PutServiceComposeTagResponse> {
+  const resp = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/compose-tag`, {
+    method: 'PUT',
+    body: JSON.stringify({ tag }),
+  })
+  return (await resp.json()) as PutServiceComposeTagResponse
 }

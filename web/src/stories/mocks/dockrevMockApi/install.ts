@@ -64,6 +64,12 @@ export function installDockrevMockApi(
         return nextService
       })
     }
+    if (options.serviceTagSuggestionsById) {
+      state.serviceTagSuggestionsById = {
+        ...state.serviceTagSuggestionsById,
+        ...options.serviceTagSuggestionsById,
+      }
+    }
   }
   const ignoreSeqRef = { value: 0 }
   const jobSeqRef = { value: 0 }

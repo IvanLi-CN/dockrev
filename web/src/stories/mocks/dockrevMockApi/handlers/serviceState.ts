@@ -659,6 +659,48 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     return json(settings)
   }
 
+  if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/tag-suggestions')) {
+    const parts = urlPath.split('/').filter(Boolean)
+    const serviceId = decodeURIComponent(parts[2])
+    const debug = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
+    debug.serviceTagSuggestionCalls += 1
+    debug.lastServiceTagSuggestionUrl = urlPath
+    const items = f.serviceTagSuggestionsById[serviceId] ?? []
+    return json({ items: items.slice(0, 20) })
+  }
+
+  if (method === 'PUT' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/compose-tag')) {
+    const parts = urlPath.split('/').filter(Boolean)
+    const serviceId = decodeURIComponent(parts[2])
+    const parsed = parseJsonBody(init?.body)
+    const debug = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
+    debug.lastComposeTagRequest = parsed
+    if (!isRecord(parsed) || typeof parsed.tag !== 'string' || !parsed.tag.trim()) {
+      return json({ error: { code: 'invalid_argument', message: 'tag is required' } }, { status: 400 })
+    }
+    const tag = parsed.tag.trim()
+    const found = findService(serviceId)
+    if (!found) return json({ error: 'not found' }, { status: 404 })
+    if (tag === 'compose-error') {
+      return json(
+        { error: { code: 'invalid_argument', message: 'image uses variable interpolation and cannot be edited safely' } },
+        { status: 400 },
+      )
+    }
+    const base = found.svc.image.ref.replace(/(?<!^):[^:/@]+(?:@.*)?$/, '')
+    const imageRef = `${base}:${tag}`
+    found.svc.image = { ...found.svc.image, ref: imageRef, tag }
+    found.svc.candidate = null
+    const settings = f.serviceSettingsById[serviceId]
+    if (settings) found.svc.settings = settings
+    const now = nowIso()
+    f.serviceTagSuggestionsById[serviceId] = [
+      { tag, lastUsedAt: now, source: 'manual', useCount: 1 },
+      ...(f.serviceTagSuggestionsById[serviceId] ?? []).filter((item) => item.tag !== tag),
+    ].slice(0, 20)
+    return json({ ok: true, tag, imageRef, composeFile: '/srv/app/docker-compose.yml', updatedAt: now })
+  }
+
   if (method === 'PUT' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/settings')) {
     const parts = urlPath.split('/').filter(Boolean)
     const serviceId = decodeURIComponent(parts[2])

@@ -20,6 +20,7 @@ mod schema;
 mod settings;
 mod snapshots;
 mod stacks;
+mod tag_history;
 
 pub(crate) use new_version_discoveries::{
     candidate_tag_allows_settled_fallback, canonical_candidate_identity_tag,
@@ -236,6 +237,14 @@ pub struct ServiceResourceTarget {
 pub struct ServiceResourceOverviewSamples {
     pub service_id: String,
     pub samples: Vec<ServiceResourceSample>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServiceTagSuggestion {
+    pub tag: String,
+    pub last_used_at: String,
+    pub source: String,
+    pub use_count: u32,
 }
 
 #[cfg(test)]
