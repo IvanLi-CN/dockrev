@@ -611,6 +611,15 @@ export const SearchAndFallback: Story = {
     );
     expectStory(searchInput, "expected overview search input");
 
+    setInputValue(searchInput, "worker");
+    searchInput.form?.requestSubmit();
+    await sleep(260);
+
+    expectStory(
+      serviceCards(canvasElement).length === 0,
+      "keyboard search should exclude services without launch hrefs",
+    );
+
     setInputValue(searchInput, "Acme API");
     searchInput.form?.requestSubmit();
     await sleep(260);
