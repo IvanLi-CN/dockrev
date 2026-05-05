@@ -18,7 +18,7 @@ use crate::{
 };
 
 pub const RESOURCE_MONITOR_RETENTION_DAYS: u32 = 30;
-pub const DEFAULT_SAMPLE_INTERVAL_SECONDS: u64 = 30;
+pub const DEFAULT_SAMPLE_INTERVAL_SECONDS: u64 = 10;
 
 pub fn is_valid_sample_interval_seconds(value: u64) -> bool {
     matches!(value, 10 | 30 | 60 | 300)
@@ -681,6 +681,15 @@ mod tests {
             tx,
             subscribers: Arc::new(AtomicUsize::new(subscribers)),
         })
+    }
+
+    #[test]
+    fn normalize_sample_interval_seconds_uses_ten_seconds_default() {
+        assert_eq!(normalize_sample_interval_seconds(10), 10);
+        assert_eq!(normalize_sample_interval_seconds(30), 30);
+        assert_eq!(normalize_sample_interval_seconds(60), 60);
+        assert_eq!(normalize_sample_interval_seconds(300), 300);
+        assert_eq!(normalize_sample_interval_seconds(7), 10);
     }
 
     #[test]

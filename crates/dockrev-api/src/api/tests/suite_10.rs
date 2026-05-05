@@ -24,7 +24,7 @@ async fn settings_and_notifications_roundtrip() {
     assert_eq!(settings["resourceMonitor"]["enabled"].as_bool(), Some(true));
     assert_eq!(
         settings["resourceMonitor"]["sampleIntervalSeconds"].as_u64(),
-        Some(30)
+        Some(10)
     );
     assert_eq!(
         settings["resourceMonitor"]["retentionDays"].as_u64(),
@@ -799,6 +799,9 @@ services:
     let sampled_at_2 = (now - time::Duration::minutes(5))
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap();
+    let worker_sampled_at = (now - time::Duration::hours(2))
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
 
     state
         .db
@@ -827,6 +830,19 @@ services:
                 block_read_bytes: None,
                 block_write_bytes: None,
                 pids: Some(6),
+                container_count: 1,
+            },
+            crate::db::ServiceResourceSampleInput {
+                service_id: worker_id.clone(),
+                sampled_at: worker_sampled_at.clone(),
+                cpu_percent: 3.25,
+                mem_used_bytes: Some(64 * 1024 * 1024),
+                mem_limit_bytes: Some(512 * 1024 * 1024),
+                net_rx_bytes: Some(5_000),
+                net_tx_bytes: Some(7_000),
+                block_read_bytes: None,
+                block_write_bytes: None,
+                pids: Some(2),
                 container_count: 1,
             },
         ])
@@ -866,8 +882,12 @@ services:
         .iter()
         .find(|row| row["serviceId"].as_str() == Some(worker_id.as_str()))
         .unwrap();
-    assert_eq!(worker["sampleCount"].as_u64(), Some(0));
-    assert!(worker["sampledAt"].is_null());
+    assert_eq!(worker["sampleCount"].as_u64(), Some(1));
+    assert_eq!(worker["sampledAt"].as_str(), Some(worker_sampled_at.as_str()));
+    assert_eq!(worker["cpuPercent"].as_f64(), Some(3.25));
+    assert_eq!(worker["memUsedBytes"].as_u64(), Some(64 * 1024 * 1024));
+    assert!(worker["netRxRateBps"].is_null());
+    assert!(worker["netTxRateBps"].is_null());
     assert_eq!(worker["stale"].as_bool(), Some(true));
 }
 

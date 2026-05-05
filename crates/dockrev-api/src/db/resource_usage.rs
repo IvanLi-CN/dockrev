@@ -211,7 +211,21 @@ FROM services sv
 JOIN stacks st ON st.id = sv.stack_id
 LEFT JOIN service_resource_samples s
   ON s.service_id = sv.id
-  AND s.sampled_at >= ?1
+  AND (
+    s.sampled_at >= ?1
+    OR (
+      NOT EXISTS (
+        SELECT 1
+        FROM service_resource_samples recent
+        WHERE recent.service_id = sv.id AND recent.sampled_at >= ?1
+      )
+      AND s.sampled_at = (
+        SELECT MAX(latest.sampled_at)
+        FROM service_resource_samples latest
+        WHERE latest.service_id = sv.id
+      )
+    )
+  )
 WHERE st.archived = 0 AND sv.archived = 0
 ORDER BY sv.stack_id ASC, sv.name ASC, s.sampled_at ASC
 "#,

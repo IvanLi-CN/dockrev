@@ -56,8 +56,8 @@ Rules:
 
 - Requires the same app authorization as other service APIs.
 - `window` accepts `15m`, `1h`, or `6h`; unsupported values return an invalid-argument response.
-- `services` contains active, non-archived services. Services without samples remain present with nullable metric fields and `sampleCount=0`.
-- Network RX/TX rates are derived from the latest two monotonic byte counters in the requested window; missing or reset counters return `null`.
+- `services` contains active, non-archived services. Services that have never been sampled remain present with nullable metric fields and `sampleCount=0`; services with no samples in the requested window fall back to their latest historical sample and remain stale when it is older than the freshness threshold.
+- Network RX/TX rates are derived from the latest two monotonic byte counters in the requested window; fallback-only, missing, or reset counters return `null`.
 - `stale` is true when the latest sample is older than `max(sample_interval_seconds * 2, 60)`.
 - When resource monitoring is disabled, the endpoint returns `200` with `enabled=false` and an empty `services` array so Overview can degrade without blocking navigation.
 
