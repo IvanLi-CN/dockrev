@@ -7,8 +7,8 @@ import {
   resolveAggregateUpdateActionState,
 } from "../aggregateUpdateGuard";
 import { AggregateUpdatePreviewList } from "../components/AggregateUpdatePreviewList";
-import { ConfirmServiceVersionCell } from "../components/ConfirmServiceVersionCell";
 import { CurrentVersionPopover } from "../components/CurrentVersionPopover";
+import { ServiceUpdateConfirmDetails } from "../components/ServiceUpdateConfirmDetails";
 import { UpdateCandidateFilters } from "../components/UpdateCandidateFilters";
 import { VersionTagsPopover } from "../components/VersionTagsPopover";
 import {
@@ -934,125 +934,39 @@ export function OperationsDashboardSectionView(props: {
                                     return;
                                   }
                                   const body = (
-                                    <>
-                                      <div className="modalLead">
-                                        将对该服务执行更新（apply）。
-                                      </div>
-                                      <div className="modalKvGrid">
-                                        <div className="modalKvLabel">范围</div>
-                                        <div className="modalKvValue">
-                                          <Mono>service</Mono>
-                                        </div>
-                                        <div className="modalKvLabel">目标</div>
-                                        <div className="modalKvValue">
-                                          <Mono>{`${d.name}/${svc.name}`}</Mono>
-                                        </div>
-                                        <div className="modalKvLabel">镜像</div>
-                                        <div className="modalKvValue">
-                                          {(() => {
-                                            const img = splitImageRef(
-                                              svc.image.ref,
-                                            );
-                                            const dn = splitImageNameForDisplay(
-                                              img.name,
-                                              svc.image.tag,
-                                            );
-                                            return (
-                                              <div className="cellTwoLine">
-                                                <div
-                                                  className="mono monoPrimary monoSplit imageLinkRow"
-                                                  title={
-                                                    dn.suffix
-                                                      ? `${dn.base}${dn.suffix}`
-                                                      : dn.base
-                                                  }
-                                                >
-                                                  <span className="monoSplitBase">
-                                                    {dn.base}
-                                                  </span>
-                                                  <ImageLinkIcons
-                                                    imageRef={svc.image.ref}
-                                                    repoUrl={
-                                                      svc.settings.repoUrl
-                                                    }
-                                                  />
-                                                </div>
-                                                <div className="mono monoSecondary">
-                                                  {img.registry}
-                                                </div>
-                                              </div>
-                                            );
-                                          })()}
-                                        </div>
-                                        <div className="modalKvLabel">
-                                          目标版本
-                                        </div>
-                                        <div className="modalKvValue">
-                                          <ConfirmServiceVersionCell
-                                            serviceId={svc.id}
-                                            imageTag={svc.image.tag}
-                                            imageDigest={
-                                              svc.image.digest ?? null
-                                            }
-                                            resolvedTag={svc.image.resolvedTag}
-                                            resolvedTags={
-                                              svc.image.resolvedTags
-                                            }
-                                            inferenceStatus={
-                                              svc.versionInference?.status
-                                            }
-                                            candidateTag={svc.candidate?.tag}
-                                            candidateDigest={
-                                              svc.candidate?.digest ?? null
-                                            }
-                                            candidateResolvedTag={
-                                              svc.candidate?.resolvedTag
-                                            }
-                                            prefetchOnMount={
-                                              candidatePrefetchOnMount
-                                            }
-                                            onHostResolvedTags={(update) => {
-                                              patchServiceInStackDetails(
-                                                st.id,
-                                                svc.id,
-                                                (prev) => ({
-                                                  ...prev,
-                                                  image: {
-                                                    ...prev.image,
-                                                    resolvedTag:
-                                                      update.resolvedTag,
-                                                    resolvedTags:
-                                                      update.resolvedTags,
-                                                  },
-                                                }),
-                                              );
-                                            }}
-                                            onHostCandidateResolvedTag={(
-                                              resolvedTag,
-                                            ) => {
-                                              patchServiceInStackDetails(
-                                                st.id,
-                                                svc.id,
-                                                (prev) => ({
-                                                  ...prev,
-                                                  candidate: prev.candidate
-                                                    ? {
-                                                        ...prev.candidate,
-                                                        resolvedTag,
-                                                      }
-                                                    : prev.candidate,
-                                                }),
-                                              );
-                                            }}
-                                          />
-                                        </div>
-                                        <div className="modalKvLabel">状态</div>
-                                        <div className="modalKvValue">
-                                          <Mono>{stt}</Mono>
-                                        </div>
-                                      </div>
-                                      <div className="modalDivider" />
-                                    </>
+                                    <ServiceUpdateConfirmDetails
+                                      service={svc}
+                                      status={stt}
+                                      onHostResolvedTags={(update) => {
+                                        patchServiceInStackDetails(
+                                          st.id,
+                                          svc.id,
+                                          (prev) => ({
+                                            ...prev,
+                                            image: {
+                                              ...prev.image,
+                                              resolvedTag: update.resolvedTag,
+                                              resolvedTags: update.resolvedTags,
+                                            },
+                                          }),
+                                        );
+                                      }}
+                                      onHostCandidateResolvedTag={(resolvedTag) => {
+                                        patchServiceInStackDetails(
+                                          st.id,
+                                          svc.id,
+                                          (prev) => ({
+                                            ...prev,
+                                            candidate: prev.candidate
+                                              ? {
+                                                  ...prev.candidate,
+                                                  resolvedTag,
+                                                }
+                                              : prev.candidate,
+                                          }),
+                                        );
+                                      }}
+                                    />
                                   );
                                   void triggerApply({
                                     scope: "service",

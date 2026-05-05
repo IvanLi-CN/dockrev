@@ -122,3 +122,4 @@
 | hps4f | Dockrev：服务页接管运维大盘，概览页改为 Homepage 兼容导航页 | 已完成 | `hps4f-overview-homepage-nav/SPEC.md` | 2026-05-01 | fast-track（page role swap + homepage metadata + Homepage-like v2 navigation + resource overview metrics + audit repair for density/a11y/contrast/icons/motion + visual evidence） |
 | v3g2q | Dockrev：批量更新可见范围与实际提交范围对齐 | 已完成 | `v3g2q-batch-update-visibility-alignment/SPEC.md` | 2026-04-18 | fast-track（CTA/确认框/预览/提交对齐 + same-tag digest-only 可见性） |
 | xyy72 | Dockrev：自动部署策略配置器 | active | `xyy72-auto-deploy-policy-configurator/SPEC.md` | 2026-04-30 | fast-track（auto policy model + Service/Stack UI + Storybook visual evidence） |
+| ttfyf | Dockrev：更新确认弹窗信息收敛 | 已实现 | `ttfyf-update-confirm-information-convergence/SPEC.md` | 2026-05-05 | fast-track（单服务确认与聚合预览组件边界收敛） |

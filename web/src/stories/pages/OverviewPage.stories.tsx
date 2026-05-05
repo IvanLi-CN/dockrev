@@ -399,6 +399,14 @@ export const Default: Story = {
       document.body.textContent?.includes("确认更新服务"),
       "clicking the updatable badge should open the update confirmation dialog",
     );
+    expectStory(
+      document.body.textContent?.includes("版本"),
+      "homepage update confirmation should show the version summary",
+    );
+    expectStory(
+      document.body.textContent?.includes("目标 digest"),
+      "homepage update confirmation should show the target digest",
+    );
   },
 };
 
@@ -602,6 +610,15 @@ export const SearchAndFallback: Story = {
       'input[type="search"][aria-label="搜索服务入口"]',
     );
     expectStory(searchInput, "expected overview search input");
+
+    setInputValue(searchInput, "worker");
+    searchInput.form?.requestSubmit();
+    await sleep(260);
+
+    expectStory(
+      serviceCards(canvasElement).length === 0,
+      "keyboard search should exclude services without launch hrefs",
+    );
 
     setInputValue(searchInput, "Acme API");
     searchInput.form?.requestSubmit();
