@@ -218,7 +218,7 @@ const demoSettings = {
   },
   resourceMonitor: {
     enabled: true,
-    sampleIntervalSeconds: 30,
+    sampleIntervalSeconds: 10,
     retentionDays: 7,
   },
   schedules: {

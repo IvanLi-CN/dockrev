@@ -70,8 +70,8 @@
 - `/` 必须展示分组导航卡片；仅纳入带有合法 `homepage.href` 的服务，显示时优先使用 `homepage.group/name/icon/description`，缺失字段按 `stack.name`、`service.name`、`image.ref`、默认图标兜底。
 - `/` 顶部必须展示 Homepage-like 一体化条：资源摘要、搜索输入、当前时间；资源摘要只允许展示聚合服务样本得出的 CPU/MEM/RX/TX。
 - 导航卡片点击必须在新标签页打开合法 `homepage.href`；服务详情通过卡片标题/描述行右侧的独立 icon 按钮进入。
-- 导航卡片必须显示真实资源摘要 `CPU/MEM/RX/TX`；资源监控关闭、无样本、stale 或请求失败时显示稳定占位，不发起逐服务历史请求。
-- `/api/services/resource-usage/overview?window=1h` 必须返回所有 active 服务的最新资源样本摘要、样本数量、采样时间与 stale 标记；监控关闭时返回 `enabled=false` 且不以错误中断导航页。
+- 导航卡片必须显示真实资源摘要 `CPU/MEM/RX/TX`；资源监控关闭、从未采样、stale 或请求失败时显示稳定占位，不发起逐服务历史请求。
+- `/api/services/resource-usage/overview?window=1h` 必须返回所有 active 服务的最新资源样本摘要、样本数量、采样时间与 stale 标记；当窗口内无样本但该服务存在历史样本时，使用最近一次历史样本兜底并按当前时间标记 stale；监控关闭时返回 `enabled=false` 且不以错误中断导航页。
 - 必须提供全站前端 demo：通过 Vite app 根路径 `/` 配合 `VITE_DOCKREV_DEMO=app` 安装本地 mock API 并渲染真实 Dockrev 应用；该 demo 不增加第二个 URL path 或 query 入口，且不依赖 Storybook iframe、toolbar 或 story runtime。
 - 服务 API 中的 `Service` 必须新增可空 `homepage` 元数据对象，包含 `group`、`name`、`icon`、`href`、`description` 五项。
 - compose 解析必须兼容 `labels` 的 YAML list / map 两种写法，并只提取 Homepage 基础五项标签。
@@ -118,7 +118,7 @@
 - 若服务没有 `homepage.href`、值为空或 URL 不合法，则不显示在导航页；它仍可在 `/services` 与服务详情页中管理。
 - 若 `homepage.icon` 不可识别或加载失败，则使用统一默认图标，不能让卡片留空。
 - 若资源监控关闭，则 Overview 资源摘要和卡片指标显示占位，并保留所有合法 Web 入口。
-- 若资源样本缺失或超过 stale 阈值，则卡片布局不抖动；无样本显示 `NO DATA`，stale 样本显示 `STALE` 并保留最近数值。
+- 若资源样本缺失或超过 stale 阈值，则卡片布局不抖动；从未采样显示 `NO DATA`，窗口内无样本但存在历史样本时显示 `STALE` 并保留最近数值。
 - 若 `/services` 搜索为空结果，仅更新候选区域展示空态；任务摘要、discovery 异常与归档恢复区仍应正常显示。
 - 若同一 stack 下部分服务有合法 Homepage href、部分没有，则导航页只展示有 Web 入口的服务，其余服务留在运维大盘管理。
 - 若 compose 同时出现 `homepage.widget.*`，本轮必须忽略，不得报错或污染 `homepage` 基础元数据。
@@ -160,7 +160,7 @@
 - Given 用户在 light theme 打开 `/`，When 页面展示主 CTA、资源状态行与分组数量徽标，Then 这些文字与背景的对比度满足 WCAG AA 4.5:1。
 - Given 用户通过 `bun run demo:app` 打开 `/`，When 前端加载完成，Then 页面通过纯前端 mock API 渲染同一 Dockrev 应用体验，且不出现 Storybook shell。
 - Given `/api/services/resource-usage/overview?window=1h` 返回最新样本，When `/` 渲染导航卡片，Then 每张卡片显示真实 CPU/MEM/RX/TX。
-- Given 资源监控关闭、无样本或样本 stale，When `/` 渲染导航卡片，Then 服务入口仍展示，指标显示稳定占位或 stale 状态。
+- Given 资源监控关闭、从未采样、窗口内无样本但存在历史样本或样本 stale，When `/` 渲染导航卡片，Then 服务入口仍展示，指标显示稳定占位或 stale 状态；存在历史样本时保留最近数值。
 - Given 某服务存在 `serviceRowStatus=updatable|hint|archMismatch|blocked`，When `/` 渲染导航卡片，Then 右上角徽标展示与现有服务列表一致的状态语义；正常资源状态不得新增第二套更新口径。
 - Given 运行 `cargo test`、`bun run --cwd web lint`、`bun run --cwd web build`、`bun run --cwd web build-storybook` 与 `bun run --cwd web test-storybook -- --url <leased-port>`，When 本改动完成，Then 全部通过。
 
@@ -256,6 +256,19 @@
   evidence_note: 验证 light theme 下主 CTA、状态行文字与分组数量徽标使用修复后的对比度 token。
 
   ![Homepage audit light theme 对比度](./assets/overview-homepage-audit-light-contrast.png)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: browser-viewport
+  requested_viewport: `1366x900`
+  viewport_strategy: devtools-emulate
+  sensitive_exclusion: N/A
+  submission_gate: pending-owner-approval
+  story_id_or_title: `pages-overviewpage--metrics-stale`
+  state: `resource overview stale sample keeps latest values`
+  evidence_note: 验证 Overview 资源样本 stale 时，卡片继续保留最近 CPU/MEM/RX/TX 数值并显示 `STALE` 摘要态。
+
+  ![Homepage resource stale fallback](./assets/overview-resource-stale-fallback.png)
 
 - source_type: storybook_canvas
   story_id_or_title: `pages-overviewpage--mobile-stacked`
