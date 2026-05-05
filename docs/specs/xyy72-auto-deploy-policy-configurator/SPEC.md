@@ -33,7 +33,7 @@
 - API 数据类型、持久化 schema、迁移与校验器。
 - 自动策略匹配、延迟 pending 记录、定时轮询与自动 update job 入队。
 - Service settings 与 Stack settings API。
-- Service 详情页、Stack 详情页、独立设置抽屉、Services/Operations Stack 分组入口。
+- Service 详情页、Stack 详情页与独立设置抽屉。
 - Storybook stories、mock API、交互覆盖与视觉证据。
 
 ### Out of scope
@@ -62,7 +62,7 @@
 
 - UI 以紧凑规则列表展示，默认提供一个可直接编辑的规则。
 - 配置器文案应明确“延迟需要同时满足时间和版本数”。
-- Stack 分组标题应提供进入 Stack 策略详情的入口。
+- Services/Operations 更新候选列表不展示 Stack 策略快捷按钮；Stack 策略配置保留在 Stack 详情页，并可从 Service 详情页进入。
 
 ## 功能与行为规格（Functional/Behavior Spec）
 
@@ -121,7 +121,7 @@
 - Service 详情页展示当前最终自动更新结果、继承/覆盖/禁用来源、主规则摘要，以及最近三次影响该服务的 update job。
 - Stack 详情页展示当前 Stack 自动更新结果、主规则摘要、最近三次影响该 Stack 服务的 update job，以及该 Stack 下服务列表。
 - Service 与 Stack 的完整设置界面必须放在独立抽屉内：桌面端从右侧出现，移动端从底部出现。
-- Services/Operations 的 Stack 分组标题可进入 Stack 详情。
+- Services/Operations 的 Stack 分组标题只承载分组展开/收起与更新操作，不展示策略快捷入口；Service 详情页保留进入 Stack 详情页的中性入口。
 - 非线性滑块必须显示档位 label，不使用线性数字输入作为主控件。
 
 ## 接口契约（Interfaces & Contracts）
