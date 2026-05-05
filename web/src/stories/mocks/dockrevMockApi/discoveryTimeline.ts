@@ -8,6 +8,10 @@ export function buildMockDiscoveryTimeline(
   options: DockrevMockApiOptions,
   findService: (serviceId: string) => MockDiscoveryTimelineServiceMatch,
 ): NewVersionDiscoveryTimelineResponse {
+  if (options.discoveryTimelineErrorServiceIds?.includes(serviceId)) {
+    throw new Error('mock discovery timeline failed')
+  }
+
   const override = options.discoveryTimelineByServiceId?.[serviceId]
   if (override) {
     return {

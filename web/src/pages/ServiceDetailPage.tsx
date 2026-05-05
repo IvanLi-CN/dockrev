@@ -7,13 +7,15 @@ import {
   putServiceSettings,
   type JobListItem,
   type Service,
+  type ServiceSettings,
 } from '../api'
 import { navigate } from '../routes'
 import { Button, IconButton, Input, Mono, Pill, RefreshIcon, SelectField, Switch } from '../ui'
 import { isDockrevImageRef } from '../runtimeConfig'
 import { serviceRowStatus } from '../updateStatus'
 import { ServiceResourcePanel } from '../components/ServiceResourcePanel'
-import { AutoUpdatePolicyEditor, createDefaultAutoUpdatePolicy } from '../components/AutoUpdatePolicyEditor'
+import { createDefaultAutoUpdatePolicy } from '../components/AutoUpdatePolicyEditor'
+import { AutoUpdatePolicyDrawer } from '../components/AutoUpdatePolicyDrawer'
 import { AutoUpdatePolicyResultCard } from '../components/AutoUpdatePolicyResultCard'
 import { RecentUpdateRecords, selectRecentServiceUpdateJobs } from '../components/RecentUpdateRecords'
 import { ResponsiveSettingsDrawer } from '../components/ResponsiveSettingsDrawer'
@@ -55,7 +57,6 @@ export function ServiceDetailPage(props: {
     bannerClass,
     bannerDetail,
     bannerTitle,
-    bindTargets,
     busy,
     composeEnvFile,
     composeFiles,
@@ -79,7 +80,6 @@ export function ServiceDetailPage(props: {
     setNewRuleNote,
     setNewRuleValue,
     setRepoInferBusy,
-    setSettings,
     settings,
     settingsBusy,
     stack,
@@ -87,10 +87,12 @@ export function ServiceDetailPage(props: {
     supervisorErrorAt,
     supervisorState,
     tone,
-    volTargets,
   } = useServiceDetailPageState(props)
   const [jobs, setJobs] = useState<JobListItem[]>([])
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false)
+  const [serviceSettingsDrawerOpen, setServiceSettingsDrawerOpen] = useState(false)
+  const [autoPolicyDraft, setAutoPolicyDraft] = useState(() => createDefaultAutoUpdatePolicy('inherit'))
+  const [serviceSettingsDraft, setServiceSettingsDraft] = useState<ServiceSettings | null>(null)
 
   const refreshRecentJobs = useCallback(async () => {
     setJobs(await listJobs())
@@ -110,6 +112,14 @@ export function ServiceDetailPage(props: {
   }
 
   const policy = settings.autoUpdatePolicy ?? createDefaultAutoUpdatePolicy('inherit')
+  const serviceProtectionDraft = serviceSettingsDraft ?? settings
+  const serviceProtectionBindTargets = Object.entries(serviceProtectionDraft.backupTargets.bindPaths).map(
+    ([key, value]) => ({ key, value }),
+  )
+  const serviceProtectionVolTargets = Object.entries(serviceProtectionDraft.backupTargets.volumeNames).map(
+    ([key, value]) => ({ key, value }),
+  )
+  const visibleRepoUrl = serviceSettingsDrawerOpen ? serviceProtectionDraft.repoUrl : draftRepoUrl
   const recentUpdateJobs = selectRecentServiceUpdateJobs(jobs, service.id)
 
   return (
@@ -132,7 +142,7 @@ export function ServiceDetailPage(props: {
                   title={dn.suffix ? `${dn.base}${dn.suffix}` : dn.base}
                 >
                   <span className="monoSplitBase">{dn.base}</span>
-                  <ImageLinkIcons imageRef={service.image.ref} repoUrl={draftRepoUrl} />
+                  <ImageLinkIcons imageRef={service.image.ref} repoUrl={visibleRepoUrl} />
                 </div>
                 <div className="mono monoSecondary">{img.registry}</div>
               </div>
@@ -208,12 +218,31 @@ export function ServiceDetailPage(props: {
       <div className="settingsSummaryGrid" style={{ marginTop: 16 }}>
         <AutoUpdatePolicyResultCard
           busy={settingsBusy}
-          onOpenSettings={() => setSettingsDrawerOpen(true)}
+          onOpenSettings={() => {
+            setAutoPolicyDraft(policy)
+            setSettingsDrawerOpen(true)
+          }}
           policy={policy}
           scope="service"
           stackPolicy={stackSettings?.autoUpdatePolicy ?? null}
         />
         <RecentUpdateRecords jobs={recentUpdateJobs} />
+      </div>
+
+      <div className="card serviceSafeguardCard">
+        <div>
+          <div className="title">服务保护设置</div>
+          <div className="muted">失败回滚、代码仓库和备份目标单独配置，不与自动更新策略混排。</div>
+        </div>
+        <Button
+          disabled={settingsBusy}
+          onClick={() => {
+            setServiceSettingsDraft(settings)
+            setServiceSettingsDrawerOpen(true)
+          }}
+        >
+          打开
+        </Button>
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>
@@ -318,37 +347,41 @@ export function ServiceDetailPage(props: {
           </div>
         </div>
 
-      <ResponsiveSettingsDrawer
-        description="配置自动更新策略、失败回滚和服务级备份目标。"
+      <AutoUpdatePolicyDrawer
+        busy={settingsBusy}
+        onChange={setAutoPolicyDraft}
         onOpenChange={setSettingsDrawerOpen}
+        onSave={() => {
+          void (async () => {
+            setBusy(true)
+            setError(null)
+            try {
+              await putServiceSettings(props.serviceId, {
+                ...settings,
+                autoUpdatePolicy: autoPolicyDraft,
+                repoUrl: undefined,
+              })
+              await requestRefresh()
+            } catch (e: unknown) {
+              setError(errorMessage(e))
+            } finally {
+              setBusy(false)
+            }
+          })()
+        }}
         open={settingsDrawerOpen}
-        title="服务设置"
+        policy={autoPolicyDraft}
+        previewServiceId={service.id}
+        scope="service"
+        stackPolicy={stackSettings?.autoUpdatePolicy ?? null}
+      />
+
+      <ResponsiveSettingsDrawer
+        description="配置失败回滚、代码仓库和服务级备份目标。"
+        onOpenChange={setServiceSettingsDrawerOpen}
+        open={serviceSettingsDrawerOpen}
+        title="服务保护设置"
       >
-        <AutoUpdatePolicyEditor
-          busy={settingsBusy}
-          onChange={(autoUpdatePolicy) => setSettings({ ...settings, autoUpdatePolicy })}
-          onSave={() => {
-            void (async () => {
-              setBusy(true)
-              setError(null)
-              try {
-                await putServiceSettings(props.serviceId, {
-                  ...settings,
-                  repoUrl: undefined,
-                })
-                await requestRefresh()
-              } catch (e: unknown) {
-                setError(errorMessage(e))
-              } finally {
-                setBusy(false)
-              }
-            })()
-          }}
-          policy={policy}
-          scope="service"
-          stackPolicy={stackSettings?.autoUpdatePolicy ?? null}
-        />
-        <div className="settingsDrawerDivider" />
         <div className="settingsDrawerSection">
           <div className="title">更新前备份 / 回滚</div>
           <div className="muted">服务级策略（失败回滚 + 备份 targets 三态选择）</div>
@@ -357,8 +390,14 @@ export function ServiceDetailPage(props: {
             <div className="kvRow">
               <div className="label">失败回滚（autoRollback）</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <Switch checked={settings.autoRollback} disabled={settingsBusy} onChange={(v) => setSettings({ ...settings, autoRollback: v })} />
-                <div className="muted">{settings.autoRollback ? 'on' : 'off'}</div>
+                <Switch
+                  checked={serviceProtectionDraft.autoRollback}
+                  disabled={settingsBusy}
+                  onChange={(autoRollback) =>
+                    setServiceSettingsDraft({ ...serviceProtectionDraft, autoRollback })
+                  }
+                />
+                <div className="muted">{serviceProtectionDraft.autoRollback ? 'on' : 'off'}</div>
               </div>
             </div>
             <div className="kvRow">
@@ -368,11 +407,11 @@ export function ServiceDetailPage(props: {
                   <Input
                     className="input"
                     disabled={settingsBusy}
-                    onChange={(e) => setSettings({ ...settings, repoUrl: e.target.value })}
+                    onChange={(e) => setServiceSettingsDraft({ ...serviceProtectionDraft, repoUrl: e.target.value })}
                     placeholder="https://github.com/owner/repo"
-                    value={settings.repoUrl ?? ''}
+                    value={serviceProtectionDraft.repoUrl ?? ''}
                   />
-                  <RepositoryLinkIcon repoUrl={draftRepoUrl} />
+                  <RepositoryLinkIcon repoUrl={serviceProtectionDraft.repoUrl ?? draftRepoUrl} />
                   <IconButton
                     disabled={settingsBusy}
                     hint={repoInferBusy ? '正在重新推断代码仓库…' : '根据镜像 OCI source / GHCR 重新推断'}
@@ -383,7 +422,7 @@ export function ServiceDetailPage(props: {
                         try {
                           const result = await inferServiceRepoLink(props.serviceId)
                           if (result.repoUrl) {
-                            setSettings((prev) => (prev ? { ...prev, repoUrl: result.repoUrl } : prev))
+                            setServiceSettingsDraft({ ...serviceProtectionDraft, repoUrl: result.repoUrl })
                           } else {
                             setError(result.reason?.trim() || '未识别到代码仓库入口')
                           }
@@ -411,20 +450,20 @@ export function ServiceDetailPage(props: {
 
           <div className="kv" style={{ marginTop: 10 }}>
             <div className="label">Bind paths</div>
-            {bindTargets.length === 0 ? <div className="muted">暂无</div> : null}
-            {bindTargets.map((t) => (
+            {serviceProtectionBindTargets.length === 0 ? <div className="muted">暂无</div> : null}
+            {serviceProtectionBindTargets.map((t) => (
               <div key={t.key} className="kvRow">
                 <div className="mono">{t.key}</div>
                 <SelectField
                   className="input"
                   disabled={settingsBusy}
                   onChange={(value) =>
-                    setSettings({
-                      ...settings,
+                    setServiceSettingsDraft({
+                      ...serviceProtectionDraft,
                       backupTargets: {
-                        ...settings.backupTargets,
+                        ...serviceProtectionDraft.backupTargets,
                         bindPaths: {
-                          ...settings.backupTargets.bindPaths,
+                          ...serviceProtectionDraft.backupTargets.bindPaths,
                           [t.key]: value as 'inherit' | 'skip' | 'force',
                         },
                       },
@@ -443,20 +482,20 @@ export function ServiceDetailPage(props: {
             <div className="label" style={{ marginTop: 10 }}>
               Volume names
             </div>
-            {volTargets.length === 0 ? <div className="muted">暂无</div> : null}
-            {volTargets.map((t) => (
+            {serviceProtectionVolTargets.length === 0 ? <div className="muted">暂无</div> : null}
+            {serviceProtectionVolTargets.map((t) => (
               <div key={t.key} className="kvRow">
                 <div className="mono">{t.key}</div>
                 <SelectField
                   className="input"
                   disabled={settingsBusy}
                   onChange={(value) =>
-                    setSettings({
-                      ...settings,
+                    setServiceSettingsDraft({
+                      ...serviceProtectionDraft,
                       backupTargets: {
-                        ...settings.backupTargets,
+                        ...serviceProtectionDraft.backupTargets,
                         volumeNames: {
-                          ...settings.backupTargets.volumeNames,
+                          ...serviceProtectionDraft.backupTargets.volumeNames,
                           [t.key]: value as 'inherit' | 'skip' | 'force',
                         },
                       },
@@ -481,9 +520,11 @@ export function ServiceDetailPage(props: {
                     setBusy(true)
                     setError(null)
                     try {
+                      const draft = serviceSettingsDraft ?? settings
                       await putServiceSettings(props.serviceId, {
-                        ...settings,
-                        repoUrl: (settings.repoUrl ?? '').trim() || null,
+                        ...draft,
+                        autoUpdatePolicy: settings.autoUpdatePolicy,
+                        repoUrl: (draft.repoUrl ?? '').trim() || null,
                       })
                       await requestRefresh()
                     } catch (e: unknown) {

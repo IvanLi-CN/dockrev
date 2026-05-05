@@ -1979,8 +1979,11 @@ async function runInteractive({ baseUrl, browser }) {
       "pages-interactiveapp--repo-link-editing-flow",
     );
     try {
-      await page.getByRole("button", { name: "设置" }).click();
-      await page.getByText("服务设置", { exact: true }).waitFor({
+      await page
+        .locator(".serviceSafeguardCard")
+        .getByRole("button", { name: "打开" })
+        .click();
+      await page.getByRole("heading", { name: "服务保护设置" }).waitFor({
         timeout: 10_000,
       });
 

@@ -36,6 +36,10 @@ function findButton(root: ParentNode, text: string): HTMLButtonElement | null {
   )
 }
 
+function drawerText(doc: Document): string {
+  return doc.querySelector('.settingsDrawerContent')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+}
+
 function render(stackId: string): Story['render'] {
   return () => (
     <PageHarness route={{ name: 'stack', stackId }} title="Stack 详情" topbarHint="Stack 详情">
@@ -60,8 +64,9 @@ export const PolicyEnabled: Story = {
     const settingsTrigger = findButton(doc, '设置')
     expectStory(settingsTrigger, 'stack settings drawer trigger missing')
     settingsTrigger.click()
-    await waitForCondition(() => doc.body.textContent?.includes('Stack 设置') ?? false)
-    expectStory(doc.body.textContent?.includes('Stable semver'), 'stack policy editor missing in drawer')
+    await waitForCondition(() => drawerText(doc).includes('自动更新策略'))
+    expectStory(drawerText(doc).includes('Stable semver'), 'stack policy editor missing in drawer')
+    expectStory(!drawerText(doc).includes('更新前备份 / 回滚'), 'stack auto policy drawer must stay independent')
   },
 }
 

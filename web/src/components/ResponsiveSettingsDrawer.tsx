@@ -1,12 +1,15 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { X } from 'lucide-react'
 import {
-  Button,
   Drawer,
   DrawerClose,
   DrawerContent,
   DrawerDescription,
   DrawerHeader,
   DrawerTitle,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
 } from '../ui'
 
 function useMediaQuery(query: string): boolean {
@@ -46,11 +49,16 @@ export function ResponsiveSettingsDrawer(props: {
                 <DrawerDescription className="settingsDrawerDescription">{props.description}</DrawerDescription>
               ) : null}
             </div>
-            <DrawerClose asChild>
-              <Button aria-label="关闭设置抽屉" variant="ghost">
-                关闭
-              </Button>
-            </DrawerClose>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DrawerClose asChild>
+                  <button aria-label="关闭设置抽屉" className="settingsDrawerCloseIcon" type="button">
+                    <X aria-hidden="true" className="iconSm" />
+                  </button>
+                </DrawerClose>
+              </TooltipTrigger>
+              <TooltipContent>关闭</TooltipContent>
+            </Tooltip>
           </div>
         </DrawerHeader>
         <div className="settingsDrawerBody">{props.children}</div>

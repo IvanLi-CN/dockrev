@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from 'react'
 import { Button, Input, Mono, Pill, SelectField, Switch } from '../ui'
 import type {
   AutoUpdateMatcherType,
@@ -5,7 +6,9 @@ import type {
   AutoUpdatePolicyMode,
   AutoUpdateRule,
   AutoUpdateRuleAction,
+  NewVersionDiscoveryTimelineItem,
 } from '../api'
+import { getServiceNewVersionDiscoveryTimeline } from '../api'
 
 export const AUTO_UPDATE_TIME_PRESETS = [
   { value: 0, label: '立即' },
@@ -111,6 +114,118 @@ function validationMessage(policy: AutoUpdatePolicy): string | null {
   return null
 }
 
+type PreviewMatchResult =
+  | { status: 'matched'; rule: AutoUpdateRule }
+  | { status: 'missed' }
+  | { status: 'uncertain'; reason: string }
+
+function escapeRegex(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')
+}
+
+function globToRegex(pattern: string): RegExp {
+  let source = ''
+  for (const char of pattern) {
+    if (char === '*') source += '.*'
+    else if (char === '?') source += '.'
+    else source += escapeRegex(char)
+  }
+  return new RegExp(`^(?:${source})$`)
+}
+
+function parseLooseVersion(value: string): number[] | null {
+  const match = value.trim().match(/^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$/)
+  if (!match) return null
+  return [match[1], match[2] ?? '0', match[3] ?? '0'].map((part) => Number(part))
+}
+
+function compareLooseVersion(left: number[], right: number[]): number {
+  for (let index = 0; index < 3; index += 1) {
+    const diff = (left[index] ?? 0) - (right[index] ?? 0)
+    if (diff !== 0) return diff
+  }
+  return 0
+}
+
+function matchesSemverPreview(version: string, pattern: string): boolean | null {
+  const parsedVersion = parseLooseVersion(version)
+  if (!parsedVersion) return null
+  const clauses = pattern
+    .split(',')
+    .flatMap((part) => part.trim().split(/\s+/))
+    .map((part) => part.trim())
+    .filter(Boolean)
+  if (clauses.length === 0) return null
+
+  for (const clause of clauses) {
+    const match = clause.match(/^(>=|<=|>|<|=)?\s*v?(\d+(?:\.\d+){0,2})$/)
+    if (!match) return null
+    const op = match[1] || '='
+    const target = parseLooseVersion(match[2])
+    if (!target) return null
+    const cmp = compareLooseVersion(parsedVersion, target)
+    if (op === '>' && !(cmp > 0)) return false
+    if (op === '>=' && !(cmp >= 0)) return false
+    if (op === '<' && !(cmp < 0)) return false
+    if (op === '<=' && !(cmp <= 0)) return false
+    if (op === '=' && cmp !== 0) return false
+  }
+  return true
+}
+
+function matchRulePreview(rule: AutoUpdateRule, version: string): PreviewMatchResult {
+  const pattern = rule.matcher.pattern.trim()
+  if (!pattern) return { status: 'uncertain', reason: '规则为空' }
+  try {
+    if (rule.matcher.type === 'glob') {
+      return globToRegex(pattern).test(version) ? { status: 'matched', rule } : { status: 'missed' }
+    }
+    if (rule.matcher.type === 'regex') {
+      return new RegExp(`^(?:${pattern})$`).test(version) ? { status: 'matched', rule } : { status: 'missed' }
+    }
+    const matched = matchesSemverPreview(version, pattern)
+    if (matched == null) return { status: 'uncertain', reason: 'semver 预览不确定' }
+    return matched ? { status: 'matched', rule } : { status: 'missed' }
+  } catch {
+    return { status: 'uncertain', reason: '规则无法预览' }
+  }
+}
+
+function previewPolicyFor(policy: AutoUpdatePolicy, stackPolicy: AutoUpdatePolicy | null | undefined): AutoUpdatePolicy | null {
+  if (policy.mode === 'disabled') return null
+  if (policy.mode === 'inherit') return stackPolicy ?? null
+  return policy
+}
+
+function matchPolicyPreview(policy: AutoUpdatePolicy | null, version: string): PreviewMatchResult {
+  if (!policy || !policy.enabled) return { status: 'missed' }
+  for (const rule of policy.rules) {
+    if (!rule.enabled) continue
+    const result = matchRulePreview(rule, version)
+    if (result.status !== 'missed') return result
+  }
+  return { status: 'missed' }
+}
+
+function formatPreviewTime(value: string | null | undefined): string {
+  const trimmed = (value ?? '').trim()
+  if (!trimmed) return '时间未知'
+  const parsed = new Date(trimmed)
+  if (Number.isNaN(parsed.valueOf())) return trimmed
+  return new Intl.DateTimeFormat(undefined, {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(parsed)
+}
+
+function previewKindLabel(kind: NewVersionDiscoveryTimelineItem['kind']): string {
+  if (kind === 'currentCandidate') return '当前候选'
+  if (kind === 'currentRunning') return '当前运行'
+  return '历史发现'
+}
+
 export function AutoUpdatePolicyEditor(props: {
   scope: 'service' | 'stack'
   policy: AutoUpdatePolicy
@@ -118,6 +233,7 @@ export function AutoUpdatePolicyEditor(props: {
   busy?: boolean
   onChange: (policy: AutoUpdatePolicy) => void
   onSave?: () => void
+  previewServiceId?: string
 }) {
   const { policy } = props
   const isService = props.scope === 'service'
@@ -147,7 +263,7 @@ export function AutoUpdatePolicyEditor(props: {
 
       <div className="autoPolicyControls">
         {isService ? (
-          <label className="formField">
+          <label className="autoPolicyInlineField">
             <span className="label">模式</span>
             <SelectField
               disabled={props.busy}
@@ -288,6 +404,116 @@ export function AutoUpdatePolicyEditor(props: {
         ) : null}
       </div>
       {validation ? <div className="autoPolicyValidation">{validation}</div> : null}
+      {props.previewServiceId ? (
+        <AutoUpdateHistoryPreview
+          policy={previewPolicyFor(policy, props.stackPolicy)}
+          serviceId={props.previewServiceId}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+function AutoUpdateHistoryPreview(props: {
+  policy: AutoUpdatePolicy | null
+  serviceId: string
+}) {
+  const [timelineState, setTimelineState] = useState<{
+    serviceId: string
+    items: NewVersionDiscoveryTimelineItem[] | null
+    status: 'loading' | 'ready' | 'error'
+    error: string | null
+  }>(() => ({ serviceId: props.serviceId, items: null, status: 'loading', error: null }))
+
+  useEffect(() => {
+    let cancelled = false
+    void getServiceNewVersionDiscoveryTimeline(props.serviceId)
+      .then((response) => {
+        if (cancelled) return
+        setTimelineState({
+          serviceId: props.serviceId,
+          items: response.items.slice(0, 20),
+          status: 'ready',
+          error: null,
+        })
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        setTimelineState({
+          serviceId: props.serviceId,
+          items: null,
+          status: 'error',
+          error: err instanceof Error && err.message.trim() ? err.message : '加载历史版本失败',
+        })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [props.serviceId])
+
+  const activeState =
+    timelineState.serviceId === props.serviceId
+      ? timelineState
+      : { serviceId: props.serviceId, items: null, status: 'loading' as const, error: null }
+  const previewRows = useMemo(
+    () =>
+      (activeState.items ?? []).map((item) => ({
+        item,
+        result: matchPolicyPreview(props.policy, item.version),
+      })),
+    [activeState.items, props.policy],
+  )
+
+  const matchedCount = previewRows.filter((row) => row.result.status === 'matched').length
+
+  return (
+    <div className="autoPolicyHistoryPreview">
+      <div className="autoPolicyHistoryHead">
+        <div>
+          <div className="title">历史版本命中预览</div>
+          <div className="muted">展示最近 20 条内的发现记录，按当前草稿规则本地预览。</div>
+        </div>
+        <Pill tone={matchedCount > 0 ? 'info' : 'muted'}>{matchedCount}/{previewRows.length} 命中</Pill>
+      </div>
+
+      {activeState.status === 'loading' ? <div className="autoPolicyHistoryState">正在加载历史版本…</div> : null}
+      {activeState.status === 'error' ? (
+        <div className="autoPolicyHistoryState autoPolicyHistoryStateError">{activeState.error}</div>
+      ) : null}
+      {activeState.status === 'ready' && previewRows.length === 0 ? (
+        <div className="autoPolicyHistoryState">暂无历史版本记录。</div>
+      ) : null}
+      {previewRows.length > 0 ? (
+        <div className="autoPolicyHistoryList">
+          {previewRows.map(({ item, result }, index) => (
+            <div className="autoPolicyHistoryRow" key={`${item.kind}:${item.version}:${item.occurredAt ?? index}`}>
+              <div className="autoPolicyHistoryVersion">
+                <Mono>{item.version}</Mono>
+                <span>{previewKindLabel(item.kind)}</span>
+              </div>
+              <div className="autoPolicyHistoryResult">
+                {result.status === 'matched' ? (
+                  <>
+                    <Pill tone="ok">命中</Pill>
+                    <span>{result.rule.name} · {autoUpdateRuleSummary(result.rule)}</span>
+                  </>
+                ) : result.status === 'uncertain' ? (
+                  <>
+                    <Pill tone="warn">不确定</Pill>
+                    <span>{result.reason}</span>
+                  </>
+                ) : (
+                  <>
+                    <Pill tone="muted">未命中</Pill>
+                    <span>不会触发自动部署</span>
+                  </>
+                )}
+              </div>
+              <div className="autoPolicyHistoryTime">{formatPreviewTime(item.occurredAt)}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -300,8 +526,18 @@ function NonlinearSlider(props: {
   onChange: (value: number) => void
 }) {
   const index = presetIndex(props.presets, props.value)
+  const stopDrawerDrag = (event: { stopPropagation: () => void }) => {
+    event.stopPropagation()
+  }
   return (
-    <div className="autoPolicySlider">
+    <div
+      className="autoPolicySlider"
+      onMouseDownCapture={stopDrawerDrag}
+      onPointerDownCapture={stopDrawerDrag}
+      onPointerMoveCapture={stopDrawerDrag}
+      onTouchStartCapture={stopDrawerDrag}
+      onTouchMoveCapture={stopDrawerDrag}
+    >
       <div className="autoPolicySliderHead">
         <span className="label">{props.label}</span>
         <Mono>{props.presets[index]?.label ?? props.presets[0]?.label}</Mono>
