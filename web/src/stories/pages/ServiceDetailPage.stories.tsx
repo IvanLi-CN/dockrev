@@ -71,6 +71,7 @@ export const AutoPolicyInherited: Story = {
     await waitForCondition(() => canvasElement.textContent?.includes('自动更新结果') ?? false)
     expectStory(canvasElement.textContent?.includes('继承 Stack'), 'service auto policy inherited summary missing')
     expectStory(canvasElement.textContent?.includes('最近更新记录'), 'recent update records missing')
+    expectStory(findButton(canvasElement, 'Stack 详情'), 'stack detail top action missing')
   },
 }
 

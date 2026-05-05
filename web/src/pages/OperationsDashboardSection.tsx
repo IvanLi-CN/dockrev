@@ -458,13 +458,6 @@ export function OperationsDashboardSectionView(props: {
                     <div className="actionStack">
                       <Button
                         variant="ghost"
-                        disabled={busy}
-                        onClick={() => navigate({ name: "stack", stackId: st.id })}
-                      >
-                        策略
-                      </Button>
-                      <Button
-                        variant="ghost"
                         disabled={
                           stackApplyActiveJob
                             ? false

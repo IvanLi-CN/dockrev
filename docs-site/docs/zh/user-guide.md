@@ -40,7 +40,7 @@ description: Dockrev 核心页面与日常操作流程。
 
 ### 5) 自动更新策略
 
-- 入口：Service Detail 的“自动更新策略”和 Services/Operations 里 Stack 分组的“策略”
+- 入口：Service Detail 的“自动更新策略”，或从 Service Detail 顶部进入 Stack Detail 的“Stack 设置”
 - Stack 可配置默认策略；Service 可选择继承、覆盖或禁用
 - 规则支持 semver、regex、glob 匹配候选版本或 tag
 - 延迟规则同时满足“候选首次发现后的时间门槛”和“当前版本落后 N 个匹配版本”后才会自动执行

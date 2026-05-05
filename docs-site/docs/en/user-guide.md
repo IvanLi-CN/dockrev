@@ -40,7 +40,7 @@ description: Daily usage flows and UI operations in Dockrev.
 
 ### 5) Auto-update policies
 
-- Configure from Service Detail, or from the Stack group “Policy” action in Services/Operations
+- Configure from Service Detail, or open Stack Detail from the Service Detail top actions and use the “Stack Settings” drawer
 - Stack policies define defaults; each Service can inherit, override, or disable auto updates
 - Rules match candidate versions or tags with semver, regex, or glob
 - Delayed rules require both gates: candidate first-seen age and current version lag behind N matching versions

@@ -32,6 +32,28 @@ function setInputValue(input: HTMLInputElement, value: string) {
   input.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
+function findStackUpdateButton(
+  canvasElement: HTMLElement,
+): HTMLButtonElement | undefined {
+  return Array.from(
+    canvasElement.querySelectorAll<HTMLButtonElement>(
+      ".tableGroup .groupHead .actionCell button",
+    ),
+  ).find((button) => button.textContent?.includes("更新此 stack"));
+}
+
+function assertNoStackPolicyButtons(canvasElement: HTMLElement) {
+  const policyButtons = Array.from(
+    canvasElement.querySelectorAll<HTMLButtonElement>(
+      ".tableGroup .groupHead .actionCell button",
+    ),
+  ).filter((button) => button.textContent?.trim() === "策略");
+  expectStory(
+    policyButtons.length === 0,
+    "services update candidate stack groups should not render policy buttons",
+  );
+}
+
 function renderServices(pageSubtitle: string): Story["render"] {
   return () => (
     <PageHarness
@@ -140,6 +162,7 @@ export const CandidateSearchKeepsArchivedVisible: Story = {
   render: renderServices("回归：更新候选搜索只过滤候选区，不影响归档恢复区"),
   play: async ({ canvasElement }) => {
     await sleep(260);
+    assertNoStackPolicyButtons(canvasElement);
 
     expectStory(
       canvasElement.textContent?.includes("运行态与结果"),
@@ -219,9 +242,7 @@ export const CandidateSearchKeepsArchivedVisible: Story = {
     allCancelButton?.click();
     await sleep(120);
 
-    const stackAction = canvasElement.querySelector<HTMLButtonElement>(
-      ".tableGroup .groupHead .actionCell button",
-    );
+    const stackAction = findStackUpdateButton(canvasElement);
     expectStory(stackAction, "expected filtered stack action button");
     stackAction.click();
     await sleep(220);
@@ -280,15 +301,14 @@ export const SameTagDigestUpdateVisible: Story = {
   render: renderServices("回归：same-tag / digest-only 候选必须明确可见"),
   play: async ({ canvasElement }) => {
     await sleep(260);
+    assertNoStackPolicyButtons(canvasElement);
 
     expectStory(
       canvasElement.textContent?.includes("同标签新 digest"),
       "services table should surface same-tag digest-only updates explicitly",
     );
 
-    const stackAction = canvasElement.querySelector<HTMLButtonElement>(
-      ".tableGroup .groupHead .actionCell button",
-    );
+    const stackAction = findStackUpdateButton(canvasElement);
     expectStory(stackAction, "expected stack action button for same-tag case");
     stackAction.click();
     await sleep(220);

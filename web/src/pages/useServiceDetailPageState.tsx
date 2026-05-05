@@ -848,6 +848,13 @@ export function useServiceDetailPageState(props: {
           </>
         )}
         <Button
+          variant="ghost"
+          disabled={busy}
+          onClick={() => navigate({ name: 'stack', stackId })}
+        >
+          Stack 详情
+        </Button>
+        <Button
           variant={service?.archived ? 'primary' : 'ghost'}
           disabled={busy || !service}
           onClick={() => {

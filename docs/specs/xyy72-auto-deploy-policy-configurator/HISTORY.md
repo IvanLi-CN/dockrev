@@ -7,6 +7,7 @@
 - 2026-04-30: 创建 topic-level spec，锁定 Service/Stack 自动部署策略首版范围。
 - 2026-04-30: 实现自动策略配置器、后端执行路径、Storybook 证据与共享测试机 smoke；远端 push/PR 截图提交仍等待主人授权。
 - 2026-04-30: 将 Service/Stack 详情页上的内联策略配置器收敛为结果摘要与最近三次更新记录，完整设置移入响应式抽屉。
+- 2026-05-05: Services/Operations 更新候选列表移除 Stack 策略快捷按钮，策略配置继续保留在 Stack 详情页，并通过 Service 详情页的中性 Stack 详情入口保持可达。
 
 ## Key Reasons / Replacements
 
