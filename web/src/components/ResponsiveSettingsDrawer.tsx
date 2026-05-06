@@ -5,6 +5,7 @@ import {
   DrawerClose,
   DrawerContent,
   DrawerDescription,
+  DrawerHandle,
   DrawerHeader,
   DrawerTitle,
   Tooltip,
@@ -39,8 +40,11 @@ export function ResponsiveSettingsDrawer(props: {
   const direction = desktop ? 'right' : 'bottom'
 
   return (
-    <Drawer direction={direction} onOpenChange={props.onOpenChange} open={props.open}>
+    <Drawer direction={direction} handleOnly onOpenChange={props.onOpenChange} open={props.open}>
       <DrawerContent className="settingsDrawerContent" data-settings-drawer-direction={direction}>
+        <div className="settingsDrawerDragZone" aria-label="拖动设置抽屉" data-settings-drawer-drag-zone="true">
+          <DrawerHandle className="settingsDrawerHandle" />
+        </div>
         <DrawerHeader className="settingsDrawerHeader">
           <div className="settingsDrawerTitleRow">
             <div>

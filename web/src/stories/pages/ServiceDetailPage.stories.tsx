@@ -117,10 +117,13 @@ export const AutoPolicyOverrideDelayed: Story = {
     expectStory(settingsTrigger, 'service settings drawer trigger missing')
     settingsTrigger.click()
     await waitForCondition(() => drawerText(doc).includes('自动更新策略'))
+    await waitForCondition(() => drawerText(doc).includes('Service stable'))
     expectStory(!drawerText(doc).includes('更新前备份 / 回滚'), 'auto policy drawer must not include backup settings')
     expectStory(drawerText(doc).includes('Service stable'), 'service policy editor missing in drawer')
     expectStory(drawerText(doc).includes('历史版本命中预览'), 'history match preview missing')
     await waitForCondition(() => drawerText(doc).includes('命中'))
+    expectStory(doc.querySelector('[data-settings-drawer-drag-zone="true"]'), 'drawer drag zone missing')
+    expectStory(doc.querySelector('[data-vaul-handle]'), 'drawer handle missing')
 
     const timeSlider = doc.querySelector<HTMLInputElement>('input[type="range"][aria-label="时间"]')
     expectStory(timeSlider, 'time slider missing')
@@ -129,6 +132,12 @@ export const AutoPolicyOverrideDelayed: Story = {
     timeSlider.dispatchEvent(new Event('input', { bubbles: true }))
     timeSlider.dispatchEvent(new Event('change', { bubbles: true }))
     await waitForCondition(() => drawerText(doc).includes('延迟 6h'))
+
+    const ruleInput = doc.querySelector<HTMLInputElement>('.autoPolicyPattern input')
+    expectStory(ruleInput, 'policy rule input missing')
+    ruleInput.focus()
+    ruleInput.setSelectionRange(0, Math.min(2, ruleInput.value.length))
+    expectStory(ruleInput.selectionStart === 0 && ruleInput.selectionEnd === Math.min(2, ruleInput.value.length), 'rule input text selection blocked')
   },
 }
 

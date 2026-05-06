@@ -4676,6 +4676,45 @@ html[data-theme='light'] .modalOverlay {
   box-shadow: 0 -24px 56px rgba(0, 0, 0, 0.42);
 }
 
+.settingsDrawerDragZone {
+  display: flex;
+  justify-content: center;
+  position: absolute;
+  z-index: 2;
+  cursor: grab;
+}
+
+.settingsDrawerDragZone:active {
+  cursor: grabbing;
+}
+
+.settingsDrawerHandle {
+  background: color-mix(in srgb, var(--muted) 62%, transparent);
+}
+
+.settingsDrawerContent[data-settings-drawer-direction='bottom'] .settingsDrawerDragZone {
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.settingsDrawerContent[data-settings-drawer-direction='bottom'] .settingsDrawerHandle {
+  width: 38px;
+  height: 5px;
+}
+
+.settingsDrawerContent[data-settings-drawer-direction='right'] .settingsDrawerDragZone {
+  top: 50%;
+  left: 8px;
+  transform: translateY(-50%);
+}
+
+.settingsDrawerContent[data-settings-drawer-direction='right'] .settingsDrawerHandle {
+  width: 5px;
+  height: 38px;
+  margin: 0;
+}
+
 .settingsDrawerHeader {
   padding: 18px 20px 16px;
   border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
