@@ -790,6 +790,10 @@ pub(crate) async fn run_update_job(
         .finish_job(&job_id, &final_status, &finished_at, &final_summary)
         .await?;
 
+    if should_record_update_tag_history(&req, &final_status) {
+        record_update_tag_history(state.as_ref(), &req, &finished_at).await;
+    }
+
     if final_status == "success"
         && let Ok(now_dt) = time::OffsetDateTime::parse(
             &finished_at,
@@ -828,4 +832,104 @@ pub(crate) async fn run_update_job(
     }
 
     Ok(())
+}
+
+async fn record_update_tag_history(state: &AppState, req: &TriggerUpdateRequest, now: &str) {
+    let Ok(targets) = requested_update_targets(req) else {
+        return;
+    };
+    if targets.is_empty() {
+        return;
+    }
+    let targets_by_service = targets
+        .into_iter()
+        .map(|target| (target.service_id.clone(), target))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut stack_ids = std::collections::BTreeSet::new();
+    for service_id in targets_by_service.keys() {
+        match state.db.get_service_stack_id(service_id).await {
+            Ok(Some(stack_id)) => {
+                stack_ids.insert(stack_id);
+            }
+            Ok(None) => {}
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    service_id = %service_id,
+                    "failed to resolve service stack for tag history"
+                );
+            }
+        }
+    }
+    for stack_id in stack_ids {
+        let Ok(Some(stack)) = state.db.get_stack(&stack_id).await else {
+            continue;
+        };
+        for service in stack.services {
+            let Some(target) = targets_by_service.get(&service.id) else {
+                continue;
+            };
+            let Some(image_repo) =
+                crate::snapshot_worker::image_repo_from_image_ref(&service.image.reference)
+            else {
+                continue;
+            };
+            let tag = target.target_tag.trim();
+            if tag.is_empty() {
+                continue;
+            }
+            if let Err(err) = state
+                .db
+                .upsert_service_tag_history(&service.id, &image_repo, tag, "update", now)
+                .await
+            {
+                tracing::warn!(
+                    error = %err,
+                    service_id = %service.id,
+                    "failed to record update tag history"
+                );
+            }
+        }
+    }
+}
+
+fn should_record_update_tag_history(req: &TriggerUpdateRequest, final_status: &str) -> bool {
+    final_status == "success" && matches!(&req.mode, UpdateMode::Apply)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn update_req(mode: UpdateMode) -> TriggerUpdateRequest {
+        TriggerUpdateRequest {
+            scope: JobScope::Service,
+            stack_id: Some("stack_1".to_string()),
+            service_id: Some("svc_1".to_string()),
+            target_tag: Some("5.2".to_string()),
+            target_digest: Some("sha256:abc".to_string()),
+            pull_tags: Some(Vec::new()),
+            targets: None,
+            mode,
+            allow_arch_mismatch: false,
+            backup_mode: BackupMode::Inherit,
+            reason: UpdateReason::Ui,
+        }
+    }
+
+    #[test]
+    fn tag_history_is_recorded_only_for_successful_apply_updates() {
+        assert!(should_record_update_tag_history(
+            &update_req(UpdateMode::Apply),
+            "success"
+        ));
+        assert!(!should_record_update_tag_history(
+            &update_req(UpdateMode::DryRun),
+            "success"
+        ));
+        assert!(!should_record_update_tag_history(
+            &update_req(UpdateMode::Apply),
+            "failed"
+        ));
+    }
 }

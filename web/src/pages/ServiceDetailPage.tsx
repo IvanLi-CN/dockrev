@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   createIgnore,
   deleteIgnore,
   inferServiceRepoLink,
+  listServiceTagSuggestions,
   listJobs,
+  putServiceComposeTag,
   putServiceSettings,
   type JobListItem,
   type Service,
   type ServiceSettings,
+  type ServiceTagSuggestionItem,
 } from '../api'
 import { navigate } from '../routes'
 import { Button, IconButton, Input, Mono, Pill, RefreshIcon, SelectField, Switch } from '../ui'
@@ -43,6 +46,212 @@ function svcBadge(svc: Service): string {
 
 function isDockrevService(svc: Service): boolean {
   return isDockrevImageRef(svc.image.ref)
+}
+
+function formatSuggestionTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value || '-'
+  return date.toLocaleString()
+}
+
+function ServiceComposeTagField(props: {
+  busy: boolean
+  currentTag: string
+  serviceId: string
+  onError: (message: string | null) => void
+  onSaved: () => Promise<void>
+}) {
+  const [value, setValue] = useState(props.currentTag)
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const [items, setItems] = useState<ServiceTagSuggestionItem[]>([])
+  const [fieldError, setFieldError] = useState<string | null>(null)
+  const [activeIndex, setActiveIndex] = useState(0)
+  const [filterSuggestions, setFilterSuggestions] = useState(false)
+  const comboId = useId()
+  const closeTimerRef = useRef<number | null>(null)
+  const listboxId = `${comboId}-tag-suggestions`
+
+  const filteredItems = useMemo(() => {
+    const query = filterSuggestions ? value.trim().toLowerCase() : ''
+    if (!query) return items
+    return items.filter((item) => item.tag.toLowerCase().includes(query))
+  }, [filterSuggestions, items, value])
+
+  useEffect(() => {
+    setValue(props.currentTag)
+    setOpen(false)
+    setLoaded(false)
+    setItems([])
+    setFieldError(null)
+    setActiveIndex(0)
+    setFilterSuggestions(false)
+  }, [props.currentTag, props.serviceId])
+
+  useEffect(() => {
+    if (!open) return
+    setActiveIndex((current) => Math.min(Math.max(current, 0), Math.max(filteredItems.length - 1, 0)))
+  }, [filteredItems.length, open])
+
+  const loadSuggestions = useCallback(async () => {
+    if (loaded || loading) return
+    setLoading(true)
+    setFieldError(null)
+    try {
+      const resp = await listServiceTagSuggestions(props.serviceId)
+      setItems(resp.items)
+      setLoaded(true)
+    } catch (e: unknown) {
+      setFieldError(errorMessage(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [loaded, loading, props.serviceId])
+
+  const openSuggestions = useCallback(() => {
+    if (closeTimerRef.current != null) {
+      window.clearTimeout(closeTimerRef.current)
+      closeTimerRef.current = null
+    }
+    setOpen(true)
+    void loadSuggestions()
+  }, [loadSuggestions])
+
+  const scheduleClose = useCallback(() => {
+    closeTimerRef.current = window.setTimeout(() => {
+      setOpen(false)
+    }, 120)
+  }, [])
+
+  const selectSuggestion = useCallback((item: ServiceTagSuggestionItem) => {
+    setValue(item.tag)
+    setOpen(false)
+    setActiveIndex(0)
+    setFilterSuggestions(false)
+  }, [])
+
+  const save = useCallback(async () => {
+    const next = value.trim()
+    setFieldError(null)
+    props.onError(null)
+    if (!next) {
+      setFieldError('tag 不能为空')
+      return
+    }
+    setSaving(true)
+    try {
+      await putServiceComposeTag(props.serviceId, next)
+      setLoaded(false)
+      setItems([])
+      setOpen(false)
+      await props.onSaved()
+    } catch (e: unknown) {
+      setFieldError(errorMessage(e))
+    } finally {
+      setSaving(false)
+    }
+  }, [props, value])
+
+  const disabled = props.busy || saving
+  return (
+    <div className="serviceTagEditor">
+      <div className="serviceTagEditorHeader">
+        <div>
+          <div className="label">部署 tag</div>
+          <div className="muted">写回原始 Compose 文件；保存后不会自动执行 compose up。</div>
+        </div>
+        <div className="chipStatic">
+          当前 <Mono>{props.currentTag || '-'}</Mono>
+        </div>
+      </div>
+      <div className="serviceTagEditorControls">
+        <div className="serviceTagInputWrap">
+          <Input
+            aria-activedescendant={
+              open && filteredItems[activeIndex] ? `${listboxId}-option-${activeIndex}` : undefined
+            }
+            aria-autocomplete="list"
+            aria-controls={listboxId}
+            aria-expanded={open}
+            autoComplete="off"
+            className="input"
+            disabled={disabled}
+            onBlur={scheduleClose}
+            onChange={(e) => {
+              setValue(e.target.value)
+              setOpen(true)
+              setActiveIndex(0)
+              setFilterSuggestions(true)
+              void loadSuggestions()
+            }}
+            onFocus={openSuggestions}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault()
+                setOpen(true)
+                void loadSuggestions()
+                setActiveIndex((current) => Math.min(current + 1, Math.max(filteredItems.length - 1, 0)))
+                return
+              }
+              if (e.key === 'ArrowUp') {
+                e.preventDefault()
+                setOpen(true)
+                setActiveIndex((current) => Math.max(current - 1, 0))
+                return
+              }
+              if (e.key === 'Enter') {
+                if (open && filteredItems[activeIndex]) {
+                  e.preventDefault()
+                  selectSuggestion(filteredItems[activeIndex])
+                  return
+                }
+                e.preventDefault()
+                void save()
+                return
+              }
+              if (e.key === 'Escape') setOpen(false)
+            }}
+            placeholder="例如 5.2.3 或 stable"
+            role="combobox"
+            value={value}
+          />
+          {open ? (
+            <div className="serviceTagSuggestionMenu" id={listboxId} role="listbox">
+              {loading ? <div className="serviceTagSuggestionEmpty">加载历史 tag…</div> : null}
+              {!loading && fieldError ? <div className="serviceTagSuggestionEmpty">{fieldError}</div> : null}
+              {!loading && !fieldError && filteredItems.length === 0 ? (
+                <div className="serviceTagSuggestionEmpty">{items.length === 0 ? '暂无历史 tag' : '没有匹配的历史 tag'}</div>
+              ) : null}
+              {!loading && !fieldError
+                ? filteredItems.map((item, index) => (
+                    <button
+                      aria-selected={index === activeIndex}
+                      className={`serviceTagSuggestionItem${index === activeIndex ? ' active' : ''}`}
+                      id={`${listboxId}-option-${index}`}
+                      key={`${item.tag}-${item.lastUsedAt}`}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => selectSuggestion(item)}
+                      onMouseEnter={() => setActiveIndex(index)}
+                      role="option"
+                      type="button"
+                    >
+                      <span className="mono monoPrimary">{item.tag}</span>
+                      <span className="muted">{formatSuggestionTime(item.lastUsedAt)}</span>
+                    </button>
+                  ))
+                : null}
+            </div>
+          ) : null}
+        </div>
+        <Button variant="primary" disabled={disabled || value.trim() === props.currentTag.trim()} onClick={() => void save()}>
+          {saving ? '保存中…' : '保存 tag'}
+        </Button>
+      </div>
+      {fieldError ? <div className="serviceTagFieldError">{fieldError}</div> : null}
+    </div>
+  )
 }
 
 export function ServiceDetailPage(props: {
@@ -90,6 +299,7 @@ export function ServiceDetailPage(props: {
   } = useServiceDetailPageState(props)
   const [jobs, setJobs] = useState<JobListItem[]>([])
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false)
+  const [tagDrawerOpen, setTagDrawerOpen] = useState(false)
   const [serviceSettingsDrawerOpen, setServiceSettingsDrawerOpen] = useState(false)
   const [autoPolicyDraft, setAutoPolicyDraft] = useState(() => createDefaultAutoUpdatePolicy('inherit'))
   const [serviceSettingsDraft, setServiceSettingsDraft] = useState<ServiceSettings | null>(null)
@@ -227,6 +437,21 @@ export function ServiceDetailPage(props: {
           stackPolicy={stackSettings?.autoUpdatePolicy ?? null}
         />
         <RecentUpdateRecords jobs={recentUpdateJobs} />
+      </div>
+
+      <div className="card serviceSafeguardCard">
+        <div>
+          <div className="title">部署 tag</div>
+          <div className="muted">直接写回原始 Compose 文件里的镜像 tag，不自动执行 compose up。</div>
+        </div>
+        <div className="serviceTagCardActions">
+          <div className="chipStatic">
+            当前 <Mono>{service.image.tag || '-'}</Mono>
+          </div>
+          <Button disabled={settingsBusy} onClick={() => setTagDrawerOpen(true)}>
+            编辑 tag
+          </Button>
+        </div>
       </div>
 
       <div className="card serviceSafeguardCard">
@@ -375,6 +600,23 @@ export function ServiceDetailPage(props: {
         scope="service"
         stackPolicy={stackSettings?.autoUpdatePolicy ?? null}
       />
+
+      <ResponsiveSettingsDrawer
+        description="写回原始 Compose 文件里的镜像 tag；保存后不会自动执行 compose up。"
+        onOpenChange={setTagDrawerOpen}
+        open={tagDrawerOpen}
+        title="部署 tag"
+      >
+        <div className="settingsDrawerSection">
+          <ServiceComposeTagField
+            busy={settingsBusy}
+            currentTag={service.image.tag}
+            onError={setError}
+            onSaved={requestRefresh}
+            serviceId={props.serviceId}
+          />
+        </div>
+      </ResponsiveSettingsDrawer>
 
       <ResponsiveSettingsDrawer
         description="配置失败回滚、代码仓库和服务级备份目标。"

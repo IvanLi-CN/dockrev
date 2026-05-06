@@ -18,6 +18,7 @@ import type {
   ServiceResourceSample,
   ServiceRollbackTargetResponse,
   ServiceSettings,
+  ServiceTagSuggestionItem,
   SettingsResponse,
   StackSettings,
   StackDetail,
@@ -94,6 +95,7 @@ export type DockrevMockApiOptions = {
   discoveryTimelineErrorServiceIds?: string[]
   githubReleasesByServiceId?: Record<string, DockrevMockGitHubReleasesDataset>
   serviceOverridesById?: Record<string, Partial<StackDetail['services'][number]>>
+  serviceTagSuggestionsById?: Record<string, ServiceTagSuggestionItem[]>
 }
 
 export type DockrevMockGitHubReleasesDataset = {
@@ -248,6 +250,9 @@ export type MockDebug = {
   versionInferenceRefreshCalls: number
   lastVersionInferenceRefreshUrl: string | null
   lastVersionInferenceRefreshDigest: string | null
+  serviceTagSuggestionCalls: number
+  lastServiceTagSuggestionUrl: string | null
+  lastComposeTagRequest: unknown | null
 }
 
 export type VersionInferenceTaskProgressMock = {
@@ -343,6 +348,7 @@ export type Fixture = {
   stackSettingsById: Record<string, StackSettings>
   rollbackTargetByServiceId: Record<string, ServiceRollbackTargetResponse>
   repoLinkInferenceByServiceId: Record<string, ServiceRepoLinkInferenceResponse>
+  serviceTagSuggestionsById: Record<string, ServiceTagSuggestionItem[]>
   deployCheckReport: DeployCheckReportResponse
   deployWelcome: DeployWelcomeResponse
   versionInferenceOverview: VersionInferenceOverviewMock
@@ -565,6 +571,9 @@ export function makeMockDebug(): MockDebug {
     versionInferenceRefreshCalls: 0,
     lastVersionInferenceRefreshUrl: null,
     lastVersionInferenceRefreshDigest: null,
+    serviceTagSuggestionCalls: 0,
+    lastServiceTagSuggestionUrl: null,
+    lastComposeTagRequest: null,
   }
 }
 

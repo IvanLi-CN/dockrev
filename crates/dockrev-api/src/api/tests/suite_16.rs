@@ -426,8 +426,9 @@ services:
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), 200);
+    let status = resp.status();
     let body = response_json(resp).await;
+    assert_eq!(status, 200, "body={body}");
     assert!(body["repoUrl"].is_null(), "initial settings: {body}");
 
     let resp = app
@@ -461,8 +462,9 @@ services:
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), 200);
+    let status = resp.status();
     let body = response_json(resp).await;
+    assert_eq!(status, 200, "body={body}");
     assert_eq!(
         body["repoUrl"].as_str(),
         Some("https://github.com/acme/web")
@@ -891,6 +893,189 @@ services:
     assert!(
         !stored.repo_url_auto_disabled,
         "saving a repoUrl should re-enable auto backfill: {stored:?}"
+    );
+}
+
+#[tokio::test]
+async fn put_service_compose_tag_updates_file_stack_and_suggestions() {
+    let compose_path = format!(
+        "/tmp/dockrev-test-compose-tag-editor-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2 # prod
+"#,
+    )
+    .unwrap();
+
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = state
+        .db
+        .list_services_for_check(&stack_id)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id
+        .clone();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/services/{service_id}/compose-tag"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "tag": "5.3" }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["tag"].as_str(), Some("5.3"));
+    assert_eq!(body["imageRef"].as_str(), Some("ghcr.io/acme/web:5.3"));
+    assert!(
+        std::fs::read_to_string(&compose_path)
+            .unwrap()
+            .contains("image: ghcr.io/acme/web:5.3 # prod")
+    );
+
+    let stack = state.db.get_stack(&stack_id).await.unwrap().unwrap();
+    let service = stack.services.first().unwrap();
+    assert_eq!(service.image.tag, "5.3");
+    assert_eq!(service.image.reference, "ghcr.io/acme/web:5.3");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/tag-suggestions"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["items"][0]["tag"].as_str(), Some("5.3"));
+    assert_eq!(body["items"][0]["source"].as_str(), Some("manual"));
+}
+
+#[tokio::test]
+async fn tag_suggestions_use_normalized_dockerhub_repo_key() {
+    let compose_path = format!(
+        "/tmp/dockrev-test-compose-tag-dockerhub-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: nginx
+"#,
+    )
+    .unwrap();
+
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = state
+        .db
+        .list_services_for_check(&stack_id)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id
+        .clone();
+
+    state
+        .db
+        .upsert_service_tag_history(
+            &service_id,
+            "docker.io/library/nginx",
+            "1.26",
+            "update",
+            "2026-05-05T14:20:00Z",
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/tag-suggestions"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["items"][0]["tag"].as_str(), Some("1.26"));
+    assert_eq!(body["items"][0]["source"].as_str(), Some("update"));
+}
+
+#[tokio::test]
+async fn put_service_compose_tag_rejects_interpolated_image() {
+    let compose_path = format!(
+        "/tmp/dockrev-test-compose-tag-interpolation-{}.yml",
+        ulid::Ulid::new()
+    );
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:${TAG}
+"#,
+    )
+    .unwrap();
+
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let service_id = state
+        .db
+        .list_services_for_check(&stack_id)
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id
+        .clone();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/services/{service_id}/compose-tag"))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "tag": "5.3" }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let body = response_json(resp).await;
+    assert!(
+        body.to_string().contains("variable interpolation"),
+        "body={body}"
+    );
+    assert!(
+        std::fs::read_to_string(&compose_path)
+            .unwrap()
+            .contains("ghcr.io/acme/web:${TAG}")
     );
 }
 

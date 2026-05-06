@@ -68,6 +68,165 @@ pub(super) async fn infer_service_repo_link(
     ))
 }
 
+pub(super) async fn list_service_tag_suggestions(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(service_id): Path<String>,
+) -> Result<Json<ServiceTagSuggestionsResponse>, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+    let stack_id = state
+        .db
+        .get_service_stack_id(&service_id)
+        .await
+        .map_err(map_internal)?
+        .ok_or_else(|| ApiError::not_found("service not found"))?;
+    let stack = state
+        .db
+        .get_stack(&stack_id)
+        .await
+        .map_err(map_internal)?
+        .ok_or_else(|| ApiError::not_found("service not found"))?;
+    let service = stack
+        .services
+        .iter()
+        .find(|svc| svc.id == service_id)
+        .ok_or_else(|| ApiError::not_found("service not found"))?;
+    let image_repo = service_tag_history_repo_key(&service.image.reference)
+        .ok_or_else(|| ApiError::invalid_argument("service image is not tag-based"))?;
+    let items = state
+        .db
+        .list_service_tag_suggestions(&service_id, &image_repo, 20)
+        .await
+        .map_err(map_internal)?
+        .into_iter()
+        .map(|item| ServiceTagSuggestionItem {
+            tag: item.tag,
+            last_used_at: item.last_used_at,
+            source: item.source,
+            use_count: item.use_count,
+        })
+        .collect();
+    Ok(Json(ServiceTagSuggestionsResponse { items }))
+}
+
+pub(super) async fn put_service_compose_tag(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(service_id): Path<String>,
+    Json(req): Json<PutServiceComposeTagRequest>,
+) -> Result<Json<PutServiceComposeTagResponse>, ApiError> {
+    let _user = require_user(&state, &headers).await?;
+    let tag = crate::compose::validate_docker_tag(&req.tag)
+        .map_err(|e| ApiError::invalid_argument(e.to_string()))?;
+    let now = now_rfc3339().map_err(map_internal)?;
+    let stack_id = state
+        .db
+        .get_service_stack_id(&service_id)
+        .await
+        .map_err(map_internal)?
+        .ok_or_else(|| ApiError::not_found("service not found"))?;
+    let stack = state
+        .db
+        .get_stack(&stack_id)
+        .await
+        .map_err(map_internal)?
+        .ok_or_else(|| ApiError::not_found("service not found"))?;
+    let service = stack
+        .services
+        .iter()
+        .find(|svc| svc.id == service_id)
+        .ok_or_else(|| ApiError::not_found("service not found"))?;
+    let image_repo = service_tag_history_repo_key(&service.image.reference)
+        .ok_or_else(|| ApiError::invalid_argument("service image is not tag-based"))?;
+
+    let compose_file = resolve_compose_file_for_service_image(&stack, &service.name)
+        .await
+        .map_err(|e| ApiError::invalid_argument(e.to_string()))?;
+    let patch = crate::compose::patch_service_image_tag_in_file(
+        std::path::Path::new(&compose_file),
+        &service.name,
+        &tag,
+    )
+    .map_err(|e| ApiError::invalid_argument(format!("{e:#}")))?;
+
+    let service_specs = read_compose_service_specs(&stack.compose.compose_files)
+        .await
+        .map_err(|e| ApiError::invalid_argument(e.to_string()))?;
+    state
+        .db
+        .sync_stack_from_compose(
+            &stack.id,
+            &stack.compose.compose_files,
+            &service_specs,
+            &now,
+        )
+        .await
+        .map_err(map_internal)?;
+    state
+        .db
+        .upsert_service_tag_history(&service_id, &image_repo, &tag, "manual", &now)
+        .await
+        .map_err(map_internal)?;
+
+    Ok(Json(PutServiceComposeTagResponse {
+        ok: true,
+        tag,
+        image_ref: patch.image_ref,
+        compose_file,
+        updated_at: now,
+    }))
+}
+
+async fn resolve_compose_file_for_service_image(
+    stack: &crate::api::types::StackRecord,
+    service_name: &str,
+) -> anyhow::Result<String> {
+    let mut target: Option<String> = None;
+    for path in &stack.compose.compose_files {
+        let contents = tokio::fs::read_to_string(path)
+            .await
+            .with_context(|| format!("read compose file {path}"))?;
+        let services = crate::compose::parse_services(&contents)
+            .with_context(|| format!("parse compose file {path}"))?;
+        if services
+            .iter()
+            .any(|svc| svc.name == service_name && !svc.image_ref.trim().is_empty())
+        {
+            target = Some(path.clone());
+        }
+    }
+    target.ok_or_else(|| anyhow::anyhow!("service image definition not found in compose files"))
+}
+
+fn service_tag_history_repo_key(image_ref: &str) -> Option<String> {
+    let image_repo = crate::compose::image_repo_from_tagged_ref(image_ref)?;
+    crate::snapshot_worker::image_repo_from_image_ref(&format!("{image_repo}:latest"))
+}
+
+async fn read_compose_service_specs(
+    compose_files: &[String],
+) -> anyhow::Result<Vec<crate::db::ComposeServiceSpec>> {
+    let mut merged = std::collections::BTreeMap::new();
+    for path in compose_files {
+        let contents = tokio::fs::read_to_string(path)
+            .await
+            .with_context(|| format!("read compose file {path}"))?;
+        let parsed = crate::compose::parse_services(&contents)
+            .with_context(|| format!("parse compose file {path}"))?;
+        merged = crate::compose::merge_services(merged, parsed);
+    }
+    Ok(merged
+        .into_values()
+        .map(|svc| crate::db::ComposeServiceSpec {
+            name: svc.name,
+            image_ref: svc.image_ref,
+            image_tag: svc.image_tag,
+            homepage: svc.homepage,
+            update_guard: svc.update_guard,
+        })
+        .collect())
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct TriggerVersionInferenceRefreshRequest {

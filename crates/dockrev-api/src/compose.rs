@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fs, path::Path};
 
 use anyhow::Context as _;
 
@@ -117,7 +117,7 @@ fn merge_update_guard(
     incoming.or(base)
 }
 
-fn extract_tag(image_ref: &str) -> Option<String> {
+pub fn extract_tag(image_ref: &str) -> Option<String> {
     // Strip digest first so refs like `repo:tag@sha256:...` still yield the tag, while
     // digest-only refs like `repo@sha256:...` return None.
     let (without_digest, _) = image_ref.split_once('@').unwrap_or((image_ref, ""));
@@ -133,6 +133,299 @@ fn extract_tag(image_ref: &str) -> Option<String> {
         return None;
     }
     Some(right.to_string())
+}
+
+pub fn validate_docker_tag(tag: &str) -> anyhow::Result<String> {
+    let tag = tag.trim();
+    if tag.is_empty() {
+        return Err(anyhow::anyhow!("tag is required"));
+    }
+    if tag.len() > 128 {
+        return Err(anyhow::anyhow!("tag must be at most 128 characters"));
+    }
+    let mut chars = tag.chars();
+    let Some(first) = chars.next() else {
+        return Err(anyhow::anyhow!("tag is required"));
+    };
+    if !(first.is_ascii_alphanumeric() || first == '_') {
+        return Err(anyhow::anyhow!(
+            "tag must start with an ASCII letter, digit, or underscore"
+        ));
+    }
+    if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-') {
+        return Err(anyhow::anyhow!(
+            "tag may only contain ASCII letters, digits, underscore, period, and dash"
+        ));
+    }
+    Ok(tag.to_string())
+}
+
+pub fn image_repo_from_tagged_ref(image_ref: &str) -> Option<String> {
+    let image_ref = image_ref.trim();
+    let (without_digest, digest) = image_ref.split_once('@').unwrap_or((image_ref, ""));
+    if !digest.is_empty() {
+        return None;
+    }
+    let without_digest = without_digest.trim();
+    if without_digest.is_empty() {
+        return None;
+    }
+    match without_digest.rsplit_once(':') {
+        Some((left, right)) if !right.is_empty() && !right.contains('/') && !left.is_empty() => {
+            Some(left.to_string())
+        }
+        _ => Some(without_digest.to_string()),
+    }
+}
+
+pub fn image_ref_with_tag(image_ref: &str, tag: &str) -> anyhow::Result<String> {
+    let tag = validate_docker_tag(tag)?;
+    let repo = image_repo_from_tagged_ref(image_ref)
+        .ok_or_else(|| anyhow::anyhow!("only tag-based image refs are supported"))?;
+    Ok(format!("{repo}:{tag}"))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ComposeTagPatchResult {
+    pub image_ref: String,
+    pub tag: String,
+}
+
+#[derive(Clone, Debug)]
+struct ImageValueParts {
+    prefix: String,
+    image_ref: String,
+    suffix: String,
+}
+
+pub fn patch_service_image_tag_in_file(
+    path: &Path,
+    service_name: &str,
+    tag: &str,
+) -> anyhow::Result<ComposeTagPatchResult> {
+    let tag = validate_docker_tag(tag)?;
+    let original =
+        fs::read_to_string(path).with_context(|| format!("read compose file {path:?}"))?;
+    let patched = patch_service_image_tag_text(&original, service_name, &tag)
+        .with_context(|| format!("patch service {service_name} image tag in {path:?}"))?;
+    let tmp_path = path.with_file_name(format!(
+        ".{}.dockrev-tag-{}.tmp",
+        path.file_name()
+            .and_then(|v| v.to_str())
+            .unwrap_or("compose"),
+        ulid::Ulid::new()
+    ));
+    fs::write(&tmp_path, patched.text.as_bytes())
+        .with_context(|| format!("write temporary compose file {tmp_path:?}"))?;
+    fs::rename(&tmp_path, path).with_context(|| format!("replace compose file {path:?}"))?;
+    Ok(ComposeTagPatchResult {
+        image_ref: patched.image_ref,
+        tag,
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ComposeTagPatchTextResult {
+    text: String,
+    image_ref: String,
+}
+
+fn patch_service_image_tag_text(
+    text: &str,
+    service_name: &str,
+    tag: &str,
+) -> anyhow::Result<ComposeTagPatchTextResult> {
+    let service_name = service_name.trim();
+    if service_name.is_empty() {
+        return Err(anyhow::anyhow!("service name is required"));
+    }
+    let lines = split_lines_preserve_endings(text);
+    let services_idx = find_top_level_mapping_key_line(&lines, "services")
+        .ok_or_else(|| anyhow::anyhow!("missing services mapping"))?;
+    let service_idx = find_direct_child_mapping_key_line(&lines, service_name, services_idx)
+        .ok_or_else(|| anyhow::anyhow!("service image definition not found"))?;
+    let image_idx = find_direct_child_mapping_key_line(&lines, "image", service_idx)
+        .ok_or_else(|| anyhow::anyhow!("service image definition not found"))?;
+
+    let raw_line = lines[image_idx].0;
+    let newline = lines[image_idx].1;
+    let colon = raw_line
+        .find(':')
+        .ok_or_else(|| anyhow::anyhow!("invalid image line"))?;
+    let key_prefix = &raw_line[..=colon];
+    let value = &raw_line[colon + 1..];
+    let parts = parse_image_value(value)?;
+    if parts.image_ref.contains('$') {
+        return Err(anyhow::anyhow!(
+            "image uses variable interpolation and cannot be edited safely"
+        ));
+    }
+    if parts.image_ref.contains('@') {
+        return Err(anyhow::anyhow!(
+            "digest-pinned image refs cannot be edited safely"
+        ));
+    }
+    let next_ref = image_ref_with_tag(&parts.image_ref, tag)?;
+    let next_line = format!(
+        "{key_prefix}{}{}{}{}",
+        parts.prefix, next_ref, parts.suffix, newline
+    );
+
+    let mut out = String::new();
+    for (idx, (line, ending)) in lines.iter().enumerate() {
+        if idx == image_idx {
+            out.push_str(&next_line);
+        } else {
+            out.push_str(line);
+            out.push_str(ending);
+        }
+    }
+    Ok(ComposeTagPatchTextResult {
+        text: out,
+        image_ref: next_ref,
+    })
+}
+
+fn split_lines_preserve_endings(text: &str) -> Vec<(&str, &str)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (idx, ch) in text.char_indices() {
+        if ch == '\n' {
+            let end = idx + ch.len_utf8();
+            let raw = &text[start..idx];
+            if let Some(stripped) = raw.strip_suffix('\r') {
+                out.push((stripped, "\r\n"));
+            } else {
+                out.push((raw, "\n"));
+            }
+            start = end;
+        }
+    }
+    if start < text.len() {
+        out.push((&text[start..], ""));
+    }
+    out
+}
+
+fn line_indent(line: &str) -> usize {
+    line.chars().take_while(|c| *c == ' ').count()
+}
+
+fn find_top_level_mapping_key_line(lines: &[(&str, &str)], key: &str) -> Option<usize> {
+    for (idx, (line, _)) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || line_indent(line) != 0 {
+            continue;
+        }
+        let Some((candidate, rest)) = trimmed.split_once(':') else {
+            continue;
+        };
+        if rest.trim_start().starts_with('&') || rest.trim_start().starts_with('*') {
+            continue;
+        }
+        if unquote_yaml_key(candidate.trim()) == Some(key) {
+            return Some(idx);
+        }
+    }
+    None
+}
+
+fn find_direct_child_mapping_key_line(
+    lines: &[(&str, &str)],
+    key: &str,
+    parent_idx: usize,
+) -> Option<usize> {
+    let parent_indent = line_indent(lines.get(parent_idx)?.0);
+    let mut child_indent: Option<usize> = None;
+    for (idx, (line, _)) in lines.iter().enumerate().skip(parent_idx + 1) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = line_indent(line);
+        if indent <= parent_indent {
+            break;
+        }
+        let Some((candidate, rest)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let expected_indent = *child_indent.get_or_insert(indent);
+        if indent != expected_indent {
+            continue;
+        }
+        if rest.trim_start().starts_with('&') || rest.trim_start().starts_with('*') {
+            continue;
+        }
+        if unquote_yaml_key(candidate.trim()) == Some(key) {
+            return Some(idx);
+        }
+    }
+    None
+}
+
+fn unquote_yaml_key(input: &str) -> Option<&str> {
+    if input.is_empty() {
+        return None;
+    }
+    if (input.starts_with('"') && input.ends_with('"'))
+        || (input.starts_with('\'') && input.ends_with('\''))
+    {
+        return input.get(1..input.len().saturating_sub(1));
+    }
+    Some(input)
+}
+
+fn parse_image_value(value: &str) -> anyhow::Result<ImageValueParts> {
+    let leading_len = value.len() - value.trim_start().len();
+    let leading = &value[..leading_len];
+    let rest = &value[leading_len..];
+    if rest.is_empty() {
+        return Err(anyhow::anyhow!("image must be a single-line scalar"));
+    }
+    if rest.starts_with('*') || rest.starts_with('&') {
+        return Err(anyhow::anyhow!(
+            "image aliases and anchors are not supported"
+        ));
+    }
+    if rest.starts_with('"') || rest.starts_with('\'') {
+        let quote = rest.as_bytes()[0] as char;
+        let mut escaped = false;
+        for (idx, ch) in rest.char_indices().skip(1) {
+            if quote == '"' && ch == '\\' && !escaped {
+                escaped = true;
+                continue;
+            }
+            if ch == quote && !escaped {
+                let image_ref = &rest[1..idx];
+                let suffix = &rest[idx..];
+                return Ok(ImageValueParts {
+                    prefix: format!("{leading}{quote}"),
+                    image_ref: image_ref.to_string(),
+                    suffix: suffix.to_string(),
+                });
+            }
+            escaped = false;
+        }
+        return Err(anyhow::anyhow!("unterminated quoted image scalar"));
+    }
+
+    let mut end = rest.len();
+    for (idx, ch) in rest.char_indices() {
+        if ch == '#' && (idx == 0 || rest[..idx].ends_with(char::is_whitespace)) {
+            end = idx;
+            break;
+        }
+    }
+    let image_raw = &rest[..end];
+    let image_trimmed = image_raw.trim_end();
+    if image_trimmed.is_empty() {
+        return Err(anyhow::anyhow!("image must be a single-line scalar"));
+    }
+    Ok(ImageValueParts {
+        prefix: leading.to_string(),
+        image_ref: image_trimmed.to_string(),
+        suffix: rest[image_trimmed.len()..].to_string(),
+    })
 }
 
 fn parse_homepage_labels(values: &BTreeMap<String, String>) -> Option<ServiceHomepage> {
@@ -463,5 +756,92 @@ services:
                 description: None,
             })
         );
+    }
+
+    #[test]
+    fn patch_service_image_tag_preserves_comment() {
+        let yaml = "services:\n  api:\n    image: ghcr.io/acme/api:5.2 # prod\n";
+        let patched = patch_service_image_tag_text(yaml, "api", "5.3").unwrap();
+        assert_eq!(
+            patched.text,
+            "services:\n  api:\n    image: ghcr.io/acme/api:5.3 # prod\n"
+        );
+        assert_eq!(patched.image_ref, "ghcr.io/acme/api:5.3");
+    }
+
+    #[test]
+    fn patch_service_image_tag_preserves_double_quotes() {
+        let yaml = "services:\n  api:\n    image: \"localhost:5000/acme/api:5.2\"\n";
+        let patched = patch_service_image_tag_text(yaml, "api", "5.3").unwrap();
+        assert_eq!(
+            patched.text,
+            "services:\n  api:\n    image: \"localhost:5000/acme/api:5.3\"\n"
+        );
+    }
+
+    #[test]
+    fn patch_service_image_tag_adds_tag_to_implicit_latest() {
+        let yaml = "services:\n  api:\n    image: nginx\n";
+        let patched = patch_service_image_tag_text(yaml, "api", "1.27").unwrap();
+        assert_eq!(patched.text, "services:\n  api:\n    image: nginx:1.27\n");
+        assert_eq!(patched.image_ref, "nginx:1.27");
+    }
+
+    #[test]
+    fn patch_service_image_tag_adds_tag_after_registry_port() {
+        let yaml = "services:\n  api:\n    image: localhost:5000/acme/api\n";
+        let patched = patch_service_image_tag_text(yaml, "api", "5.3").unwrap();
+        assert_eq!(
+            patched.text,
+            "services:\n  api:\n    image: localhost:5000/acme/api:5.3\n"
+        );
+        assert_eq!(patched.image_ref, "localhost:5000/acme/api:5.3");
+    }
+
+    #[test]
+    fn patch_service_image_tag_ignores_nested_image_keys() {
+        let yaml = "services:\n  api:\n    labels:\n      image: not-a-service-image:1\n    image: ghcr.io/acme/api:5.2\n";
+        let patched = patch_service_image_tag_text(yaml, "api", "5.3").unwrap();
+        assert_eq!(
+            patched.text,
+            "services:\n  api:\n    labels:\n      image: not-a-service-image:1\n    image: ghcr.io/acme/api:5.3\n"
+        );
+    }
+
+    #[test]
+    fn patch_service_image_tag_uses_root_services_mapping() {
+        let yaml = "x-template:\n  services:\n    api:\n      image: ghcr.io/acme/template:1\nservices:\n  api:\n    image: ghcr.io/acme/api:5.2\n";
+        let patched = patch_service_image_tag_text(yaml, "api", "5.3").unwrap();
+        assert_eq!(
+            patched.text,
+            "x-template:\n  services:\n    api:\n      image: ghcr.io/acme/template:1\nservices:\n  api:\n    image: ghcr.io/acme/api:5.3\n"
+        );
+        assert_eq!(patched.image_ref, "ghcr.io/acme/api:5.3");
+    }
+
+    #[test]
+    fn patch_service_image_tag_rejects_interpolation() {
+        let yaml = "services:\n  api:\n    image: ghcr.io/acme/api:${TAG}\n";
+        let err = patch_service_image_tag_text(yaml, "api", "5.3").unwrap_err();
+        assert!(err.to_string().contains("variable interpolation"));
+    }
+
+    #[test]
+    fn patch_service_image_tag_rejects_dollar_interpolation() {
+        let yaml = "services:\n  api:\n    image: ghcr.io/acme/api:$TAG\n";
+        let err = patch_service_image_tag_text(yaml, "api", "5.3").unwrap_err();
+        assert!(err.to_string().contains("variable interpolation"));
+    }
+
+    #[test]
+    fn patch_service_image_tag_rejects_digest_pin() {
+        let yaml = "services:\n  api:\n    image: ghcr.io/acme/api@sha256:deadbeef\n";
+        let err = patch_service_image_tag_text(yaml, "api", "5.3").unwrap_err();
+        assert!(err.to_string().contains("digest-pinned"));
+    }
+
+    #[test]
+    fn validate_docker_tag_rejects_slash() {
+        assert!(validate_docker_tag("release/5").is_err());
     }
 }
