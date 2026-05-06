@@ -121,8 +121,11 @@
 - Service 详情页展示当前最终自动更新结果、继承/覆盖/禁用来源、主规则摘要，以及最近三次影响该服务的 update job。
 - Stack 详情页展示当前 Stack 自动更新结果、主规则摘要、最近三次影响该 Stack 服务的 update job，以及该 Stack 下服务列表。
 - Service 与 Stack 的完整设置界面必须放在独立抽屉内：桌面端从右侧出现，移动端从底部出现。
+- 自动更新策略抽屉必须只承载策略编辑、规则预览与历史版本命中预览，不得与失败回滚、代码仓库、备份目标等其他服务设置混排。
+- Service 自动更新策略抽屉应展示最近 20 条内的版本发现记录，并按当前草稿规则本地预览命中、未命中或预览不确定；该预览仅辅助判断，最终执行仍以后端匹配引擎为准。
 - Services/Operations 的 Stack 分组标题只承载分组展开/收起与更新操作，不展示策略快捷入口；Service 详情页保留进入 Stack 详情页的中性入口。
 - 非线性滑块必须显示档位 label，不使用线性数字输入作为主控件。
+- 非线性滑块拖拽必须优先调整滑块，不得被抽屉的横向/纵向拖拽手势抢占。
 
 ## 接口契约（Interfaces & Contracts）
 
@@ -190,7 +193,7 @@
 - `cd web && bun run build`
 - `cd web && bun run build-storybook`
 - `cd web && bun run test-storybook`
-- Service and Stack policy drawers have Storybook states for inherited/override/disabled, nonlinear slider labels, delayed gate copy, invalid input display, and recent update record summaries.
+- Service and Stack policy drawers have Storybook states for inherited/override/disabled, nonlinear slider labels, delayed gate copy, invalid input display, history match preview states, drag-safe sliders, and recent update record summaries.
 
 ### Integration smoke
 
@@ -206,10 +209,10 @@
   sensitive_exclusion: N/A
   submission_gate: pending-owner-approval
   story_id_or_title: Pages/ServiceDetailPage/Auto Policy Override Delayed
-  state: Service settings drawer desktop
-  evidence_note: verifies the Service detail summary opens the full settings drawer from the right on desktop, with auto policy, nonlinear sliders, rollback, repo, and backup settings inside the drawer.
+  state: Service auto policy drawer desktop
+  evidence_note: verifies the Service detail summary opens an independent auto policy drawer from the right on desktop, with aligned mode/enable controls, icon-only close control, nonlinear sliders, and history match preview.
 
-![Service settings drawer desktop](./assets/service-auto-update-settings-drawer-desktop.png)
+![Service auto policy drawer desktop](./assets/service-auto-update-policy-drawer-desktop.png)
 
 - source_type: storybook_canvas
   target_program: mock-only
@@ -219,10 +222,10 @@
   sensitive_exclusion: N/A
   submission_gate: pending-owner-approval
   story_id_or_title: Pages/ServiceDetailPage/Auto Policy Override Delayed
-  state: Service settings drawer mobile
-  evidence_note: verifies the same Service settings drawer appears from the bottom on mobile and keeps nonlinear slider controls usable in a narrow viewport.
+  state: Service auto policy drawer mobile
+  evidence_note: verifies the same independent Service auto policy drawer appears from the bottom on mobile and keeps nonlinear slider controls usable in a narrow viewport.
 
-![Service settings drawer mobile](./assets/service-auto-update-settings-drawer-mobile.png)
+![Service auto policy drawer mobile](./assets/service-auto-update-policy-drawer-mobile.png)
 
 - source_type: storybook_canvas
   target_program: mock-only
@@ -232,10 +235,10 @@
   sensitive_exclusion: N/A
   submission_gate: pending-owner-approval
   story_id_or_title: Pages/StackDetailPage/Policy Enabled
-  state: Stack settings drawer desktop
-  evidence_note: verifies the Stack detail summary opens the full Stack policy drawer from the right on desktop with delayed time/version gates and matcher controls.
+  state: Stack auto policy drawer desktop
+  evidence_note: verifies the Stack detail summary opens an independent Stack auto policy drawer from the right on desktop with delayed time/version gates and matcher controls.
 
-![Stack settings drawer desktop](./assets/stack-auto-update-settings-drawer-desktop.png)
+![Stack auto policy drawer desktop](./assets/stack-auto-update-policy-drawer-desktop.png)
 
 ## Related PRs
 

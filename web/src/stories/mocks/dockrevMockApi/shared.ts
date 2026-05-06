@@ -91,6 +91,7 @@ export type DockrevApiScenario =
 
 export type DockrevMockApiOptions = {
   discoveryTimelineByServiceId?: Record<string, NewVersionDiscoveryTimelineResponse>
+  discoveryTimelineErrorServiceIds?: string[]
   githubReleasesByServiceId?: Record<string, DockrevMockGitHubReleasesDataset>
   serviceOverridesById?: Record<string, Partial<StackDetail['services'][number]>>
 }

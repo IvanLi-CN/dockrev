@@ -4676,6 +4676,45 @@ html[data-theme='light'] .modalOverlay {
   box-shadow: 0 -24px 56px rgba(0, 0, 0, 0.42);
 }
 
+.settingsDrawerDragZone {
+  display: flex;
+  justify-content: center;
+  position: absolute;
+  z-index: 2;
+  cursor: grab;
+}
+
+.settingsDrawerDragZone:active {
+  cursor: grabbing;
+}
+
+.settingsDrawerHandle {
+  background: color-mix(in srgb, var(--muted) 62%, transparent);
+}
+
+.settingsDrawerContent[data-settings-drawer-direction='bottom'] .settingsDrawerDragZone {
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.settingsDrawerContent[data-settings-drawer-direction='bottom'] .settingsDrawerHandle {
+  width: 38px;
+  height: 5px;
+}
+
+.settingsDrawerContent[data-settings-drawer-direction='right'] .settingsDrawerDragZone {
+  top: 50%;
+  left: 8px;
+  transform: translateY(-50%);
+}
+
+.settingsDrawerContent[data-settings-drawer-direction='right'] .settingsDrawerHandle {
+  width: 5px;
+  height: 38px;
+  margin: 0;
+}
+
 .settingsDrawerHeader {
   padding: 18px 20px 16px;
   border-bottom: 1px solid color-mix(in srgb, var(--borderColor) 82%, transparent);
@@ -4703,6 +4742,35 @@ html[data-theme='light'] .modalOverlay {
   line-height: 1.5;
 }
 
+.settingsDrawerCloseIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.settingsDrawerCloseIcon:hover {
+  background: color-mix(in srgb, var(--surface-strong) 70%, transparent);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+
+.settingsDrawerCloseIcon:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .settingsDrawerBody {
   display: flex;
   flex: 1 1 auto;
@@ -4722,6 +4790,14 @@ html[data-theme='light'] .modalOverlay {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.serviceSafeguardCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 16px;
 }
 
 .settingsSummaryGrid {
@@ -4850,6 +4926,28 @@ html[data-theme='light'] .modalOverlay {
 
 .autoPolicyControls {
   flex-wrap: wrap;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 70%, transparent);
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: color-mix(in srgb, var(--panel2) 22%, transparent);
+}
+
+.autoPolicyInlineField {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+}
+
+.autoPolicyInlineField .label,
+.autoPolicySwitchRow .label {
+  white-space: nowrap;
+}
+
+.autoPolicyInlineField .select,
+.autoPolicyInlineField .input {
+  min-width: 168px;
 }
 
 .autoPolicySwitchRow {
@@ -4907,6 +5005,8 @@ html[data-theme='light'] .modalOverlay {
 
 .autoPolicySlider {
   min-width: 0;
+  touch-action: pan-y;
+  user-select: none;
 }
 
 .autoPolicySlider input[type='range'] {
@@ -4938,6 +5038,82 @@ html[data-theme='light'] .modalOverlay {
 .autoPolicyValidation {
   color: var(--color-warning);
   font-size: 12px;
+}
+
+.autoPolicyHistoryPreview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 72%, transparent);
+  border-radius: 10px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--panel2) 22%, transparent);
+}
+
+.autoPolicyHistoryHead,
+.autoPolicyHistoryRow,
+.autoPolicyHistoryVersion,
+.autoPolicyHistoryResult {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.autoPolicyHistoryHead {
+  justify-content: space-between;
+}
+
+.autoPolicyHistoryState {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.autoPolicyHistoryStateError {
+  color: var(--color-error);
+}
+
+.autoPolicyHistoryList {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.autoPolicyHistoryRow {
+  min-width: 0;
+  border-top: 1px solid color-mix(in srgb, var(--borderColor) 62%, transparent);
+  padding-top: 7px;
+}
+
+.autoPolicyHistoryVersion {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.autoPolicyHistoryVersion .mono {
+  overflow-wrap: anywhere;
+}
+
+.autoPolicyHistoryVersion span:not(.mono) {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.autoPolicyHistoryResult {
+  flex: 1.4 1 220px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.autoPolicyHistoryResult span:not(.pill) {
+  overflow-wrap: anywhere;
+}
+
+.autoPolicyHistoryTime {
+  flex: 0 0 auto;
+  color: var(--muted2);
+  font-size: 11px;
 }
 
 .stackDetailHero {
@@ -4972,10 +5148,32 @@ html[data-theme='light'] .modalOverlay {
     grid-template-columns: 1fr;
   }
   .autoPolicyTop,
+  .serviceSafeguardCard,
   .stackDetailHero,
   .stackServiceRow {
     align-items: flex-start;
     flex-direction: column;
+  }
+  .autoPolicyControls {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .autoPolicyInlineField {
+    width: 100%;
+  }
+  .autoPolicyInlineField .select,
+  .autoPolicyInlineField .input {
+    min-width: 0;
+    width: 100%;
+  }
+  .autoPolicyHistoryHead,
+  .autoPolicyHistoryRow,
+  .autoPolicyHistoryResult {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .autoPolicyHistoryTime {
+    flex: 0 1 auto;
   }
 }
 

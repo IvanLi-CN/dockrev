@@ -42,6 +42,10 @@ function findButtons(root: ParentNode, text: string): HTMLButtonElement[] {
   )
 }
 
+function drawerText(doc: Document): string {
+  return doc.querySelector('.settingsDrawerContent')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+}
+
 function render(stackId: string, serviceId: string): Story['render'] {
   return () => {
     return (
@@ -112,9 +116,101 @@ export const AutoPolicyOverrideDelayed: Story = {
     const settingsTrigger = findButton(doc, '设置')
     expectStory(settingsTrigger, 'service settings drawer trigger missing')
     settingsTrigger.click()
-    await waitForCondition(() => doc.body.textContent?.includes('服务设置') ?? false)
-    expectStory(doc.body.textContent?.includes('更新前备份 / 回滚'), 'service settings drawer content missing')
-    expectStory(doc.body.textContent?.includes('Service stable'), 'service policy editor missing in drawer')
+    await waitForCondition(() => drawerText(doc).includes('自动更新策略'))
+    await waitForCondition(() => drawerText(doc).includes('Service stable'))
+    expectStory(!drawerText(doc).includes('更新前备份 / 回滚'), 'auto policy drawer must not include backup settings')
+    expectStory(drawerText(doc).includes('Service stable'), 'service policy editor missing in drawer')
+    expectStory(drawerText(doc).includes('历史版本命中预览'), 'history match preview missing')
+    await waitForCondition(() => drawerText(doc).includes('命中'))
+    expectStory(doc.querySelector('[data-settings-drawer-drag-zone="true"]'), 'drawer drag zone missing')
+    expectStory(doc.querySelector('[data-vaul-handle]'), 'drawer handle missing')
+
+    const timeSlider = doc.querySelector<HTMLInputElement>('input[type="range"][aria-label="时间"]')
+    expectStory(timeSlider, 'time slider missing')
+    timeSlider.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    timeSlider.value = '4'
+    timeSlider.dispatchEvent(new Event('input', { bubbles: true }))
+    timeSlider.dispatchEvent(new Event('change', { bubbles: true }))
+    await waitForCondition(() => drawerText(doc).includes('延迟 6h'))
+
+    const ruleInput = doc.querySelector<HTMLInputElement>('.autoPolicyPattern input')
+    expectStory(ruleInput, 'policy rule input missing')
+    ruleInput.focus()
+    ruleInput.setSelectionRange(0, Math.min(2, ruleInput.value.length))
+    expectStory(ruleInput.selectionStart === 0 && ruleInput.selectionEnd === Math.min(2, ruleInput.value.length), 'rule input text selection blocked')
+  },
+}
+
+export const AutoPolicyInvalidRegexPreview: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    dockrevServiceOverridesById: {
+      'svc-prod-api': {
+        settings: {
+          autoRollback: true,
+          backupTargets: { bindPaths: { '/var/lib/api/data': 'inherit' }, volumeNames: {} },
+          repoUrl: null,
+          autoUpdatePolicy: {
+            mode: 'override',
+            enabled: true,
+            rules: [
+              {
+                id: 'bad-regex',
+                name: 'Broken regex',
+                enabled: true,
+                matcher: { type: 'regex', pattern: '[' },
+                action: 'delayed',
+                delay: { minAgeSeconds: 900, minVersionLag: 1 },
+              },
+            ],
+          },
+        },
+      },
+    },
+  },
+  render: render('stack-prod', 'svc-prod-api'),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => canvasElement.textContent?.includes('Broken regex') ?? false)
+    const settingsTrigger = findButton(doc, '设置')
+    expectStory(settingsTrigger, 'service settings drawer trigger missing')
+    settingsTrigger.click()
+    await waitForCondition(() => drawerText(doc).includes('不确定'))
+    expectStory(drawerText(doc).includes('规则无法预览'), 'invalid regex preview state missing')
+  },
+}
+
+export const AutoPolicyEmptyHistoryPreview: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    dockrevDiscoveryTimelineByServiceId: {
+      'svc-prod-api': { items: [] },
+    },
+  },
+  render: render('stack-prod', 'svc-prod-api'),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => canvasElement.textContent?.includes('自动更新结果') ?? false)
+    const settingsTrigger = findButton(doc, '设置')
+    expectStory(settingsTrigger, 'service settings drawer trigger missing')
+    settingsTrigger.click()
+    await waitForCondition(() => drawerText(doc).includes('暂无历史版本记录'))
+  },
+}
+
+export const AutoPolicyHistoryPreviewError: Story = {
+  parameters: {
+    dockrevApiScenario: 'dashboard-demo',
+    dockrevDiscoveryTimelineErrorServiceIds: ['svc-prod-api'],
+  },
+  render: render('stack-prod', 'svc-prod-api'),
+  play: async ({ canvasElement }) => {
+    const doc = canvasElement.ownerDocument
+    await waitForCondition(() => canvasElement.textContent?.includes('自动更新结果') ?? false)
+    const settingsTrigger = findButton(doc, '设置')
+    expectStory(settingsTrigger, 'service settings drawer trigger missing')
+    settingsTrigger.click()
+    await waitForCondition(() => drawerText(doc).includes('mock discovery timeline failed'))
   },
 }
 

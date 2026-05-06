@@ -8,10 +8,10 @@ import {
   type StackDetail,
   type StackSettings,
 } from '../api'
-import { AutoUpdatePolicyEditor, createDefaultAutoUpdatePolicy } from '../components/AutoUpdatePolicyEditor'
+import { createDefaultAutoUpdatePolicy } from '../components/AutoUpdatePolicyEditor'
+import { AutoUpdatePolicyDrawer } from '../components/AutoUpdatePolicyDrawer'
 import { AutoUpdatePolicyResultCard } from '../components/AutoUpdatePolicyResultCard'
 import { RecentUpdateRecords, selectRecentStackUpdateJobs } from '../components/RecentUpdateRecords'
-import { ResponsiveSettingsDrawer } from '../components/ResponsiveSettingsDrawer'
 import { navigate } from '../routes'
 import { Button, Mono, Pill } from '../ui'
 import { serviceRowStatus } from '../updateStatus'
@@ -46,6 +46,7 @@ export function StackDetailPage(props: {
   const [settings, setSettings] = useState<StackSettings | null>(null)
   const [jobs, setJobs] = useState<JobListItem[]>([])
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false)
+  const [autoPolicyDraft, setAutoPolicyDraft] = useState(() => createDefaultAutoUpdatePolicy('override'))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -97,12 +98,15 @@ export function StackDetailPage(props: {
       </div>
 
       <div className="settingsSummaryGrid">
-        <AutoUpdatePolicyResultCard
-          busy={busy}
-          onOpenSettings={() => setSettingsDrawerOpen(true)}
-          policy={policy}
-          scope="stack"
-        />
+      <AutoUpdatePolicyResultCard
+        busy={busy}
+        onOpenSettings={() => {
+          setAutoPolicyDraft(policy)
+          setSettingsDrawerOpen(true)
+        }}
+        policy={policy}
+        scope="stack"
+      />
         <RecentUpdateRecords jobs={recentUpdateJobs} />
       </div>
 
@@ -126,33 +130,28 @@ export function StackDetailPage(props: {
           })}
         </div>
       </div>
-      <ResponsiveSettingsDrawer
-        description="配置 Stack 级自动部署策略。"
+      <AutoUpdatePolicyDrawer
+        busy={busy}
+        onChange={setAutoPolicyDraft}
         onOpenChange={setSettingsDrawerOpen}
+        onSave={() => {
+          void (async () => {
+            setBusy(true)
+            setError(null)
+            try {
+              await putStackSettings(stack.id, { autoUpdatePolicy: autoPolicyDraft })
+              await refresh()
+            } catch (e: unknown) {
+              setError(errorMessage(e))
+            } finally {
+              setBusy(false)
+            }
+          })()
+        }}
         open={settingsDrawerOpen}
-        title="Stack 设置"
-      >
-        <AutoUpdatePolicyEditor
-          busy={busy}
-          onChange={(autoUpdatePolicy) => setSettings({ ...settings, autoUpdatePolicy })}
-          onSave={() => {
-            void (async () => {
-              setBusy(true)
-              setError(null)
-              try {
-                await putStackSettings(stack.id, { autoUpdatePolicy: policy })
-                await refresh()
-              } catch (e: unknown) {
-                setError(errorMessage(e))
-              } finally {
-                setBusy(false)
-              }
-            })()
-          }}
-          policy={policy}
-          scope="stack"
-        />
-      </ResponsiveSettingsDrawer>
+        policy={autoPolicyDraft}
+        scope="stack"
+      />
       {error ? <div className="error">{error}</div> : null}
     </div>
   )
