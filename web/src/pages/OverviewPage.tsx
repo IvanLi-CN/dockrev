@@ -38,6 +38,15 @@ import { navigate } from "../routes";
 import { isDockrevImageRef } from "../runtimeConfig";
 import { buildUpdateServiceTarget } from "../updateTargets";
 import {
+  markResourceOverviewStale,
+  readHomepageNavSnapshot,
+  readHomepageResourceSummarySnapshot,
+  resourceSummarySnapshotIsStale,
+  writeHomepageNavSnapshot,
+  writeHomepageResourceSummarySnapshot,
+  type HomepageNavCardSnapshotItem,
+} from "./homepageSnapshot";
+import {
   Button,
   Dialog,
   DialogClose,
@@ -48,7 +57,7 @@ import {
   Input,
   Mono,
 } from "../ui";
-import { serviceRowStatus, statusLabel, type RowStatus } from "../updateStatus";
+import { serviceRowStatus, statusLabel } from "../updateStatus";
 import { usePageResumeRefresh } from "../usePageResumeRefresh";
 
 const HOMEPAGE_COLUMN_BREAKPOINTS = [
@@ -57,21 +66,9 @@ const HOMEPAGE_COLUMN_BREAKPOINTS = [
   { query: "(max-width: 1500px)", columns: 3 },
 ] as const;
 
-type HomepageNavCard = {
-  id: string;
-  stackId: string;
-  stackName: string;
-  serviceId: string;
-  serviceName: string;
-  imageRef: string;
-  groupName: string;
-  title: string;
-  description: string;
-  href: string;
-  icon: string | null;
-  status: RowStatus;
-  isDockrev: boolean;
-  service: Service;
+type HomepageNavCard = HomepageNavCardSnapshotItem & {
+  source: "live" | "snapshot";
+  service?: Service;
 };
 
 type ServiceBadge = {
@@ -180,10 +177,37 @@ function toNavCards(
         status,
         isDockrev: isDockrevImageRef(service.image.ref),
         service,
+        source: "live",
       });
     }
   }
   return cards;
+}
+
+function navCardsToSnapshot(
+  cards: HomepageNavCard[],
+): HomepageNavCardSnapshotItem[] {
+  return cards.map((card) => ({
+    id: card.id,
+    stackId: card.stackId,
+    stackName: card.stackName,
+    serviceId: card.serviceId,
+    serviceName: card.serviceName,
+    imageRef: card.imageRef,
+    groupName: card.groupName,
+    title: card.title,
+    description: card.description,
+    href: card.href,
+    icon: card.icon,
+    status: card.status,
+    isDockrev: card.isDockrev,
+  }));
+}
+
+function snapshotCardsToNavCards(
+  cards: HomepageNavCardSnapshotItem[],
+): HomepageNavCard[] {
+  return cards.map((card) => ({ ...card, source: "snapshot" }));
 }
 
 function matchesSearch(card: HomepageNavCard, query: string): boolean {
@@ -527,8 +551,29 @@ export function OverviewPage(props: {
   const [details, setDetails] = useState<
     Record<string, StackDetail | undefined>
   >({});
+  const [detailsRefreshComplete, setDetailsRefreshComplete] = useState(false);
+  const [detailsRefreshHadFailures, setDetailsRefreshHadFailures] =
+    useState(false);
+  const [refreshing, setRefreshing] = useState(true);
+  const [cachedCards, setCachedCards] = useState<HomepageNavCard[]>(() => {
+    const snapshot = readHomepageNavSnapshot();
+    return snapshot ? snapshotCardsToNavCards(snapshot.cards) : [];
+  });
+  const [hasCachedNavSnapshot, setHasCachedNavSnapshot] = useState(
+    () => readHomepageNavSnapshot() !== null,
+  );
+  const [resourceFromCache, setResourceFromCache] = useState(() => {
+    const snapshot = readHomepageResourceSummarySnapshot();
+    return snapshot ? resourceSummarySnapshotIsStale(snapshot) : false;
+  });
   const [resourceOverview, setResourceOverview] =
-    useState<ServiceResourceOverviewResponse | null>(null);
+    useState<ServiceResourceOverviewResponse | null>(() => {
+      const snapshot = readHomepageResourceSummarySnapshot();
+      if (!snapshot) return null;
+      return resourceSummarySnapshotIsStale(snapshot)
+        ? markResourceOverviewStale(snapshot.overview)
+        : snapshot.overview;
+    });
   const [search, setSearch] = useState("");
   const [searchDraft, setSearchDraft] = useState("");
   const [headerSearchOpen, setHeaderSearchOpen] = useState(false);
@@ -551,42 +596,55 @@ export function OverviewPage(props: {
   }, []);
 
   const refresh = useCallback(async () => {
-    const [nextStacks, metricsResult] = await Promise.all([
-      listStacks(),
-      getServiceResourceUsageOverview("1h").then(
-        (value) => ({ ok: true, value }) as const,
-        (error: unknown) => ({ ok: false, error }) as const,
-      ),
-    ]);
-    const maxLastScan = nextStacks
-      .map((item) => item.lastCheckAt)
-      .sort()
-      .at(-1);
-    onLastScanHint(maxLastScan);
-    setStacks(nextStacks);
+    setRefreshing(true);
+    setDetailsRefreshComplete(false);
+    setDetailsRefreshHadFailures(false);
+    try {
+      const [nextStacks, metricsResult] = await Promise.all([
+        listStacks(),
+        getServiceResourceUsageOverview("1h").then(
+          (value) => ({ ok: true, value }) as const,
+          (error: unknown) => ({ ok: false, error }) as const,
+        ),
+      ]);
+      const maxLastScan = nextStacks
+        .map((item) => item.lastCheckAt)
+        .sort()
+        .at(-1);
+      onLastScanHint(maxLastScan);
+      setStacks(nextStacks);
+      setDetails({});
 
-    if (metricsResult.ok) {
-      setResourceOverview(metricsResult.value);
-      setResourceError(null);
-    } else {
-      setResourceOverview(null);
-      setResourceError(
-        metricsResult.error instanceof Error
-          ? metricsResult.error.message
-          : String(metricsResult.error),
+      if (metricsResult.ok) {
+        setResourceOverview(metricsResult.value);
+        setResourceFromCache(false);
+        setResourceError(null);
+        writeHomepageResourceSummarySnapshot(metricsResult.value);
+      } else {
+        setResourceError(
+          metricsResult.error instanceof Error
+            ? metricsResult.error.message
+            : String(metricsResult.error),
+        );
+      }
+
+      const detailResults = await Promise.all(
+        nextStacks.map(async (stack) => {
+          try {
+            const detail = await getStack(stack.id);
+            setDetails((prev) => ({ ...prev, [stack.id]: detail }));
+            return true;
+          } catch {
+            setDetails((prev) => ({ ...prev, [stack.id]: undefined }));
+            return false;
+          }
+        }),
       );
+      setDetailsRefreshHadFailures(detailResults.some((ok) => !ok));
+      setDetailsRefreshComplete(true);
+    } finally {
+      setRefreshing(false);
     }
-
-    const nextDetails = await Promise.all(
-      nextStacks.map(async (stack) => {
-        try {
-          return [stack.id, await getStack(stack.id)] as const;
-        } catch {
-          return [stack.id, undefined] as const;
-        }
-      }),
-    );
-    setDetails(Object.fromEntries(nextDetails));
   }, [onLastScanHint]);
 
   const requestRefresh = usePageResumeRefresh(refresh, {
@@ -709,10 +767,14 @@ export function OverviewPage(props: {
     };
   }, [noticeCheckJobId, requestRefresh]);
 
-  const allCards = useMemo(
+  const liveCards = useMemo(
     () => toNavCards(stacks, details),
     [details, stacks],
   );
+  const allCards = useMemo(() => {
+    if (liveCards.length > 0 || detailsRefreshComplete) return liveCards;
+    return cachedCards;
+  }, [cachedCards, detailsRefreshComplete, liveCards]);
   const filteredCards = useMemo(
     () => allCards.filter((card) => matchesSearch(card, search)),
     [allCards, search],
@@ -745,6 +807,16 @@ export function OverviewPage(props: {
     () => aggregateMetrics(resourceOverview?.services ?? []),
     [resourceOverview],
   );
+  const hasCachedCardsInUse = allCards.some((card) => card.source === "snapshot");
+
+  useEffect(() => {
+    if (!detailsRefreshComplete) return;
+    if (detailsRefreshHadFailures) return;
+    const snapshotCards = navCardsToSnapshot(liveCards);
+    writeHomepageNavSnapshot(snapshotCards);
+    setCachedCards(snapshotCardsToNavCards(snapshotCards));
+    setHasCachedNavSnapshot(true);
+  }, [detailsRefreshComplete, detailsRefreshHadFailures, liveCards]);
 
   const topbarContent = useMemo(
     () => (
@@ -820,19 +892,71 @@ export function OverviewPage(props: {
 
       <div className="homepageStatusLine">
         <span>
-          {summary.activeCount > 0
+          {hasCachedCardsInUse
+            ? "正在刷新服务入口，先显示上次导航"
+            : summary.activeCount > 0
             ? `${summary.activeCount} 个服务提供实时摘要`
             : resourceOverview?.enabled === false
               ? "资源监控已关闭"
-              : "等待资源样本"}
+              : resourceOverview && resourceFromCache
+                ? "显示上次资源样本，正在刷新"
+                : refreshing
+                  ? "正在加载资源样本"
+                  : "等待资源样本"}
         </span>
-        {resourceError ? <span>资源指标暂不可用：{resourceError}</span> : null}
+        {resourceError ? (
+          <span>
+            {resourceOverview
+              ? `资源指标刷新失败，保留旧样本：${resourceError}`
+              : `资源指标暂不可用：${resourceError}`}
+          </span>
+        ) : null}
       </div>
 
-      {groupedCards.length === 0 ? (
+      {groupedCards.length === 0 && refreshing && !hasCachedNavSnapshot ? (
+        <div className="homepageNavSkeleton" aria-label="正在加载服务入口">
+          {Array.from({ length: 3 }).map((_, groupIndex) => (
+            <section
+              key={`homepage-skeleton-group-${groupIndex}`}
+              className="homepageDashboardGroup homepageDashboardGroupSkeleton"
+            >
+              <div className="homepageDashboardGroupHeader">
+                <span className="homepageSkeletonLine homepageSkeletonTitle" />
+                <span className="homepageSkeletonPill" />
+              </div>
+              <div className="homepageDashboardStack">
+                {Array.from({ length: groupIndex === 0 ? 2 : 1 }).map((__, cardIndex) => (
+                  <div
+                    key={`homepage-skeleton-card-${groupIndex}-${cardIndex}`}
+                    className="homepageServiceCard homepageServiceCardSkeleton"
+                  >
+                    <div className="homepageServiceCardTop">
+                      <span className="homepageServiceIcon homepageSkeletonBlock" />
+                      <span className="homepageServiceCardIdentity">
+                        <span className="homepageSkeletonLine" />
+                        <span className="homepageSkeletonLine homepageSkeletonLineShort" />
+                      </span>
+                      <span className="homepageServiceDetailButton homepageSkeletonBlock" />
+                    </div>
+                    <div className="homepageServiceMetricsGrid">
+                      {["CPU", "MEM", "RX", "TX"].map((label) => (
+                        <CardMetric key={label} value="-" label={label} />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      ) : groupedCards.length === 0 ? (
         <div className="homepageEmptyState">
           <Activity className="homepageEmptyIcon" aria-hidden="true" />
-          <div>当前搜索条件下没有可展示的服务入口。</div>
+          <div>
+            {refreshing
+              ? "正在刷新服务入口。"
+              : "当前搜索条件下没有可展示的服务入口。"}
+          </div>
         </div>
       ) : (
         <div
@@ -873,7 +997,7 @@ export function OverviewPage(props: {
                             openHomepageHref(card.href);
                           }}
                         >
-                          {card.status === "updatable" && !card.isDockrev ? (
+                          {card.status === "updatable" && !card.isDockrev && card.service ? (
                             <button
                               type="button"
                               className={`homepageServiceStateBadge homepageServiceStateBadge-${badge.tone} homepageServiceStateButton`}
@@ -975,7 +1099,7 @@ export function OverviewPage(props: {
               确认更新服务 {updateDialogCard?.title ?? ""}？
             </DialogTitle>
           </DialogHeader>
-          {updateDialogCard ? (
+          {updateDialogCard?.service ? (
             <ServiceUpdateConfirmDetails
               service={updateDialogCard.service}
               status={updateDialogCard.status}
@@ -989,9 +1113,10 @@ export function OverviewPage(props: {
             </DialogClose>
             <Button
               variant="primary"
-              disabled={busy || !updateDialogCard?.service.candidate}
+              disabled={busy || !updateDialogCard?.service?.candidate}
               onClick={() => {
-                if (!updateDialogCard?.service.candidate) return;
+                const service = updateDialogCard?.service;
+                if (!updateDialogCard || !service?.candidate) return;
                 const card = updateDialogCard;
                 void (async () => {
                   setBusy(true);
@@ -1001,7 +1126,7 @@ export function OverviewPage(props: {
                     const response = await triggerUpdate({
                       scope: "service",
                       stackId: card.stackId,
-                      ...(await buildUpdateServiceTarget(card.service)),
+                      ...(await buildUpdateServiceTarget(service)),
                       mode: "apply",
                       allowArchMismatch: false,
                       backupMode: "inherit",

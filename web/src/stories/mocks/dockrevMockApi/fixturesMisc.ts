@@ -321,7 +321,11 @@ export function buildFixture(scenario: Exclude<DockrevApiScenario, 'error'>): Fi
   if (scenario === 'empty') return baseEmpty()
   if (isCleanupMockScenario(scenario)) return baseEmpty()
   if (scenario === 'no-candidates') return buildNoCandidates()
-  if (scenario === 'dashboard-demo' || scenario === 'dashboard-demo-slow-update') return buildDashboardDemo()
+  if (
+    scenario === 'dashboard-demo' ||
+    scenario === 'dashboard-demo-slow-update' ||
+    scenario === 'overview-homepage-slow-refresh'
+  ) return buildDashboardDemo()
   if (scenario === 'dashboard-demo-hydrated-update') {
     const fixture = buildDashboardDemo()
     fixture.jobs = fixture.jobs.map((job) =>
