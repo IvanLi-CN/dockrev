@@ -1,5 +1,9 @@
 import type { Meta, StoryObj } from "@storybook/react";
 import { OverviewPage } from "../../pages/OverviewPage";
+import type {
+  HomepageNavSnapshot,
+  HomepageResourceSummarySnapshot,
+} from "../../pages/homepageSnapshot";
 import { PageHarness } from "../mocks/PageHarness";
 import { withDockrevMockApi } from "../mocks/withDockrevMockApi";
 
@@ -263,6 +267,73 @@ function findCardByText(canvasElement: HTMLElement, text: string) {
   );
 }
 
+function cachedNavSnapshot(generatedAt = new Date().toISOString()): HomepageNavSnapshot {
+  return {
+    version: 1,
+    generatedAt,
+    cards: [
+      {
+        id: "cached-acme-api",
+        stackId: "stack-prod",
+        stackName: "prod",
+        serviceId: "svc-prod-api",
+        serviceName: "api",
+        imageRef: "ghcr.io/acme/api:5.2.1",
+        groupName: "Cached Brain",
+        title: "Cached Acme API",
+        description: "Cached API gateway",
+        href: "https://cached-api.example.com",
+        icon: "si-github",
+        status: "updatable",
+        isDockrev: false,
+      },
+      {
+        id: "cached-prom",
+        stackId: "stack-infra",
+        stackName: "infra",
+        serviceId: "svc-infra-prom",
+        serviceName: "prometheus",
+        imageRef: "quay.io/prometheus/prometheus:v2.52.0",
+        groupName: "Cached Tools",
+        title: "Cached Prometheus",
+        description: "Cached metrics",
+        href: "https://cached-metrics.example.com",
+        icon: "prometheus.svg",
+        status: "ok",
+        isDockrev: false,
+      },
+    ],
+  };
+}
+
+function cachedResourceSnapshot(
+  generatedAt = new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+): HomepageResourceSummarySnapshot {
+  return {
+    version: 1,
+    generatedAt,
+    overview: {
+      enabled: true,
+      window: "1h",
+      generatedAt,
+      staleAfterSeconds: 60,
+      services: [
+        {
+          serviceId: "svc-prod-api",
+          sampledAt: generatedAt,
+          cpuPercent: 42,
+          memUsedBytes: 512 * 1024 * 1024,
+          memLimitBytes: 1024 * 1024 * 1024,
+          netRxRateBps: 2048,
+          netTxRateBps: 4096,
+          stale: false,
+          sampleCount: 12,
+        },
+      ],
+    },
+  };
+}
+
 export const Default: Story = {
   parameters: {
     dockrevApiScenario: "dashboard-demo",
@@ -406,6 +477,68 @@ export const Default: Story = {
     expectStory(
       document.body.textContent?.includes("目标 digest"),
       "homepage update confirmation should show the target digest",
+    );
+  },
+};
+
+export const CachedInstantNavigation: Story = {
+  parameters: {
+    dockrevApiScenario: "overview-homepage-slow-refresh",
+    dockrevHomepageNavSnapshot: cachedNavSnapshot(),
+    dockrevHomepageResourceSummarySnapshot: cachedResourceSnapshot(),
+    dockrevServiceOverridesById: defaultHomepageOverrides(),
+  },
+  render: renderOverview(),
+  play: async ({ canvasElement }) => {
+    await sleep(80);
+
+    expectStory(
+      findCardByText(canvasElement, "Cached Acme API"),
+      "cached launcher card should be visible before slow stack details return",
+    );
+    expectStory(
+      desktopTopMetricValue(canvasElement, "CPU") === "42%",
+      "cached resource summary should populate top CPU before the metrics request returns",
+    );
+    expectStory(
+      canvasElement.textContent?.includes("正在刷新服务入口，先显示上次导航"),
+      "cached navigation should disclose that a background refresh is running",
+    );
+    expectStory(
+      !canvasElement.textContent?.includes("当前搜索条件下没有可展示的服务入口"),
+      "cached first paint must not show the misleading empty state",
+    );
+
+    await sleep(1000);
+    expectStory(
+      findCardByText(canvasElement, "Acme API"),
+      "live cards should replace cached launcher cards after refresh",
+    );
+  },
+};
+
+export const ColdStartSkeleton: Story = {
+  parameters: {
+    dockrevApiScenario: "overview-homepage-slow-refresh",
+    dockrevServiceOverridesById: defaultHomepageOverrides(),
+  },
+  render: renderOverview(),
+  play: async ({ canvasElement }) => {
+    await sleep(80);
+
+    expectStory(
+      canvasElement.querySelector(".homepageNavSkeleton"),
+      "cold start should render a stable navigation skeleton while data loads",
+    );
+    expectStory(
+      !canvasElement.textContent?.includes("当前搜索条件下没有可展示的服务入口"),
+      "cold start skeleton must not show an empty result before refresh completes",
+    );
+
+    await sleep(1000);
+    expectStory(
+      serviceCards(canvasElement).length >= 4,
+      "live homepage cards should render after the slow cold-start refresh",
     );
   },
 };

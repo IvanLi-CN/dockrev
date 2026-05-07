@@ -69,6 +69,7 @@ export type DockrevApiScenario =
   | 'multi-stack-mixed'
   | 'overview-discovery-readable'
   | 'overview-resource-monitor-error'
+  | 'overview-homepage-slow-refresh'
   | 'overview-resource-monitor-stale'
   | 'overview-resource-monitor-zero-rates'
   | 'aggregate-dockrev-guard'

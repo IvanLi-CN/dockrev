@@ -603,6 +603,15 @@ export function installDockrevMockApi(
 
     if (!state) return json({ error: 'mock not initialized' }, { status: 500 })
     const f = state
+    if (
+      scenario === 'overview-homepage-slow-refresh' &&
+      method === 'GET' &&
+      (urlPath === '/api/services/resource-usage/overview' || urlPath.startsWith('/api/stacks'))
+    ) {
+      await new Promise<void>((resolve) => {
+        globalThis.setTimeout(() => resolve(), 900)
+      })
+    }
     const routeCtx: MockRouteContext = {
       scenario,
       state: f,

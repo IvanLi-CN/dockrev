@@ -9622,6 +9622,79 @@ html[data-theme='light'] .btnPrimary {
   flex: 0 0 auto;
 }
 
+.homepageNavSkeleton {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 14px;
+}
+
+.homepageDashboardGroupSkeleton {
+  opacity: 0.78;
+}
+
+.homepageServiceCardSkeleton {
+  cursor: default;
+  pointer-events: none;
+}
+
+.homepageSkeletonLine,
+.homepageSkeletonPill,
+.homepageSkeletonBlock {
+  display: block;
+  background: linear-gradient(
+    90deg,
+    oklch(0.34 0.032 252 / 0.42),
+    oklch(0.48 0.044 245 / 0.34),
+    oklch(0.34 0.032 252 / 0.42)
+  );
+  background-size: 220% 100%;
+  animation: homepageSkeletonSweep 1400ms cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.homepageSkeletonLine {
+  width: min(150px, 64%);
+  height: 14px;
+  border-radius: 999px;
+}
+
+.homepageSkeletonTitle {
+  width: min(180px, 70%);
+  height: 22px;
+}
+
+.homepageSkeletonLineShort {
+  width: min(110px, 46%);
+  height: 11px;
+}
+
+.homepageSkeletonPill {
+  width: 38px;
+  height: 21px;
+  border-radius: 999px;
+}
+
+.homepageSkeletonBlock {
+  border-radius: 7px;
+}
+
+@keyframes homepageSkeletonSweep {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -120% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .homepageSkeletonLine,
+  .homepageSkeletonPill,
+  .homepageSkeletonBlock {
+    animation: none;
+  }
+}
+
 html[data-theme='light'] .homepageDashboardPage,
 html[data-theme='light'] .homepageHeaderContent {
   --homepage-line: oklch(0.54 0.036 252 / 0.26);
@@ -9656,6 +9729,10 @@ html[data-theme='light'] .homepageHeaderSearchPopover {
 
 @media (max-width: 1500px) {
   .homepageDashboardGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .homepageNavSkeleton {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
@@ -9700,6 +9777,10 @@ html[data-theme='light'] .homepageHeaderSearchPopover {
   }
 
   .homepageDashboardGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .homepageNavSkeleton {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -9854,6 +9935,10 @@ html[data-theme='light'] .homepageHeaderSearchPopover {
   }
 
   .homepageDashboardGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .homepageNavSkeleton {
     grid-template-columns: 1fr;
   }
 
