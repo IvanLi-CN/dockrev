@@ -27,6 +27,21 @@ function expectStory(condition: unknown, message: string): asserts condition {
   if (!condition) throw new globalThis.Error(message);
 }
 
+async function waitUntil(assertion: () => void, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown = null;
+  while (Date.now() < deadline) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await sleep(50);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new globalThis.Error("condition was not met before timeout");
+}
+
 function setInputValue(input: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(
     HTMLInputElement.prototype,
@@ -514,6 +529,26 @@ export const CachedInstantNavigation: Story = {
       findCardByText(canvasElement, "Acme API"),
       "live cards should replace cached launcher cards after refresh",
     );
+  },
+};
+
+export const RefreshKeepsLiveNavigation: Story = {
+  parameters: {
+    dockrevApiScenario: "overview-homepage-slow-refresh",
+    dockrevServiceOverridesById: defaultHomepageOverrides(),
+  },
+  render: renderOverview(),
+  play: async ({ canvasElement }) => {
+    await waitUntil(() => {
+      expectStory(findCardByText(canvasElement, "Acme API"), "live launcher cards should render before refresh regression proof starts");
+      expectStory(canvasElement.querySelector(".homepageServiceStateButton"), "live updatable card should expose the update action before refresh");
+    });
+
+    canvasElement.querySelector<HTMLButtonElement>('button[aria-label="刷新服务列表"]')?.click();
+    await sleep(1000);
+
+    expectStory(findCardByText(canvasElement, "Acme API"), "manual refresh should keep the last live launcher cards visible while slow details reload");
+    expectStory(canvasElement.querySelector<HTMLButtonElement>(".homepageServiceStateButton")?.disabled, "manual refresh should keep but disable live update actions while slow details reload");
   },
 };
 
