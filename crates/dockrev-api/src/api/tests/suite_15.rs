@@ -877,6 +877,148 @@ services:
 }
 
 #[tokio::test]
+async fn runtime_scan_keeps_container_image_id_when_shared_moving_tag_was_pulled_elsewhere() {
+    let runner: Arc<SharedMovingTagRunner> = Arc::new(SharedMovingTagRunner::new());
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(SharedMovingTagRegistry),
+        runner,
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let trtff_compose_path = format!("/tmp/dockrev-test-trtff-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &trtff_compose_path,
+        r#"
+services:
+  trtff-api:
+    image: ghcr.io/sequenxe/trtff:latest
+"#,
+    )
+    .unwrap();
+    let ctp_compose_path = format!("/tmp/dockrev-test-ctp-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &ctp_compose_path,
+        r#"
+services:
+  ctp-recorder:
+    image: ghcr.io/sequenxe/trtff:latest
+"#,
+    )
+    .unwrap();
+
+    let trtff_stack_id = seed_stack_from_compose(&state, "trtff", &trtff_compose_path).await;
+    let ctp_stack_id =
+        seed_stack_from_compose(&state, "ctp-recorder", &ctp_compose_path).await;
+    let now = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    for (project, stack_id, compose_path) in [
+        ("trtff", trtff_stack_id.as_str(), trtff_compose_path.as_str()),
+        ("ctp-recorder", ctp_stack_id.as_str(), ctp_compose_path.as_str()),
+    ] {
+        state
+            .db
+            .upsert_discovered_compose_project(crate::db::DiscoveredComposeProjectUpsert {
+                project: project.to_string(),
+                stack_id: Some(stack_id.to_string()),
+                status: "active".to_string(),
+                last_seen_at: Some(now.clone()),
+                last_scan_at: now.clone(),
+                last_error: None,
+                last_config_files: Some(vec![compose_path.to_string()]),
+                unarchive_if_active: true,
+            })
+            .await
+            .unwrap();
+    }
+
+    let payload = serde_json::json!({
+        "scope": "all",
+        "reason": "ui",
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/runtime-scans")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let triggered = response_json(resp).await;
+    let job_id = triggered["jobId"].as_str().unwrap().to_string();
+
+    let mut finished = false;
+    for _ in 0..120 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/jobs/{job_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let job = response_json(resp).await;
+        if job["job"]["status"].as_str().unwrap() != "running" {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(finished, "runtime scan job did not finish in time");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{trtff_stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let trtff_detail = response_json(resp).await;
+    let trtff_service = &trtff_detail["stack"]["services"][0];
+    assert_eq!(
+        trtff_service["image"]["digest"].as_str().unwrap(),
+        "sha256:old-runtime"
+    );
+    assert_eq!(
+        trtff_service["candidate"]["digest"].as_str().unwrap(),
+        "sha256:new-runtime"
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{ctp_stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let ctp_detail = response_json(resp).await;
+    let ctp_service = &ctp_detail["stack"]["services"][0];
+    assert_eq!(
+        ctp_service["image"]["digest"].as_str().unwrap(),
+        "sha256:new-runtime"
+    );
+    assert!(ctp_service["candidate"].is_null());
+}
+
+#[tokio::test]
 async fn runtime_scan_resolved_tag_inference_matches_check() {
     let compose = r#"
 services:

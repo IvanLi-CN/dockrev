@@ -785,21 +785,13 @@ pub(crate) async fn docker_compose_project_runtime_digests(
         let Some(repo_digests) = repo_digests_by_image_id.get(&image_id) else {
             continue;
         };
+        let entry = digests_by_service.entry(svc_name.clone()).or_default();
+        insert_runtime_digests_for_image(entry, repo_digests, repo_candidates, &image_id);
         if let Some(started_at) = started_at {
             started_ats_by_service
                 .entry(svc_name.clone())
                 .or_default()
                 .insert(started_at);
-        }
-        let entry = digests_by_service.entry(svc_name).or_default();
-        for d in repo_digests {
-            for repo in repo_candidates {
-                if let Some(rest) = d.strip_prefix(&format!("{repo}@"))
-                    && !rest.trim().is_empty()
-                {
-                    entry.insert(rest.trim().to_string());
-                }
-            }
         }
     }
 
@@ -821,6 +813,31 @@ pub(crate) async fn docker_compose_project_runtime_digests(
         }
     }
     Ok(out)
+}
+
+pub(crate) fn insert_runtime_digests_for_image(
+    out: &mut BTreeSet<String>,
+    repo_digests: &[String],
+    repo_candidates: &[String],
+    image_id: &str,
+) {
+    let mut matched_repo_digest = false;
+    for d in repo_digests {
+        for repo in repo_candidates {
+            if let Some(rest) = d.strip_prefix(&format!("{repo}@"))
+                && !rest.trim().is_empty()
+            {
+                out.insert(rest.trim().to_string());
+                matched_repo_digest = true;
+            }
+        }
+    }
+    if !matched_repo_digest && !image_id.trim().is_empty() {
+        // Moving tags may have been retargeted on the host after this container was created.
+        // The container image ID is still the immutable runtime binding; the current tag pointer
+        // is not.
+        out.insert(image_id.trim().to_string());
+    }
 }
 
 fn repo_candidates(img: &registry::ImageRef) -> Vec<String> {
