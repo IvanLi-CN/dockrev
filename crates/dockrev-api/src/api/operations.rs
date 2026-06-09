@@ -1372,18 +1372,13 @@ pub(super) async fn docker_compose_service_runtime_digest(
         }
 
         let parsed = serde_json::from_str::<Vec<String>>(inspect.stdout.trim()).unwrap_or_default();
-        let mut matched = false;
-        for d in parsed {
-            for repo in repo_candidates {
-                if let Some(rest) = d.strip_prefix(&format!("{repo}@"))
-                    && !rest.trim().is_empty()
-                {
-                    digests.insert(rest.trim().to_string());
-                    matched = true;
-                }
-            }
-        }
-        if matched && let Some(started_at) = started_at {
+        crate::runtime_scan::insert_runtime_digests_for_image(
+            &mut digests,
+            &parsed,
+            repo_candidates,
+            img_id,
+        );
+        if let Some(started_at) = started_at {
             started_ats.insert(started_at);
         }
     }

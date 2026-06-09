@@ -137,6 +137,102 @@ impl CheckAndRuntimeScanRunner {
     }
 }
 
+#[derive(Clone)]
+struct SharedMovingTagRunner {
+    calls: Arc<std::sync::Mutex<Vec<Vec<String>>>>,
+}
+
+impl SharedMovingTagRunner {
+    fn new() -> Self {
+        Self {
+            calls: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl CommandRunner for SharedMovingTagRunner {
+    async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
+        self.calls.lock().unwrap().push(spec.args.clone());
+        let args = spec.args;
+
+        let (status, stdout) = if args.first().map(|s| s.as_str()) == Some("ps")
+            && args.get(1).map(|s| s.as_str()) == Some("-q")
+        {
+            let filter = args.join(" ");
+            if filter.contains("com.docker.compose.project=trtff") {
+                (0, "cid_trtff\n".to_string())
+            } else if filter.contains("com.docker.compose.project=ctp-recorder") {
+                (0, "cid_ctp\n".to_string())
+            } else {
+                (0, String::new())
+            }
+        } else if args.first().map(|s| s.as_str()) == Some("inspect")
+            && args.get(1).map(|s| s.as_str()) == Some("--format")
+            && args
+                .get(2)
+                .map(|s| s.as_str())
+                .is_some_and(|s| s.contains("com.docker.compose.service"))
+        {
+            let stdout = if args.iter().any(|arg| arg == "cid_trtff") {
+                "trtff-api\tsha256:old-runtime\t2026-06-04T13:08:09Z\n"
+            } else if args.iter().any(|arg| arg == "cid_ctp") {
+                "ctp-recorder\tsha256:new-runtime\t2026-06-09T04:08:58Z\n"
+            } else {
+                ""
+            };
+            (0, stdout.to_string())
+        } else if args.first().map(|s| s.as_str()) == Some("inspect")
+            && args.get(1).map(|s| s.as_str()) == Some("--format")
+            && args
+                .get(2)
+                .map(|s| s.as_str())
+                .is_some_and(|s| s.starts_with("{{.Image}}"))
+        {
+            let stdout = match args.get(3).map(String::as_str) {
+                Some("cid_trtff") => "sha256:old-runtime\t2026-06-04T13:08:09Z\n",
+                Some("cid_ctp") => "sha256:new-runtime\t2026-06-09T04:08:58Z\n",
+                _ => "",
+            };
+            (0, stdout.to_string())
+        } else if args.first().map(|s| s.as_str()) == Some("image")
+            && args.get(1).map(|s| s.as_str()) == Some("inspect")
+            && args.iter().any(|s| s.contains("RepoDigests"))
+        {
+            if args.iter().any(|s| s.contains("{{.Id}}")) {
+                let mut lines = Vec::new();
+                if args.iter().any(|arg| arg == "sha256:old-runtime") {
+                    lines.push("sha256:old-runtime\t[]".to_string());
+                }
+                if args.iter().any(|arg| arg == "sha256:new-runtime") {
+                    lines.push(
+                        "sha256:new-runtime\t[\"ghcr.io/sequenxe/trtff@sha256:new-runtime\"]"
+                            .to_string(),
+                    );
+                }
+                (0, format!("{}\n", lines.join("\n")))
+            } else if args.iter().any(|arg| arg == "sha256:old-runtime") {
+                (0, "[]".to_string())
+            } else if args.iter().any(|arg| arg == "sha256:new-runtime") {
+                (
+                    0,
+                    "[\"ghcr.io/sequenxe/trtff@sha256:new-runtime\"]".to_string(),
+                )
+            } else {
+                (0, "[]".to_string())
+            }
+        } else {
+            (0, String::new())
+        };
+
+        Ok(CommandOutput {
+            status,
+            stdout,
+            stderr: String::new(),
+        })
+    }
+}
+
 #[async_trait::async_trait]
 impl CommandRunner for CheckAndRuntimeScanRunner {
     async fn run(&self, spec: CommandSpec, _timeout: Duration) -> anyhow::Result<CommandOutput> {
@@ -557,6 +653,33 @@ impl CountingRegistry {
     }
 }
 
+#[derive(Clone, Default)]
+struct SharedMovingTagRegistry;
+
+#[async_trait::async_trait]
+impl RegistryClient for SharedMovingTagRegistry {
+    async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
+        Ok(vec!["latest".to_string(), "0.28.0".to_string()])
+    }
+
+    async fn get_manifest(
+        &self,
+        _image: &ImageRef,
+        reference: &str,
+        _host_platform: &str,
+    ) -> anyhow::Result<ManifestInfo> {
+        let digest = match reference {
+            "latest" | "0.28.0" => "sha256:new-runtime",
+            _ => "sha256:unknown",
+        };
+        Ok(ManifestInfo {
+            digest: Some(digest.to_string()),
+            platform_digest: None,
+            arch: vec!["linux/amd64".to_string()],
+        })
+    }
+}
+
 #[async_trait::async_trait]
 impl RegistryClient for CountingRegistry {
     async fn list_tags(&self, _image: &ImageRef) -> anyhow::Result<Vec<String>> {
@@ -863,4 +986,3 @@ impl StaggeredCheckRegistry {
         self.started_at.lock().unwrap().clone()
     }
 }
-
