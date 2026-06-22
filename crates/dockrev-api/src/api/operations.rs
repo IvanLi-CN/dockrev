@@ -224,7 +224,7 @@ pub(super) fn update_progress_snapshot(
             total_stacks,
             UPDATE_STACK_BASE_PROGRESS + UPDATE_STACK_APPLY_SPAN * update_apply_fraction(evt),
         )
-        .max(last_percent)
+        .max(last_percent),
     };
 
     let planned_percent = match evt.step {
@@ -281,7 +281,10 @@ pub(super) async fn persist_job_progress(
 mod tests {
     use super::*;
 
-    fn evt(step: updater::UpdateProgressStep, pull_fraction: Option<f64>) -> updater::UpdateProgressEvent {
+    fn evt(
+        step: updater::UpdateProgressStep,
+        pull_fraction: Option<f64>,
+    ) -> updater::UpdateProgressEvent {
         updater::UpdateProgressEvent {
             step,
             service_name: "web".to_string(),
