@@ -89,11 +89,18 @@ function normalizeProgress(input: JobProgress | null | undefined): JobProgress |
   // Frontend only sanitizes backend values; percent is never derived from current/total.
   const percentRaw = Number.isFinite(input.percent) ? input.percent : 0
   const percent = Math.max(0, Math.min(100, Math.round(percentRaw)))
+  const hasPlannedPercent = Object.prototype.hasOwnProperty.call(input, 'plannedPercent')
   const plannedTotalRaw = Number.isFinite(input.plannedTotal) ? Math.max(0, input.plannedTotal ?? 0) : total
   const plannedCurrentRaw = Number.isFinite(input.plannedCurrent) ? Math.max(0, input.plannedCurrent ?? 0) : current
   const plannedCurrent = Math.min(plannedCurrentRaw, plannedTotalRaw || plannedCurrentRaw)
-  const plannedPercentRaw = Number.isFinite(input.plannedPercent) ? input.plannedPercent : percent
-  const plannedPercent = Math.max(0, Math.min(100, Math.round(plannedPercentRaw ?? 0)))
+  const plannedPercent =
+    input.plannedPercent === null
+      ? null
+      : Number.isFinite(input.plannedPercent)
+        ? Math.max(0, Math.min(100, Math.round(input.plannedPercent ?? 0)))
+        : hasPlannedPercent
+          ? null
+          : percent
   return { ...input, current, total, percent, plannedCurrent, plannedTotal: plannedTotalRaw, plannedPercent }
 }
 

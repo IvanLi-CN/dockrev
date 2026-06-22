@@ -125,9 +125,11 @@ function getProgressMetrics(job: JobListItem): {
       : completedCurrent
   const plannedCurrent = Math.min(plannedCurrentRaw, plannedTotal || plannedCurrentRaw)
   const plannedPercent =
-    plannedTotal > 0 && Number.isFinite(p.plannedPercent)
-      ? Math.max(0, Math.min(100, Math.round(p.plannedPercent ?? 0)))
-      : completedPercent
+    p.plannedPercent === null
+      ? null
+      : plannedTotal > 0 && Number.isFinite(p.plannedPercent)
+        ? Math.max(0, Math.min(100, Math.round(p.plannedPercent ?? 0)))
+        : completedPercent
 
   const normalizedCompletedPercent =
     job.status === 'running' && completedPercent === 0 && completedCurrent < completedTotal ? null : completedPercent

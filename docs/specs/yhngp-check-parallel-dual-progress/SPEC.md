@@ -4,7 +4,7 @@
 
 - Status: 已完成
 - Created: 2026-02-24
-- Last: 2026-02-24
+- Last: 2026-06-22
 
 ## 背景 / 问题陈述
 
@@ -65,7 +65,8 @@
 兼容口径：
 
 - 既有 `current/total/percent` 继续表示“完成进度”。
-- 若调用方未使用 `planned*`，行为保持不变。
+- 历史 producer 若缺失 `planned*`，前端按 `planned=completed` 回退。
+- 新 producer 可显式发送 `plannedPercent: null` 表示“运行中但当前无可验证计划百分比”，前端必须保留该 `null` 语义并进入 indeterminate。
 
 ## 功能与行为规格（Functional/Behavior Spec）
 
@@ -82,12 +83,14 @@
   - `current/total/percent` 表示实际完成进度。
 - `update/runtime_scan/discovery`：
   - 默认 `planned* = completed*`，保证前端双层展示一致。
+  - 例外：`stack/all update` 的 batch pull 阶段若缺少可解析中间证据，不得用 synthetic service 预推进伪造高百分比；此时允许显式发送 `plannedPercent: null`，completed `percent` 只在已验证阶段推进。
 
 ### 前端展示
 
 - Queue 行内展示两层条：安排（上）+ 完成（下）。
 - Job 详情页进度卡展示两层条与对应计数/百分比。
 - 历史任务若缺失 `planned*`，前端回退为 `planned=completed`。
+- 若任务显式发送 `plannedPercent: null`，UI 必须显示 running/indeterminate，而不是回退成具体数字。
 
 ## 验收标准（Acceptance Criteria）
 
@@ -95,6 +98,7 @@
 - Given `check` 任务 running，When 读取 jobs API 或 SSE，Then `plannedCurrent >= current` 且两者单调递增。
 - Given 任务处于 running，When 查看 `/queue` 与 `/queue/:jobId`，Then 均可见双层进度条。
 - Given 历史任务无 `planned*`，When 前端渲染，Then 不报错且双层展示正常回退。
+- Given `stack/all update` 的 batch pull 无可解析进展，When 读取 jobs API/SSE 或查看 `/queue` 与 `/queue/:jobId`，Then `plannedPercent` 保持 `null`，UI 进入 indeterminate，且不会在 pull 完成前虚高到 `82%` 一类已验证阶段之外的数值。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
@@ -103,10 +107,17 @@
 - `cargo test -p dockrev-api`
 - `bun run --cwd web lint`
 - `bun run --cwd web build`
+- `bun run --cwd web test-storybook`
 
 ### Quality checks
 
 - 新增/更新测试覆盖：并发上限、错峰启动、progress 字段与 SSE 载荷。
+
+## Visual Evidence
+
+![Queue update indeterminate](./assets/update-indeterminate-queue.png)
+
+![Job detail update indeterminate](./assets/update-indeterminate-job-detail.png)
 
 ## 实现里程碑（Milestones / Delivery checklist）
 
@@ -127,3 +138,4 @@
 - 2026-02-24: 创建规格并冻结范围与验收口径。
 - 2026-02-24: 完成实现与本地验证（cargo test + web lint/build）。
 - 2026-02-24: 快车道交付完成（PR #90，CI 全绿，review-loop 无 P0/P1 阻塞）。
+- 2026-06-22: 修正 `stack/all update` batch pull 的进度语义；无可解析 pull 证据时使用显式 `plannedPercent: null` 驱动 UI 进入 indeterminate，避免 synthetic service 预推进造成的虚高百分比。

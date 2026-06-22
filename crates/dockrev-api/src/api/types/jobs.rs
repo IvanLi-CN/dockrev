@@ -295,13 +295,10 @@ pub struct JobProgress {
     /// Percent provided by backend. Frontend should not derive/override this value.
     pub percent: u32,
     /// Planned/scheduled units. Defaults to completed units when omitted by old producers.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub planned_current: Option<u32>,
     /// Planned/scheduled total units. Defaults to total when omitted by old producers.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub planned_total: Option<u32>,
     /// Planned/scheduled percent. Defaults to percent when omitted by old producers.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub planned_percent: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_target: Option<String>,

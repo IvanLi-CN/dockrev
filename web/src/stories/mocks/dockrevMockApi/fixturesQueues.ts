@@ -533,6 +533,41 @@ export function buildQueueProgressSmoothing(): Fixture {
   return f
 }
 
+export function buildQueueUpdateIndeterminate(): Fixture {
+  const f = buildQueueMixed()
+  const runningJob = f.jobs.find((job) => job.id === 'job-running')
+  if (!runningJob) return f
+
+  const nextProgress = {
+    phase: 'apply',
+    message: 'applying updates for stack stack-prod',
+    current: 2,
+    total: 5,
+    percent: 40,
+    plannedCurrent: 4,
+    plannedTotal: 5,
+    plannedPercent: null,
+    currentTarget: 'worker',
+    updatedAt: nowIso(-600),
+  }
+
+  runningJob.type = 'update'
+  runningJob.scope = 'stack'
+  runningJob.progress = nextProgress
+
+  const runningDetail = f.jobById['job-running']
+  if (runningDetail) {
+    f.jobById['job-running'] = {
+      ...runningDetail,
+      type: 'update',
+      scope: 'stack',
+      progress: { ...nextProgress },
+    }
+  }
+
+  return f
+}
+
 export function buildQueueLongLogs(): Fixture {
   const f = buildDashboardDemo()
 
@@ -1047,4 +1082,3 @@ export function buildQueueHealthRollback(): Fixture {
 
   return f
 }
-

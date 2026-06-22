@@ -48,6 +48,36 @@ export const RunningDualProgress: Story = {
   },
 }
 
+export const UpdateIndeterminate: Story = {
+  parameters: { dockrevApiScenario: 'queue-update-indeterminate' },
+  render: () => {
+    return (
+      <PageHarness
+        route={{ name: 'job', jobId: 'job-running' }}
+        title="任务详情"
+        topbarHint="任务队列"
+        pageSubtitle="运行中 update 在缺少可解析 pull 证据时应进入 indeterminate"
+      >
+        {({ onTopActions }) => <JobDetailPage jobId="job-running" onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await sleep(120)
+
+    const progressbar = canvasElement.querySelector('[role="progressbar"]') as HTMLElement | null
+    if (!progressbar) {
+      throw new globalThis.Error('progress bar missing')
+    }
+    if (!progressbar.className.includes('jobProgressBarIndeterminate')) {
+      throw new globalThis.Error('progress bar should be indeterminate')
+    }
+    if (progressbar.getAttribute('aria-valuetext') !== '安排 running · 完成 40%') {
+      throw new globalThis.Error('progress aria text should stay indeterminate on planned side')
+    }
+  },
+}
+
 export const LegacyProgressFallback: Story = {
   parameters: { dockrevApiScenario: 'queue-legacy-progress' },
   render: () => {

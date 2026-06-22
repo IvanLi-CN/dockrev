@@ -3,6 +3,10 @@ import { QueuePage } from '../../pages/QueuePage'
 import { PageHarness } from '../mocks/PageHarness'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 const meta: Meta<typeof QueuePage> = {
   title: 'Pages/QueuePage',
   component: QueuePage,
@@ -47,6 +51,36 @@ export const LegacyProgressFallback: Story = {
         {({ onTopActions }) => <QueuePage onTopActions={onTopActions} />}
       </PageHarness>
     )
+  },
+}
+
+export const UpdateIndeterminate: Story = {
+  parameters: { dockrevApiScenario: 'queue-update-indeterminate' },
+  render: () => {
+    return (
+      <PageHarness
+        route={{ name: 'queue' }}
+        title="任务队列"
+        topbarHint="任务队列"
+        pageSubtitle="运行中 update 在缺少可解析 pull 证据时应保持 indeterminate"
+      >
+        {({ onTopActions }) => <QueuePage onTopActions={onTopActions} />}
+      </PageHarness>
+    )
+  },
+  play: async ({ canvasElement }) => {
+    await sleep(120)
+
+    const progressbar = canvasElement.querySelector('[role="progressbar"]') as HTMLElement | null
+    if (!progressbar) {
+      throw new globalThis.Error('queue progress bar missing')
+    }
+    if (!progressbar.className.includes('queueProgressBarIndeterminate')) {
+      throw new globalThis.Error('queue progress bar should be indeterminate')
+    }
+    if (progressbar.getAttribute('aria-valuetext') !== '安排 running · 完成 40%') {
+      throw new globalThis.Error('queue progress aria text should preserve indeterminate planned state')
+    }
   },
 }
 

@@ -47,7 +47,7 @@ pub(super) fn make_job_progress_with_percent(
     updated_at: String,
     percent: u32,
 ) -> JobProgress {
-    make_job_progress_with_percent_and_plan(
+    make_job_progress_with_optional_plan(
         phase,
         message,
         current,
@@ -55,9 +55,9 @@ pub(super) fn make_job_progress_with_percent(
         current_target,
         updated_at,
         percent,
-        current,
-        total,
-        percent,
+        Some(current),
+        Some(total),
+        Some(percent),
     )
 }
 
@@ -74,15 +74,42 @@ pub(super) fn make_job_progress_with_percent_and_plan(
     planned_total: u32,
     planned_percent: u32,
 ) -> JobProgress {
+    make_job_progress_with_optional_plan(
+        phase,
+        message,
+        current,
+        total,
+        current_target,
+        updated_at,
+        percent,
+        Some(planned_current),
+        Some(planned_total),
+        Some(planned_percent),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn make_job_progress_with_optional_plan(
+    phase: &str,
+    message: String,
+    current: u32,
+    total: u32,
+    current_target: Option<String>,
+    updated_at: String,
+    percent: u32,
+    planned_current: Option<u32>,
+    planned_total: Option<u32>,
+    planned_percent: Option<u32>,
+) -> JobProgress {
     JobProgress {
         phase: phase.to_string(),
         message,
         current,
         total,
         percent: percent.min(100),
-        planned_current: Some(planned_current),
-        planned_total: Some(planned_total),
-        planned_percent: Some(planned_percent.min(100)),
+        planned_current,
+        planned_total,
+        planned_percent: planned_percent.map(|value| value.min(100)),
         current_target,
         updated_at,
     }
@@ -155,6 +182,62 @@ pub(super) fn update_apply_fraction(evt: &updater::UpdateProgressEvent) -> f64 {
     ((service_index as f64) + step_fraction) * unit
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum UpdateProgressSemantics {
+    Legacy,
+    VerifiedOnlyBatch,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct UpdateProgressSnapshot {
+    pub percent: u32,
+    pub planned_percent: Option<u32>,
+}
+
+pub(super) fn update_progress_snapshot(
+    evt: &updater::UpdateProgressEvent,
+    semantics: UpdateProgressSemantics,
+    processed_stacks: u32,
+    total_stacks: u32,
+    last_percent: u32,
+) -> UpdateProgressSnapshot {
+    use updater::UpdateProgressStep as S;
+
+    let legacy_percent = update_progress_percent(
+        processed_stacks,
+        total_stacks,
+        UPDATE_STACK_BASE_PROGRESS + UPDATE_STACK_APPLY_SPAN * update_apply_fraction(evt),
+    )
+    .max(last_percent);
+
+    if semantics == UpdateProgressSemantics::Legacy {
+        return UpdateProgressSnapshot {
+            percent: legacy_percent,
+            planned_percent: Some(legacy_percent),
+        };
+    }
+
+    let next_percent = match evt.step {
+        S::ServiceStart | S::PullStart => last_percent,
+        _ => update_progress_percent(
+            processed_stacks,
+            total_stacks,
+            UPDATE_STACK_BASE_PROGRESS + UPDATE_STACK_APPLY_SPAN * update_apply_fraction(evt),
+        )
+        .max(last_percent)
+    };
+
+    let planned_percent = match evt.step {
+        S::ServiceStart | S::PullStart => None,
+        _ => Some(next_percent),
+    };
+
+    UpdateProgressSnapshot {
+        percent: next_percent,
+        planned_percent,
+    }
+}
+
 pub(super) async fn persist_job_progress(
     state: &Arc<AppState>,
     job_id: &str,
@@ -192,6 +275,77 @@ pub(super) async fn persist_job_progress(
         .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn evt(step: updater::UpdateProgressStep, pull_fraction: Option<f64>) -> updater::UpdateProgressEvent {
+        updater::UpdateProgressEvent {
+            step,
+            service_name: "web".to_string(),
+            service_index: 0,
+            service_total: 2,
+            pull_fraction,
+            message: "mock".to_string(),
+        }
+    }
+
+    #[test]
+    fn batch_update_progress_stays_verified_only_until_pull_has_evidence() {
+        let last_percent = update_progress_percent(0, 2, UPDATE_STACK_BASE_PROGRESS);
+
+        let service_start = update_progress_snapshot(
+            &evt(updater::UpdateProgressStep::ServiceStart, None),
+            UpdateProgressSemantics::VerifiedOnlyBatch,
+            0,
+            2,
+            last_percent,
+        );
+        assert_eq!(service_start.percent, last_percent);
+        assert_eq!(service_start.planned_percent, None);
+
+        let pull_start = update_progress_snapshot(
+            &evt(updater::UpdateProgressStep::PullStart, None),
+            UpdateProgressSemantics::VerifiedOnlyBatch,
+            0,
+            2,
+            last_percent,
+        );
+        assert_eq!(pull_start.percent, last_percent);
+        assert_eq!(pull_start.planned_percent, None);
+
+        let pull_progress = update_progress_snapshot(
+            &evt(updater::UpdateProgressStep::PullProgress, Some(0.5)),
+            UpdateProgressSemantics::VerifiedOnlyBatch,
+            0,
+            2,
+            last_percent,
+        );
+        assert!(pull_progress.percent > last_percent);
+        assert_eq!(pull_progress.planned_percent, Some(pull_progress.percent));
+    }
+
+    #[test]
+    fn optional_planned_progress_serializes_explicit_nulls() {
+        let progress = make_job_progress_with_optional_plan(
+            "apply",
+            "mock".to_string(),
+            2,
+            5,
+            Some("svc-web".to_string()),
+            "2026-06-22T00:00:00Z".to_string(),
+            40,
+            Some(2),
+            Some(5),
+            None,
+        );
+        let value = serde_json::to_value(progress).unwrap();
+        assert!(value["plannedCurrent"].is_number());
+        assert!(value["plannedTotal"].is_number());
+        assert!(value["plannedPercent"].is_null());
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
