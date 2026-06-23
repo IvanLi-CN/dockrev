@@ -26,7 +26,7 @@ fn batch_update_progress_stays_verified_only_until_pull_has_evidence() {
         last_percent,
     );
     assert_eq!(service_start.percent, last_percent);
-    assert_eq!(service_start.planned_percent, None);
+    assert_eq!(service_start.planned_percent, Some(None));
 
     let pull_start = update_progress_snapshot(
         &evt(updater::UpdateProgressStep::PullStart, None),
@@ -36,7 +36,7 @@ fn batch_update_progress_stays_verified_only_until_pull_has_evidence() {
         last_percent,
     );
     assert_eq!(pull_start.percent, last_percent);
-    assert_eq!(pull_start.planned_percent, None);
+    assert_eq!(pull_start.planned_percent, Some(None));
 
     let pull_progress = update_progress_snapshot(
         &evt(updater::UpdateProgressStep::PullProgress, Some(0.5)),
@@ -46,7 +46,10 @@ fn batch_update_progress_stays_verified_only_until_pull_has_evidence() {
         last_percent,
     );
     assert!(pull_progress.percent > last_percent);
-    assert_eq!(pull_progress.planned_percent, Some(pull_progress.percent));
+    assert_eq!(
+        pull_progress.planned_percent,
+        Some(Some(pull_progress.percent))
+    );
 }
 
 #[test]

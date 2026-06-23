@@ -898,16 +898,22 @@ async fn finish_job_preserves_existing_progress_when_summary_omits_progress() {
     assert_eq!(detail["job"]["progress"]["phase"].as_str().unwrap(), "scan");
     assert_eq!(detail["job"]["progress"]["percent"].as_u64().unwrap(), 60);
     assert!(
-        detail["job"]["progress"]["plannedCurrent"].is_null(),
-        "legacy progress should keep planned* absent"
+        detail["job"]["progress"]
+            .get("plannedCurrent")
+            .is_none(),
+        "legacy progress should keep plannedCurrent absent"
     );
     assert!(
-        detail["job"]["progress"]["plannedTotal"].is_null(),
-        "legacy progress should keep planned* absent"
+        detail["job"]["progress"]
+            .get("plannedTotal")
+            .is_none(),
+        "legacy progress should keep plannedTotal absent"
     );
     assert!(
-        detail["job"]["progress"]["plannedPercent"].is_null(),
-        "legacy progress should keep planned* absent"
+        detail["job"]["progress"]
+            .get("plannedPercent")
+            .is_none(),
+        "legacy progress should keep plannedPercent absent"
     );
     assert_eq!(
         detail["job"]["summary"]["progress"]["phase"]
@@ -938,16 +944,16 @@ async fn finish_job_preserves_existing_progress_when_summary_omits_progress() {
     assert_eq!(item["progress"]["phase"].as_str().unwrap(), "scan");
     assert_eq!(item["progress"]["percent"].as_u64().unwrap(), 60);
     assert!(
-        item["progress"]["plannedCurrent"].is_null(),
-        "legacy progress should keep planned* absent"
+        item["progress"].get("plannedCurrent").is_none(),
+        "legacy progress should keep plannedCurrent absent"
     );
     assert!(
-        item["progress"]["plannedTotal"].is_null(),
-        "legacy progress should keep planned* absent"
+        item["progress"].get("plannedTotal").is_none(),
+        "legacy progress should keep plannedTotal absent"
     );
     assert!(
-        item["progress"]["plannedPercent"].is_null(),
-        "legacy progress should keep planned* absent"
+        item["progress"].get("plannedPercent").is_none(),
+        "legacy progress should keep plannedPercent absent"
     );
 }
 
@@ -1096,7 +1102,9 @@ async fn jobs_endpoints_preserve_explicit_null_planned_percent() {
     assert_eq!(detail_progress["plannedCurrent"].as_u64().unwrap(), 0);
     assert_eq!(detail_progress["plannedTotal"].as_u64().unwrap(), 1);
     assert!(
-        detail_progress["plannedPercent"].is_null(),
+        detail_progress
+            .get("plannedPercent")
+            .is_some_and(|v| v.is_null()),
         "explicit null plannedPercent should survive detail serialization"
     );
 
@@ -1122,7 +1130,9 @@ async fn jobs_endpoints_preserve_explicit_null_planned_percent() {
     assert_eq!(item["progress"]["plannedCurrent"].as_u64().unwrap(), 0);
     assert_eq!(item["progress"]["plannedTotal"].as_u64().unwrap(), 1);
     assert!(
-        item["progress"]["plannedPercent"].is_null(),
+        item["progress"]
+            .get("plannedPercent")
+            .is_some_and(|v| v.is_null()),
         "explicit null plannedPercent should survive list serialization"
     );
 }

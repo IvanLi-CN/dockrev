@@ -222,6 +222,11 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             if (!parsed || typeof parsed !== 'object') return
             const p = parsed as Record<string, unknown>
             if (p.type !== 'job_progress') return
+            const plannedPercent = Object.prototype.hasOwnProperty.call(p, 'plannedPercent')
+              ? typeof p.plannedPercent === 'number'
+                ? p.plannedPercent
+                : null
+              : undefined
             const next = normalizeProgress({
               phase: typeof p.phase === 'string' ? p.phase : 'running',
               message: typeof p.message === 'string' ? p.message : '',
@@ -230,7 +235,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
               percent: typeof p.percent === 'number' ? p.percent : 0,
               plannedCurrent: typeof p.plannedCurrent === 'number' ? p.plannedCurrent : null,
               plannedTotal: typeof p.plannedTotal === 'number' ? p.plannedTotal : null,
-              plannedPercent: typeof p.plannedPercent === 'number' ? p.plannedPercent : null,
+              ...(plannedPercent === undefined ? {} : { plannedPercent }),
               currentTarget: typeof p.currentTarget === 'string' ? p.currentTarget : null,
               updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : new Date().toISOString(),
             })

@@ -355,7 +355,7 @@ pub(crate) async fn run_update_job(
                     total_stacks_for_progress,
                     UPDATE_STACK_BASE_PROGRESS,
                 );
-                let mut last_planned_percent = Some(last_percent);
+                let mut last_planned_percent = Some(Some(last_percent));
                 let mut last_emit = std::time::Instant::now()
                     .checked_sub(Duration::from_secs(5))
                     .unwrap_or_else(std::time::Instant::now);

@@ -57,7 +57,7 @@ pub(super) fn make_job_progress_with_percent(
         percent,
         Some(current),
         Some(total),
-        Some(percent),
+        Some(Some(percent)),
     )
 }
 
@@ -84,7 +84,7 @@ pub(super) fn make_job_progress_with_percent_and_plan(
         percent,
         Some(planned_current),
         Some(planned_total),
-        Some(planned_percent),
+        Some(Some(planned_percent)),
     )
 }
 
@@ -99,7 +99,7 @@ pub(super) fn make_job_progress_with_optional_plan(
     percent: u32,
     planned_current: Option<u32>,
     planned_total: Option<u32>,
-    planned_percent: Option<u32>,
+    planned_percent: Option<Option<u32>>,
 ) -> JobProgress {
     JobProgress {
         phase: phase.to_string(),
@@ -109,7 +109,7 @@ pub(super) fn make_job_progress_with_optional_plan(
         percent: percent.min(100),
         planned_current,
         planned_total,
-        planned_percent: planned_percent.map(|value| value.min(100)),
+        planned_percent: planned_percent.map(|value| value.map(|value| value.min(100))),
         current_target,
         updated_at,
     }
@@ -191,7 +191,7 @@ pub(super) enum UpdateProgressSemantics {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct UpdateProgressSnapshot {
     pub percent: u32,
-    pub planned_percent: Option<u32>,
+    pub planned_percent: Option<Option<u32>>,
 }
 
 pub(super) fn update_progress_snapshot(
@@ -213,7 +213,7 @@ pub(super) fn update_progress_snapshot(
     if semantics == UpdateProgressSemantics::Legacy {
         return UpdateProgressSnapshot {
             percent: legacy_percent,
-            planned_percent: Some(legacy_percent),
+            planned_percent: Some(Some(legacy_percent)),
         };
     }
 
@@ -228,8 +228,8 @@ pub(super) fn update_progress_snapshot(
     };
 
     let planned_percent = match evt.step {
-        S::ServiceStart | S::PullStart => None,
-        _ => Some(next_percent),
+        S::ServiceStart | S::PullStart => Some(None),
+        _ => Some(Some(next_percent)),
     };
 
     UpdateProgressSnapshot {
