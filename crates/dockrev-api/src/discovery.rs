@@ -49,7 +49,7 @@ fn make_job_progress(
         percent: progress_percent(current, total),
         planned_current: Some(current),
         planned_total: Some(total),
-        planned_percent: Some(progress_percent(current, total)),
+        planned_percent: Some(Some(progress_percent(current, total))),
         current_target,
         updated_at,
     }

@@ -898,16 +898,22 @@ async fn finish_job_preserves_existing_progress_when_summary_omits_progress() {
     assert_eq!(detail["job"]["progress"]["phase"].as_str().unwrap(), "scan");
     assert_eq!(detail["job"]["progress"]["percent"].as_u64().unwrap(), 60);
     assert!(
-        detail["job"]["progress"]["plannedCurrent"].is_null(),
-        "legacy progress should keep planned* absent"
+        detail["job"]["progress"]
+            .get("plannedCurrent")
+            .is_none(),
+        "legacy progress should keep plannedCurrent absent"
     );
     assert!(
-        detail["job"]["progress"]["plannedTotal"].is_null(),
-        "legacy progress should keep planned* absent"
+        detail["job"]["progress"]
+            .get("plannedTotal")
+            .is_none(),
+        "legacy progress should keep plannedTotal absent"
     );
     assert!(
-        detail["job"]["progress"]["plannedPercent"].is_null(),
-        "legacy progress should keep planned* absent"
+        detail["job"]["progress"]
+            .get("plannedPercent")
+            .is_none(),
+        "legacy progress should keep plannedPercent absent"
     );
     assert_eq!(
         detail["job"]["summary"]["progress"]["phase"]
@@ -938,16 +944,16 @@ async fn finish_job_preserves_existing_progress_when_summary_omits_progress() {
     assert_eq!(item["progress"]["phase"].as_str().unwrap(), "scan");
     assert_eq!(item["progress"]["percent"].as_u64().unwrap(), 60);
     assert!(
-        item["progress"]["plannedCurrent"].is_null(),
-        "legacy progress should keep planned* absent"
+        item["progress"].get("plannedCurrent").is_none(),
+        "legacy progress should keep plannedCurrent absent"
     );
     assert!(
-        item["progress"]["plannedTotal"].is_null(),
-        "legacy progress should keep planned* absent"
+        item["progress"].get("plannedTotal").is_none(),
+        "legacy progress should keep plannedTotal absent"
     );
     assert!(
-        item["progress"]["plannedPercent"].is_null(),
-        "legacy progress should keep planned* absent"
+        item["progress"].get("plannedPercent").is_none(),
+        "legacy progress should keep plannedPercent absent"
     );
 }
 
@@ -1045,6 +1051,93 @@ async fn jobs_endpoints_include_planned_progress_fields_and_invariants() {
 }
 
 #[tokio::test]
+async fn jobs_endpoints_preserve_explicit_null_planned_percent() {
+    let state = test_state(":memory:").await;
+    let app = api::router(state.clone());
+
+    let created_at = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    let job_id = ids::new_job_id();
+    let mut job = crate::api::types::JobRecord::new_running(
+        job_id.clone(),
+        crate::api::types::JobType::Update,
+        crate::api::types::JobScope::Stack,
+        Some("stack-prod".to_string()),
+        None,
+        &created_at,
+    )
+    .to_db();
+    job.created_by = "ivan".to_string();
+    job.reason = "ui".to_string();
+    state.db.insert_job(job).await.unwrap();
+
+    let progress = serde_json::json!({
+        "phase": "apply",
+        "message": "pulling image for web",
+        "current": 0,
+        "total": 1,
+        "percent": 15,
+        "plannedCurrent": 0,
+        "plannedTotal": 1,
+        "plannedPercent": null,
+        "currentTarget": "stack-prod",
+        "updatedAt": created_at,
+    });
+    state.db.set_job_progress(&job_id, &progress).await.unwrap();
+
+    let detail_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/jobs/{job_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail_resp.status(), 200);
+    let detail = response_json(detail_resp).await;
+    let detail_progress = &detail["job"]["progress"];
+    assert_eq!(detail_progress["plannedCurrent"].as_u64().unwrap(), 0);
+    assert_eq!(detail_progress["plannedTotal"].as_u64().unwrap(), 1);
+    assert!(
+        detail_progress
+            .get("plannedPercent")
+            .is_some_and(|v| v.is_null()),
+        "explicit null plannedPercent should survive detail serialization"
+    );
+
+    let list_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/jobs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_resp.status(), 200);
+    let list = response_json(list_resp).await;
+    let item = list["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|j| j["id"].as_str().unwrap() == job_id)
+        .cloned()
+        .expect("job not in list");
+    assert_eq!(item["progress"]["plannedCurrent"].as_u64().unwrap(), 0);
+    assert_eq!(item["progress"]["plannedTotal"].as_u64().unwrap(), 1);
+    assert!(
+        item["progress"]
+            .get("plannedPercent")
+            .is_some_and(|v| v.is_null()),
+        "explicit null plannedPercent should survive list serialization"
+    );
+}
+
+#[tokio::test]
 async fn jobs_events_stream_emits_job_event_for_new_event_log() {
     let state = test_state(":memory:").await;
     let app = api::router(state.clone());
@@ -1114,4 +1207,3 @@ async fn jobs_events_stream_emits_job_event_for_new_event_log() {
     assert_eq!(payload["jobId"].as_str().unwrap(), job_id);
     assert_eq!(payload["type"].as_str().unwrap(), "job_progress");
 }
-

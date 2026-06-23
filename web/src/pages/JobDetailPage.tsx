@@ -89,11 +89,18 @@ function normalizeProgress(input: JobProgress | null | undefined): JobProgress |
   // Frontend only sanitizes backend values; percent is never derived from current/total.
   const percentRaw = Number.isFinite(input.percent) ? input.percent : 0
   const percent = Math.max(0, Math.min(100, Math.round(percentRaw)))
+  const hasPlannedPercent = Object.prototype.hasOwnProperty.call(input, 'plannedPercent')
   const plannedTotalRaw = Number.isFinite(input.plannedTotal) ? Math.max(0, input.plannedTotal ?? 0) : total
   const plannedCurrentRaw = Number.isFinite(input.plannedCurrent) ? Math.max(0, input.plannedCurrent ?? 0) : current
   const plannedCurrent = Math.min(plannedCurrentRaw, plannedTotalRaw || plannedCurrentRaw)
-  const plannedPercentRaw = Number.isFinite(input.plannedPercent) ? input.plannedPercent : percent
-  const plannedPercent = Math.max(0, Math.min(100, Math.round(plannedPercentRaw ?? 0)))
+  const plannedPercent =
+    input.plannedPercent === null
+      ? null
+      : Number.isFinite(input.plannedPercent)
+        ? Math.max(0, Math.min(100, Math.round(input.plannedPercent ?? 0)))
+        : hasPlannedPercent
+          ? null
+          : percent
   return { ...input, current, total, percent, plannedCurrent, plannedTotal: plannedTotalRaw, plannedPercent }
 }
 
@@ -215,6 +222,11 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
             if (!parsed || typeof parsed !== 'object') return
             const p = parsed as Record<string, unknown>
             if (p.type !== 'job_progress') return
+            const plannedPercent = Object.prototype.hasOwnProperty.call(p, 'plannedPercent')
+              ? typeof p.plannedPercent === 'number'
+                ? p.plannedPercent
+                : null
+              : undefined
             const next = normalizeProgress({
               phase: typeof p.phase === 'string' ? p.phase : 'running',
               message: typeof p.message === 'string' ? p.message : '',
@@ -223,7 +235,7 @@ export function JobDetailPage(props: { jobId: string; onTopActions: (node: React
               percent: typeof p.percent === 'number' ? p.percent : 0,
               plannedCurrent: typeof p.plannedCurrent === 'number' ? p.plannedCurrent : null,
               plannedTotal: typeof p.plannedTotal === 'number' ? p.plannedTotal : null,
-              plannedPercent: typeof p.plannedPercent === 'number' ? p.plannedPercent : null,
+              ...(plannedPercent === undefined ? {} : { plannedPercent }),
               currentTarget: typeof p.currentTarget === 'string' ? p.currentTarget : null,
               updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : new Date().toISOString(),
             })

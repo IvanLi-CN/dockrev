@@ -341,26 +341,35 @@ pub(crate) async fn run_update_job(
             let progress_stack_id = stack_id.clone();
             let processed_stacks_for_progress = processed_stacks;
             let total_stacks_for_progress = total_stacks;
+            let progress_semantics =
+                if job_kind == TransitionJobKind::Update
+                    && matches!(req.scope.clone(), JobScope::Stack | JobScope::All)
+                {
+                    UpdateProgressSemantics::VerifiedOnlyBatch
+                } else {
+                    UpdateProgressSemantics::Legacy
+                };
             let progress_task = tokio::spawn(async move {
                 let mut last_percent = update_progress_percent(
                     processed_stacks_for_progress,
                     total_stacks_for_progress,
                     UPDATE_STACK_BASE_PROGRESS,
                 );
+                let mut last_planned_percent = Some(Some(last_percent));
                 let mut last_emit = std::time::Instant::now()
                     .checked_sub(Duration::from_secs(5))
                     .unwrap_or_else(std::time::Instant::now);
 
                 while let Some(evt) = progress_rx.recv().await {
-                    let apply_fraction = update_apply_fraction(&evt);
-                    let stack_fraction =
-                        UPDATE_STACK_BASE_PROGRESS + UPDATE_STACK_APPLY_SPAN * apply_fraction;
-                    let next_percent = update_progress_percent(
+                    let snapshot = update_progress_snapshot(
+                        &evt,
+                        progress_semantics,
                         processed_stacks_for_progress,
                         total_stacks_for_progress,
-                        stack_fraction,
-                    )
-                    .max(last_percent);
+                        last_percent,
+                    );
+                    let next_percent = snapshot.percent;
+                    let next_planned_percent = snapshot.planned_percent;
 
                     let force_emit = matches!(
                         evt.step,
@@ -372,8 +381,11 @@ pub(crate) async fn run_update_job(
                             | updater::UpdateProgressStep::SyncTagDone
                             | updater::UpdateProgressStep::PullTagsDone
                             | updater::UpdateProgressStep::ServiceDone
-                    );
+                    ) || (progress_semantics == UpdateProgressSemantics::VerifiedOnlyBatch
+                        && matches!(evt.step, updater::UpdateProgressStep::PullStart));
+                    let planned_changed = next_planned_percent != last_planned_percent;
                     let should_emit = force_emit
+                        || planned_changed
                         || next_percent > last_percent
                         || last_emit.elapsed() >= Duration::from_millis(600);
                     if !should_emit {
@@ -381,6 +393,7 @@ pub(crate) async fn run_update_job(
                     }
 
                     last_percent = next_percent;
+                    last_planned_percent = next_planned_percent;
                     last_emit = std::time::Instant::now();
                     let updated_at = now_rfc3339()
                         .unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
@@ -389,7 +402,7 @@ pub(crate) async fn run_update_job(
                     } else {
                         format!("{} · {}", evt.service_name, evt.message)
                     };
-                    let progress = make_job_progress_with_percent(
+                    let progress = make_job_progress_with_optional_plan(
                         "apply",
                         progress_message,
                         processed_stacks_for_progress,
@@ -397,6 +410,9 @@ pub(crate) async fn run_update_job(
                         Some(progress_stack_id.clone()),
                         updated_at,
                         next_percent,
+                        Some(processed_stacks_for_progress),
+                        Some(total_stacks_for_progress),
+                        next_planned_percent,
                     );
                     if let Err(e) =
                         persist_job_progress(&progress_state, &progress_job_id, &progress).await

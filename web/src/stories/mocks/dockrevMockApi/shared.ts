@@ -82,6 +82,7 @@ export type DockrevApiScenario =
   | 'queue-progress-smoothing'
   | 'queue-health-rollback'
   | 'queue-legacy-progress'
+  | 'queue-update-indeterminate'
   | 'queue-long-logs'
   | 'settings-configured'
   | 'settings-configured-load-slow'

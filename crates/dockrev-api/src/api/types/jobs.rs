@@ -1,4 +1,44 @@
+use std::fmt;
+
 use super::*;
+
+fn deserialize_planned_percent<'de, D>(deserializer: D) -> Result<Option<Option<u32>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct PlannedPercentVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for PlannedPercentVisitor {
+        type Value = Option<Option<u32>>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a planned percent number or null")
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(Some(None))
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(Some(None))
+        }
+
+        fn visit_some<D2>(self, deserializer: D2) -> Result<Self::Value, D2::Error>
+        where
+            D2: serde::Deserializer<'de>,
+        {
+            u32::deserialize(deserializer).map(|value| Some(Some(value)))
+        }
+    }
+
+    deserializer.deserialize_option(PlannedPercentVisitor)
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -300,9 +340,13 @@ pub struct JobProgress {
     /// Planned/scheduled total units. Defaults to total when omitted by old producers.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub planned_total: Option<u32>,
-    /// Planned/scheduled percent. Defaults to percent when omitted by old producers.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub planned_percent: Option<u32>,
+    /// Planned/scheduled percent. `None` keeps legacy records omitted; `Some(None)` emits explicit null.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_planned_percent",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub planned_percent: Option<Option<u32>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_target: Option<String>,
     pub updated_at: String,
