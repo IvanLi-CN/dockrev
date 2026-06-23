@@ -4,11 +4,20 @@ fn evt(
     step: updater::UpdateProgressStep,
     pull_fraction: Option<f64>,
 ) -> updater::UpdateProgressEvent {
+    evt_with_index(step, pull_fraction, 0, 2)
+}
+
+fn evt_with_index(
+    step: updater::UpdateProgressStep,
+    pull_fraction: Option<f64>,
+    service_index: u32,
+    service_total: u32,
+) -> updater::UpdateProgressEvent {
     updater::UpdateProgressEvent {
         step,
         service_name: "web".to_string(),
-        service_index: 0,
-        service_total: 2,
+        service_index,
+        service_total,
         pull_fraction,
         message: "mock".to_string(),
     }
@@ -49,6 +58,35 @@ fn batch_update_progress_stays_verified_only_until_pull_has_evidence() {
     assert_eq!(
         pull_progress.planned_percent,
         Some(Some(pull_progress.percent))
+    );
+}
+
+#[test]
+fn batch_pull_progress_does_not_jump_with_later_service_indexes() {
+    let last_percent = update_progress_percent(0, 1, UPDATE_STACK_BASE_PROGRESS);
+
+    let first_service_progress = update_progress_snapshot(
+        &evt_with_index(updater::UpdateProgressStep::PullProgress, Some(0.5), 0, 3),
+        UpdateProgressSemantics::VerifiedOnlyBatch,
+        0,
+        1,
+        last_percent,
+    );
+    let later_service_progress = update_progress_snapshot(
+        &evt_with_index(updater::UpdateProgressStep::PullProgress, Some(0.5), 2, 3),
+        UpdateProgressSemantics::VerifiedOnlyBatch,
+        0,
+        1,
+        last_percent,
+    );
+
+    assert_eq!(
+        first_service_progress.percent,
+        later_service_progress.percent
+    );
+    assert_eq!(
+        first_service_progress.planned_percent,
+        later_service_progress.planned_percent
     );
 }
 

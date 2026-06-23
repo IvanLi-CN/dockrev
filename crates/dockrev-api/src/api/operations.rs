@@ -219,6 +219,16 @@ pub(super) fn update_progress_snapshot(
 
     let next_percent = match evt.step {
         S::ServiceStart | S::PullStart => last_percent,
+        S::PullProgress => {
+            let pull_fraction = evt.pull_fraction.unwrap_or(0.0).clamp(0.0, 1.0);
+            update_progress_percent(
+                processed_stacks,
+                total_stacks,
+                UPDATE_STACK_BASE_PROGRESS
+                    + UPDATE_STACK_APPLY_SPAN * (0.08 + 0.42 * pull_fraction),
+            )
+            .max(last_percent)
+        }
         _ => update_progress_percent(
             processed_stacks,
             total_stacks,
