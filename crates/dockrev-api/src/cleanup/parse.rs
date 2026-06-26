@@ -1,3 +1,5 @@
+use ring::digest::{SHA256, digest};
+
 use super::*;
 
 pub(super) fn ensure_success(ctx: &str, out: &CommandOutput) -> anyhow::Result<()> {

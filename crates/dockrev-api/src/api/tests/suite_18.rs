@@ -295,12 +295,13 @@ services:
     let inserted = state.cleanup_snapshot_worker.enqueue().await;
     assert!(inserted);
     for _ in 0..200 {
-        if runner.stale_generation() >= 2 {
+        if runner.stale_generation() >= 2 && !state.cleanup_snapshot_worker.is_running() {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     assert_eq!(runner.stale_generation(), 2);
+    assert!(!state.cleanup_snapshot_worker.is_running());
 
     let apply_resp = app
         .oneshot(
