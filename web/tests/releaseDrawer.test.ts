@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import type { ServiceGitHubReleaseLocateResponse, ServiceGitHubReleasesResponse } from '../src/api'
 import {
   applyLocatePreloadFailure,
+  buildReleaseLocateFailureFromListResponse,
   buildReleaseLocateNotFoundResponse,
   RELEASE_DRAWER_LOCATE_LIMIT,
   shouldContinueReleaseLocateSearch,
@@ -143,6 +144,32 @@ describe('release drawer locate bounds', () => {
       indexWithinPage: null,
       absoluteIndex: null,
       message: '在前 32 条发布记录中未找到 9.9.9。',
+    })
+  })
+
+  test('preserves first-page permission failure for locate banner state', () => {
+    const listResponse: ServiceGitHubReleasesResponse = {
+      status: 'permissionDenied',
+      authMode: 'anonymous',
+      repo: null,
+      page: 1,
+      perPage: 20,
+      hasMore: false,
+      items: [],
+      message: '需要 GitHub PAT 才能读取这个私有仓库。',
+    }
+
+    expect(buildReleaseLocateFailureFromListResponse(listResponse, '1.39.5')).toEqual({
+      status: 'permissionDenied',
+      authMode: 'anonymous',
+      repo: null,
+      version: '1.39.5',
+      searchedCount: 0,
+      matchedTag: null,
+      page: null,
+      indexWithinPage: null,
+      absoluteIndex: null,
+      message: '需要 GitHub PAT 才能读取这个私有仓库。',
     })
   })
 })

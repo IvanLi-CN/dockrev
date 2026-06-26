@@ -41,6 +41,25 @@ export function applyLocatePreloadFailure(
   }
 }
 
+export function buildReleaseLocateFailureFromListResponse(
+  listResponse: ServiceGitHubReleasesResponse | null,
+  version: string,
+  searchedCount = 0,
+): ServiceGitHubReleaseLocateResponse {
+  return {
+    status: locateStatusFromListStatus(listResponse?.status ?? 'upstreamError'),
+    authMode: listResponse?.authMode ?? 'anonymous',
+    repo: listResponse?.repo ?? null,
+    version,
+    searchedCount,
+    matchedTag: null,
+    page: null,
+    indexWithinPage: null,
+    absoluteIndex: null,
+    message: listResponse?.message?.trim() || 'GitHub Releases 拉取失败，请稍后重试。',
+  }
+}
+
 export function shouldContinueReleaseLocateSearch(
   response: ServiceGitHubReleasesResponse | null,
   searchedCount: number,

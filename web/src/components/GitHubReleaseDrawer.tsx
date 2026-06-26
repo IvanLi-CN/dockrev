@@ -12,6 +12,7 @@ import {
   type ServiceGitHubReleasesStatus,
 } from '../api'
 import {
+  buildReleaseLocateFailureFromListResponse,
   buildReleaseLocateNotFoundResponse,
   RELEASE_DRAWER_LOCATE_LIMIT,
   shouldContinueReleaseLocateSearch,
@@ -131,24 +132,6 @@ function buildListFailureResponse(
     perPage,
     hasMore: false,
     items: [],
-    message: fallbackReleaseErrorMessage(error),
-  }
-}
-
-function buildLocateFailureResponse(
-  error: unknown,
-  version: string,
-): ServiceGitHubReleaseLocateResponse {
-  return {
-    status: 'upstreamError',
-    authMode: 'anonymous',
-    repo: null,
-    version,
-    searchedCount: 0,
-    matchedTag: null,
-    page: null,
-    indexWithinPage: null,
-    absoluteIndex: null,
     message: fallbackReleaseErrorMessage(error),
   }
 }
@@ -304,6 +287,9 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
     ): Promise<ServiceGitHubReleaseLocateResponse | null> => {
       let response = initialResponse
       let searchedCount = 0
+      if (response && response.status !== 'ready') {
+        return buildReleaseLocateFailureFromListResponse(response, version, searchedCount)
+      }
       while (response && response.status === 'ready') {
         const remainingBudget = RELEASE_DRAWER_LOCATE_LIMIT - searchedCount
         if (remainingBudget <= 0) {
@@ -334,7 +320,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
         const nextResponse = await fetchPage(expectedSession, targetServiceId, nextPage)
         if (!nextResponse) return null
         if (nextResponse.status !== 'ready') {
-          return buildLocateFailureResponse(new Error(nextResponse.message ?? 'load failed'), version)
+          return buildReleaseLocateFailureFromListResponse(nextResponse, version, searchedCount)
         }
         response = nextResponse
       }
