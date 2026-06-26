@@ -100,7 +100,7 @@ Environment variables (API):
 - `DOCKREV_DB_PATH` (default `./data/dockrev.sqlite3`)
 - `DOCKREV_DOCKER_CONFIG` (optional) path to a Docker `config.json`; Dockrev stages it into a temporary Docker CLI config directory for update-job `docker compose` / `docker pull` auth, and also copies Docker context metadata (`contexts/`) when the configured path is a real `config.json`
 - `DOCKREV_COMPOSE_BIN` (default `docker-compose`; set to `docker` to use the plugin)
-- `DOCKREV_DEPLOY_CHECK_LOCAL_COMMAND_TIMEOUT_SECONDS` (default `12`; must be `>= 1`) timeout for local `docker info` / `compose version` probes used by `GET /api/deploy-check/report`
+- `DOCKREV_DEPLOY_CHECK_LOCAL_COMMAND_TIMEOUT_SECONDS` (default `8`; must be `>= 1`) timeout for local `docker info` / `compose version` probes used by `GET /api/deploy-check/report`
 - `DOCKREV_AUTH_FORWARD_HEADER_NAME` (default `X-Forwarded-User`) trusted Forward Auth user header
 - `DOCKREV_AUTH_GROUP_HEADER_NAME` (default `Remote-Groups`) trusted Forward Auth group header
 - `DOCKREV_AUTH_ALLOWED_USER` (optional) single allowed user for Dockrev authorization

@@ -42,6 +42,10 @@ fn default_cleanup_scope_all() -> CleanupScope {
     CleanupScope::All
 }
 
+fn default_cleanup_scan_refresh() -> bool {
+    true
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum CleanupResourceKind {
@@ -90,6 +94,8 @@ impl CleanupApplyReason {
 pub struct CleanupScanRequest {
     pub reason: CleanupScanReason,
     pub preset: CleanupPreset,
+    #[serde(default = "default_cleanup_scan_refresh")]
+    pub refresh: bool,
     #[serde(default = "default_cleanup_scope_all")]
     pub scope: CleanupScope,
     #[serde(default)]
@@ -115,6 +121,13 @@ pub struct CleanupApplyRequest {
 #[serde(rename_all = "camelCase")]
 pub struct CleanupApplyResponse {
     pub job_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CleanupScanStatus {
+    Pending,
+    Ready,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -183,18 +196,87 @@ pub struct CleanupUnownedGroup {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CleanupScanResponse {
+    pub status: CleanupScanStatus,
     pub reason: CleanupScanReason,
     pub preset: CleanupPreset,
     pub scope: CleanupScope,
-    pub scanned_at: String,
-    pub estimated_reclaimable_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scanned_at: Option<String>,
+    #[serde(default)]
+    pub refreshing: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_reclaimable_bytes: Option<u64>,
     #[serde(default)]
     pub has_unknown_size: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_disk_usage: Option<CleanupServerDiskUsage>,
+    #[serde(default)]
     pub stack_groups: Vec<CleanupStackGroup>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unowned_group: Option<CleanupUnownedGroup>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub confirmation_fingerprint: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupInventorySnapshot {
+    pub scanned_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_disk_usage: Option<CleanupServerDiskUsage>,
+    pub candidates: Vec<CleanupInventoryCandidate>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupInventoryCandidate {
+    pub key: String,
+    pub resource_id: String,
+    pub kind: CleanupResourceKind,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_reclaimable_bytes: Option<u64>,
+    #[serde(default)]
+    pub estimate_unknown: bool,
+    #[serde(default)]
+    pub requires_ephemeral_confirmation: bool,
+    pub ownership: CleanupInventoryOwnership,
+    pub category: CleanupInventoryCategory,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CleanupInventoryOwnershipType {
+    Service,
+    StackOrphan,
+    Unowned,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupInventoryOwnership {
+    pub kind: CleanupInventoryOwnershipType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stack_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stack_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CleanupInventoryCategory {
+    StoppedContainer,
+    DanglingImage,
+    ManagedUnusedImage,
+    UnusedNetwork,
+    ManagedUnusedVolume,
+    GlobalUnusedImage,
+    GlobalUnusedVolume,
+    BuilderCache,
 }

@@ -1365,6 +1365,20 @@ CREATE TABLE IF NOT EXISTS image_digest_tags_snapshots (
   PRIMARY KEY (image_repo, digest, host_platform)
 );
 
+CREATE TABLE IF NOT EXISTS cleanup_inventory_snapshots (
+  snapshot_key TEXT PRIMARY KEY,
+  snapshot_json TEXT NOT NULL,
+  checked_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS deploy_check_report_snapshots (
+  snapshot_key TEXT PRIMARY KEY,
+  report_json TEXT NOT NULL,
+  checked_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS service_resource_samples (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,

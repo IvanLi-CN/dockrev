@@ -4,7 +4,6 @@ import type {
   StackListItem,
   StackSettings,
   ServiceSettings,
-  ServiceDigestTagsResponse,
   ServiceDigestTagsSnapshotResult,
   StackDetail,
   ServiceRepoLinkInferenceResponse,
@@ -15,7 +14,6 @@ import type {
   TriggerVersionInferenceRefreshResponse,
   NewVersionDiscoveryTimelineResponse,
   ServiceGitHubReleasesResponse,
-  ServiceGitHubReleaseLocateResponse,
   VersionInferenceOverviewResponse,
   GetVersionInferenceOverviewInput,
   JobListItem,
@@ -26,7 +24,7 @@ import type {
   ServiceResourceUsageWindow,
   ServiceResourceHistoryResponse,
   ServiceResourceOverviewResponse,
-  DeployCheckReportResponse,
+  DeployCheckReportEnvelope,
   DeployWelcomeResponse,
   CleanupScanRequest,
   CleanupApplyRequest,
@@ -276,11 +274,11 @@ export async function restoreService(serviceId: string) {
   await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/restore`, { method: 'POST', body: '{}' })
 }
 
-export async function listServiceDigestTags(serviceId: string, digest: string): Promise<ServiceDigestTagsResponse> {
+export async function listServiceDigestTags(serviceId: string, digest: string): Promise<ServiceDigestTagsSnapshotResult> {
   const resp = await apiFetch(
     `/api/services/${encodeURIComponent(serviceId)}/digest-tags?digest=${encodeURIComponent(digest)}`,
   )
-  return (await resp.json()) as ServiceDigestTagsResponse
+  return (await resp.json()) as ServiceDigestTagsSnapshotResult
 }
 
 export async function getServiceDigestTagsSnapshot(serviceId: string, digest: string): Promise<ServiceDigestTagsSnapshotResult> {
@@ -326,24 +324,6 @@ export async function getServiceGitHubReleases(
     `/api/services/${encodeURIComponent(serviceId)}/github-releases${query ? `?${query}` : ''}`,
   )
   return (await resp.json()) as ServiceGitHubReleasesResponse
-}
-
-export async function locateServiceGitHubRelease(
-  serviceId: string,
-  input: { version: string; perPage?: number; limit?: number },
-): Promise<ServiceGitHubReleaseLocateResponse> {
-  const sp = new URLSearchParams()
-  sp.set('version', input.version)
-  if (typeof input.perPage === 'number' && Number.isFinite(input.perPage)) {
-    sp.set('perPage', String(Math.max(1, Math.round(input.perPage))))
-  }
-  if (typeof input.limit === 'number' && Number.isFinite(input.limit)) {
-    sp.set('limit', String(Math.max(1, Math.round(input.limit))))
-  }
-  const resp = await apiFetch(
-    `/api/services/${encodeURIComponent(serviceId)}/github-releases/locate?${sp.toString()}`,
-  )
-  return (await resp.json()) as ServiceGitHubReleaseLocateResponse
 }
 
 export async function getVersionInferenceOverview(
@@ -621,9 +601,17 @@ export async function putSettings(input: PutSettingsInput) {
   return (await resp.json()) as { ok: boolean }
 }
 
-export async function getDeployCheckReport(): Promise<DeployCheckReportResponse> {
+export async function getDeployCheckReport(): Promise<DeployCheckReportEnvelope> {
   const resp = await apiFetch('/api/deploy-check/report')
-  return (await resp.json()) as DeployCheckReportResponse
+  return (await resp.json()) as DeployCheckReportEnvelope
+}
+
+export async function refreshDeployCheckReport(): Promise<DeployCheckReportEnvelope> {
+  const resp = await apiFetch('/api/deploy-check/report/refresh', {
+    method: 'POST',
+    body: '{}',
+  })
+  return (await resp.json()) as DeployCheckReportEnvelope
 }
 
 export async function getDeployWelcome(): Promise<DeployWelcomeResponse> {

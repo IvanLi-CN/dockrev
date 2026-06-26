@@ -429,10 +429,13 @@ export function buildCleanupMockScanResponse(
 
   const allResources = [...stackGroups.flatMap((stack) => [...stack.stackOrphans, ...stack.services.flatMap((service) => service.resources)]), ...unowned]
   return {
+    status: 'ready',
     reason: request.reason,
     preset: request.preset,
     scope: request.scope,
     scannedAt: fixture.scannedAt,
+    refreshing: false,
+    retryAfterMs: null,
     estimatedReclaimableBytes: sumKnown(allResources),
     hasUnknownSize: allResources.some(itemHasUnknown),
     serverDiskUsage: {

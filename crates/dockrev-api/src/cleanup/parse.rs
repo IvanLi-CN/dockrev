@@ -245,6 +245,106 @@ fn normalize_parent_list(value: &serde_json::Value) -> serde_json::Value {
     )
 }
 
+pub(super) async fn resolve_volume_fingerprint_with_runner(
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+    volume: &DockerVolumeInspect,
+) -> Option<String> {
+    if let Some(labels) = volume.labels.as_ref() {
+        let project = labels
+            .get("com.docker.compose.project")
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+        let volume_name = labels
+            .get("com.docker.compose.volume")
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+        if let (Some(project), Some(volume_name)) = (project, volume_name) {
+            return Some(format!("volume:{project}:{volume_name}"));
+        }
+    }
+    if let Some(created_at) = volume
+        .created_at
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(format!("volume:{}:{}", volume.name, created_at));
+    }
+    let mountpoint = volume.mountpoint.as_deref()?.trim();
+    if mountpoint.is_empty() {
+        return Some(format!("volume:{}", volume.name));
+    }
+    let size = scan_volume_size_from_mountpoint_with_runner(runner, mountpoint).await;
+    Some(format!(
+        "volume:{}:{}",
+        volume.name,
+        size.map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ))
+}
+
+pub(super) async fn scan_volume_sizes_from_system_df_with_runner(
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+) -> BTreeMap<String, u64> {
+    let out = runner
+        .run(
+            CommandSpec {
+                program: "docker".to_string(),
+                args: vec!["system".to_string(), "df".to_string(), "-v".to_string()],
+                env: Vec::new(),
+            },
+            DOCKER_TIMEOUT,
+        )
+        .await;
+    match out {
+        Ok(output) if output.status == 0 => {
+            parse_volume_sizes_from_system_df_verbose(&output.stdout)
+        }
+        _ => BTreeMap::new(),
+    }
+}
+
+pub(super) async fn scan_volume_size_from_mountpoint_with_runner(
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+    mountpoint: &str,
+) -> Option<u64> {
+    let out = runner
+        .run(
+            CommandSpec {
+                program: "du".to_string(),
+                args: vec!["-sk".to_string(), mountpoint.to_string()],
+                env: Vec::new(),
+            },
+            DOCKER_TIMEOUT,
+        )
+        .await
+        .ok()?;
+    if out.status != 0 {
+        return None;
+    }
+    parse_du_kilobytes_output(&out.stdout)
+}
+
+pub(super) async fn scan_server_disk_usage_with_runner(
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+) -> Option<(u64, u64)> {
+    let out = runner
+        .run(
+            CommandSpec {
+                program: "df".to_string(),
+                args: vec!["-B1".to_string(), ".".to_string()],
+                env: Vec::new(),
+            },
+            DOCKER_TIMEOUT,
+        )
+        .await
+        .ok()?;
+    if out.status != 0 {
+        return None;
+    }
+    parse_df_bytes_output(&out.stdout)
+}
+
 fn parse_buildx_text_inventory_record(line: &str) -> Option<String> {
     let mut columns = line.split_whitespace();
     let id = columns.next()?;

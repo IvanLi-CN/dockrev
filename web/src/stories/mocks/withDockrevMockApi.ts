@@ -17,6 +17,8 @@ export const withDockrevMockApi: Decorator = (Story, context) => {
     githubReleasesByServiceId: context.parameters?.dockrevGitHubReleasesByServiceId,
     serviceOverridesById: context.parameters?.dockrevServiceOverridesById,
     serviceTagSuggestionsById: context.parameters?.dockrevServiceTagSuggestionsById,
+    deployCheckReportOverride: context.parameters?.dockrevDeployCheckReportOverride,
+    deployWelcomeOverride: context.parameters?.dockrevDeployWelcomeOverride,
   } satisfies DockrevMockApiOptions
   window.localStorage.removeItem(HOMEPAGE_NAV_SNAPSHOT_KEY)
   window.localStorage.removeItem(HOMEPAGE_RESOURCE_SUMMARY_KEY)

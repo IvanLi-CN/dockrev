@@ -1170,22 +1170,11 @@ services:
     let app = api::router(state.clone());
     let before_jobs = state.db.list_jobs().await.unwrap().len();
 
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/deploy-check/report")
-                .header("X-Forwarded-User", "ops")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let body = response_json(resp).await;
-    assert_eq!(body["overall"]["result"], "pass");
-    assert_eq!(body["overall"]["blockingCheckIds"], serde_json::json!([]));
-    let checks = body["checks"].as_array().unwrap();
+    let body = wait_for_deploy_check_report_ready(&app, Some("ops")).await;
+    assert_eq!(body["status"], "ready");
+    assert_eq!(body["report"]["overall"]["result"], "pass");
+    assert_eq!(body["report"]["overall"]["blockingCheckIds"], serde_json::json!([]));
+    let checks = body["report"]["checks"].as_array().unwrap();
     assert!(checks.iter().any(|c| c["id"] == "core.docker_engine"));
     assert!(checks.iter().any(|c| c["id"] == "core.compose_access"));
     assert!(
@@ -1244,20 +1233,10 @@ services:
         .unwrap();
 
     let app = api::router(state.clone());
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/deploy-check/report")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let body = response_json(resp).await;
-    assert_eq!(body["overall"]["result"], "fail");
-    let blocking = body["overall"]["blockingCheckIds"]
+    let body = wait_for_deploy_check_report_ready(&app, None).await;
+    assert_eq!(body["status"], "ready");
+    assert_eq!(body["report"]["overall"]["result"], "fail");
+    let blocking = body["report"]["overall"]["blockingCheckIds"]
         .as_array()
         .unwrap()
         .iter()
@@ -1295,20 +1274,10 @@ services:
         .unwrap();
 
     let app = api::router(state.clone());
-    let resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/deploy-check/report")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let body = response_json(resp).await;
-    assert_eq!(body["overall"]["result"], "fail");
-    let blocking = body["overall"]["blockingCheckIds"]
+    let body = wait_for_deploy_check_report_ready(&app, None).await;
+    assert_eq!(body["status"], "ready");
+    assert_eq!(body["report"]["overall"]["result"], "fail");
+    let blocking = body["report"]["overall"]["blockingCheckIds"]
         .as_array()
         .unwrap()
         .iter()

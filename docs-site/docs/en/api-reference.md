@@ -40,7 +40,7 @@ This page documents every HTTP route exposed in:
 | POST | `/api/stacks/{stack_id}/restore` | Forward Auth | Restore stack | `200` `404` `401` |
 | POST | `/api/services/{service_id}/archive` | Forward Auth | Archive service | `200` `404` `401` |
 | POST | `/api/services/{service_id}/restore` | Forward Auth | Restore service | `200` `404` `401` |
-| GET | `/api/services/{service_id}/digest-tags` | Forward Auth | Fetch digest-to-tags mapping | `200` `404` `401` |
+| GET | `/api/services/{service_id}/digest-tags` | Forward Auth | Fetch the digest-tags debug view (now snapshot-backed; returns `202 pending` while the snapshot is missing or refreshing) | `200` `202` `404` `401` |
 | GET | `/api/services/{service_id}/digest-tags-snapshot` | Forward Auth | Fetch digest-tag snapshot (`202 pending` while the target digest is refreshing) | `200` `202` `404` `401` |
 | POST | `/api/services/{service_id}/version-inference/refresh` | Forward Auth | Trigger digest-scoped version inference refresh (`digest` body required) | `202` `400` `404` `401` |
 | GET | `/api/version-inference/overview` | Forward Auth | Version inference overview | `200` `401` |
@@ -115,7 +115,8 @@ This page documents every HTTP route exposed in:
 | DELETE | `/api/web-push/subscriptions` | Forward Auth | Delete web push subscription | `200` `400` `401` |
 | POST | `/api/webhooks/trigger` | Webhook Secret | External trigger for check/update jobs (`action=update` requires explicit `targets[]`) | `200` `400` `401` |
 | POST | `/api/webhooks/github-packages` | GitHub Signature | Receive GH package webhooks and enqueue matching `check.service` jobs, or one discovery fallback when nothing matches | `200` `202` `400` `401` |
-| GET | `/api/deploy-check/report` | Forward Auth | Deployment preflight report; anonymous or non-matching identities receive Dockrev-generated `401 auth_required` | `200` `401` |
+| GET | `/api/deploy-check/report` | Forward Auth | Fetch the deploy-check report snapshot; cached responses may include `refreshing=true`, and cache-miss / not-ready states return `202 pending` | `200` `202` `401` |
+| POST | `/api/deploy-check/report/refresh` | Forward Auth | Enqueue a deploy-check report refresh and return a `pending` envelope | `202` `401` |
 | GET | `/api/deploy-welcome` | Forward Auth | Get deploy welcome status | `200` `401` |
 | PUT | `/api/deploy-welcome` | Forward Auth | Update deploy welcome status | `200` `400` `401` |
 

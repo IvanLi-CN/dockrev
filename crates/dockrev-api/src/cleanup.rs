@@ -7,11 +7,13 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::api::types::{
-    CleanupPreset, CleanupResourceItem, CleanupResourceKind, CleanupScanReason, CleanupScanRequest,
-    CleanupScanResponse, CleanupScope, CleanupServerDiskUsage, CleanupServiceGroup,
+    CleanupInventoryCandidate, CleanupInventoryCategory, CleanupInventoryOwnership,
+    CleanupInventoryOwnershipType, CleanupInventorySnapshot, CleanupPreset, CleanupResourceItem,
+    CleanupResourceKind, CleanupScanReason, CleanupScanRequest, CleanupScanResponse,
+    CleanupScanStatus, CleanupScope, CleanupServerDiskUsage, CleanupServiceGroup,
     CleanupStackGroup, CleanupUnownedGroup, JobLogLine, JobProgress,
 };
-use crate::db::ArchivedFilter;
+use crate::db::{ArchivedFilter, Db};
 use crate::runner::{CommandOutput, CommandSpec};
 use crate::state::AppState;
 
@@ -21,8 +23,7 @@ mod parse;
 
 use parse::{
     ensure_success, fingerprint_hint_from_buildx_text_output, fingerprint_hint_from_output,
-    parse_buildx_du_json_lines, parse_buildx_du_text_summary, resolve_volume_fingerprint,
-    scan_server_disk_usage, scan_volume_size_from_mountpoint, scan_volume_sizes_from_system_df,
+    parse_buildx_du_json_lines, parse_buildx_du_text_summary,
 };
 
 #[derive(Clone, Debug)]
@@ -41,11 +42,14 @@ pub struct CleanupExecutionPlan {
 impl CleanupExecutionPlan {
     pub fn to_response(&self, reason: CleanupScanReason) -> CleanupScanResponse {
         CleanupScanResponse {
+            status: CleanupScanStatus::Ready,
             reason,
             preset: self.request.preset.clone(),
             scope: self.request.scope.clone(),
-            scanned_at: self.scanned_at.clone(),
-            estimated_reclaimable_bytes: self.estimated_reclaimable_bytes,
+            scanned_at: Some(self.scanned_at.clone()),
+            refreshing: false,
+            retry_after_ms: None,
+            estimated_reclaimable_bytes: Some(self.estimated_reclaimable_bytes),
             has_unknown_size: self.has_unknown_size,
             server_disk_usage: self.server_disk_usage.clone(),
             stack_groups: self.stack_groups.clone(),
@@ -104,31 +108,6 @@ enum CleanupOwnership {
         stack_name: String,
     },
     Unowned,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum CleanupCandidateCategory {
-    StoppedContainer,
-    DanglingImage,
-    ManagedUnusedImage,
-    UnusedNetwork,
-    ManagedUnusedVolume,
-    GlobalUnusedImage,
-    GlobalUnusedVolume,
-    BuilderCache,
-}
-
-#[derive(Clone, Debug)]
-struct CleanupCandidate {
-    key: String,
-    resource_id: String,
-    kind: CleanupResourceKind,
-    label: String,
-    estimated_reclaimable_bytes: Option<u64>,
-    estimate_unknown: bool,
-    requires_ephemeral_confirmation: bool,
-    ownership: CleanupOwnership,
-    category: CleanupCandidateCategory,
 }
 
 #[derive(Clone, Debug)]
@@ -279,15 +258,41 @@ pub async fn build_execution_plan(
     req: &CleanupScanRequest,
     scanned_at: &str,
 ) -> anyhow::Result<CleanupExecutionPlan> {
-    let managed = load_managed_context(state).await?;
-    let mut candidates = scan_candidates(state, &managed).await?;
-    if matches!(
-        req.preset,
-        CleanupPreset::Balanced | CleanupPreset::ProjectDeepClean | CleanupPreset::Aggressive
-    ) && let Some(builder_cache) = scan_builder_cache_candidate(state).await
-    {
+    let snapshot = build_inventory_snapshot(state.db.clone(), state.runner.clone()).await?;
+    build_execution_plan_from_snapshot(&snapshot, req, scanned_at)
+}
+
+pub async fn build_inventory_snapshot(
+    db: Db,
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+) -> anyhow::Result<CleanupInventorySnapshot> {
+    let managed = load_managed_context_from_db(&db).await?;
+    let mut candidates = scan_candidates(&runner, &db, &managed).await?;
+    if let Some(builder_cache) = scan_builder_cache_candidate(runner.clone()).await {
         candidates.push(builder_cache);
     }
+    let scanned_at = now_rfc3339()?;
+    let server_disk_usage = scan_server_disk_usage_with_runner(runner.clone())
+        .await
+        .map(CleanupServerDiskUsage::from);
+    Ok(CleanupInventorySnapshot {
+        scanned_at,
+        server_disk_usage,
+        candidates,
+    })
+}
+
+pub fn build_execution_plan_from_snapshot(
+    snapshot: &CleanupInventorySnapshot,
+    req: &CleanupScanRequest,
+    scanned_at: &str,
+) -> anyhow::Result<CleanupExecutionPlan> {
+    let candidates = snapshot
+        .candidates
+        .iter()
+        .cloned()
+        .map(candidate_from_snapshot)
+        .collect::<Vec<_>>();
 
     let request = CleanupPlanRequest {
         preset: req.preset.clone(),
@@ -303,9 +308,6 @@ pub async fn build_execution_plan(
 
     let (stack_groups, unowned_group, estimated_reclaimable_bytes, has_unknown_size) =
         build_grouped_response(&selected);
-    let server_disk_usage = scan_server_disk_usage(state)
-        .await
-        .map(CleanupServerDiskUsage::from);
     let confirmation_fingerprint = compute_confirmation_fingerprint(
         &request,
         &selected,
@@ -319,7 +321,7 @@ pub async fn build_execution_plan(
             kind: candidate.kind,
             resource_id: candidate.resource_id,
             label: candidate.label,
-            ownership: candidate.ownership,
+            ownership: execution_ownership_from_snapshot(&candidate.ownership),
         })
         .collect::<Vec<_>>();
 
@@ -328,7 +330,7 @@ pub async fn build_execution_plan(
         scanned_at: scanned_at.to_string(),
         estimated_reclaimable_bytes,
         has_unknown_size,
-        server_disk_usage,
+        server_disk_usage: snapshot.server_disk_usage.clone(),
         stack_groups,
         unowned_group,
         confirmation_fingerprint,
@@ -492,17 +494,21 @@ pub async fn run_cleanup_job(
 }
 
 async fn load_managed_context(state: &AppState) -> anyhow::Result<ManagedContext> {
-    let stack_rows = state.db.list_stacks(ArchivedFilter::Exclude).await?;
+    load_managed_context_from_db(&state.db).await
+}
+
+async fn load_managed_context_from_db(db: &Db) -> anyhow::Result<ManagedContext> {
+    let stack_rows = db.list_stacks(ArchivedFilter::Exclude).await?;
     let mut context = ManagedContext::default();
 
     for stack_row in stack_rows {
-        let Some(stack) = state.db.get_stack(&stack_row.id).await? else {
+        let Some(stack) = db.get_stack(&stack_row.id).await? else {
             continue;
         };
         if stack.archived {
             continue;
         }
-        let compose_project = state.db.get_stack_compose_project(&stack.id).await?;
+        let compose_project = db.get_stack_compose_project(&stack.id).await?;
         let stack_ref = ManagedStackRef {
             stack_id: stack.id.clone(),
             stack_name: stack.name.clone(),
@@ -545,14 +551,15 @@ async fn load_managed_context(state: &AppState) -> anyhow::Result<ManagedContext
 }
 
 async fn scan_candidates(
-    state: &AppState,
+    runner: &std::sync::Arc<dyn crate::runner::CommandRunner>,
+    db: &Db,
     managed: &ManagedContext,
-) -> anyhow::Result<Vec<CleanupCandidate>> {
-    let container_ids = docker_list_ids(state, vec!["container", "ls", "-aq"]).await?;
+) -> anyhow::Result<Vec<CleanupInventoryCandidate>> {
+    let container_ids = docker_list_ids(runner, vec!["container", "ls", "-aq"]).await?;
     let mut containers = Vec::<DockerContainerInspect>::new();
     for container_id in container_ids {
         let inspect = docker_inspect_json::<DockerContainerInspect>(
-            state,
+            runner,
             vec![
                 "inspect".to_string(),
                 "--size".to_string(),
@@ -578,7 +585,7 @@ async fn scan_candidates(
         .filter(|name| !name.is_empty())
         .collect::<BTreeSet<_>>();
 
-    let mut candidates = Vec::<CleanupCandidate>::new();
+    let mut candidates = Vec::<CleanupInventoryCandidate>::new();
 
     for container in &containers {
         if container.state.status.as_deref() == Some("running") {
@@ -592,7 +599,7 @@ async fn scan_candidates(
             .trim()
             .trim_start_matches('/')
             .to_string();
-        candidates.push(CleanupCandidate {
+        candidates.push(CleanupInventoryCandidate {
             key: format!("container:{}", container.id),
             resource_id: container.id.clone(),
             kind: CleanupResourceKind::Container,
@@ -605,19 +612,19 @@ async fn scan_candidates(
                 .and_then(|size| u64::try_from(size).ok())
                 .is_none(),
             requires_ephemeral_confirmation: false,
-            ownership: owner,
-            category: CleanupCandidateCategory::StoppedContainer,
+            ownership: snapshot_ownership(owner),
+            category: CleanupInventoryCategory::StoppedContainer,
         });
     }
 
-    let image_ids = docker_list_ids(state, vec!["image", "ls", "-aq", "--no-trunc"]).await?;
+    let image_ids = docker_list_ids(runner, vec!["image", "ls", "-aq", "--no-trunc"]).await?;
     let mut dedup_image_ids = BTreeSet::new();
     for image_id in image_ids {
         if !dedup_image_ids.insert(image_id.clone()) || used_image_ids.contains(&image_id) {
             continue;
         }
         let inspect = docker_inspect_json::<DockerImageInspect>(
-            state,
+            runner,
             vec![
                 "image".to_string(),
                 "inspect".to_string(),
@@ -631,14 +638,14 @@ async fn scan_candidates(
         let dangling = image_is_dangling(&inspect);
         let ownership = resolve_image_ownership(&inspect, &repos, managed);
         let category = if dangling {
-            CleanupCandidateCategory::DanglingImage
+            CleanupInventoryCategory::DanglingImage
         } else if matches!(ownership, CleanupOwnership::Unowned) {
-            CleanupCandidateCategory::GlobalUnusedImage
+            CleanupInventoryCategory::GlobalUnusedImage
         } else {
-            CleanupCandidateCategory::ManagedUnusedImage
+            CleanupInventoryCategory::ManagedUnusedImage
         };
         let label = preferred_image_label(&inspect);
-        candidates.push(CleanupCandidate {
+        candidates.push(CleanupInventoryCandidate {
             key: format!("image:{}", inspect.id),
             resource_id: inspect.id,
             kind: CleanupResourceKind::Image,
@@ -646,12 +653,12 @@ async fn scan_candidates(
             estimated_reclaimable_bytes: inspect.size,
             estimate_unknown: inspect.size.is_none(),
             requires_ephemeral_confirmation: false,
-            ownership,
+            ownership: snapshot_ownership(ownership),
             category,
         });
     }
 
-    let volume_names = docker_list_ids(state, vec!["volume", "ls", "-q"]).await?;
+    let volume_names = docker_list_ids(runner, vec!["volume", "ls", "-q"]).await?;
     let mut system_df_volume_sizes: Option<BTreeMap<String, u64>> = None;
     let mut dedup_volume_names = BTreeSet::new();
     for volume_name in volume_names {
@@ -661,7 +668,7 @@ async fn scan_candidates(
             continue;
         }
         let inspect = docker_inspect_json::<DockerVolumeInspect>(
-            state,
+            runner,
             vec![
                 "volume".to_string(),
                 "inspect".to_string(),
@@ -673,11 +680,11 @@ async fn scan_candidates(
         .await?;
         let ownership = resolve_volume_ownership(&inspect, managed);
         let category = if matches!(ownership, CleanupOwnership::Unowned) {
-            CleanupCandidateCategory::GlobalUnusedVolume
+            CleanupInventoryCategory::GlobalUnusedVolume
         } else {
-            CleanupCandidateCategory::ManagedUnusedVolume
+            CleanupInventoryCategory::ManagedUnusedVolume
         };
-        let volume_fingerprint = resolve_volume_fingerprint(state, &inspect).await;
+        let volume_fingerprint = resolve_volume_fingerprint_with_runner(runner, &inspect).await;
         if volume_fingerprint.is_none() {
             continue;
         }
@@ -685,7 +692,8 @@ async fn scan_candidates(
             inspect.usage_data.as_ref().and_then(|usage| usage.size);
         if estimated_reclaimable_bytes.is_none() {
             if system_df_volume_sizes.is_none() {
-                system_df_volume_sizes = Some(scan_volume_sizes_from_system_df(state).await);
+                system_df_volume_sizes =
+                    Some(scan_volume_sizes_from_system_df_with_runner(runner).await);
             }
             estimated_reclaimable_bytes = system_df_volume_sizes
                 .as_ref()
@@ -694,9 +702,10 @@ async fn scan_candidates(
         if estimated_reclaimable_bytes.is_none()
             && let Some(mountpoint) = inspect.mountpoint.as_deref()
         {
-            estimated_reclaimable_bytes = scan_volume_size_from_mountpoint(state, mountpoint).await;
+            estimated_reclaimable_bytes =
+                scan_volume_size_from_mountpoint_with_runner(runner, mountpoint).await;
         }
-        candidates.push(CleanupCandidate {
+        candidates.push(CleanupInventoryCandidate {
             key: volume_fingerprint.unwrap_or_else(|| format!("volume:{}", inspect.name)),
             resource_id: inspect.name.clone(),
             kind: CleanupResourceKind::Volume,
@@ -704,19 +713,19 @@ async fn scan_candidates(
             estimated_reclaimable_bytes,
             estimate_unknown: estimated_reclaimable_bytes.is_none(),
             requires_ephemeral_confirmation: false,
-            ownership,
+            ownership: snapshot_ownership(ownership),
             category,
         });
     }
 
-    let network_ids = docker_list_ids(state, vec!["network", "ls", "-q"]).await?;
+    let network_ids = docker_list_ids(runner, vec!["network", "ls", "-q"]).await?;
     let mut dedup_network_ids = BTreeSet::new();
     for network_id in network_ids {
         if !dedup_network_ids.insert(network_id.clone()) {
             continue;
         }
         let inspect = docker_inspect_json::<DockerNetworkInspect>(
-            state,
+            runner,
             vec![
                 "network".to_string(),
                 "inspect".to_string(),
@@ -729,7 +738,7 @@ async fn scan_candidates(
         if is_builtin_network(&inspect) || !inspect.containers.is_empty() {
             continue;
         }
-        candidates.push(CleanupCandidate {
+        candidates.push(CleanupInventoryCandidate {
             key: format!("network:{}", inspect.id),
             resource_id: inspect.id.clone(),
             kind: CleanupResourceKind::Network,
@@ -737,24 +746,28 @@ async fn scan_candidates(
             estimated_reclaimable_bytes: Some(0),
             estimate_unknown: false,
             requires_ephemeral_confirmation: false,
-            ownership: resolve_network_ownership(&inspect, managed),
-            category: CleanupCandidateCategory::UnusedNetwork,
+            ownership: snapshot_ownership(resolve_network_ownership(&inspect, managed)),
+            category: CleanupInventoryCategory::UnusedNetwork,
         });
     }
 
+    let _ = db;
     Ok(candidates)
 }
 
-async fn scan_builder_cache_candidate(state: &AppState) -> Option<CleanupCandidate> {
-    let estimate = scan_builder_cache_estimate(state)
-        .await
-        .unwrap_or(BuilderCacheEstimate {
-            reclaimable_bytes: None,
-            estimate_unknown: true,
-            fingerprint_hint: None,
-        });
+async fn scan_builder_cache_candidate(
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+) -> Option<CleanupInventoryCandidate> {
+    let estimate =
+        scan_builder_cache_estimate(runner.clone())
+            .await
+            .unwrap_or(BuilderCacheEstimate {
+                reclaimable_bytes: None,
+                estimate_unknown: true,
+                fingerprint_hint: None,
+            });
     let fingerprint_hint = estimate.fingerprint_hint?;
-    Some(CleanupCandidate {
+    Some(CleanupInventoryCandidate {
         key: format!("builder_cache:global:{fingerprint_hint}"),
         resource_id: "global-builder-cache".to_string(),
         kind: CleanupResourceKind::BuilderCache,
@@ -762,14 +775,21 @@ async fn scan_builder_cache_candidate(state: &AppState) -> Option<CleanupCandida
         estimated_reclaimable_bytes: estimate.reclaimable_bytes,
         estimate_unknown: estimate.estimate_unknown,
         requires_ephemeral_confirmation: false,
-        ownership: CleanupOwnership::Unowned,
-        category: CleanupCandidateCategory::BuilderCache,
+        ownership: CleanupInventoryOwnership {
+            kind: CleanupInventoryOwnershipType::Unowned,
+            stack_id: None,
+            stack_name: None,
+            service_id: None,
+            service_name: None,
+        },
+        category: CleanupInventoryCategory::BuilderCache,
     })
 }
 
-async fn scan_builder_cache_estimate(state: &AppState) -> Option<BuilderCacheEstimate> {
-    let json_out = state
-        .runner
+async fn scan_builder_cache_estimate(
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+) -> Option<BuilderCacheEstimate> {
+    let json_out = runner
         .run(
             CommandSpec {
                 program: "docker".to_string(),
@@ -795,7 +815,7 @@ async fn scan_builder_cache_estimate(state: &AppState) -> Option<BuilderCacheEst
                 ..estimate
             });
         }
-        if let Some(summary_estimate) = scan_builder_cache_text_summary(state).await
+        if let Some(summary_estimate) = scan_builder_cache_text_summary(runner.clone()).await
             && summary_estimate.reclaimable_bytes.unwrap_or_default()
                 >= estimate.reclaimable_bytes.unwrap_or_default()
         {
@@ -811,12 +831,13 @@ async fn scan_builder_cache_estimate(state: &AppState) -> Option<BuilderCacheEst
         });
     }
 
-    scan_builder_cache_text_summary(state).await
+    scan_builder_cache_text_summary(runner).await
 }
 
-async fn scan_builder_cache_text_summary(state: &AppState) -> Option<BuilderCacheEstimate> {
-    let out = state
-        .runner
+async fn scan_builder_cache_text_summary(
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+) -> Option<BuilderCacheEstimate> {
+    let out = runner
         .run(
             CommandSpec {
                 program: "docker".to_string(),
@@ -998,68 +1019,68 @@ fn is_builtin_network(network: &DockerNetworkInspect) -> bool {
         || matches!(network.driver.as_deref(), Some("host" | "null"))
 }
 
-fn candidate_matches_request(candidate: &CleanupCandidate, request: &CleanupPlanRequest) -> bool {
+fn candidate_matches_request(
+    candidate: &CleanupInventoryCandidate,
+    request: &CleanupPlanRequest,
+) -> bool {
     if !preset_includes_candidate(&request.preset, &candidate.category) {
         return false;
     }
 
     match request.scope {
         CleanupScope::All => match candidate.category {
-            CleanupCandidateCategory::BuilderCache => true,
+            CleanupInventoryCategory::BuilderCache => true,
             _ => true,
         },
-        CleanupScope::Stack => match &candidate.ownership {
-            CleanupOwnership::Service { stack_id, .. }
-            | CleanupOwnership::StackOrphan { stack_id, .. } => {
-                Some(stack_id.as_str()) == request.stack_id.as_deref()
+        CleanupScope::Stack => match candidate.ownership.kind {
+            CleanupInventoryOwnershipType::Service | CleanupInventoryOwnershipType::StackOrphan => {
+                candidate.ownership.stack_id.as_deref() == request.stack_id.as_deref()
             }
-            CleanupOwnership::Unowned => false,
+            CleanupInventoryOwnershipType::Unowned => false,
         },
-        CleanupScope::Service => match &candidate.ownership {
-            CleanupOwnership::Service {
-                stack_id,
-                service_id,
-                ..
-            } => {
-                Some(stack_id.as_str()) == request.stack_id.as_deref()
-                    && Some(service_id.as_str()) == request.service_id.as_deref()
+        CleanupScope::Service => match candidate.ownership.kind {
+            CleanupInventoryOwnershipType::Service => {
+                candidate.ownership.stack_id.as_deref() == request.stack_id.as_deref()
+                    && candidate.ownership.service_id.as_deref() == request.service_id.as_deref()
             }
-            CleanupOwnership::StackOrphan { .. } | CleanupOwnership::Unowned => false,
+            CleanupInventoryOwnershipType::StackOrphan | CleanupInventoryOwnershipType::Unowned => {
+                false
+            }
         },
     }
 }
 
-fn preset_includes_candidate(preset: &CleanupPreset, category: &CleanupCandidateCategory) -> bool {
+fn preset_includes_candidate(preset: &CleanupPreset, category: &CleanupInventoryCategory) -> bool {
     match preset {
         CleanupPreset::Conservative => matches!(
             category,
-            CleanupCandidateCategory::StoppedContainer
-                | CleanupCandidateCategory::DanglingImage
-                | CleanupCandidateCategory::UnusedNetwork
+            CleanupInventoryCategory::StoppedContainer
+                | CleanupInventoryCategory::DanglingImage
+                | CleanupInventoryCategory::UnusedNetwork
         ),
         CleanupPreset::Balanced => matches!(
             category,
-            CleanupCandidateCategory::StoppedContainer
-                | CleanupCandidateCategory::DanglingImage
-                | CleanupCandidateCategory::UnusedNetwork
-                | CleanupCandidateCategory::ManagedUnusedImage
-                | CleanupCandidateCategory::BuilderCache
+            CleanupInventoryCategory::StoppedContainer
+                | CleanupInventoryCategory::DanglingImage
+                | CleanupInventoryCategory::UnusedNetwork
+                | CleanupInventoryCategory::ManagedUnusedImage
+                | CleanupInventoryCategory::BuilderCache
         ),
         CleanupPreset::ProjectDeepClean => matches!(
             category,
-            CleanupCandidateCategory::StoppedContainer
-                | CleanupCandidateCategory::DanglingImage
-                | CleanupCandidateCategory::UnusedNetwork
-                | CleanupCandidateCategory::ManagedUnusedImage
-                | CleanupCandidateCategory::ManagedUnusedVolume
-                | CleanupCandidateCategory::BuilderCache
+            CleanupInventoryCategory::StoppedContainer
+                | CleanupInventoryCategory::DanglingImage
+                | CleanupInventoryCategory::UnusedNetwork
+                | CleanupInventoryCategory::ManagedUnusedImage
+                | CleanupInventoryCategory::ManagedUnusedVolume
+                | CleanupInventoryCategory::BuilderCache
         ),
         CleanupPreset::Aggressive => true,
     }
 }
 
 fn build_grouped_response(
-    candidates: &[CleanupCandidate],
+    candidates: &[CleanupInventoryCandidate],
 ) -> (
     Vec<CleanupStackGroup>,
     Option<CleanupUnownedGroup>,
@@ -1095,15 +1116,14 @@ fn build_grouped_response(
         total_bytes = total_bytes.saturating_add(known);
         total_unknown |= unknown;
 
-        match &candidate.ownership {
-            CleanupOwnership::Service {
-                stack_id,
-                stack_name,
-                service_id,
-                service_name,
-            } => {
+        match candidate.ownership.kind {
+            CleanupInventoryOwnershipType::Service => {
+                let stack_id = candidate.ownership.stack_id.clone().unwrap_or_default();
+                let stack_name = candidate.ownership.stack_name.clone().unwrap_or_default();
+                let service_id = candidate.ownership.service_id.clone().unwrap_or_default();
+                let service_name = candidate.ownership.service_name.clone().unwrap_or_default();
                 let stack = stacks.entry(stack_id.clone()).or_default();
-                stack.stack_name = stack_name.clone();
+                stack.stack_name = stack_name;
                 stack.bytes = stack.bytes.saturating_add(known);
                 stack.has_unknown |= unknown;
                 let service = stack.services.entry(service_id.clone()).or_insert_with(|| {
@@ -1120,17 +1140,16 @@ fn build_grouped_response(
                 service.has_unknown_size |= unknown;
                 service.resources.push(item);
             }
-            CleanupOwnership::StackOrphan {
-                stack_id,
-                stack_name,
-            } => {
+            CleanupInventoryOwnershipType::StackOrphan => {
+                let stack_id = candidate.ownership.stack_id.clone().unwrap_or_default();
+                let stack_name = candidate.ownership.stack_name.clone().unwrap_or_default();
                 let stack = stacks.entry(stack_id.clone()).or_default();
-                stack.stack_name = stack_name.clone();
+                stack.stack_name = stack_name;
                 stack.bytes = stack.bytes.saturating_add(known);
                 stack.has_unknown |= unknown;
                 stack.stack_orphans.push(item);
             }
-            CleanupOwnership::Unowned => {
+            CleanupInventoryOwnershipType::Unowned => {
                 unowned_resources.push(item);
             }
         }
@@ -1184,36 +1203,36 @@ fn build_grouped_response(
     (stack_groups, unowned_group, total_bytes, total_unknown)
 }
 
-fn minimum_preset_for_category(category: &CleanupCandidateCategory) -> CleanupPreset {
+fn minimum_preset_for_category(category: &CleanupInventoryCategory) -> CleanupPreset {
     match category {
-        CleanupCandidateCategory::StoppedContainer
-        | CleanupCandidateCategory::DanglingImage
-        | CleanupCandidateCategory::UnusedNetwork => CleanupPreset::Conservative,
-        CleanupCandidateCategory::ManagedUnusedImage | CleanupCandidateCategory::BuilderCache => {
+        CleanupInventoryCategory::StoppedContainer
+        | CleanupInventoryCategory::DanglingImage
+        | CleanupInventoryCategory::UnusedNetwork => CleanupPreset::Conservative,
+        CleanupInventoryCategory::ManagedUnusedImage | CleanupInventoryCategory::BuilderCache => {
             CleanupPreset::Balanced
         }
-        CleanupCandidateCategory::ManagedUnusedVolume => CleanupPreset::ProjectDeepClean,
-        CleanupCandidateCategory::GlobalUnusedImage
-        | CleanupCandidateCategory::GlobalUnusedVolume => CleanupPreset::Aggressive,
+        CleanupInventoryCategory::ManagedUnusedVolume => CleanupPreset::ProjectDeepClean,
+        CleanupInventoryCategory::GlobalUnusedImage
+        | CleanupInventoryCategory::GlobalUnusedVolume => CleanupPreset::Aggressive,
     }
 }
 
-fn candidate_reason(category: &CleanupCandidateCategory) -> &'static str {
+fn candidate_reason(category: &CleanupInventoryCategory) -> &'static str {
     match category {
-        CleanupCandidateCategory::StoppedContainer => "容器已退出",
-        CleanupCandidateCategory::DanglingImage => "悬空镜像，未被容器使用",
-        CleanupCandidateCategory::ManagedUnusedImage => "旧镜像未被任何容器使用",
-        CleanupCandidateCategory::ManagedUnusedVolume => "卷未挂载到任何容器",
-        CleanupCandidateCategory::UnusedNetwork => "网络没有活动容器连接",
-        CleanupCandidateCategory::BuilderCache => "Builder cache 可回收",
-        CleanupCandidateCategory::GlobalUnusedImage => "未归属镜像未被任何容器使用",
-        CleanupCandidateCategory::GlobalUnusedVolume => "未归属卷未挂载到任何容器",
+        CleanupInventoryCategory::StoppedContainer => "容器已退出",
+        CleanupInventoryCategory::DanglingImage => "悬空镜像，未被容器使用",
+        CleanupInventoryCategory::ManagedUnusedImage => "旧镜像未被任何容器使用",
+        CleanupInventoryCategory::ManagedUnusedVolume => "卷未挂载到任何容器",
+        CleanupInventoryCategory::UnusedNetwork => "网络没有活动容器连接",
+        CleanupInventoryCategory::BuilderCache => "Builder cache 可回收",
+        CleanupInventoryCategory::GlobalUnusedImage => "未归属镜像未被任何容器使用",
+        CleanupInventoryCategory::GlobalUnusedVolume => "未归属卷未挂载到任何容器",
     }
 }
 
 fn compute_confirmation_fingerprint(
     request: &CleanupPlanRequest,
-    candidates: &[CleanupCandidate],
+    candidates: &[CleanupInventoryCandidate],
     _scanned_at: &str,
     estimated_reclaimable_bytes: u64,
     has_unknown_size: bool,
@@ -1221,9 +1240,9 @@ fn compute_confirmation_fingerprint(
     let mut selected = candidates
         .iter()
         .map(|candidate| -> anyhow::Result<_> {
-            let ownership = ownership_json(&candidate.ownership);
+            let ownership = snapshot_ownership_json(&candidate.ownership);
             let ownership_key = serde_json::to_string(&ownership)?;
-            let category = format!("{:?}", candidate.category);
+            let category = serde_json::to_string(&candidate.category)?;
             let entry = json!({
                 "key": candidate.key,
                 "kind": candidate.kind.as_str(),
@@ -1245,7 +1264,7 @@ fn compute_confirmation_fingerprint(
                     candidate.estimate_unknown,
                     candidate.requires_ephemeral_confirmation,
                     ownership_key,
-                    category,
+                    category.clone(),
                 ),
                 entry,
             ))
@@ -1270,25 +1289,16 @@ fn compute_confirmation_fingerprint(
     Ok(format!("sha256:{}", hex::encode(hashed.as_ref())))
 }
 
-fn ownership_json(ownership: &CleanupOwnership) -> serde_json::Value {
-    match ownership {
-        CleanupOwnership::Service {
-            stack_id,
-            service_id,
-            ..
-        } => json!({
-            "type": "service",
-            "stackId": stack_id,
-            "serviceId": service_id,
-        }),
-        CleanupOwnership::StackOrphan { stack_id, .. } => json!({
-            "type": "stack_orphan",
-            "stackId": stack_id,
-        }),
-        CleanupOwnership::Unowned => json!({
-            "type": "unowned",
-        }),
-    }
+fn snapshot_ownership_json(ownership: &CleanupInventoryOwnership) -> serde_json::Value {
+    json!({
+        "type": match ownership.kind {
+            CleanupInventoryOwnershipType::Service => "service",
+            CleanupInventoryOwnershipType::StackOrphan => "stack_orphan",
+            CleanupInventoryOwnershipType::Unowned => "unowned",
+        },
+        "stackId": ownership.stack_id,
+        "serviceId": ownership.service_id,
+    })
 }
 
 fn command_spec_for_action(action: &CleanupCommandAction) -> CommandSpec {
@@ -1358,6 +1368,130 @@ fn grouped_targets_json(commands: &[CleanupCommandAction]) -> serde_json::Value 
             })
             .collect::<Vec<_>>()
     )
+}
+
+fn snapshot_ownership(ownership: CleanupOwnership) -> CleanupInventoryOwnership {
+    match ownership {
+        CleanupOwnership::Service {
+            stack_id,
+            stack_name,
+            service_id,
+            service_name,
+        } => CleanupInventoryOwnership {
+            kind: CleanupInventoryOwnershipType::Service,
+            stack_id: Some(stack_id),
+            stack_name: Some(stack_name),
+            service_id: Some(service_id),
+            service_name: Some(service_name),
+        },
+        CleanupOwnership::StackOrphan {
+            stack_id,
+            stack_name,
+        } => CleanupInventoryOwnership {
+            kind: CleanupInventoryOwnershipType::StackOrphan,
+            stack_id: Some(stack_id),
+            stack_name: Some(stack_name),
+            service_id: None,
+            service_name: None,
+        },
+        CleanupOwnership::Unowned => CleanupInventoryOwnership {
+            kind: CleanupInventoryOwnershipType::Unowned,
+            stack_id: None,
+            stack_name: None,
+            service_id: None,
+            service_name: None,
+        },
+    }
+}
+
+fn candidate_from_snapshot(candidate: CleanupInventoryCandidate) -> CleanupInventoryCandidate {
+    candidate
+}
+
+fn execution_ownership_from_snapshot(ownership: &CleanupInventoryOwnership) -> CleanupOwnership {
+    match ownership.kind {
+        CleanupInventoryOwnershipType::Service => CleanupOwnership::Service {
+            stack_id: ownership.stack_id.clone().unwrap_or_default(),
+            stack_name: ownership.stack_name.clone().unwrap_or_default(),
+            service_id: ownership.service_id.clone().unwrap_or_default(),
+            service_name: ownership.service_name.clone().unwrap_or_default(),
+        },
+        CleanupInventoryOwnershipType::StackOrphan => CleanupOwnership::StackOrphan {
+            stack_id: ownership.stack_id.clone().unwrap_or_default(),
+            stack_name: ownership.stack_name.clone().unwrap_or_default(),
+        },
+        CleanupInventoryOwnershipType::Unowned => CleanupOwnership::Unowned,
+    }
+}
+
+async fn docker_list_ids(
+    runner: &std::sync::Arc<dyn crate::runner::CommandRunner>,
+    args: Vec<&str>,
+) -> anyhow::Result<Vec<String>> {
+    let out = runner
+        .run(
+            CommandSpec {
+                program: "docker".to_string(),
+                args: args.into_iter().map(ToString::to_string).collect(),
+                env: Vec::new(),
+            },
+            DOCKER_TIMEOUT,
+        )
+        .await?;
+    ensure_success("docker list", &out)?;
+    Ok(out
+        .stdout
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>())
+}
+
+async fn docker_inspect_json<T>(
+    runner: &std::sync::Arc<dyn crate::runner::CommandRunner>,
+    args: Vec<String>,
+) -> anyhow::Result<T>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let out = runner
+        .run(
+            CommandSpec {
+                program: "docker".to_string(),
+                args,
+                env: Vec::new(),
+            },
+            DOCKER_TIMEOUT,
+        )
+        .await?;
+    ensure_success("docker inspect", &out)?;
+    serde_json::from_str(out.stdout.trim()).context("parse docker inspect json")
+}
+
+async fn resolve_volume_fingerprint_with_runner(
+    runner: &std::sync::Arc<dyn crate::runner::CommandRunner>,
+    volume: &DockerVolumeInspect,
+) -> Option<String> {
+    parse::resolve_volume_fingerprint_with_runner(runner.clone(), volume).await
+}
+
+async fn scan_volume_sizes_from_system_df_with_runner(
+    runner: &std::sync::Arc<dyn crate::runner::CommandRunner>,
+) -> BTreeMap<String, u64> {
+    parse::scan_volume_sizes_from_system_df_with_runner(runner.clone()).await
+}
+
+async fn scan_volume_size_from_mountpoint_with_runner(
+    runner: &std::sync::Arc<dyn crate::runner::CommandRunner>,
+    mountpoint: &str,
+) -> Option<u64> {
+    parse::scan_volume_size_from_mountpoint_with_runner(runner.clone(), mountpoint).await
+}
+
+async fn scan_server_disk_usage_with_runner(
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+) -> Option<(u64, u64)> {
+    parse::scan_server_disk_usage_with_runner(runner).await
 }
 
 fn is_in_use_error(kind: CleanupResourceKind, output: &str) -> bool {
@@ -1450,46 +1584,6 @@ async fn persist_cleanup_job_progress(
         .await?;
 
     Ok(())
-}
-
-async fn docker_list_ids(state: &AppState, args: Vec<&str>) -> anyhow::Result<Vec<String>> {
-    let out = state
-        .runner
-        .run(
-            CommandSpec {
-                program: "docker".to_string(),
-                args: args.into_iter().map(ToString::to_string).collect(),
-                env: Vec::new(),
-            },
-            DOCKER_TIMEOUT,
-        )
-        .await?;
-    ensure_success("docker list", &out)?;
-    Ok(out
-        .stdout
-        .lines()
-        .map(|line| line.trim().to_string())
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>())
-}
-
-async fn docker_inspect_json<T>(state: &AppState, args: Vec<String>) -> anyhow::Result<T>
-where
-    T: for<'de> Deserialize<'de>,
-{
-    let out = state
-        .runner
-        .run(
-            CommandSpec {
-                program: "docker".to_string(),
-                args,
-                env: Vec::new(),
-            },
-            DOCKER_TIMEOUT,
-        )
-        .await?;
-    ensure_success("docker inspect", &out)?;
-    serde_json::from_str(out.stdout.trim()).context("parse docker inspect json")
 }
 
 fn now_rfc3339() -> anyhow::Result<String> {

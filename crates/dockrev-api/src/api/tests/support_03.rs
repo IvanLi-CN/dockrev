@@ -113,11 +113,31 @@ async fn test_state_with(
         db.clone(),
         registry.clone(),
     ));
+    let cleanup_snapshot_worker = Arc::new(crate::cleanup_snapshot_worker::CleanupSnapshotWorker::new(
+        db.clone(),
+        runner.clone(),
+    ));
+    let deploy_check_refresh_worker = Arc::new(
+        crate::deploy_check_refresh_worker::DeployCheckRefreshWorker::new(
+            db.clone(),
+            runner.clone(),
+            config.clone(),
+        ),
+    );
     let resource_hub = Arc::new(crate::resource_usage::RealtimeSamplerHub::new(
         db.clone(),
         runner.clone(),
     ));
-    AppState::new(config, db, registry, runner, snapshot_worker, resource_hub)
+    AppState::new(
+        config,
+        db,
+        registry,
+        runner,
+        snapshot_worker,
+        cleanup_snapshot_worker,
+        deploy_check_refresh_worker,
+        resource_hub,
+    )
 }
 
 async fn test_state(db_path: &str) -> Arc<AppState> {
@@ -158,11 +178,31 @@ async fn test_state(db_path: &str) -> Arc<AppState> {
         db.clone(),
         registry.clone(),
     ));
+    let cleanup_snapshot_worker = Arc::new(crate::cleanup_snapshot_worker::CleanupSnapshotWorker::new(
+        db.clone(),
+        runner.clone(),
+    ));
+    let deploy_check_refresh_worker = Arc::new(
+        crate::deploy_check_refresh_worker::DeployCheckRefreshWorker::new(
+            db.clone(),
+            runner.clone(),
+            config.clone(),
+        ),
+    );
     let resource_hub = Arc::new(crate::resource_usage::RealtimeSamplerHub::new(
         db.clone(),
         runner.clone(),
     ));
-    AppState::new(config, db, registry, runner, snapshot_worker, resource_hub)
+    AppState::new(
+        config,
+        db,
+        registry,
+        runner,
+        snapshot_worker,
+        cleanup_snapshot_worker,
+        deploy_check_refresh_worker,
+        resource_hub,
+    )
 }
 
 async fn test_state_auth_required(db_path: &str) -> Arc<AppState> {
@@ -202,11 +242,31 @@ async fn test_state_auth_required(db_path: &str) -> Arc<AppState> {
         db.clone(),
         registry.clone(),
     ));
+    let cleanup_snapshot_worker = Arc::new(crate::cleanup_snapshot_worker::CleanupSnapshotWorker::new(
+        db.clone(),
+        runner.clone(),
+    ));
+    let deploy_check_refresh_worker = Arc::new(
+        crate::deploy_check_refresh_worker::DeployCheckRefreshWorker::new(
+            db.clone(),
+            runner.clone(),
+            config.clone(),
+        ),
+    );
     let resource_hub = Arc::new(crate::resource_usage::RealtimeSamplerHub::new(
         db.clone(),
         runner.clone(),
     ));
-    AppState::new(config, db, registry, runner, snapshot_worker, resource_hub)
+    AppState::new(
+        config,
+        db,
+        registry,
+        runner,
+        snapshot_worker,
+        cleanup_snapshot_worker,
+        deploy_check_refresh_worker,
+        resource_hub,
+    )
 }
 
 async fn test_state_with_authz(
@@ -251,11 +311,31 @@ async fn test_state_with_authz(
         db.clone(),
         registry.clone(),
     ));
+    let cleanup_snapshot_worker = Arc::new(crate::cleanup_snapshot_worker::CleanupSnapshotWorker::new(
+        db.clone(),
+        runner.clone(),
+    ));
+    let deploy_check_refresh_worker = Arc::new(
+        crate::deploy_check_refresh_worker::DeployCheckRefreshWorker::new(
+            db.clone(),
+            runner.clone(),
+            config.clone(),
+        ),
+    );
     let resource_hub = Arc::new(crate::resource_usage::RealtimeSamplerHub::new(
         db.clone(),
         runner.clone(),
     ));
-    AppState::new(config, db, registry, runner, snapshot_worker, resource_hub)
+    AppState::new(
+        config,
+        db,
+        registry,
+        runner,
+        snapshot_worker,
+        cleanup_snapshot_worker,
+        deploy_check_refresh_worker,
+        resource_hub,
+    )
 }
 
 async fn seed_stack_from_compose(state: &Arc<AppState>, name: &str, compose_file: &str) -> String {
@@ -599,6 +679,70 @@ async fn wait_for_job_log_contains(state: &Arc<AppState>, job_id: &str, needle: 
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("timed out waiting for job {job_id} log containing {needle}");
+}
+
+async fn wait_for_cleanup_scan_ready(
+    app: &Router,
+    request_body: serde_json::Value,
+) -> serde_json::Value {
+    let mut next_refresh = request_body
+        .get("refresh")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true);
+    for _ in 0..300 {
+        let mut request_body = request_body.clone();
+        request_body["refresh"] = serde_json::Value::Bool(next_refresh);
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/cleanups/scan")
+                    .header("X-Forwarded-User", "ops")
+                    .header("content-type", "application/json")
+                    .body(Body::from(request_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body = response_json(resp).await;
+        if status == axum::http::StatusCode::OK
+            && body["status"].as_str() == Some("ready")
+            && body["refreshing"].as_bool() != Some(true)
+        {
+            return body;
+        }
+        assert_eq!(body["status"].as_str(), Some("pending"));
+        next_refresh = false;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("timed out waiting for cleanup scan ready");
+}
+
+async fn wait_for_deploy_check_report_ready(
+    app: &Router,
+    user: Option<&str>,
+) -> serde_json::Value {
+    for _ in 0..300 {
+        let mut builder = Request::builder().method("GET").uri("/api/deploy-check/report");
+        if let Some(user) = user {
+            builder = builder.header("X-Forwarded-User", user);
+        }
+        let resp = app
+            .clone()
+            .oneshot(builder.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body = response_json(resp).await;
+        if status == axum::http::StatusCode::OK && body["status"].as_str() == Some("ready") {
+            return body;
+        }
+        assert_eq!(body["status"].as_str(), Some("pending"));
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("timed out waiting for deploy check report ready");
 }
 
 async fn insert_check_job(state: &Arc<AppState>, reason: &str, now: &str) -> String {

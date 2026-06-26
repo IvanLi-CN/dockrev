@@ -40,7 +40,7 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 | POST | `/api/stacks/{stack_id}/restore` | Forward Auth | 取消归档 stack | `200` `404` `401` |
 | POST | `/api/services/{service_id}/archive` | Forward Auth | 归档 service | `200` `404` `401` |
 | POST | `/api/services/{service_id}/restore` | Forward Auth | 取消归档 service | `200` `404` `401` |
-| GET | `/api/services/{service_id}/digest-tags` | Forward Auth | 查询 digest 对应 tags | `200` `404` `401` |
+| GET | `/api/services/{service_id}/digest-tags` | Forward Auth | 查询 digest tags 调试视图（已改为 snapshot-backed；缺失或刷新中时返回 `202 pending`） | `200` `202` `404` `401` |
 | GET | `/api/services/{service_id}/digest-tags-snapshot` | Forward Auth | 查询 digest tags 快照（目标 digest 正在刷新时返回 `202 pending`） | `200` `202` `404` `401` |
 | POST | `/api/services/{service_id}/version-inference/refresh` | Forward Auth | 触发指定 digest 的局部版本推断刷新（请求体必须带 `digest`） | `202` `400` `404` `401` |
 | GET | `/api/version-inference/overview` | Forward Auth | 版本推断总览 | `200` `401` |
@@ -127,7 +127,8 @@ description: Dockrev API 与 Supervisor API 的全量接口清单。
 | DELETE | `/api/web-push/subscriptions` | Forward Auth | 删除 Web Push 订阅 | `200` `400` `401` |
 | POST | `/api/webhooks/trigger` | Webhook Secret | 外部触发 check/update 任务（`action=update` 必须显式携带 `targets[]`） | `200` `400` `401` |
 | POST | `/api/webhooks/github-packages` | GitHub Signature | 接收 GH package webhook，并优先触发命中服务的 `check.service`；零命中时回退到 1 个 discovery | `200` `202` `400` `401` |
-| GET | `/api/deploy-check/report` | Forward Auth | 返回部署预检报告；匿名或未命中 allowlist 时返回 Dockrev 生成的 `401 auth_required` | `200` `401` |
+| GET | `/api/deploy-check/report` | Forward Auth | 返回部署预检报告快照；有缓存时可带 `refreshing=true`，无缓存或刷新未就绪时返回 `202 pending` | `200` `202` `401` |
+| POST | `/api/deploy-check/report/refresh` | Forward Auth | 仅触发 deploy-check report 后台刷新并返回 `pending` envelope | `202` `401` |
 | GET | `/api/deploy-welcome` | Forward Auth | 查询 deploy welcome 状态 | `200` `401` |
 | PUT | `/api/deploy-welcome` | Forward Auth | 更新 deploy welcome 状态 | `200` `400` `401` |
 

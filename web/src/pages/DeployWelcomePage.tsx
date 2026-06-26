@@ -3,7 +3,9 @@ import {
   getDeployCheckReport,
   getDeployWelcome,
   putDeployWelcome,
+  refreshDeployCheckReport,
   type DeployCheckItem,
+  type DeployCheckReportEnvelope,
   type DeployCheckReportResponse,
 } from '../api'
 import { navigate } from '../routes'
@@ -24,6 +26,14 @@ function normalizeGroup(input: DeployCheckItem['group'], id: string): 'core' | '
   if (input === 'core' || input === 'feature') return input
   if (id.startsWith('core.')) return 'core'
   return 'feature'
+}
+
+export function shouldKeepPollingDeployCheckReport(envelope: DeployCheckReportEnvelope): boolean {
+  return envelope.status !== 'ready' || Boolean(envelope.refreshing)
+}
+
+export function shouldKeepDeployCheckLoading(envelope: DeployCheckReportEnvelope): boolean {
+  return !envelope.report && shouldKeepPollingDeployCheckReport(envelope)
 }
 
 function statusMeta(status: DeployCheckItem['status']): {
@@ -114,6 +124,17 @@ export function DeployWelcomePage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [reportRefreshing, setReportRefreshing] = useState(false)
+
+  async function settleReportEnvelope(envelope: DeployCheckReportEnvelope): Promise<DeployCheckReportEnvelope> {
+    let current = envelope
+    while (shouldKeepPollingDeployCheckReport(current)) {
+      const retryAfter = Math.max(200, current.retryAfterMs ?? 800)
+      await new Promise((resolve) => window.setTimeout(resolve, retryAfter))
+      current = await getDeployCheckReport()
+    }
+    return current
+  }
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -121,7 +142,28 @@ export function DeployWelcomePage() {
     const [reportResult, welcomeResult] = await Promise.allSettled([getDeployCheckReport(), getDeployWelcome()])
 
     if (reportResult.status === 'fulfilled') {
-      setReport(reportResult.value)
+      const envelope = reportResult.value
+      if (envelope.report) {
+        setReport(envelope.report)
+      }
+      setReportRefreshing(Boolean(envelope.refreshing))
+      const shouldWaitForFirstReport = shouldKeepDeployCheckLoading(envelope)
+      if (envelope.status !== 'ready' || envelope.refreshing) {
+        void refreshDeployCheckReport().catch(() => {})
+        void settleReportEnvelope(envelope)
+          .then((settled) => {
+            if (settled.report) {
+              setReport(settled.report)
+            }
+            setReportRefreshing(Boolean(settled.refreshing))
+          })
+          .catch((e) => {
+            setError(errorMessage(e))
+          })
+      }
+      if (shouldWaitForFirstReport) {
+        setLoading(true)
+      }
     } else {
       setError(errorMessage(reportResult.reason))
       setLoading(false)
@@ -229,6 +271,7 @@ export function DeployWelcomePage() {
               <span className="deployWelcomeOverallSummary">{report.overall.summary}</span>
             </div>
           </div>
+          {reportRefreshing ? <div className="deployWelcomeSubtitle">正在后台刷新最新检查结果…</div> : null}
 
           <div className="deployWelcomeDefinitions" role="list" aria-label="状态说明">
             <div className="deployWelcomeDefinition" role="listitem">

@@ -70,6 +70,18 @@ export function installDockrevMockApi(
         ...options.serviceTagSuggestionsById,
       }
     }
+    if (options.deployCheckReportOverride) {
+      state.deployCheckReport = {
+        ...state.deployCheckReport,
+        ...options.deployCheckReportOverride,
+      }
+    }
+    if (options.deployWelcomeOverride) {
+      state.deployWelcome = {
+        ...state.deployWelcome,
+        ...options.deployWelcomeOverride,
+      }
+    }
   }
   const ignoreSeqRef = { value: 0 }
   const jobSeqRef = { value: 0 }
@@ -736,7 +748,48 @@ export function installDockrevMockApi(
 
     if (isCleanupMockScenario(scenario) && method === 'POST' && urlPath === '/api/cleanups/scan') {
       if (scenario === 'cleanup-console-scan-pending') {
-        return new Promise<Response>(() => {})
+        const parsed = parseJsonBody(init?.body) as CleanupScanRequest | null
+        const request: CleanupScanRequest = {
+          reason: parsed?.reason === 'confirm' ? 'confirm' : 'page',
+          refresh: parsed?.refresh !== false,
+          preset:
+            parsed?.preset === 'conservative' ||
+            parsed?.preset === 'balanced' ||
+            parsed?.preset === 'project_deep_clean' ||
+            parsed?.preset === 'aggressive'
+              ? parsed.preset
+              : 'balanced',
+          scope: parsed?.scope === 'stack' || parsed?.scope === 'service' ? parsed.scope : 'all',
+          stackId: typeof parsed?.stackId === 'string' ? parsed.stackId : undefined,
+          serviceId: typeof parsed?.serviceId === 'string' ? parsed.serviceId : undefined,
+        }
+        const ready = buildCleanupMockScanResponse('cleanup-console', request)
+        if (request.reason === 'page') {
+          return json(
+            {
+              ...ready,
+              status: 'pending',
+              refreshing: true,
+              retryAfterMs: 450,
+              scannedAt: null,
+              estimatedReclaimableBytes: null,
+              hasUnknownSize: false,
+              serverDiskUsage: null,
+              stackGroups: [],
+              unownedGroup: null,
+              confirmationFingerprint: null,
+            },
+            { status: 202 },
+          )
+        }
+        return json(
+          {
+            ...ready,
+            refreshing: true,
+            retryAfterMs: 450,
+          },
+          { status: 200 },
+        )
       }
       if (scenario === 'cleanup-console-scan-slow') {
         await new Promise<void>((resolve) => {
@@ -746,6 +799,7 @@ export function installDockrevMockApi(
       const parsed = parseJsonBody(init?.body) as CleanupScanRequest | null
       const request: CleanupScanRequest = {
         reason: parsed?.reason === 'confirm' ? 'confirm' : 'page',
+        refresh: parsed?.refresh !== false,
         preset:
           parsed?.preset === 'conservative' ||
           parsed?.preset === 'balanced' ||
