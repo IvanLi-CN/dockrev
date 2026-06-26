@@ -227,6 +227,82 @@ async fn cleanup_page_refresh_forces_background_refresh_even_with_fresh_cache() 
 }
 
 #[tokio::test]
+async fn cleanup_page_stale_poll_reenqueues_refresh_when_worker_is_idle() {
+    let db_path = format!("/tmp/dockrev-cleanup-page-stale-poll-{}.sqlite3", ulid::Ulid::new());
+    let runner = Arc::new(CleanupRunner::stale_on_second_scan());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner.clone()).await;
+    let app = api::router(state.clone());
+
+    let initial = wait_for_cleanup_scan_ready(
+        &app,
+        serde_json::json!({
+            "reason": "page",
+            "preset": "balanced",
+            "scope": "all",
+        }),
+    )
+    .await;
+    assert_eq!(initial["status"].as_str(), Some("ready"));
+    assert_eq!(runner.stale_generation(), 1);
+    assert!(!state.cleanup_snapshot_worker.is_running());
+
+    let checked_at = test_offset_from_now_rfc3339(time::Duration::seconds(
+        -(crate::cleanup_snapshot_worker::CLEANUP_CONFIRM_MAX_AGE_SECONDS + 5),
+    ));
+    let updated_at = test_now_rfc3339();
+    state
+        .db
+        .upsert_cleanup_inventory_snapshot(
+            crate::cleanup_snapshot_worker::CLEANUP_SNAPSHOT_KEY,
+            &serde_json::to_string(&crate::cleanup::build_inventory_snapshot(
+                state.db.clone(),
+                state.runner.clone(),
+            )
+            .await
+            .unwrap())
+            .unwrap(),
+            &checked_at,
+            &updated_at,
+        )
+        .await
+        .unwrap();
+
+    let poll_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "page",
+                        "refresh": false,
+                        "preset": "balanced",
+                        "scope": "all",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(poll_resp.status(), 200);
+    let poll_body = response_json(poll_resp).await;
+    assert_eq!(poll_body["status"].as_str(), Some("ready"));
+    assert_eq!(poll_body["refreshing"].as_bool(), Some(true));
+
+    for _ in 0..200 {
+        if runner.stale_generation() >= 3 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(runner.stale_generation(), 3);
+}
+
+#[tokio::test]
 async fn cleanup_page_returns_error_after_initial_refresh_failure_until_explicit_retry() {
     let db_path = format!("/tmp/dockrev-cleanup-initial-refresh-failure-{}.sqlite3", ulid::Ulid::new());
     let runner = Arc::new(CleanupRunner::volume_in_use());

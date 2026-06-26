@@ -24,6 +24,11 @@ pub(super) async fn scan_cleanups(
                     .map_err(|err| map_internal(err.into()))?;
                 let is_fresh =
                     cleanup_snapshot_worker::cleanup_snapshot_is_fresh(&row.checked_at, now);
+                let mut refreshing = is_running;
+                if (!is_fresh || req.refresh) && !refreshing {
+                    refreshing = state.cleanup_snapshot_worker.enqueue().await
+                        || state.cleanup_snapshot_worker.is_running();
+                }
                 let plan = cleanup::build_execution_plan_from_snapshot(
                     &snapshot,
                     &req,
@@ -31,12 +36,16 @@ pub(super) async fn scan_cleanups(
                 )
                 .map_err(map_internal)?;
                 let mut response = plan.to_response(req.reason);
-                let should_refresh = req.refresh || !is_fresh || is_running;
-                response.refreshing = should_refresh;
-                response.retry_after_ms = should_refresh
+                response.refreshing = refreshing;
+                response.retry_after_ms = refreshing
                     .then_some(cleanup_snapshot_worker::CLEANUP_SNAPSHOT_PENDING_RETRY_AFTER_MS);
-                if req.refresh {
-                    let _ = state.cleanup_snapshot_worker.enqueue().await;
+                if !refreshing
+                    && req.refresh
+                    && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
+                {
+                    return Err(ApiError::internal(format!(
+                        "cleanup snapshot refresh failed: {last_error}"
+                    )));
                 }
                 return Ok(Json(response));
             }

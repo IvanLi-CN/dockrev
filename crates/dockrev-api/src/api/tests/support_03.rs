@@ -713,7 +713,11 @@ async fn wait_for_cleanup_scan_ready(
         {
             return body;
         }
-        assert_eq!(body["status"].as_str(), Some("pending"));
+        assert!(
+            body["status"].as_str() == Some("pending")
+                || body["refreshing"].as_bool() == Some(true),
+            "unexpected cleanup polling payload: {body}"
+        );
         next_refresh = false;
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
