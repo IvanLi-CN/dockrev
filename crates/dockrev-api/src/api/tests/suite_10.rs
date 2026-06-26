@@ -1315,7 +1315,7 @@ async fn deploy_check_report_returns_error_after_initial_refresh_failure_until_e
 }
 
 #[tokio::test]
-async fn deploy_check_report_returns_error_for_stale_cached_report_after_refresh_failure() {
+async fn deploy_check_report_serves_stale_cached_report_and_allows_explicit_refresh_after_failure() {
     let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
     let checked_at = test_offset_from_now_rfc3339(time::Duration::seconds(
         -(crate::deploy_check_refresh_worker::DEPLOY_CHECK_REPORT_STALE_AFTER_SECONDS + 5),
@@ -1358,14 +1358,35 @@ async fn deploy_check_report_returns_error_for_stale_cached_report_after_refresh
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), 500);
+    assert_eq!(resp.status(), 200);
     let body = response_json(resp).await;
-    assert_eq!(body["error"]["code"], "internal");
-    assert_eq!(
-        body["error"]["message"].as_str(),
-        Some("deploy-check refresh failed: boom")
-    );
+    assert_eq!(body["status"], "ready");
+    assert_eq!(body["refreshing"], false);
+    assert!(body["report"].is_object());
+    assert!(body["report"]["generatedAt"].as_str().is_some());
     assert!(!state.deploy_check_refresh_worker.is_running());
+
+    let refresh_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/deploy-check/report/refresh")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(refresh_resp.status(), 200);
+    let refresh_body = response_json(refresh_resp).await;
+    assert_eq!(refresh_body["status"], "pending");
+    assert_eq!(refresh_body["refreshing"], true);
+
+    let ready_body = wait_for_deploy_check_report_ready(&app, Some("ops")).await;
+    assert_eq!(ready_body["status"], "ready");
+    assert_eq!(ready_body["refreshing"], false);
 }
 
 #[tokio::test]

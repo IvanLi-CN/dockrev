@@ -563,12 +563,7 @@ async fn get_deploy_check_report(
         let now = time::OffsetDateTime::now_utc();
         let is_fresh =
             deploy_check_refresh_worker::deploy_check_report_is_fresh(&row.checked_at, now);
-        if !refreshing && !is_fresh {
-            if let Some(last_error) = last_error.clone() {
-                return Err(ApiError::internal(format!(
-                    "deploy-check refresh failed: {last_error}"
-                )));
-            }
+        if !refreshing && !is_fresh && last_error.is_none() {
             let started = state.deploy_check_refresh_worker.enqueue().await;
             refreshing = started || state.deploy_check_refresh_worker.is_running();
             if !refreshing
