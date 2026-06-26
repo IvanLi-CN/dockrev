@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 
 import type { ServiceGitHubReleaseLocateResponse, ServiceGitHubReleasesResponse } from '../src/api'
-import { applyLocatePreloadFailure } from '../src/githubReleaseDrawerState'
+import {
+  applyLocatePreloadFailure,
+  buildReleaseLocateNotFoundResponse,
+  RELEASE_DRAWER_LOCATE_LIMIT,
+  shouldContinueReleaseLocateSearch,
+} from '../src/githubReleaseDrawerState'
 import { shouldResetReleaseDrawerOnRouteChange } from '../src/releaseDrawer'
 
 describe('release drawer route transitions', () => {
@@ -68,6 +73,76 @@ describe('release drawer locate preload failures', () => {
       ...locateResponse,
       status: 'rateLimited',
       message: '已定位到 1.39.5，但加载对应发布页失败：GitHub 匿名访问已触发 rate limit。请稍后再试。',
+    })
+  })
+})
+
+describe('release drawer locate bounds', () => {
+  test('continues paging only while still inside the search window', () => {
+    const listResponse: ServiceGitHubReleasesResponse = {
+      status: 'ready',
+      authMode: 'anonymous',
+      repo: null,
+      page: 2,
+      perPage: 20,
+      hasMore: true,
+      items: [],
+      message: null,
+    }
+
+    expect(shouldContinueReleaseLocateSearch(listResponse, 40, RELEASE_DRAWER_LOCATE_LIMIT)).toBe(true)
+    expect(shouldContinueReleaseLocateSearch(listResponse, 50, RELEASE_DRAWER_LOCATE_LIMIT)).toBe(false)
+  })
+
+  test('returns outsideWindow once the bounded search budget is exhausted', () => {
+    const listResponse: ServiceGitHubReleasesResponse = {
+      status: 'ready',
+      authMode: 'anonymous',
+      repo: null,
+      page: 3,
+      perPage: 20,
+      hasMore: true,
+      items: [],
+      message: null,
+    }
+
+    expect(buildReleaseLocateNotFoundResponse(listResponse, '1.39.5', 50, RELEASE_DRAWER_LOCATE_LIMIT)).toEqual({
+      status: 'outsideWindow',
+      authMode: 'anonymous',
+      repo: null,
+      version: '1.39.5',
+      searchedCount: 50,
+      matchedTag: '1.39.5',
+      page: null,
+      indexWithinPage: null,
+      absoluteIndex: null,
+      message: '已定位到 1.39.5，但它不在前 50 条发布记录内。',
+    })
+  })
+
+  test('returns notFound when the repo exhausts before the bounded search limit', () => {
+    const listResponse: ServiceGitHubReleasesResponse = {
+      status: 'ready',
+      authMode: 'anonymous',
+      repo: null,
+      page: 2,
+      perPage: 20,
+      hasMore: false,
+      items: [],
+      message: null,
+    }
+
+    expect(buildReleaseLocateNotFoundResponse(listResponse, '9.9.9', 32, RELEASE_DRAWER_LOCATE_LIMIT)).toEqual({
+      status: 'notFound',
+      authMode: 'anonymous',
+      repo: null,
+      version: '9.9.9',
+      searchedCount: 32,
+      matchedTag: null,
+      page: null,
+      indexWithinPage: null,
+      absoluteIndex: null,
+      message: '在前 32 条发布记录中未找到 9.9.9。',
     })
   })
 })

@@ -11,6 +11,11 @@ import {
   type ServiceGitHubReleasesResponse,
   type ServiceGitHubReleasesStatus,
 } from '../api'
+import {
+  buildReleaseLocateNotFoundResponse,
+  RELEASE_DRAWER_LOCATE_LIMIT,
+  shouldContinueReleaseLocateSearch,
+} from '../githubReleaseDrawerState'
 import { navigate } from '../routes'
 import { closeGitHubReleaseDrawer } from '../releaseDrawer'
 import { requestSettingsFocus } from '../settingsFocus'
@@ -145,25 +150,6 @@ function buildLocateFailureResponse(
     indexWithinPage: null,
     absoluteIndex: null,
     message: fallbackReleaseErrorMessage(error),
-  }
-}
-
-function buildLocateNotFoundResponse(
-  listResponse: ServiceGitHubReleasesResponse | null,
-  version: string,
-  searchedCount: number,
-): ServiceGitHubReleaseLocateResponse {
-  return {
-    status: 'notFound',
-    authMode: listResponse?.authMode ?? 'anonymous',
-    repo: listResponse?.repo ?? null,
-    version,
-    searchedCount,
-    matchedTag: null,
-    page: null,
-    indexWithinPage: null,
-    absoluteIndex: null,
-    message: `在已加载的 ${searchedCount} 条发布记录中未找到 ${version}。`,
   }
 }
 
@@ -319,24 +305,30 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
       let response = initialResponse
       let searchedCount = 0
       while (response && response.status === 'ready') {
-        const matchedIndex = response.items.findIndex((item) => releaseMatchesVersion(item, version))
+        const remainingBudget = RELEASE_DRAWER_LOCATE_LIMIT - searchedCount
+        if (remainingBudget <= 0) {
+          return buildReleaseLocateNotFoundResponse(response, version, searchedCount)
+        }
+        const scanCount = Math.min(response.items.length, remainingBudget)
+        const scanItems = response.items.slice(0, scanCount)
+        const matchedIndex = scanItems.findIndex((item) => releaseMatchesVersion(item, version))
         if (matchedIndex >= 0) {
           return {
             status: 'found',
             authMode: response.authMode,
             repo: response.repo ?? null,
             version,
-            searchedCount: searchedCount + response.items.length,
-            matchedTag: response.items[matchedIndex]?.tagName ?? version,
+            searchedCount: searchedCount + scanCount,
+            matchedTag: scanItems[matchedIndex]?.tagName ?? version,
             page: response.page,
             indexWithinPage: matchedIndex,
             absoluteIndex: searchedCount + matchedIndex,
             message: null,
           }
         }
-        searchedCount += response.items.length
-        if (!response.hasMore) {
-          return buildLocateNotFoundResponse(response, version, searchedCount)
+        searchedCount += scanCount
+        if (!shouldContinueReleaseLocateSearch(response, searchedCount)) {
+          return buildReleaseLocateNotFoundResponse(response, version, searchedCount)
         }
         const nextPage = response.page + 1
         const nextResponse = await fetchPage(expectedSession, targetServiceId, nextPage)
@@ -346,7 +338,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
         }
         response = nextResponse
       }
-      return buildLocateNotFoundResponse(initialResponse, version, searchedCount)
+      return buildReleaseLocateNotFoundResponse(initialResponse, version, searchedCount)
     },
     [fetchPage],
   )
