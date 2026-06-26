@@ -227,6 +227,86 @@ async fn cleanup_page_refresh_forces_background_refresh_even_with_fresh_cache() 
 }
 
 #[tokio::test]
+async fn cleanup_page_returns_error_after_initial_refresh_failure_until_explicit_retry() {
+    let db_path = format!("/tmp/dockrev-cleanup-initial-refresh-failure-{}.sqlite3", ulid::Ulid::new());
+    let runner = Arc::new(CleanupRunner::volume_in_use());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    state
+        .cleanup_snapshot_worker
+        .set_last_error_for_test(Some("boom".to_string()))
+        .await;
+    let app = api::router(state.clone());
+
+    let failing_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "page",
+                        "refresh": false,
+                        "preset": "aggressive",
+                        "scope": "all",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(failing_resp.status(), 500);
+    let failing_body = response_json(failing_resp).await;
+    assert_eq!(failing_body["error"]["code"], "internal");
+    assert_eq!(
+        failing_body["error"]["message"].as_str(),
+        Some("cleanup snapshot refresh failed: boom")
+    );
+    assert!(!state.cleanup_snapshot_worker.is_running());
+
+    let refresh_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "page",
+                        "refresh": true,
+                        "preset": "aggressive",
+                        "scope": "all",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(refresh_resp.status(), 200);
+    let refresh_body = response_json(refresh_resp).await;
+    assert_eq!(refresh_body["status"].as_str(), Some("pending"));
+    assert_eq!(refresh_body["refreshing"].as_bool(), Some(true));
+
+    let ready_body = wait_for_cleanup_scan_ready(
+        &app,
+        serde_json::json!({
+            "reason": "page",
+            "preset": "aggressive",
+            "scope": "all",
+        }),
+    )
+    .await;
+    assert_eq!(ready_body["status"].as_str(), Some("ready"));
+    assert_eq!(ready_body["refreshing"].as_bool(), Some(false));
+}
+
+#[tokio::test]
 async fn cleanup_scan_keeps_stable_fingerprint_when_builder_cache_falls_back_to_text_summary() {
     let db_path = format!(
         "/tmp/dockrev-cleanup-builder-text-ephemeral-{}.sqlite3",

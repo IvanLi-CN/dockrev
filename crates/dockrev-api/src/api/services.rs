@@ -1074,7 +1074,49 @@ pub(super) async fn list_service_digest_tags(
     Query(q): Query<ListServiceDigestTagsQuery>,
 ) -> Result<Response, ApiError> {
     let _user = require_user(&state, &headers).await?;
+    if q.digest
+        .as_deref()
+        .is_none_or(|digest| digest.trim().is_empty())
+    {
+        return list_service_digest_repo_tags(&state, &service_id).await;
+    }
     digest_tags_snapshot_response(&state, &service_id, q.digest.as_deref()).await
+}
+
+async fn list_service_digest_repo_tags(
+    state: &Arc<AppState>,
+    service_id: &str,
+) -> Result<Response, ApiError> {
+    let snapshot_target = state
+        .db
+        .get_service_snapshot_target(service_id)
+        .await
+        .map_err(map_internal)?;
+    let Some(snapshot_target) = snapshot_target else {
+        return Err(ApiError::not_found("service not found"));
+    };
+
+    let image = registry::ImageRef::parse(&snapshot_target.image_ref).map_err(|_| {
+        ApiError::invalid_argument("invalid image ref (expected repo/name[:tag][@sha256:digest])")
+    })?;
+    let repo_tags = state
+        .registry
+        .list_tags(&image)
+        .await
+        .map_err(map_internal)?;
+    Ok(Json(ServiceDigestTagsResponse {
+        digest: snapshot_target.current_digest.unwrap_or_default(),
+        tags: Vec::new(),
+        repo_tags: repo_tags.clone(),
+        scan: ServiceDigestTagsScanSummary {
+            repo_tags_total: repo_tags.len(),
+            repo_tags_considered: 0,
+            manifests_ok: 0,
+            manifests_timeout: 0,
+            manifests_error: 0,
+        },
+    })
+    .into_response())
 }
 
 async fn digest_tags_snapshot_response(

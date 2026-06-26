@@ -53,6 +53,15 @@ impl DeployCheckRefreshWorker {
         self.running.load(Ordering::SeqCst)
     }
 
+    pub async fn last_error(&self) -> Option<String> {
+        self.last_error.lock().await.clone()
+    }
+
+    #[cfg(test)]
+    pub async fn set_last_error_for_test(&self, value: Option<String>) {
+        *self.last_error.lock().await = value;
+    }
+
     async fn run_loop(self) {
         loop {
             self.pending.store(false, Ordering::SeqCst);

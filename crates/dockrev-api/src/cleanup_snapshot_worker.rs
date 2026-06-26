@@ -36,7 +36,11 @@ impl CleanupSnapshotWorker {
 
     pub async fn enqueue(&self) -> bool {
         self.pending.store(true, Ordering::SeqCst);
-        if self.running.swap(true, Ordering::SeqCst) {
+        if self
+            .running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
             return false;
         }
         let worker = self.clone();
@@ -50,6 +54,15 @@ impl CleanupSnapshotWorker {
         self.running.load(Ordering::SeqCst)
     }
 
+    pub async fn last_error(&self) -> Option<String> {
+        self.last_error.lock().await.clone()
+    }
+
+    #[cfg(test)]
+    pub async fn set_last_error_for_test(&self, value: Option<String>) {
+        *self.last_error.lock().await = value;
+    }
+
     async fn run_loop(self) {
         loop {
             self.pending.store(false, Ordering::SeqCst);
@@ -58,14 +71,20 @@ impl CleanupSnapshotWorker {
             *last_error = result.err().map(|err| err.to_string());
             drop(last_error);
 
-            if !self.pending.load(Ordering::SeqCst) {
-                self.running.store(false, Ordering::SeqCst);
-                if self.pending.load(Ordering::SeqCst) && !self.running.swap(true, Ordering::SeqCst)
-                {
-                    continue;
-                }
-                break;
+            if self.pending.swap(false, Ordering::SeqCst) {
+                continue;
             }
+
+            self.running.store(false, Ordering::SeqCst);
+            if self.pending.load(Ordering::SeqCst)
+                && self
+                    .running
+                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+            {
+                continue;
+            }
+            break;
         }
     }
 

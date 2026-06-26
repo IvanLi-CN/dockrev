@@ -42,7 +42,19 @@ pub(super) async fn scan_cleanups(
             }
 
             if req.refresh {
-                let _ = state.cleanup_snapshot_worker.enqueue().await;
+                let started = state.cleanup_snapshot_worker.enqueue().await;
+                let refreshing = started || state.cleanup_snapshot_worker.is_running();
+                if !refreshing
+                    && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
+                {
+                    return Err(ApiError::internal(format!(
+                        "cleanup snapshot refresh failed: {last_error}"
+                    )));
+                }
+            } else if let Some(last_error) = state.cleanup_snapshot_worker.last_error().await {
+                return Err(ApiError::internal(format!(
+                    "cleanup snapshot refresh failed: {last_error}"
+                )));
             }
             Ok(Json(CleanupScanResponse {
                 status: CleanupScanStatus::Pending,

@@ -1262,6 +1262,59 @@ async fn deploy_check_report_marks_stale_cached_report_refreshing_and_reenqueues
 }
 
 #[tokio::test]
+async fn deploy_check_report_returns_error_after_initial_refresh_failure_until_explicit_retry() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+    state
+        .deploy_check_refresh_worker
+        .set_last_error_for_test(Some("boom".to_string()))
+        .await;
+    let app = api::router(state.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/deploy-check/report")
+                .header("X-Forwarded-User", "ops")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 500);
+    let body = response_json(resp).await;
+    assert_eq!(body["error"]["code"], "internal");
+    assert_eq!(
+        body["error"]["message"].as_str(),
+        Some("deploy-check refresh failed: boom")
+    );
+    assert_eq!(state.deploy_check_refresh_worker.is_running(), false);
+
+    let refresh_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/deploy-check/report/refresh")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(refresh_resp.status(), 200);
+    let refresh_body = response_json(refresh_resp).await;
+    assert_eq!(refresh_body["status"], "pending");
+    assert_eq!(refresh_body["refreshing"], true);
+
+    let ready_body = wait_for_deploy_check_report_ready(&app, Some("ops")).await;
+    assert_eq!(ready_body["status"], "ready");
+    assert_eq!(ready_body["refreshing"], false);
+}
+
+#[tokio::test]
 async fn deploy_check_report_fails_when_enabled_feature_is_misconfigured() {
     let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
 

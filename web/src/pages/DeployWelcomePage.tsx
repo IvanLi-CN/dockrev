@@ -193,6 +193,24 @@ export function DeployWelcomePage() {
     setLoading(keepLoadingAfterBootstrap)
   }, [])
 
+  const retryInitialReportRefresh = useCallback(async () => {
+    setLoading(true)
+    setReportRefreshing(true)
+    setError(null)
+    try {
+      const settled = await settleReportEnvelope(await refreshDeployCheckReport())
+      if (settled.report) {
+        setReport(settled.report)
+      }
+      setReportRefreshing(Boolean(settled.refreshing))
+    } catch (e) {
+      setError(errorMessage(e))
+      setReportRefreshing(false)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     void refresh()
   }, [refresh])
@@ -253,7 +271,7 @@ export function DeployWelcomePage() {
                 variant="primary"
                 disabled={loading}
                 onClick={() => {
-                  void refresh()
+                  void retryInitialReportRefresh()
                 }}
               >
                 重试

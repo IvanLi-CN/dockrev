@@ -245,6 +245,77 @@ services:
 }
 
 #[tokio::test]
+async fn service_digest_tags_without_digest_returns_repo_tags_debug_payload() {
+    let state = test_state_with(
+        ":memory:",
+        Arc::new(DigestTagsRegistry),
+        Arc::new(FakeRunner),
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let compose_path = format!("/tmp/dockrev-test-digest-repo-tags-{}.yml", ulid::Ulid::new());
+    std::fs::write(
+        &compose_path,
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .unwrap();
+
+    let stack_id = seed_stack_from_compose(&state, "demo", &compose_path).await;
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/stacks/{stack_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let detail = response_json(resp).await;
+    let service_id = detail["stack"]["services"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    set_single_service_check_result(
+        &state,
+        &stack_id,
+        Some("sha256:match"),
+        Some("latest"),
+        Some("sha256:candidate"),
+    )
+    .await;
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/services/{service_id}/digest-tags"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body = response_json(resp).await;
+    assert_eq!(body["digest"].as_str(), Some("sha256:match"));
+    assert_eq!(body["tags"].as_array().unwrap().len(), 0);
+    let repo_tags = body["repoTags"].as_array().unwrap();
+    assert_eq!(repo_tags.len(), 50);
+    assert_eq!(repo_tags[0].as_str(), Some("1.0.0"));
+    assert_eq!(repo_tags[49].as_str(), Some("1.0.49"));
+    assert_eq!(body["scan"]["repoTagsTotal"].as_u64(), Some(50));
+    assert_eq!(body["scan"]["repoTagsConsidered"].as_u64(), Some(0));
+    assert_eq!(body["scan"]["manifestsOk"].as_u64(), Some(0));
+}
+
+#[tokio::test]
 async fn service_digest_tags_snapshot_returns_pending_when_missing() {
     let state = test_state_with(
         ":memory:",

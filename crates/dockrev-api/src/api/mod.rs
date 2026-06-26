@@ -557,6 +557,7 @@ async fn get_deploy_check_report(
         .await
         .map_err(map_internal)?;
     let mut refreshing = state.deploy_check_refresh_worker.is_running();
+    let last_error = state.deploy_check_refresh_worker.last_error().await;
 
     if let Some(row) = cached {
         let now = time::OffsetDateTime::now_utc();
@@ -585,11 +586,29 @@ async fn get_deploy_check_report(
         }));
     }
 
-    let _ = state.deploy_check_refresh_worker.enqueue().await;
+    if !refreshing && let Some(last_error) = last_error {
+        return Err(ApiError::internal(format!(
+            "deploy-check refresh failed: {last_error}"
+        )));
+    }
+
+    if !refreshing {
+        let started = state.deploy_check_refresh_worker.enqueue().await;
+        refreshing = started || state.deploy_check_refresh_worker.is_running();
+        if !refreshing
+            && let Some(last_error) = state.deploy_check_refresh_worker.last_error().await
+        {
+            return Err(ApiError::internal(format!(
+                "deploy-check refresh failed: {last_error}"
+            )));
+        }
+    }
+
     Ok(Json(DeployCheckReportEnvelope {
         status: DeployCheckReportStatus::Pending,
-        refreshing: true,
-        retry_after_ms: Some(deploy_check_refresh_worker::DEPLOY_CHECK_PENDING_RETRY_AFTER_MS),
+        refreshing,
+        retry_after_ms: refreshing
+            .then_some(deploy_check_refresh_worker::DEPLOY_CHECK_PENDING_RETRY_AFTER_MS),
         report: None,
     }))
 }
