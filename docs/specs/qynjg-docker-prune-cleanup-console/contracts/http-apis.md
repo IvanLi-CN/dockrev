@@ -83,23 +83,25 @@
 
 说明：
 
-- `reason=page` 的实现约定是：前端固定以 `preset=aggressive, scope=all` 拉取一份完整 inventory，再用每个资源项的 `minPreset` 做本地 tab 投影；页面默认展示 `balanced` 投影，但不重复全量扫描。
+- `reason=page` 的实现约定是：前端固定以 `preset=aggressive, scope=all` 读取一份完整 inventory snapshot，再用每个资源项的 `minPreset` 做本地 tab 投影；页面默认展示 `balanced` 投影，但不重复全量扫描。
 - `minPreset` 表示该资源最早在哪个 preset 开始出现，前端据此决定 tabs 是否显示该资源。
 - `estimatedReclaimableBytes` 对资源项来说允许为 `null`；这时 `estimateUnknown=true`，group/response 级 `hasUnknownSize=true`。
 - `serverDiskUsage` 表示 Dockrev 运行环境看到的服务器根文件系统用量；字段可省略，省略时前端必须展示“未获取”而不是把它混入可回收候选估算。
-- `reason=confirm` 返回当前动作作用域的最新候选；`confirmationFingerprint` 在 page/confirm 两类响应里都可能出现，但前端只使用 confirm 返回值发起 apply。
+- `reason=confirm` 只有在最新 cleanup snapshot 年龄 `<=30s` 且无 refresh in-flight 时才返回 ready；否则返回 pending，前端必须 poll 到 ready 后再允许确认。
+- cleanup confirm/page 的首次请求可以使用 `refresh=true` 触发后台刷新；后续 poll 必须改用 `refresh=false`，避免重复 re-enqueue 同一轮扫描。
 - `unownedGroup` 仅允许在 `scope=all` 时出现。
 - `service` 作用域的 payload 仍沿用 `stackGroups[] -> services[]` 结构，只是只包含目标 service 所属 stack 与该 service。
 
 ## `POST /api/cleanups/scan`
 
-作用：执行同步 cleanup 扫描，返回页面展示或确认弹窗所需的最新候选分组。
+作用：读取 cleanup snapshot，并按页面 / 确认语义返回 `ready` 或 `pending`。该接口不再在 owner-facing 请求链路里同步执行全量 Docker 扫描。
 
 Request body:
 
 ```json
 {
   "reason": "page | confirm",
+  "refresh": true,
   "preset": "balanced",
   "scope": "all | stack | service",
   "stackId": "optional for scope=stack|service",
@@ -113,18 +115,25 @@ Request body:
   - `scope` 固定为 `all`
   - 不接受 `stackId` / `serviceId`
 - `reason=confirm`：
+  - `refresh=true` 表示“必要时触发/续接一次后台 refresh”
+  - `refresh=false` 表示“只读当前 snapshot / in-flight 状态，不重复 enqueue”
   - 必须带 `scope`
   - `scope=stack` 时必须带 `stackId`
   - `scope=service` 时必须同时带 `stackId` 与 `serviceId`
 
-Response: `200 OK`
+Response:
+
+- `200 OK` with `status=ready`
+- `200 OK` with `status=pending`
 
 ```json
 {
+  "status": "ready",
   "reason": "confirm",
   "preset": "project_deep_clean",
   "scope": "stack",
   "scannedAt": "2026-03-29T13:40:00Z",
+  "refreshing": false,
   "estimatedReclaimableBytes": 53248,
   "hasUnknownSize": false,
   "serverDiskUsage": {
@@ -133,6 +142,20 @@ Response: `200 OK`
   },
   "stackGroups": [],
   "confirmationFingerprint": "sha256-abc"
+}
+```
+
+pending 示例：
+
+```json
+{
+  "status": "pending",
+  "reason": "confirm",
+  "preset": "project_deep_clean",
+  "scope": "stack",
+  "refreshing": true,
+  "retryAfterMs": 800,
+  "stackGroups": []
 }
 ```
 
@@ -155,7 +178,7 @@ Response: `200 OK`
 
 ## `POST /api/cleanups/apply`
 
-作用：基于最近一次 confirm-scan 的 fingerprint 发起异步 cleanup job。
+作用：基于最近一次 ready confirm snapshot 的 fingerprint 发起异步 cleanup job；apply 路径不再内联全量重扫。
 
 Request body:
 

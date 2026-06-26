@@ -7,6 +7,7 @@
     "dev": "bun --bun ./node_modules/.bin/vite",
     "demo:app": "VITE_DOCKREV_DEMO=app bun --bun ./node_modules/.bin/vite --host 127.0.0.1",
     "build": "bun --bun ./node_modules/.bin/tsc -b && bun --bun ./node_modules/.bin/vite build",
+    "test": "bun test",
     "lint": "bun --bun ./node_modules/.bin/eslint .",
     "storybook": "bun ./scripts/storybook-dev.mjs",
     "storybook:start": "bun ./scripts/storybook-daemon.mjs start",

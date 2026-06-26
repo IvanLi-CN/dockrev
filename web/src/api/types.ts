@@ -562,6 +562,13 @@ export type DeployCheckReportResponse = {
   checks: DeployCheckItem[]
 }
 
+export type DeployCheckReportEnvelope = {
+  status: 'pending' | 'ready'
+  refreshing?: boolean
+  retryAfterMs?: number | null
+  report?: DeployCheckReportResponse | null
+}
+
 export type DeployWelcomeResponse = {
   neverAutoOpen: boolean
   updatedAt?: string | null
@@ -580,6 +587,7 @@ export type CleanupApplyReason = 'ui'
 export type CleanupScanRequest = {
   reason: CleanupScanReason
   preset: CleanupPreset
+  refresh?: boolean
   scope: CleanupScope
   stackId?: string
   serviceId?: string
@@ -638,11 +646,14 @@ export type CleanupUnownedGroup = {
 }
 
 export type CleanupScanResponse = {
+  status: 'pending' | 'ready'
   reason: CleanupScanReason
   preset: CleanupPreset
   scope: CleanupScope
-  scannedAt: string
-  estimatedReclaimableBytes: number
+  scannedAt?: string | null
+  refreshing?: boolean
+  retryAfterMs?: number | null
+  estimatedReclaimableBytes?: number | null
   hasUnknownSize?: boolean
   serverDiskUsage?: CleanupServerDiskUsage | null
   stackGroups: CleanupStackGroup[]

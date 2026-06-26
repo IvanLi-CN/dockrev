@@ -121,7 +121,7 @@ impl Config {
             std::env::var("DOCKREV_DEPLOY_CHECK_LOCAL_COMMAND_TIMEOUT_SECONDS")
                 .ok()
                 .and_then(|v| v.trim().parse::<u64>().ok())
-                .unwrap_or(12);
+                .unwrap_or(8);
         if deploy_check_local_command_timeout_seconds == 0 {
             return Err(anyhow::anyhow!(
                 "DOCKREV_DEPLOY_CHECK_LOCAL_COMMAND_TIMEOUT_SECONDS must be >= 1"

@@ -66,6 +66,25 @@ pub struct DeployCheckReportResponse {
     pub checks: Vec<DeployCheckItem>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeployCheckReportStatus {
+    Pending,
+    Ready,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeployCheckReportEnvelope {
+    pub status: DeployCheckReportStatus,
+    #[serde(default)]
+    pub refreshing: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub report: Option<DeployCheckReportResponse>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeployCheckOverall {

@@ -3,6 +3,130 @@ use super::*;
 const TARGET_BATCH_SIZE: usize = 400;
 
 impl Db {
+    pub async fn upsert_cleanup_inventory_snapshot(
+        &self,
+        snapshot_key: &str,
+        snapshot_json: &str,
+        checked_at: &str,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let snapshot_key = snapshot_key.to_string();
+        let snapshot_json = snapshot_json.to_string();
+        let checked_at = checked_at.to_string();
+        let now = now.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                r#"
+INSERT INTO cleanup_inventory_snapshots (
+  snapshot_key,
+  snapshot_json,
+  checked_at,
+  updated_at
+) VALUES (?1, ?2, ?3, ?4)
+ON CONFLICT(snapshot_key) DO UPDATE SET
+  snapshot_json = excluded.snapshot_json,
+  checked_at = excluded.checked_at,
+  updated_at = excluded.updated_at
+"#,
+                params![snapshot_key, snapshot_json, checked_at, now],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("upsert cleanup inventory snapshot")
+    }
+
+    pub async fn get_cleanup_inventory_snapshot(
+        &self,
+        snapshot_key: &str,
+    ) -> anyhow::Result<Option<CleanupInventorySnapshotRow>> {
+        let snapshot_key = snapshot_key.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    r#"
+SELECT snapshot_key, snapshot_json, checked_at, updated_at
+FROM cleanup_inventory_snapshots
+WHERE snapshot_key = ?1
+"#,
+                    params![snapshot_key],
+                    |row| {
+                        Ok(CleanupInventorySnapshotRow {
+                            snapshot_key: row.get(0)?,
+                            snapshot_json: row.get(1)?,
+                            checked_at: row.get(2)?,
+                            updated_at: row.get(3)?,
+                        })
+                    },
+                )
+                .optional()?)
+        })
+        .await
+        .context("get cleanup inventory snapshot")
+    }
+
+    pub async fn upsert_deploy_check_report_snapshot(
+        &self,
+        snapshot_key: &str,
+        report_json: &str,
+        checked_at: &str,
+        now: &str,
+    ) -> anyhow::Result<()> {
+        let snapshot_key = snapshot_key.to_string();
+        let report_json = report_json.to_string();
+        let checked_at = checked_at.to_string();
+        let now = now.to_string();
+        self.call(move |conn| {
+            conn.execute(
+                r#"
+INSERT INTO deploy_check_report_snapshots (
+  snapshot_key,
+  report_json,
+  checked_at,
+  updated_at
+) VALUES (?1, ?2, ?3, ?4)
+ON CONFLICT(snapshot_key) DO UPDATE SET
+  report_json = excluded.report_json,
+  checked_at = excluded.checked_at,
+  updated_at = excluded.updated_at
+"#,
+                params![snapshot_key, report_json, checked_at, now],
+            )?;
+            Ok(())
+        })
+        .await
+        .context("upsert deploy check report snapshot")
+    }
+
+    pub async fn get_deploy_check_report_snapshot(
+        &self,
+        snapshot_key: &str,
+    ) -> anyhow::Result<Option<DeployCheckReportSnapshotRow>> {
+        let snapshot_key = snapshot_key.to_string();
+        self.call(move |conn| {
+            Ok(conn
+                .query_row(
+                    r#"
+SELECT snapshot_key, report_json, checked_at, updated_at
+FROM deploy_check_report_snapshots
+WHERE snapshot_key = ?1
+"#,
+                    params![snapshot_key],
+                    |row| {
+                        Ok(DeployCheckReportSnapshotRow {
+                            snapshot_key: row.get(0)?,
+                            report_json: row.get(1)?,
+                            checked_at: row.get(2)?,
+                            updated_at: row.get(3)?,
+                        })
+                    },
+                )
+                .optional()?)
+        })
+        .await
+        .context("get deploy check report snapshot")
+    }
+
     pub async fn list_ignore_rules_for_service(
         &self,
         service_id: &str,

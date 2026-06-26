@@ -4,7 +4,6 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   ApiError,
   getServiceGitHubReleases,
-  locateServiceGitHubRelease,
   type GitHubReleaseAuthMode,
   type ServiceGitHubReleaseItem,
   type ServiceGitHubReleaseLocateResponse,
@@ -12,6 +11,12 @@ import {
   type ServiceGitHubReleasesResponse,
   type ServiceGitHubReleasesStatus,
 } from '../api'
+import {
+  buildReleaseLocateFailureFromListResponse,
+  buildReleaseLocateNotFoundResponse,
+  RELEASE_DRAWER_LOCATE_LIMIT,
+  shouldContinueReleaseLocateSearch,
+} from '../githubReleaseDrawerState'
 import { navigate } from '../routes'
 import { closeGitHubReleaseDrawer } from '../releaseDrawer'
 import { requestSettingsFocus } from '../settingsFocus'
@@ -27,11 +32,9 @@ import {
   Mono,
   ScrollArea,
 } from '../ui'
-import { applyLocatePreloadFailure } from '../githubReleaseDrawerState'
 import { cn } from '../lib/utils'
 
 const RELEASES_PER_PAGE = 20
-const RELEASE_LOCATE_LIMIT = 50
 const TARGET_HIGHLIGHT_MS = 2200
 const RELEASE_ROW_GAP = 12
 
@@ -129,24 +132,6 @@ function buildListFailureResponse(
     perPage,
     hasMore: false,
     items: [],
-    message: fallbackReleaseErrorMessage(error),
-  }
-}
-
-function buildLocateFailureResponse(
-  error: unknown,
-  version: string,
-): ServiceGitHubReleaseLocateResponse {
-  return {
-    status: 'upstreamError',
-    authMode: 'anonymous',
-    repo: null,
-    version,
-    searchedCount: 0,
-    matchedTag: null,
-    page: null,
-    indexWithinPage: null,
-    absoluteIndex: null,
     message: fallbackReleaseErrorMessage(error),
   }
 }
@@ -293,14 +278,53 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
     [],
   )
 
-  const ensurePagesLoaded = useCallback(
-    async (expectedSession: string, targetServiceId: string, targetPage: number) => {
-      const startPage = Math.max(2, loadedPagesRef.current + 1)
-      for (let page = startPage; page <= targetPage; page += 1) {
-        const response = await fetchPage(expectedSession, targetServiceId, page)
-        if (!response || response.status !== 'ready') return response
+  const locateAcrossPages = useCallback(
+    async (
+      expectedSession: string,
+      targetServiceId: string,
+      version: string,
+      initialResponse: ServiceGitHubReleasesResponse | null,
+    ): Promise<ServiceGitHubReleaseLocateResponse | null> => {
+      let response = initialResponse
+      let searchedCount = 0
+      if (response && response.status !== 'ready') {
+        return buildReleaseLocateFailureFromListResponse(response, version, searchedCount)
       }
-      return null
+      while (response && response.status === 'ready') {
+        const remainingBudget = RELEASE_DRAWER_LOCATE_LIMIT - searchedCount
+        if (remainingBudget <= 0) {
+          return buildReleaseLocateNotFoundResponse(response, version, searchedCount)
+        }
+        const scanCount = Math.min(response.items.length, remainingBudget)
+        const scanItems = response.items.slice(0, scanCount)
+        const matchedIndex = scanItems.findIndex((item) => releaseMatchesVersion(item, version))
+        if (matchedIndex >= 0) {
+          return {
+            status: 'found',
+            authMode: response.authMode,
+            repo: response.repo ?? null,
+            version,
+            searchedCount: searchedCount + scanCount,
+            matchedTag: scanItems[matchedIndex]?.tagName ?? version,
+            page: response.page,
+            indexWithinPage: matchedIndex,
+            absoluteIndex: searchedCount + matchedIndex,
+            message: null,
+          }
+        }
+        searchedCount += scanCount
+        if (!shouldContinueReleaseLocateSearch(response, searchedCount)) {
+          return buildReleaseLocateNotFoundResponse(response, version, searchedCount)
+        }
+        const nextPage = response.page + 1
+        const nextResponse = await fetchPage(expectedSession, targetServiceId, nextPage)
+        if (!nextResponse) return null
+        if (nextResponse.status !== 'ready') {
+          return buildReleaseLocateFailureFromListResponse(nextResponse, version, searchedCount)
+        }
+        response = nextResponse
+      }
+      return buildReleaseLocateNotFoundResponse(initialResponse, version, searchedCount)
     },
     [fetchPage],
   )
@@ -336,29 +360,12 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
     let cancelled = false
 
     void (async () => {
-      const pagePromise = fetchPage(sessionKey, serviceId, 1)
-      const locatePromise = targetVersion
-        ? locateServiceGitHubRelease(serviceId, {
-            version: targetVersion,
-            perPage: RELEASES_PER_PAGE,
-            limit: RELEASE_LOCATE_LIMIT,
-          }).catch((error) => buildLocateFailureResponse(error, targetVersion))
-        : Promise.resolve<ServiceGitHubReleaseLocateResponse | null>(null)
-      const [pageResponse, nextLocateResponse] = await Promise.all([pagePromise, locatePromise])
+      const pageResponse = await fetchPage(sessionKey, serviceId, 1)
       if (cancelled || activeSessionRef.current !== sessionKey) return
 
-      let resolvedLocateResponse = nextLocateResponse
-      if (
-        pageResponse?.status === 'ready' &&
-        nextLocateResponse?.status === 'found' &&
-        (nextLocateResponse.page ?? 1) > 1
-      ) {
-        const preloadFailure = await ensurePagesLoaded(sessionKey, serviceId, nextLocateResponse.page ?? 1)
-        if (cancelled || activeSessionRef.current !== sessionKey) return
-        if (preloadFailure) {
-          resolvedLocateResponse = applyLocatePreloadFailure(nextLocateResponse, preloadFailure)
-        }
-      }
+      const resolvedLocateResponse = targetVersion
+        ? await locateAcrossPages(sessionKey, serviceId, targetVersion, pageResponse)
+        : null
 
       if (resolvedLocateResponse) {
         setLocateResponse(resolvedLocateResponse)
@@ -371,7 +378,7 @@ export function GitHubReleaseDrawer(props: GitHubReleaseDrawerProps) {
     return () => {
       cancelled = true
     }
-  }, [ensurePagesLoaded, fetchPage, props.open, resetState, serviceId, sessionKey, targetVersion])
+  }, [fetchPage, locateAcrossPages, props.open, resetState, serviceId, sessionKey, targetVersion])
 
   const rowCount = items.length + ((hasMoreRef.current || loadingMore || loadMoreFailure) ? 1 : 0)
   const isReady = listResponse?.status === 'ready'

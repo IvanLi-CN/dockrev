@@ -5,11 +5,13 @@ mod authz;
 mod auto_update;
 mod backup;
 mod cleanup;
+mod cleanup_snapshot_worker;
 mod compose;
 mod compose_runner;
 mod config;
 mod cron_expr;
 mod db;
+mod deploy_check_refresh_worker;
 mod discovery;
 mod docker_runner;
 mod error;
@@ -106,7 +108,25 @@ async fn main() -> anyhow::Result<()> {
         db.clone(),
         registry.clone(),
     ));
-    let state = state::AppState::new(config, db, registry, runner, snapshot_worker, resource_hub);
+    let cleanup_snapshot_worker = std::sync::Arc::new(
+        cleanup_snapshot_worker::CleanupSnapshotWorker::new(db.clone(), runner.clone()),
+    );
+    let deploy_check_refresh_worker =
+        std::sync::Arc::new(deploy_check_refresh_worker::DeployCheckRefreshWorker::new(
+            db.clone(),
+            runner.clone(),
+            config.clone(),
+        ));
+    let state = state::AppState::new(
+        config,
+        db,
+        registry,
+        runner,
+        snapshot_worker,
+        cleanup_snapshot_worker,
+        deploy_check_refresh_worker,
+        resource_hub,
+    );
 
     // Recover orphaned/incomplete jobs created by a previous process instance.
     // This covers cases where the container was killed or the process panicked mid-job.

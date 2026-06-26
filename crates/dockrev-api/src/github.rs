@@ -128,7 +128,7 @@ impl GitHubClient {
         Ok(Self {
             client: reqwest::Client::builder()
                 .default_headers(headers.clone())
-                .timeout(std::time::Duration::from_secs(12))
+                .timeout(std::time::Duration::from_secs(8))
                 .build()
                 .context("build reqwest client")?,
             base_url,

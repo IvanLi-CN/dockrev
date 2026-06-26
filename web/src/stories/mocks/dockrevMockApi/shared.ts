@@ -1,4 +1,5 @@
 import type {
+  DeployCheckReportEnvelope,
   DeployCheckReportResponse,
   DeployWelcomeResponse,
   DiscoveredProject,
@@ -98,6 +99,8 @@ export type DockrevMockApiOptions = {
   githubReleasesByServiceId?: Record<string, DockrevMockGitHubReleasesDataset>
   serviceOverridesById?: Record<string, Partial<StackDetail['services'][number]>>
   serviceTagSuggestionsById?: Record<string, ServiceTagSuggestionItem[]>
+  deployCheckReportOverride?: Partial<DeployCheckReportEnvelope>
+  deployWelcomeOverride?: Partial<DeployWelcomeResponse>
 }
 
 export type DockrevMockGitHubReleasesDataset = {
@@ -351,7 +354,7 @@ export type Fixture = {
   rollbackTargetByServiceId: Record<string, ServiceRollbackTargetResponse>
   repoLinkInferenceByServiceId: Record<string, ServiceRepoLinkInferenceResponse>
   serviceTagSuggestionsById: Record<string, ServiceTagSuggestionItem[]>
-  deployCheckReport: DeployCheckReportResponse
+  deployCheckReport: DeployCheckReportEnvelope
   deployWelcome: DeployWelcomeResponse
   versionInferenceOverview: VersionInferenceOverviewMock
   versionInferenceEvents: VersionInferenceEventMock[]
@@ -666,6 +669,15 @@ export function makeDefaultDeployCheckReport(): DeployCheckReportResponse {
         recommendation: '',
       },
     ],
+  }
+}
+
+export function makeDefaultDeployCheckEnvelope(): DeployCheckReportEnvelope {
+  return {
+    status: 'ready',
+    refreshing: false,
+    retryAfterMs: null,
+    report: makeDefaultDeployCheckReport(),
   }
 }
 

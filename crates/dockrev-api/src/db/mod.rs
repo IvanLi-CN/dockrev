@@ -179,6 +179,27 @@ pub struct ImageDigestTagsSnapshotRow {
     pub updated_at: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct CleanupInventorySnapshotRow {
+    #[allow(dead_code)]
+    pub snapshot_key: String,
+    pub snapshot_json: String,
+    pub checked_at: String,
+    #[allow(dead_code)]
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct DeployCheckReportSnapshotRow {
+    #[allow(dead_code)]
+    pub snapshot_key: String,
+    pub report_json: String,
+    #[allow(dead_code)]
+    pub checked_at: String,
+    #[allow(dead_code)]
+    pub updated_at: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewVersionDiscoveryRow {
     pub service_id: String,

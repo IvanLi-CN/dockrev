@@ -1,5 +1,6 @@
 import type {
   CleanupScanResponse,
+  DeployCheckReportEnvelope,
   DeployCheckReportResponse,
   DeployWelcomeResponse,
   DiscoveredProject,
@@ -11,9 +12,7 @@ import type {
   NewVersionDiscoveryTimelineResponse,
   NotificationConfig,
   Service,
-  ServiceDigestTagsResponse,
   ServiceDigestTagsSnapshotResult,
-  ServiceGitHubReleaseLocateResponse,
   ServiceGitHubReleasesResponse,
   ServiceResourceHistoryResponse,
   ServiceResourceOverviewResponse,
@@ -461,12 +460,22 @@ const deployCheckReport = {
   ],
 } satisfies DeployCheckReportResponse
 
+const deployCheckEnvelope = {
+  status: 'ready',
+  refreshing: false,
+  retryAfterMs: null,
+  report: deployCheckReport,
+} satisfies DeployCheckReportEnvelope
+
 function buildCleanupScan(): CleanupScanResponse {
   return {
+    status: 'ready',
     reason: 'page',
     preset: 'balanced',
     scope: 'all',
     scannedAt: nowIso(),
+    refreshing: false,
+    retryAfterMs: null,
     estimatedReclaimableBytes: 734 * 1024 * 1024,
     stackGroups: [
       {
@@ -498,17 +507,13 @@ function buildCleanupScan(): CleanupScanResponse {
   }
 }
 
-function digestTags(digestValue: string): ServiceDigestTagsResponse {
+function digestSnapshot(digestValue: string): ServiceDigestTagsSnapshotResult {
   return {
     digest: digestValue,
     tags: ['5.2.1', 'stable'],
-    repoTags: ['5.2.1', 'stable', 'latest'],
+    checkedAt: nowIso(-300_000),
     scan: { repoTagsTotal: 3, repoTagsConsidered: 3, manifestsOk: 3, manifestsTimeout: 0, manifestsError: 0 },
   }
-}
-
-function digestSnapshot(digestValue: string): ServiceDigestTagsSnapshotResult {
-  return { ...digestTags(digestValue), checkedAt: nowIso(-300_000) }
 }
 
 function githubReleases(): ServiceGitHubReleasesResponse {
@@ -532,20 +537,6 @@ function githubReleases(): ServiceGitHubReleasesResponse {
         createdAt: nowIso(-86_400_000),
       },
     ],
-  }
-}
-
-function locatedRelease(version: string): ServiceGitHubReleaseLocateResponse {
-  return {
-    status: 'found',
-    authMode: 'anonymous',
-    repo: { fullName: 'acme/api', htmlUrl: 'https://github.com/acme/api' },
-    version,
-    searchedCount: 1,
-    matchedTag: version.startsWith('v') ? version : `v${version}`,
-    page: 1,
-    indexWithinPage: 0,
-    absoluteIndex: 0,
   }
 }
 
@@ -607,7 +598,8 @@ export function installAppDemoApi(): DemoInstallResult | null {
     if (path === '/api/notifications/test' && method === 'POST') {
       return json({ ok: true, results: { email: { ok: true }, webhook: { ok: true }, telegram: { ok: true }, webPush: { ok: true } } })
     }
-    if (path === '/api/deploy-check/report' && method === 'GET') return json(deployCheckReport)
+    if (path === '/api/deploy-check/report' && method === 'GET') return json(deployCheckEnvelope)
+    if (path === '/api/deploy-check/report/refresh' && method === 'POST') return json(deployCheckEnvelope, { status: 202 })
     if (path === '/api/deploy-welcome' && method === 'GET') {
       return json({ neverAutoOpen: true, updatedAt: nowIso(-86_400_000) } satisfies DeployWelcomeResponse)
     }
@@ -656,7 +648,7 @@ export function installAppDemoApi(): DemoInstallResult | null {
     }
     if (path.startsWith('/api/services/') && path.endsWith('/rollback') && method === 'POST') return json(createUpdateJob())
     if (path.startsWith('/api/services/') && path.endsWith('/digest-tags') && method === 'GET') {
-      return json(digestTags(url.searchParams.get('digest') ?? 'sha256:demo'))
+      return json(digestSnapshot(url.searchParams.get('digest') ?? 'sha256:demo'))
     }
     if (path.startsWith('/api/services/') && path.endsWith('/digest-tags-snapshot') && method === 'GET') {
       return json(digestSnapshot(url.searchParams.get('digest') ?? 'sha256:demo'))
@@ -669,9 +661,6 @@ export function installAppDemoApi(): DemoInstallResult | null {
       return json({ items: [{ kind: 'currentCandidate', version: '5.2.3', occurredAt: nowIso(-86_400_000) }] } satisfies NewVersionDiscoveryTimelineResponse)
     }
     if (path.startsWith('/api/services/') && path.endsWith('/github-releases') && method === 'GET') return json(githubReleases())
-    if (path.startsWith('/api/services/') && path.endsWith('/github-releases/locate') && method === 'GET') {
-      return json(locatedRelease(url.searchParams.get('version') ?? '5.2.3'))
-    }
     if (path.startsWith('/api/services/') && path.endsWith('/repo-link/infer') && method === 'POST') {
       return json({ repoUrl: 'https://github.com/acme/demo', strategy: 'oci_source', reason: null })
     }

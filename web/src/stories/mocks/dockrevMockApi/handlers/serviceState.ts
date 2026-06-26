@@ -36,7 +36,6 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     urlPathWithQuery,
     buildMockDigestTagData,
     buildMockDiscoveryTimeline,
-    buildMockGitHubReleaseLocateResponse,
     buildMockGitHubReleasesResponse,
   } = ctx
 
@@ -228,6 +227,18 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     return json(f.deployCheckReport)
   }
 
+  if (method === 'POST' && urlPath === '/api/deploy-check/report/refresh') {
+    return json(
+      {
+        ...f.deployCheckReport,
+        status: 'ready',
+        refreshing: true,
+        retryAfterMs: 450,
+      },
+      { status: 202 },
+    )
+  }
+
   if (method === 'GET' && urlPath === '/api/deploy-welcome') {
     return json(f.deployWelcome)
   }
@@ -353,15 +364,6 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     return json({ error: 'not found' }, { status: 404 })
   }
 
-  if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/github-releases/locate')) {
-    const parts = urlPath.split('/').filter(Boolean)
-    const serviceId = decodeURIComponent(parts[2])
-    const version = url?.searchParams.get('version')?.trim() ?? ''
-    const perPage = Math.max(1, Number(url?.searchParams.get('perPage') ?? '20') || 20)
-    const limit = Math.max(1, Number(url?.searchParams.get('limit') ?? '50') || 50)
-    return json(buildMockGitHubReleaseLocateResponse(serviceId, version, perPage, limit))
-  }
-
   if (method === 'GET' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/github-releases')) {
     const parts = urlPath.split('/').filter(Boolean)
     const serviceId = decodeURIComponent(parts[2])
@@ -447,28 +449,13 @@ export async function handleServiceStateRoutes(ctx: MockRouteContext): Promise<R
     const debug = globalThis.__DOCKREV_MOCK_DEBUG__ ?? (globalThis.__DOCKREV_MOCK_DEBUG__ = makeMockDebug())
     debug.digestTagsCalls += 1
     debug.lastDigestTagsUrl = urlPathWithQuery
-
-    const parts = urlPath.split('/').filter(Boolean)
-    const serviceId = decodeURIComponent(parts[2])
-    const found = findService(serviceId)
-    if (!found) return json({ error: 'not found' }, { status: 404 })
-
-    const digestNorm = normalizeDigestValue(url?.searchParams.get('digest'))
-    const refreshed = debug.lastVersionInferenceRefreshDigest === digestNorm
-    const { repoTags, tags } = buildMockDigestTagData(serviceId, found.svc.image.tag, digestNorm, refreshed)
-
-    return json({
-      digest: digestNorm,
-      tags,
-      repoTags,
-      scan: {
-        repoTagsTotal: repoTags.length,
-        repoTagsConsidered: repoTags.length,
-        manifestsOk: digestNorm ? repoTags.length : 0,
-        manifestsTimeout: 0,
-        manifestsError: 0,
-      },
+    const snapshotResp = await handleServiceStateRoutes({
+      ...ctx,
+      method: 'GET',
+      urlPath: urlPath.replace(/\/digest-tags$/, '/digest-tags-snapshot'),
+      urlPathWithQuery: urlPathWithQuery.replace(/\/digest-tags(?=\?)/, '/digest-tags-snapshot').replace(/\/digest-tags$/, '/digest-tags-snapshot'),
     })
+    if (snapshotResp) return snapshotResp
   }
 
   if (method === 'POST' && urlPath.startsWith('/api/services/') && urlPath.endsWith('/version-inference/refresh')) {

@@ -9,6 +9,7 @@ import {
   type CleanupPreset,
   type CleanupResourceItem,
   type CleanupResourceKind,
+  type CleanupScanRequest,
   type CleanupScanResponse,
   type CleanupScope,
   type CleanupServerDiskUsage,
@@ -140,12 +141,13 @@ function formatBytes(bytes: number): string {
   return `${value.toFixed(digits)} ${units[index]}`
 }
 
-function formatEstimate(bytes: number, hasUnknown?: boolean): string {
+function formatEstimate(bytes?: number | null, hasUnknown?: boolean): string {
+  const normalizedBytes = Number.isFinite(bytes ?? null) ? Math.max(0, bytes ?? 0) : 0
   if (hasUnknown) {
-    if (bytes > 0) return `${formatBytes(bytes)}+`
+    if (normalizedBytes > 0) return `${formatBytes(normalizedBytes)}+`
     return '未知大小'
   }
-  return formatBytes(bytes)
+  return formatBytes(normalizedBytes)
 }
 
 function formatUnknownCount(count: number): string {
@@ -175,6 +177,7 @@ function formatPercent(value: number): string {
 }
 
 function countVisibleResources(response: CleanupScanResponse): number {
+  if (response.status !== 'ready') return 0
   let total = 0
   for (const stack of response.stackGroups) {
     total += stack.stackOrphans.length
@@ -185,6 +188,7 @@ function countVisibleResources(response: CleanupScanResponse): number {
 }
 
 function flattenAllResources(response: CleanupScanResponse): CleanupResourceItem[] {
+  if (response.status !== 'ready') return []
   return [
     ...response.stackGroups.flatMap((stack) => [
       ...stack.stackOrphans,
@@ -206,6 +210,7 @@ function usageBucketForKind(kind: CleanupResourceKind): CleanupUsageBucket {
 }
 
 function buildUsageCards(response: CleanupScanResponse): CleanupUsageCard[] {
+  if (response.status !== 'ready') return []
   const resources = flattenAllResources(response)
   const totals = new Map<CleanupUsageBucket, { bytes: number; count: number; unknownCount: number }>()
   for (const meta of CLEANUP_USAGE_CARD_META) {
@@ -261,6 +266,7 @@ function itemHasUnknownSize(item: CleanupResourceItem): boolean {
 }
 
 function projectResponseForPreset(pageScan: CleanupScanResponse, preset: CleanupPreset): CleanupScanResponse {
+  if (pageScan.status !== 'ready') return { ...pageScan, preset }
   const stackGroups: CleanupStackGroup[] = []
   let totalBytes = 0
   let totalUnknown = false
@@ -729,17 +735,47 @@ export function CleanupPage(props: {
   )
   const initialScanPending = loading && !pageScan
 
+  const fetchCleanupScan = useCallback(
+    async (input: CleanupScanRequest, options?: { pollUntilReady?: boolean }) => {
+      let response = await scanCleanups(input)
+      const shouldPoll = options?.pollUntilReady ?? false
+      while (shouldPoll && (response.status !== 'ready' || response.refreshing)) {
+        const retryAfter = Math.max(200, response.retryAfterMs ?? 800)
+        await new Promise((resolve) => window.setTimeout(resolve, retryAfter))
+        response = await scanCleanups({ ...input, refresh: false })
+      }
+      return response
+    },
+    [],
+  )
+
   const refreshPageScan = useCallback(async () => {
     setRefreshing(true)
     setPageError(null)
     try {
-      const response = await scanCleanups({
+      const response = await fetchCleanupScan({
         reason: 'page',
+        refresh: true,
         preset: 'aggressive',
         scope: 'all',
       })
-      setPageScan(response)
-      onLastScanHint?.(response.scannedAt)
+      if (response.status === 'ready') {
+        setPageScan(response)
+        onLastScanHint?.(response.scannedAt ?? undefined)
+      }
+      if (response.status !== 'ready' || response.refreshing) {
+        const settled = await fetchCleanupScan(
+          {
+            reason: 'page',
+            refresh: true,
+            preset: 'aggressive',
+            scope: 'all',
+          },
+          { pollUntilReady: true },
+        )
+        setPageScan(settled)
+        onLastScanHint?.(settled.scannedAt ?? undefined)
+      }
     } catch (error) {
       const message = toErrorMessage(error)
       setPageError(message)
@@ -748,7 +784,7 @@ export function CleanupPage(props: {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [onLastScanHint])
+  }, [fetchCleanupScan, onLastScanHint])
 
   useEffect(() => {
     onLastScanHint?.(undefined)
@@ -769,13 +805,21 @@ export function CleanupPage(props: {
           confirmationFingerprint: '',
         }
 
-        let latest = await scanCleanups({
-          reason: 'confirm',
-          preset: activePreset,
-          scope: target.scope,
-          stackId: confirmRequest.stackId,
-          serviceId: confirmRequest.serviceId,
-        })
+        let latest = await fetchCleanupScan(
+          {
+            reason: 'confirm',
+            refresh: true,
+            preset: activePreset,
+            scope: target.scope,
+            stackId: confirmRequest.stackId,
+            serviceId: confirmRequest.serviceId,
+          },
+          { pollUntilReady: true },
+        )
+
+        if (latest.status !== 'ready') {
+          throw new Error('cleanup snapshot is not ready')
+        }
 
         if (countVisibleResources(latest) === 0) {
           await confirm({
@@ -821,11 +865,29 @@ export function CleanupPage(props: {
               const mismatch = parseFingerprintMismatch(error.details)
               if (mismatch?.latest) {
                 latest = mismatch.latest
+                if (latest.status !== 'ready') {
+                  latest = await fetchCleanupScan(
+                    {
+                      reason: 'confirm',
+                      refresh: true,
+                      preset: activePreset,
+                      scope: target.scope,
+                      stackId: confirmRequest.stackId,
+                      serviceId: confirmRequest.serviceId,
+                    },
+                    { pollUntilReady: true },
+                  )
+                }
                 stale = true
-                if (countVisibleResources(latest) === 0) {
+                if (latest.status !== 'ready' || countVisibleResources(latest) === 0) {
                   await confirm({
                     title: '候选已变化',
-                    body: <CleanupConfirmBody response={latest} stale targetLabel={target.targetLabel} />,
+                    body:
+                      latest.status === 'ready' ? (
+                        <CleanupConfirmBody response={latest} stale targetLabel={target.targetLabel} />
+                      ) : (
+                        '最新 cleanup snapshot 仍在刷新，请稍后重试。'
+                      ),
                     badgeText: '无需执行',
                     badgeTone: 'muted',
                     bodyClassName: 'cleanupConfirmDialogBody',
@@ -848,7 +910,7 @@ export function CleanupPage(props: {
         setBusyActionKey(null)
       }
     },
-    [activePreset, confirm],
+    [activePreset, confirm, fetchCleanupScan],
   )
 
   const topActions = useMemo(() => {

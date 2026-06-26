@@ -12,26 +12,40 @@ use crate::{
     db::ArchivedFilter,
     registry,
     runner::CommandSpec,
-    state::AppState,
 };
 
-fn local_command_timeout(state: &AppState) -> Duration {
-    Duration::from_secs(state.config.deploy_check_local_command_timeout_seconds)
+fn local_command_timeout_from_config(config: &crate::config::Config) -> Duration {
+    Duration::from_secs(config.deploy_check_local_command_timeout_seconds)
 }
 
-pub async fn build_report(state: &AppState) -> anyhow::Result<DeployCheckReportResponse> {
-    let context = collect_context(state).await?;
+pub async fn build_report_with_parts(
+    config: &crate::config::Config,
+    db: &crate::db::Db,
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+) -> anyhow::Result<DeployCheckReportResponse> {
+    let context = collect_context_from_db(db).await?;
 
-    let mut checks = Vec::new();
-    checks.push(check_docker_engine(state).await);
-    checks.push(check_compose_access(&context));
-    checks.push(check_service_image_ref_valid(&context));
-    checks.push(check_update_executor_ready(state).await);
+    let (docker_check, update_executor_check) = tokio::join!(
+        check_docker_engine_with(config, runner.clone()),
+        check_update_executor_ready_with(config, runner.clone()),
+    );
 
-    checks.push(check_registry_auth(state, &context));
-    checks.extend(check_notification_features(state).await?);
-    checks.push(check_github_packages_feature(state).await?);
+    let mut checks = vec![
+        docker_check,
+        check_compose_access(&context),
+        check_service_image_ref_valid(&context),
+        update_executor_check,
+        check_registry_auth_with(config, &context),
+    ];
+    checks.extend(check_notification_features_with(db).await?);
+    checks.push(check_github_packages_feature_with(db).await?);
 
+    build_report_from_checks(checks)
+}
+
+fn build_report_from_checks(
+    checks: Vec<DeployCheckItem>,
+) -> anyhow::Result<DeployCheckReportResponse> {
     let blocking_check_ids: Vec<String> = checks
         .iter()
         .filter(|item| item.required && item.status == DeployCheckStatus::Fail)
@@ -67,15 +81,15 @@ struct PreflightContext {
     parsed_images: Vec<registry::ImageRef>,
 }
 
-async fn collect_context(state: &AppState) -> anyhow::Result<PreflightContext> {
-    let stack_ids = state.db.list_stack_ids().await?;
+async fn collect_context_from_db(db: &crate::db::Db) -> anyhow::Result<PreflightContext> {
+    let stack_ids = db.list_stack_ids().await?;
     let mut compose_paths = BTreeSet::<String>::new();
     let mut invalid_image_refs = Vec::<String>::new();
     let mut parsed_images = Vec::<registry::ImageRef>::new();
     let mut active_services_total = 0usize;
 
     for stack_id in stack_ids {
-        let Some(stack) = state.db.get_stack(&stack_id).await? else {
+        let Some(stack) = db.get_stack(&stack_id).await? else {
             continue;
         };
         if stack.archived {
@@ -108,8 +122,7 @@ async fn collect_context(state: &AppState) -> anyhow::Result<PreflightContext> {
     }
 
     // Also include the latest discovered compose files when stacks are not yet created.
-    let discovered = state
-        .db
+    let discovered = db
         .list_discovered_compose_projects(ArchivedFilter::Exclude)
         .await
         .context("list discovered compose projects for deploy preflight")?;
@@ -131,7 +144,10 @@ async fn collect_context(state: &AppState) -> anyhow::Result<PreflightContext> {
     })
 }
 
-async fn check_docker_engine(state: &AppState) -> DeployCheckItem {
+async fn check_docker_engine_with(
+    config: &crate::config::Config,
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+) -> DeployCheckItem {
     let spec = CommandSpec {
         program: "docker".to_string(),
         args: vec![
@@ -142,7 +158,10 @@ async fn check_docker_engine(state: &AppState) -> DeployCheckItem {
         env: Vec::new(),
     };
 
-    match state.runner.run(spec, local_command_timeout(state)).await {
+    match runner
+        .run(spec, local_command_timeout_from_config(config))
+        .await
+    {
         Ok(output) if output.status == 0 => {
             let version = output.stdout.trim();
             let evidence = if version.is_empty() {
@@ -274,19 +293,25 @@ fn check_service_image_ref_valid(context: &PreflightContext) -> DeployCheckItem 
     )
 }
 
-async fn check_update_executor_ready(state: &AppState) -> DeployCheckItem {
-    let args = compose_version_args(&state.config.compose_bin);
+async fn check_update_executor_ready_with(
+    config: &crate::config::Config,
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+) -> DeployCheckItem {
+    let args = compose_version_args(&config.compose_bin);
     let spec = CommandSpec {
-        program: state.config.compose_bin.clone(),
+        program: config.compose_bin.clone(),
         args,
         env: Vec::new(),
     };
 
-    match state.runner.run(spec, local_command_timeout(state)).await {
+    match runner
+        .run(spec, local_command_timeout_from_config(config))
+        .await
+    {
         Ok(output) if output.status == 0 => {
             let stdout = output.stdout.trim();
             let evidence = if stdout.is_empty() {
-                format!("{} version ok", state.config.compose_bin)
+                format!("{} version ok", config.compose_bin)
             } else {
                 first_line(stdout)
             };
@@ -317,7 +342,10 @@ async fn check_update_executor_ready(state: &AppState) -> DeployCheckItem {
     }
 }
 
-fn check_registry_auth(state: &AppState, context: &PreflightContext) -> DeployCheckItem {
+fn check_registry_auth_with(
+    config: &crate::config::Config,
+    context: &PreflightContext,
+) -> DeployCheckItem {
     let mut required_hosts = BTreeSet::<String>::new();
     let mut potential_hosts = BTreeSet::<String>::new();
     for image in &context.parsed_images {
@@ -337,7 +365,7 @@ fn check_registry_auth(state: &AppState, context: &PreflightContext) -> DeployCh
         if !potential_hosts.is_empty() {
             let potential_evidence =
                 format!("potential hosts: {}", join_limited_set(&potential_hosts, 6));
-            let Some(path) = state.config.docker_config_path.clone() else {
+            let Some(path) = config.docker_config_path.clone() else {
                 return na_feature(
                     "feature.registry_auth",
                     "私有镜像仓库鉴权配置",
@@ -419,7 +447,7 @@ fn check_registry_auth(state: &AppState, context: &PreflightContext) -> DeployCh
         );
     }
 
-    let Some(path) = state.config.docker_config_path.clone() else {
+    let Some(path) = config.docker_config_path.clone() else {
         return fail_feature(
             "feature.registry_auth",
             "私有镜像仓库鉴权配置",
@@ -483,8 +511,10 @@ fn check_registry_auth(state: &AppState, context: &PreflightContext) -> DeployCh
     )
 }
 
-async fn check_notification_features(state: &AppState) -> anyhow::Result<Vec<DeployCheckItem>> {
-    let settings = state.db.get_notification_settings().await?;
+async fn check_notification_features_with(
+    db: &crate::db::Db,
+) -> anyhow::Result<Vec<DeployCheckItem>> {
+    let settings = db.get_notification_settings().await?;
     let mut checks = Vec::new();
 
     checks.push(if !settings.email_enabled {
@@ -650,12 +680,9 @@ async fn check_notification_features(state: &AppState) -> anyhow::Result<Vec<Dep
     Ok(checks)
 }
 
-async fn check_github_packages_feature(state: &AppState) -> anyhow::Result<DeployCheckItem> {
-    let settings = state.db.get_github_packages_settings().await?;
-    let repos_selected_total = state
-        .db
-        .count_github_packages_repos_selected_total()
-        .await?;
+async fn check_github_packages_feature_with(db: &crate::db::Db) -> anyhow::Result<DeployCheckItem> {
+    let settings = db.get_github_packages_settings().await?;
+    let repos_selected_total = db.count_github_packages_repos_selected_total().await?;
 
     if !settings.enabled {
         return Ok(na_feature(

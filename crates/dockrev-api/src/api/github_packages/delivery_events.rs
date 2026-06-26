@@ -105,6 +105,7 @@ pub(crate) async fn github_packages_webhook_delivery_events(
 
     let sse_state = state.clone();
     let stream = async_stream::stream! {
+        yield Ok::<Event, Infallible>(Event::default().comment("keep-alive"));
         loop {
             let rows = match sse_state
                 .db
@@ -146,11 +147,7 @@ pub(crate) async fn github_packages_webhook_delivery_events(
         }
     };
 
-    let sse = Sse::new(stream).keep_alive(
-        KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .text("keep-alive"),
-    );
+    let sse = Sse::new(stream).keep_alive(edge_proxy_safe_keepalive());
 
     let mut resp_headers = HeaderMap::new();
     resp_headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));

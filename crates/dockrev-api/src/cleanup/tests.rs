@@ -2,16 +2,51 @@ use super::parse::{
     parse_df_bytes_output, parse_du_kilobytes_output, parse_human_size,
     parse_volume_sizes_from_system_df_verbose, volume_fingerprint_key,
 };
+use super::planning::preset_includes_candidate;
 use super::*;
+
+fn ownership_to_snapshot(ownership: CleanupOwnership) -> CleanupInventoryOwnership {
+    match ownership {
+        CleanupOwnership::Service {
+            stack_id,
+            stack_name,
+            service_id,
+            service_name,
+        } => CleanupInventoryOwnership {
+            kind: CleanupInventoryOwnershipType::Service,
+            stack_id: Some(stack_id),
+            stack_name: Some(stack_name),
+            service_id: Some(service_id),
+            service_name: Some(service_name),
+        },
+        CleanupOwnership::StackOrphan {
+            stack_id,
+            stack_name,
+        } => CleanupInventoryOwnership {
+            kind: CleanupInventoryOwnershipType::StackOrphan,
+            stack_id: Some(stack_id),
+            stack_name: Some(stack_name),
+            service_id: None,
+            service_name: None,
+        },
+        CleanupOwnership::Unowned => CleanupInventoryOwnership {
+            kind: CleanupInventoryOwnershipType::Unowned,
+            stack_id: None,
+            stack_name: None,
+            service_id: None,
+            service_name: None,
+        },
+    }
+}
 
 fn sample_candidate(
     key: &str,
     kind: CleanupResourceKind,
     ownership: CleanupOwnership,
-    category: CleanupCandidateCategory,
+    category: CleanupInventoryCategory,
     estimated_reclaimable_bytes: Option<u64>,
-) -> CleanupCandidate {
-    CleanupCandidate {
+) -> CleanupInventoryCandidate {
+    CleanupInventoryCandidate {
         key: key.to_string(),
         resource_id: key.to_string(),
         kind,
@@ -19,7 +54,7 @@ fn sample_candidate(
         estimated_reclaimable_bytes,
         estimate_unknown: estimated_reclaimable_bytes.is_none(),
         requires_ephemeral_confirmation: false,
-        ownership,
+        ownership: ownership_to_snapshot(ownership),
         category,
     }
 }
@@ -28,27 +63,27 @@ fn sample_candidate(
 fn preset_filter_respects_progressive_rules() {
     assert!(preset_includes_candidate(
         &CleanupPreset::Conservative,
-        &CleanupCandidateCategory::DanglingImage
+        &CleanupInventoryCategory::DanglingImage
     ));
     assert!(!preset_includes_candidate(
         &CleanupPreset::Conservative,
-        &CleanupCandidateCategory::ManagedUnusedImage
+        &CleanupInventoryCategory::ManagedUnusedImage
     ));
     assert!(preset_includes_candidate(
         &CleanupPreset::Balanced,
-        &CleanupCandidateCategory::ManagedUnusedImage
+        &CleanupInventoryCategory::ManagedUnusedImage
     ));
     assert!(!preset_includes_candidate(
         &CleanupPreset::Balanced,
-        &CleanupCandidateCategory::ManagedUnusedVolume
+        &CleanupInventoryCategory::ManagedUnusedVolume
     ));
     assert!(preset_includes_candidate(
         &CleanupPreset::ProjectDeepClean,
-        &CleanupCandidateCategory::ManagedUnusedVolume
+        &CleanupInventoryCategory::ManagedUnusedVolume
     ));
     assert!(preset_includes_candidate(
         &CleanupPreset::Aggressive,
-        &CleanupCandidateCategory::GlobalUnusedImage
+        &CleanupInventoryCategory::GlobalUnusedImage
     ));
 }
 
@@ -64,7 +99,7 @@ fn service_and_stack_scope_exclude_unowned_candidates() {
         "global",
         CleanupResourceKind::Image,
         CleanupOwnership::Unowned,
-        CleanupCandidateCategory::GlobalUnusedImage,
+        CleanupInventoryCategory::GlobalUnusedImage,
         Some(1),
     );
     let service = sample_candidate(
@@ -76,7 +111,7 @@ fn service_and_stack_scope_exclude_unowned_candidates() {
             service_id: "svc-1".to_string(),
             service_name: "web".to_string(),
         },
-        CleanupCandidateCategory::ManagedUnusedImage,
+        CleanupInventoryCategory::ManagedUnusedImage,
         Some(1),
     );
     assert!(!candidate_matches_request(&unowned, &request));
@@ -95,7 +130,7 @@ fn build_grouped_response_keeps_service_and_stack_orphans_separate() {
                 service_id: "svc-1".to_string(),
                 service_name: "web".to_string(),
             },
-            CleanupCandidateCategory::ManagedUnusedImage,
+            CleanupInventoryCategory::ManagedUnusedImage,
             Some(10),
         ),
         sample_candidate(
@@ -105,14 +140,14 @@ fn build_grouped_response_keeps_service_and_stack_orphans_separate() {
                 stack_id: "stack-1".to_string(),
                 stack_name: "alpha".to_string(),
             },
-            CleanupCandidateCategory::UnusedNetwork,
+            CleanupInventoryCategory::UnusedNetwork,
             Some(0),
         ),
         sample_candidate(
             "global-vol",
             CleanupResourceKind::Volume,
             CleanupOwnership::Unowned,
-            CleanupCandidateCategory::GlobalUnusedVolume,
+            CleanupInventoryCategory::GlobalUnusedVolume,
             None,
         ),
     ];
@@ -138,7 +173,7 @@ fn build_grouped_response_preserves_known_lower_bound_for_unknown_estimates() {
         "builder-cache",
         CleanupResourceKind::BuilderCache,
         CleanupOwnership::Unowned,
-        CleanupCandidateCategory::BuilderCache,
+        CleanupInventoryCategory::BuilderCache,
         Some(256),
     );
     candidate.estimate_unknown = true;
@@ -165,7 +200,7 @@ fn fingerprint_changes_when_selected_resources_change() {
         "a",
         CleanupResourceKind::Image,
         CleanupOwnership::Unowned,
-        CleanupCandidateCategory::BuilderCache,
+        CleanupInventoryCategory::BuilderCache,
         Some(1),
     )];
     let second = vec![
@@ -173,14 +208,14 @@ fn fingerprint_changes_when_selected_resources_change() {
             "a",
             CleanupResourceKind::Image,
             CleanupOwnership::Unowned,
-            CleanupCandidateCategory::BuilderCache,
+            CleanupInventoryCategory::BuilderCache,
             Some(1),
         ),
         sample_candidate(
             "b",
             CleanupResourceKind::Volume,
             CleanupOwnership::Unowned,
-            CleanupCandidateCategory::GlobalUnusedVolume,
+            CleanupInventoryCategory::GlobalUnusedVolume,
             Some(2),
         ),
     ];
@@ -207,7 +242,7 @@ fn fingerprint_ignores_candidate_iteration_order() {
         service_name: "web".to_string(),
     };
     let first = vec![
-        CleanupCandidate {
+        CleanupInventoryCandidate {
             key: "volume:data:created:2026-03-29T00:00:00Z".to_string(),
             resource_id: "data".to_string(),
             kind: CleanupResourceKind::Volume,
@@ -215,10 +250,10 @@ fn fingerprint_ignores_candidate_iteration_order() {
             estimated_reclaimable_bytes: Some(2048),
             estimate_unknown: false,
             requires_ephemeral_confirmation: false,
-            ownership: CleanupOwnership::Unowned,
-            category: CleanupCandidateCategory::GlobalUnusedVolume,
+            ownership: ownership_to_snapshot(CleanupOwnership::Unowned),
+            category: CleanupInventoryCategory::GlobalUnusedVolume,
         },
-        CleanupCandidate {
+        CleanupInventoryCandidate {
             key: "image:sha256:abc".to_string(),
             resource_id: "sha256:abc".to_string(),
             kind: CleanupResourceKind::Image,
@@ -226,8 +261,8 @@ fn fingerprint_ignores_candidate_iteration_order() {
             estimated_reclaimable_bytes: Some(1024),
             estimate_unknown: false,
             requires_ephemeral_confirmation: false,
-            ownership: service.clone(),
-            category: CleanupCandidateCategory::ManagedUnusedImage,
+            ownership: ownership_to_snapshot(service.clone()),
+            category: CleanupInventoryCategory::ManagedUnusedImage,
         },
     ];
     let second = vec![first[1].clone(), first[0].clone()];
@@ -253,7 +288,7 @@ fn fingerprint_ignores_scanned_at_timestamp_changes() {
         "builder-cache",
         CleanupResourceKind::BuilderCache,
         CleanupOwnership::Unowned,
-        CleanupCandidateCategory::BuilderCache,
+        CleanupInventoryCategory::BuilderCache,
         Some(256),
     )];
 
@@ -278,7 +313,7 @@ fn fingerprint_ignores_scanned_at_for_ephemeral_confirmation_candidates() {
         "volume:data",
         CleanupResourceKind::Volume,
         CleanupOwnership::Unowned,
-        CleanupCandidateCategory::GlobalUnusedVolume,
+        CleanupInventoryCategory::GlobalUnusedVolume,
         Some(256),
     )];
     selected[0].requires_ephemeral_confirmation = true;
@@ -304,7 +339,7 @@ fn fingerprint_changes_when_estimate_unknown_changes() {
         "builder-cache",
         CleanupResourceKind::BuilderCache,
         CleanupOwnership::Unowned,
-        CleanupCandidateCategory::BuilderCache,
+        CleanupInventoryCategory::BuilderCache,
         Some(256),
     )];
     let mut lower_bound = exact.clone();
@@ -448,7 +483,7 @@ fn fingerprint_changes_when_reusable_volume_instance_changes() {
         stack_id: "stack-1".to_string(),
         stack_name: "alpha".to_string(),
     };
-    let first = vec![CleanupCandidate {
+    let first = vec![CleanupInventoryCandidate {
         key: "volume:data:2026-03-29T00:00:00Z".to_string(),
         resource_id: "data".to_string(),
         kind: CleanupResourceKind::Volume,
@@ -456,10 +491,10 @@ fn fingerprint_changes_when_reusable_volume_instance_changes() {
         estimated_reclaimable_bytes: Some(8192),
         estimate_unknown: false,
         requires_ephemeral_confirmation: false,
-        ownership: ownership.clone(),
-        category: CleanupCandidateCategory::ManagedUnusedVolume,
+        ownership: ownership_to_snapshot(ownership.clone()),
+        category: CleanupInventoryCategory::ManagedUnusedVolume,
     }];
-    let second = vec![CleanupCandidate {
+    let second = vec![CleanupInventoryCandidate {
         key: "volume:data:2026-03-29T00:10:00Z".to_string(),
         resource_id: "data".to_string(),
         kind: CleanupResourceKind::Volume,
@@ -467,8 +502,8 @@ fn fingerprint_changes_when_reusable_volume_instance_changes() {
         estimated_reclaimable_bytes: Some(8192),
         estimate_unknown: false,
         requires_ephemeral_confirmation: false,
-        ownership,
-        category: CleanupCandidateCategory::ManagedUnusedVolume,
+        ownership: ownership_to_snapshot(ownership),
+        category: CleanupInventoryCategory::ManagedUnusedVolume,
     }];
 
     let first_fp =

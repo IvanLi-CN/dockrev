@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::{cleanup, ids, models::JobRecord};
+use crate::{cleanup, cleanup_snapshot_worker, ids, models::JobRecord};
 
 pub(super) async fn scan_cleanups(
     State(state): State<Arc<AppState>>,
@@ -9,11 +9,129 @@ pub(super) async fn scan_cleanups(
 ) -> Result<Json<CleanupScanResponse>, ApiError> {
     let _user = require_user(&state, &headers).await?;
     validate_cleanup_scan_request(&req)?;
-    let scanned_at = now_rfc3339().map_err(map_internal)?;
-    let plan = cleanup::build_execution_plan(state.as_ref(), &req, &scanned_at)
+    let now = time::OffsetDateTime::now_utc();
+    let snapshot_row = state
+        .db
+        .get_cleanup_inventory_snapshot(cleanup_snapshot_worker::CLEANUP_SNAPSHOT_KEY)
         .await
         .map_err(map_internal)?;
-    Ok(Json(plan.to_response(req.reason)))
+    let is_running = state.cleanup_snapshot_worker.is_running();
+
+    match req.reason {
+        CleanupScanReason::Page => {
+            if let Some(row) = snapshot_row {
+                let snapshot = serde_json::from_str::<CleanupInventorySnapshot>(&row.snapshot_json)
+                    .map_err(|err| map_internal(err.into()))?;
+                let is_fresh =
+                    cleanup_snapshot_worker::cleanup_snapshot_is_fresh(&row.checked_at, now);
+                let mut refreshing = is_running;
+                let last_error = state.cleanup_snapshot_worker.last_error().await;
+                if (!is_fresh || req.refresh) && !refreshing {
+                    if !req.refresh
+                        && !is_fresh
+                        && let Some(last_error) = last_error.clone()
+                    {
+                        return Err(ApiError::internal(format!(
+                            "cleanup snapshot refresh failed: {last_error}"
+                        )));
+                    }
+                    refreshing = state.cleanup_snapshot_worker.enqueue().await
+                        || state.cleanup_snapshot_worker.is_running();
+                    if !refreshing
+                        && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
+                    {
+                        return Err(ApiError::internal(format!(
+                            "cleanup snapshot refresh failed: {last_error}"
+                        )));
+                    }
+                }
+                let plan = cleanup::build_execution_plan_from_snapshot(
+                    &snapshot,
+                    &req,
+                    &snapshot.scanned_at,
+                )
+                .map_err(map_internal)?;
+                let mut response = plan.to_response(req.reason);
+                response.refreshing = refreshing;
+                response.retry_after_ms = refreshing
+                    .then_some(cleanup_snapshot_worker::CLEANUP_SNAPSHOT_PENDING_RETRY_AFTER_MS);
+                return Ok(Json(response));
+            }
+
+            if req.refresh {
+                let started = state.cleanup_snapshot_worker.enqueue().await;
+                let refreshing = started || state.cleanup_snapshot_worker.is_running();
+                if !refreshing
+                    && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
+                {
+                    return Err(ApiError::internal(format!(
+                        "cleanup snapshot refresh failed: {last_error}"
+                    )));
+                }
+            } else if let Some(last_error) = state.cleanup_snapshot_worker.last_error().await {
+                return Err(ApiError::internal(format!(
+                    "cleanup snapshot refresh failed: {last_error}"
+                )));
+            }
+            Ok(Json(CleanupScanResponse {
+                status: CleanupScanStatus::Pending,
+                reason: req.reason,
+                preset: req.preset,
+                scope: req.scope,
+                scanned_at: None,
+                refreshing: true,
+                retry_after_ms: Some(
+                    cleanup_snapshot_worker::CLEANUP_SNAPSHOT_PENDING_RETRY_AFTER_MS,
+                ),
+                estimated_reclaimable_bytes: None,
+                has_unknown_size: false,
+                server_disk_usage: None,
+                stack_groups: Vec::new(),
+                unowned_group: None,
+                confirmation_fingerprint: None,
+            }))
+        }
+        CleanupScanReason::Confirm => {
+            if let Some(row) = snapshot_row {
+                let snapshot = serde_json::from_str::<CleanupInventorySnapshot>(&row.snapshot_json)
+                    .map_err(|err| map_internal(err.into()))?;
+                let is_fresh =
+                    cleanup_snapshot_worker::cleanup_snapshot_is_fresh(&row.checked_at, now);
+                if is_fresh && !is_running {
+                    let plan = cleanup::build_execution_plan_from_snapshot(
+                        &snapshot,
+                        &req,
+                        &snapshot.scanned_at,
+                    )
+                    .map_err(map_internal)?;
+                    return Ok(Json(plan.to_response(req.reason)));
+                }
+                if req.refresh {
+                    let _ = state.cleanup_snapshot_worker.enqueue().await;
+                }
+            } else if req.refresh {
+                let _ = state.cleanup_snapshot_worker.enqueue().await;
+            }
+
+            Ok(Json(CleanupScanResponse {
+                status: CleanupScanStatus::Pending,
+                reason: req.reason,
+                preset: req.preset,
+                scope: req.scope,
+                scanned_at: None,
+                refreshing: true,
+                retry_after_ms: Some(
+                    cleanup_snapshot_worker::CLEANUP_SNAPSHOT_PENDING_RETRY_AFTER_MS,
+                ),
+                estimated_reclaimable_bytes: None,
+                has_unknown_size: false,
+                server_disk_usage: None,
+                stack_groups: Vec::new(),
+                unowned_group: None,
+                confirmation_fingerprint: None,
+            }))
+        }
+    }
 }
 
 pub(super) async fn apply_cleanups(
@@ -23,17 +141,42 @@ pub(super) async fn apply_cleanups(
 ) -> Result<Json<CleanupApplyResponse>, ApiError> {
     let user = require_user(&state, &headers).await?;
     validate_cleanup_apply_request(&req)?;
-    let scanned_at = now_rfc3339().map_err(map_internal)?;
     let scan_req = CleanupScanRequest {
         reason: CleanupScanReason::Confirm,
         preset: req.preset.clone(),
+        refresh: false,
         scope: req.scope.clone(),
         stack_id: req.stack_id.clone(),
         service_id: req.service_id.clone(),
     };
-    let plan = cleanup::build_execution_plan(state.as_ref(), &scan_req, &scanned_at)
+    let Some(snapshot_row) = state
+        .db
+        .get_cleanup_inventory_snapshot(cleanup_snapshot_worker::CLEANUP_SNAPSHOT_KEY)
         .await
-        .map_err(map_internal)?;
+        .map_err(map_internal)?
+    else {
+        let _ = state.cleanup_snapshot_worker.enqueue().await;
+        return Err(ApiError::cleanup_snapshot_stale(cleanup_pending_response(
+            &scan_req,
+        )));
+    };
+    let snapshot = serde_json::from_str::<CleanupInventorySnapshot>(&snapshot_row.snapshot_json)
+        .map_err(|err| map_internal(err.into()))?;
+    let now = time::OffsetDateTime::now_utc();
+    let is_fresh =
+        cleanup_snapshot_worker::cleanup_snapshot_is_fresh(&snapshot_row.checked_at, now);
+    let is_running = state.cleanup_snapshot_worker.is_running();
+    if !is_fresh || is_running {
+        if !is_running {
+            let _ = state.cleanup_snapshot_worker.enqueue().await;
+        }
+        return Err(ApiError::cleanup_snapshot_stale(cleanup_pending_response(
+            &scan_req,
+        )));
+    }
+    let plan =
+        cleanup::build_execution_plan_from_snapshot(&snapshot, &scan_req, &snapshot.scanned_at)
+            .map_err(map_internal)?;
     let submitted_fingerprint = req.confirmation_fingerprint.trim();
     if plan.confirmation_fingerprint() != submitted_fingerprint {
         tracing::warn!(
@@ -91,6 +234,24 @@ pub(super) async fn apply_cleanups(
     });
 
     Ok(Json(CleanupApplyResponse { job_id }))
+}
+
+fn cleanup_pending_response(req: &CleanupScanRequest) -> CleanupScanResponse {
+    CleanupScanResponse {
+        status: CleanupScanStatus::Pending,
+        reason: req.reason.clone(),
+        preset: req.preset.clone(),
+        scope: req.scope.clone(),
+        scanned_at: None,
+        refreshing: true,
+        retry_after_ms: Some(cleanup_snapshot_worker::CLEANUP_SNAPSHOT_PENDING_RETRY_AFTER_MS),
+        estimated_reclaimable_bytes: None,
+        has_unknown_size: false,
+        server_disk_usage: None,
+        stack_groups: Vec::new(),
+        unowned_group: None,
+        confirmation_fingerprint: None,
+    }
 }
 
 fn validate_cleanup_scan_request(req: &CleanupScanRequest) -> Result<(), ApiError> {

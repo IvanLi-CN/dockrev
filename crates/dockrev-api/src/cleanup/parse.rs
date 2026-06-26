@@ -1,3 +1,5 @@
+use ring::digest::{SHA256, digest};
+
 use super::*;
 
 pub(super) fn ensure_success(ctx: &str, out: &CommandOutput) -> anyhow::Result<()> {
@@ -245,81 +247,48 @@ fn normalize_parent_list(value: &serde_json::Value) -> serde_json::Value {
     )
 }
 
-fn parse_buildx_text_inventory_record(line: &str) -> Option<String> {
-    let mut columns = line.split_whitespace();
-    let id = columns.next()?;
-    if matches!(
-        id,
-        "ID" | "TYPE" | "NAME" | "Description" | "TOTAL" | "Total" | "SIZE"
-    ) {
-        return None;
+pub(super) async fn resolve_volume_fingerprint_with_runner(
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+    volume: &DockerVolumeInspect,
+) -> Option<String> {
+    if let Some(labels) = volume.labels.as_ref() {
+        let project = labels
+            .get("com.docker.compose.project")
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+        let volume_name = labels
+            .get("com.docker.compose.volume")
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+        if let (Some(project), Some(volume_name)) = (project, volume_name) {
+            return Some(format!("volume:{project}:{volume_name}"));
+        }
     }
-    let reclaimable = columns.next()?;
-    let size = columns.next()?;
-    Some(format!("{id}\t{reclaimable}\t{size}"))
-}
-
-pub(super) fn volume_fingerprint_key(volume: &DockerVolumeInspect) -> Option<String> {
-    volume
+    if let Some(created_at) = volume
         .created_at
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(|created_at| format!("volume:{}:created:{created_at}", volume.name))
-}
-
-fn parse_mountpoint_stat_fingerprint(input: &str) -> Option<String> {
-    let signature = input.lines().find(|line| !line.trim().is_empty())?.trim();
-    (!signature.is_empty()).then(|| signature.to_string())
-}
-
-pub(super) async fn scan_volume_fingerprint_from_mountpoint(
-    state: &AppState,
-    mountpoint: &str,
-) -> Option<String> {
-    let mountpoint = mountpoint.trim();
+    {
+        return Some(format!("volume:{}:{}", volume.name, created_at));
+    }
+    let mountpoint = volume.mountpoint.as_deref()?.trim();
     if mountpoint.is_empty() {
-        return None;
+        return Some(format!("volume:{}", volume.name));
     }
-    let out = state
-        .runner
-        .run(
-            CommandSpec {
-                program: "stat".to_string(),
-                args: vec![
-                    "-c".to_string(),
-                    "%d:%i:%W:%Y:%Z".to_string(),
-                    mountpoint.to_string(),
-                ],
-                env: Vec::new(),
-            },
-            DOCKER_TIMEOUT,
-        )
-        .await
-        .ok()?;
-    if out.status != 0 {
-        return None;
-    }
-    let signature = parse_mountpoint_stat_fingerprint(&out.stdout)?;
-    Some(format!("mount:{mountpoint}:{signature}"))
+    let size = scan_volume_size_from_mountpoint_with_runner(runner, mountpoint).await;
+    Some(format!(
+        "volume:{}:{}",
+        volume.name,
+        size.map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ))
 }
 
-pub(super) async fn resolve_volume_fingerprint(
-    state: &AppState,
-    volume: &DockerVolumeInspect,
-) -> Option<String> {
-    if let Some(key) = volume_fingerprint_key(volume) {
-        return Some(key);
-    }
-    let mountpoint = volume.mountpoint.as_deref()?;
-    scan_volume_fingerprint_from_mountpoint(state, mountpoint)
-        .await
-        .map(|fingerprint| format!("volume:{}:{fingerprint}", volume.name))
-}
-
-pub(super) async fn scan_volume_sizes_from_system_df(state: &AppState) -> BTreeMap<String, u64> {
-    let out = match state
-        .runner
+pub(super) async fn scan_volume_sizes_from_system_df_with_runner(
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+) -> BTreeMap<String, u64> {
+    let out = runner
         .run(
             CommandSpec {
                 program: "docker".to_string(),
@@ -328,43 +297,20 @@ pub(super) async fn scan_volume_sizes_from_system_df(state: &AppState) -> BTreeM
             },
             DOCKER_TIMEOUT,
         )
-        .await
-    {
-        Ok(out) if out.status == 0 => out,
-        _ => return BTreeMap::new(),
-    };
-    parse_volume_sizes_from_system_df_verbose(&out.stdout)
-}
-
-pub(super) async fn scan_server_disk_usage(state: &AppState) -> Option<(u64, u64)> {
-    let out = state
-        .runner
-        .run(
-            CommandSpec {
-                program: "df".to_string(),
-                args: vec!["-P".to_string(), "-B1".to_string(), "/".to_string()],
-                env: Vec::new(),
-            },
-            DOCKER_TIMEOUT,
-        )
-        .await
-        .ok()?;
-    if out.status != 0 {
-        return None;
+        .await;
+    match out {
+        Ok(output) if output.status == 0 => {
+            parse_volume_sizes_from_system_df_verbose(&output.stdout)
+        }
+        _ => BTreeMap::new(),
     }
-    parse_df_bytes_output(&out.stdout)
 }
 
-pub(super) async fn scan_volume_size_from_mountpoint(
-    state: &AppState,
+pub(super) async fn scan_volume_size_from_mountpoint_with_runner(
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
     mountpoint: &str,
 ) -> Option<u64> {
-    let mountpoint = mountpoint.trim();
-    if mountpoint.is_empty() {
-        return None;
-    }
-    let out = state
-        .runner
+    let out = runner
         .run(
             CommandSpec {
                 program: "du".to_string(),
@@ -379,6 +325,50 @@ pub(super) async fn scan_volume_size_from_mountpoint(
         return None;
     }
     parse_du_kilobytes_output(&out.stdout)
+}
+
+pub(super) async fn scan_server_disk_usage_with_runner(
+    runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
+) -> Option<(u64, u64)> {
+    let out = runner
+        .run(
+            CommandSpec {
+                program: "df".to_string(),
+                args: vec!["-B1".to_string(), ".".to_string()],
+                env: Vec::new(),
+            },
+            DOCKER_TIMEOUT,
+        )
+        .await
+        .ok()?;
+    if out.status != 0 {
+        return None;
+    }
+    parse_df_bytes_output(&out.stdout)
+}
+
+fn parse_buildx_text_inventory_record(line: &str) -> Option<String> {
+    let mut columns = line.split_whitespace();
+    let id = columns.next()?;
+    if matches!(
+        id,
+        "ID" | "TYPE" | "NAME" | "Description" | "TOTAL" | "Total" | "SIZE"
+    ) {
+        return None;
+    }
+    let reclaimable = columns.next()?;
+    let size = columns.next()?;
+    Some(format!("{id}\t{reclaimable}\t{size}"))
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) fn volume_fingerprint_key(volume: &DockerVolumeInspect) -> Option<String> {
+    volume
+        .created_at
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|created_at| format!("volume:{}:created:{created_at}", volume.name))
 }
 
 fn split_table_columns(line: &str) -> Vec<&str> {

@@ -15,29 +15,16 @@ services:
     .await;
     let app = api::router(state.clone());
 
-    let scan_resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/cleanups/scan")
-                .header("X-Forwarded-User", "ops")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::json!({
-                        "reason": "confirm",
-                        "preset": "project_deep_clean",
-                        "scope": "stack",
-                        "stackId": stack_id,
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(scan_resp.status(), 200);
-    let scan_body = response_json(scan_resp).await;
+    let scan_body = wait_for_cleanup_scan_ready(
+        &app,
+        serde_json::json!({
+            "reason": "confirm",
+            "preset": "project_deep_clean",
+            "scope": "stack",
+            "stackId": stack_id,
+        }),
+    )
+    .await;
     let fingerprint = scan_body["confirmationFingerprint"]
         .as_str()
         .unwrap()
@@ -93,38 +80,11 @@ async fn cleanup_scan_omits_builder_cache_when_no_inventory_hint_exists() {
     })
     .to_string();
 
-    let first = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/cleanups/scan")
-                .header("X-Forwarded-User", "ops")
-                .header("content-type", "application/json")
-                .body(Body::from(body.clone()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(first.status(), 200);
-    let first_body = response_json(first).await;
+    let first_body = wait_for_cleanup_scan_ready(&app, serde_json::from_str(&body).unwrap()).await;
 
     tokio::time::sleep(Duration::from_millis(10)).await;
 
-    let second = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/cleanups/scan")
-                .header("X-Forwarded-User", "ops")
-                .header("content-type", "application/json")
-                .body(Body::from(body))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(second.status(), 200);
-    let second_body = response_json(second).await;
+    let second_body = wait_for_cleanup_scan_ready(&app, serde_json::from_str(&body).unwrap()).await;
 
     assert_eq!(
         first_body["confirmationFingerprint"].as_str(),
@@ -133,6 +93,355 @@ async fn cleanup_scan_omits_builder_cache_when_no_inventory_hint_exists() {
     assert!(first_body["unownedGroup"].is_null());
     assert_eq!(first_body["estimatedReclaimableBytes"].as_u64(), Some(0));
     assert_eq!(first_body["hasUnknownSize"].as_bool(), Some(false));
+}
+
+#[tokio::test]
+async fn cleanup_confirm_pending_poll_does_not_reenqueue_refresh() {
+    let db_path = format!("/tmp/dockrev-cleanup-confirm-poll-{}.sqlite3", ulid::Ulid::new());
+    let runner = Arc::new(CleanupRunner::stale_on_second_scan());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner.clone()).await;
+    let (stack_id, _service_id, _compose_path) = seed_cleanup_stack(
+        &state,
+        "demo",
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let initial = wait_for_cleanup_scan_ready(
+        &app,
+        serde_json::json!({
+            "reason": "confirm",
+            "preset": "balanced",
+            "scope": "stack",
+            "stackId": stack_id,
+        }),
+    )
+    .await;
+    assert_eq!(initial["status"].as_str(), Some("ready"));
+    assert_eq!(runner.stale_generation(), 1);
+
+    let inserted = state.cleanup_snapshot_worker.enqueue().await;
+    assert!(inserted);
+    for _ in 0..200 {
+        if state.cleanup_snapshot_worker.is_running() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(state.cleanup_snapshot_worker.is_running());
+
+    let pending_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "confirm",
+                        "refresh": false,
+                        "preset": "balanced",
+                        "scope": "stack",
+                        "stackId": stack_id,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(pending_resp.status(), 200);
+    let pending_body = response_json(pending_resp).await;
+    assert_eq!(pending_body["status"].as_str(), Some("pending"));
+    assert_eq!(pending_body["refreshing"].as_bool(), Some(true));
+
+    for _ in 0..200 {
+        if !state.cleanup_snapshot_worker.is_running() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(!state.cleanup_snapshot_worker.is_running());
+    assert_eq!(runner.stale_generation(), 2);
+}
+
+#[tokio::test]
+async fn cleanup_page_refresh_forces_background_refresh_even_with_fresh_cache() {
+    let db_path = format!("/tmp/dockrev-cleanup-page-refresh-{}.sqlite3", ulid::Ulid::new());
+    let runner = Arc::new(CleanupRunner::stale_on_second_scan());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner.clone()).await;
+    let app = api::router(state.clone());
+
+    let initial = wait_for_cleanup_scan_ready(
+        &app,
+        serde_json::json!({
+            "reason": "page",
+            "preset": "balanced",
+            "scope": "all",
+        }),
+    )
+    .await;
+    assert_eq!(initial["status"].as_str(), Some("ready"));
+    assert_eq!(runner.stale_generation(), 1);
+
+    let refresh_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "page",
+                        "refresh": true,
+                        "preset": "balanced",
+                        "scope": "all",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(refresh_resp.status(), 200);
+    let refresh_body = response_json(refresh_resp).await;
+    assert_eq!(refresh_body["status"].as_str(), Some("ready"));
+    assert_eq!(refresh_body["refreshing"].as_bool(), Some(true));
+
+    for _ in 0..200 {
+        if runner.stale_generation() >= 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(runner.stale_generation(), 2);
+}
+
+#[tokio::test]
+async fn cleanup_page_stale_poll_reenqueues_refresh_when_worker_is_idle() {
+    let db_path = format!("/tmp/dockrev-cleanup-page-stale-poll-{}.sqlite3", ulid::Ulid::new());
+    let runner = Arc::new(CleanupRunner::stale_on_second_scan());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner.clone()).await;
+    let app = api::router(state.clone());
+
+    let initial = wait_for_cleanup_scan_ready(
+        &app,
+        serde_json::json!({
+            "reason": "page",
+            "preset": "balanced",
+            "scope": "all",
+        }),
+    )
+    .await;
+    assert_eq!(initial["status"].as_str(), Some("ready"));
+    assert_eq!(runner.stale_generation(), 1);
+    assert!(!state.cleanup_snapshot_worker.is_running());
+
+    let checked_at = test_offset_from_now_rfc3339(time::Duration::seconds(
+        -(crate::cleanup_snapshot_worker::CLEANUP_CONFIRM_MAX_AGE_SECONDS + 5),
+    ));
+    let updated_at = test_now_rfc3339();
+    state
+        .db
+        .upsert_cleanup_inventory_snapshot(
+            crate::cleanup_snapshot_worker::CLEANUP_SNAPSHOT_KEY,
+            &serde_json::to_string(&crate::cleanup::build_inventory_snapshot(
+                state.db.clone(),
+                state.runner.clone(),
+            )
+            .await
+            .unwrap())
+            .unwrap(),
+            &checked_at,
+            &updated_at,
+        )
+        .await
+        .unwrap();
+
+    let poll_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "page",
+                        "refresh": false,
+                        "preset": "balanced",
+                        "scope": "all",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(poll_resp.status(), 200);
+    let poll_body = response_json(poll_resp).await;
+    assert_eq!(poll_body["status"].as_str(), Some("ready"));
+    assert_eq!(poll_body["refreshing"].as_bool(), Some(true));
+
+    for _ in 0..200 {
+        if runner.stale_generation() >= 3 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(runner.stale_generation(), 3);
+}
+
+#[tokio::test]
+async fn cleanup_page_returns_error_after_initial_refresh_failure_until_explicit_retry() {
+    let db_path = format!("/tmp/dockrev-cleanup-initial-refresh-failure-{}.sqlite3", ulid::Ulid::new());
+    let runner = Arc::new(CleanupRunner::volume_in_use());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    state
+        .cleanup_snapshot_worker
+        .set_last_error_for_test(Some("boom".to_string()))
+        .await;
+    let app = api::router(state.clone());
+
+    let failing_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "page",
+                        "refresh": false,
+                        "preset": "aggressive",
+                        "scope": "all",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(failing_resp.status(), 500);
+    let failing_body = response_json(failing_resp).await;
+    assert_eq!(failing_body["error"]["code"], "internal");
+    assert_eq!(
+        failing_body["error"]["message"].as_str(),
+        Some("cleanup snapshot refresh failed: boom")
+    );
+    assert!(!state.cleanup_snapshot_worker.is_running());
+
+    let refresh_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "page",
+                        "refresh": true,
+                        "preset": "aggressive",
+                        "scope": "all",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(refresh_resp.status(), 200);
+    let refresh_body = response_json(refresh_resp).await;
+    assert_eq!(refresh_body["status"].as_str(), Some("pending"));
+    assert_eq!(refresh_body["refreshing"].as_bool(), Some(true));
+
+    let ready_body = wait_for_cleanup_scan_ready(
+        &app,
+        serde_json::json!({
+            "reason": "page",
+            "preset": "aggressive",
+            "scope": "all",
+        }),
+    )
+    .await;
+    assert_eq!(ready_body["status"].as_str(), Some("ready"));
+    assert_eq!(ready_body["refreshing"].as_bool(), Some(false));
+}
+
+#[tokio::test]
+async fn cleanup_page_returns_error_for_stale_cached_snapshot_after_refresh_failure() {
+    let db_path = format!(
+        "/tmp/dockrev-cleanup-stale-refresh-failure-{}.sqlite3",
+        ulid::Ulid::new()
+    );
+    let runner = Arc::new(CleanupRunner::volume_in_use());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    let snapshot = crate::cleanup::build_inventory_snapshot(state.db.clone(), state.runner.clone())
+        .await
+        .unwrap();
+    let checked_at = test_offset_from_now_rfc3339(time::Duration::seconds(
+        -(crate::cleanup_snapshot_worker::CLEANUP_CONFIRM_MAX_AGE_SECONDS + 5),
+    ));
+    let updated_at = test_now_rfc3339();
+    state
+        .db
+        .upsert_cleanup_inventory_snapshot(
+            crate::cleanup_snapshot_worker::CLEANUP_SNAPSHOT_KEY,
+            &serde_json::to_string(&snapshot).unwrap(),
+            &checked_at,
+            &updated_at,
+        )
+        .await
+        .unwrap();
+    state
+        .cleanup_snapshot_worker
+        .set_last_error_for_test(Some("boom".to_string()))
+        .await;
+    let app = api::router(state.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "page",
+                        "refresh": false,
+                        "preset": "balanced",
+                        "scope": "all",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 500);
+    let body = response_json(resp).await;
+    assert_eq!(body["error"]["code"], "internal");
+    assert_eq!(
+        body["error"]["message"].as_str(),
+        Some("cleanup snapshot refresh failed: boom")
+    );
+    assert!(!state.cleanup_snapshot_worker.is_running());
 }
 
 #[tokio::test]
@@ -152,38 +461,11 @@ async fn cleanup_scan_keeps_stable_fingerprint_when_builder_cache_falls_back_to_
     })
     .to_string();
 
-    let first = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/cleanups/scan")
-                .header("X-Forwarded-User", "ops")
-                .header("content-type", "application/json")
-                .body(Body::from(body.clone()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(first.status(), 200);
-    let first_body = response_json(first).await;
+    let first_body = wait_for_cleanup_scan_ready(&app, serde_json::from_str(&body).unwrap()).await;
 
     tokio::time::sleep(Duration::from_millis(10)).await;
 
-    let second = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/cleanups/scan")
-                .header("X-Forwarded-User", "ops")
-                .header("content-type", "application/json")
-                .body(Body::from(body))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(second.status(), 200);
-    let second_body = response_json(second).await;
+    let second_body = wait_for_cleanup_scan_ready(&app, serde_json::from_str(&body).unwrap()).await;
 
     assert_eq!(
         first_body["confirmationFingerprint"].as_str(),
@@ -212,34 +494,32 @@ services:
     .await;
     let app = api::router(state.clone());
 
-    let scan_resp = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/cleanups/scan")
-                .header("X-Forwarded-User", "ops")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::json!({
-                        "reason": "confirm",
-                        "preset": "balanced",
-                        "scope": "stack",
-                        "stackId": stack_id,
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(scan_resp.status(), 200);
-    let scan_body = response_json(scan_resp).await;
+    let scan_body = wait_for_cleanup_scan_ready(
+        &app,
+        serde_json::json!({
+            "reason": "confirm",
+            "preset": "balanced",
+            "scope": "stack",
+            "stackId": stack_id,
+        }),
+    )
+    .await;
     let fingerprint = scan_body["confirmationFingerprint"]
         .as_str()
         .unwrap()
         .to_string();
     assert_eq!(runner.stale_generation(), 1);
+
+    let inserted = state.cleanup_snapshot_worker.enqueue().await;
+    assert!(inserted);
+    for _ in 0..200 {
+        if runner.stale_generation() >= 2 && !state.cleanup_snapshot_worker.is_running() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(runner.stale_generation(), 2);
+    assert!(!state.cleanup_snapshot_worker.is_running());
 
     let apply_resp = app
         .oneshot(
@@ -283,6 +563,60 @@ services:
 }
 
 #[tokio::test]
+async fn cleanup_apply_without_snapshot_returns_stale_pending_payload_and_enqueues_refresh() {
+    let db_path = format!("/tmp/dockrev-cleanup-apply-missing-snapshot-{}.sqlite3", ulid::Ulid::new());
+    let runner = Arc::new(CleanupRunner::volume_in_use());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    let (stack_id, _service_id, _compose_path) = seed_cleanup_stack(
+        &state,
+        "demo",
+        r#"
+services:
+  web:
+    image: ghcr.io/acme/web:5.2
+"#,
+    )
+    .await;
+    let app = api::router(state.clone());
+
+    let apply_resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/apply")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "ui",
+                        "preset": "balanced",
+                        "scope": "stack",
+                        "stackId": stack_id,
+                        "confirmationFingerprint": "missing",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(apply_resp.status(), 409);
+    let apply_body = response_json(apply_resp).await;
+    assert_eq!(apply_body["error"]["code"], "cleanup_snapshot_stale");
+    assert_eq!(apply_body["error"]["details"]["latest"]["status"].as_str(), Some("pending"));
+    assert_eq!(apply_body["error"]["details"]["latest"]["refreshing"].as_bool(), Some(true));
+    assert_eq!(apply_body["error"]["details"]["latest"]["scope"].as_str(), Some("stack"));
+
+    for _ in 0..200 {
+        if state.cleanup_snapshot_worker.is_running() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(state.cleanup_snapshot_worker.is_running());
+}
+
+#[tokio::test]
 async fn cleanup_job_summary_records_skipped_in_use_volume() {
     let db_path = format!("/tmp/dockrev-cleanup-volume-{}.sqlite3", ulid::Ulid::new());
     let runner = Arc::new(CleanupRunner::volume_in_use());
@@ -297,18 +631,23 @@ services:
 "#,
     )
     .await;
-    let plan = crate::cleanup::build_execution_plan(
-        state.as_ref(),
-        &crate::api::types::CleanupScanRequest {
-            reason: crate::api::types::CleanupScanReason::Confirm,
-            preset: crate::api::types::CleanupPreset::ProjectDeepClean,
-            scope: crate::api::types::CleanupScope::Stack,
-            stack_id: Some(stack_id.clone()),
-            service_id: None,
-        },
+    let request = crate::api::types::CleanupScanRequest {
+        reason: crate::api::types::CleanupScanReason::Confirm,
+        preset: crate::api::types::CleanupPreset::ProjectDeepClean,
+        refresh: true,
+        scope: crate::api::types::CleanupScope::Stack,
+        stack_id: Some(stack_id.clone()),
+        service_id: None,
+    };
+    let snapshot =
+        crate::cleanup::build_inventory_snapshot(state.db.clone(), state.runner.clone())
+            .await
+            .unwrap();
+    let plan = crate::cleanup::build_execution_plan_from_snapshot(
+        &snapshot,
+        &request,
         &test_now_rfc3339(),
     )
-    .await
     .unwrap();
     let response = plan.to_response(crate::api::types::CleanupScanReason::Confirm);
     assert_eq!(response.stack_groups.len(), 1);
@@ -373,29 +712,16 @@ services:
     .await;
     let app = api::router(state);
 
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/cleanups/scan")
-                .header("X-Forwarded-User", "ops")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::json!({
-                        "reason": "confirm",
-                        "preset": "project_deep_clean",
-                        "scope": "stack",
-                        "stackId": stack_id,
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), 200);
-    let body = response_json(resp).await;
+    let body = wait_for_cleanup_scan_ready(
+        &app,
+        serde_json::json!({
+            "reason": "confirm",
+            "preset": "project_deep_clean",
+            "scope": "stack",
+            "stackId": stack_id,
+        }),
+    )
+    .await;
     assert_eq!(
         body["stackGroups"][0]["services"][0]["estimatedReclaimableBytes"].as_u64(),
         Some(128_000_000)
@@ -433,29 +759,16 @@ services:
     .await;
     let app = api::router(state);
 
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/cleanups/scan")
-                .header("X-Forwarded-User", "ops")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::json!({
-                        "reason": "confirm",
-                        "preset": "project_deep_clean",
-                        "scope": "stack",
-                        "stackId": stack_id,
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), 200);
-    let body = response_json(resp).await;
+    let body = wait_for_cleanup_scan_ready(
+        &app,
+        serde_json::json!({
+            "reason": "confirm",
+            "preset": "project_deep_clean",
+            "scope": "stack",
+            "stackId": stack_id,
+        }),
+    )
+    .await;
     assert_eq!(
         body["stackGroups"][0]["services"][0]["estimatedReclaimableBytes"].as_u64(),
         Some(1_572_864)
@@ -486,29 +799,16 @@ services:
     .await;
     let app = api::router(state);
 
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/cleanups/scan")
-                .header("X-Forwarded-User", "ops")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::json!({
-                        "reason": "confirm",
-                        "preset": "project_deep_clean",
-                        "scope": "stack",
-                        "stackId": stack_id,
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), 200);
-    let body = response_json(resp).await;
+    let body = wait_for_cleanup_scan_ready(
+        &app,
+        serde_json::json!({
+            "reason": "confirm",
+            "preset": "project_deep_clean",
+            "scope": "stack",
+            "stackId": stack_id,
+        }),
+    )
+    .await;
     assert_eq!(body["stackGroups"], serde_json::json!([]));
     assert!(body["unownedGroup"].is_null());
     assert_eq!(body["estimatedReclaimableBytes"].as_u64(), Some(0));
@@ -526,28 +826,15 @@ async fn cleanup_scan_uses_builder_cache_summary_when_json_includes_shared_rows(
     let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
     let app = api::router(state);
 
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/cleanups/scan")
-                .header("X-Forwarded-User", "ops")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::json!({
-                        "reason": "page",
-                        "preset": "balanced",
-                        "scope": "all"
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), 200);
-    let body = response_json(resp).await;
+    let body = wait_for_cleanup_scan_ready(
+        &app,
+        serde_json::json!({
+            "reason": "page",
+            "preset": "balanced",
+            "scope": "all"
+        }),
+    )
+    .await;
     assert_eq!(
         body["estimatedReclaimableBytes"].as_u64(),
         Some(384_000_000)
@@ -577,28 +864,15 @@ async fn cleanup_scan_keeps_builder_cache_estimate_when_json_falls_back_to_text_
     let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
     let app = api::router(state);
 
-    let resp = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/cleanups/scan")
-                .header("X-Forwarded-User", "ops")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::json!({
-                        "reason": "page",
-                        "preset": "balanced",
-                        "scope": "all"
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), 200);
-    let body = response_json(resp).await;
+    let body = wait_for_cleanup_scan_ready(
+        &app,
+        serde_json::json!({
+            "reason": "page",
+            "preset": "balanced",
+            "scope": "all"
+        }),
+    )
+    .await;
     assert_eq!(
         body["estimatedReclaimableBytes"].as_u64(),
         Some(384_000_000)

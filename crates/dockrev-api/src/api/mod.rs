@@ -37,9 +37,9 @@ use crate::{
     authz::{self, AuthzFailure, AuthzMatchKind, RequestAuth},
     backup,
     db::GitHubPackagesWebhookDeliveryRecordInput,
-    discovery,
+    deploy_check_refresh_worker, discovery,
     error::ApiError,
-    ghcr_webhook_jobs, ids, ignore, notify, preflight, registry, resource_usage, runtime_scan,
+    ghcr_webhook_jobs, ids, ignore, notify, registry, resource_usage, runtime_scan,
     snapshot_worker,
     state::AppState,
     ui, updater,
@@ -74,6 +74,14 @@ use services::*;
 pub(crate) use stacks::needs_version_inference_for_tags;
 use stacks::*;
 use webhooks::*;
+
+pub(crate) const EDGE_PROXY_SAFE_SSE_HEARTBEAT_SECONDS: u64 = 5;
+
+pub(crate) fn edge_proxy_safe_keepalive() -> KeepAlive {
+    KeepAlive::new()
+        .interval(Duration::from_secs(EDGE_PROXY_SAFE_SSE_HEARTBEAT_SECONDS))
+        .text("keep-alive")
+}
 pub fn router(state: Arc<AppState>) -> Router {
     Router::<Arc<AppState>>::new()
         .route("/api/health", get(health))
@@ -258,6 +266,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/deploy-check/report", get(get_deploy_check_report))
+        .route(
+            "/api/deploy-check/report/refresh",
+            post(post_deploy_check_report_refresh),
+        )
         .route(
             "/api/deploy-welcome",
             get(get_deploy_welcome).put(put_deploy_welcome),
@@ -537,18 +549,89 @@ async fn put_settings(
 async fn get_deploy_check_report(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Result<Json<DeployCheckReportResponse>, ApiError> {
+) -> Result<Json<DeployCheckReportEnvelope>, ApiError> {
     let auth = require_user(&state, &headers).await?;
-
-    let report = preflight::build_report(state.as_ref())
+    let cached = state
+        .db
+        .get_deploy_check_report_snapshot(deploy_check_refresh_worker::DEPLOY_CHECK_SNAPSHOT_KEY)
         .await
         .map_err(map_internal)?;
-    Ok(Json(attach_authz_checks(
-        state.as_ref(),
-        &headers,
-        report,
-        Ok(auth),
-    )))
+    let mut refreshing = state.deploy_check_refresh_worker.is_running();
+    let last_error = state.deploy_check_refresh_worker.last_error().await;
+
+    if let Some(row) = cached {
+        let now = time::OffsetDateTime::now_utc();
+        let is_fresh =
+            deploy_check_refresh_worker::deploy_check_report_is_fresh(&row.checked_at, now);
+        if !refreshing && !is_fresh && last_error.is_none() {
+            let started = state.deploy_check_refresh_worker.enqueue().await;
+            refreshing = started || state.deploy_check_refresh_worker.is_running();
+            if !refreshing
+                && let Some(last_error) = state.deploy_check_refresh_worker.last_error().await
+            {
+                return Err(ApiError::internal(format!(
+                    "deploy-check refresh failed: {last_error}"
+                )));
+            }
+        }
+        let report = serde_json::from_str::<DeployCheckReportResponse>(&row.report_json)
+            .map_err(|err| map_internal(err.into()))?;
+        return Ok(Json(DeployCheckReportEnvelope {
+            status: DeployCheckReportStatus::Ready,
+            refreshing,
+            retry_after_ms: if refreshing {
+                Some(deploy_check_refresh_worker::DEPLOY_CHECK_PENDING_RETRY_AFTER_MS)
+            } else {
+                None
+            },
+            report: Some(attach_authz_checks(
+                state.as_ref(),
+                &headers,
+                report,
+                Ok(auth),
+            )),
+        }));
+    }
+
+    if !refreshing && let Some(last_error) = last_error {
+        return Err(ApiError::internal(format!(
+            "deploy-check refresh failed: {last_error}"
+        )));
+    }
+
+    if !refreshing {
+        let started = state.deploy_check_refresh_worker.enqueue().await;
+        refreshing = started || state.deploy_check_refresh_worker.is_running();
+        if !refreshing
+            && let Some(last_error) = state.deploy_check_refresh_worker.last_error().await
+        {
+            return Err(ApiError::internal(format!(
+                "deploy-check refresh failed: {last_error}"
+            )));
+        }
+    }
+
+    Ok(Json(DeployCheckReportEnvelope {
+        status: DeployCheckReportStatus::Pending,
+        refreshing,
+        retry_after_ms: refreshing
+            .then_some(deploy_check_refresh_worker::DEPLOY_CHECK_PENDING_RETRY_AFTER_MS),
+        report: None,
+    }))
+}
+
+async fn post_deploy_check_report_refresh(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<DeployCheckReportEnvelope>, ApiError> {
+    let _auth = require_user(&state, &headers).await?;
+    let _ = state.deploy_check_refresh_worker.enqueue().await;
+    Ok(Json(DeployCheckReportEnvelope {
+        status: DeployCheckReportStatus::Pending,
+        refreshing: true,
+        retry_after_ms: Some(deploy_check_refresh_worker::DEPLOY_CHECK_PENDING_RETRY_AFTER_MS),
+        report: None,
+    }))
 }
 
 async fn get_deploy_welcome(

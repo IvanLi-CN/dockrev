@@ -101,6 +101,7 @@ pub(super) async fn jobs_events(
 
     let sse_state = state.clone();
     let stream = async_stream::stream! {
+        yield Ok::<Event, Infallible>(Event::default().comment("keep-alive"));
         loop {
             let rows = match sse_state.db.list_job_event_logs_since(after_id, 200).await {
                 Ok(v) => v,
@@ -155,11 +156,7 @@ pub(super) async fn jobs_events(
         }
     };
 
-    let sse = Sse::new(stream).keep_alive(
-        KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .text("keep-alive"),
-    );
+    let sse = Sse::new(stream).keep_alive(edge_proxy_safe_keepalive());
 
     let mut resp_headers = HeaderMap::new();
     resp_headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
@@ -190,6 +187,7 @@ pub(super) async fn job_events(
     let sse_state = state.clone();
     let sse_job_id = job_id.clone();
     let stream = async_stream::stream! {
+        yield Ok::<Event, Infallible>(Event::default().comment("keep-alive"));
         // If the job is already finished and no new logs arrive for a while, close the stream.
         let mut finished_idle_ticks: u32 = 0;
 
@@ -272,11 +270,7 @@ pub(super) async fn job_events(
         }
     };
 
-    let sse = Sse::new(stream).keep_alive(
-        KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .text("keep-alive"),
-    );
+    let sse = Sse::new(stream).keep_alive(edge_proxy_safe_keepalive());
 
     let mut resp_headers = HeaderMap::new();
     resp_headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));

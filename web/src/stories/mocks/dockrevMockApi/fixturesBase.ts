@@ -1,6 +1,6 @@
 import type { IgnoreRule, JobDetail, JobListItem, StackDetail, StackListItem } from '../../../api'
 import {
-  makeDefaultDeployCheckReport,
+  makeDefaultDeployCheckEnvelope,
   makeDefaultDeployWelcome,
   makeDefaultGitHubPackagesSettings,
   makeDefaultNotifications,
@@ -27,7 +27,7 @@ export function baseEmpty(): Fixture {
     rollbackTargetByServiceId: {},
     repoLinkInferenceByServiceId: {},
     serviceTagSuggestionsById: {},
-    deployCheckReport: makeDefaultDeployCheckReport(),
+    deployCheckReport: makeDefaultDeployCheckEnvelope(),
     deployWelcome: makeDefaultDeployWelcome(),
     versionInferenceOverview: makeVersionInferenceOverview(),
     versionInferenceEvents: [],
