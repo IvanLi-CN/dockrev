@@ -144,6 +144,7 @@ export function DeployWelcomePage() {
     setLoading(true)
     setError(null)
     const [reportResult, welcomeResult] = await Promise.allSettled([getDeployCheckReport(), getDeployWelcome()])
+    let keepLoadingAfterBootstrap = false
 
     if (reportResult.status === 'fulfilled') {
       const envelope = reportResult.value
@@ -152,6 +153,7 @@ export function DeployWelcomePage() {
       }
       setReportRefreshing(Boolean(envelope.refreshing))
       const shouldWaitForFirstReport = shouldKeepDeployCheckLoading(envelope)
+      keepLoadingAfterBootstrap = shouldWaitForFirstReport
       const shouldRequestRefresh = shouldTriggerDeployCheckReportRefresh(envelope)
       const shouldPoll = shouldRequestRefresh || shouldKeepPollingDeployCheckReport(envelope)
       if (shouldPoll) {
@@ -164,13 +166,13 @@ export function DeployWelcomePage() {
               setReport(settled.report)
             }
             setReportRefreshing(Boolean(settled.refreshing))
+            setLoading(false)
           })
           .catch((e) => {
             setError(errorMessage(e))
+            setReportRefreshing(false)
+            setLoading(false)
           })
-      }
-      if (shouldWaitForFirstReport) {
-        setLoading(true)
       }
     } else {
       setError(errorMessage(reportResult.reason))
@@ -188,7 +190,7 @@ export function DeployWelcomePage() {
       setError(`检查报告已加载，但欢迎页偏好读取失败：${errorMessage(welcomeResult.reason)}`)
     }
 
-    setLoading(false)
+    setLoading(keepLoadingAfterBootstrap)
   }, [])
 
   useEffect(() => {

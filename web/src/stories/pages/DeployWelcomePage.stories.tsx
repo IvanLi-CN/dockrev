@@ -26,6 +26,10 @@ async function waitForCondition(check: () => boolean, timeoutMs = 3_000): Promis
   }
 }
 
+function expectStory(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new globalThis.Error(message)
+}
+
 function renderPage(pageSubtitle = '部署功能完整性检查') {
   return (
     <PageHarness route={{ name: 'deploy-check' }} title="部署检查" pageSubtitle={pageSubtitle} topbarHint="Deployment Checklist">
@@ -116,6 +120,11 @@ export const InitialPending: Story = {
   render: () => renderPage('验证首次无缓存时仅显示 pending shell，待 poll 后再进入 checklist'),
   play: async ({ canvasElement }) => {
     await waitForCondition(() => canvasElement.textContent?.includes('正在加载部署检查报告…') ?? false)
+    await sleep(120)
+    expectStory(
+      !(canvasElement.textContent?.includes('无法加载检查报告') ?? false),
+      'initial pending should not flash the failure copy while the first report is still pending',
+    )
     await waitForCondition(() => canvasElement.textContent?.includes('重试') ?? false)
   },
 }
