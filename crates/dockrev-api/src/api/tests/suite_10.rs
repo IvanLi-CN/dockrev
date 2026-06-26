@@ -1289,7 +1289,7 @@ async fn deploy_check_report_returns_error_after_initial_refresh_failure_until_e
         body["error"]["message"].as_str(),
         Some("deploy-check refresh failed: boom")
     );
-    assert_eq!(state.deploy_check_refresh_worker.is_running(), false);
+    assert!(!state.deploy_check_refresh_worker.is_running());
 
     let refresh_resp = app
         .clone()
