@@ -383,6 +383,68 @@ async fn cleanup_page_returns_error_after_initial_refresh_failure_until_explicit
 }
 
 #[tokio::test]
+async fn cleanup_page_returns_error_for_stale_cached_snapshot_after_refresh_failure() {
+    let db_path = format!(
+        "/tmp/dockrev-cleanup-stale-refresh-failure-{}.sqlite3",
+        ulid::Ulid::new()
+    );
+    let runner = Arc::new(CleanupRunner::volume_in_use());
+    let state = test_state_with(&db_path, Arc::new(FakeRegistry), runner).await;
+    let snapshot = crate::cleanup::build_inventory_snapshot(state.db.clone(), state.runner.clone())
+        .await
+        .unwrap();
+    let checked_at = test_offset_from_now_rfc3339(time::Duration::seconds(
+        -(crate::cleanup_snapshot_worker::CLEANUP_CONFIRM_MAX_AGE_SECONDS + 5),
+    ));
+    let updated_at = test_now_rfc3339();
+    state
+        .db
+        .upsert_cleanup_inventory_snapshot(
+            crate::cleanup_snapshot_worker::CLEANUP_SNAPSHOT_KEY,
+            &serde_json::to_string(&snapshot).unwrap(),
+            &checked_at,
+            &updated_at,
+        )
+        .await
+        .unwrap();
+    state
+        .cleanup_snapshot_worker
+        .set_last_error_for_test(Some("boom".to_string()))
+        .await;
+    let app = api::router(state.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/cleanups/scan")
+                .header("X-Forwarded-User", "ops")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "reason": "page",
+                        "refresh": false,
+                        "preset": "balanced",
+                        "scope": "all",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 500);
+    let body = response_json(resp).await;
+    assert_eq!(body["error"]["code"], "internal");
+    assert_eq!(
+        body["error"]["message"].as_str(),
+        Some("cleanup snapshot refresh failed: boom")
+    );
+    assert!(!state.cleanup_snapshot_worker.is_running());
+}
+
+#[tokio::test]
 async fn cleanup_scan_keeps_stable_fingerprint_when_builder_cache_falls_back_to_text_summary() {
     let db_path = format!(
         "/tmp/dockrev-cleanup-builder-text-ephemeral-{}.sqlite3",

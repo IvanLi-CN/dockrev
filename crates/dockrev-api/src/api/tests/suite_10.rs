@@ -1315,6 +1315,60 @@ async fn deploy_check_report_returns_error_after_initial_refresh_failure_until_e
 }
 
 #[tokio::test]
+async fn deploy_check_report_returns_error_for_stale_cached_report_after_refresh_failure() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+    let checked_at = test_offset_from_now_rfc3339(time::Duration::seconds(
+        -(crate::deploy_check_refresh_worker::DEPLOY_CHECK_REPORT_STALE_AFTER_SECONDS + 5),
+    ));
+    let updated_at = test_now_rfc3339();
+    let stale_report = crate::api::types::DeployCheckReportResponse {
+        overall: crate::api::types::DeployCheckOverall {
+            result: crate::api::types::DeployCheckResult::Pass,
+            blocking_check_ids: Vec::new(),
+            summary: "stale cached report".to_string(),
+        },
+        generated_at: checked_at.clone(),
+        checks: Vec::new(),
+    };
+    state
+        .db
+        .upsert_deploy_check_report_snapshot(
+            crate::deploy_check_refresh_worker::DEPLOY_CHECK_SNAPSHOT_KEY,
+            &serde_json::to_string(&stale_report).unwrap(),
+            &checked_at,
+            &updated_at,
+        )
+        .await
+        .unwrap();
+    state
+        .deploy_check_refresh_worker
+        .set_last_error_for_test(Some("boom".to_string()))
+        .await;
+    let app = api::router(state.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/deploy-check/report")
+                .header("X-Forwarded-User", "ops")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 500);
+    let body = response_json(resp).await;
+    assert_eq!(body["error"]["code"], "internal");
+    assert_eq!(
+        body["error"]["message"].as_str(),
+        Some("deploy-check refresh failed: boom")
+    );
+    assert!(!state.deploy_check_refresh_worker.is_running());
+}
+
+#[tokio::test]
 async fn deploy_check_report_fails_when_enabled_feature_is_misconfigured() {
     let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
 

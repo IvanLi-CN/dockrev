@@ -564,8 +564,20 @@ async fn get_deploy_check_report(
         let is_fresh =
             deploy_check_refresh_worker::deploy_check_report_is_fresh(&row.checked_at, now);
         if !refreshing && !is_fresh {
-            let _ = state.deploy_check_refresh_worker.enqueue().await;
-            refreshing = true;
+            if let Some(last_error) = last_error.clone() {
+                return Err(ApiError::internal(format!(
+                    "deploy-check refresh failed: {last_error}"
+                )));
+            }
+            let started = state.deploy_check_refresh_worker.enqueue().await;
+            refreshing = started || state.deploy_check_refresh_worker.is_running();
+            if !refreshing
+                && let Some(last_error) = state.deploy_check_refresh_worker.last_error().await
+            {
+                return Err(ApiError::internal(format!(
+                    "deploy-check refresh failed: {last_error}"
+                )));
+            }
         }
         let report = serde_json::from_str::<DeployCheckReportResponse>(&row.report_json)
             .map_err(|err| map_internal(err.into()))?;

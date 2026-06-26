@@ -25,9 +25,25 @@ pub(super) async fn scan_cleanups(
                 let is_fresh =
                     cleanup_snapshot_worker::cleanup_snapshot_is_fresh(&row.checked_at, now);
                 let mut refreshing = is_running;
+                let last_error = state.cleanup_snapshot_worker.last_error().await;
                 if (!is_fresh || req.refresh) && !refreshing {
+                    if !req.refresh
+                        && !is_fresh
+                        && let Some(last_error) = last_error.clone()
+                    {
+                        return Err(ApiError::internal(format!(
+                            "cleanup snapshot refresh failed: {last_error}"
+                        )));
+                    }
                     refreshing = state.cleanup_snapshot_worker.enqueue().await
                         || state.cleanup_snapshot_worker.is_running();
+                    if !refreshing
+                        && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
+                    {
+                        return Err(ApiError::internal(format!(
+                            "cleanup snapshot refresh failed: {last_error}"
+                        )));
+                    }
                 }
                 let plan = cleanup::build_execution_plan_from_snapshot(
                     &snapshot,
@@ -39,14 +55,6 @@ pub(super) async fn scan_cleanups(
                 response.refreshing = refreshing;
                 response.retry_after_ms = refreshing
                     .then_some(cleanup_snapshot_worker::CLEANUP_SNAPSHOT_PENDING_RETRY_AFTER_MS);
-                if !refreshing
-                    && req.refresh
-                    && let Some(last_error) = state.cleanup_snapshot_worker.last_error().await
-                {
-                    return Err(ApiError::internal(format!(
-                        "cleanup snapshot refresh failed: {last_error}"
-                    )));
-                }
                 return Ok(Json(response));
             }
 
