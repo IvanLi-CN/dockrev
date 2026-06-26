@@ -44,7 +44,7 @@ pub(super) async fn scan_cleanups(
             if req.refresh {
                 let _ = state.cleanup_snapshot_worker.enqueue().await;
             }
-            return Ok(Json(CleanupScanResponse {
+            Ok(Json(CleanupScanResponse {
                 status: CleanupScanStatus::Pending,
                 reason: req.reason,
                 preset: req.preset,
@@ -60,7 +60,7 @@ pub(super) async fn scan_cleanups(
                 stack_groups: Vec::new(),
                 unowned_group: None,
                 confirmation_fingerprint: None,
-            }));
+            }))
         }
         CleanupScanReason::Confirm => {
             if let Some(row) = snapshot_row {

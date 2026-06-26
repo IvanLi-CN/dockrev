@@ -413,19 +413,23 @@ services:
 "#,
     )
     .await;
-    let plan = crate::cleanup::build_execution_plan(
-        state.as_ref(),
-        &crate::api::types::CleanupScanRequest {
-            reason: crate::api::types::CleanupScanReason::Confirm,
-            preset: crate::api::types::CleanupPreset::ProjectDeepClean,
-            refresh: true,
-            scope: crate::api::types::CleanupScope::Stack,
-            stack_id: Some(stack_id.clone()),
-            service_id: None,
-        },
+    let request = crate::api::types::CleanupScanRequest {
+        reason: crate::api::types::CleanupScanReason::Confirm,
+        preset: crate::api::types::CleanupPreset::ProjectDeepClean,
+        refresh: true,
+        scope: crate::api::types::CleanupScope::Stack,
+        stack_id: Some(stack_id.clone()),
+        service_id: None,
+    };
+    let snapshot =
+        crate::cleanup::build_inventory_snapshot(state.db.clone(), state.runner.clone())
+            .await
+            .unwrap();
+    let plan = crate::cleanup::build_execution_plan_from_snapshot(
+        &snapshot,
+        &request,
         &test_now_rfc3339(),
     )
-    .await
     .unwrap();
     let response = plan.to_response(crate::api::types::CleanupScanReason::Confirm);
     assert_eq!(response.stack_groups.len(), 1);

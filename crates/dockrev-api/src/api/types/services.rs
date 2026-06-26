@@ -12,15 +12,6 @@ pub struct ServiceDigestTagsScanSummary {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ServiceDigestTagsResponse {
-    pub digest: String,
-    pub tags: Vec<String>,
-    pub repo_tags: Vec<String>,
-    pub scan: ServiceDigestTagsScanSummary,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ServiceDigestTagsSnapshotResponse {
     pub digest: String,
     pub tags: Vec<String>,

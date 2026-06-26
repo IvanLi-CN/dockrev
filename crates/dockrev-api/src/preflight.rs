@@ -12,19 +12,10 @@ use crate::{
     db::ArchivedFilter,
     registry,
     runner::CommandSpec,
-    state::AppState,
 };
-
-fn local_command_timeout(state: &AppState) -> Duration {
-    Duration::from_secs(state.config.deploy_check_local_command_timeout_seconds)
-}
 
 fn local_command_timeout_from_config(config: &crate::config::Config) -> Duration {
     Duration::from_secs(config.deploy_check_local_command_timeout_seconds)
-}
-
-pub async fn build_report(state: &AppState) -> anyhow::Result<DeployCheckReportResponse> {
-    build_report_with_parts(&state.config, &state.db, state.runner.clone()).await
 }
 
 pub async fn build_report_with_parts(
@@ -39,12 +30,13 @@ pub async fn build_report_with_parts(
         check_update_executor_ready_with(config, runner.clone()),
     );
 
-    let mut checks = Vec::new();
-    checks.push(docker_check);
-    checks.push(check_compose_access(&context));
-    checks.push(check_service_image_ref_valid(&context));
-    checks.push(update_executor_check);
-    checks.push(check_registry_auth_with(config, &context));
+    let mut checks = vec![
+        docker_check,
+        check_compose_access(&context),
+        check_service_image_ref_valid(&context),
+        update_executor_check,
+        check_registry_auth_with(config, &context),
+    ];
     checks.extend(check_notification_features_with(db).await?);
     checks.push(check_github_packages_feature_with(db).await?);
 
@@ -87,10 +79,6 @@ struct PreflightContext {
     active_services_total: usize,
     invalid_image_refs: Vec<String>,
     parsed_images: Vec<registry::ImageRef>,
-}
-
-async fn collect_context(state: &AppState) -> anyhow::Result<PreflightContext> {
-    collect_context_from_db(&state.db).await
 }
 
 async fn collect_context_from_db(db: &crate::db::Db) -> anyhow::Result<PreflightContext> {
@@ -154,10 +142,6 @@ async fn collect_context_from_db(db: &crate::db::Db) -> anyhow::Result<Preflight
         invalid_image_refs,
         parsed_images,
     })
-}
-
-async fn check_docker_engine(state: &AppState) -> DeployCheckItem {
-    check_docker_engine_with(&state.config, state.runner.clone()).await
 }
 
 async fn check_docker_engine_with(
@@ -309,10 +293,6 @@ fn check_service_image_ref_valid(context: &PreflightContext) -> DeployCheckItem 
     )
 }
 
-async fn check_update_executor_ready(state: &AppState) -> DeployCheckItem {
-    check_update_executor_ready_with(&state.config, state.runner.clone()).await
-}
-
 async fn check_update_executor_ready_with(
     config: &crate::config::Config,
     runner: std::sync::Arc<dyn crate::runner::CommandRunner>,
@@ -360,10 +340,6 @@ async fn check_update_executor_ready_with(
             "安装并暴露 compose 命令到 PATH；`DOCKREV_COMPOSE_BIN=docker` 时要求 Docker Compose 插件可用；修复后重启并复检。",
         ),
     }
-}
-
-fn check_registry_auth(state: &AppState, context: &PreflightContext) -> DeployCheckItem {
-    check_registry_auth_with(&state.config, context)
 }
 
 fn check_registry_auth_with(
@@ -535,10 +511,6 @@ fn check_registry_auth_with(
     )
 }
 
-async fn check_notification_features(state: &AppState) -> anyhow::Result<Vec<DeployCheckItem>> {
-    check_notification_features_with(&state.db).await
-}
-
 async fn check_notification_features_with(
     db: &crate::db::Db,
 ) -> anyhow::Result<Vec<DeployCheckItem>> {
@@ -706,10 +678,6 @@ async fn check_notification_features_with(
     });
 
     Ok(checks)
-}
-
-async fn check_github_packages_feature(state: &AppState) -> anyhow::Result<DeployCheckItem> {
-    check_github_packages_feature_with(&state.db).await
 }
 
 async fn check_github_packages_feature_with(db: &crate::db::Db) -> anyhow::Result<DeployCheckItem> {

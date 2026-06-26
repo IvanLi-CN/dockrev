@@ -361,6 +361,7 @@ fn parse_buildx_text_inventory_record(line: &str) -> Option<String> {
     Some(format!("{id}\t{reclaimable}\t{size}"))
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn volume_fingerprint_key(volume: &DockerVolumeInspect) -> Option<String> {
     volume
         .created_at
@@ -368,119 +369,6 @@ pub(super) fn volume_fingerprint_key(volume: &DockerVolumeInspect) -> Option<Str
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|created_at| format!("volume:{}:created:{created_at}", volume.name))
-}
-
-fn parse_mountpoint_stat_fingerprint(input: &str) -> Option<String> {
-    let signature = input.lines().find(|line| !line.trim().is_empty())?.trim();
-    (!signature.is_empty()).then(|| signature.to_string())
-}
-
-pub(super) async fn scan_volume_fingerprint_from_mountpoint(
-    state: &AppState,
-    mountpoint: &str,
-) -> Option<String> {
-    let mountpoint = mountpoint.trim();
-    if mountpoint.is_empty() {
-        return None;
-    }
-    let out = state
-        .runner
-        .run(
-            CommandSpec {
-                program: "stat".to_string(),
-                args: vec![
-                    "-c".to_string(),
-                    "%d:%i:%W:%Y:%Z".to_string(),
-                    mountpoint.to_string(),
-                ],
-                env: Vec::new(),
-            },
-            DOCKER_TIMEOUT,
-        )
-        .await
-        .ok()?;
-    if out.status != 0 {
-        return None;
-    }
-    let signature = parse_mountpoint_stat_fingerprint(&out.stdout)?;
-    Some(format!("mount:{mountpoint}:{signature}"))
-}
-
-pub(super) async fn resolve_volume_fingerprint(
-    state: &AppState,
-    volume: &DockerVolumeInspect,
-) -> Option<String> {
-    if let Some(key) = volume_fingerprint_key(volume) {
-        return Some(key);
-    }
-    let mountpoint = volume.mountpoint.as_deref()?;
-    scan_volume_fingerprint_from_mountpoint(state, mountpoint)
-        .await
-        .map(|fingerprint| format!("volume:{}:{fingerprint}", volume.name))
-}
-
-pub(super) async fn scan_volume_sizes_from_system_df(state: &AppState) -> BTreeMap<String, u64> {
-    let out = match state
-        .runner
-        .run(
-            CommandSpec {
-                program: "docker".to_string(),
-                args: vec!["system".to_string(), "df".to_string(), "-v".to_string()],
-                env: Vec::new(),
-            },
-            DOCKER_TIMEOUT,
-        )
-        .await
-    {
-        Ok(out) if out.status == 0 => out,
-        _ => return BTreeMap::new(),
-    };
-    parse_volume_sizes_from_system_df_verbose(&out.stdout)
-}
-
-pub(super) async fn scan_server_disk_usage(state: &AppState) -> Option<(u64, u64)> {
-    let out = state
-        .runner
-        .run(
-            CommandSpec {
-                program: "df".to_string(),
-                args: vec!["-P".to_string(), "-B1".to_string(), "/".to_string()],
-                env: Vec::new(),
-            },
-            DOCKER_TIMEOUT,
-        )
-        .await
-        .ok()?;
-    if out.status != 0 {
-        return None;
-    }
-    parse_df_bytes_output(&out.stdout)
-}
-
-pub(super) async fn scan_volume_size_from_mountpoint(
-    state: &AppState,
-    mountpoint: &str,
-) -> Option<u64> {
-    let mountpoint = mountpoint.trim();
-    if mountpoint.is_empty() {
-        return None;
-    }
-    let out = state
-        .runner
-        .run(
-            CommandSpec {
-                program: "du".to_string(),
-                args: vec!["-sk".to_string(), mountpoint.to_string()],
-                env: Vec::new(),
-            },
-            DOCKER_TIMEOUT,
-        )
-        .await
-        .ok()?;
-    if out.status != 0 {
-        return None;
-    }
-    parse_du_kilobytes_output(&out.stdout)
 }
 
 fn split_table_columns(line: &str) -> Vec<&str> {

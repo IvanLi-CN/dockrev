@@ -2,6 +2,7 @@ use super::parse::{
     parse_df_bytes_output, parse_du_kilobytes_output, parse_human_size,
     parse_volume_sizes_from_system_df_verbose, volume_fingerprint_key,
 };
+use super::planning::preset_includes_candidate;
 use super::*;
 
 fn ownership_to_snapshot(ownership: CleanupOwnership) -> CleanupInventoryOwnership {

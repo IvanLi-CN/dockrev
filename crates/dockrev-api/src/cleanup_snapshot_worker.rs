@@ -50,10 +50,6 @@ impl CleanupSnapshotWorker {
         self.running.load(Ordering::SeqCst)
     }
 
-    pub async fn last_error(&self) -> Option<String> {
-        self.last_error.lock().await.clone()
-    }
-
     async fn run_loop(self) {
         loop {
             self.pending.store(false, Ordering::SeqCst);

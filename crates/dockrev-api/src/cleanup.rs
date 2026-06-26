@@ -27,7 +27,6 @@ use parse::{
 use planning::{
     build_grouped_response, candidate_matches_request, compute_confirmation_fingerprint,
     grouped_targets_json, image_is_dangling, is_builtin_network, preferred_image_label,
-    preset_includes_candidate,
 };
 
 #[derive(Clone, Debug)]
@@ -255,15 +254,6 @@ struct BuildxDuRecord {
     shared: bool,
     #[serde(default, rename = "Size")]
     size: serde_json::Value,
-}
-
-pub async fn build_execution_plan(
-    state: &AppState,
-    req: &CleanupScanRequest,
-    scanned_at: &str,
-) -> anyhow::Result<CleanupExecutionPlan> {
-    let snapshot = build_inventory_snapshot(state.db.clone(), state.runner.clone()).await?;
-    build_execution_plan_from_snapshot(&snapshot, req, scanned_at)
 }
 
 pub async fn build_inventory_snapshot(
@@ -495,10 +485,6 @@ pub async fn run_cleanup_job(
         .await?;
 
     Ok(())
-}
-
-async fn load_managed_context(state: &AppState) -> anyhow::Result<ManagedContext> {
-    load_managed_context_from_db(&state.db).await
 }
 
 async fn load_managed_context_from_db(db: &Db) -> anyhow::Result<ManagedContext> {
