@@ -556,9 +556,16 @@ async fn get_deploy_check_report(
         .get_deploy_check_report_snapshot(deploy_check_refresh_worker::DEPLOY_CHECK_SNAPSHOT_KEY)
         .await
         .map_err(map_internal)?;
-    let refreshing = state.deploy_check_refresh_worker.is_running();
+    let mut refreshing = state.deploy_check_refresh_worker.is_running();
 
     if let Some(row) = cached {
+        let now = time::OffsetDateTime::now_utc();
+        let is_fresh =
+            deploy_check_refresh_worker::deploy_check_report_is_fresh(&row.checked_at, now);
+        if !refreshing && !is_fresh {
+            let _ = state.deploy_check_refresh_worker.enqueue().await;
+            refreshing = true;
+        }
         let report = serde_json::from_str::<DeployCheckReportResponse>(&row.report_json)
             .map_err(|err| map_internal(err.into()))?;
         return Ok(Json(DeployCheckReportEnvelope {

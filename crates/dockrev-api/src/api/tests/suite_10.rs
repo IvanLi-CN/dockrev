@@ -1205,6 +1205,63 @@ services:
 }
 
 #[tokio::test]
+async fn deploy_check_report_marks_stale_cached_report_refreshing_and_reenqueues_worker() {
+    let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
+    let checked_at = test_offset_from_now_rfc3339(time::Duration::seconds(
+        -(crate::deploy_check_refresh_worker::DEPLOY_CHECK_REPORT_STALE_AFTER_SECONDS + 5),
+    ));
+    let updated_at = test_now_rfc3339();
+    let stale_report = crate::api::types::DeployCheckReportResponse {
+        overall: crate::api::types::DeployCheckOverall {
+            result: crate::api::types::DeployCheckResult::Pass,
+            blocking_check_ids: Vec::new(),
+            summary: "stale cached report".to_string(),
+        },
+        generated_at: checked_at.clone(),
+        checks: Vec::new(),
+    };
+    state
+        .db
+        .upsert_deploy_check_report_snapshot(
+            crate::deploy_check_refresh_worker::DEPLOY_CHECK_SNAPSHOT_KEY,
+            &serde_json::to_string(&stale_report).unwrap(),
+            &checked_at,
+            &updated_at,
+        )
+        .await
+        .unwrap();
+
+    let app = api::router(state.clone());
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/deploy-check/report")
+                .header("X-Forwarded-User", "ops")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = response_json(resp).await;
+    assert_eq!(body["status"], "ready");
+    assert_eq!(body["refreshing"], true);
+    assert_eq!(
+        body["retryAfterMs"].as_u64(),
+        Some(crate::deploy_check_refresh_worker::DEPLOY_CHECK_PENDING_RETRY_AFTER_MS)
+    );
+    assert!(state.deploy_check_refresh_worker.is_running());
+
+    let ready_body = wait_for_deploy_check_report_ready(&app, Some("ops")).await;
+    assert_eq!(ready_body["status"], "ready");
+    assert_eq!(ready_body["refreshing"], false);
+    let refreshed_generated_at = ready_body["report"]["generatedAt"].as_str().unwrap();
+    assert_ne!(refreshed_generated_at, checked_at.as_str());
+}
+
+#[tokio::test]
 async fn deploy_check_report_fails_when_enabled_feature_is_misconfigured() {
     let state = test_state_with(":memory:", Arc::new(FakeRegistry), Arc::new(FakeRunner)).await;
 

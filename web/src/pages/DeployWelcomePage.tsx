@@ -32,6 +32,10 @@ export function shouldKeepPollingDeployCheckReport(envelope: DeployCheckReportEn
   return envelope.status !== 'ready' || Boolean(envelope.refreshing)
 }
 
+export function shouldTriggerDeployCheckReportRefresh(envelope: DeployCheckReportEnvelope): boolean {
+  return envelope.status === 'ready' && !envelope.refreshing
+}
+
 export function shouldKeepDeployCheckLoading(envelope: DeployCheckReportEnvelope): boolean {
   return !envelope.report && shouldKeepPollingDeployCheckReport(envelope)
 }
@@ -148,9 +152,13 @@ export function DeployWelcomePage() {
       }
       setReportRefreshing(Boolean(envelope.refreshing))
       const shouldWaitForFirstReport = shouldKeepDeployCheckLoading(envelope)
-      if (envelope.status !== 'ready' || envelope.refreshing) {
-        void refreshDeployCheckReport().catch(() => {})
-        void settleReportEnvelope(envelope)
+      const shouldRequestRefresh = shouldTriggerDeployCheckReportRefresh(envelope)
+      const shouldPoll = shouldRequestRefresh || shouldKeepPollingDeployCheckReport(envelope)
+      if (shouldPoll) {
+        setReportRefreshing(true)
+        const seed = shouldRequestRefresh ? refreshDeployCheckReport() : Promise.resolve(envelope)
+        void seed
+          .then((nextEnvelope) => settleReportEnvelope(nextEnvelope))
           .then((settled) => {
             if (settled.report) {
               setReport(settled.report)

@@ -736,10 +736,17 @@ async fn wait_for_deploy_check_report_ready(
             .unwrap();
         let status = resp.status();
         let body = response_json(resp).await;
-        if status == axum::http::StatusCode::OK && body["status"].as_str() == Some("ready") {
+        if status == axum::http::StatusCode::OK
+            && body["status"].as_str() == Some("ready")
+            && body["refreshing"].as_bool() != Some(true)
+        {
             return body;
         }
-        assert_eq!(body["status"].as_str(), Some("pending"));
+        assert!(
+            body["status"].as_str() == Some("pending")
+                || body["refreshing"].as_bool() == Some(true),
+            "unexpected deploy-check polling payload: {body}"
+        );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("timed out waiting for deploy check report ready");
