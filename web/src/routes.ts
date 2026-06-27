@@ -13,8 +13,17 @@ export type Route =
   | { name: 'deploy-check' }
   | { name: 'settings' }
   | { name: 'stack'; stackId: string }
-  | { name: 'service'; stackId: string; serviceId: string }
+  | { name: 'service'; stackId: string; serviceId: string; section?: 'overview' | 'monitoring' | 'settings' }
   | { name: 'supervisor-misroute'; basePath: string; pathname: string }
+
+function normalizeServiceSection(
+  value: string | null | undefined,
+): 'overview' | 'monitoring' | 'settings' | null {
+  const section = (value ?? '').trim()
+  if (section === '' || section === 'overview') return 'overview'
+  if (section === 'monitoring' || section === 'settings') return section
+  return null
+}
 
 export function parseRoute(pathname: string): Route {
   const sup = parseSupervisorMisroute(pathname)
@@ -46,7 +55,13 @@ export function parseRoute(pathname: string): Route {
     return { name: 'stack', stackId: parts[1] }
   }
   if (parts.length === 3 && parts[0] === 'services') {
-    return { name: 'service', stackId: parts[1], serviceId: parts[2] }
+    return { name: 'service', stackId: parts[1], serviceId: parts[2], section: 'overview' }
+  }
+  if (parts.length === 4 && parts[0] === 'services') {
+    const section = normalizeServiceSection(parts[3])
+    if (section) {
+      return { name: 'service', stackId: parts[1], serviceId: parts[2], section }
+    }
   }
   return { name: 'overview' }
 }
@@ -78,7 +93,10 @@ export function href(route: Route): string {
     case 'stack':
       return `/services/${encodeURIComponent(route.stackId)}`
     case 'service':
-      return `/services/${encodeURIComponent(route.stackId)}/${encodeURIComponent(route.serviceId)}`
+      if (!route.section || route.section === 'overview') {
+        return `/services/${encodeURIComponent(route.stackId)}/${encodeURIComponent(route.serviceId)}`
+      }
+      return `/services/${encodeURIComponent(route.stackId)}/${encodeURIComponent(route.serviceId)}/${route.section}`
     case 'supervisor-misroute': {
       const p = route.basePath.endsWith('/') ? route.basePath : `${route.basePath}/`
       return p

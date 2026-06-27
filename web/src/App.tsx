@@ -104,7 +104,16 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
         topbarHint: '系统设置',
       }
     case 'service':
-      return { title: '服务详情', topbarHint: '服务详情' }
+      return {
+        title: '服务详情',
+        pageSubtitle:
+          route.section === 'monitoring'
+            ? '资源趋势、实时状态与容器压力观测'
+            : route.section === 'settings'
+              ? '自动更新、Compose、保护项与服务级集成设置'
+              : '运行态摘要、更新决策与服务上下文',
+        topbarHint: '服务详情',
+      }
     case 'stack':
       return { title: 'Stack 详情', topbarHint: 'Stack 详情' }
     case 'supervisor-misroute':
@@ -368,6 +377,7 @@ export default function App() {
           <ServiceDetailPage
             stackId={route.stackId}
             serviceId={route.serviceId}
+            section={route.section}
             onLastScanHint={setLastScanHint}
             onTopActions={setPageActions}
           />

@@ -1,0 +1,17 @@
+# Dockrev：服务详情页三子页信息架构升级 演进历史（#ey4ar）
+
+> 这里记录会影响 Agent 理解“为什么一步步变成现在这样”的关键演进；单次任务流水账不放这里，规范正文仍以 `./SPEC.md` 为准。
+
+## Decision Trace
+
+- 2026-06-27: 新建本 spec，冻结 `概览 / 监控 / 设置` 三子页方案、旧链接默认落概览、页头 tabs 导航，以及“高频动作保留 / 低频危险动作下沉”的信息架构重排。
+
+## Key Reasons / Replacements
+
+- 服务详情页已经承载多个主题能力，需要一个新的 topic spec 统一约束子页路由与内容归位。
+- 既有自动更新、回滚、Compose tag、资源监控等 feature specs 继续拥有各自能力契约；本 spec 只负责服务详情页的信息架构与导航层组织。
+
+## References
+
+- `./SPEC.md`
+- `./IMPLEMENTATION.md`

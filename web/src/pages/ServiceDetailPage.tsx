@@ -13,7 +13,7 @@ import {
   type ServiceTagSuggestionItem,
 } from '../api'
 import { navigate } from '../routes'
-import { Button, IconButton, Input, Mono, Pill, RefreshIcon, SelectField, Switch } from '../ui'
+import { Button, IconButton, Input, Mono, Pill, RefreshIcon, SelectField, Switch, Tabs, TabsList, TabsTrigger } from '../ui'
 import { isDockrevImageRef } from '../runtimeConfig'
 import { serviceRowStatus } from '../updateStatus'
 import { ServiceResourcePanel } from '../components/ServiceResourcePanel'
@@ -257,9 +257,12 @@ function ServiceComposeTagField(props: {
 export function ServiceDetailPage(props: {
   stackId: string
   serviceId: string
+  section?: 'overview' | 'monitoring' | 'settings'
   onLastScanHint: (lastScan?: string) => void
   onTopActions: (node: ReactNode) => void
 }) {
+  const { onTopActions } = props
+  const section = props.section ?? 'overview'
   const {
     anomalyCandidateTag,
     anomalyCurrentTag,
@@ -293,9 +296,11 @@ export function ServiceDetailPage(props: {
     settingsBusy,
     stack,
     stackSettings,
+    topActions,
     supervisorErrorAt,
     supervisorState,
     tone,
+    dangerousActions,
   } = useServiceDetailPageState(props)
   const [jobs, setJobs] = useState<JobListItem[]>([])
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false)
@@ -317,6 +322,11 @@ export function ServiceDetailPage(props: {
     void refreshRecentJobs().catch(() => undefined)
   }, [notice?.jobId, refreshRecentJobs])
 
+  useEffect(() => {
+    onTopActions(topActions)
+    return () => onTopActions(null)
+  }, [onTopActions, topActions])
+
   if (!stack || !service || !settings) {
     return <div className="muted">加载中…</div>
   }
@@ -331,6 +341,235 @@ export function ServiceDetailPage(props: {
   )
   const visibleRepoUrl = serviceSettingsDrawerOpen ? serviceProtectionDraft.repoUrl : draftRepoUrl
   const recentUpdateJobs = selectRecentServiceUpdateJobs(jobs, service.id)
+  const sectionValue = section
+
+  const renderOverviewSection = () => (
+    <div className="svcDetailSectionStack">
+      <RecentUpdateRecords jobs={recentUpdateJobs} />
+    </div>
+  )
+
+  const renderMonitoringSection = () => (
+    <div className="svcDetailSectionStack">
+      <ServiceResourcePanel serviceId={service.id} />
+    </div>
+  )
+
+  const renderSettingsSection = () => (
+    <div className="svcDetailSectionStack">
+      <div data-service-detail-section-card="auto-policy">
+        <div data-service-detail-action="open-auto-policy">
+          <AutoUpdatePolicyResultCard
+            busy={settingsBusy}
+            onOpenSettings={() => {
+              setAutoPolicyDraft(policy)
+              setSettingsDrawerOpen(true)
+            }}
+            policy={policy}
+            scope="service"
+            stackPolicy={stackSettings?.autoUpdatePolicy ?? null}
+          />
+        </div>
+      </div>
+
+      <div className="card svcComposeCard">
+        <div className="title">Compose 信息</div>
+        <div className="kv">
+          <div className="kvRow">
+            <div className="muted">type</div>
+            <div className="mono">{composeType}</div>
+          </div>
+          <div className="kvRow">
+            <div className="muted">compose files</div>
+            {composeFiles.length > 0 ? (
+              <div>
+                {composeFiles.map((item, index) => (
+                  <div key={`${item}-${index}`} className="mono">
+                    {item}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mono">-</div>
+            )}
+          </div>
+          <div className="kvRow">
+            <div className="muted">env file</div>
+            <div className="mono">{composeEnvFile}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="card serviceSafeguardCard">
+        <div>
+          <div className="title">部署 tag</div>
+          <div className="muted">直接写回原始 Compose 文件里的镜像 tag，不自动执行 compose up。</div>
+        </div>
+        <div className="serviceTagCardActions">
+          <div className="chipStatic">
+            当前 <Mono>{service.image.tag || '-'}</Mono>
+          </div>
+          <Button disabled={settingsBusy} onClick={() => setTagDrawerOpen(true)}>
+            编辑 tag
+          </Button>
+        </div>
+      </div>
+
+      <div className="card serviceSafeguardCard">
+        <div>
+          <div className="title">服务保护设置</div>
+          <div className="muted">失败回滚、代码仓库和备份目标单独配置，不与自动更新策略混排。</div>
+        </div>
+        <div data-service-detail-action="open-service-settings">
+          <Button
+            disabled={settingsBusy}
+            onClick={() => {
+              setServiceSettingsDraft(settings)
+              setServiceSettingsDrawerOpen(true)
+            }}
+          >
+            打开
+          </Button>
+        </div>
+      </div>
+
+      <div className="card" data-service-detail-section-card="ignore-rules">
+        <div className="title">忽略规则</div>
+
+        <div className="ruleList">
+          {rules.map((r) => (
+            <div key={r.id} className="ruleRow" style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+              <div style={{ flex: 1 }}>
+                <div className="mono">
+                  {r.match.kind}={r.match.value}
+                </div>
+                <div className="muted">
+                  id <Mono>{r.id}</Mono> · enabled <Mono>{String(r.enabled)}</Mono>
+                  {r.note ? (
+                    <>
+                      {' '}
+                      · note <Mono>{r.note}</Mono>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                disabled={busy}
+                onClick={() => {
+                  void (async () => {
+                    setBusy(true)
+                    setError(null)
+                    try {
+                      await deleteIgnore(r.id)
+                      await requestRefresh()
+                    } catch (e: unknown) {
+                      setError(errorMessage(e))
+                    } finally {
+                      setBusy(false)
+                    }
+                  })()
+                }}
+              >
+                删除
+              </Button>
+            </div>
+          ))}
+          {rules.length === 0 ? <div className="muted">暂无规则</div> : null}
+        </div>
+
+        <div className="sectionTitle" style={{ marginTop: 14 }}>
+          添加规则
+        </div>
+        <div className="formGrid">
+          <label className="formField">
+            <span className="label">Kind</span>
+            <SelectField
+              className="input"
+              onChange={(value) => setNewRuleKind(value as 'exact' | 'prefix' | 'regex' | 'semver')}
+              options={[
+                { value: 'exact', label: 'exact' },
+                { value: 'prefix', label: 'prefix' },
+                { value: 'regex', label: 'regex' },
+                { value: 'semver', label: 'semver' },
+              ]}
+              value={newRuleKind}
+            />
+          </label>
+          <label className="formField formSpan2">
+            <span className="label">Value</span>
+            <Input className="input" onChange={(e) => setNewRuleValue(e.target.value)} value={newRuleValue} />
+          </label>
+          <label className="formField formSpan2">
+            <span className="label">Note</span>
+            <Input className="input" onChange={(e) => setNewRuleNote(e.target.value)} value={newRuleNote} />
+          </label>
+          <div className="formActions formSpan2">
+            <Button
+              variant="primary"
+              disabled={busy}
+              onClick={() => {
+                void (async () => {
+                  setBusy(true)
+                  setError(null)
+                  try {
+                    await createIgnore({
+                      enabled: true,
+                      serviceId,
+                      kind: newRuleKind,
+                      value: newRuleValue,
+                      note: newRuleNote,
+                    })
+                    await requestRefresh()
+                  } catch (e: unknown) {
+                    setError(errorMessage(e))
+                  } finally {
+                    setBusy(false)
+                  }
+                })()
+              }}
+            >
+              添加
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="card" data-service-detail-section-card="webhook">
+        <div className="title">Webhook 触发（服务级）</div>
+        <div className="muted">用于外部系统触发：更新此服务 / 更新 compose / 更新全部</div>
+
+        <div className="webhookRow">
+          <div className="label">POST</div>
+          <div className="mono">/api/v1/update/service/{service.name}</div>
+          <div style={{ marginLeft: 'auto' }} className="chipStatic">
+            需要鉴权
+          </div>
+        </div>
+        <div className="webhookBody">
+          <div className="label">Body（可选）</div>
+          <div className="mono">{`{ "dryRun": true, "backup": "inherit" }`}</div>
+          <div className="muted">dryRun=仅预览；backup=inherit/on/off；rollback=inherit/on/off</div>
+        </div>
+      </div>
+
+      <div className="card svcDangerZoneCard" data-service-detail-section-card="danger-zone">
+        <div className="svcDangerZoneHead">
+          <div>
+            <div className="title">维护动作</div>
+            <div className="muted">低频或高影响动作下沉到设置页，避免服务详情首屏过于拥挤。</div>
+          </div>
+        </div>
+        <div className="svcDangerZoneActions">{dangerousActions}</div>
+      </div>
+    </div>
+  )
+
+  const renderSection = () => {
+    if (sectionValue === 'monitoring') return renderMonitoringSection()
+    if (sectionValue === 'settings') return renderSettingsSection()
+    return renderOverviewSection()
+  }
 
   return (
     <div className="page">
@@ -364,32 +603,43 @@ export function ServiceDetailPage(props: {
         </div>
       </div>
 
-      <div className="card svcComposeCard">
-        <div className="title">Compose 信息</div>
-        <div className="kv">
-          <div className="kvRow">
-            <div className="muted">type</div>
-            <div className="mono">{composeType}</div>
-          </div>
-          <div className="kvRow">
-            <div className="muted">compose files</div>
-            {composeFiles.length > 0 ? (
-              <div>
-                {composeFiles.map((item, index) => (
-                  <div key={`${item}-${index}`} className="mono">
-                    {item}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="mono">-</div>
-            )}
-          </div>
-          <div className="kvRow">
-            <div className="muted">env file</div>
-            <div className="mono">{composeEnvFile}</div>
-          </div>
-        </div>
+      <div className="svcDetailTabsShell">
+        <Tabs
+          onValueChange={(value) => {
+            const nextSection = value as 'overview' | 'monitoring' | 'settings'
+            navigate({
+              name: 'service',
+              stackId: props.stackId,
+              serviceId: props.serviceId,
+              section: nextSection,
+            })
+          }}
+          value={sectionValue}
+        >
+          <TabsList className="svcDetailTabsList" aria-label="服务详情分区">
+            <TabsTrigger
+              className={sectionValue === 'overview' ? 'svcDetailTab active' : 'svcDetailTab'}
+              data-service-detail-tab="overview"
+              value="overview"
+            >
+              概览
+            </TabsTrigger>
+            <TabsTrigger
+              className={sectionValue === 'monitoring' ? 'svcDetailTab active' : 'svcDetailTab'}
+              data-service-detail-tab="monitoring"
+              value="monitoring"
+            >
+              监控
+            </TabsTrigger>
+            <TabsTrigger
+              className={sectionValue === 'settings' ? 'svcDetailTab active' : 'svcDetailTab'}
+              data-service-detail-tab="settings"
+              value="settings"
+            >
+              设置
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
       </div>
 
       <div className={bannerClass}>
@@ -423,154 +673,7 @@ export function ServiceDetailPage(props: {
         </div>
       ) : null}
 
-      <ServiceResourcePanel serviceId={service.id} />
-
-      <div className="settingsSummaryGrid" style={{ marginTop: 16 }}>
-        <AutoUpdatePolicyResultCard
-          busy={settingsBusy}
-          onOpenSettings={() => {
-            setAutoPolicyDraft(policy)
-            setSettingsDrawerOpen(true)
-          }}
-          policy={policy}
-          scope="service"
-          stackPolicy={stackSettings?.autoUpdatePolicy ?? null}
-        />
-        <RecentUpdateRecords jobs={recentUpdateJobs} />
-      </div>
-
-      <div className="card serviceSafeguardCard">
-        <div>
-          <div className="title">部署 tag</div>
-          <div className="muted">直接写回原始 Compose 文件里的镜像 tag，不自动执行 compose up。</div>
-        </div>
-        <div className="serviceTagCardActions">
-          <div className="chipStatic">
-            当前 <Mono>{service.image.tag || '-'}</Mono>
-          </div>
-          <Button disabled={settingsBusy} onClick={() => setTagDrawerOpen(true)}>
-            编辑 tag
-          </Button>
-        </div>
-      </div>
-
-      <div className="card serviceSafeguardCard">
-        <div>
-          <div className="title">服务保护设置</div>
-          <div className="muted">失败回滚、代码仓库和备份目标单独配置，不与自动更新策略混排。</div>
-        </div>
-        <Button
-          disabled={settingsBusy}
-          onClick={() => {
-            setServiceSettingsDraft(settings)
-            setServiceSettingsDrawerOpen(true)
-          }}
-        >
-          打开
-        </Button>
-      </div>
-
-      <div className="card" style={{ marginTop: 16 }}>
-          <div className="title">忽略规则</div>
-
-          <div className="ruleList">
-            {rules.map((r) => (
-              <div key={r.id} className="ruleRow" style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                <div style={{ flex: 1 }}>
-                  <div className="mono">
-                    {r.match.kind}={r.match.value}
-                  </div>
-                  <div className="muted">
-                    id <Mono>{r.id}</Mono> · enabled <Mono>{String(r.enabled)}</Mono>
-                    {r.note ? (
-                      <>
-                        {' '}
-                        · note <Mono>{r.note}</Mono>
-                      </>
-                    ) : null}
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={() => {
-                    void (async () => {
-                      setBusy(true)
-                      setError(null)
-                      try {
-                        await deleteIgnore(r.id)
-                        await requestRefresh()
-                      } catch (e: unknown) {
-                        setError(errorMessage(e))
-                      } finally {
-                        setBusy(false)
-                      }
-                    })()
-                  }}
-                >
-                  删除
-                </Button>
-              </div>
-            ))}
-            {rules.length === 0 ? <div className="muted">暂无规则</div> : null}
-          </div>
-
-          <div className="sectionTitle" style={{ marginTop: 14 }}>
-            添加规则
-          </div>
-          <div className="formGrid">
-            <label className="formField">
-              <span className="label">Kind</span>
-              <SelectField
-                className="input"
-                onChange={(value) => setNewRuleKind(value as 'exact' | 'prefix' | 'regex' | 'semver')}
-                options={[
-                  { value: 'exact', label: 'exact' },
-                  { value: 'prefix', label: 'prefix' },
-                  { value: 'regex', label: 'regex' },
-                  { value: 'semver', label: 'semver' },
-                ]}
-                value={newRuleKind}
-              />
-            </label>
-            <label className="formField formSpan2">
-              <span className="label">Value</span>
-              <Input className="input" onChange={(e) => setNewRuleValue(e.target.value)} value={newRuleValue} />
-            </label>
-            <label className="formField formSpan2">
-              <span className="label">Note</span>
-              <Input className="input" onChange={(e) => setNewRuleNote(e.target.value)} value={newRuleNote} />
-            </label>
-            <div className="formActions formSpan2">
-              <Button
-                variant="primary"
-                disabled={busy}
-                onClick={() => {
-                  void (async () => {
-                    setBusy(true)
-                    setError(null)
-                    try {
-                      await createIgnore({
-                        enabled: true,
-                        serviceId,
-                        kind: newRuleKind,
-                        value: newRuleValue,
-                        note: newRuleNote,
-                      })
-                      await requestRefresh()
-                    } catch (e: unknown) {
-                      setError(errorMessage(e))
-                    } finally {
-                      setBusy(false)
-                    }
-                  })()
-                }}
-              >
-                添加
-              </Button>
-            </div>
-          </div>
-        </div>
+      {renderSection()}
 
       <AutoUpdatePolicyDrawer
         busy={settingsBusy}
@@ -783,24 +886,6 @@ export function ServiceDetailPage(props: {
           </div>
         </div>
       </ResponsiveSettingsDrawer>
-
-      <div className="card" style={{ marginTop: 16 }}>
-        <div className="title">Webhook 触发（服务级）</div>
-        <div className="muted">用于外部系统触发：更新此服务 / 更新 compose / 更新全部</div>
-
-        <div className="webhookRow">
-          <div className="label">POST</div>
-          <div className="mono">/api/v1/update/service/{service.name}</div>
-          <div style={{ marginLeft: 'auto' }} className="chipStatic">
-            需要鉴权
-          </div>
-        </div>
-        <div className="webhookBody">
-          <div className="label">Body（可选）</div>
-          <div className="mono">{`{ "dryRun": true, "backup": "inherit" }`}</div>
-          <div className="muted">dryRun=仅预览；backup=inherit/on/off；rollback=inherit/on/off</div>
-        </div>
-      </div>
 
       {error ? <div className="error">{error}</div> : null}
       {notice ? (

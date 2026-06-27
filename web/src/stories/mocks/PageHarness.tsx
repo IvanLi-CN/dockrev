@@ -8,7 +8,7 @@ import {
   closeGitHubReleaseDrawer,
   readGitHubReleaseDrawerState,
 } from '../../releaseDrawer'
-import type { Route } from '../../routes'
+import { currentHref, currentRoutePathname, parseRoute, subscribeNavigation, type Route } from '../../routes'
 import type { TopbarAuthIdentity } from '../../topbarAuthIdentity'
 
 export function PageHarness(props: {
@@ -18,6 +18,25 @@ export function PageHarness(props: {
   topbarHint?: string
   authIdentity?: TopbarAuthIdentity | null
   children: (ctx: {
+    route: Route
+    onTopActions: (node: ReactNode) => void
+    onTopbarContent: (node: ReactNode) => void
+    onSidebarNavContent: (node: ReactNode) => void
+    onMobileNavContent: (node: ReactNode) => void
+    onLastScanHint: (lastScan?: string) => void
+  }) => ReactNode
+}) {
+  return <PageHarnessInner key={currentHref(props.route)} {...props} />
+}
+
+function PageHarnessInner(props: {
+  route: Route
+  title: string
+  pageSubtitle?: string
+  topbarHint?: string
+  authIdentity?: TopbarAuthIdentity | null
+  children: (ctx: {
+    route: Route
     onTopActions: (node: ReactNode) => void
     onTopbarContent: (node: ReactNode) => void
     onSidebarNavContent: (node: ReactNode) => void
@@ -31,6 +50,7 @@ export function PageHarness(props: {
   const [mobileNavContent, setMobileNavContent] = useState<ReactNode>(null)
   const [lastScanHint, setLastScanHint] = useState<string | undefined>(undefined)
   const [releaseDrawerState, setReleaseDrawerState] = useState(CLOSED_GITHUB_RELEASE_DRAWER_STATE)
+  const [route, setRoute] = useState<Route>(props.route)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -43,6 +63,31 @@ export function PageHarness(props: {
     }
     if (!changed) return
     window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const targetHref = currentHref(props.route)
+    if (targetHref.startsWith('#')) {
+      if (window.location.hash !== targetHref) window.location.hash = targetHref
+      return
+    }
+    if (window.location.pathname !== targetHref) {
+      window.history.replaceState({}, '', targetHref)
+    }
+  }, [props.route])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const sync = () => setRoute(parseRoute(currentRoutePathname()))
+    window.addEventListener('popstate', sync)
+    window.addEventListener('hashchange', sync)
+    const unsubscribe = subscribeNavigation(sync)
+    return () => {
+      window.removeEventListener('popstate', sync)
+      window.removeEventListener('hashchange', sync)
+      unsubscribe()
+    }
   }, [])
 
   useEffect(() => {
@@ -63,7 +108,7 @@ export function PageHarness(props: {
   return (
     <>
       <AppShell
-        route={props.route}
+        route={route}
         title={props.title}
         pageSubtitle={props.pageSubtitle}
         topbarHint={props.topbarHint}
@@ -75,6 +120,7 @@ export function PageHarness(props: {
         lastScanHint={lastScanHint}
       >
         {props.children({
+          route,
           onTopActions: setTopActions,
           onTopbarContent: setTopbarContent,
           onSidebarNavContent: setSidebarNavContent,
