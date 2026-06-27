@@ -18,7 +18,7 @@
 
 ## Remaining Gaps
 
-- 待执行 review-loop、提交本地 commit，并推进 PR / merge-ready 收口。
+- 待推进 PR / CI / merge 收口。
 
 ## Related Changes
 
