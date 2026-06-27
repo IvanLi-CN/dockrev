@@ -164,10 +164,12 @@
   requested_viewport: `1440x1200`
   viewport_strategy: `devtools-emulate`
   sensitive_exclusion: `N/A`
-  submission_gate: `pending-owner-approval`
+  submission_gate: `approved`
   story_id_or_title: `Pages/ServiceDetailPage/OverviewDefault`
   state: `legacy route -> overview`
   evidence_note: 验证旧 `/services/:stackId/:serviceId` 路径仍稳定落到概览子页，顶部高频动作保留在共享页头，主体仅展示运行摘要与最近更新记录。
+  PR: include
+  PR caption: 服务详情旧链接默认落到概览子页，页头 tabs 与共享高频动作保持稳定可达。
 
 ![服务详情概览子页（桌面）](./assets/service-detail-overview-desktop.png)
 
@@ -177,10 +179,12 @@
   requested_viewport: `1440x1200`
   viewport_strategy: `devtools-emulate`
   sensitive_exclusion: `N/A`
-  submission_gate: `pending-owner-approval`
+  submission_gate: `approved`
   story_id_or_title: `Pages/ServiceDetailPage/MonitoringSection`
   state: `monitoring deep link`
   evidence_note: 验证 `监控` 子页通过独立 section 深链承载资源监控面板，保留共享 hero/banner/top actions，同时不混入配置卡片。
+  PR: include
+  PR caption: 监控子页独占资源监控面板，复用同一服务上下文与顶部动作。
 
 ![服务详情监控子页（桌面）](./assets/service-detail-monitoring-desktop.png)
 
@@ -190,10 +194,12 @@
   requested_viewport: `1440x1600`
   viewport_strategy: `devtools-emulate`
   sensitive_exclusion: `N/A`
-  submission_gate: `pending-owner-approval`
+  submission_gate: `approved`
   story_id_or_title: `Pages/ServiceDetailPage/SettingsSection`
   state: `settings deep link`
   evidence_note: 验证 `设置` 子页集中自动更新摘要、Compose 信息、部署 tag、服务保护、忽略规则、Webhook 与维护动作，且低频危险动作已从共享页头下沉。
+  PR: include
+  PR caption: 设置子页集中低频配置与维护动作，不再把这些卡片堆在服务详情首屏。
 
 ![服务详情设置子页（桌面）](./assets/service-detail-settings-desktop.png)
 
@@ -203,7 +209,7 @@
   requested_viewport: `390x844`
   viewport_strategy: `devtools-emulate`
   sensitive_exclusion: `N/A`
-  submission_gate: `pending-owner-approval`
+  submission_gate: `approved`
   story_id_or_title: `Pages/ServiceDetailPage/OverviewDefault`
   state: `mobile overview tabs`
   evidence_note: 验证窄屏下服务详情页仍保留共享顶部动作与 route-backed tabs，概览子页在移动端保持单列阅读顺序。
