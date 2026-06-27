@@ -4,7 +4,7 @@
 
 - Status: 进行中
 - Created: 2026-03-11
-- Last: 2026-03-23
+- Last: 2026-06-27
 
 ## 背景 / 问题陈述
 
@@ -24,7 +24,7 @@
 
 ### Non-goals
 
-- 不调整其余 required checks / informational checks 的对外命名。
+- 不调整与 worktree/bootstrap smoke 无关的 required checks / informational checks 对外命名。
 - 不修改 release 主流程、应用逻辑、数据库 schema 或 Web UI 行为。
 - 不把 `Review Policy Gate` 或 `PR Label Gate` 降级为 informational。
 
@@ -81,6 +81,7 @@
 - `CI (PR)`
   - `pull_request`：维持现有按路径裁剪的重活门禁。
   - `merge_group`：保守视为 full sweep，确保 required jobs 真跑出来。
+  - `Worktree bootstrap smoke`：独立 required job，验证 shared `post-checkout` hook 与 worktree 依赖 bootstrap 合同。
 
 ### Edge cases / errors
 
@@ -95,6 +96,7 @@
 - Given 一个非 owner / 非 maintainer 作者 PR，When 未达到要求 review，Then `Review Policy Gate` 失败。
 - Given 一个 merge queue 组，When 其中任一关联 PR 未满足标签或 review 语义，Then 对应 required gate 失败并标出具体 PR。
 - Given 仓库内 declaration、workflow、contract-check 与 live rules，When 校验最终契约，Then 不再出现 review gate / required checks / signed-commit 规则漂移。
+- Given 新 linked worktree 安装了 Dockrev shared hooks，When 触发 checkout，Then `Worktree bootstrap smoke` 覆盖 hook 触发、依赖安装、stamp 快速跳过和 `DOCKREV_BOOTSTRAP_SKIP=1`。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 
@@ -102,6 +104,7 @@
 
 - `python3 /Users/ivan/.style-playbook-skills/skills/style-topic-quality-gates/scripts/check_quality_gates.py --repo-root . --declaration .github/quality-gates.json --allow-unchecked-branch-protection`
 - `go run github.com/rhysd/actionlint/cmd/actionlint@latest .github/workflows/*.yml`
+- `bash scripts/test-worktree-bootstrap.sh`
 - `bash ./.github/scripts/release-channel-contract-check.sh`
 - `python3 ./.github/scripts/check-live-quality-gates.py --declaration .github/quality-gates.json --repo "${GITHUB_REPOSITORY}" --mode require`（GitHub Actions 上必须通过）
 - `git diff --check`
@@ -125,3 +128,4 @@
 - 2026-03-11: 完成 repo 内 label gate / CI merge queue 对齐，并消除 main / PR check context 冲突。
 - 2026-03-11: 根据 live GitHub 行为复盘回修策略：dockrev 的条件 review 改回 workflow-backed `Review Policy Gate`，GitHub live 只保留 PR-only、required checks、signed commits 与 direct-push 防护。
 - 2026-03-23: live quality-gates 校验从 `release-channel-contract-check.sh` 的真实网络调用中拆出，改为 `CI (PR)` / `CI (main)` 显式 authenticated step；离线 contract-check 仅保留静态与 mock API 自测。
+- 2026-06-27: 将 `Worktree bootstrap smoke` 纳入 `CI (PR)` required checks，覆盖 linked worktree shared hook 与项目内依赖 bootstrap 合同。

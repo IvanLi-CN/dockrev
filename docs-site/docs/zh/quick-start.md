@@ -48,6 +48,15 @@ docker compose up --build
 
 ## 本地开发启动（非容器）
 
+### 工作区依赖
+
+```bash
+bun run hooks:install
+bun run bootstrap:worktree
+```
+
+`hooks:install` 会安装 shared Git `post-checkout` hook。新 linked worktree 切入后会自动运行项目内依赖 bootstrap：根目录、`web/`、`docs-site/` 的 Bun 依赖，以及 `cargo fetch --locked`。它不会安装 Bun、Rust、Playwright browsers 或系统包；如需临时跳过自动运行，设置 `DOCKREV_BOOTSTRAP_SKIP=1`。
+
 ### 后端
 
 ```bash

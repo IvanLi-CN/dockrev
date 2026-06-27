@@ -264,6 +264,7 @@ REQUIRED_CHECKS = [
     "Release intent label gate",
     "Detect changes",
     "Lint & Checks",
+    "Worktree bootstrap smoke",
     "Backend Tests",
     "Frontend lint + build",
     "Frontend Storybook build",

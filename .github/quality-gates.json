@@ -35,6 +35,7 @@
     "Release intent label gate",
     "Detect changes",
     "Lint & Checks",
+    "Worktree bootstrap smoke",
     "Backend Tests",
     "Frontend lint + build",
     "Frontend Storybook build",
@@ -63,6 +64,7 @@
       "jobs": [
         "Detect changes",
         "Lint & Checks",
+        "Worktree bootstrap smoke",
         "Backend Tests",
         "Deploy Smoke",
         "Frontend lint + build",
