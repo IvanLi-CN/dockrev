@@ -5,6 +5,7 @@ api_root="${GITHUB_API_URL:-https://api.github.com}"
 repo="${GITHUB_REPOSITORY:-}"
 token="${GITHUB_TOKEN:-}"
 sha="${WORKFLOW_RUN_SHA:-${GITHUB_SHA:-}}"
+python_bin="${PYTHON:-python3}"
 
 if [[ -z "${repo}" ]]; then
   echo "release-intent: missing GITHUB_REPOSITORY" >&2
@@ -63,7 +64,7 @@ fi
 
 export pulls_json
 result="$(
-  python - <<'PY'
+  "${python_bin}" - <<'PY'
 from __future__ import annotations
 
 import json
@@ -125,7 +126,7 @@ fi
 
 export labels_json
 decision="$(
-  python - <<'PY'
+  "${python_bin}" - <<'PY'
 from __future__ import annotations
 
 import json

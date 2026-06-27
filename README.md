@@ -41,6 +41,15 @@ Front-end (React + TypeScript):
 
 ## Dev quickstart
 
+Install repo hooks and project-local dependencies:
+
+```bash
+bun run hooks:install
+bun run bootstrap:worktree
+```
+
+The hook installer writes a shared Git `post-checkout` hook for linked worktrees. On checkout it runs `scripts/bootstrap-worktree.sh`, which installs the root, `web/`, and `docs-site/` Bun dependencies with frozen lockfiles, then runs `cargo fetch --locked`. It does not install Bun, Rust, Playwright browsers, Docker, or other system packages. Set `DOCKREV_BOOTSTRAP_SKIP=1` to skip the automatic hook run.
+
 Backend:
 
 ```bash

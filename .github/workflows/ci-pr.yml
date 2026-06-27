@@ -111,6 +111,17 @@ jobs:
             --declaration .github/quality-gates.json \
             --repo "${GITHUB_REPOSITORY}"
 
+  worktree-bootstrap:
+    name: Worktree bootstrap smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run worktree bootstrap smoke
+        run: bash ./scripts/test-worktree-bootstrap.sh
+
   unit-tests:
     name: Backend Tests
     runs-on: ubuntu-latest
