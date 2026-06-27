@@ -5,6 +5,7 @@ api_root="${GITHUB_API_URL:-https://api.github.com}"
 repo="${GITHUB_REPOSITORY:-}"
 token="${GITHUB_TOKEN:-}"
 pr_number="${PR_NUMBER:-}"
+python_bin="${PYTHON:-python3}"
 
 if [[ -z "${repo}" ]]; then
   echo "label-gate: missing GITHUB_REPOSITORY" >&2
@@ -31,7 +32,7 @@ labels_json="$(
 )"
 
 export labels_json
-python - <<'PY'
+"${python_bin}" - <<'PY'
 from __future__ import annotations
 
 import json

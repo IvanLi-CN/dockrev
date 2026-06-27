@@ -40,6 +40,15 @@ Entry points:
 
 ## Local dev startup (without containers)
 
+### Worktree dependencies
+
+```bash
+bun run hooks:install
+bun run bootstrap:worktree
+```
+
+`hooks:install` installs a shared Git `post-checkout` hook. New linked worktrees automatically run the project-local bootstrap: root, `web/`, and `docs-site/` Bun installs plus `cargo fetch --locked`. It does not install Bun, Rust, Playwright browsers, or system packages. Set `DOCKREV_BOOTSTRAP_SKIP=1` to skip the automatic hook run.
+
 ### Backend
 
 ```bash

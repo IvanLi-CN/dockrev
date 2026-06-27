@@ -2,6 +2,9 @@
   "name": "dockrev",
   "private": true,
   "scripts": {
+    "hooks:install": "bash scripts/install-hooks.sh",
+    "bootstrap:worktree": "bash scripts/bootstrap-worktree.sh",
+    "test:worktree-bootstrap": "bash scripts/test-worktree-bootstrap.sh",
     "docs:dev": "DOCS_PORT=${DOCS_PORT:-50885} bun run --cwd docs-site dev",
     "docs:build": "bun run --cwd docs-site build",
     "docs:preview": "DOCS_PORT=${DOCS_PORT:-50885} bun run --cwd docs-site preview"
