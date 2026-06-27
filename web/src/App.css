@@ -4630,6 +4630,42 @@ html[data-theme='light'] .modalOverlay {
   margin-top: 12px;
 }
 
+.svcDetailTabsShell {
+  margin-top: 18px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.svcDetailTabsList {
+  width: max-content;
+  min-width: 100%;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--borderColor) 84%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel2) 72%, transparent) 0%, transparent 100%),
+    color-mix(in srgb, var(--panel) 92%, var(--bg) 8%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 8%, transparent);
+}
+
+.svcDetailTab {
+  min-width: 104px;
+  color: var(--muted);
+}
+
+.svcDetailTab.active,
+.svcDetailTab[data-state='active'] {
+  color: var(--text);
+}
+
+.svcDetailSectionStack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 16px;
+}
+
 .serviceRepoField {
   display: flex;
   align-items: center;
@@ -4897,6 +4933,27 @@ html[data-theme='light'] .modalOverlay {
   align-items: center;
   gap: 10px;
   flex: 0 0 auto;
+}
+
+.svcDangerZoneCard {
+  border-color: color-mix(in srgb, var(--color-danger) 28%, var(--borderColor) 72%);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-danger) 8%, transparent) 0%, transparent 100%),
+    color-mix(in srgb, var(--panel) 96%, var(--bg) 4%);
+}
+
+.svcDangerZoneHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.svcDangerZoneActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
 }
 
 .settingsSummaryGrid {
@@ -5247,11 +5304,18 @@ html[data-theme='light'] .modalOverlay {
     grid-template-columns: 1fr;
   }
   .autoPolicyTop,
+  .svcDangerZoneActions,
   .serviceSafeguardCard,
   .stackDetailHero,
   .stackServiceRow {
     align-items: flex-start;
     flex-direction: column;
+  }
+  .svcDetailTabsList {
+    min-width: max-content;
+  }
+  .svcDetailTab {
+    min-width: 92px;
   }
   .autoPolicyControls {
     align-items: flex-start;

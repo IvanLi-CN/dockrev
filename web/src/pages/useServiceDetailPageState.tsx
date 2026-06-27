@@ -24,9 +24,8 @@ export function useServiceDetailPageState(props: {
   stackId: string
   serviceId: string
   onLastScanHint: (lastScan?: string) => void
-  onTopActions: (node: ReactNode) => void
 }) {
-  const { stackId, serviceId, onLastScanHint, onTopActions } = props
+  const { stackId, serviceId, onLastScanHint } = props
   const confirm = useConfirm()
   const [stack, setStack] = useState<StackDetail | null>(null)
   const [service, setService] = useState<Service | null>(null)
@@ -467,8 +466,45 @@ export function useServiceDetailPageState(props: {
     }
   }, [refreshStackOnly, stackId])
 
-  useEffect(() => {
-    onTopActions(
+  const archiveOrRestoreService = useCallback(async () => {
+    if (!service) return
+    setBusy(true)
+    setError(null)
+    try {
+      if (service.archived) {
+        await restoreService(service.id)
+      } else {
+        await archiveService(service.id)
+      }
+      await requestRefresh()
+    } catch (e: unknown) {
+      setError(errorMessage(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [requestRefresh, service])
+
+  const blockServiceUpdates = useCallback(async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      await createIgnore({
+        enabled: true,
+        serviceId,
+        kind: 'regex',
+        value: '.*',
+        note: 'blocked via UI',
+      })
+      await requestRefresh()
+    } catch (e: unknown) {
+      setError(errorMessage(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [requestRefresh, serviceId])
+
+  const topActions = useMemo(
+    () => (
       <>
         {service && isDockrevService(service) ? (
           <>
@@ -587,45 +623,44 @@ export function useServiceDetailPageState(props: {
               }
               onClick={() => {
                 void (async () => {
-	                  if (applyActiveJob) {
-	                    navigate({ name: 'job', jobId: applyActiveJob.jobId })
-	                    return
-	                  }
-	                  if (!service || !service.candidate) return
-		                  const ok = await confirm({
-		                    title: `确认更新服务 ${service.name}？`,
-		                    body: (
-		                      <ServiceUpdateConfirmDetails
-                            service={service}
-                            status={serviceRowStatus(service)}
-                            onHostResolvedTags={(update) => {
-                              patchServiceInStack((prev) => ({
-                                ...prev,
-                                image: {
-                                  ...prev.image,
-                                  resolvedTag: update.resolvedTag,
-                                  resolvedTags: update.resolvedTags,
-                                },
-                              }))
-                            }}
-                            onHostCandidateResolvedTag={(resolvedTag) => {
-                              patchServiceInStack((prev) => ({
-                                ...prev,
-                                candidate: prev.candidate
-                                  ? {
-                                      ...prev.candidate,
-                                      resolvedTag,
-                                    }
-                                  : prev.candidate,
-                              }))
-                            }}
-                          />
-	                    ),
-	                    confirmText: '执行更新',
-	                    cancelText: '取消',
-	                    confirmVariant: 'primary',
-                      // Hide the pill badge; the intent is already visible in the modal body.
-                      badgeText: null,
+                  if (applyActiveJob) {
+                    navigate({ name: 'job', jobId: applyActiveJob.jobId })
+                    return
+                  }
+                  if (!service || !service.candidate) return
+                  const ok = await confirm({
+                    title: `确认更新服务 ${service.name}？`,
+                    body: (
+                      <ServiceUpdateConfirmDetails
+                        service={service}
+                        status={serviceRowStatus(service)}
+                        onHostResolvedTags={(update) => {
+                          patchServiceInStack((prev) => ({
+                            ...prev,
+                            image: {
+                              ...prev.image,
+                              resolvedTag: update.resolvedTag,
+                              resolvedTags: update.resolvedTags,
+                            },
+                          }))
+                        }}
+                        onHostCandidateResolvedTag={(resolvedTag) => {
+                          patchServiceInStack((prev) => ({
+                            ...prev,
+                            candidate: prev.candidate
+                              ? {
+                                  ...prev.candidate,
+                                  resolvedTag,
+                                }
+                              : prev.candidate,
+                          }))
+                        }}
+                      />
+                    ),
+                    confirmText: '执行更新',
+                    cancelText: '取消',
+                    confirmVariant: 'primary',
+                    badgeText: null,
                   })
                   if (!ok) return
                   setError(null)
@@ -778,34 +813,50 @@ export function useServiceDetailPageState(props: {
             </Button>
           </>
         )}
-        <Button
-          variant="ghost"
-          disabled={busy}
-          onClick={() => navigate({ name: 'stack', stackId })}
-        >
+        <Button variant="ghost" disabled={busy} onClick={() => navigate({ name: 'stack', stackId })}>
           Stack 详情
         </Button>
+      </>
+    ),
+    [
+      applyActiveJob,
+      applyActionBusy,
+      applyActionKey,
+      applySubmitting,
+      beginSubmitting,
+      busy,
+      checkSupervisor,
+      confirm,
+      endSubmitting,
+      patchServiceInStack,
+      requestRefresh,
+      refreshStackOnly,
+      rollbackActionBusy,
+      rollbackActiveJobId,
+      rollbackActiveJobStatus,
+      rollbackHint,
+      rollbackReason,
+      rollbackTarget,
+      rollbackTargetRefreshing,
+      selfUpgradeUrl,
+      service,
+      stack?.name,
+      stackId,
+      supervisorError,
+      supervisorErrorAt,
+      supervisorState.status,
+      trackJob,
+    ],
+  )
+
+  const dangerousActions = useMemo(
+    () => (
+      <>
         <Button
           variant={service?.archived ? 'primary' : 'ghost'}
           disabled={busy || !service}
           onClick={() => {
-            void (async () => {
-              if (!service) return
-              setBusy(true)
-              setError(null)
-              try {
-                if (service.archived) {
-                  await restoreService(service.id)
-                } else {
-                  await archiveService(service.id)
-                }
-                await requestRefresh()
-              } catch (e: unknown) {
-                setError(errorMessage(e))
-              } finally {
-                setBusy(false)
-              }
-            })()
+            void archiveOrRestoreService()
           }}
         >
           {service?.archived ? '恢复' : '归档'}
@@ -814,62 +865,15 @@ export function useServiceDetailPageState(props: {
           variant="danger"
           disabled={busy}
           onClick={() => {
-            void (async () => {
-              setBusy(true)
-              setError(null)
-              try {
-                await createIgnore({
-                  enabled: true,
-                  serviceId,
-                  kind: 'regex',
-                  value: '.*',
-                  note: 'blocked via UI',
-                })
-                await requestRefresh()
-              } catch (e: unknown) {
-                setError(errorMessage(e))
-              } finally {
-                setBusy(false)
-              }
-            })()
+            void blockServiceUpdates()
           }}
         >
           阻止此服务更新
         </Button>
-      </>,
-    )
-  }, [
-    applyActiveJob,
-    applyActionBusy,
-    applyActionKey,
-    applySubmitting,
-    beginSubmitting,
-    busy,
-    checkSupervisor,
-    confirm,
-    endSubmitting,
-    onTopActions,
-    patchServiceInStack,
-    requestRefresh,
-    refreshStackOnly,
-    rollbackActionBusy,
-    rollbackActiveJobId,
-    rollbackActiveJobStatus,
-    rollbackHint,
-    rollbackReason,
-    rollbackReasonLabel,
-    rollbackTarget,
-    rollbackTargetRefreshing,
-    selfUpgradeUrl,
-    service,
-    serviceId,
-    stackId,
-    stack?.name,
-    supervisorErrorAt,
-    supervisorError,
-    supervisorState.status,
-    trackJob,
-  ])
+      </>
+    ),
+    [archiveOrRestoreService, blockServiceUpdates, busy, service],
+  )
 
   const bindTargets = useMemo(() => (settings ? formatMap(settings.backupTargets.bindPaths) : []), [settings])
   const volTargets = useMemo(() => (settings ? formatMap(settings.backupTargets.volumeNames) : []), [settings])
@@ -1095,7 +1099,9 @@ export function useServiceDetailPageState(props: {
     stack,
     supervisorErrorAt,
     supervisorState,
+    topActions,
     tone,
+    dangerousActions,
     volTargets,
   }
 }

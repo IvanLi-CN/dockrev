@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { ServiceDetailPage } from '../../pages/ServiceDetailPage'
+import { currentRoutePathname, type Route } from '../../routes'
 import { PageHarness } from '../mocks/PageHarness'
 import { withDockrevMockApi } from '../mocks/withDockrevMockApi'
 
@@ -7,10 +8,12 @@ const meta: Meta<typeof ServiceDetailPage> = {
   title: 'Pages/ServiceDetailPage',
   component: ServiceDetailPage,
   decorators: [withDockrevMockApi],
+  tags: ['autodocs'],
 }
 
 export default meta
 type Story = StoryObj<typeof ServiceDetailPage>
+type ServiceSection = 'overview' | 'monitoring' | 'settings'
 
 function expectStory(condition: unknown, message: string): asserts condition {
   if (!condition) throw new globalThis.Error(message)
@@ -28,53 +31,139 @@ async function waitForCondition(check: () => boolean, timeoutMs = 3000): Promise
   }
 }
 
+function normalizeText(value: string | null | undefined): string {
+  return value?.replace(/\s+/g, ' ').trim() ?? ''
+}
+
 function findButton(root: ParentNode, text: string): HTMLButtonElement | null {
   return (
     Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.replace(/\s+/g, ' ').trim() === text,
+      (button) => normalizeText(button.textContent) === text,
     ) ?? null
   )
 }
 
 function findButtons(root: ParentNode, text: string): HTMLButtonElement[] {
   return Array.from(root.querySelectorAll<HTMLButtonElement>('button')).filter(
-    (button) => button.textContent?.replace(/\s+/g, ' ').trim() === text,
+    (button) => normalizeText(button.textContent) === text,
   )
 }
 
-function drawerText(doc: Document): string {
-  return doc.querySelector('.settingsDrawerContent')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+function findActionButton(root: ParentNode, action: string, text: string): HTMLButtonElement | null {
+  const scope = root.querySelector(`[data-service-detail-action="${action}"]`)
+  if (!scope) return null
+  return findButton(scope, text)
 }
 
-function render(stackId: string, serviceId: string): Story['render'] {
-  return () => {
-    return (
-      <PageHarness route={{ name: 'service', stackId, serviceId }} title="服务详情" topbarHint="服务详情">
-        {({ onTopActions, onLastScanHint }) => (
+function findSectionCard(root: ParentNode, card: string): HTMLElement | null {
+  return root.querySelector<HTMLElement>(`[data-service-detail-section-card="${card}"]`)
+}
+
+function findTab(root: ParentNode, section: ServiceSection): HTMLButtonElement | null {
+  return root.querySelector<HTMLButtonElement>(`[data-service-detail-tab="${section}"]`)
+}
+
+function drawerText(doc: Document): string {
+  return normalizeText(doc.querySelector('.settingsDrawerContent')?.textContent)
+}
+
+function routeFor(stackId: string, serviceId: string, section: ServiceSection = 'overview'): Route {
+  return section === 'overview'
+    ? { name: 'service', stackId, serviceId }
+    : { name: 'service', stackId, serviceId, section }
+}
+
+function render(
+  stackId: string,
+  serviceId: string,
+  section: ServiceSection = 'overview',
+  pageSubtitle?: string,
+): Story['render'] {
+  return () => (
+    <PageHarness
+      route={routeFor(stackId, serviceId, section)}
+      title="服务详情"
+      topbarHint="服务详情"
+      pageSubtitle={pageSubtitle}
+    >
+      {({ route, onTopActions, onLastScanHint }) =>
+        route.name === 'service' ? (
           <ServiceDetailPage
-            stackId={stackId}
-            serviceId={serviceId}
+            stackId={route.stackId}
+            serviceId={route.serviceId}
+            section={route.section}
             onLastScanHint={onLastScanHint}
             onTopActions={onTopActions}
           />
-        )}
-      </PageHarness>
-    )
-  }
+        ) : null
+      }
+    </PageHarness>
+  )
 }
 
-export const Updatable: Story = {
+export const OverviewDefault: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'overview', '旧链接默认落到概览；保留共享顶部动作与最近更新记录'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes('最近更新记录'))
+    expectStory(currentRoutePathname() === '/services/stack-prod/svc-prod-api', 'legacy overview route should stay canonical')
+    expectStory(findTab(canvasElement, 'overview')?.getAttribute('data-state') === 'active', 'overview tab should be active')
+    expectStory(!normalizeText(canvasElement.textContent).includes('资源监控'), 'overview should not render monitoring panel')
+    expectStory(!findSectionCard(canvasElement, 'auto-policy'), 'overview should not render settings cards')
+    expectStory(findButton(canvasElement, 'Stack 详情'), 'stack detail top action missing')
+  },
+}
+
+export const MonitoringSection: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-prod', 'svc-prod-api', 'monitoring', '监控子页只承载资源监控面板'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes('资源监控'))
+    expectStory(currentRoutePathname() === '/services/stack-prod/svc-prod-api/monitoring', 'monitoring deep link missing')
+    expectStory(findTab(canvasElement, 'monitoring')?.getAttribute('data-state') === 'active', 'monitoring tab should be active')
+    expectStory(!normalizeText(canvasElement.textContent).includes('最近更新记录'), 'monitoring should not render recent updates')
+    expectStory(!findSectionCard(canvasElement, 'auto-policy'), 'monitoring should not render settings cards')
+  },
+}
+
+export const SettingsSection: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-prod', 'svc-prod-api', 'settings', '设置子页集中自动更新、Compose、保护项与维护动作'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'auto-policy')))
+    expectStory(currentRoutePathname() === '/services/stack-prod/svc-prod-api/settings', 'settings deep link missing')
+    expectStory(findTab(canvasElement, 'settings')?.getAttribute('data-state') === 'active', 'settings tab should be active')
+    expectStory(Boolean(findSectionCard(canvasElement, 'auto-policy')), 'settings should render auto policy card')
+    expectStory(Boolean(findSectionCard(canvasElement, 'ignore-rules')), 'settings should render ignore rules')
+    expectStory(Boolean(findSectionCard(canvasElement, 'danger-zone')), 'settings should render maintenance actions')
+    expectStory(!normalizeText(canvasElement.textContent).includes('最近更新记录'), 'settings should not render overview card')
+  },
+}
+
+export const TabNavigation: Story = {
+  parameters: { dockrevApiScenario: 'dashboard-demo' },
+  render: render('stack-prod', 'svc-prod-api', 'overview', '页头 Tabs 直接驱动 service section 路由'),
+  play: async ({ canvasElement }) => {
+    await waitForCondition(() => findTab(canvasElement, 'overview') != null)
+
+    findTab(canvasElement, 'monitoring')?.click()
+    await waitForCondition(() => currentRoutePathname() === '/services/stack-prod/svc-prod-api/monitoring')
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes('资源监控'))
+    expectStory(findTab(canvasElement, 'monitoring')?.getAttribute('data-state') === 'active', 'monitoring tab active state missing after switch')
+
+    findTab(canvasElement, 'settings')?.click()
+    await waitForCondition(() => currentRoutePathname() === '/services/stack-prod/svc-prod-api/settings')
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'auto-policy')))
+    expectStory(findTab(canvasElement, 'settings')?.getAttribute('data-state') === 'active', 'settings tab active state missing after switch')
+  },
 }
 
 export const AutoPolicyInherited: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'settings'),
   play: async ({ canvasElement }) => {
-    await waitForCondition(() => canvasElement.textContent?.includes('自动更新结果') ?? false)
-    expectStory(canvasElement.textContent?.includes('继承 Stack'), 'service auto policy inherited summary missing')
-    expectStory(canvasElement.textContent?.includes('最近更新记录'), 'recent update records missing')
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'auto-policy')))
+    expectStory(normalizeText(canvasElement.textContent).includes('继承 Stack'), 'service auto policy inherited summary missing')
     expectStory(findButton(canvasElement, 'Stack 详情'), 'stack detail top action missing')
   },
 }
@@ -106,15 +195,15 @@ export const AutoPolicyOverrideDelayed: Story = {
       },
     },
   },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'settings'),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
-    await waitForCondition(() => canvasElement.textContent?.includes('Service stable') ?? false)
-    expectStory(canvasElement.textContent?.includes('延迟 3h'), 'nonlinear time slider label missing')
-    expectStory(canvasElement.textContent?.includes('落后 3 个匹配版本'), 'version lag copy missing')
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes('Service stable'))
+    expectStory(normalizeText(canvasElement.textContent).includes('延迟 3h'), 'nonlinear time slider label missing')
+    expectStory(normalizeText(canvasElement.textContent).includes('落后 3 个匹配版本'), 'version lag copy missing')
 
-    const settingsTrigger = findButton(doc, '设置')
-    expectStory(settingsTrigger, 'service settings drawer trigger missing')
+    const settingsTrigger = findActionButton(doc, 'open-auto-policy', '设置')
+    expectStory(settingsTrigger, 'service auto policy drawer trigger missing')
     settingsTrigger.click()
     await waitForCondition(() => drawerText(doc).includes('自动更新策略'))
     await waitForCondition(() => drawerText(doc).includes('Service stable'))
@@ -137,7 +226,10 @@ export const AutoPolicyOverrideDelayed: Story = {
     expectStory(ruleInput, 'policy rule input missing')
     ruleInput.focus()
     ruleInput.setSelectionRange(0, Math.min(2, ruleInput.value.length))
-    expectStory(ruleInput.selectionStart === 0 && ruleInput.selectionEnd === Math.min(2, ruleInput.value.length), 'rule input text selection blocked')
+    expectStory(
+      ruleInput.selectionStart === 0 && ruleInput.selectionEnd === Math.min(2, ruleInput.value.length),
+      'rule input text selection blocked',
+    )
   },
 }
 
@@ -168,13 +260,11 @@ export const AutoPolicyInvalidRegexPreview: Story = {
       },
     },
   },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'settings'),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
-    await waitForCondition(() => canvasElement.textContent?.includes('Broken regex') ?? false)
-    const settingsTrigger = findButton(doc, '设置')
-    expectStory(settingsTrigger, 'service settings drawer trigger missing')
-    settingsTrigger.click()
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes('Broken regex'))
+    findActionButton(doc, 'open-auto-policy', '设置')?.click()
     await waitForCondition(() => drawerText(doc).includes('不确定'))
     expectStory(drawerText(doc).includes('规则无法预览'), 'invalid regex preview state missing')
   },
@@ -187,13 +277,11 @@ export const AutoPolicyEmptyHistoryPreview: Story = {
       'svc-prod-api': { items: [] },
     },
   },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'settings'),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
-    await waitForCondition(() => canvasElement.textContent?.includes('自动更新结果') ?? false)
-    const settingsTrigger = findButton(doc, '设置')
-    expectStory(settingsTrigger, 'service settings drawer trigger missing')
-    settingsTrigger.click()
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'auto-policy')))
+    findActionButton(doc, 'open-auto-policy', '设置')?.click()
     await waitForCondition(() => drawerText(doc).includes('暂无历史版本记录'))
   },
 }
@@ -203,13 +291,11 @@ export const AutoPolicyHistoryPreviewError: Story = {
     dockrevApiScenario: 'dashboard-demo',
     dockrevDiscoveryTimelineErrorServiceIds: ['svc-prod-api'],
   },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'settings'),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
-    await waitForCondition(() => canvasElement.textContent?.includes('自动更新结果') ?? false)
-    const settingsTrigger = findButton(doc, '设置')
-    expectStory(settingsTrigger, 'service settings drawer trigger missing')
-    settingsTrigger.click()
+    await waitForCondition(() => Boolean(findSectionCard(canvasElement, 'auto-policy')))
+    findActionButton(doc, 'open-auto-policy', '设置')?.click()
     await waitForCondition(() => drawerText(doc).includes('mock discovery timeline failed'))
   },
 }
@@ -225,7 +311,7 @@ export const ComposeTagEditorSuggestions: Story = {
       ],
     },
   },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'settings'),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
     await waitForCondition(() => findButton(doc, '编辑 tag') != null)
@@ -259,7 +345,7 @@ export const ComposeTagEditorSuggestions: Story = {
 
 export const ComposeTagEditorSaveError: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'settings'),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
     await waitForCondition(() => findButton(doc, '编辑 tag') != null)
@@ -292,7 +378,7 @@ export const ComposeTagEditorMobileDrawer: Story = {
       },
     },
   },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'settings'),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
     await waitForCondition(() => findButton(doc, '编辑 tag') != null)
@@ -326,85 +412,85 @@ export const AutoPolicyDisabled: Story = {
       },
     },
   },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'settings'),
   play: async ({ canvasElement }) => {
-    await waitForCondition(() => canvasElement.textContent?.includes('不会执行 Stack 级自动部署策略') ?? false)
+    await waitForCondition(() => normalizeText(canvasElement.textContent).includes('不会执行 Stack 级自动部署策略'))
   },
 }
 
 export const HydratedRunningUpdate: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo-hydrated-update' },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'overview'),
 }
 
 export const Hint: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
-  render: render('stack-infra', 'svc-infra-loki'),
+  render: render('stack-infra', 'svc-infra-loki', 'overview'),
 }
 
 export const ArchMismatch: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
-  render: render('stack-infra', 'svc-infra-prom'),
+  render: render('stack-infra', 'svc-infra-prom', 'overview'),
 }
 
 export const CrossTag: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
-  render: render('stack-infra', 'svc-infra-postgres'),
+  render: render('stack-infra', 'svc-infra-postgres', 'overview'),
 }
 
 export const ResolvedTag: Story = {
   parameters: { dockrevApiScenario: 'resolved-tag-demo' },
-  render: render('stack-resolved', 'svc-resolved-web'),
+  render: render('stack-resolved', 'svc-resolved-web', 'overview'),
 }
 
 export const Blocked: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
-  render: render('stack-prod', 'svc-prod-worker'),
+  render: render('stack-prod', 'svc-prod-worker', 'overview'),
 }
 
 export const NoCandidate: Story = {
   parameters: { dockrevApiScenario: 'no-candidates' },
-  render: render('stack-1', 'svc-a'),
+  render: render('stack-1', 'svc-a', 'overview'),
 }
 
 export const ComposeFallbacks: Story = {
   parameters: { dockrevApiScenario: 'service-detail-compose-fallbacks' },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'settings'),
 }
 
 export const VersionAnomalyUpdatable: Story = {
   parameters: { dockrevApiScenario: 'service-detail-version-anomaly' },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'overview'),
 }
 
 export const InferencePendingCandidateLoading: Story = {
   parameters: { dockrevApiScenario: 'services-inference-pending-candidate-loading' },
-  render: render('stack-inference-pending', 'svc-inference-pending'),
+  render: render('stack-inference-pending', 'svc-inference-pending', 'overview'),
 }
 
 export const ResourceMonitorDisabled: Story = {
   parameters: { dockrevApiScenario: 'service-detail-resource-monitor-disabled' },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'monitoring'),
 }
 
 export const ResourceMonitorEmpty: Story = {
   parameters: { dockrevApiScenario: 'service-detail-resource-monitor-empty' },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'monitoring'),
 }
 
 export const ResourceMonitorStreamError: Story = {
   parameters: { dockrevApiScenario: 'service-detail-resource-monitor-stream-error' },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'monitoring'),
 }
 
 export const RollbackAvailable: Story = {
   parameters: { dockrevApiScenario: 'service-detail-rollback-available' },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'overview'),
 }
 
 export const RollbackUnavailable: Story = {
   parameters: { dockrevApiScenario: 'service-detail-rollback-unavailable' },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'overview'),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
     await waitForCondition(() => findButton(doc, '回滚') != null)
@@ -413,7 +499,7 @@ export const RollbackUnavailable: Story = {
     expectStory(trigger, 'rollback action missing')
     expectStory(trigger.disabled, 'rollback action should be disabled when no target is available')
     expectStory(
-      trigger.title.includes('未找到可回滚到升级前版本的成功升级记录'),
+      trigger.getAttribute('data-hint')?.includes('未找到可回滚到升级前版本的成功升级记录'),
       'rollback disabled reason missing',
     )
   },
@@ -421,7 +507,7 @@ export const RollbackUnavailable: Story = {
 
 export const RollbackActive: Story = {
   parameters: { dockrevApiScenario: 'service-detail-rollback-active' },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'overview'),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
     await waitForCondition(() => findButton(doc, '回滚中…') != null)
@@ -436,7 +522,7 @@ export const RollbackActive: Story = {
 
 export const RollbackRefreshRaceAfterUpdate: Story = {
   parameters: { dockrevApiScenario: 'service-detail-rollback-stale-after-update' },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'overview'),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
     await waitForCondition(() => findButton(doc, '执行更新') != null)
@@ -482,7 +568,7 @@ export const RollbackRefreshRaceAfterUpdate: Story = {
 
 export const UpdateConfirmOpen: Story = {
   parameters: { dockrevApiScenario: 'dashboard-demo' },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'overview'),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
     await waitForCondition(() => findButton(doc, '执行更新') != null)
@@ -500,7 +586,7 @@ export const UpdateConfirmOpen: Story = {
 
 export const RollbackConfirmOpen: Story = {
   parameters: { dockrevApiScenario: 'service-detail-rollback-confirm-open' },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'overview'),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
     await waitForCondition(() => findButton(doc, '回滚') != null)
@@ -519,12 +605,12 @@ export const RollbackConfirmOpen: Story = {
 
 export const RepoLinkEditing: Story = {
   parameters: { dockrevApiScenario: 'repo-link-editing' },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'settings'),
   play: async ({ canvasElement }) => {
     const doc = canvasElement.ownerDocument
-    await waitForCondition(() => findButton(doc, '设置') != null)
-    findButton(doc, '设置')?.click()
-    await waitForCondition(() => doc.body.textContent?.includes('服务设置') ?? false)
+    await waitForCondition(() => findActionButton(doc, 'open-service-settings', '打开') != null)
+    findActionButton(doc, 'open-service-settings', '打开')?.click()
+    await waitForCondition(() => doc.body.textContent?.includes('服务保护设置') ?? false)
     const helper = Array.from(doc.body.querySelectorAll<HTMLElement>('.muted')).find((node) =>
       node.textContent?.includes('清空并保存会禁用后续自动补齐'),
     )
@@ -534,5 +620,5 @@ export const RepoLinkEditing: Story = {
 
 export const Error: Story = {
   parameters: { dockrevApiScenario: 'error' },
-  render: render('stack-prod', 'svc-prod-api'),
+  render: render('stack-prod', 'svc-prod-api', 'overview'),
 }
