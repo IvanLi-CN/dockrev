@@ -16,7 +16,7 @@ import { GhcrWebhookQueuePage } from './pages/GhcrWebhookQueuePage'
 import { GhcrWebhookInboxPage } from './pages/GhcrWebhookInboxPage'
 import { GhcrWebhookRegistryPage } from './pages/GhcrWebhookRegistryPage'
 import { SupervisorMisroutePage } from './pages/SupervisorMisroutePage'
-import { brandMarkUrl } from './publicAssetUrls'
+import { BrandLogo } from './BrandLogo'
 import { DeployWelcomePage } from './pages/DeployWelcomePage'
 import { UnauthorizedPage } from './pages/UnauthorizedPage'
 import { useRoute } from './useRoute'
@@ -49,7 +49,6 @@ function pageTitle(route: Route): { title: string; pageSubtitle?: string; topbar
     case 'overview':
       return {
         title: '',
-        topbarHint: '服务导航',
       }
     case 'queue':
       return { title: '任务队列', topbarHint: '任务队列' }
@@ -298,8 +297,7 @@ export default function App() {
           <div className="standaloneHead">
             <div className="standaloneHeadLeft">
               <div className="brand">
-                <img className="brandMark" src={brandMarkUrl} alt="" aria-hidden="true" />
-                Dockrev
+                <BrandLogo />
               </div>
             </div>
             <div className="standaloneHeadRight">

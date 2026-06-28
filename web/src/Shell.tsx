@@ -3,7 +3,7 @@ import { History, X } from 'lucide-react'
 import { getDockrevVersion } from './api'
 import { GitHubIcon, Mono, ToggleGroup, ToggleGroupItem } from './ui'
 import { ConfirmProvider } from './ConfirmProvider'
-import { brandMarkUrl } from './publicAssetUrls'
+import { BrandLogo } from './BrandLogo'
 import { UpdateActionTrackerProvider } from './updateActionTracking'
 import type { Route } from './routes'
 import { currentHref, navigate } from './routes'
@@ -162,8 +162,7 @@ export function AppShell(props: {
                 </div>
                 <div className="topbarIdentity">
                   <div className="brand">
-                    <img className="brandMark" src={brandMarkUrl} alt="" aria-hidden="true" />
-                    Dockrev
+                    <BrandLogo />
                   </div>
                   {props.topbarHint ? <div className="topbarHint">{props.topbarHint}</div> : null}
                 </div>
@@ -196,8 +195,7 @@ export function AppShell(props: {
           >
             <div className="mobileMenuDrawerHead">
               <div className="mobileMenuDrawerBrand">
-                <img className="brandMark" src={brandMarkUrl} alt="" aria-hidden="true" />
-                <div className="mobileMenuDrawerTitle">Dockrev</div>
+                <BrandLogo />
               </div>
               <button
                 type="button"

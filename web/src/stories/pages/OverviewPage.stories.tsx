@@ -41,7 +41,7 @@ function setInputValue(input: HTMLInputElement, value: string) {
 
 function renderOverview(): Story["render"] {
   return () => (
-    <PageHarness route={{ name: "overview" }} title="" topbarHint="服务导航">
+    <PageHarness route={{ name: "overview" }} title="">
       {({
         onLastScanHint,
         onMobileNavContent,
